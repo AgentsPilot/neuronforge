@@ -44,4 +44,6 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
       {children}
     </AuthContext.Provider>
   )
+  
 }
+
