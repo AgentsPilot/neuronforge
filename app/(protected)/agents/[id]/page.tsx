@@ -63,7 +63,8 @@ export default function AgentDetailsPage() {
   }
 
   const handleRunAgent = async () => {
-    if (!agent?.prompt) return
+    if (!agent?.prompt || !user?.id || !agent?.id) return
+
     setLoading(true)
     setResponse(null)
     setRunError(null)
@@ -72,7 +73,11 @@ export default function AgentDetailsPage() {
       const res = await fetch('/api/run-agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: agent.prompt }),
+        body: JSON.stringify({
+          prompt: agent.prompt,
+          user_id: user.id,
+          agent_id: agent.id,
+        }),
       })
 
       const data = await res.json()
