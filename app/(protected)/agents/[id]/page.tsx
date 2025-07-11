@@ -158,25 +158,32 @@ export default function AgentDetailsPage() {
       <h1 className="text-3xl font-bold mb-4">{agent.title}</h1>
       <p className="bg-white p-4 rounded shadow whitespace-pre-wrap">{agent.prompt}</p>
 
-      {stats && (
+        {stats && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6">
-          <div className="bg-white rounded shadow p-4 text-center">
+            <div className="bg-white rounded shadow p-4 text-center">
             <div className="text-gray-500 text-sm">Total Runs</div>
-            <div className="text-xl font-semibold">{stats.run_count}</div>
-          </div>
-          <div className="bg-white rounded shadow p-4 text-center">
+            <div className="text-xl font-semibold">
+                {typeof stats.run_count === 'number' ? stats.run_count : 'N/A'}
+            </div>
+            </div>
+            <div className="bg-white rounded shadow p-4 text-center">
             <div className="text-gray-500 text-sm">Success Rate</div>
             <div className="text-xl font-semibold">
-              {(stats.success_rate * 100).toFixed(0)}%
+            {typeof stats.success_count === 'number' && typeof stats.run_count === 'number' && stats.run_count > 0
+            ? `${((stats.success_count / stats.run_count) * 100).toFixed(0)}%`
+            : 'N/A'}            </div>
             </div>
-          </div>
-          <div className="bg-white rounded shadow p-4 text-center">
+            <div className="bg-white rounded shadow p-4 text-center">
             <div className="text-gray-500 text-sm">Last Run</div>
-            <div className="text-sm">{new Date(stats.last_run).toLocaleString()}</div>
-          </div>
+            <div className="text-sm">
+            {(() => {
+            if (!stats?.last_run_at) return 'N/A'
+            const isoString = stats.last_run_at.replace(' ', 'T') + 'Z'
+            const parsed = new Date(isoString)
+            return isNaN(parsed.getTime()) ? 'Invalid Date' : parsed.toLocaleString()            })()}            </div>
+            </div>
         </div>
-      )}
-
+        )}
       <div className="flex flex-wrap gap-4 mt-6">
         <button onClick={handleCopy} className="bg-gray-200 px-4 py-2 rounded hover:bg-gray-300 transition">
           {copySuccess ? '✅ Copied!' : '📋 Copy'}
