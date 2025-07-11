@@ -15,6 +15,7 @@ export default function AgentDetailsPage() {
   const [copySuccess, setCopySuccess] = useState(false)
   const [response, setResponse] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [runError, setRunError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!id || !user) return
@@ -65,6 +66,7 @@ export default function AgentDetailsPage() {
     if (!agent?.prompt) return
     setLoading(true)
     setResponse(null)
+    setRunError(null)
 
     try {
       const res = await fetch('/api/run-agent', {
@@ -74,9 +76,14 @@ export default function AgentDetailsPage() {
       })
 
       const data = await res.json()
-      setResponse(data.output)
+
+      if (res.ok) {
+        setResponse(data.result)
+      } else {
+        setRunError(data.error || 'Error running agent.')
+      }
     } catch (err) {
-      setResponse('⚠️ Failed to run agent.')
+      setRunError('Unexpected error occurred.')
     } finally {
       setLoading(false)
     }
@@ -128,9 +135,13 @@ export default function AgentDetailsPage() {
         </button>
       </div>
 
+      {runError && (
+        <p className="mt-4 text-red-500 font-medium">⚠️ {runError}</p>
+      )}
+
       {response && (
         <div className="bg-gray-100 p-4 rounded shadow mt-6 whitespace-pre-wrap">
-          <h2 className="font-semibold mb-2">Response:</h2>
+          <h2 className="font-semibold mb-2">🧠 Agent Response:</h2>
           <p>{response}</p>
         </div>
       )}
