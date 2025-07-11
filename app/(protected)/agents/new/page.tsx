@@ -4,61 +4,118 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
-import RequireAuth from '@/components/RequireAuth'
-
-console.log('🧪 NewAgentPage rendered')
 
 export default function NewAgentPage() {
-  const router = useRouter()
   const { user } = useAuth()
-  const [title, setTitle] = useState('')
-  const [prompt, setPrompt] = useState('')
+  const router = useRouter()
+
+  const [agentName, setAgentName] = useState('')
+  const [description, setDescription] = useState('')
+  const [systemPrompt, setSystemPrompt] = useState('')
+  const [userPrompt, setUserPrompt] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!title || !prompt || !user) return
+    if (!user) return
+
+    setLoading(true)
+    setError(null)
 
     const { error } = await supabase.from('agents').insert([
-      { title, prompt, user_id: user.id },
+      {
+        user_id: user.id,
+        agent_name: agentName,
+        description,
+        system_prompt: systemPrompt,
+        user_prompt: userPrompt,
+      },
     ])
 
     if (error) {
-      setError(error.message)
+      setError('Failed to create agent.')
     } else {
       router.push('/dashboard')
     }
+
+    setLoading(false)
   }
 
   return (
-    <RequireAuth>
-      <div className="min-h-screen flex flex-col items-center justify-center">
-        <h1 className="text-2xl font-bold mb-4">Create New Agent</h1>
-        <form onSubmit={handleSubmit} className="w-full max-w-md p-6 bg-white shadow rounded">
-          {error && <p className="text-red-500 mb-2">{error}</p>}
+    <div className="min-h-screen max-w-3xl mx-auto px-6 py-12">
+      <h1 className="text-4xl font-bold text-center mb-10">🛠️ Build Your Agent</h1>
+
+      <form onSubmit={handleSubmit} className="space-y-8 bg-white p-8 rounded-xl shadow-md">
+        <div>
+          <label className="block text-sm font-semibold text-gray-800 mb-1">
+            Agent Name
+          </label>
           <input
             type="text"
-            placeholder="Agent Name"
-            className="w-full px-4 py-2 border mb-3 rounded"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            value={agentName}
+            onChange={(e) => setAgentName(e.target.value)}
             required
+            className="w-full px-4 py-2 border rounded-lg shadow-sm focus:ring focus:ring-blue-300"
+            placeholder="e.g., Marketing Assistant"
           />
+        </div>
+
+        <div>
+          <label className="block text-sm font-semibold text-gray-800 mb-1">
+            Description
+          </label>
           <textarea
-            placeholder="Agent Prompt"
-            className="w-full px-4 py-2 border mb-3 rounded"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            required
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={2}
+            className="w-full px-4 py-2 border rounded-lg shadow-sm focus:ring focus:ring-blue-300"
+            placeholder="What does this agent do?"
           />
+        </div>
+
+        <div>
+          <label className="block text-sm font-semibold text-gray-800 mb-1">
+            System Prompt <span className="text-gray-500 font-normal">(optional)</span>
+          </label>
+          <textarea
+            value={systemPrompt}
+            onChange={(e) => setSystemPrompt(e.target.value)}
+            rows={3}
+            className="w-full px-4 py-2 border rounded-lg shadow-sm focus:ring focus:ring-blue-300"
+            placeholder="Instructions that shape the agent’s behavior (e.g., speak formally, act like a travel advisor)"
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Use this field to guide the personality or constraints of the agent.
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-semibold text-gray-800 mb-1">
+            User Prompt
+          </label>
+          <textarea
+            value={userPrompt}
+            onChange={(e) => setUserPrompt(e.target.value)}
+            rows={5}
+            required
+            className="w-full px-4 py-2 border rounded-lg shadow-sm focus:ring focus:ring-blue-300"
+            placeholder="Prompt that the agent will process (e.g., summarize this report...)"
+          />
+        </div>
+
+        {error && <p className="text-red-500 font-medium">{error}</p>}
+
+        <div className="flex justify-center">
           <button
             type="submit"
-            className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition"
+            disabled={loading}
+            className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition font-medium"
           >
-            Save Agent
+            {loading ? 'Saving...' : 'Create Agent'}
           </button>
-        </form>
-      </div>
-    </RequireAuth>
+        </div>
+      </form>
+    </div>
   )
 }

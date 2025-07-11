@@ -17,9 +17,9 @@ export async function POST(req: Request) {
     const body = await req.json()
     console.log('🟢 /api/run-agent called with:', body)
 
-    const { prompt, user_id, agent_id } = body
+    const { user_prompt, system_prompt, user_id, agent_id } = body
 
-    if (!prompt || !user_id || !agent_id) {
+    if (!user_prompt || !user_id || !agent_id) {
       console.error('❌ Missing required fields')
       return NextResponse.json(
         { error: 'Missing prompt, user_id or agent_id' },
@@ -29,7 +29,10 @@ export async function POST(req: Request) {
 
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o',
-      messages: [{ role: 'user', content: prompt }],
+      messages: [
+  { role: 'system', content: system_prompt || '' },
+  { role: 'user', content: user_prompt },
+],
     })
 
     const output = completion.choices[0].message.content
@@ -39,7 +42,7 @@ export async function POST(req: Request) {
       {
         user_id,
         agent_id,
-        prompt,
+        user_prompt,
         output,
       },
     ])
