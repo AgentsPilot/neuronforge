@@ -10,8 +10,8 @@ export default function EditAgentPage() {
   const { id } = useParams()
   const router = useRouter()
   const { user } = useAuth()
-  const [title, setTitle] = useState('')
-  const [prompt, setPrompt] = useState('')
+  const [agent_name, setAgentname] = useState('')
+  const [user_prompt, setPrompt] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -28,8 +28,8 @@ export default function EditAgentPage() {
       if (error) {
         setError('Agent not found.')
       } else {
-        setTitle(data.title)
-        setPrompt(data.prompt)
+        setAgentname(data.agent_name)
+        setPrompt(data.user_prompt)
       }
     }
 
@@ -38,11 +38,11 @@ export default function EditAgentPage() {
 
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!title || !prompt || !user) return
+    if (!agent_name || !user_prompt || !user) return
 
     const { error } = await supabase
       .from('agents')
-      .update({ title, prompt })
+      .update({ agent_name, user_prompt })
       .eq('id', id)
       .eq('user_id', user.id)
 
@@ -61,16 +61,16 @@ export default function EditAgentPage() {
           {error && <p className="text-red-500 mb-2">{error}</p>}
           <input
             type="text"
-            placeholder="Agent Title"
+            placeholder="Agent Name"
             className="w-full px-4 py-2 border mb-3 rounded"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            value={agent_name}
+            onChange={(e) => setAgentname(e.target.value)}
             required
           />
           <textarea
-            placeholder="Agent Prompt"
+            placeholder="User Prompt"
             className="w-full px-4 py-2 border mb-3 rounded"
-            value={prompt}
+            value={user_prompt}
             onChange={(e) => setPrompt(e.target.value)}
             required
           />

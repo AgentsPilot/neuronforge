@@ -10,7 +10,7 @@ export default function DeleteAgentPage() {
   const { id } = useParams()
   const router = useRouter()
   const { user } = useAuth()
-  const [agentTitle, setAgentTitle] = useState('')
+  const [agentName, setAgentName] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -19,7 +19,7 @@ export default function DeleteAgentPage() {
     const fetchAgent = async () => {
       const { data, error } = await supabase
         .from('agents')
-        .select('title')
+        .select('agent_name')
         .eq('id', id)
         .eq('user_id', user.id)
         .single()
@@ -27,7 +27,7 @@ export default function DeleteAgentPage() {
       if (error) {
         setError('Agent not found.')
       } else {
-        setAgentTitle(data.title)
+        setAgentName(data.agent_name)
       }
     }
 
@@ -60,7 +60,7 @@ export default function DeleteAgentPage() {
         ) : (
           <>
             <p className="mb-4">
-              Are you sure you want to delete the agent <strong>{agentTitle}</strong>?
+              Are you sure you want to delete the agent <strong>{agentName}</strong>?
             </p>
             <div className="flex gap-4">
               <button

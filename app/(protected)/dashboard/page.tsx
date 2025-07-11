@@ -8,8 +8,8 @@ import { supabase } from '@/lib/supabaseClient'
 
 type Agent = {
   id: string
-  title: string
-  prompt: string
+  agent_name: string
+  user_prompt: string
 }
 
 export default function DashboardPage() {
@@ -22,7 +22,7 @@ export default function DashboardPage() {
       if (!user) return
       const { data, error } = await supabase
         .from('agents')
-        .select('id, title, prompt')
+        .select('id, agent_name, user_prompt')
         .eq('user_id', user.id)
 
       if (error) {
@@ -70,8 +70,8 @@ export default function DashboardPage() {
               href={`/agents/${agent.id}`}
               className="bg-white p-4 rounded shadow hover:shadow-lg transition"
             >
-              <h2 className="text-xl font-semibold mb-2">{agent.title}</h2>
-              <p className="text-gray-700 text-sm whitespace-pre-line line-clamp-3">{agent.prompt}</p>
+              <h2 className="text-xl font-semibold mb-2">{agent.agent_name}</h2>
+              <p className="text-gray-700 text-sm whitespace-pre-line line-clamp-3">{agent.user_prompt}</p>
             </Link>
           ))}
         </div>

@@ -155,8 +155,8 @@ export default function AgentDetailsPage() {
         ← Back to Dashboard
       </Link>
 
-      <h1 className="text-3xl font-bold mb-4">{agent.title}</h1>
-      <p className="bg-white p-4 rounded shadow whitespace-pre-wrap">{agent.prompt}</p>
+      <h1 className="text-3xl font-bold mb-4">{agent.agent_name}</h1>
+      <p className="bg-white p-4 rounded shadow whitespace-pre-wrap">{agent.user_prompt}</p>
 
         {stats && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6">
