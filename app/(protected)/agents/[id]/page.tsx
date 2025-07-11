@@ -107,7 +107,6 @@ export default function AgentDetailsPage() {
       if (res.ok) {
         setResponse(data.result)
 
-        // Prepend new log to state if history is already shown
         if (showHistory) {
           setLogs((prev) => [
             {
@@ -174,13 +173,12 @@ export default function AgentDetailsPage() {
           {loading ? 'Running...' : '▶️ Run Agent'}
         </button>
 
-        <button
-          onClick={fetchLogs}
-          disabled={logsFetched}
-          className="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600 transition"
+        <Link
+          href={`/agents/${agent.id}/history`}
+          className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition"
         >
-          📜 Show History
-        </button>
+          🔗 Full History Page
+        </Link>
       </div>
 
       {runError && (
