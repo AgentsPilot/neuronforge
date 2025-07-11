@@ -11,11 +11,14 @@ export default function AgentDetailsPage() {
   const router = useRouter()
   const { user } = useAuth()
   const [agent, setAgent] = useState<any>(null)
+  const [logs, setLogs] = useState<any[]>([])
   const [error, setError] = useState<string | null>(null)
   const [copySuccess, setCopySuccess] = useState(false)
   const [response, setResponse] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [runError, setRunError] = useState<string | null>(null)
+  const [showHistory, setShowHistory] = useState(false)
+  const [logsFetched, setLogsFetched] = useState(false)
 
   useEffect(() => {
     if (!id || !user) return
@@ -37,6 +40,25 @@ export default function AgentDetailsPage() {
 
     fetchAgent()
   }, [id, user])
+
+  const fetchLogs = async () => {
+    if (!agent || logsFetched) return
+
+    const { data: logsData, error: logsError } = await supabase
+      .from('agent_logs')
+      .select('*')
+      .eq('agent_id', agent.id)
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+
+    if (!logsError) {
+      setLogs(logsData)
+      setLogsFetched(true)
+      setShowHistory(true)
+    } else {
+      console.error('Failed to fetch logs:', logsError)
+    }
+  }
 
   const handleDelete = async () => {
     if (!confirm('Are you sure you want to delete this agent?')) return
@@ -84,6 +106,19 @@ export default function AgentDetailsPage() {
 
       if (res.ok) {
         setResponse(data.result)
+
+        // Prepend new log to state if history is already shown
+        if (showHistory) {
+          setLogs((prev) => [
+            {
+              id: Date.now(),
+              created_at: new Date().toISOString(),
+              prompt: agent.prompt,
+              output: data.result,
+            },
+            ...prev,
+          ])
+        }
       } else {
         setRunError(data.error || 'Error running agent.')
       }
@@ -138,6 +173,14 @@ export default function AgentDetailsPage() {
         >
           {loading ? 'Running...' : '▶️ Run Agent'}
         </button>
+
+        <button
+          onClick={fetchLogs}
+          disabled={logsFetched}
+          className="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600 transition"
+        >
+          📜 Show History
+        </button>
       </div>
 
       {runError && (
@@ -148,6 +191,28 @@ export default function AgentDetailsPage() {
         <div className="bg-gray-100 p-4 rounded shadow mt-6 whitespace-pre-wrap">
           <h2 className="font-semibold mb-2">🧠 Agent Response:</h2>
           <p>{response}</p>
+        </div>
+      )}
+
+      {showHistory && logs.length > 0 && (
+        <div className="mt-10">
+          <h2 className="text-xl font-semibold mb-4">📜 Run History</h2>
+          <ul className="space-y-4">
+            {logs.map((log) => (
+              <li key={log.id} className="bg-gray-50 p-4 rounded shadow">
+                <p className="text-sm text-gray-500 mb-2">
+                  {new Date(log.created_at).toLocaleString()}
+                </p>
+                <p className="font-medium whitespace-pre-wrap mb-2">
+                  <span className="text-gray-700">Prompt:</span> {log.prompt}
+                </p>
+                <p className="whitespace-pre-wrap">
+                  <span className="text-gray-700 font-medium">Output:</span>{' '}
+                  {log.output}
+                </p>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>
