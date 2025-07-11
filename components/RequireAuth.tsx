@@ -1,20 +1,23 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useAuth } from './UserProvider'
 
 export default function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { user, session } = useAuth()
+  const { user } = useAuth()
   const router = useRouter()
+  const [checking, setChecking] = useState(true)
 
   useEffect(() => {
-    if (!session && !user) {
+    if (user === null) {
       router.push('/login')
+    } else {
+      setChecking(false)
     }
-  }, [user, session, router])
+  }, [user])
 
-  if (session || !user) {
+  if (checking) {
     return <p className="text-center mt-10">Loading...</p>
   }
 
