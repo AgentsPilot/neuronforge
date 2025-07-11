@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
+import InputSchemaBuilder from '@/components/InputSchemaBuilder'
 
 export default function NewAgentPage() {
   const { user } = useAuth()
@@ -13,6 +14,8 @@ export default function NewAgentPage() {
   const [description, setDescription] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [userPrompt, setUserPrompt] = useState('')
+  const [inputSchema, setInputSchema] = useState<any[]>([])
+  const [outputSchema, setOutputSchema] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -23,15 +26,17 @@ export default function NewAgentPage() {
     setLoading(true)
     setError(null)
 
-    const { error } = await supabase.from('agents').insert([
-      {
-        user_id: user.id,
-        agent_name: agentName,
-        description,
-        system_prompt: systemPrompt,
-        user_prompt: userPrompt,
-      },
-    ])
+    const payload = {
+      user_id: user.id,
+      agent_name: agentName,
+      description,
+      system_prompt: systemPrompt,
+      user_prompt: userPrompt,
+      input_schema: inputSchema.length > 0 ? inputSchema : null,
+      output_schema: outputSchema || null,
+    }
+
+    const { error } = await supabase.from('agents').insert([payload])
 
     if (error) {
       setError('Failed to create agent.')
@@ -102,6 +107,32 @@ export default function NewAgentPage() {
             className="w-full px-4 py-2 border rounded-lg shadow-sm focus:ring focus:ring-blue-300"
             placeholder="Prompt that the agent will process (e.g., summarize this report...)"
           />
+        </div>
+
+        <div>
+          <label className="block text-sm font-semibold text-gray-800 mb-2">
+            Input Schema
+          </label>
+          <InputSchemaBuilder onSchemaChange={setInputSchema} />
+          <p className="text-xs text-gray-500 mt-1">
+            Define structured inputs your agent expects using fields and types.
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-semibold text-gray-800 mb-1">
+            Output Schema <span className="text-gray-500 font-normal">(optional)</span>
+          </label>
+          <textarea
+            value={outputSchema}
+            onChange={(e) => setOutputSchema(e.target.value)}
+            rows={4}
+            className="w-full px-4 py-2 border rounded-lg shadow-sm focus:ring focus:ring-blue-300"
+            placeholder={`e.g. {\n  "summary": "string",\n  "confidence": "number"\n}`}
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Describe the expected output format using JSON-like structure.
+          </p>
         </div>
 
         {error && <p className="text-red-500 font-medium">{error}</p>}
