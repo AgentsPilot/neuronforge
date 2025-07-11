@@ -13,6 +13,8 @@ export default function AgentDetailsPage() {
   const [agent, setAgent] = useState<any>(null)
   const [error, setError] = useState<string | null>(null)
   const [copySuccess, setCopySuccess] = useState(false)
+  const [response, setResponse] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     if (!id || !user) return
@@ -59,6 +61,27 @@ export default function AgentDetailsPage() {
     }
   }
 
+  const handleRunAgent = async () => {
+    if (!agent?.prompt) return
+    setLoading(true)
+    setResponse(null)
+
+    try {
+      const res = await fetch('/api/run-agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: agent.prompt }),
+      })
+
+      const data = await res.json()
+      setResponse(data.output)
+    } catch (err) {
+      setResponse('⚠️ Failed to run agent.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   if (error) return <p className="text-red-500 text-center mt-6">{error}</p>
   if (!agent) return <p className="text-center mt-6">Loading agent details...</p>
 
@@ -95,7 +118,22 @@ export default function AgentDetailsPage() {
         >
           🗑️ Delete
         </button>
+
+        <button
+          onClick={handleRunAgent}
+          disabled={loading}
+          className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 transition"
+        >
+          {loading ? 'Running...' : '▶️ Run Agent'}
+        </button>
       </div>
+
+      {response && (
+        <div className="bg-gray-100 p-4 rounded shadow mt-6 whitespace-pre-wrap">
+          <h2 className="font-semibold mb-2">Response:</h2>
+          <p>{response}</p>
+        </div>
+      )}
     </div>
   )
 }
