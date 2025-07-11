@@ -65,10 +65,14 @@ export default function DashboardPage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
           {agents.map((agent) => (
-            <div key={agent.id} className="bg-white p-4 rounded shadow">
+            <Link
+              key={agent.id}
+              href={`/agents/${agent.id}`}
+              className="bg-white p-4 rounded shadow hover:shadow-lg transition"
+            >
               <h2 className="text-xl font-semibold mb-2">{agent.title}</h2>
-              <p className="text-gray-700 text-sm whitespace-pre-line">{agent.prompt}</p>
-            </div>
+              <p className="text-gray-700 text-sm whitespace-pre-line line-clamp-3">{agent.prompt}</p>
+            </Link>
           ))}
         </div>
       )}
