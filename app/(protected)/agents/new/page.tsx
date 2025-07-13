@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
-import InputSchemaBuilder from '@/components/InputSchemaBuilder'
+import VisualSchemaBuilder from '@/components/VisualSchemaBuilder'
 
 export default function NewAgentPage() {
   const { user } = useAuth()
@@ -15,7 +15,7 @@ export default function NewAgentPage() {
   const [systemPrompt, setSystemPrompt] = useState('')
   const [userPrompt, setUserPrompt] = useState('')
   const [inputSchema, setInputSchema] = useState<any[]>([])
-  const [outputSchema, setOutputSchema] = useState('')
+  const [outputSchema, setOutputSchema] = useState<any[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -33,7 +33,7 @@ export default function NewAgentPage() {
       system_prompt: systemPrompt,
       user_prompt: userPrompt,
       input_schema: inputSchema.length > 0 ? inputSchema : null,
-      output_schema: outputSchema || null,
+      output_schema: outputSchema.length > 0 ? outputSchema : null,
     }
 
     const { error } = await supabase.from('agents').insert([payload])
@@ -48,14 +48,12 @@ export default function NewAgentPage() {
   }
 
   return (
-    <div className="min-h-screen max-w-3xl mx-auto px-6 py-12">
+    <div className="min-h-screen max-w-4xl mx-auto px-6 py-12">
       <h1 className="text-4xl font-bold text-center mb-10">🛠️ Build Your Agent</h1>
 
       <form onSubmit={handleSubmit} className="space-y-8 bg-white p-8 rounded-xl shadow-md">
         <div>
-          <label className="block text-sm font-semibold text-gray-800 mb-1">
-            Agent Name
-          </label>
+          <label className="block text-sm font-semibold text-gray-800 mb-1">Agent Name</label>
           <input
             type="text"
             value={agentName}
@@ -67,9 +65,7 @@ export default function NewAgentPage() {
         </div>
 
         <div>
-          <label className="block text-sm font-semibold text-gray-800 mb-1">
-            Description
-          </label>
+          <label className="block text-sm font-semibold text-gray-800 mb-1">Description</label>
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
@@ -96,9 +92,7 @@ export default function NewAgentPage() {
         </div>
 
         <div>
-          <label className="block text-sm font-semibold text-gray-800 mb-1">
-            User Prompt
-          </label>
+          <label className="block text-sm font-semibold text-gray-800 mb-1">User Prompt</label>
           <textarea
             value={userPrompt}
             onChange={(e) => setUserPrompt(e.target.value)}
@@ -110,28 +104,24 @@ export default function NewAgentPage() {
         </div>
 
         <div>
-          <label className="block text-sm font-semibold text-gray-800 mb-2">
-            Input Schema
-          </label>
-          <InputSchemaBuilder onSchemaChange={setInputSchema} />
+          <label className="block text-sm font-semibold text-gray-800 mb-2">Input Schema</label>
+          <VisualSchemaBuilder
+            schema={inputSchema}
+            onSchemaChange={setInputSchema}
+          />
           <p className="text-xs text-gray-500 mt-1">
             Define structured inputs your agent expects using fields and types.
           </p>
         </div>
 
         <div>
-          <label className="block text-sm font-semibold text-gray-800 mb-1">
-            Output Schema <span className="text-gray-500 font-normal">(optional)</span>
-          </label>
-          <textarea
-            value={outputSchema}
-            onChange={(e) => setOutputSchema(e.target.value)}
-            rows={4}
-            className="w-full px-4 py-2 border rounded-lg shadow-sm focus:ring focus:ring-blue-300"
-            placeholder={`e.g. {\n  "summary": "string",\n  "confidence": "number"\n}`}
+          <label className="block text-sm font-semibold text-gray-800 mb-2">Output Schema</label>
+          <VisualSchemaBuilder
+            schema={outputSchema}
+            onSchemaChange={setOutputSchema}
           />
           <p className="text-xs text-gray-500 mt-1">
-            Describe the expected output format using JSON-like structure.
+            Define the expected structure of the agent's output.
           </p>
         </div>
 
