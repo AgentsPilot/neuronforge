@@ -5,6 +5,7 @@ import LogoutButton from '@/components/LogoutButton'
 import Link from 'next/link'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
+import { useRouter } from 'next/navigation'
 
 type Agent = {
   id: string
@@ -12,33 +13,45 @@ type Agent = {
   description?: string
   system_prompt?: string
   user_prompt: string
+  status: string
 }
 
 export default function DashboardPage() {
   const { user } = useAuth()
+  const router = useRouter()
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    const fetchAgents = async () => {
-      if (!user) return
-      const { data, error } = await supabase
-        .from('agents')
-        .select('id, agent_name, description, system_prompt, user_prompt')
-        .eq('user_id', user.id)
-        .eq('is_archived', false) // ✅ Added this line
+  const fetchAgents = async () => {
+    if (!user) return
+    const { data, error } = await supabase
+      .from('agents')
+      .select('id, agent_name, description, system_prompt, user_prompt, status')
+      .eq('user_id', user.id)
+      .eq('is_archived', false)
 
-      if (error) {
-        console.error('❌ Failed to fetch agents:', error.message)
-      } else {
-        setAgents(data || [])
-      }
-
-      setLoading(false)
+    if (error) {
+      console.error('❌ Failed to fetch agents:', error.message)
+    } else {
+      setAgents(data || [])
     }
 
+    setLoading(false)
+  }
+
+  useEffect(() => {
     fetchAgents()
   }, [user])
+
+  const handleActivate = async (id: string) => {
+    await supabase.from('agents').update({ status: 'active' }).eq('id', id)
+    fetchAgents()
+  }
+
+  const handleDelete = async (id: string) => {
+    await supabase.from('agents').update({ is_archived: true }).eq('id', id)
+    fetchAgents()
+  }
 
   return (
     <div className="min-h-screen relative px-6 py-10 bg-gray-50">
@@ -66,37 +79,57 @@ export default function DashboardPage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {agents.map((agent) => (
-            <Link
+            <div
               key={agent.id}
-              href={`/agents/${agent.id}`}
-              className="bg-white p-6 rounded-2xl shadow hover:shadow-lg transition border border-gray-100 hover:border-blue-200"
+              className="bg-white p-6 rounded-2xl shadow border border-gray-100 hover:border-blue-200"
             >
-              <h2 className="text-lg font-semibold text-gray-800 mb-3">
+              <h2 className="text-lg font-semibold text-gray-800 mb-2">
                 {agent.agent_name}
               </h2>
 
-              <p className="text-sm text-gray-600 mb-4 line-clamp-2">
+              <p className="text-sm text-gray-600 mb-3 line-clamp-2">
                 {agent.description || <span className="italic text-gray-400">No description</span>}
               </p>
 
-              <hr className="my-2" />
-
-              <div className="text-xs text-gray-500 mb-3">
-                <span className="font-semibold text-gray-700 block mb-1">🧠 System Prompt</span>
-                <p className="line-clamp-2">
-                  {agent.system_prompt || <span className="italic text-gray-400">None provided</span>}
-                </p>
+              <div className="text-xs text-gray-500 mb-2">
+                <span className="font-semibold text-gray-700">Status:</span>{' '}
+                <span className={agent.status === 'draft' ? 'text-yellow-600' : 'text-green-600'}>
+                  {agent.status}
+                </span>
               </div>
 
-              <hr className="my-2" />
+              <div className="flex flex-wrap gap-2 mt-3">
+                <Link
+                  href={`/agents/${agent.id}/edit`}
+                  className="text-xs bg-gray-200 px-3 py-1 rounded hover:bg-gray-300"
+                >
+                  Edit
+                </Link>
 
-              <div className="text-xs text-gray-500">
-                <span className="font-semibold text-gray-700 block mb-1">💬 User Prompt</span>
-                <p className="line-clamp-2">
-                  {agent.user_prompt || <span className="italic text-gray-400">None provided</span>}
-                </p>
+                <button
+                  onClick={() => handleDelete(agent.id)}
+                  className="text-xs bg-red-100 text-red-600 px-3 py-1 rounded hover:bg-red-200"
+                >
+                  Delete
+                </button>
+
+                {agent.status === 'draft' && (
+                  <button
+                    onClick={() => handleActivate(agent.id)}
+                    className="text-xs bg-yellow-200 text-yellow-800 px-3 py-1 rounded hover:bg-yellow-300"
+                  >
+                    Activate
+                  </button>
+                )}
+
+                <Link
+                  href={`/agents/${agent.id}/run`}
+                  className="text-xs bg-blue-100 text-blue-800 px-3 py-1 rounded hover:bg-blue-200"
+                >
+                  Run
+                </Link>
               </div>
-            </Link>
+            </div>
           ))}
         </div>
       )}
