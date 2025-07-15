@@ -6,6 +6,8 @@ import Link from 'next/link'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 import { useRouter } from 'next/navigation'
+import { toast } from 'sonner'
+import AgentResultModal from '@/components/AgentResultModal'
 
 type Agent = {
   id: string
@@ -21,6 +23,9 @@ export default function DashboardPage() {
   const router = useRouter()
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
+
+  const [showResultModal, setShowResultModal] = useState(false)
+  const [lastResult, setLastResult] = useState('')
 
   const fetchAgents = async () => {
     if (!user) return
@@ -51,6 +56,33 @@ export default function DashboardPage() {
   const handleDelete = async (id: string) => {
     await supabase.from('agents').update({ is_archived: true }).eq('id', id)
     fetchAgents()
+  }
+
+  const handleRunAgent = async (agentId: string) => {
+    console.log('Running agent with ID:', agentId)
+    const toastId = toast.loading('Running agent...')
+
+    try {
+      const res = await fetch('/api/run-agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_id: agentId }),
+      })
+
+      const result = await res.json()
+
+      if (!res.ok) {
+        console.error('❌ Run error:', result)
+        toast.error(`❌ Failed: ${result.error || 'Unknown error'}`, { id: toastId })
+      } else {
+        setLastResult(result.result.message || '✅ Agent ran successfully.')
+        setShowResultModal(true)
+        toast.dismiss(toastId)
+      }
+    } catch (err) {
+      console.error('❌ Unexpected error:', err)
+      toast.error('Unexpected error while running agent', { id: toastId })
+    }
   }
 
   return (
@@ -122,17 +154,24 @@ export default function DashboardPage() {
                   </button>
                 )}
 
-                <Link
-                  href={`/agents/${agent.id}/run`}
+                <button
+                  onClick={() => handleRunAgent(agent.id)}
                   className="text-xs bg-blue-100 text-blue-800 px-3 py-1 rounded hover:bg-blue-200"
                 >
                   Run
-                </Link>
+                </button>
               </div>
             </div>
           ))}
         </div>
       )}
+
+      <AgentResultModal
+        isOpen={showResultModal}
+        onClose={() => setShowResultModal(false)}
+        title="Agent Result"
+        result={lastResult}
+      />
     </div>
   )
 }

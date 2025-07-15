@@ -1,6 +1,7 @@
 import './globals.css'
 import { Inter } from 'next/font/google'
 import { UserProvider } from '@/components/UserProvider'
+import { Toaster } from 'sonner' // ✅ NEW
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -13,8 +14,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className={inter.className}>
-        <UserProvider>{children}</UserProvider>
+        <UserProvider>
+          {children}
+          <Toaster richColors position="top-center" /> {/* ✅ NEW */}
+        </UserProvider>
       </body>
     </html>
   )
-};
+}
