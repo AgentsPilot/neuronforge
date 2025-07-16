@@ -1,11 +1,8 @@
 {
-  "routes": [
+  "rewrites": [
     {
-      "src": "/api/.*",
-      "dest": "/api/$1",
-      "headers": {
-        "x-vercel-protection-bypass": "1"
-      }
+      "source": "/api/:path*",
+      "destination": "/api/:path*"
     }
   ]
 }
