@@ -1,8 +1,15 @@
 {
-  "rewrites": [
+  "functions": {
+    "api/run-agent.ts": {
+      "memory": 512,
+      "maxDuration": 10
+    }
+  },
+  "routes": [
     {
-      "source": "/api/:path*",
-      "destination": "/api/:path*"
+      "src": "/api/run-agent",
+      "methods": ["POST"],
+      "dest": "api/run-agent/route.ts"
     }
   ]
 }
