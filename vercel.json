@@ -1,6 +1,6 @@
 {
   "functions": {
-    "api/run-agent.ts": {
+    "app/api/run-agent/route.ts": {
       "memory": 512,
       "maxDuration": 10
     }
@@ -9,7 +9,7 @@
     {
       "src": "/api/run-agent",
       "methods": ["POST"],
-      "dest": "api/run-agent/route.ts"
+      "dest": "app/api/run-agent/route.ts"
     }
   ]
 }
