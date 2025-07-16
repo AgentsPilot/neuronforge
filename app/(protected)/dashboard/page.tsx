@@ -78,6 +78,13 @@ export default function DashboardPage() {
         setLastResult(result.result.message || '✅ Agent ran successfully.')
         setShowResultModal(true)
         toast.dismiss(toastId)
+
+        // Log run to Supabase
+        await supabase.from('agent_logs').insert({
+          agent_id: agentId,
+          user_id: user?.id,
+          result: result.result.message,
+        })
       }
     } catch (err) {
       console.error('❌ Unexpected error:', err)
@@ -160,8 +167,15 @@ export default function DashboardPage() {
                 >
                   Run
                 </button>
-              </div>
-            </div>
+
+                <Link
+                  href={`/agents/${agent.id}/runs`}
+                  className="text-xs bg-green-100 text-green-800 px-3 py-1 rounded hover:bg-green-200"
+                >
+                  View Runs
+                </Link>
+              </div>            
+</div>
           ))}
         </div>
       )}
