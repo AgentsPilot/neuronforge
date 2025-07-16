@@ -6,11 +6,12 @@ import Step1Basics from './wizard/Step1Basics'
 import Step2Prompts from './wizard/Step2Prompts'
 import Step3Schema from './wizard/Step3Schemas'
 import Step4Plugins from './wizard/Step4Plugins'
+import Step4_5_Mode from './wizard/Step4_5_mode'
 import Step5Review from './wizard/Step5Review'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 
-const TOTAL_STEPS = 5
+const TOTAL_STEPS = 6
 
 export default function AgentWizard({ agentId }: { agentId?: string }) {
   const [step, setStep] = useState(1)
@@ -28,7 +29,10 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
     userPrompt: '',
     inputSchema: [],
     outputSchema: [],
-    plugins: {}
+    plugins: {},
+    mode: 'on_demand', // NEW
+    schedule_cron: '', // NEW
+    trigger_conditions: '', // NEW
   })
 
   useEffect(() => {
@@ -57,6 +61,9 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
         inputSchema: data.input_schema || [],
         outputSchema: data.output_schema || [],
         plugins: data.connected_plugins || {},
+        mode: data.mode || 'on_demand',
+        schedule_cron: data.schedule_cron || '',
+        trigger_conditions: JSON.stringify(data.trigger_conditions || {}),
       })
 
       setLoadingDraft(false)
@@ -114,7 +121,10 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
       input_schema: agentData.inputSchema,
       output_schema: agentData.outputSchema,
       connected_plugins: agentData.plugins,
-      status: 'active'
+      mode: agentData.mode,
+      schedule_cron: agentData.schedule_cron || null,
+      trigger_conditions: agentData.trigger_conditions ? JSON.parse(agentData.trigger_conditions) : null,
+      status: 'active',
     }
 
     let result
@@ -149,7 +159,10 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
       input_schema: agentData.inputSchema,
       output_schema: agentData.outputSchema,
       connected_plugins: agentData.plugins,
-      status: 'draft'
+      mode: agentData.mode,
+      schedule_cron: agentData.schedule_cron || null,
+      trigger_conditions: agentData.trigger_conditions ? JSON.parse(agentData.trigger_conditions) : null,
+      status: 'draft',
     }
 
     let result
@@ -190,7 +203,8 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
       {step === 2 && <Step2Prompts data={agentData} onUpdate={updateData} />}
       {step === 3 && <Step3Schema data={agentData} onUpdate={updateData} />}
       {step === 4 && <Step4Plugins data={agentData} onUpdate={updateData} />}
-      {step === 5 && <Step5Review data={agentData} onEditStep={(s) => setStep(s)} />}
+      {step === 5 && <Step4_5_Mode data={agentData} onUpdate={updateData} />}
+      {step === 6 && <Step5Review data={agentData} onEditStep={(s) => setStep(s)} />}
 
       {error && <p className="text-red-500 text-sm mt-4 text-center">{error}</p>}
 

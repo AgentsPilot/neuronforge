@@ -18,6 +18,9 @@ interface Step5ReviewProps {
     inputSchema: SchemaField[]
     outputSchema: SchemaField[]
     plugins: Record<string, any>
+    mode: string
+    schedule_cron: string
+    trigger_conditions: string
   }
   onEditStep: (step: number) => void
 }
@@ -54,6 +57,24 @@ const renderSchemaTable = (schema: SchemaField[]) => {
 }
 
 const Step5Review: FC<Step5ReviewProps> = ({ data, onEditStep }) => {
+  const renderModeDetails = () => {
+    switch (data.mode) {
+      case 'scheduled':
+        return <p><strong>Cron Schedule:</strong> {data.schedule_cron || '—'}</p>
+      case 'triggered':
+        return (
+          <div>
+            <p><strong>Trigger Conditions:</strong></p>
+            <pre className="bg-gray-100 p-3 rounded text-sm overflow-auto">
+              {data.trigger_conditions || '{}'}
+            </pre>
+          </div>
+        )
+      default:
+        return <p>This agent runs manually when you trigger it.</p>
+    }
+  }
+
   return (
     <div className="space-y-8">
       {/* Agent Info */}
@@ -105,6 +126,16 @@ const Step5Review: FC<Step5ReviewProps> = ({ data, onEditStep }) => {
         ) : (
           <span className="text-gray-500 text-sm">No plugins connected</span>
         )}
+      </div>
+
+      {/* Mode */}
+      <div className="flex justify-between items-center">
+        <h2 className="text-xl font-semibold">⚙️ Execution Mode</h2>
+        <button onClick={() => onEditStep(5)} className="text-blue-600 text-sm underline">Edit</button>
+      </div>
+      <div className="bg-gray-50 p-4 rounded border space-y-2">
+        <p><strong>Mode:</strong> {data.mode}</p>
+        {renderModeDetails()}
       </div>
     </div>
   )
