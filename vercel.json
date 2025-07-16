@@ -1,11 +1,11 @@
 {
   "routes": [
     {
-      "src": "/api/(.*)",
+      "src": "/api/.*",
+      "dest": "/api/$1",
       "headers": {
-        "cache-control": "no-cache"
-      },
-      "methods": ["GET", "POST", "OPTIONS"]
+        "x-vercel-protection-bypass": "1"
+      }
     }
   ]
 }
