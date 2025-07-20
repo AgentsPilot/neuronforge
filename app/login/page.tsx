@@ -8,21 +8,21 @@ export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [errorMessage, setErrorMessage] = useState(''); // Renamed to avoid conflict
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
+    setErrorMessage('');
 
-    const { data, error } = await supabase.auth.signInWithPassword({
+    const { error: loginError } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
 
-    if (error) {
-      setError(error.message);
+    if (loginError) {
+      setErrorMessage(loginError.message);
     } else {
-      router.push('/dashboard'); // or wherever you want to go after login
+      router.push('/dashboard');
     }
   };
 
@@ -30,11 +30,10 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-100">
       <form
         onSubmit={handleLogin}
-        className="bg-white p-6 rounded-lg shadow-md w-full max-w-sm"
-      >
-        
+        className="bg-white p-6 rounded-lg shadow-md w-full max-w-sm">
         <h1 className="text-2xl mb-4 text-center font-bold">Sign In</h1>
-        {error && <p className="text-red-500 mb-3">{error}</p>}
+
+        {errorMessage && <p className="text-red-500 mb-3">{errorMessage}</p>}
 
         <input
           type="email"

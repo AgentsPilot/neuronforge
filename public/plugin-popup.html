@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Connect Plugin</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        padding: 20px;
+      }
+      label {
+        display: block;
+        margin-top: 12px;
+      }
+      input {
+        width: 100%;
+        padding: 8px;
+        margin-top: 4px;
+        box-sizing: border-box;
+      }
+      button {
+        margin-top: 20px;
+        padding: 10px 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <h2 id="plugin-title">Connect Plugin</h2>
+    <form id="plugin-form">
+      <label>
+        Username:
+        <input type="text" name="username" required />
+      </label>
+      <label>
+        Password:
+        <input type="password" name="password" required />
+      </label>
+      <button type="submit">Submit</button>
+    </form>
+
+    <script>
+      const urlParams = new URLSearchParams(window.location.search);
+      const pluginKey = urlParams.get('plugin');
+      document.getElementById('plugin-title').innerText = `Connect to ${pluginKey}`;
+
+      const form = document.getElementById('plugin-form');
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const formData = new FormData(form);
+        const payload = {
+          plugin_key: pluginKey,
+          username: formData.get('username'),
+          password: formData.get('password'),
+        };
+
+        try {
+          const res = await fetch('/api/plugin-connections', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+
+          if (res.ok) {
+            window.opener?.postMessage(
+              { type: 'PLUGIN_CONNECTED', pluginKey },
+              window.origin
+            );
+            window.close();
+          } else {
+            alert('Failed to save credentials.');
+          }
+        } catch (err) {
+          alert('Error connecting: ' + err.message);
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Plugin Authentication</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      background-color: #f9fafb;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+    }
+
+    .auth-box {
+      background: white;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+      padding: 2rem;
+      width: 100%;
+      max-width: 360px;
+    }
+
+    .auth-box h2 {
+      margin-bottom: 1.5rem;
+      font-size: 1.25rem;
+      color: #111827;
+      text-align: center;
+    }
+
+    .form-group {
+      margin-bottom: 1rem;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 0.875rem;
+      color: #374151;
+      margin-bottom: 0.25rem;
+    }
+
+    .form-group input {
+      width: 100%;
+      padding: 0.5rem 0.75rem;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 1rem;
+    }
+
+    button {
+      width: 100%;
+      padding: 0.6rem;
+      background-color: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background-color 0.2s ease;
+    }
+
+    button:hover {
+      background-color: #1d4ed8;
+    }
+
+    #error {
+      color: #dc2626;
+      font-size: 0.875rem;
+      margin-top: 1rem;
+      text-align: center;
+      min-height: 1em;
+    }
+  </style>
+</head>
+<body>
+  <div class="auth-box">
+    <h2>Connect Plugin</h2>
+    <form onsubmit="sendCredentials(); return false;">
+      <div class="form-group">
+        <label for="username">Username</label>
+        <input id="username" required />
+      </div>
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input id="password" type="password" required />
+      </div>
+      <button type="submit">Connect</button>
+      <p id="error"></p>
+    </form>
+  </div>
+
+  <script>
+    const pluginKey = new URLSearchParams(window.location.search).get('plugin')
+
+    function sendCredentials() {
+      const username = document.getElementById('username').value.trim()
+      const password = document.getElementById('password').value.trim()
+      const errorEl = document.getElementById('error')
+      errorEl.textContent = ''
+
+      // Simple built-in validation
+      if (!username || !password) {
+        errorEl.textContent = 'Please fill in both fields.'
+        return
+      }
+
+      if (pluginKey === 'google-mail' && !username.endsWith('@gmail.com')) {
+        errorEl.textContent = 'Username must be a valid @gmail.com address.'
+        return
+      }
+
+      // If all good, send to parent
+      window.opener?.postMessage(
+        {
+          type: 'PLUGIN_CREDENTIALS',
+          pluginKey,
+          username,
+          password
+        },
+        '*'
+      )
+    }
+
+    // Optionally close if parent explicitly says success
+    window.addEventListener('message', (event) => {
+      if (event.data?.type === 'PLUGIN_SUCCESS') {
+        window.close()
+      }
+    })
+  </script>
+</body>
+</html>
