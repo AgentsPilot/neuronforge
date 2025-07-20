@@ -118,7 +118,7 @@ export default function Step4Plugins({ data, onUpdate }: Props) {
       console.error('Plugin disconnect error:', err)
       setPluginErrors((prev) => ({
         ...prev,
-        [pluginKey]: (err as Error)?.message || 'Failed to disconnect.'
+        [pluginKey]: (err as Error)?.message || 'Failed to disconnect.',
       }))
     } finally {
       setLoadingPlugin(null)
@@ -128,6 +128,7 @@ export default function Step4Plugins({ data, onUpdate }: Props) {
   const isConnected = (pluginKey: string) =>
     data.connectedPlugins?.[pluginKey]?.connected
 
+  // ✅ Auto-clean if popup is manually closed
   useEffect(() => {
     const timer = setInterval(() => {
       if (authPopup && authPopup.closed) {
@@ -136,6 +137,38 @@ export default function Step4Plugins({ data, onUpdate }: Props) {
     }, 500)
     return () => clearInterval(timer)
   }, [authPopup])
+
+  // ✅ Persisted state load on initial mount
+  useEffect(() => {
+    const loadConnections = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) return
+
+      const { data: connections, error } = await supabase
+        .from('plugin_connections')
+        .select('*')
+        .eq('user_id', user.id)
+
+      if (error) {
+        console.error('Failed to load plugin connections:', error)
+        return
+      }
+
+      const updated: Record<string, any> = {}
+      connections?.forEach((conn) => {
+        updated[conn.plugin_key] = {
+          connected: true,
+          username: conn.username,
+        }
+      })
+
+      onUpdate({ connectedPlugins: updated })
+    }
+
+    loadConnections()
+  }, [])
 
   return (
     <div className="space-y-6">
