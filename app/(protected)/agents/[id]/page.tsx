@@ -1,133 +1,123 @@
-// page.tsx under [id] — Edit Existing Agent
-
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
-import { supabase } from '@/lib/supabaseClient'
+import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
-import SchemaBuilder from '@/components/SchemaBuilder'
-import RequireAuth from '@/components/RequireAuth'
+import { supabase } from '@/lib/supabaseClient'
+import Link from 'next/link'
+import AgentStatsBlock from '../AgentStatsBlock'
 
-export default function EditAgentPage() {
-  const { id } = useParams()
-  const router = useRouter()
+type Agent = {
+  id: string
+  agent_name: string
+  description?: string
+  system_prompt?: string
+  user_prompt: string
+  status: string
+  input_schema?: any
+}
+
+export default function AgentPage({ params }: { params: { id: string } }) {
   const { user } = useAuth()
+  const router = useRouter()
+  const [agent, setAgent] = useState<Agent | null>(null)
+  const [loading, setLoading] = useState(true)
 
-  const [agentName, setAgentName] = useState('')
-  const [description, setDescription] = useState('')
-  const [systemPrompt, setSystemPrompt] = useState('')
-  const [userPrompt, setUserPrompt] = useState('')
-  const [inputSchema, setInputSchema] = useState<any[]>([])
-  const [outputSchema, setOutputSchema] = useState<any[]>([])
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!id || !user) return
-
-    const fetchAgent = async () => {
-      const { data, error } = await supabase
-        .from('agents')
-        .select('*')
-        .eq('id', id)
-        .eq('user_id', user.id)
-        .single()
-
-      if (error || !data) {
-        setError('Agent not found.')
-      } else {
-        setAgentName(data.agent_name)
-        setDescription(data.description || '')
-        setSystemPrompt(data.system_prompt || '')
-        setUserPrompt(data.user_prompt || '')
-        setInputSchema(data.input_schema || [])
-        setOutputSchema(data.output_schema || [])
-      }
-    }
-
-    fetchAgent()
-  }, [id, user])
-
-  const handleUpdate = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!agentName || !userPrompt || !user) return
-
-    const { error } = await supabase
+  const fetchAgent = async () => {
+    const { data, error } = await supabase
       .from('agents')
-      .update({
-        agent_name: agentName,
-        description,
-        system_prompt: systemPrompt,
-        user_prompt: userPrompt,
-        input_schema: inputSchema,
-        output_schema: outputSchema,
-      })
-      .eq('id', id)
-      .eq('user_id', user.id)
+      .select('*')
+      .eq('id', params.id)
+      .eq('user_id', user?.id)
+      .single()
 
     if (error) {
-      setError('Failed to update agent.')
-    } else {
-      router.push(`/agents/${id}`)
+      console.error('❌ Failed to fetch agent:', error.message)
+      return
     }
+
+    setAgent(data)
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    if (user) fetchAgent()
+  }, [user])
+
+  const handleDelete = async () => {
+    await supabase.from('agents').update({ is_archived: true }).eq('id', params.id)
+    router.push('/dashboard')
+  }
+
+  const handleToggleStatus = async () => {
+    const newStatus = agent?.status === 'active' ? 'draft' : 'active'
+    await supabase.from('agents').update({ status: newStatus }).eq('id', params.id)
+    fetchAgent()
+  }
+
+  if (loading || !agent) {
+    return <div className="p-6 text-gray-500">Loading agent...</div>
   }
 
   return (
-    <RequireAuth>
-      <div className="min-h-screen flex flex-col items-center justify-center px-4">
-        <h1 className="text-2xl font-bold mb-4">Edit Agent</h1>
-        <form onSubmit={handleUpdate} className="w-full max-w-xl bg-white p-6 rounded shadow space-y-6">
-          {error && <p className="text-red-500">{error}</p>}
+    <div className="min-h-screen px-6 py-10 bg-gray-50">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+        {/* Sidebar Menu */}
+        <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3 h-fit">
+          <h2 className="text-md font-bold text-gray-700 mb-2">Actions</h2>
 
-          <input
-            type="text"
-            placeholder="Agent Name"
-            className="w-full px-4 py-2 border rounded"
-            value={agentName}
-            onChange={(e) => setAgentName(e.target.value)}
-            required
-          />
-
-          <textarea
-            placeholder="Description"
-            className="w-full px-4 py-2 border rounded"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-
-          <textarea
-            placeholder="System Prompt"
-            className="w-full px-4 py-2 border rounded"
-            value={systemPrompt}
-            onChange={(e) => setSystemPrompt(e.target.value)}
-          />
-
-          <textarea
-            placeholder="User Prompt"
-            className="w-full px-4 py-2 border rounded"
-            value={userPrompt}
-            onChange={(e) => setUserPrompt(e.target.value)}
-            required
-          />
-
-          <div>
-            <label className="block font-semibold mb-1">Input Schema</label>
-            <SchemaBuilder schema={inputSchema} setSchema={setInputSchema} />
-          </div>
-
-          <div>
-            <label className="block font-semibold mb-1">Output Schema</label>
-            <SchemaBuilder schema={outputSchema} setSchema={setOutputSchema} />
-          </div>
+          <Link
+            href={`/agents/${agent.id}/edit`}
+            className="block text-sm px-3 py-2 bg-gray-100 rounded hover:bg-gray-200"
+          >
+            ✏️ Edit Agent
+          </Link>
 
           <button
-            type="submit"
-            className="w-full bg-green-600 text-white py-2 rounded hover:bg-green-700 transition"
+            onClick={handleDelete}
+            className="block text-sm px-3 py-2 bg-red-100 text-red-700 rounded hover:bg-red-200 w-full text-left"
           >
-            Update Agent
+            🗑️ Delete Agent
           </button>
-        </form>
+
+          <button
+            onClick={handleToggleStatus}
+            className="block text-sm px-3 py-2 bg-yellow-100 text-yellow-800 rounded hover:bg-yellow-200 w-full text-left"
+          >
+            {agent.status === 'active' ? '🚫 Deactivate' : '✅ Activate'}
+          </button>
+        </div>
+
+        {/* Main Content */}
+        <div className="md:col-span-3 space-y-8">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-800 mb-2">
+              {agent.agent_name}
+            </h1>
+            <p className="text-sm text-gray-600">
+              {agent.description || <em className="text-gray-400">No description provided.</em>}
+            </p>
+          </div>
+
+          {/* 📊 Agent Stats */}
+          <AgentStatsBlock agentId={agent.id} />
+
+          {/* 🕓 Agent History Placeholder */}
+          <div className="bg-white border rounded-xl p-6 text-sm text-gray-500">
+            🕓 Agent history will appear here.
+          </div>
+
+          {/* 🧪 Agent Sandbox Placeholder */}
+          <div className="bg-white border rounded-xl p-6 text-sm text-gray-500">
+            🧪 Agent sandbox will appear here.
+          </div>
+
+          {/* ▶️ Agent Run Form Placeholder */}
+          <div className="bg-white border rounded-xl p-6 text-sm text-gray-500">
+            ▶️ Agent run form will appear here.
+          </div>
+        </div>
       </div>
-    </RequireAuth>
+    </div>
   )
 }

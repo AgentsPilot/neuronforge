@@ -1,3 +1,5 @@
+// lib/plugins/strategies/gmail.ts
+
 import type { PluginStrategy, PluginStrategyArgs } from '../types'
 import { supabase } from '@/lib/supabaseClient'
 
@@ -24,7 +26,7 @@ export const gmailPluginStrategy: PluginStrategy = {
     }
 
     const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID!
-    const redirectUri = `${window.location.origin}/oauth/callback/google-mail` // ✅ CORRECT
+    const redirectUri = `${window.location.origin}/oauth/callback/google-mail`
     const scope = encodeURIComponent('https://mail.google.com https://www.googleapis.com/auth/userinfo.email')
 
     console.log('Redirect URI used:', redirectUri)
@@ -78,7 +80,7 @@ export const gmailPluginStrategy: PluginStrategy = {
   handleOAuthCallback: async ({ code, state }) => {
     const { user_id } = JSON.parse(state)
 
-    const redirectUri = `${process.env.NEXT_PUBLIC_BASE_URL}/oauth/callback/google-mail` // ✅ Must match Google Console
+    const redirectUri = `${process.env.NEXT_PUBLIC_BASE_URL}/oauth/callback/google-mail`
     console.log('📣 Token exchange redirect URI:', redirectUri)
 
     const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
@@ -117,6 +119,34 @@ export const gmailPluginStrategy: PluginStrategy = {
       username: profile.email,
       access_token: tokenData.access_token,
       refresh_token: tokenData.refresh_token ?? null,
+      expires_at: tokenData.expires_in
+        ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
+        : null,
+      credentials: tokenData,
+    }
+  },
+
+  refreshToken: async (connection) => {
+    const res = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID!,
+        client_secret: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_SECRET!,
+        refresh_token: connection.refresh_token,
+        grant_type: 'refresh_token',
+      }),
+    })
+
+    if (!res.ok) {
+      const errorText = await res.text()
+      throw new Error(`Gmail token refresh failed: ${errorText}`)
+    }
+
+    const tokenData = await res.json()
+
+    return {
+      access_token: tokenData.access_token,
       expires_at: tokenData.expires_in
         ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
         : null,
