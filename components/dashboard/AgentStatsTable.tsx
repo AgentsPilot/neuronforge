@@ -11,16 +11,23 @@ type AgentStat = {
   agent_name: string
 }
 
-export default function AgentStatsTable() {
+export default function AgentStatsTable({ agentId }: { agentId?: string }) {
   const [stats, setStats] = useState<AgentStat[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     const fetchStats = async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from('agent_stats')
         .select('agent_id, run_count, success_count, last_run_at, agents(agent_name)')
         .order('run_count', { ascending: false })
+
+      // ✅ Apply agent_id filter if passed
+      if (agentId) {
+        query = query.eq('agent_id', agentId)
+      }
+
+      const { data, error } = await query
 
       if (error) {
         console.error('❌ Error fetching agent stats:', error.message)
@@ -40,7 +47,7 @@ export default function AgentStatsTable() {
     }
 
     fetchStats()
-  }, [])
+  }, [agentId])
 
   if (loading) {
     return <p className="text-gray-500">Loading agent stats...</p>

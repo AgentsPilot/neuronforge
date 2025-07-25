@@ -1,11 +1,11 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Step1Basics from './wizard/Step1Basics'
 import Step2Prompts from './wizard/Step2Prompts'
-import Step3Schema from './wizard/Step3Schemas'
-import Step4Plugins from './wizard/Step4Plugins'
+import Step3Plugins from './wizard/Step3Plugins'
+import Step4Schema from './wizard/Step4Schemas'
 import Step4_5_Mode from './wizard/Step4_5_mode'
 import Step5Review from './wizard/Step5Review'
 import { useAuth } from '@/components/UserProvider'
@@ -18,9 +18,9 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadingDraft, setLoadingDraft] = useState(false)
-
   const { user } = useAuth()
   const router = useRouter()
+  const searchParams = useSearchParams()
 
   const [agentData, setAgentData] = useState({
     agentName: '',
@@ -30,14 +30,20 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
     inputSchema: [],
     outputSchema: [],
     plugins: {},
-    mode: 'on_demand', // NEW
-    schedule_cron: '', // NEW
-    trigger_conditions: '', // NEW
+    mode: 'on_demand',
+    schedule_cron: '',
+    trigger_conditions: '',
   })
 
   useEffect(() => {
-    if (!agentId || !user) return
+    const initialPrompt = searchParams.get('prompt')
+    if (initialPrompt && !agentId && user && !agentData.userPrompt.trim()) {
+      setAgentData((prev) => ({ ...prev, userPrompt: initialPrompt }))
+    }
+  }, [searchParams, agentId, user])
 
+  useEffect(() => {
+    if (!agentId || !user) return
     const fetchAgent = async () => {
       setLoadingDraft(true)
       const { data, error } = await supabase
@@ -201,8 +207,8 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
 
       {step === 1 && <Step1Basics data={agentData} onUpdate={updateData} />}
       {step === 2 && <Step2Prompts data={agentData} onUpdate={updateData} />}
-      {step === 3 && <Step3Schema data={agentData} onUpdate={updateData} />}
-      {step === 4 && <Step4Plugins data={agentData} onUpdate={updateData} />}
+      {step === 3 && <Step3Plugins data={agentData} onUpdate={updateData} />}
+      {step === 4 && <Step4Schema data={agentData} onUpdate={updateData} setStepLoading={setLoading} />}
       {step === 5 && <Step4_5_Mode data={agentData} onUpdate={updateData} />}
       {step === 6 && <Step5Review data={agentData} onEditStep={(s) => setStep(s)} />}
 
@@ -219,10 +225,11 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
 
         {step < TOTAL_STEPS ? (
           <button
-            className="px-4 py-2 bg-blue-600 text-white rounded"
+            className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50"
             onClick={nextStep}
+            disabled={loading}
           >
-            Next
+            {loading ? 'Loading...' : 'Next'}
           </button>
         ) : (
           <div className="flex flex-col sm:flex-row gap-4">

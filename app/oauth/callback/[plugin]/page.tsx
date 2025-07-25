@@ -22,37 +22,39 @@ export default function OAuthCallbackPage() {
       setStatus('Exchanging code for token...')
 
       try {
-        const res = await fetch(`/api/oauth/token?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`)
+        const res = await fetch(
+          `/api/oauth/token?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`
+        )
+
         if (!res.ok) {
           const text = await res.text()
-          console.error('❌ Failed to exchange token:', text)
+          console.error('❌ Token exchange failed:', text)
 
-          // Context-aware error message
           if (text.includes('redirect_uri_mismatch')) {
-            setStatus('Redirect URI mismatch. Check Google Console settings.')
+            setStatus('Redirect URI mismatch. Check Google Console.')
           } else if (text.includes('invalid_grant')) {
-            setStatus('Authorization expired or invalid. Try again.')
+            setStatus('Authorization expired. Try again.')
           } else {
-            setStatus('Token exchange failed. Check logs.')
+            setStatus('Token exchange failed. See logs.')
           }
 
           return
         }
 
-        setStatus('✅ Gmail connected successfully!')
+        setStatus('✅ Plugin connected successfully!')
 
-        // Notify parent window
+        // ✅ Notify parent window
         if (window.opener) {
-          window.opener.postMessage({ type: 'plugin-connected' }, window.origin)
+          window.opener.postMessage({ type: 'plugin-connected' }, '*')
         }
 
-        // Wait a second before closing so message is received
+        // Give it time to propagate
         setTimeout(() => {
           window.close()
         }, 1000)
       } catch (err) {
-        console.error('❌ Unexpected error during token exchange:', err)
-        setStatus('Unexpected error occurred. Check console logs.')
+        console.error('❌ Unexpected error:', err)
+        setStatus('Unexpected error. See console.')
       }
     }
 
@@ -61,7 +63,7 @@ export default function OAuthCallbackPage() {
 
   return (
     <div className="p-8 text-center">
-      <h2 className="text-xl font-bold">Gmail OAuth</h2>
+      <h2 className="text-xl font-bold">Plugin Connection</h2>
       <p className="text-gray-600 mt-4">{status}</p>
     </div>
   )

@@ -1,11 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 import Link from 'next/link'
-import AgentStatsBlock from '../AgentStatsBlock'
+import AgentStatsBlock from '@/components/dashboard/AgentStatsTable'
+import AgentHistoryBlock from '@/components/dashboard/AgentHistoryBlock'
+import AgentSandbox from '@/components/dashboard/AgentSandbox'
 
 type Agent = {
   id: string
@@ -15,21 +17,27 @@ type Agent = {
   user_prompt: string
   status: string
   input_schema?: any
+  connected_plugins?: Record<string, any>
+  plugins_required?: string[]
 }
 
-export default function AgentPage({ params }: { params: { id: string } }) {
+export default function AgentPage() {
   const { user } = useAuth()
   const router = useRouter()
+  const params = useParams()
+  const agentId = params.id as string
+
   const [agent, setAgent] = useState<Agent | null>(null)
   const [loading, setLoading] = useState(true)
 
   const fetchAgent = async () => {
-    const { data, error } = await supabase
-      .from('agents')
-      .select('*')
-      .eq('id', params.id)
-      .eq('user_id', user?.id)
-      .single()
+const { data, error } = await supabase
+  .from('agents')
+  .select('*, connected_plugins, plugins_required')
+  .eq('id', agentId)
+  .eq('user_id', user?.id)
+  .maybeSingle()
+
 
     if (error) {
       console.error('❌ Failed to fetch agent:', error.message)
@@ -41,22 +49,24 @@ export default function AgentPage({ params }: { params: { id: string } }) {
   }
 
   useEffect(() => {
-    if (user) fetchAgent()
-  }, [user])
+    if (user && agentId) {
+      fetchAgent()
+    }
+  }, [user, agentId])
 
   const handleDelete = async () => {
-    await supabase.from('agents').update({ is_archived: true }).eq('id', params.id)
+    await supabase.from('agents').update({ is_archived: true }).eq('id', agentId)
     router.push('/dashboard')
   }
 
   const handleToggleStatus = async () => {
     const newStatus = agent?.status === 'active' ? 'draft' : 'active'
-    await supabase.from('agents').update({ status: newStatus }).eq('id', params.id)
+    await supabase.from('agents').update({ status: newStatus }).eq('id', agentId)
     fetchAgent()
   }
 
   if (loading || !agent) {
-    return <div className="p-6 text-gray-500">Loading agent...</div>
+    return null
   }
 
   return (
@@ -99,22 +109,24 @@ export default function AgentPage({ params }: { params: { id: string } }) {
             </p>
           </div>
 
-          {/* 📊 Agent Stats */}
-          <AgentStatsBlock agentId={agent.id} />
+          {/* Show stats and history only if agent is not draft */}
+          {agent.status !== 'draft' ? (
+            <>
+              <AgentStatsBlock agentId={agent.id} />
+              <AgentHistoryBlock agentId={agent.id} />
+            </>
+          ) : (
+            <p className="text-yellow-600 italic">⚠️ This agent is in draft mode. Stats and history will appear after activation.</p>
+          )}
 
-          {/* 🕓 Agent History Placeholder */}
-          <div className="bg-white border rounded-xl p-6 text-sm text-gray-500">
-            🕓 Agent history will appear here.
-          </div>
-
-          {/* 🧪 Agent Sandbox Placeholder */}
-          <div className="bg-white border rounded-xl p-6 text-sm text-gray-500">
-            🧪 Agent sandbox will appear here.
-          </div>
-
-          {/* ▶️ Agent Run Form Placeholder */}
-          <div className="bg-white border rounded-xl p-6 text-sm text-gray-500">
-            ▶️ Agent run form will appear here.
+          <div className="bg-white border rounded-xl p-6">
+          <AgentSandbox
+            agentId={agent.id}
+            inputSchema={agent.input_schema}
+            userPrompt={agent.user_prompt}
+            connectedPlugins={agent.connected_plugins}
+            pluginsRequired={agent.plugins_required}
+          />          
           </div>
         </div>
       </div>

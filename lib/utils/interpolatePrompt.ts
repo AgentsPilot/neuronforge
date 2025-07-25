@@ -1,4 +1,5 @@
 import { readInbox } from '@/lib/plugins/actions/gmail/readInbox'
+import { supabase } from '@/lib/supabaseClient'
 
 export async function interpolatePrompt(
   template: string,
