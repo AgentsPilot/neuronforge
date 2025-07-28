@@ -13,7 +13,7 @@ const openai = new OpenAI({
 
 export async function POST(req: Request) {
   const body = await req.json()
-  const { agent_id, input_variables = {}, override_user_prompt } = body
+  let { agent_id, input_variables = {}, override_user_prompt } = body
   const cookieStore = await cookies()
 
   const supabase = createServerClient(
@@ -71,47 +71,62 @@ export async function POST(req: Request) {
   const detectedPlugins = detectPluginsFromPrompt(rawUserPrompt)
   const pluginContext: Record<string, string> = {}
 
-    for (const pluginKey of detectedPlugins) {
-      const strategy = pluginRegistry[pluginKey]
-      const creds = plugins[pluginKey]
+  for (const pluginKey of detectedPlugins) {
+    const strategy = pluginRegistry[pluginKey]
+    const creds = plugins[pluginKey]
 
-      if (strategy?.run && creds) {
-        try {
-          // 🔁 Refresh token if needed
-          if (strategy.refreshToken && creds.expires_at && new Date(creds.expires_at) < new Date()) {
-            const refreshed = await strategy.refreshToken(creds)
-            creds.access_token = refreshed.access_token
-            creds.expires_at = refreshed.expires_at
-          }
-
-          const result = await strategy.run({ connection: creds })
-
-          const summary =
-            typeof result === 'object' ? Object.values(result)[0] : String(result)
-
-          pluginContext[pluginKey] = summary
-        } catch (err: any) {
-          console.warn(`⚠️ Plugin ${pluginKey} run failed: ${err.message}`)
+    if (strategy?.run && creds) {
+      try {
+        if (strategy.refreshToken && creds.expires_at && new Date(creds.expires_at) < new Date()) {
+          const refreshed = await strategy.refreshToken(creds)
+          creds.access_token = refreshed.access_token
+          creds.expires_at = refreshed.expires_at
         }
-      } else {
-        console.warn(`⚠️ No credentials found for plugin: ${pluginKey}`)
+
+        const result = await strategy.run({ connection: creds, options: input_variables })
+        let summary = typeof result === 'object' ? Object.values(result)[0] : String(result)
+
+        // ✂️ Truncate long plugin context
+        if (summary.length > 3000) {
+          summary = summary.slice(0, 3000) + '\n...[truncated]'
+        }
+
+        pluginContext[pluginKey] = summary
+      } catch (err: any) {
+        console.warn(`⚠️ Plugin ${pluginKey} run failed: ${err.message}`)
       }
+    } else {
+      console.warn(`⚠️ No credentials found for plugin: ${pluginKey}`)
     }
+  }
+
+  // ✂️ Truncate overly long input values
+  Object.keys(input_variables).forEach((key) => {
+    if (typeof input_variables[key] === 'string' && input_variables[key].length > 500) {
+      input_variables[key] = input_variables[key].slice(0, 500) + '... [truncated]'
+    }
+  })
+
   // 🧠 Interpolate prompt
   const interpolatedPrompt = await interpolatePrompt(
     rawUserPrompt,
     input_variables,
-    plugins
+    plugins,
+    user.id
   )
 
   // 🧩 Append plugin context as structured sections
   const contextString = Object.entries(pluginContext)
     .map(([key, value]) => `\n\n[Plugin: ${key}]\n${value}`)
     .join('')
+
   const finalPrompt = `${interpolatedPrompt}${contextString}`
 
   try {
     console.log('🧠 Final Prompt Sent to OpenAI:\n', finalPrompt)
+    console.log('📝 Input Form Data:', input_variables)
+    console.log('📋 Input Schema:', agent.input_schema)
+    console.log('🔌 Plugin Context:', pluginContext)
 
     const completion = await openai.chat.completions.create({
       model: 'gpt-4',

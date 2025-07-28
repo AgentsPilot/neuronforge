@@ -2,19 +2,25 @@
 
 import { useEffect, useState } from 'react'
 import { v4 as uuidv4 } from 'uuid'
+import { toast } from 'sonner'
 
 const FIELD_TYPES = ['string', 'number', 'boolean', 'date', 'enum']
 
-    export default function Step3Schema({
-      data,
-      onUpdate,
-      setStepLoading,
-    }: {
-      data: any
-      onUpdate: (updates: any) => void
-      setStepLoading: (val: boolean) => void
-    }) {
-    const [error, setError] = useState<string | null>(null)
+const BLOCKED_FIELDS_BY_PLUGIN: Record<string, string[]> = {
+  'google-mail': ['email', 'emailAccount'],
+  'notion': ['workspace', 'workspaceName'],
+}
+
+export default function Step3Schema({
+  data,
+  onUpdate,
+  setStepLoading,
+}: {
+  data: any
+  onUpdate: (updates: any) => void
+  setStepLoading: (val: boolean) => void
+}) {
+  const [error, setError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
 
   useEffect(() => {
@@ -26,7 +32,10 @@ const FIELD_TYPES = ['string', 'number', 'boolean', 'date', 'enum']
         const res = await fetch('/api/generate/input-schema', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: data.userPrompt, plugins: Object.keys(data.plugins || {}) }),
+          body: JSON.stringify({
+            prompt: data.userPrompt,
+            plugins: Object.keys(data.plugins || {}),
+          }),
         })
 
         const json = await res.json()
@@ -37,7 +46,18 @@ const FIELD_TYPES = ['string', 'number', 'boolean', 'date', 'enum']
           ...field,
         }))
 
-        onUpdate({ inputSchema: schemaWithIds })
+        // 🔒 Filter out blocked fields if plugin is selected
+        const selectedPlugins = Object.keys(data.plugins || {})
+        const blockedFields = selectedPlugins.flatMap((plugin) => BLOCKED_FIELDS_BY_PLUGIN[plugin] || [])
+        const filteredSchema = schemaWithIds.filter(
+          (field: any) => !blockedFields.includes(field.name?.toLowerCase())
+        )
+
+        if (filteredSchema.length < schemaWithIds.length) {
+          toast.warning('Account identifier fields (e.g. emailAccount) were removed due to selected plugins.')
+        }
+
+        onUpdate({ inputSchema: filteredSchema })
       } catch (err: any) {
         setError(err.message || 'Unexpected error')
       } finally {
@@ -151,19 +171,44 @@ const FIELD_TYPES = ['string', 'number', 'boolean', 'date', 'enum']
           </div>
 
           {field.type === 'enum' && (
-            <input
-              className="border rounded px-3 py-2 mt-2 w-full"
-              placeholder="Comma-separated values (e.g. option1,option2,option3)"
-              value={field.enum?.join(',') || ''}
-              onChange={(e) =>
-                handleFieldChange(field.id, {
-                  enum: e.target.value
-                    .split(',')
-                    .map((val) => val.trim())
-                    .filter(Boolean),
-                })
-              }
-            />
+            <div className="mt-2 space-y-2">
+              <label className="block text-sm font-medium">Enum Options</label>
+              {(field.enum || []).map((option: string, index: number) => (
+                <div key={index} className="flex gap-2 items-center">
+                  <input
+                    type="text"
+                    className="border rounded px-2 py-1 w-full"
+                    value={option}
+                    onChange={(e) => {
+                      const newEnum = [...(field.enum || [])]
+                      newEnum[index] = e.target.value
+                      handleFieldChange(field.id, { enum: newEnum })
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newEnum = [...(field.enum || [])]
+                      newEnum.splice(index, 1)
+                      handleFieldChange(field.id, { enum: newEnum })
+                    }}
+                    className="text-red-600 hover:underline text-sm"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => {
+                  const newEnum = [...(field.enum || []), '']
+                  handleFieldChange(field.id, { enum: newEnum })
+                }}
+                className="text-blue-600 hover:underline text-sm mt-1"
+              >
+                ➕ Add Option
+              </button>
+            </div>
           )}
         </div>
       ))}

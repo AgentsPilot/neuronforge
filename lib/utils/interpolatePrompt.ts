@@ -1,33 +1,39 @@
-import { readInbox } from '@/lib/plugins/actions/gmail/readInbox'
-import { supabase } from '@/lib/supabaseClient'
+// lib/utils/interpolatePrompt.ts
+
+import { pluginRegistry } from '@/lib/plugins/pluginRegistry'
+import type { PluginConnection } from '@/lib/plugins/types'
 
 export async function interpolatePrompt(
   template: string,
-  variables: Record<string, any>,
-  plugins?: Record<string, any>,
-  userId?: string // ✅ new parameter
+  input_variables: Record<string, any> = {},
+  plugins: Record<string, PluginConnection> = {},
+  userId?: string
 ): Promise<string> {
+  console.log('🧪 interpolatePrompt.ts: running with template =', template)
+  console.log('📥 interpolatePrompt.ts: input_variables =', input_variables)
+  console.log('🔌 interpolatePrompt.ts: plugins =', Object.keys(plugins))
+  console.log('👤 interpolatePrompt.ts: userId =', userId)
+
   let output = template
 
-  // 🔄 Replace {{input.xyz}} variables
-  output = output.replace(/{{\s*input\.([a-zA-Z0-9_]+)\s*}}/g, (_, key) => {
-    const value = variables?.[key]
-    return typeof value !== 'undefined' ? String(value) : ''
-  })
+  // ⏬ Interpolate plugin content
+  for (const [pluginKey, connection] of Object.entries(plugins)) {
+    const strategy = pluginRegistry[pluginKey]
+    if (!strategy?.run) continue
 
-  // 📩 Replace {{gmail.readInbox}} with real inbox data
-  if (output.includes('{{gmail.readInbox}}')) {
-    if (!userId) {
-      console.warn('⚠️ Missing userId for Gmail plugin resolution.')
-      output = output.replaceAll('{{gmail.readInbox}}', '[Missing user ID]')
-    } else {
-      try {
-        const emails = await readInbox(userId) // ✅ use userId
-        output = output.replaceAll('{{gmail.readInbox}}', JSON.stringify(emails, null, 2))
-      } catch (err) {
-        console.error('❌ Failed to fetch Gmail inbox:', err)
-        output = output.replaceAll('{{gmail.readInbox}}', '[Error reading inbox]')
+    try {
+      const result = await strategy.run({
+        connection,
+        input_variables,
+        userId,
+      })
+
+      for (const [key, value] of Object.entries(result || {})) {
+        output += `\n\n[${pluginKey}] ${key}:\n${value}`
       }
+    } catch (err) {
+      console.error(`❌ Plugin '${pluginKey}' run failed:`, err)
+      output += `\n\n[${pluginKey}] Error: failed to fetch data`
     }
   }
 

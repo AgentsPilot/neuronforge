@@ -1,27 +1,33 @@
-// ✅ /app/api/agent/generate-input-schema/route.ts
+// /app/api/generate/input-schema/route.ts
 import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
 
 export async function POST(req: Request) {
-  const { userPrompt, plugins } = await req.json()
+  const { prompt, plugins = [] } = await req.json()
 
-  const pluginContext = plugins?.length
-    ? `The user has selected the following plugins: ${plugins.join(', ')}.`
-    : 'The user has not selected any plugins.'
+  if (!prompt || typeof prompt !== 'string') {
+    return NextResponse.json({ error: 'Missing or invalid prompt' }, { status: 400 })
+  }
 
-  const systemPrompt = `You are an assistant that helps generate input fields for a custom AI agent.
-Given the user's goal and the selected plugins, return a JSON array of input fields the user should configure.
-Each field must include: name, type (string, number, boolean, enum), required (true/false).
-Only include fields that are relevant to the task and plugins.
+  const pluginContext = plugins.length
+    ? `The user has selected the following plugins: ${plugins.join(', ')}. Include fields that will help the agent interact with these plugins.`
+    : `The user did not select any plugins. Suggest general inputs based on the agent's purpose.`
 
-Format:
+  const systemPrompt = `You are an assistant helping define input fields for an AI agent.
+Based on the user prompt, return a JSON array of input fields the agent will require.
+Each field should include: name, type (string | number | boolean | date | enum), and required (true/false).
+If type is "enum", include an "enum" array.
+
+Example:
 [
-  { "name": "email_subject", "type": "string", "required": true },
-  { "name": "priority", "type": "enum", "required": false, "options": ["low", "medium", "high"] }
+  { "name": "emailSubject", "type": "string", "required": true },
+  { "name": "startDate", "type": "date", "required": false },
+  { "name": "category", "type": "enum", "enum": ["HR", "Finance", "IT"], "required": true }
 ]
 
+Prompt: ${prompt}
 ${pluginContext}`
 
   const completion = await openai.chat.completions.create({
@@ -29,15 +35,16 @@ ${pluginContext}`
     temperature: 0.3,
     messages: [
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
+      { role: 'user', content: prompt },
     ],
   })
 
+  const responseText = completion.choices[0].message.content ?? '[]'
+
   try {
-    const content = completion.choices[0].message.content ?? '[]'
-    const fields = JSON.parse(content)
-    return NextResponse.json({ schema: fields })
-  } catch (err) {
-    return NextResponse.json({ schema: [] })
+    const input_schema = JSON.parse(responseText)
+    return NextResponse.json({ input_schema })
+  } catch {
+    return NextResponse.json({ input_schema: [] })
   }
 }

@@ -1,14 +1,17 @@
-// ✅ Client-safe version (from earlier)
+// lib/plugins/refreshIfNeeded.ts
+
 export async function refreshIfNeeded(userId: string, pluginKey: string) {
-  const res = await fetch(`/api/plugins/${pluginKey}/refresh`, {
+  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000' // adjust if needed
+
+  const res = await fetch(`${baseUrl}/api/plugins/${pluginKey}/refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ userId }),
   })
 
   if (!res.ok) {
-    const errorText = await res.text()
-    throw new Error(`Failed to refresh plugin ${pluginKey}: ${errorText}`)
+    const errText = await res.text()
+    throw new Error(`Failed to refresh plugin: ${errText}`)
   }
 
   const { pluginData } = await res.json()

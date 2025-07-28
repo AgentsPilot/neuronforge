@@ -1,9 +1,12 @@
-// lib/plugins/strategies/gmail.ts
-
 import type { PluginStrategy, PluginStrategyArgs } from '../types'
 import { supabase } from '@/lib/supabaseClient'
 
 export const gmailPluginStrategy: PluginStrategy = {
+  metadata: {
+    providesAccountContext: true,
+    protectedFields: ['email', 'emailAddress', 'email_account', 'username']
+  },
+
   connect: async ({ supabase, popup }: PluginStrategyArgs) => {
     if (!popup) throw new Error('Popup was blocked by the browser.')
 
@@ -30,7 +33,8 @@ export const gmailPluginStrategy: PluginStrategy = {
     const scope = encodeURIComponent('https://mail.google.com https://www.googleapis.com/auth/userinfo.email')
 
     const state = encodeURIComponent(JSON.stringify({ user_id: user.id, plugin_key: 'google-mail' }))
-    const oauthUrl = `https://accounts.google.com/o/oauth2/v2/auth` +
+    const oauthUrl =
+      `https://accounts.google.com/o/oauth2/v2/auth` +
       `?response_type=code&client_id=${clientId}` +
       `&redirect_uri=${encodeURIComponent(redirectUri)}` +
       `&scope=${scope}&access_type=offline&prompt=consent&state=${state}`
@@ -61,7 +65,6 @@ export const gmailPluginStrategy: PluginStrategy = {
 
   handleOAuthCallback: async ({ code, state }) => {
     const { user_id } = JSON.parse(state)
-
     const redirectUri = `${process.env.NEXT_PUBLIC_BASE_URL}/oauth/callback/google-mail`
 
     const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
@@ -137,46 +140,86 @@ export const gmailPluginStrategy: PluginStrategy = {
 
   run: async ({ connection, input_variables = {} }) => {
     const accessToken = connection.access_token
-    const count = parseInt(input_variables.num_emails || '10') || 10
 
-    const messageListRes = await fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${count}&q=is:inbox`,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      }
+    const numberOfEmails = Math.min(
+      parseInt(input_variables?.numberOfEmails || '5'),
+      100
     )
+    const emailLabel = input_variables?.emailLabel || 'INBOX'
 
-    if (!messageListRes.ok) {
-      const errorText = await messageListRes.text()
-      throw new Error(`Failed to fetch Gmail message list: ${errorText}`)
-    }
+    console.log('📨 gmailPluginStrategy.run: Requesting', numberOfEmails, 'emails with label:', emailLabel)
 
-    const { messages } = await messageListRes.json()
-    const emailContents: string[] = []
+    let emailSummaries: string[] = []
+    let nextPageToken: string | undefined
 
-    for (const msg of messages || []) {
-      const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=full`, {
+    while (emailSummaries.length < numberOfEmails) {
+      const listUrl = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages')
+      listUrl.searchParams.set('maxResults', '50')
+      listUrl.searchParams.set('q', `label:${emailLabel}`)
+      if (nextPageToken) listUrl.searchParams.set('pageToken', nextPageToken)
+
+      const listRes = await fetch(listUrl.toString(), {
         headers: {
           Authorization: `Bearer ${accessToken}`,
         },
       })
 
-      if (msgRes.ok) {
-        const msgJson = await msgRes.json()
-        const parts = msgJson.payload?.parts || []
-        const plainTextPart = parts.find(p => p.mimeType === 'text/plain')
-
-        if (plainTextPart?.body?.data) {
-          const body = Buffer.from(plainTextPart.body.data, 'base64').toString('utf8')
-          emailContents.push(body.trim())
-        }
+      if (!listRes.ok) {
+        const errText = await listRes.text()
+        throw new Error(`❌ Failed to fetch Gmail message list: ${errText}`)
       }
+
+      const listJson = await listRes.json()
+      const messages = listJson.messages || []
+      nextPageToken = listJson.nextPageToken
+
+      if (messages.length === 0) break
+
+      for (const msg of messages) {
+        if (emailSummaries.length >= numberOfEmails) break
+
+        const msgRes = await fetch(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=full`,
+          {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+            },
+          }
+        )
+
+        if (!msgRes.ok) {
+          console.warn(`⚠️ Skipped message ${msg.id} due to fetch error`)
+          continue
+        }
+
+        const msgJson = await msgRes.json()
+
+        const subjectHeader = msgJson.payload?.headers?.find(
+          (h: any) => h.name.toLowerCase() === 'subject'
+        )
+        const subject = subjectHeader?.value || '(no subject)'
+        const snippet = msgJson.snippet || ''
+
+        emailSummaries.push(`• Subject: ${subject}\n  Snippet: ${stripHtml(snippet)}`)
+      }
+
+      if (!nextPageToken) break
     }
+
+    console.log(
+      `✅ gmailPluginStrategy.run: Requested ${numberOfEmails}, returning ${emailSummaries.length}`
+    )
 
     return {
-      'plugin.google_mail_summary': emailContents.join('\n\n'),
+      'plugin.google_mail_summary': emailSummaries.join('\n\n'),
     }
   },
+}
+
+function stripHtml(text: string): string {
+  return text
+    .replace(/<[^>]*>?/gm, '')
+    .replace(/&nbsp;|&amp;|&lt;|&gt;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }

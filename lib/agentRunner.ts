@@ -1,19 +1,25 @@
-export async function runAgent(agentId: string, input: Record<string, any>, userPrompt: string) {
-  const response = await fetch('/api/run-agent', {
+// /lib/agentRunner.ts
+
+export async function runAgent(
+  agentId: string,
+  input_variables: Record<string, any>,
+  override_user_prompt?: string
+) {
+  const res = await fetch('/api/run-agent', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify({
       agent_id: agentId,
-      input,
-      user_prompt: userPrompt,
+      input_variables, // ✅ MAKE SURE THIS IS PASSED
+      override_user_prompt,
     }),
   })
 
-  if (!response.ok) {
-    const error = await response.text()
-    throw new Error(`Failed to run agent: ${error}`)
+  if (!res.ok) {
+    throw new Error(`Agent run failed: ${res.statusText}`)
   }
 
-  const result = await response.json()
-  return result // ✅ Return what your backend sends (should include { output: ... })
+  return await res.json()
 }
