@@ -7,11 +7,12 @@ import Step2Prompts from './wizard/Step2Prompts'
 import Step3Plugins from './wizard/Step3Plugins'
 import Step4Schema from './wizard/Step4Schemas'
 import Step4_5_Mode from './wizard/Step4_5_mode'
-import Step5Review from './wizard/Step5Review'
+import Step5OutputSchema from './wizard/Step5OutputSchema'
+import Step6Review from './wizard/Step5Review'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 
-const TOTAL_STEPS = 6
+const TOTAL_STEPS = 7
 
 export default function AgentWizard({ agentId }: { agentId?: string }) {
   const [step, setStep] = useState(1)
@@ -210,7 +211,13 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
       {step === 3 && <Step3Plugins data={agentData} onUpdate={updateData} />}
       {step === 4 && <Step4Schema data={agentData} onUpdate={updateData} setStepLoading={setLoading} />}
       {step === 5 && <Step4_5_Mode data={agentData} onUpdate={updateData} />}
-      {step === 6 && <Step5Review data={agentData} onEditStep={(s) => setStep(s)} />}
+      {step === 6 && (
+  <Step5OutputSchema
+  data={agentData}
+  onUpdate={updateData}
+/>
+)}
+      {step === 7 && <Step6Review data={agentData} onEditStep={(s) => setStep(s)} />}
 
       {error && <p className="text-red-500 text-sm mt-4 text-center">{error}</p>}
 

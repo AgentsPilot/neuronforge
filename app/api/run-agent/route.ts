@@ -6,6 +6,7 @@ import OpenAI from 'openai'
 import { interpolatePrompt } from '@/lib/utils/interpolatePrompt'
 import { detectPluginsFromPrompt } from '@/lib/plugins/detectPluginsFromPrompt'
 import { pluginRegistry } from '@/lib/plugins/pluginRegistry'
+import { sendEmailDraft } from '@/lib/plugins/google-mail/sendEmailDraft'
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
@@ -83,10 +84,9 @@ export async function POST(req: Request) {
           creds.expires_at = refreshed.expires_at
         }
 
-        const result = await strategy.run({ connection: creds, options: input_variables })
+        const result = await strategy.run({ connection: creds })
         let summary = typeof result === 'object' ? Object.values(result)[0] : String(result)
 
-        // ✂️ Truncate long plugin context
         if (summary.length > 3000) {
           summary = summary.slice(0, 3000) + '\n...[truncated]'
         }
@@ -95,19 +95,15 @@ export async function POST(req: Request) {
       } catch (err: any) {
         console.warn(`⚠️ Plugin ${pluginKey} run failed: ${err.message}`)
       }
-    } else {
-      console.warn(`⚠️ No credentials found for plugin: ${pluginKey}`)
     }
   }
 
-  // ✂️ Truncate overly long input values
   Object.keys(input_variables).forEach((key) => {
     if (typeof input_variables[key] === 'string' && input_variables[key].length > 500) {
       input_variables[key] = input_variables[key].slice(0, 500) + '... [truncated]'
     }
   })
 
-  // 🧠 Interpolate prompt
   const interpolatedPrompt = await interpolatePrompt(
     rawUserPrompt,
     input_variables,
@@ -115,7 +111,6 @@ export async function POST(req: Request) {
     user.id
   )
 
-  // 🧩 Append plugin context as structured sections
   const contextString = Object.entries(pluginContext)
     .map(([key, value]) => `\n\n[Plugin: ${key}]\n${value}`)
     .join('')
@@ -123,11 +118,6 @@ export async function POST(req: Request) {
   const finalPrompt = `${interpolatedPrompt}${contextString}`
 
   try {
-    console.log('🧠 Final Prompt Sent to OpenAI:\n', finalPrompt)
-    console.log('📝 Input Form Data:', input_variables)
-    console.log('📋 Input Schema:', agent.input_schema)
-    console.log('🔌 Plugin Context:', pluginContext)
-
     const completion = await openai.chat.completions.create({
       model: 'gpt-4',
       messages: [
@@ -140,6 +130,58 @@ export async function POST(req: Request) {
     const message = completion.choices[0].message.content || 'No response.'
     const outputMessage = `✅ Agent "${agent.agent_name}" ran successfully.`
 
+    // 🧠 Parse output schema
+    let parsed_output: any = null
+    let send_status: string | null = null
+
+    if (agent.output_schema?.type === 'SummaryBlock') {
+      parsed_output = { summary: message }
+      send_status = 'Summary block logged.'
+    } else if (agent.output_schema?.type === 'EmailDraft') {
+      const { to, subject, includePdf } = agent.output_schema
+
+      if (to && subject) {
+        try {
+          await sendEmailDraft({
+            userId: user.id,
+            to,
+            subject,
+            body: message,
+            includePdf,
+          })
+
+          parsed_output = { to, subject, body: message }
+          send_status = `📧 Email sent to ${to}.`
+        } catch (e: any) {
+          parsed_output = { to, subject, body: message }
+          send_status = `❌ Failed to send email: ${e.message}`
+        }
+      } else {
+        send_status = '❌ Missing "to" or "subject" in output schema for EmailDraft.'
+      }
+        } else if (agent.output_schema?.type === 'Alert') {
+          const { title, message: messageTemplate, severity } = agent.output_schema
+
+          if (title && messageTemplate && severity) {
+            // 🧠 Interpolate input variables into the message
+            const alertMessage = Object.entries(input_variables).reduce((msg, [key, val]) => {
+              return msg.replace(new RegExp(`{{\\s*input\\.${key}\\s*}}`, 'g'), val)
+            }, messageTemplate)
+
+            parsed_output = {
+              type: 'Alert',
+              title,
+              message: alertMessage,
+              severity,
+            }
+
+            send_status = `🚨 Alert generated: ${title}`
+          } else {
+            send_status = '❌ Missing alert title, message, or severity in output schema.'
+          }
+        } else {
+          send_status = 'No structured output configured.'
+        }
     const fullResult = {
       message,
       agent_id: agent.id,
@@ -148,6 +190,8 @@ export async function POST(req: Request) {
       input_variables,
       plugins,
       plugin_context: pluginContext,
+      parsed_output,
+      send_status,
     }
 
     await supabase.from('agent_logs').insert([

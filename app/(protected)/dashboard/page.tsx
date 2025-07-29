@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabaseClient'
 import AgentStatsChart from '@/components/dashboard/AgentStatsChart'
 import AgentStatsTable from '@/components/dashboard/AgentStatsTable'
 import ScheduledAgentsCard from '@/components/dashboard/ScheduledAgentsCard'
+import AlertFeed from '@/components/dashboard/AlertFeed'
 
 export default function DashboardPage() {
   const { user } = useAuth()
@@ -52,13 +53,17 @@ export default function DashboardPage() {
       {/* 📊 Agent Stats Table + Chart */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
         <AgentStatsTable />
-        
         <AgentStatsChart />
       </div>
 
-      {/* ⏰ Scheduled Agents Placeholder */}
+      {/* ⏰ Scheduled Agents */}
       <div className="mb-12">
         <ScheduledAgentsCard />
+      </div>
+
+      {/* 🔔 Recent Alerts */}
+      <div className="mb-16">
+        {user?.id && <AlertFeed userId={user.id} />}
       </div>
 
       {loading && (

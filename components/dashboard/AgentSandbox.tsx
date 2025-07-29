@@ -5,6 +5,10 @@ import { runAgent } from '@/lib/agentRunner'
 import { supabase } from '@/lib/supabaseClient'
 import { useAuth } from '@/components/UserProvider'
 import { interpolatePrompt } from '@/lib/utils/interpolatePrompt'
+import { generatePDF } from '@/lib/pdf/generatePDF'
+import { sendEmailDraft } from '@/lib/plugins/google-mail/sendEmailDraft'
+
+// Types
 
 type Field = {
   name: string
@@ -14,9 +18,16 @@ type Field = {
   required?: boolean
 }
 
-type AgentSandboxProps = {
+interface OutputField {
+  name: string
+  type: string
+  description?: string
+}
+
+interface AgentSandboxProps {
   agentId: string
   inputSchema?: Field[]
+  outputSchema?: OutputField[]
   userPrompt: string
   pluginsRequired?: string[]
 }
@@ -29,31 +40,28 @@ const BLOCKED_FIELDS_BY_PLUGIN: Record<string, string[]> = {
 export default function AgentSandbox({
   agentId,
   inputSchema = [],
+  outputSchema = [],
   userPrompt,
   pluginsRequired = [],
 }: AgentSandboxProps) {
   const [formData, setFormData] = useState<Record<string, any>>({})
-  const [result, setResult] = useState<string | null>(null)
+  const [result, setResult] = useState<any | null>(null)
   const [loading, setLoading] = useState(false)
   const [connectedPluginKeys, setConnectedPluginKeys] = useState<string[]>([])
+  const [sendStatus, setSendStatus] = useState<string | null>(null)
 
   const { user } = useAuth()
 
   useEffect(() => {
     const fetchConnectedPlugins = async () => {
       if (!user?.id) return
-
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('plugin_connections')
         .select('plugin_key')
         .eq('user_id', user.id)
 
-      if (!error && data) {
-        const keys = data.map((row) => row.plugin_key)
-        setConnectedPluginKeys(keys)
-      }
+      if (data) setConnectedPluginKeys(data.map((row) => row.plugin_key))
     }
-
     fetchConnectedPlugins()
   }, [user])
 
@@ -61,44 +69,67 @@ export default function AgentSandbox({
     setFormData((prev) => ({ ...prev, [name]: value }))
   }
 
-  const handleRun = async () => {
-    try {
-      setLoading(true)
+const handleRun = async () => {
+  try {
+    setLoading(true)
+    setSendStatus(null)
+    setResult(null)
 
-      const normalizedPluginsRequired = Array.isArray(pluginsRequired) ? pluginsRequired : []
-      const missingPlugins = normalizedPluginsRequired.filter(
-        (key) => !connectedPluginKeys.includes(key)
-      )
+    const missingPlugins = (pluginsRequired || []).filter(
+      (key) => !connectedPluginKeys.includes(key)
+    )
+    if (missingPlugins.length > 0) {
+      setResult({ error: `❌ Missing required plugin(s): ${missingPlugins.join(', ')}` })
+      return
+    }
 
-      if (missingPlugins.length > 0) {
-        setResult(`❌ Missing required plugin(s): ${missingPlugins.join(', ')}`)
-        return
+    const interpolatedPrompt = await interpolatePrompt(userPrompt, formData, undefined, user?.id)
+
+    const res = await runAgent(agentId, formData, interpolatedPrompt)
+
+    const finalResult = res?.result || res?.output || 'No output returned.'
+    setResult(finalResult)
+
+    if (finalResult?.send_status) {
+      setSendStatus(finalResult.send_status)
+    } else {
+      // Fallback if no explicit send_status
+      const usedOutputType = outputSchema.find((f) =>
+        ['SummaryBlock', 'EmailDraft'].includes(f.type)
+      )?.type
+
+      if (usedOutputType === 'SummaryBlock') {
+        setSendStatus('📝 SummaryBlock was generated and logged.')
+      } else if (usedOutputType === 'EmailDraft') {
+        setSendStatus('📤 Email draft was generated. Ready to send.')
       }
+    }
+  } catch (err: any) {
+    setResult({ error: err.message })
+  } finally {
+    setLoading(false)
+  }
+}
 
-      const interpolatedPrompt = await interpolatePrompt(userPrompt, formData, undefined, user?.id)
-
-      console.log('🧠 Prompt Sent:', interpolatedPrompt)
-      console.log('📤 Submitting run with:', {
-        agent_id: agentId,
-        input_variables: formData,
-        override_user_prompt: interpolatedPrompt,
-      })
-
-      const res = await runAgent(agentId, formData, interpolatedPrompt)
-
-      setResult(res?.result?.message || res?.output || 'No output returned.')
-    } catch (err: any) {
-      setResult(`❌ Error: ${err.message}`)
-    } finally {
-      setLoading(false)
+  const handleDownloadPDF = () => {
+    if (result && outputSchema) {
+      generatePDF(result, outputSchema)
     }
   }
 
-  // 🔒 Filter input fields based on connected plugins
+  const handleSendEmail = async () => {
+    if (result && result.to && result.subject && result.body) {
+      await sendEmailDraft(user?.id!, result)
+      setSendStatus('✅ Email sent successfully via Gmail.')
+    } else {
+      alert('Missing required email fields.')
+    }
+  }
+
   const filteredInputSchema = inputSchema.filter((field) => {
-    const fieldName = field.name?.toLowerCase()
+    const name = field.name.toLowerCase()
     return !connectedPluginKeys.some((plugin) =>
-      (BLOCKED_FIELDS_BY_PLUGIN[plugin] || []).includes(fieldName)
+      (BLOCKED_FIELDS_BY_PLUGIN[plugin] || []).includes(name)
     )
   })
 
@@ -113,34 +144,22 @@ export default function AgentSandbox({
           {filteredInputSchema.map((field, index) => (
             <div key={index} className="space-y-1">
               <label className="block text-sm font-medium text-gray-700">
-                {field.name}{' '}
-                <span className="text-gray-400 text-xs">({field.type})</span>{' '}
-                {field.required && <span className="text-red-500">*</span>}
+                {field.name} <span className="text-gray-400 text-xs">({field.type})</span>
               </label>
-              {field.description && (
-                <p className="text-xs text-gray-500">{field.description}</p>
-              )}
-              {field.type === 'enum' && Array.isArray(field.enum) ? (
+              {field.description && <p className="text-xs text-gray-500">{field.description}</p>}
+              {field.type === 'enum' ? (
                 <select
                   className="w-full border px-3 py-2 rounded"
                   onChange={(e) => handleInputChange(field.name, e.target.value)}
                 >
-                  <option value="">Select one</option>
-                  {field.enum.map((opt) => (
-                    <option key={opt} value={opt}>
-                      {opt}
-                    </option>
+                  <option value="">Select</option>
+                  {field.enum?.map((opt) => (
+                    <option key={opt} value={opt}>{opt}</option>
                   ))}
                 </select>
               ) : (
                 <input
-                  type={
-                    field.type === 'number'
-                      ? 'number'
-                      : field.type === 'date'
-                      ? 'date'
-                      : 'text'
-                  }
+                  type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
                   className="w-full border px-3 py-2 rounded"
                   onChange={(e) => handleInputChange(field.name, e.target.value)}
                 />
@@ -150,29 +169,51 @@ export default function AgentSandbox({
         </form>
       )}
 
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          Final Prompt (System Generated)
-        </label>
-        <textarea
-          className="w-full border px-3 py-2 rounded min-h-[100px] bg-gray-100"
-          value={userPrompt}
-          readOnly
-        />
-      </div>
-
       <button
-        className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
+        className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
         onClick={handleRun}
         disabled={loading}
       >
         {loading ? 'Running...' : 'Run Agent'}
       </button>
 
+      {sendStatus && (
+        <p className="text-sm text-green-700 font-medium">{sendStatus}</p>
+      )}
+
       {result && (
-        <div className="bg-gray-50 border border-gray-200 p-4 rounded text-sm text-gray-800 whitespace-pre-wrap">
+        <div className="bg-gray-50 border border-gray-200 p-4 rounded text-sm text-gray-800 space-y-4">
           <strong>Result:</strong>
-          <div>{result}</div>
+
+          {typeof result === 'object' ? (
+            <ul className="list-disc pl-5">
+              {outputSchema.map((field) => (
+                <li key={field.name}>
+                  <strong>{field.name}:</strong> {result[field.name] || '—'}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>{result}</p>
+          )}
+
+          {(connectedPluginKeys.includes('google-mail') && result?.to && result?.subject && result?.body) && (
+            <button
+              className="bg-green-600 text-white px-4 py-2 rounded"
+              onClick={handleSendEmail}
+            >
+              Send Email via Gmail
+            </button>
+          )}
+
+          {(outputSchema.some((f) => ['SummaryBlock', 'EmailDraft'].includes(f.type))) && (
+            <button
+              className="bg-gray-700 text-white px-4 py-2 rounded"
+              onClick={handleDownloadPDF}
+            >
+              Download PDF
+            </button>
+          )}
         </div>
       )}
     </div>

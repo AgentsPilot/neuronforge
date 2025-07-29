@@ -9,6 +9,11 @@ interface SchemaField {
   required?: boolean
 }
 
+interface OutputSchema {
+  type?: string
+  fields?: SchemaField[]
+}
+
 interface Step5ReviewProps {
   data: {
     agentName: string
@@ -16,7 +21,7 @@ interface Step5ReviewProps {
     systemPrompt: string
     userPrompt: string
     inputSchema: SchemaField[]
-    outputSchema: SchemaField[]
+    outputSchema: OutputSchema
     plugins: Record<string, any>
     mode: string
     schedule_cron: string
@@ -25,8 +30,10 @@ interface Step5ReviewProps {
   onEditStep: (step: number) => void
 }
 
-const renderSchemaTable = (schema: SchemaField[]) => {
-  if (!schema || schema.length === 0) {
+const renderSchemaTable = (schema: SchemaField[] | { fields?: SchemaField[] }) => {
+  const fields = Array.isArray(schema) ? schema : schema?.fields ?? []
+
+  if (!fields || fields.length === 0) {
     return <p className="text-sm text-gray-500">No fields defined.</p>
   }
 
@@ -42,7 +49,7 @@ const renderSchemaTable = (schema: SchemaField[]) => {
           </tr>
         </thead>
         <tbody>
-          {schema.map((field, index) => (
+          {fields.map((field, index) => (
             <tr key={index} className="border-b hover:bg-gray-50">
               <td className="px-4 py-2">{field.name}</td>
               <td className="px-4 py-2">{field.type}</td>
@@ -100,21 +107,24 @@ const Step5Review: FC<Step5ReviewProps> = ({ data, onEditStep }) => {
       {/* Input Schema */}
       <div className="flex justify-between items-center">
         <h2 className="text-xl font-semibold">🔧 Input Schema</h2>
-        <button onClick={() => onEditStep(3)} className="text-blue-600 text-sm underline">Edit</button>
+        <button onClick={() => onEditStep(4)} className="text-blue-600 text-sm underline">Edit</button>
       </div>
       {renderSchemaTable(data.inputSchema)}
 
       {/* Output Schema */}
       <div className="flex justify-between items-center">
         <h2 className="text-xl font-semibold">📤 Output Schema</h2>
-        <button onClick={() => onEditStep(3)} className="text-blue-600 text-sm underline">Edit</button>
+        <button onClick={() => onEditStep(6)} className="text-blue-600 text-sm underline">Edit</button>
       </div>
-      {renderSchemaTable(data.outputSchema)}
+      <div className="bg-gray-50 p-4 rounded border space-y-2">
+        <p><strong>Type:</strong> {data.outputSchema?.type || '—'}</p>
+        {renderSchemaTable(data.outputSchema)}
+      </div>
 
       {/* Plugins */}
       <div className="flex justify-between items-center">
         <h2 className="text-xl font-semibold">🔌 Plugins</h2>
-        <button onClick={() => onEditStep(4)} className="text-blue-600 text-sm underline">Edit</button>
+        <button onClick={() => onEditStep(3)} className="text-blue-600 text-sm underline">Edit</button>
       </div>
       <div className="flex gap-2 flex-wrap">
         {Object.keys(data.plugins).length > 0 ? (
