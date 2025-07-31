@@ -312,6 +312,7 @@ Connected plugins: ${connectedPlugins.join(', ') || 'None'}
   }
 
   const detectedPlugins = detectPluginsFromPrompt(prompt)
+  .filter((p) => connectedPlugins.includes(p)) // Only include plugins that are actually connected
 
   const { data: newAgent, error } = await supabase
     .from('agents')

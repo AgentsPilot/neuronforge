@@ -5,7 +5,7 @@ import SchemaBuilder from '@/components/SchemaBuilder'
 
 type SchemaField = {
   name: string
-  type: 'string' | 'number' | 'boolean'
+  type: 'string' | 'number' | 'boolean' | 'file'
   required: boolean
 }
 
@@ -71,6 +71,7 @@ export default function InputSchemaBuilder({ onSchemaChange }: Props) {
                 <option value="string">String</option>
                 <option value="number">Number</option>
                 <option value="boolean">Boolean</option>
+                <option value="file">PDF Upload</option>
               </select>
               <label className="flex items-center space-x-2">
                 <input
@@ -118,6 +119,13 @@ export default function InputSchemaBuilder({ onSchemaChange }: Props) {
                     onChange={(e) => handleFormInput(field.name, e.target.checked)}
                     className="h-4 w-4"
                   />
+                ) : field.type === 'file' ? (
+                  <input
+                    type="file"
+                    accept="application/pdf"
+                    onChange={(e) => handleFormInput(field.name, e.target.files?.[0] || null)}
+                    className="w-full"
+                  />
                 ) : (
                   <input
                     type={field.type === 'number' ? 'number' : 'text'}
@@ -139,7 +147,13 @@ export default function InputSchemaBuilder({ onSchemaChange }: Props) {
           <div className="mt-4">
             <h4 className="text-sm font-medium text-gray-700 mb-1">📦 JSON Output</h4>
             <pre className="text-xs bg-gray-100 p-3 rounded whitespace-pre-wrap">
-              {JSON.stringify(formData, null, 2)}
+              {JSON.stringify(
+                Object.fromEntries(
+                  Object.entries(formData).map(([k, v]) => [k, v instanceof File ? '[PDF uploaded]' : v])
+                ),
+                null,
+                2
+              )}
             </pre>
           </div>
         </div>

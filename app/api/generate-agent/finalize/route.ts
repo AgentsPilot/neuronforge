@@ -74,11 +74,20 @@ ${formattedAnswers}`,
     return NextResponse.json({ error: 'Failed to parse AI response.', raw }, { status: 500 })
   }
 
-  const plugins = selected_plugin ? [selected_plugin] : detectPluginsFromPrompt(original_prompt)
+  const validPlugins = detectPluginsFromPrompt(original_prompt)
 
-  const appendedSystemPrompt = clarification_questions && clarification_questions.length > 0
-    ? `${extracted.system_prompt}\n\nClarification details:\n${clarification_questions.map((q, i) => `Q${i + 1}: ${q}`).join('\n')}`
-    : extracted.system_prompt
+  // ✅ Only assign selected_plugin if it's also detected from the prompt
+  const plugins =
+    selected_plugin && validPlugins.includes(selected_plugin)
+      ? [selected_plugin]
+      : validPlugins
+
+  const appendedSystemPrompt =
+    clarification_questions && clarification_questions.length > 0
+      ? `${extracted.system_prompt}\n\nClarification details:\n${clarification_questions
+          .map((q, i) => `Q${i + 1}: ${q}`)
+          .join('\n')}`
+      : extracted.system_prompt
 
   const { data: newAgent, error } = await supabase
     .from('agents')

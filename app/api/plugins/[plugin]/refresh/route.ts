@@ -6,7 +6,7 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ plugin: string }> }
 ): Promise<Response> {
-  const { plugin } = await params // Await params before accessing properties
+  const { plugin } = await params
   const { userId } = await req.json()
 
   if (!userId || !plugin) {
@@ -55,5 +55,16 @@ export async function POST(
     .eq('user_id', userId)
     .eq('plugin_key', plugin)
 
-  return NextResponse.json({ pluginData: { ...connection, ...update } })
+  const { data: refreshedConnection, error: fetchError } = await supabaseAdmin
+    .from('plugin_connections')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('plugin_key', plugin)
+    .single()
+
+  if (fetchError || !refreshedConnection) {
+    return NextResponse.json({ error: 'Failed to retrieve updated connection' }, { status: 500 })
+  }
+
+  return NextResponse.json({ pluginData: refreshedConnection })
 }

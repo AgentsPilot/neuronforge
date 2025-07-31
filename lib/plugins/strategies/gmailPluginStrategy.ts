@@ -30,9 +30,11 @@ export const gmailPluginStrategy: PluginStrategy = {
 
     const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID!
     const redirectUri = `${window.location.origin}/oauth/callback/google-mail`
-    const scope = encodeURIComponent('https://mail.google.com https://www.googleapis.com/auth/userinfo.email')
 
+    // ✅ FIXED SCOPE TO INCLUDE ONLY `https://mail.google.com` FOR FULL ACCESS
+    const scope = encodeURIComponent('https://mail.google.com')
     const state = encodeURIComponent(JSON.stringify({ user_id: user.id, plugin_key: 'google-mail' }))
+
     const oauthUrl =
       `https://accounts.google.com/o/oauth2/v2/auth` +
       `?response_type=code&client_id=${clientId}` +
@@ -42,6 +44,7 @@ export const gmailPluginStrategy: PluginStrategy = {
     popup.location.href = oauthUrl
   },
 
+  // ✅ The rest of your file remains unchanged below...
   disconnect: async ({ supabase, onUpdate }: PluginStrategyArgs) => {
     const {
       data: { user },
@@ -122,12 +125,19 @@ export const gmailPluginStrategy: PluginStrategy = {
       }),
     })
 
-    if (!res.ok) {
-      const errorText = await res.text()
-      throw new Error(`Gmail token refresh failed: ${errorText}`)
-    }
-
     const tokenData = await res.json()
+
+    if (!res.ok || tokenData.error === 'invalid_grant') {
+      console.warn('⚠️ Gmail token refresh failed:', tokenData)
+
+      await supabase
+        .from('plugin_connections')
+        .update({ is_valid: false })
+        .eq('plugin_key', 'google-mail')
+        .eq('username', connection.username)
+
+      throw new Error('⚠️ Gmail token has expired or been revoked. Please reconnect your Gmail account.')
+    }
 
     return {
       access_token: tokenData.access_token,

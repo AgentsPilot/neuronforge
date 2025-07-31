@@ -3,38 +3,128 @@
 import React, { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { useAuth } from '@/components/UserProvider'
+import {
+  Clock,
+  CheckCircle,
+  XCircle,
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  Calendar,
+  Play,
+  Filter,
+  Search,
+  Download,
+  RefreshCw,
+  Eye,
+  Copy,
+  MoreVertical,
+  Activity,
+  Zap
+} from 'lucide-react'
+
+type LogEntry = {
+  id: string
+  created_at: string
+  run_output: string
+  full_output: any
+  status?: string
+  duration?: number
+}
+
+type FilterType = 'all' | 'success' | 'error' | 'warning'
 
 export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
   const { user } = useAuth()
-  const [logs, setLogs] = useState<any[]>([])
+  const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<FilterType>('all')
+  const [currentPage, setCurrentPage] = useState(1)
+  const logsPerPage = 10
 
   useEffect(() => {
-    const fetchLogs = async () => {
-      const { data, error } = await supabase
-        .from('agent_logs')
-        .select('id, created_at, run_output, full_output')
-        .eq('agent_id', agentId)
-        .eq('user_id', user?.id)
-        .order('created_at', { ascending: false })
-
-      if (error) {
-        console.error('❌ Failed to fetch logs:', error.message)
-      } else {
-        setLogs(data || [])
-      }
-
-      setLoading(false)
-    }
-
-    if (agentId && user) {
-      fetchLogs()
-    }
+    fetchLogs()
   }, [agentId, user])
 
+  const fetchLogs = async () => {
+    setLoading(true)
+    const { data, error } = await supabase
+      .from('agent_logs')
+      .select('id, created_at, run_output, full_output, status')
+      .eq('agent_id', agentId)
+      .eq('user_id', user?.id)
+      .order('created_at', { ascending: false })
+      .limit(100)
+
+    if (error) {
+      console.error('❌ Failed to fetch logs:', error.message)
+    } else {
+      setLogs(data || [])
+    }
+    setLoading(false)
+  }
+
+  const getStatusFromOutput = (output: any): { status: string; icon: any; color: string } => {
+    // Try to determine status from output structure
+    if (typeof output === 'object' && output !== null) {
+      if (output.error || output.status === 'error') {
+        return { status: 'error', icon: XCircle, color: 'text-red-600' }
+      }
+      if (output.warning || output.status === 'warning') {
+        return { status: 'warning', icon: AlertTriangle, color: 'text-yellow-600' }
+      }
+      if (output.success !== false && output.status !== 'failed') {
+        return { status: 'success', icon: CheckCircle, color: 'text-green-600' }
+      }
+    }
+    
+    // Default to success if no clear indicators
+    return { status: 'success', icon: CheckCircle, color: 'text-green-600' }
+  }
+
+  const filteredLogs = logs.filter(log => {
+    const matchesSearch = log.run_output?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         log.id.toLowerCase().includes(searchQuery.toLowerCase())
+    
+    if (statusFilter === 'all') return matchesSearch
+    
+    const logStatus = getStatusFromOutput(log.full_output).status
+    return matchesSearch && logStatus === statusFilter
+  })
+
+  const paginatedLogs = filteredLogs.slice(
+    (currentPage - 1) * logsPerPage,
+    currentPage * logsPerPage
+  )
+
+  const totalPages = Math.ceil(filteredLogs.length / logsPerPage)
+
   const toggleDetails = (logId: string) => {
-    setExpandedLogId((prev) => (prev === logId ? null : logId))
+    setExpandedLogId(prev => prev === logId ? null : logId)
+  }
+
+  const formatDuration = (start: string, end?: string) => {
+    if (!end) return 'N/A'
+    const duration = new Date(end).getTime() - new Date(start).getTime()
+    return `${(duration / 1000).toFixed(2)}s`
+  }
+
+  const formatTimeAgo = (dateString: string) => {
+    const now = new Date()
+    const date = new Date(dateString)
+    const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000)
+    
+    if (diffInSeconds < 60) return 'Just now'
+    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`
+    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`
+    if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d ago`
+    return date.toLocaleDateString()
+  }
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text)
   }
 
   const renderStructuredOutput = (output: any) => {
@@ -42,78 +132,283 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
       try {
         output = JSON.parse(output)
       } catch {
-        return <pre className="text-sm text-gray-700 whitespace-pre-wrap">{output}</pre>
+        return (
+          <div className="bg-gray-900 text-green-400 p-4 rounded-lg font-mono text-sm overflow-x-auto">
+            <pre className="whitespace-pre-wrap">{output}</pre>
+          </div>
+        )
       }
     }
 
+    if (!output || typeof output !== 'object') {
+      return (
+        <div className="bg-gray-100 p-4 rounded-lg text-sm text-gray-600">
+          No detailed output available
+        </div>
+      )
+    }
+
     return (
-      <div className="bg-gray-50 border border-gray-200 rounded p-4 mt-2 space-y-2 text-sm text-gray-700">
+      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-3">
         {Object.entries(output).map(([key, value]) => (
-          <div key={key}>
-            <strong className="capitalize text-gray-800">{key.replace(/_/g, ' ')}:</strong>{' '}
-            <span className="text-gray-700">
+          <div key={key} className="border-b border-gray-200 pb-2 last:border-0">
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-sm font-medium text-gray-700 capitalize">
+                {key.replace(/_/g, ' ')}
+              </label>
+              <button
+                onClick={() => copyToClipboard(JSON.stringify(value, null, 2))}
+                className="p-1 hover:bg-gray-200 rounded transition-colors"
+                title="Copy value"
+              >
+                <Copy className="h-3 w-3 text-gray-500" />
+              </button>
+            </div>
+            <div className="text-sm text-gray-900">
               {typeof value === 'object' ? (
-                <pre className="whitespace-pre-wrap break-words">{JSON.stringify(value, null, 2)}</pre>
+                <pre className="bg-gray-900 text-green-400 p-3 rounded text-xs overflow-x-auto font-mono">
+                  {JSON.stringify(value, null, 2)}
+                </pre>
               ) : (
-                value?.toString()
+                <div className="bg-white p-2 rounded border border-gray-200 break-words">
+                  {value?.toString() || 'null'}
+                </div>
               )}
-            </span>
+            </div>
           </div>
         ))}
       </div>
     )
   }
 
-  return (
-    <div className="bg-white p-6 rounded-xl shadow border border-gray-100 mb-8">
-      <h2 className="text-xl font-semibold mb-4 text-gray-800">Agent Run History</h2>
-
-      {loading ? (
-        <p className="text-gray-500">Loading history...</p>
-      ) : logs.length === 0 ? (
-        <p className="text-gray-500">No runs yet.</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left">
-            <thead>
-              <tr className="text-gray-600 border-b">
-                <th className="py-2 px-4">ID</th>
-                <th className="py-2 px-4">Run Output</th>
-                <th className="py-2 px-4">Created At</th>
-                <th className="py-2 px-4">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {logs.map((log) => (
-                <React.Fragment key={log.id}>
-                  <tr className="border-b hover:bg-gray-50">
-                    <td className="py-2 px-4 text-gray-700">{log.id}</td>
-                    <td className="py-2 px-4 text-gray-700 max-w-sm truncate" title={log.run_output}>
-                      {log.run_output}
-                    </td>
-                    <td className="py-2 px-4 text-gray-600">
-                      {new Date(log.created_at).toLocaleString()}
-                    </td>
-                    <td className="py-2 px-4">
-                      <button
-                        onClick={() => toggleDetails(log.id)}
-                        className="text-blue-600 hover:underline text-sm"
-                      >
-                        {expandedLogId === log.id ? 'Hide Details' : 'View Details'}
-                      </button>
-                    </td>
-                  </tr>
-                  {expandedLogId === log.id && (
-                    <tr>
-                      <td colSpan={4}>{renderStructuredOutput(log.full_output)}</td>
-                    </tr>
-                  )}
-                </React.Fragment>
-              ))}
-            </tbody>
-          </table>
+  if (loading) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+        <div className="p-8 text-center">
+          <div className="animate-spin h-8 w-8 border-2 border-blue-600 border-t-transparent rounded-full mx-auto mb-4"></div>
+          <p className="text-gray-500">Loading execution history...</p>
         </div>
-      )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+      {/* Header */}
+      <div className="px-6 py-4 border-b border-gray-200">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+              <Activity className="h-5 w-5 text-blue-600" />
+              Execution History
+            </h2>
+            <p className="text-gray-600 text-sm mt-1">
+              Recent agent runs and their outputs ({filteredLogs.length} total)
+            </p>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            <button
+              onClick={fetchLogs}
+              disabled={loading}
+              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              title="Refresh"
+            >
+              <RefreshCw className={`h-4 w-4 text-gray-500 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+            <button className="p-2 hover:bg-gray-100 rounded-lg transition-colors" title="Download">
+              <Download className="h-4 w-4 text-gray-500" />
+            </button>
+          </div>
+        </div>
+
+        {/* Controls */}
+        <div className="flex flex-col sm:flex-row gap-4 items-center">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search executions..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Filter className="h-4 w-4 text-gray-500" />
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as FilterType)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">All Status</option>
+              <option value="success">Success</option>
+              <option value="error">Error</option>
+              <option value="warning">Warning</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="p-6">
+        {filteredLogs.length === 0 ? (
+          <div className="text-center py-12">
+            <Clock className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-900 mb-2">
+              {searchQuery || statusFilter !== 'all' ? 'No matching executions' : 'No executions yet'}
+            </h3>
+            <p className="text-gray-600">
+              {searchQuery || statusFilter !== 'all' 
+                ? 'Try adjusting your search or filter criteria.' 
+                : 'This agent hasn\'t been executed yet. Run it to see the history here.'}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {paginatedLogs.map((log, index) => {
+              const statusInfo = getStatusFromOutput(log.full_output)
+              const StatusIcon = statusInfo.icon
+              const isExpanded = expandedLogId === log.id
+
+              return (
+                <div key={log.id} className="border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
+                  {/* Log Header */}
+                  <div className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4 flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <StatusIcon className={`h-5 w-5 ${statusInfo.color}`} />
+                          <span className="text-sm font-medium text-gray-900">
+                            #{(currentPage - 1) * logsPerPage + index + 1}
+                          </span>
+                        </div>
+
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-gray-900 truncate" title={log.run_output}>
+                            {log.run_output || 'No output'}
+                          </p>
+                          <div className="flex items-center gap-4 mt-1 text-xs text-gray-500">
+                            <span className="flex items-center gap-1">
+                              <Calendar className="h-3 w-3" />
+                              {formatTimeAgo(log.created_at)}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              {new Date(log.created_at).toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => copyToClipboard(log.id)}
+                          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                          title="Copy ID"
+                        >
+                          <Copy className="h-4 w-4 text-gray-500" />
+                        </button>
+                        
+                        <button
+                          onClick={() => toggleDetails(log.id)}
+                          className="flex items-center gap-1 px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                        >
+                          {isExpanded ? (
+                            <>
+                              <ChevronDown className="h-4 w-4" />
+                              Hide Details
+                            </>
+                          ) : (
+                            <>
+                              <ChevronRight className="h-4 w-4" />
+                              View Details
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Expanded Details */}
+                  {isExpanded && (
+                    <div className="border-t border-gray-200 p-4 bg-gray-50">
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                          <div>
+                            <label className="font-medium text-gray-700">Execution ID</label>
+                            <div className="mt-1 flex items-center gap-2">
+                              <code className="text-xs bg-white px-2 py-1 rounded border font-mono">
+                                {log.id}
+                              </code>
+                              <button
+                                onClick={() => copyToClipboard(log.id)}
+                                className="p-1 hover:bg-gray-200 rounded"
+                              >
+                                <Copy className="h-3 w-3 text-gray-500" />
+                              </button>
+                            </div>
+                          </div>
+                          
+                          <div>
+                            <label className="font-medium text-gray-700">Status</label>
+                            <div className="mt-1 flex items-center gap-2">
+                              <StatusIcon className={`h-4 w-4 ${statusInfo.color}`} />
+                              <span className="capitalize">{statusInfo.status}</span>
+                            </div>
+                          </div>
+                          
+                          <div>
+                            <label className="font-medium text-gray-700">Timestamp</label>
+                            <p className="mt-1 text-gray-600">{new Date(log.created_at).toLocaleString()}</p>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="font-medium text-gray-700 mb-2 block">Detailed Output</label>
+                          {renderStructuredOutput(log.full_output)}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between pt-4 border-t border-gray-200">
+                <div className="text-sm text-gray-600">
+                  Showing {(currentPage - 1) * logsPerPage + 1} to {Math.min(currentPage * logsPerPage, filteredLogs.length)} of {filteredLogs.length} results
+                </div>
+                
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                    disabled={currentPage === 1}
+                    className="px-3 py-1 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Previous
+                  </button>
+                  
+                  <span className="text-sm text-gray-600">
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                    disabled={currentPage === totalPages}
+                    className="px-3 py-1 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
