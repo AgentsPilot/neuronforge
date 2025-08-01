@@ -28,7 +28,7 @@ type AgentStat = {
 export default function AgentStatsTable({ agentId }: { agentId?: string }) {
   const [stats, setStats] = useState<AgentStat[]>([])
   const [loading, setLoading] = useState(true)
-  const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards')
+  const [viewMode, setViewMode] = useState<'cards' | 'table'>('table')
 
   useEffect(() => {
     const fetchStats = async () => {

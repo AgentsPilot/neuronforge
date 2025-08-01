@@ -1,48 +1,43 @@
 // lib/plugins/savePluginConnection.ts
+import { createClient } from '@supabase/supabase-js'
 
-import { createServerSupabaseClient } from '@/lib/supabaseServer'
+export async function savePluginConnection(connectionData: any) {
+  console.log('💾 Saving plugin connection:', {
+    pluginKey: connectionData.plugin_key,
+    userId: connectionData.user_id,
+    username: connectionData.username
+  })
 
-export async function savePluginConnection({
-  user_id,
-  plugin_key,
-  username,
-  access_token,
-  refresh_token,
-  expires_at,
-  credentials,
-}: {
-  user_id: string
-  plugin_key: string
-  username: string
-  access_token: string
-  refresh_token: string | null
-  expires_at: string | null
-  credentials: any
-}) {
-  const supabase = createServerSupabaseClient()
-
-  const { data, error } = await supabase
-    .from('plugin_connections')
-    .upsert(
-      [
-        {
-          user_id,
-          plugin_key,
-          username,
-          access_token,
-          refresh_token,
-          expires_at,
-          credentials,
-          updated_at: new Date().toISOString(),
-        },
-      ],
-      { onConflict: 'user_id,plugin_key' }
+  try {
+    // Create a fresh Supabase client for server-side operations
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY! // Use service role key for server operations
     )
 
-  if (error) {
-    console.error('🔴 savePluginConnection failed:', error)
+    const { data, error } = await supabase
+      .from('plugin_connections')
+      .upsert({
+        ...connectionData,
+        connected_at: connectionData.connected_at || new Date().toISOString(),
+        last_used: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }, {
+        onConflict: 'user_id,plugin_key'
+      })
+      .select()
+      .single()
+
+    if (error) {
+      console.error('❌ Database error saving connection:', error)
+      throw new Error(`Failed to save connection: ${error.message}`)
+    }
+
+    console.log('✅ Plugin connection saved successfully:', data?.id)
+    return data
+
+  } catch (error) {
+    console.error('❌ Error in savePluginConnection:', error)
     throw error
   }
-
-  return data
 }

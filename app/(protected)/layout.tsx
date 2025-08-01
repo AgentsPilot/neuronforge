@@ -57,7 +57,7 @@ const SidebarLink = ({
         isActive ? 'text-blue-600' : 'text-gray-500 group-hover:text-gray-700'
       )} />
       <span className="flex-1">{label}</span>
-      {badge && (
+      {badge !== undefined && badge !== null && badge !== 0 && (
         <span className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full font-medium">
           {badge}
         </span>
@@ -93,6 +93,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const router = useRouter()
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [isMobileOpen, setIsMobileOpen] = useState(false)
+  const [agentCount, setAgentCount] = useState<number | null>(null)
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
@@ -103,6 +104,27 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     if (!user) {
       redirect('/login')
     }
+  }, [user])
+
+  // Fetch agent count from Supabase
+  useEffect(() => {
+    let cancelled = false
+    async function fetchAgentCount() {
+      if (!user) {
+        setAgentCount(null)
+        return
+      }
+      const { count, error } = await supabase
+        .from('agents')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+
+      if (!cancelled) {
+        setAgentCount(error ? null : (count ?? 0))
+      }
+    }
+    fetchAgentCount()
+    return () => { cancelled = true }
   }, [user])
 
   if (!user) return null
@@ -145,7 +167,10 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       {/* Quick Actions */}
       {!isCollapsed && (
         <div className="mb-6">
-          <button className="w-full flex items-center gap-3 px-3 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all duration-200 shadow-sm">
+          <button
+            className="w-full flex items-center gap-3 px-3 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all duration-200 shadow-sm"
+            onClick={() => router.push('/agents/new')}
+          >
             <Plus className="h-5 w-5" />
             <span className="font-medium">New Agent</span>
           </button>
@@ -166,7 +191,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
             href="/agents" 
             label="Agents" 
             icon={Bot}
-            badge="3"
+            badge={agentCount !== null ? agentCount : undefined}
             isActive={pathname === '/agents'}
             onClick={() => setIsMobileOpen(false)}
           />
@@ -181,12 +206,12 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
         <SidebarSection title="Automation">
           <SidebarLink 
-            href="/chains/new" 
-            label="Agent Chains" 
+            href="/orchestration" 
+            label="Agent Orchestration" 
             icon={Workflow}
-            isActive={pathname === '/chains/new'}
+            isActive={pathname === '/orchestration'}
             onClick={() => setIsMobileOpen(false)}
-          />
+          />          
           <SidebarLink 
             href="/monitoring" 
             label="Monitoring" 
@@ -296,7 +321,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       {/* Main content */}
       <main className={clsx(
         'flex-1 transition-all duration-300',
-        'lg:ml-0 pt-16 lg:pt-0' // Add top padding on mobile for menu button
+        'lg:ml-0 pt-16 lg:pt-0'
       )}>
         <div className="p-6 lg:p-8 h-full">
           {children}
