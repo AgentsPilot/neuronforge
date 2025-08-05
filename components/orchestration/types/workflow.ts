@@ -1,50 +1,56 @@
-// types/workflow.ts
+// Test Result Types
+export interface TestResult {
+  stepId: string
+  stepName: string
+  status: 'pending' | 'running' | 'success' | 'error'
+  message: string
+  duration?: number
+  output?: any
+  error?: string
+  timestamp: Date
+}
 
-export type WorkflowPhase = 'describe' | 'build' | 'connect'
-
+// Workflow Step Interface
 export interface WorkflowStep {
   id: number
-  title: string
-  description: string
+  title?: string
+  description?: string
+  inputs?: any[]
+  outputs?: any[]
+  selectedAgent?: any
+  isConfigured?: boolean
+  configurationComplete?: boolean
+  configurationData?: any
   suggestedAgent?: string
-  inputs: string[]
-  outputs: string[]
-  selectedAgent?: AgentLibraryItem
-  agentConfig?: any
+  testResults?: TestResult[]
+  customInputs?: any[]
+  customOutputs?: any[]
 }
 
+// Workflow Data Interface
 export interface WorkflowData {
-  title: string
-  description: string
-  industry: string
-  processDescription: string
-  generatedSteps: WorkflowStep[]
-  finalSteps: WorkflowStep[]
-  triggerType: string
+  description?: string
+  finalSteps?: WorkflowStep[]
+  generatedSteps?: WorkflowStep[]
 }
 
-export interface AgentLibraryItem {
+// Phase Types
+export type Phase = 'build' | 'connect' | 'configure' | 'test'
+
+// Connection Interface
+export interface Connection {
   id: string
-  name: string
-  description: string
-  category: string
-  inputs: string[]
-  outputs: string[]
-  usageCount: number
-  rating: number
+  fromStep: number
+  toStep: number
+  fromIO: any
+  toInput?: any
+  type: 'data_flow'
 }
 
-export interface IndustryTemplate {
-  name: string
-  icon: string
-  processes: string[]
-  description: string
-}
-
-export interface DataMapping {
-  targetField: string
-  sourceType: 'previous_step' | 'user_input' | 'static_value'
-  sourceStep?: string
-  sourceField?: string
-  staticValue?: any
+// Workflow State Interface
+export interface WorkflowState {
+  steps: WorkflowStep[]
+  connections: Connection[]
+  currentPhase: Phase
+  selectedStep: number | null
 }

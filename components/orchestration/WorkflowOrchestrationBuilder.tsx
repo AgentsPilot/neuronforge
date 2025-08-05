@@ -4,8 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Workflow, MessageSquare, Bot, Zap, CheckCircle } from 'lucide-react'
 import { ProcessDescriptionPhase } from './phases/ProcessDescriptionPhase'
-import { AgentBuildingPhase } from './phases/AgentBuildingPhase'
-import DataConnectionPhase  from './phases/DataConnectionPhase'
+import AgentBuildingPhase from './phases/AgentBuildingPhase'  // Updated import
 import { WorkflowData, WorkflowPhase } from './types/workflow'
 
 // 1. Add your mock workflows here (replace with real fetch as needed)
@@ -67,6 +66,17 @@ export default function WorkflowOrchestrationBuilder() {
 
   const updateWorkflowData = (updates: Partial<WorkflowData>) => {
     setWorkflowData(prev => ({ ...prev, ...updates }))
+  }
+
+  // Handle completion of the AgentBuildingPhase (which now includes all 4 sub-phases)
+  const handleAgentBuildingComplete = () => {
+    // You can either:
+    // Option A: Go directly to a final completion/save step
+    router.push('/workflows')
+    
+    // Option B: Or if you want to keep the 3-phase structure, 
+    // you could go to a final connection/summary phase
+    // setCurrentPhase('connect')
   }
 
   return (
@@ -140,19 +150,20 @@ export default function WorkflowOrchestrationBuilder() {
           <AgentBuildingPhase 
             data={workflowData} 
             onUpdate={updateWorkflowData}
-            onNext={() => setCurrentPhase('connect')}
+            onNext={handleAgentBuildingComplete}  // Updated to handle completion
             onBack={() => setCurrentPhase('describe')}
           />
         )}
 
-        {currentPhase === 'connect' && (
-          <DataConnectionPhase 
-            data={workflowData} 
-            onUpdate={updateWorkflowData}
-            onBack={() => setCurrentPhase('build')}
-            onSave={() => router.push('/workflows')}
-          />
-        )}
+        {/* Note: The AgentBuildingPhase now includes all workflow building functionality:
+            - Phase 1: Build (assign agents)
+            - Phase 2: Connect (data flow)
+            - Phase 3: Configure (integrations)  
+            - Phase 4: Test (validation)
+            
+            So we don't need a separate DataConnectionPhase anymore.
+            The user will complete all workflow building within AgentBuildingPhase.
+        */}
       </div>
     </div>
   )
