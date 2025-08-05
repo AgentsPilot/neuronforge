@@ -4,6 +4,8 @@ import { AgentLibraryItem } from '../types/agents'
 import { StepNavigation } from '../components/workflow/StepNavigation'
 import { BuildWorkflowPhase } from './BuildWorkflowPhase'
 import { ConnectDataPhase } from './ConnectDataPhase'
+import { ConfigureIntegrationsPhase } from './ConfigureIntegrationsPhase'
+import { TestValidatePhase } from './TestValidatePhase'
 import { createSmartAgentLibrary, generateAIAgents } from '../../../lib/utils/agentHelpers'
 import { createConnection, connectionExists, updateConnectionIndices } from '../../../lib/utils/connectionHelpers'
 
@@ -201,6 +203,15 @@ export default function AgentBuildingPhase({
     setCurrentPhase(phase)
   }, [])
 
+  // Configuration handlers
+  const handleStepConfiguration = useCallback((stepIndex: number, configData: any) => {
+    updateStep(stepIndex, {
+      configurationData: configData,
+      isConfigured: true,
+      configurationComplete: Object.keys(configData).length > 0
+    })
+  }, [updateStep])
+
   // Render current phase
   const renderCurrentPhase = () => {
     const commonProps = {
@@ -242,48 +253,25 @@ export default function AgentBuildingPhase({
       
       case 'configure':
         return (
-          <div className="bg-white/70 backdrop-blur-sm rounded-2xl shadow-lg border border-white/40 p-8 text-center">
-            <div className="text-6xl mb-4">⚙️</div>
-            <h3 className="text-xl font-semibold text-slate-900 mb-2">Configure Integrations Phase</h3>
-            <p className="text-slate-600 mb-6">Configuration phase coming soon...</p>
-            <div className="flex justify-between">
-              <button
-                onClick={() => handlePhaseChange('connect')}
-                className="px-6 py-3 border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 transition-colors"
-              >
-                ← Back to Connect
-              </button>
-              <button
-                onClick={() => handlePhaseChange('test')}
-                className="px-6 py-3 bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 text-white rounded-xl font-semibold transition-all"
-              >
-                Next: Test →
-              </button>
-            </div>
-          </div>
+          <ConfigureIntegrationsPhase
+            steps={steps}
+            connections={connections}
+            onStepsChange={persistSteps}
+            onStepConfiguration={handleStepConfiguration}
+            onPhaseComplete={() => handlePhaseChange('test')}
+            onPreviousPhase={() => handlePhaseChange('connect')}
+          />
         )
       
       case 'test':
         return (
-          <div className="bg-white/70 backdrop-blur-sm rounded-2xl shadow-lg border border-white/40 p-8 text-center">
-            <div className="text-6xl mb-4">🧪</div>
-            <h3 className="text-xl font-semibold text-slate-900 mb-2">Test & Validate Phase</h3>
-            <p className="text-slate-600 mb-6">Testing phase coming soon...</p>
-            <div className="flex justify-between">
-              <button
-                onClick={() => handlePhaseChange('configure')}
-                className="px-6 py-3 border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 transition-colors"
-              >
-                ← Back to Configure
-              </button>
-              <button
-                onClick={onNext}
-                className="px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl font-semibold transition-all"
-              >
-                Deploy Workflow →
-              </button>
-            </div>
-          </div>
+          <TestValidatePhase
+            steps={steps}
+            connections={connections}
+            onStepsChange={persistSteps}
+            onPhaseComplete={onNext}
+            onPreviousPhase={() => handlePhaseChange('configure')}
+          />
         )
       
       default:
