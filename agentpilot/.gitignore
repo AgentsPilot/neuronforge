@@ -1,0 +1,6 @@
+__pycache__/
+.env
+agentpilot.db
+*.pyc
+.venv/
+
