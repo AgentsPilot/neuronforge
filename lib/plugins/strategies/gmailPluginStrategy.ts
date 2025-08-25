@@ -288,5 +288,83 @@ export const gmailStrategy: PluginStrategy = {
       console.error('❌ Gmail OAuth callback error:', error)
       throw error
     }
+  },
+
+  // Refresh access token using refresh_token
+  async refreshToken(connection: any) {
+    if (!connection?.refresh_token) {
+      throw new Error('Missing refresh_token for Gmail connection')
+    }
+
+    const response = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: process.env.GOOGLE_CLIENT_ID!,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+        grant_type: 'refresh_token',
+        refresh_token: connection.refresh_token,
+      }),
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`Failed to refresh Gmail token: ${errorText}`)
+    }
+
+    const tokens = await response.json()
+    const expiresAt = new Date()
+    expiresAt.setSeconds(expiresAt.getSeconds() + (tokens.expires_in || 3600))
+
+    return {
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token || connection.refresh_token,
+      expires_at: expiresAt.toISOString(),
+    }
+  },
+
+  // Fetch recent emails and provide a short context
+  async run({ connection, query }: { connection: any; query?: string }) {
+    const accessToken = connection?.access_token
+    if (!accessToken) throw new Error('Missing Gmail access token')
+
+    // Build a Gmail search query. If none provided, fetch likely invoices.
+    const q = query || 'newer_than:30d (invoice OR receipt OR bill)'
+
+    // List messages
+    const listRes = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=10&q=${encodeURIComponent(q)}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    )
+    if (!listRes.ok) {
+      const text = await listRes.text()
+      throw new Error(`Gmail list failed: ${text}`)
+    }
+    const listData = await listRes.json()
+    const messages = Array.isArray(listData.messages) ? listData.messages : []
+    if (messages.length === 0) {
+      return { summary: 'No matching emails found.' }
+    }
+
+    // Fetch a few full messages
+    const details: Array<{ id: string; snippet: string; subject?: string; from?: string; date?: string }> = []
+    for (const msg of messages.slice(0, 5)) {
+      const msgRes = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      )
+      if (!msgRes.ok) continue
+      const data = await msgRes.json()
+      const headers = (data.payload?.headers || []) as Array<{ name: string; value: string }>
+      const subject = headers.find(h => h.name === 'Subject')?.value
+      const from = headers.find(h => h.name === 'From')?.value
+      const date = headers.find(h => h.name === 'Date')?.value
+      details.push({ id: data.id, snippet: data.snippet, subject, from, date })
+    }
+
+    // Summarize into context text
+    const lines = details.map(d => `- ${d.date || ''} | ${d.from || ''} | ${d.subject || ''} | ${d.snippet || ''}`)
+    const summary = lines.join('\n')
+    return { emails: details, summary }
   }
 }

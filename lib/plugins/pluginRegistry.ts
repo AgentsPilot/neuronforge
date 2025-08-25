@@ -6,6 +6,11 @@ export interface PluginStrategy {
   name: string
   connect(params: { supabase: any; popup: Window; userId: string }): Promise<void>
   handleOAuthCallback?(params: { code: string; state: string; supabase?: any }): Promise<any>
+  // Optional server-side helpers (used by API routes)
+  refreshToken?(
+    connection: any
+  ): Promise<{ access_token: string; refresh_token?: string | null; expires_at?: string | null }>
+  run?(params: { connection: any; query?: string }): Promise<any>
 }
 
 // Plugin registry - add your strategies here
