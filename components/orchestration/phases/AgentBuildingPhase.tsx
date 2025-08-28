@@ -8,6 +8,7 @@ import { ConfigureIntegrationsPhase } from './ConfigureIntegrationsPhase'
 import { TestValidatePhase } from './TestValidatePhase'
 import { createSmartAgentLibrary, generateAIAgents } from '../../../lib/utils/agentHelpers'
 import { createConnection, connectionExists, updateConnectionIndices } from '../../../lib/utils/connectionHelpers'
+import { WorkflowService } from '../../../lib/services/workflowService'
 
 interface AgentBuildingPhaseProps {
   data?: WorkflowData
@@ -22,70 +23,11 @@ export default function AgentBuildingPhase({
   onNext = () => {},
   onBack = () => {},
 }: AgentBuildingPhaseProps) {
-  // Initialize workflow steps
+  // Initialize workflow steps - FIXED: Removed hardcoded fallback steps
   const [steps, setSteps] = useState<WorkflowStep[]>(() => {
-    const initialSteps = data.finalSteps || data.generatedSteps || [
-      {
-        id: 1,
-        title: 'Email Processing',
-        description: 'Scan emails for invoices and attachments',
-        inputs: [
-          { name: 'email_folder', type: 'text', displayName: 'Email Folder', required: true },
-          { name: 'search_criteria', type: 'text', displayName: 'Search Criteria' }
-        ],
-        outputs: [
-          { name: 'found_emails', type: 'json', displayName: 'Found Emails' },
-          { name: 'attachment_count', type: 'number', displayName: 'Attachment Count' }
-        ],
-        selectedAgent: null,
-        isConfigured: false,
-        configurationComplete: false,
-        configurationData: {},
-        suggestedAgent: 'Email Scanner',
-        customInputs: [],
-        customOutputs: []
-      },
-      {
-        id: 2,
-        title: 'Invoice Extraction',
-        description: 'Extract data from invoice documents',
-        inputs: [
-          { name: 'email_attachments', type: 'json', displayName: 'Email Attachments', required: true },
-          { name: 'extraction_rules', type: 'text', displayName: 'Extraction Rules' }
-        ],
-        outputs: [
-          { name: 'invoice_data', type: 'json', displayName: 'Invoice Data' },
-          { name: 'confidence_score', type: 'number', displayName: 'Confidence Score' }
-        ],
-        selectedAgent: null,
-        isConfigured: false,
-        configurationComplete: false,
-        configurationData: {},
-        suggestedAgent: 'Invoice Data Extractor',
-        customInputs: [],
-        customOutputs: []
-      },
-      {
-        id: 3,
-        title: 'CRM Update',
-        description: 'Update CRM with extracted invoice data',
-        inputs: [
-          { name: 'processed_invoices', type: 'json', displayName: 'Processed Invoices', required: true },
-          { name: 'crm_settings', type: 'json', displayName: 'CRM Settings' }
-        ],
-        outputs: [
-          { name: 'updated_records', type: 'json', displayName: 'Updated Records' },
-          { name: 'success_count', type: 'number', displayName: 'Success Count' }
-        ],
-        selectedAgent: null,
-        isConfigured: false,
-        configurationComplete: false,
-        configurationData: {},
-        suggestedAgent: 'CRM Record Creator',
-        customInputs: [],
-        customOutputs: []
-      }
-    ]
+    // Try to load from database first, then from legacy formats, then empty array
+    const initialSteps = data.finalSteps || data.generatedSteps || data.steps || []
+    
     return initialSteps.map((step) => ({
       ...step,
       selectedAgent: step.selectedAgent || null,
@@ -212,6 +154,67 @@ export default function AgentBuildingPhase({
     })
   }, [updateStep])
 
+  // Convert legacy format to new workflow format for TestValidatePhase
+  const convertToWorkflowFormat = useCallback(() => {
+    console.log('🔄 [AgentBuildingPhase] Converting legacy format to workflow format')
+    
+    const workflowForTest = {
+      id: WorkflowService.generateUUID(),
+      name: data?.title || 'Test Workflow',
+      description: data?.description || 'Workflow created from legacy format',
+      steps: steps.map((step, index) => ({
+        id: step.id.toString(),
+        name: step.title || `Step ${index + 1}`,
+        description: step.description || '',
+        agentId: step.selectedAgent?.id || step.suggestedAgent || `agent-${step.id}`,
+        inputs: (step.inputs || []).map(input => ({
+          name: input.name || input.displayName || `input-${Math.random()}`,
+          type: input.type || 'string',
+          required: input.required !== undefined ? input.required : true,
+          source: index === 0 ? 'user' as const : 'previous_step' as const
+        })),
+        outputs: (step.outputs || []).map(output => ({
+          name: output.name || output.displayName || `output-${Math.random()}`,
+          type: output.type || 'string',
+          required: true,
+          description: output.description
+        })),
+        position: { x: 100 + index * 200, y: 100 }
+      })),
+      agents: steps.map((step, index) => ({
+        id: step.selectedAgent?.id || step.suggestedAgent || `agent-${step.id}`,
+        name: step.selectedAgent?.name || step.suggestedAgent || `Agent ${index + 1}`,
+        type: 'custom' as const,
+        configuration: step.configurationData || {},
+        outputSchema: {
+          type: 'object',
+          fields: (step.outputs || []).map(output => ({
+            name: output.name || output.displayName || 'output',
+            type: output.type || 'string'
+          }))
+        }
+      })),
+      connections: connections.map(conn => ({
+        id: conn.id,
+        fromStepId: conn.fromStep.toString(),
+        toStepId: conn.toStep.toString(),
+        fromOutputName: conn.fromIO,
+        toInputName: conn.toInput
+      })),
+      status: 'draft' as const,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }
+
+    console.log('✅ [AgentBuildingPhase] Converted workflow:', {
+      stepsCount: workflowForTest.steps.length,
+      agentsCount: workflowForTest.agents.length,
+      connectionsCount: workflowForTest.connections.length
+    })
+
+    return workflowForTest
+  }, [data, steps, connections])
+
   // Render current phase
   const renderCurrentPhase = () => {
     const commonProps = {
@@ -264,13 +267,19 @@ export default function AgentBuildingPhase({
         )
       
       case 'test':
+        // Convert legacy format to new workflow format
+        const workflowForTest = convertToWorkflowFormat()
+        
         return (
           <TestValidatePhase
-            steps={steps}
-            connections={connections}
-            onStepsChange={persistSteps}
-            onPhaseComplete={onNext}
-            onPreviousPhase={() => handlePhaseChange('configure')}
+            workflow={workflowForTest}
+            testResults={undefined}
+            onTestComplete={async () => {
+              // Handle test completion
+              console.log('✅ [AgentBuildingPhase] Test completed')
+            }}
+            onNext={onNext}
+            onBack={() => handlePhaseChange('configure')}
           />
         )
       

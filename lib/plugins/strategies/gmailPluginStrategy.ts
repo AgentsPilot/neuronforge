@@ -18,13 +18,15 @@ export const gmailStrategy: PluginStrategy = {
         random: Math.random().toString(36).substring(2)
       })
 
-      // Gmail OAuth scopes
+      // In gmailPluginStrategy.ts, change the scopes array to:
       const scopes = [
         'openid',
         'email',
-        'profile',
-        'https://www.googleapis.com/auth/gmail.readonly'
+        'profile', 
+        'https://www.googleapis.com/auth/gmail.readonly',
+        'https://www.googleapis.com/auth/gmail.send'  // ← Add this line
       ].join(' ')
+
 
       // Build OAuth URL
       const baseUrl = typeof window !== 'undefined' ? window.location.origin : process.env.NEXT_PUBLIC_APP_URL

@@ -1,13 +1,26 @@
+// app/api/plugins/[plugin]/refresh/route.ts
+export const dynamic = 'force-dynamic'
+
 import { NextResponse } from 'next/server'
 import { pluginRegistry } from '@/lib/plugins/pluginRegistry'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
 
 export async function POST(
   req: Request,
-  { params }: { params: Promise<{ plugin: string }> }
+  context: { params: Promise<{ plugin: string }> }
 ): Promise<Response> {
-  const { plugin } = await params
-  const { userId } = await req.json()
+  const { plugin } = await context.params
+  const body = await req.json()
+
+  const userId =
+    typeof body.userId === 'string'
+      ? body.userId
+      : typeof body.userId === 'object'
+      ? body.userId?.userId
+      : undefined
+
+  console.log('🔍 Plugin param received:', plugin)
+  console.log('👤 Normalized user ID:', userId)
 
   if (!userId || !plugin) {
     return NextResponse.json({ error: 'Missing userId or pluginKey' }, { status: 400 })
@@ -26,6 +39,7 @@ export async function POST(
     .single()
 
   if (error || !connection) {
+    console.warn('❌ No connection found in Supabase:', { plugin, userId })
     return NextResponse.json({ error: `No connection found for ${plugin}` }, { status: 404 })
   }
 

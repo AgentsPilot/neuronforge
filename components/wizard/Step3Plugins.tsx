@@ -45,7 +45,7 @@ export default function Step3Plugins({ data, onUpdate }: any) {
         const json = await res.json()
         setSuggestedPlugins(json.plugins || [])
       } catch (err) {
-        console.error('❌ Failed to get plugin suggestions:', err)
+        console.error('Failed to get plugin suggestions:', err)
         setSuggestedPlugins([])
       } finally {
         setLoading(false)
@@ -67,11 +67,11 @@ export default function Step3Plugins({ data, onUpdate }: any) {
       try {
         const res = await fetch('/api/user/plugins')
         const json = await res.json()
-        console.log('🔌 Plugin connection status:', json)
+        console.log('Plugin connection status:', json)
         setAllPluginStatus(json || {})
         setConnectionError(null)
       } catch (err) {
-        console.error('❌ Failed to fetch plugin connections:', err)
+        console.error('Failed to fetch plugin connections:', err)
         setConnectionError('Failed to load plugin connections')
       }
     }
@@ -79,8 +79,13 @@ export default function Step3Plugins({ data, onUpdate }: any) {
     fetchConnections()
   }, [user])
 
-  const isConnected = (pluginKey: string) =>
-    allPluginStatus[pluginKey]?.connected === true
+  const isConnected = (pluginKey: string) => {
+    // ChatGPT is always "connected" since it uses your platform's API key
+    if (pluginKey === 'chatgpt-research') {
+      return true
+    }
+    return allPluginStatus[pluginKey]?.connected === true
+  }
 
   const togglePlugin = (pluginKey: string) => {
     const updatedPlugins = { ...data.plugins }
@@ -88,11 +93,15 @@ export default function Step3Plugins({ data, onUpdate }: any) {
     if (updatedPlugins[pluginKey]) {
       delete updatedPlugins[pluginKey]
     } else {
-      if (!isConnected(pluginKey)) {
-        alert(`⚠️ Please connect ${pluginKey} before selecting.`)
+      // Special handling for ChatGPT - doesn't need individual connection
+      if (pluginKey === 'chatgpt-research') {
+        updatedPlugins[pluginKey] = { connected: true }
+      } else if (!isConnected(pluginKey)) {
+        alert(`Please connect ${pluginKey} before selecting.`)
         return
+      } else {
+        updatedPlugins[pluginKey] = { connected: true }
       }
-      updatedPlugins[pluginKey] = { connected: true }
     }
 
     onUpdate({ plugins: updatedPlugins })
@@ -100,6 +109,10 @@ export default function Step3Plugins({ data, onUpdate }: any) {
 
   const selectedPlugins = Object.keys(data.plugins || {})
   const connectedPlugins = Object.keys(allPluginStatus).filter(key => isConnected(key))
+  
+  // Add ChatGPT to connected count since it's always available
+  const totalConnectedPlugins = [...connectedPlugins, 'chatgpt-research'].filter((value, index, self) => self.indexOf(value) === index).length
+  
   const availablePlugins = pluginList.filter(plugin => 
     !suggestedPlugins.includes(plugin.pluginKey)
   )
@@ -117,7 +130,7 @@ export default function Step3Plugins({ data, onUpdate }: any) {
       setAllPluginStatus(json || {})
       setConnectionError(null)
     } catch (err) {
-      console.error('❌ Failed to refresh plugin connections:', err)
+      console.error('Failed to refresh plugin connections:', err)
       setConnectionError('Failed to refresh connections')
     }
   }
@@ -155,7 +168,7 @@ export default function Step3Plugins({ data, onUpdate }: any) {
         
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-white rounded-lg p-3 border border-blue-200">
-            <div className="text-2xl font-bold text-blue-600">{connectedPlugins.length}</div>
+            <div className="text-2xl font-bold text-blue-600">{totalConnectedPlugins}</div>
             <div className="text-sm text-blue-800">Connected</div>
           </div>
           <div className="bg-white rounded-lg p-3 border border-blue-200">
@@ -370,7 +383,7 @@ export default function Step3Plugins({ data, onUpdate }: any) {
         <div className="flex items-start gap-3">
           <Lightbulb className="h-5 w-5 text-purple-600 mt-0.5 flex-shrink-0" />
           <div>
-            <p className="font-medium text-purple-900 mb-2">💡 Plugin selection tips</p>
+            <p className="font-medium text-purple-900 mb-2">Plugin selection tips</p>
             <ul className="text-sm text-purple-800 space-y-1">
               <li>• Select only the plugins your agent actually needs</li>
               <li>• Connect plugins in Settings before selecting them here</li>

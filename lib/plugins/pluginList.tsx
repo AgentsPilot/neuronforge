@@ -24,6 +24,7 @@ import {
   Play,
   Building2,
   Globe,
+  Bot,
 } from 'lucide-react'
 
 export type PluginCategory = 
@@ -36,6 +37,7 @@ export type PluginCategory =
   | 'ecommerce'
   | 'cloud'
   | 'social'
+  | 'ai'
 
 export type PluginDefinition = {
   pluginKey: string
@@ -47,6 +49,15 @@ export type PluginDefinition = {
 }
 
 export const pluginList: PluginDefinition[] = [
+  // AI & Research
+  {
+    pluginKey: 'chatgpt-research',
+    name: 'ChatGPT Research',
+    description: 'AI-powered web research and analysis for any topic using ChatGPT-4',
+    icon: <Bot className="w-5 h-5 text-green-600" />,
+    category: 'ai',
+    isPopular: true,
+  },
   // Communication
   {
     pluginKey: 'google-mail',
@@ -281,6 +292,11 @@ export const searchPlugins = (query: string): PluginDefinition[] => {
 
 // Category metadata for UI organization
 export const categoryMetadata: Record<PluginCategory, { label: string; description: string; icon: React.ReactNode }> = {
+  ai: {
+    label: 'AI & Research',
+    description: 'Artificial intelligence and research tools',
+    icon: <Bot className="w-4 h-4" />
+  },
   communication: {
     label: 'Communication',
     description: 'Email, messaging, and team collaboration',

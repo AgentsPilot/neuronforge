@@ -41,7 +41,7 @@ export default function AgentSandbox({
   inputSchema = [],
   outputSchema = [],
   userPrompt,
-  pluginsRequired = [], // Default to empty array to prevent null issues
+  pluginsRequired = [],
 }: AgentSandboxProps) {
   const [formData, setFormData] = useState<Record<string, any>>({})
   const [result, setResult] = useState<any | null>(null)
@@ -49,10 +49,10 @@ export default function AgentSandbox({
   const [connectedPluginKeys, setConnectedPluginKeys] = useState<string[]>([])
   const [sendStatus, setSendStatus] = useState<string | null>(null)
   const [executionTime, setExecutionTime] = useState<number | null>(null)
+  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({})
 
   const { user } = useAuth()
 
-  // Safely handle pluginsRequired that might be null/undefined
   const safePluginsRequired = pluginsRequired || []
 
   useEffect(() => {
@@ -68,11 +68,81 @@ export default function AgentSandbox({
     fetchConnectedPlugins()
   }, [user])
 
+  const filteredInputSchema = inputSchema.filter((field) => {
+    const name = field.name.toLowerCase()
+    return !connectedPluginKeys.some((plugin) =>
+      (BLOCKED_FIELDS_BY_PLUGIN[plugin] || []).includes(name)
+    )
+  })
+
+  // Helper function to check if a plugin is connected
+  const getPluginStatus = (plugin: string) => {
+    if (plugin === 'chatgpt-research') {
+      return true // Always connected since it uses platform API key
+    }
+    return connectedPluginKeys.includes(plugin)
+  }
+
+  // Validation function
+  const validateForm = (): boolean => {
+    const errors: Record<string, string> = {}
+    
+    filteredInputSchema.forEach(field => {
+      if (field.required) {
+        const value = formData[field.name]
+        
+        if (value === undefined || value === null || value === '') {
+          errors[field.name] = `${field.name} is required`
+        } else if (field.type === 'number' && isNaN(Number(value))) {
+          errors[field.name] = `${field.name} must be a valid number`
+        } else if (field.type === 'boolean' && typeof value !== 'boolean') {
+          // Boolean validation - checkboxes handle this automatically
+        }
+      }
+    })
+    
+    setValidationErrors(errors)
+    return Object.keys(errors).length === 0
+  }
+
+  // Check if form is valid (for button state)
+  const isFormValid = (): boolean => {
+    const requiredFields = filteredInputSchema.filter(field => field.required)
+    
+    return requiredFields.every(field => {
+      const value = formData[field.name]
+      if (value === undefined || value === null || value === '') return false
+      if (field.type === 'number' && isNaN(Number(value))) return false
+      return true
+    })
+  }
+
+  // Check for missing plugins - exclude ChatGPT Research since it doesn't need user connections
+  const missingPlugins = safePluginsRequired.filter(
+    (key) => !getPluginStatus(key)
+  )
+
+  const canRun = isFormValid() && missingPlugins.length === 0
+
   const handleInputChange = (name: string, value: any) => {
     setFormData((prev) => ({ ...prev, [name]: value }))
+    
+    // Clear validation error for this field when user starts typing
+    if (validationErrors[name]) {
+      setValidationErrors(prev => {
+        const newErrors = { ...prev }
+        delete newErrors[name]
+        return newErrors
+      })
+    }
   }
 
   const handleRun = async () => {
+    // Final validation before running
+    if (!validateForm()) {
+      return
+    }
+
     try {
       setLoading(true)
       setSendStatus(null)
@@ -81,11 +151,8 @@ export default function AgentSandbox({
       
       const startTime = Date.now()
 
-      const missingPlugins = safePluginsRequired.filter(
-        (key) => !connectedPluginKeys.includes(key)
-      )
       if (missingPlugins.length > 0) {
-        setResult({ error: `❌ Missing required plugin(s): ${missingPlugins.join(', ')}` })
+        setResult({ error: `Missing required plugin(s): ${missingPlugins.join(', ')}` })
         return
       }
 
@@ -106,9 +173,9 @@ export default function AgentSandbox({
         )?.type
 
         if (usedOutputType === 'SummaryBlock') {
-          setSendStatus('📝 SummaryBlock was generated and logged.')
+          setSendStatus('SummaryBlock was generated and logged.')
         } else if (usedOutputType === 'EmailDraft') {
-          setSendStatus('📤 Email draft was generated. Ready to send.')
+          setSendStatus('Email draft was generated. Ready to send.')
         }
       }
     } catch (err: any) {
@@ -128,9 +195,9 @@ export default function AgentSandbox({
     if (result && result.to && result.subject && result.body) {
       try {
         await sendEmailDraft(user?.id!, result)
-        setSendStatus('✅ Email sent successfully via Gmail.')
+        setSendStatus('Email sent successfully via Gmail.')
       } catch (error) {
-        setSendStatus('❌ Failed to send email.')
+        setSendStatus('Failed to send email.')
       }
     } else {
       alert('Missing required email fields.')
@@ -149,13 +216,6 @@ export default function AgentSandbox({
     reader.readAsDataURL(file)
   }
 
-  const filteredInputSchema = inputSchema.filter((field) => {
-    const name = field.name.toLowerCase()
-    return !connectedPluginKeys.some((plugin) =>
-      (BLOCKED_FIELDS_BY_PLUGIN[plugin] || []).includes(name)
-    )
-  })
-
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text)
   }
@@ -164,7 +224,7 @@ export default function AgentSandbox({
     <div className="bg-white border rounded-xl p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold text-gray-800">🧪 Agent Sandbox</h2>
+        <h2 className="text-xl font-semibold text-gray-800">Agent Sandbox</h2>
         {safePluginsRequired.length > 0 && (
           <div className="text-sm text-gray-500">
             {safePluginsRequired.length} plugin{safePluginsRequired.length > 1 ? 's' : ''} required
@@ -178,7 +238,7 @@ export default function AgentSandbox({
           <h3 className="font-medium text-blue-900 mb-2">Required Plugins:</h3>
           <div className="flex flex-wrap gap-2">
             {safePluginsRequired.map(plugin => {
-              const isConnected = connectedPluginKeys.includes(plugin)
+              const isConnected = getPluginStatus(plugin)
               return (
                 <span
                   key={plugin}
@@ -193,6 +253,11 @@ export default function AgentSandbox({
               )
             })}
           </div>
+          {missingPlugins.length > 0 && (
+            <p className="text-red-700 text-sm mt-2">
+              Connect the missing plugins before running the agent.
+            </p>
+          )}
         </div>
       )}
 
@@ -215,9 +280,13 @@ export default function AgentSandbox({
                 {field.description && (
                   <p className="text-xs text-gray-500">{field.description}</p>
                 )}
+                
+                {/* Form Input */}
                 {field.type === 'enum' ? (
                   <select
-                    className="w-full border border-gray-300 px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className={`w-full border px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                      validationErrors[field.name] ? 'border-red-500' : 'border-gray-300'
+                    }`}
                     onChange={(e) => handleInputChange(field.name, e.target.value)}
                     value={formData[field.name] || ''}
                   >
@@ -231,11 +300,13 @@ export default function AgentSandbox({
                     <input
                       type="file"
                       accept="application/pdf,image/*,.txt,.csv"
-                      className="w-full border border-gray-300 px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className={`w-full border px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                        validationErrors[field.name] ? 'border-red-500' : 'border-gray-300'
+                      }`}
                       onChange={(e) => handleFileUpload(e, field.name)}
                     />
                     {formData[field.name] && (
-                      <p className="text-xs text-green-600 mt-1">✅ File uploaded</p>
+                      <p className="text-xs text-green-600 mt-1">File uploaded</p>
                     )}
                   </div>
                 ) : field.type === 'boolean' ? (
@@ -251,11 +322,18 @@ export default function AgentSandbox({
                 ) : (
                   <input
                     type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
-                    className="w-full border border-gray-300 px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className={`w-full border px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                      validationErrors[field.name] ? 'border-red-500' : 'border-gray-300'
+                    }`}
                     placeholder={`Enter ${field.name.toLowerCase()}`}
                     onChange={(e) => handleInputChange(field.name, e.target.value)}
                     value={formData[field.name] || ''}
                   />
+                )}
+                
+                {/* Validation Error */}
+                {validationErrors[field.name] && (
+                  <p className="text-red-500 text-xs mt-1">{validationErrors[field.name]}</p>
                 )}
               </div>
             ))}
@@ -266,9 +344,13 @@ export default function AgentSandbox({
       {/* Run Button */}
       <div className="flex items-center gap-4">
         <button
-          className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          className={`px-6 py-2 rounded-lg flex items-center gap-2 transition-colors ${
+            canRun && !loading
+              ? 'bg-blue-600 text-white hover:bg-blue-700'
+              : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+          }`}
           onClick={handleRun}
-          disabled={loading}
+          disabled={!canRun || loading}
         >
           {loading ? (
             <>
@@ -276,9 +358,21 @@ export default function AgentSandbox({
               Running...
             </>
           ) : (
-            '▶️ Run Agent'
+            'Run Agent'
           )}
         </button>
+        
+        {/* Validation Summary */}
+        {!canRun && !loading && (
+          <div className="text-sm text-gray-500">
+            {missingPlugins.length > 0 
+              ? 'Missing required plugins'
+              : !isFormValid() 
+              ? 'Fill all required fields to run'
+              : ''
+            }
+          </div>
+        )}
         
         {executionTime && (
           <span className="text-sm text-gray-500">
@@ -290,9 +384,9 @@ export default function AgentSandbox({
       {/* Status Messages */}
       {sendStatus && (
         <div className={`p-3 rounded-lg border ${
-          sendStatus.includes('✅') 
+          sendStatus.includes('successfully') 
             ? 'bg-green-50 border-green-200 text-green-800' 
-            : sendStatus.includes('❌')
+            : sendStatus.includes('Failed')
             ? 'bg-red-50 border-red-200 text-red-800'
             : 'bg-blue-50 border-blue-200 text-blue-800'
         }`}>
@@ -315,7 +409,7 @@ export default function AgentSandbox({
                 className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 rounded"
                 title="Copy result"
               >
-                📋 Copy
+                Copy
               </button>
             )}
           </div>
@@ -359,7 +453,7 @@ export default function AgentSandbox({
                   className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center gap-2"
                   onClick={handleSendEmail}
                 >
-                  📧 Send Email via Gmail
+                  Send Email via Gmail
                 </button>
               )}
 
@@ -368,7 +462,7 @@ export default function AgentSandbox({
                   className="bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-800 flex items-center gap-2"
                   onClick={handleDownloadPDF}
                 >
-                  📄 Download PDF
+                  Download PDF
                 </button>
               )}
             </div>

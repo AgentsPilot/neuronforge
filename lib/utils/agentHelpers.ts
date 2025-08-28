@@ -1,6 +1,122 @@
-// utils/agentHelpers.ts - Enhanced version with execution capabilities
-import { AgentLibraryItem, AgentExecutor, createExecutableSmartAgent } from '../types/agents';
-import { WorkflowStep } from '../types/workflow';
+// utils/agentHelpers.ts - Self-contained version with local type definitions
+// Local type definitions to avoid import issues
+interface AgentInput {
+  name: string;
+  displayName: string;
+  type: string;
+  required: boolean;
+  description: string;
+}
+
+interface AgentOutput {
+  name: string;
+  displayName: string;
+  type: string;
+  required: boolean;
+  description: string;
+}
+
+interface ConfigurationOption {
+  value: string;
+  label: string;
+}
+
+interface ConfigurationField {
+  key: string;
+  label: string;
+  type: string;
+  required: boolean;
+  options?: ConfigurationOption[];
+  defaultValue?: any;
+}
+
+interface ExecutionResult {
+  success: boolean;
+  outputs: Record<string, any>;
+  executionTime: number;
+  integrationsCalled: string[];
+  metadata: {
+    recordsProcessed: number;
+    apiCallsMade: number;
+    dataSize: number;
+  };
+}
+
+interface ValidationResult {
+  isValid: boolean;
+  errors: Array<{
+    field: string;
+    message: string;
+    code: string;
+  }>;
+}
+
+interface HealthCheckResult {
+  healthy: boolean;
+  issues: Array<{
+    severity: 'error' | 'warning';
+    message: string;
+    component: string;
+  }>;
+  integrationStatus: Record<string, {
+    connected: boolean;
+    lastChecked: Date;
+    error?: string;
+  }>;
+}
+
+export interface AgentExecutor {
+  execute(inputs: Record<string, any>, configuration?: Record<string, any>): Promise<ExecutionResult>;
+  validateInputs(inputs: Record<string, any>): Promise<ValidationResult>;
+  getRequiredIntegrations(): string[];
+  healthCheck(configuration?: Record<string, any>): Promise<HealthCheckResult>;
+}
+
+export interface AgentLibraryItem {
+  id: string;
+  name: string;
+  description: string;
+  type: 'smart' | 'ai-generated';
+  category: string;
+  tags: string[];
+  inputs: AgentInput[];
+  outputs: AgentOutput[];
+  requiredIntegrations: string[];
+  configurationSchema: ConfigurationField[];
+  executor?: AgentExecutor;
+}
+
+interface WorkflowStepInput {
+  name: string;
+  type: string;
+  required?: boolean;
+  description?: string;
+}
+
+interface WorkflowStepOutput {
+  name: string;
+  type: string;
+  required?: boolean;
+  description?: string;
+}
+
+export interface WorkflowStep {
+  id?: string;
+  description: string;
+  suggestedAgent?: string;
+  inputs?: WorkflowStepInput[];
+  outputs?: WorkflowStepOutput[];
+}
+
+// Factory function to create executable smart agents
+export const createExecutableSmartAgent = (
+  baseAgent: Omit<AgentLibraryItem, 'executor'>, 
+  executorFactory: (agent: AgentLibraryItem) => AgentExecutor
+): AgentLibraryItem => {
+  const agent = baseAgent as AgentLibraryItem;
+  agent.executor = executorFactory(agent);
+  return agent;
+};
 
 export const createSmartAgentLibrary = (workflowDescription: string): AgentLibraryItem[] => {
   const baseAgents = [
@@ -85,6 +201,56 @@ export const createSmartAgentLibrary = (workflowDescription: string): AgentLibra
           { value: 'create_new', label: 'Always Create New' }
         ]}
       ]
+    },
+
+    {
+      id: 'data-validator',
+      name: 'Data Validator',
+      description: 'Validates and cleans data according to specified rules',
+      type: 'smart' as const,
+      category: 'Data Processing',
+      tags: ['validation', 'data-quality', 'cleaning'],
+      inputs: [
+        { name: 'input_data', displayName: 'Input Data', type: 'json', required: true, description: 'Data to validate and clean' },
+        { name: 'validation_rules', displayName: 'Validation Rules', type: 'json', required: true, description: 'Rules for data validation' }
+      ],
+      outputs: [
+        { name: 'valid_data', displayName: 'Valid Data', type: 'json', required: true, description: 'Data that passed validation' },
+        { name: 'invalid_data', displayName: 'Invalid Data', type: 'json', required: false, description: 'Data that failed validation' },
+        { name: 'validation_report', displayName: 'Validation Report', type: 'json', required: true, description: 'Detailed validation results' }
+      ],
+      requiredIntegrations: [],
+      configurationSchema: [
+        { key: 'strict_mode', label: 'Strict Mode', type: 'boolean', required: false, defaultValue: false },
+        { key: 'auto_fix', label: 'Auto Fix Issues', type: 'boolean', required: false, defaultValue: true }
+      ]
+    },
+
+    {
+      id: 'report-generator',
+      name: 'Report Generator',
+      description: 'Generates formatted reports from structured data',
+      type: 'smart' as const,
+      category: 'Reporting',
+      tags: ['reports', 'formatting', 'visualization'],
+      inputs: [
+        { name: 'data_source', displayName: 'Data Source', type: 'json', required: true, description: 'Source data for the report' },
+        { name: 'report_template', displayName: 'Report Template', type: 'text', required: false, description: 'Template for report formatting' }
+      ],
+      outputs: [
+        { name: 'generated_report', displayName: 'Generated Report', type: 'text', required: true, description: 'The formatted report' },
+        { name: 'report_metrics', displayName: 'Report Metrics', type: 'json', required: true, description: 'Summary metrics from the data' },
+        { name: 'chart_data', displayName: 'Chart Data', type: 'json', required: false, description: 'Data formatted for charts' }
+      ],
+      requiredIntegrations: ['google-sheets', 'excel'],
+      configurationSchema: [
+        { key: 'output_format', label: 'Output Format', type: 'select', required: true, options: [
+          { value: 'pdf', label: 'PDF' },
+          { value: 'html', label: 'HTML' },
+          { value: 'markdown', label: 'Markdown' }
+        ]},
+        { key: 'include_charts', label: 'Include Charts', type: 'boolean', required: false, defaultValue: true }
+      ]
     }
   ];
 
@@ -101,6 +267,10 @@ const createAgentExecutor = (agent: AgentLibraryItem): AgentExecutor => {
       return createInvoiceExtractorExecutor(agent);
     case 'crm-updater':
       return createCRMUpdaterExecutor(agent);
+    case 'data-validator':
+      return createDataValidatorExecutor(agent);
+    case 'report-generator':
+      return createReportGeneratorExecutor(agent);
     default:
       return createGenericExecutor(agent);
   }
@@ -148,7 +318,7 @@ const createEmailScannerExecutor = (agent: AgentLibraryItem): AgentExecutor => (
   },
 
   async validateInputs(inputs) {
-    const errors: any[] = [];
+    const errors: Array<{ field: string; message: string; code: string }> = [];
     
     if (!inputs.email_folder) {
       errors.push({
@@ -180,7 +350,7 @@ const createEmailScannerExecutor = (agent: AgentLibraryItem): AgentExecutor => (
           }
         }
       };
-    } catch (error) {
+    } catch (error: any) {
       return {
         healthy: false,
         issues: [{
@@ -241,7 +411,7 @@ const createInvoiceExtractorExecutor = (agent: AgentLibraryItem): AgentExecutor 
   },
 
   async validateInputs(inputs) {
-    const errors: any[] = [];
+    const errors: Array<{ field: string; message: string; code: string }> = [];
     
     if (!inputs.documents || (Array.isArray(inputs.documents) && inputs.documents.length === 0)) {
       errors.push({
@@ -308,7 +478,7 @@ const createCRMUpdaterExecutor = (agent: AgentLibraryItem): AgentExecutor => ({
   },
 
   async validateInputs(inputs) {
-    const errors: any[] = [];
+    const errors: Array<{ field: string; message: string; code: string }> = [];
     
     if (!inputs.record_data) {
       errors.push({
@@ -345,6 +515,165 @@ const createCRMUpdaterExecutor = (agent: AgentLibraryItem): AgentExecutor => ({
           lastChecked: new Date()
         }
       }
+    };
+  }
+});
+
+const createDataValidatorExecutor = (agent: AgentLibraryItem): AgentExecutor => ({
+  async execute(inputs, configuration) {
+    const startTime = Date.now();
+    const { input_data, validation_rules } = inputs;
+    const strictMode = configuration?.strict_mode || false;
+    const autoFix = configuration?.auto_fix || true;
+    
+    await simulateAPICall('data-validation', 800);
+    
+    const dataArray = Array.isArray(input_data) ? input_data : [input_data];
+    const validData = dataArray.filter(() => Math.random() > 0.2); // 80% pass rate
+    const invalidData = dataArray.filter(() => Math.random() > 0.8); // 20% fail rate
+    
+    const validationReport = {
+      totalRecords: dataArray.length,
+      validRecords: validData.length,
+      invalidRecords: invalidData.length,
+      validationRate: (validData.length / dataArray.length * 100).toFixed(2) + '%',
+      issues: invalidData.map((item, i) => ({
+        recordIndex: i,
+        issues: ['Invalid email format', 'Missing required field'][Math.floor(Math.random() * 2)]
+      }))
+    };
+
+    return {
+      success: true,
+      outputs: {
+        valid_data: validData,
+        invalid_data: invalidData,
+        validation_report: validationReport
+      },
+      executionTime: Date.now() - startTime,
+      integrationsCalled: [],
+      metadata: {
+        recordsProcessed: dataArray.length,
+        apiCallsMade: 1,
+        dataSize: dataArray.length * 256
+      }
+    };
+  },
+
+  async validateInputs(inputs) {
+    const errors: Array<{ field: string; message: string; code: string }> = [];
+    
+    if (!inputs.input_data) {
+      errors.push({
+        field: 'input_data',
+        message: 'Input data is required',
+        code: 'REQUIRED_FIELD_MISSING'
+      });
+    }
+
+    if (!inputs.validation_rules) {
+      errors.push({
+        field: 'validation_rules',
+        message: 'Validation rules are required',
+        code: 'REQUIRED_FIELD_MISSING'
+      });
+    }
+
+    return { isValid: errors.length === 0, errors };
+  },
+
+  getRequiredIntegrations() {
+    return [];
+  },
+
+  async healthCheck() {
+    return {
+      healthy: true,
+      issues: [],
+      integrationStatus: {}
+    };
+  }
+});
+
+const createReportGeneratorExecutor = (agent: AgentLibraryItem): AgentExecutor => ({
+  async execute(inputs, configuration) {
+    const startTime = Date.now();
+    const { data_source, report_template } = inputs;
+    const outputFormat = configuration?.output_format || 'html';
+    const includeCharts = configuration?.include_charts || true;
+    
+    await simulateAPICall('report-generation', 2000);
+    
+    const reportMetrics = {
+      totalRecords: Array.isArray(data_source) ? data_source.length : 1,
+      generatedAt: new Date().toISOString(),
+      format: outputFormat,
+      chartsIncluded: includeCharts
+    };
+
+    const chartData = includeCharts ? [
+      { label: 'Category A', value: Math.floor(Math.random() * 100) },
+      { label: 'Category B', value: Math.floor(Math.random() * 100) },
+      { label: 'Category C', value: Math.floor(Math.random() * 100) }
+    ] : null;
+
+    const generatedReport = `
+# Data Report - ${new Date().toLocaleDateString()}
+
+## Summary
+This report contains analysis of ${reportMetrics.totalRecords} records.
+
+## Key Metrics
+- Total Records: ${reportMetrics.totalRecords}
+- Generated: ${reportMetrics.generatedAt}
+- Format: ${reportMetrics.format}
+
+${includeCharts ? '## Charts\nCharts have been generated and included in the chart_data output.' : ''}
+
+## Conclusion
+Report generation completed successfully.
+    `.trim();
+
+    return {
+      success: true,
+      outputs: {
+        generated_report: generatedReport,
+        report_metrics: reportMetrics,
+        chart_data: chartData
+      },
+      executionTime: Date.now() - startTime,
+      integrationsCalled: [],
+      metadata: {
+        recordsProcessed: reportMetrics.totalRecords,
+        apiCallsMade: 1,
+        dataSize: generatedReport.length
+      }
+    };
+  },
+
+  async validateInputs(inputs) {
+    const errors: Array<{ field: string; message: string; code: string }> = [];
+    
+    if (!inputs.data_source) {
+      errors.push({
+        field: 'data_source',
+        message: 'Data source is required',
+        code: 'REQUIRED_FIELD_MISSING'
+      });
+    }
+
+    return { isValid: errors.length === 0, errors };
+  },
+
+  getRequiredIntegrations() {
+    return [];
+  },
+
+  async healthCheck() {
+    return {
+      healthy: true,
+      issues: [],
+      integrationStatus: {}
     };
   }
 });
@@ -391,7 +720,7 @@ const createGenericExecutor = (agent: AgentLibraryItem): AgentExecutor => ({
   },
 
   async validateInputs(inputs) {
-    const errors: any[] = [];
+    const errors: Array<{ field: string; message: string; code: string }> = [];
     
     agent.inputs.forEach(input => {
       if (input.required && !inputs[input.name]) {
@@ -442,8 +771,20 @@ export const generateAIAgents = (steps: WorkflowStep[]): AgentLibraryItem[] => {
       type: 'ai-generated' as const,
       category: 'AI Generated',
       tags: ['ai-generated', 'auto-created'],
-      inputs: step.inputs || [],
-      outputs: step.outputs || [],
+      inputs: step.inputs?.map(input => ({
+        name: input.name,
+        displayName: input.name,
+        type: input.type,
+        required: input.required || false,
+        description: input.description || ''
+      })) || [],
+      outputs: step.outputs?.map(output => ({
+        name: output.name,
+        displayName: output.name,
+        type: output.type,
+        required: output.required || false,
+        description: output.description || ''
+      })) || [],
       requiredIntegrations: [],
       configurationSchema: []
     };
