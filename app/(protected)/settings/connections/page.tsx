@@ -1,17 +1,56 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Input } from '@/components/ui/input'
 import { pluginList as availablePlugins } from '@/lib/plugins/pluginList'
 import PluginCard from '@/components/settings/PluginCard'
+import { supabase } from '@/lib/supabaseClient'
+import { useAuth } from '@/components/UserProvider'
 
 export default function ConnectionsPage() {
   const [search, setSearch] = useState('')
+  const [connectedPlugins, setConnectedPlugins] = useState<string[]>([])
+  const { user } = useAuth()
+
+  // Fetch connected plugins
+  useEffect(() => {
+    const fetchConnectedPlugins = async () => {
+      if (!user?.id) return
+
+      const { data, error } = await supabase
+        .from('plugin_connections')
+        .select('plugin_key')
+        .eq('user_id', user.id)
+        .eq('status', 'active')
+
+      if (!error && data) {
+        setConnectedPlugins(data.map(connection => connection.plugin_key))
+      }
+    }
+
+    fetchConnectedPlugins()
+  }, [user])
 
   const filteredPlugins = availablePlugins.filter((plugin) =>
     plugin.name.toLowerCase().includes(search.toLowerCase()) ||
     plugin.description.toLowerCase().includes(search.toLowerCase())
   )
+
+  // Sort plugins: connected ones first, then alphabetical
+  const sortedPlugins = filteredPlugins.sort((a, b) => {
+    const aConnected = connectedPlugins.includes(a.pluginKey)
+    const bConnected = connectedPlugins.includes(b.pluginKey)
+    
+    if (aConnected && !bConnected) return -1
+    if (!aConnected && bConnected) return 1
+    return a.name.localeCompare(b.name)
+  })
+
+  const connectedCount = sortedPlugins.filter(plugin => 
+    connectedPlugins.includes(plugin.pluginKey)
+  ).length
+
+  const availableCount = sortedPlugins.length - connectedCount
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
@@ -29,6 +68,16 @@ export default function ConnectionsPage() {
           <p className="text-lg text-slate-600 max-w-2xl mx-auto">
             Integrate your favorite tools and services to streamline your workflow and boost productivity
           </p>
+          
+          {/* Connection Stats */}
+          <div className="mt-6 flex justify-center gap-6">
+            <div className="bg-green-50 px-4 py-2 rounded-full border border-green-200">
+              <span className="text-green-700 font-semibold">{connectedCount} Connected</span>
+            </div>
+            <div className="bg-blue-50 px-4 py-2 rounded-full border border-blue-200">
+              <span className="text-blue-700 font-semibold">{availableCount} Available</span>
+            </div>
+          </div>
         </div>
 
         {/* Search Section */}
@@ -63,7 +112,7 @@ export default function ConnectionsPage() {
               <p className="text-sm text-slate-500">
                 {search ? (
                   <>
-                    Showing <span className="font-semibold text-blue-600">{filteredPlugins.length}</span> of {availablePlugins.length} integrations
+                    Showing <span className="font-semibold text-blue-600">{sortedPlugins.length}</span> of {availablePlugins.length} integrations
                   </>
                 ) : (
                   <>
@@ -79,6 +128,9 @@ export default function ConnectionsPage() {
         {!search && (
           <div className="mb-12">
             <div className="flex flex-wrap justify-center gap-3">
+              <button className="px-6 py-2 bg-green-100 hover:bg-green-200 border border-green-300 rounded-full text-green-800 font-medium transition-all duration-200 hover:shadow-md hover:scale-105">
+                Connected ({connectedCount})
+              </button>
               {['Popular', 'Productivity', 'Communication', 'Storage', 'Development'].map((category) => (
                 <button
                   key={category}
@@ -93,36 +145,114 @@ export default function ConnectionsPage() {
 
         {/* Plugins Grid */}
         <div className="relative">
-          {filteredPlugins.length > 0 ? (
+          {sortedPlugins.length > 0 ? (
             <>
-              {/* Grid Container */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {filteredPlugins.map((plugin, index) => (
-                  <div
-                    key={plugin.pluginKey}
-                    className="animate-in fade-in-0 slide-in-from-bottom-4 duration-300"
-                    style={{ animationDelay: `${index * 50}ms` }}
-                  >
-                    <div className="group h-full">
-                      <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.02] border border-white/40 h-full">
-                        <PluginCard
-                          pluginKey={plugin.pluginKey}
-                          pluginName={plugin.pluginName}
-                          description={plugin.description}
-                          icon={plugin.icon}
-                        />
-                      </div>
-                    </div>
+              {/* Connected Apps Section */}
+              {connectedCount > 0 && !search && (
+                <div className="mb-12">
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                    <h2 className="text-xl font-semibold text-slate-800">Connected Apps</h2>
+                    <div className="flex-1 h-px bg-gradient-to-r from-green-200 to-transparent"></div>
                   </div>
-                ))}
-              </div>
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    {sortedPlugins
+                      .filter(plugin => connectedPlugins.includes(plugin.pluginKey))
+                      .map((plugin, index) => (
+                      <div
+                        key={plugin.pluginKey}
+                        className="animate-in fade-in-0 slide-in-from-bottom-4 duration-300"
+                        style={{ animationDelay: `${index * 50}ms` }}
+                      >
+                        <div className="group h-full">
+                          <div className="bg-gradient-to-br from-green-50 to-white border-2 border-green-200 rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.02] h-full relative">
+                            <div className="absolute top-3 right-3">
+                              <div className="w-3 h-3 bg-green-500 rounded-full border-2 border-white shadow-sm"></div>
+                            </div>
+                            <PluginCard
+                              pluginKey={plugin.pluginKey}
+                              pluginName={plugin.name}
+                              description={plugin.description}
+                              icon={plugin.icon}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
-              {/* Load More Button (if needed) */}
-              {filteredPlugins.length > 12 && (
-                <div className="text-center mt-12">
-                  <button className="px-8 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105">
-                    Load More Integrations
-                  </button>
+              {/* Available Apps Section */}
+              {availableCount > 0 && (
+                <div>
+                  {!search && connectedCount > 0 && (
+                    <div className="flex items-center gap-3 mb-6">
+                      <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                      <h2 className="text-xl font-semibold text-slate-800">Available Apps</h2>
+                      <div className="flex-1 h-px bg-gradient-to-r from-blue-200 to-transparent"></div>
+                    </div>
+                  )}
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    {sortedPlugins
+                      .filter(plugin => !connectedPlugins.includes(plugin.pluginKey))
+                      .map((plugin, index) => (
+                      <div
+                        key={plugin.pluginKey}
+                        className="animate-in fade-in-0 slide-in-from-bottom-4 duration-300"
+                        style={{ animationDelay: `${(index + connectedCount) * 50}ms` }}
+                      >
+                        <div className="group h-full">
+                          <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.02] border border-white/40 h-full">
+                            <PluginCard
+                              pluginKey={plugin.pluginKey}
+                              pluginName={plugin.name}
+                              description={plugin.description}
+                              icon={plugin.icon}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Search Results - All Apps */}
+              {search && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                  {sortedPlugins.map((plugin, index) => {
+                    const isConnected = connectedPlugins.includes(plugin.pluginKey)
+                    return (
+                      <div
+                        key={plugin.pluginKey}
+                        className="animate-in fade-in-0 slide-in-from-bottom-4 duration-300"
+                        style={{ animationDelay: `${index * 50}ms` }}
+                      >
+                        <div className="group h-full">
+                          <div className={`rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.02] h-full relative ${
+                            isConnected 
+                              ? 'bg-gradient-to-br from-green-50 to-white border-2 border-green-200'
+                              : 'bg-white/70 backdrop-blur-sm border border-white/40'
+                          }`}>
+                            {isConnected && (
+                              <div className="absolute top-3 right-3">
+                                <div className="w-3 h-3 bg-green-500 rounded-full border-2 border-white shadow-sm"></div>
+                              </div>
+                            )}
+                            <PluginCard
+                              pluginKey={plugin.pluginKey}
+                              pluginName={plugin.name}
+                              description={plugin.description}
+                              icon={plugin.icon}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </>

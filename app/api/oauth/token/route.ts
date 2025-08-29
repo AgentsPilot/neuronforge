@@ -1,6 +1,7 @@
 // app/api/oauth/token/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { gmailStrategy } from '@/lib/plugins/strategies/gmailPluginStrategy'
+import { googleDriveStrategy } from '@/lib/plugins/strategies/googleDrivePluginStrategy'
 import { createServerClient } from '@supabase/ssr'
 
 export async function GET(request: NextRequest) {
@@ -10,7 +11,7 @@ export async function GET(request: NextRequest) {
     const state = searchParams.get('state')
     const plugin = searchParams.get('plugin')
 
-    console.log('🔄 API OAuth token exchange:', { hasCode: !!code, hasState: !!state, plugin })
+    console.log('OAuth token exchange:', { hasCode: !!code, hasState: !!state, plugin })
 
     if (!code || !state) {
       return NextResponse.json(
@@ -26,22 +27,33 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Handle Gmail plugin specifically
+    // Create server-side Supabase client
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      {
+        cookies: {
+          get: () => undefined,
+          set: () => {},
+          remove: () => {},
+        },
+      }
+    )
+
+    // Handle Gmail plugin
     if (plugin === 'google-mail') {
-      // Create server-side Supabase client (following your existing pattern)
-      const supabase = createServerClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!,
-        {
-          cookies: {
-            get: () => undefined,
-            set: () => {},
-            remove: () => {},
-          },
-        }
-      )
-      
       const result = await gmailStrategy.handleOAuthCallback({
+        code,
+        state,
+        supabase
+      })
+
+      return NextResponse.json({ success: true, data: result })
+    }
+
+    // Handle Google Drive plugin
+    if (plugin === 'google-drive') {
+      const result = await googleDriveStrategy.handleOAuthCallback({
         code,
         state,
         supabase
@@ -57,7 +69,7 @@ export async function GET(request: NextRequest) {
     )
 
   } catch (error) {
-    console.error('❌ API OAuth token exchange error:', error)
+    console.error('OAuth token exchange error:', error)
     
     return NextResponse.json(
       { 

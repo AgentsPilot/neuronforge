@@ -4,7 +4,7 @@ import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
 import { runAgentWithContext } from '@/lib/utils/runAgentWithContext'
-import { extractPdfTextFromBase64 } from '@/lib/utils/extractPdfTextFromBase64' // ✅
+import { extractPdfTextFromBase64 } from '@/lib/utils/extractPdfTextFromBase64'
 
 export const runtime = 'nodejs'
 
@@ -45,7 +45,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
   }
 
-  // ✅ Extract text from uploaded PDF (if exists)
+  // Extract text from uploaded PDF (if exists)
   try {
     for (const key in input_variables) {
       const value = input_variables[key]
@@ -73,19 +73,86 @@ export async function POST(req: Request) {
     })
 
     console.log('🪵 Inserting agent log...')
-    const { error: logInsertError } = await supabase.from('agent_logs').insert({
-      agent_id,
-      user_id: user.id,
-      run_output: parsed_output ? JSON.stringify(parsed_output) : null,
-      full_output: message ? { message } : null,
-      status: send_status,
-      created_at: new Date().toISOString(),
-    })
+    const { data: logData, error: logInsertError } = await supabase
+      .from('agent_logs')
+      .insert({
+        agent_id,
+        user_id: user.id,
+        run_output: parsed_output ? JSON.stringify(parsed_output) : null,
+        full_output: message ? { message } : null,
+        status: send_status,
+        created_at: new Date().toISOString(),
+      })
+      .select('id')
+      .single()
 
     if (logInsertError) {
       console.error('❌ Failed to insert log into agent_logs:', logInsertError)
     } else {
       console.log('✅ Agent log inserted successfully')
+
+      // Insert output context if we have a log ID and output data
+      if (logData?.id && (message || parsed_output || pluginContext)) {
+        console.log('📝 Inserting agent output context...')
+        
+        const contextEntries = []
+        
+        // Add message as context if it exists
+        if (message) {
+          contextEntries.push({
+            user_id: user.id,
+            source_agent_id: agent_id,
+            run_id: logData.id,
+            context_key: 'agent_message',
+            context_data: { message }
+          })
+        }
+        
+        // Add parsed output as context if it exists
+        if (parsed_output) {
+          contextEntries.push({
+            user_id: user.id,
+            source_agent_id: agent_id,
+            run_id: logData.id,
+            context_key: 'parsed_output',
+            context_data: parsed_output
+          })
+        }
+        
+        // Add plugin context if it exists
+        if (pluginContext && Object.keys(pluginContext).length > 0) {
+          contextEntries.push({
+            user_id: user.id,
+            source_agent_id: agent_id,
+            run_id: logData.id,
+            context_key: 'plugin_context',
+            context_data: pluginContext
+          })
+        }
+        
+        // Add input variables as context for future reference
+        if (input_variables && Object.keys(input_variables).length > 0) {
+          contextEntries.push({
+            user_id: user.id,
+            source_agent_id: agent_id,
+            run_id: logData.id,
+            context_key: 'input_variables',
+            context_data: input_variables
+          })
+        }
+
+        if (contextEntries.length > 0) {
+          const { error: contextInsertError } = await supabase
+            .from('agent_output_context')
+            .insert(contextEntries)
+
+          if (contextInsertError) {
+            console.error('❌ Failed to insert agent output context:', contextInsertError)
+          } else {
+            console.log('✅ Agent output context inserted successfully')
+          }
+        }
+      }
     }
 
     console.log('📊 Updating agent_stats...')

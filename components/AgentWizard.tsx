@@ -235,7 +235,8 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
       setError(`Failed to save agent: ${error.message}`)
     } else {
       console.log('✅ Successfully saved agent:', data)
-      router.push('/agents')
+      const savedAgentId = agentId || data[0]?.id
+      router.push(`/agents/${savedAgentId}`)
     }
 
     setLoading(false)
@@ -271,13 +272,14 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
       result = await supabase.from('agents').insert([payload]).select()
     }
 
-    const { error } = result
+    const { error, data } = result
 
     if (error) {
       console.error('❌ Draft save error:', error)
       setError(`Failed to save draft: ${error.message}`)
     } else {
-      router.push('/agents')
+      const savedAgentId = agentId || data[0]?.id
+      router.push(`/agents/${savedAgentId}`)
     }
 
     setLoading(false)
@@ -311,7 +313,7 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button
-              onClick={() => router.push('/agents')}
+              onClick={() => router.push(agentId ? `/agents/${agentId}` : '/agents')}
               className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
             >
               <ArrowLeft className="h-5 w-5 text-gray-600" />

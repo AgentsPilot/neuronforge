@@ -2,6 +2,8 @@
 import { gmailStrategy } from './strategies/gmailPluginStrategy'
 import { gmailDataStrategy } from './strategies/gmailDataStrategy'
 import { chatgptResearchStrategy } from './strategies/chatgptResearchStrategy'
+import { googleDriveDataStrategy } from './strategies/googleDriveDataStrategy'
+import { googleDriveStrategy } from './strategies/googleDrivePluginStrategy'
 
 export interface PluginStrategy {
   pluginKey: string
@@ -17,9 +19,11 @@ export const pluginRegistry: Record<string, PluginStrategy> = {
   'google-mail': gmailDataStrategy,
   'gmail': gmailDataStrategy,
   'chatgpt-research': chatgptResearchStrategy,
+  'google-drive': googleDriveDataStrategy,
   
   // Keep OAuth connection available if needed separately
   'google-mail-connect': gmailStrategy,
+  'google-drive-connect': googleDriveStrategy,
 }
 
 export const isPluginAvailable = (pluginKey: string): boolean => {
@@ -30,13 +34,16 @@ export const getAvailablePlugins = (): string[] => {
   return Object.keys(pluginRegistry).filter(key => isPluginAvailable(key))
 }
 
-// Add this to your component or wherever you're testing
+// Debug logging
 console.log('=== DEBUGGING PLUGIN REGISTRY ===')
 console.log('All plugins in registry:', Object.keys(pluginRegistry))
 console.log('ChatGPT plugin exists:', 'chatgpt-research' in pluginRegistry)
+console.log('Google Drive plugin exists:', 'google-drive' in pluginRegistry)
 console.log('ChatGPT plugin details:', pluginRegistry['chatgpt-research'])
 console.log('ChatGPT has connect method:', !!pluginRegistry['chatgpt-research']?.connect)
-console.log('isPluginAvailable result:', isPluginAvailable('chatgpt-research'))
+console.log('Google Drive has connect method:', !!pluginRegistry['google-drive']?.connect)
+console.log('isPluginAvailable ChatGPT:', isPluginAvailable('chatgpt-research'))
+console.log('isPluginAvailable Google Drive:', isPluginAvailable('google-drive'))
 console.log('Available plugins:', getAvailablePlugins())
 
 // Test the specific functions

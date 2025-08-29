@@ -124,10 +124,8 @@ const SidebarSection = ({
   )
 }
 
-export default ProtectedLayout
-
-function ProtectedLayout({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth()
+export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth() // Add loading from useAuth
   const pathname = usePathname()
   const router = useRouter()
   const [isCollapsed, setIsCollapsed] = useState(false)
@@ -143,13 +141,7 @@ function ProtectedLayout({ children }: { children: React.ReactNode }) {
     router.push('/login')
   }
 
-  useEffect(() => {
-    if (!user) {
-      redirect('/login')
-    }
-  }, [user])
-
-  // Fetch agent count from Supabase
+  // Fetch agent count from Supabase - MOVED TO TOP
   useEffect(() => {
     let cancelled = false
     async function fetchAgentCount() {
@@ -245,7 +237,7 @@ function ProtectedLayout({ children }: { children: React.ReactNode }) {
     }
   }
 
-  // Debounced search
+  // Debounced search - MOVED TO TOP
   useEffect(() => {
     const debounceTimer = setTimeout(() => {
       handleSearch(searchQuery)
@@ -254,14 +246,30 @@ function ProtectedLayout({ children }: { children: React.ReactNode }) {
     return () => clearTimeout(debounceTimer)
   }, [searchQuery, user])
 
+  // Show loading spinner while auth state is being determined
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-50">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Only redirect after loading is complete and we know user is not authenticated
+  if (!user) {
+    redirect('/login')
+    return null
+  }
+
   const handleSearchResultClick = (agentId: string) => {
     setShowSearchResults(false)
     setSearchQuery('')
     setIsMobileOpen(false)
     router.push(`/agents/${agentId}`)
   }
-
-  if (!user) return null
 
   const sidebarContent = (
     <>

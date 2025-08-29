@@ -53,7 +53,10 @@ export default function AgentSandbox({
 
   const { user } = useAuth()
 
-  const safePluginsRequired = pluginsRequired || []
+  // Ensure arrays are properly defaulted
+  const safeInputSchema = Array.isArray(inputSchema) ? inputSchema : []
+  const safeOutputSchema = Array.isArray(outputSchema) ? outputSchema : []
+  const safePluginsRequired = Array.isArray(pluginsRequired) ? pluginsRequired : []
 
   useEffect(() => {
     const fetchConnectedPlugins = async () => {
@@ -68,7 +71,7 @@ export default function AgentSandbox({
     fetchConnectedPlugins()
   }, [user])
 
-  const filteredInputSchema = inputSchema.filter((field) => {
+  const filteredInputSchema = safeInputSchema.filter((field) => {
     const name = field.name.toLowerCase()
     return !connectedPluginKeys.some((plugin) =>
       (BLOCKED_FIELDS_BY_PLUGIN[plugin] || []).includes(name)
@@ -168,7 +171,7 @@ export default function AgentSandbox({
       if (finalResult?.send_status) {
         setSendStatus(finalResult.send_status)
       } else {
-        const usedOutputType = outputSchema.find((f) =>
+        const usedOutputType = safeOutputSchema.find((f) =>
           ['SummaryBlock', 'EmailDraft'].includes(f.type)
         )?.type
 
@@ -186,8 +189,8 @@ export default function AgentSandbox({
   }
 
   const handleDownloadPDF = () => {
-    if (result && outputSchema) {
-      generatePDF(result, outputSchema)
+    if (result && safeOutputSchema.length > 0) {
+      generatePDF(result, safeOutputSchema)
     }
   }
 
@@ -420,7 +423,7 @@ export default function AgentSandbox({
             </div>
           ) : typeof result === 'object' ? (
             <div className="space-y-2">
-              {outputSchema.map((field) => (
+              {safeOutputSchema.map((field) => (
                 <div key={field.name} className="bg-white border border-gray-200 rounded p-3">
                   <strong className="text-gray-700">{field.name}:</strong>
                   <div className="mt-1 text-gray-900">
@@ -457,7 +460,7 @@ export default function AgentSandbox({
                 </button>
               )}
 
-              {(outputSchema.some((f) => ['SummaryBlock', 'EmailDraft'].includes(f.type))) && (
+              {(safeOutputSchema.some((f) => ['SummaryBlock', 'EmailDraft'].includes(f.type))) && (
                 <button
                   className="bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-800 flex items-center gap-2"
                   onClick={handleDownloadPDF}
