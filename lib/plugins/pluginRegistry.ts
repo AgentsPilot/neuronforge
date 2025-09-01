@@ -1,9 +1,9 @@
-// lib/plugins/pluginRegistry.ts
 import { gmailStrategy } from './strategies/gmailPluginStrategy'
-import { gmailDataStrategy } from './strategies/gmailDataStrategy'
+import { gmailDataStrategy } from './strategies/gmailDataStrategy' 
 import { chatgptResearchStrategy } from './strategies/chatgptResearchStrategy'
 import { googleDriveDataStrategy } from './strategies/googleDriveDataStrategy'
 import { googleDriveStrategy } from './strategies/googleDrivePluginStrategy'
+import { universalPlugins } from './v2/registry'
 
 export interface PluginStrategy {
   pluginKey: string
@@ -14,16 +14,20 @@ export interface PluginStrategy {
   refreshToken?(connection: any): Promise<any>
 }
 
-// Plugin registry
+// Combined registry supporting both v1 (custom strategies) and v2 (universal)
 export const pluginRegistry: Record<string, PluginStrategy> = {
+  // V1 - Existing custom strategies
   'google-mail': gmailDataStrategy,
   'gmail': gmailDataStrategy,
   'chatgpt-research': chatgptResearchStrategy,
   'google-drive': googleDriveDataStrategy,
   
-  // Keep OAuth connection available if needed separately
+  // V1 - OAuth strategies
   'google-mail-connect': gmailStrategy,
   'google-drive-connect': googleDriveStrategy,
+  
+  // V2 - Universal plugins
+  ...universalPlugins,
 }
 
 export const isPluginAvailable = (pluginKey: string): boolean => {
@@ -34,21 +38,15 @@ export const getAvailablePlugins = (): string[] => {
   return Object.keys(pluginRegistry).filter(key => isPluginAvailable(key))
 }
 
-// Debug logging
-console.log('=== DEBUGGING PLUGIN REGISTRY ===')
-console.log('All plugins in registry:', Object.keys(pluginRegistry))
-console.log('ChatGPT plugin exists:', 'chatgpt-research' in pluginRegistry)
-console.log('Google Drive plugin exists:', 'google-drive' in pluginRegistry)
-console.log('ChatGPT plugin details:', pluginRegistry['chatgpt-research'])
-console.log('ChatGPT has connect method:', !!pluginRegistry['chatgpt-research']?.connect)
-console.log('Google Drive has connect method:', !!pluginRegistry['google-drive']?.connect)
-console.log('isPluginAvailable ChatGPT:', isPluginAvailable('chatgpt-research'))
-console.log('isPluginAvailable Google Drive:', isPluginAvailable('google-drive'))
-console.log('Available plugins:', getAvailablePlugins())
+// Feature flag to gradually migrate plugins
+export const PLUGIN_VERSION_MAP: Record<string, 'v1' | 'v2'> = {
+  'google-mail': 'v1',
+  'google-drive': 'v1', // Can change to 'v2' when ready to test
+  'google-drive-v2': 'v2',
+}
 
-// Test the specific functions
-const availablePlugins = getAvailablePlugins()
-console.log('Filtered available plugins:', availablePlugins.map(key => ({
-  key,
-  name: pluginRegistry[key].name
-})))
+console.log('Plugin Registry Loaded:', {
+  v1Plugins: Object.keys(pluginRegistry).filter(k => !k.includes('-v2')),
+  v2Plugins: Object.keys(pluginRegistry).filter(k => k.includes('-v2')),
+  totalPlugins: Object.keys(pluginRegistry).length
+})

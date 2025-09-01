@@ -1,0 +1,53 @@
+{
+  "pluginKey": "google-drive-v2",
+  "name": "Google Drive (Universal)",
+  "description": "Access and manage Google Drive files using universal plugin system",
+  "version": "2.0.0",
+  "oauth": {
+    "authUrl": "https://accounts.google.com/o/oauth2/v2/auth",
+    "tokenUrl": "https://oauth2.googleapis.com/token",
+    "scopes": [
+      "openid",
+      "email",
+      "profile",
+      "https://www.googleapis.com/auth/drive.readonly",
+      "https://www.googleapis.com/auth/drive.file"
+    ],
+    "clientIdEnvVar": "NEXT_PUBLIC_GOOGLE_CLIENT_ID",
+    "clientSecretEnvVar": "GOOGLE_CLIENT_SECRET"
+  },
+  "api": {
+    "baseUrl": "https://www.googleapis.com/drive/v3"
+  },
+  "endpoints": {
+    "search": {
+      "method": "GET",
+      "path": "/files",
+      "params": {
+        "query": { "type": "query", "required": false },
+        "limit": { "type": "query", "required": false }
+      },
+      "response": {
+        "dataPath": "$.files"
+      }
+    },
+    "getFile": {
+      "method": "GET", 
+      "path": "/files/{fileId}",
+      "params": {
+        "fileId": { "type": "path", "required": true }
+      }
+    },
+    "createFile": {
+      "method": "POST",
+      "path": "/files",
+      "body": {
+        "type": "json",
+        "fields": {
+          "name": "fileName",
+          "parents": "parentIds"
+        }
+      }
+    }
+  }
+}
