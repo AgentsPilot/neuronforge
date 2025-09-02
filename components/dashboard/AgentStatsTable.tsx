@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
+import { useAuth } from '@/components/UserProvider'
 import { 
   Activity, 
   CheckCircle, 
@@ -29,12 +30,27 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
   const [stats, setStats] = useState<AgentStat[]>([])
   const [loading, setLoading] = useState(true)
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('table')
+  const { user } = useAuth()
 
   useEffect(() => {
     const fetchStats = async () => {
+      if (!user?.id) {
+        setLoading(false)
+        return
+      }
+
       let query = supabase
         .from('agent_stats')
-        .select('agent_id, run_count, success_count, last_run_at, agents(agent_name)')
+        .select(`
+          agent_id, 
+          run_count, 
+          success_count, 
+          last_run_at,
+          agents (
+            agent_name
+          )
+        `)
+        .eq('user_id', user.id)
         .order('run_count', { ascending: false })
 
       if (agentId) {
@@ -46,22 +62,26 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
       if (error) {
         console.error('❌ Error fetching agent stats:', error.message)
         setStats([])
-      } else {
-        const parsedStats = data.map((row) => ({
-          agent_id: row.agent_id,
-          run_count: row.run_count,
-          success_count: row.success_count,
-          last_run_at: row.last_run_at,
-          agent_name: row.agents?.agent_name ?? 'Unknown',
-        }))
+      } else if (data) {
+        const parsedStats = data
+          .filter(row => row.agents) // Filter out rows where agent join failed
+          .map((row) => ({
+            agent_id: row.agent_id,
+            run_count: row.run_count || 0,
+            success_count: row.success_count || 0,
+            last_run_at: row.last_run_at,
+            agent_name: row.agents?.agent_name || 'Unknown Agent',
+          }))
         setStats(parsedStats)
+      } else {
+        setStats([])
       }
 
       setLoading(false)
     }
 
     fetchStats()
-  }, [agentId])
+  }, [agentId, user?.id])
 
   const calculateSuccessRate = (successCount: number, runCount: number) => {
     if (runCount === 0) return 0
@@ -74,18 +94,24 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
     return 'text-red-600 bg-red-50'
   }
 
-  const getActivityStatus = (lastRunAt: string) => {
+  const getActivityStatus = (lastRunAt: string | null) => {
+    if (!lastRunAt) {
+      return { status: 'never', color: 'text-gray-600', label: 'Never Run' }
+    }
+    
     const now = new Date()
     const lastRun = new Date(lastRunAt)
     const hoursSince = (now.getTime() - lastRun.getTime()) / (1000 * 60 * 60)
     
-    if (hoursSince < 1) return { status: 'active', color: 'text-green-600', label: 'Active' }
-    if (hoursSince < 24) return { status: 'recent', color: 'text-blue-600', label: 'Recent' }
+    if (hoursSince < 6) return { status: 'active', color: 'text-green-600', label: 'Active' }
+    if (hoursSince < 48) return { status: 'recent', color: 'text-blue-600', label: 'Recent' }
     if (hoursSince < 168) return { status: 'idle', color: 'text-yellow-600', label: 'Idle' }
     return { status: 'inactive', color: 'text-gray-600', label: 'Inactive' }
   }
 
-  const formatTimeAgo = (dateString: string) => {
+  const formatTimeAgo = (dateString: string | null) => {
+    if (!dateString) return 'Never'
+    
     const now = new Date()
     const date = new Date(dateString)
     const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000)
@@ -100,8 +126,11 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
   // Calculate summary statistics
   const totalRuns = stats.reduce((sum, stat) => sum + stat.run_count, 0)
   const totalSuccesses = stats.reduce((sum, stat) => sum + stat.success_count, 0)
-  const averageSuccessRate = stats.length > 0 ? Math.round((totalSuccesses / totalRuns) * 100) || 0 : 0
-  const activeAgents = stats.filter(stat => getActivityStatus(stat.last_run_at).status === 'active').length
+  const averageSuccessRate = totalRuns > 0 ? Math.round((totalSuccesses / totalRuns) * 100) : 0
+  const activeAgents = stats.filter(stat => {
+    const status = getActivityStatus(stat.last_run_at)
+    return status.status === 'active' || status.status === 'recent'
+  }).length
 
   if (loading) {
     return (
@@ -109,6 +138,17 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
         <div className="p-8 text-center">
           <div className="animate-spin h-8 w-8 border-2 border-blue-600 border-t-transparent rounded-full mx-auto mb-4"></div>
           <p className="text-gray-500">Loading agent statistics...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!user?.id) {
+    return (
+      <div className="bg-white rounded-xl border shadow-sm">
+        <div className="p-8 text-center">
+          <AlertTriangle className="h-8 w-8 text-yellow-500 mx-auto mb-4" />
+          <p className="text-gray-500">Please log in to view agent statistics.</p>
         </div>
       </div>
     )
@@ -124,7 +164,7 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
               <BarChart3 className="h-6 w-6 text-blue-600" />
               Agent Performance
             </h2>
-            <p className="text-gray-600 mt-1">Monitor agent execution statistics and performance metrics</p>
+            <p className="text-gray-600 mt-1">Monitor your agent execution statistics and performance metrics</p>
           </div>
           
           <div className="flex items-center gap-2">
@@ -193,7 +233,7 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
           <div className="text-center py-12">
             <BarChart3 className="h-12 w-12 text-gray-400 mx-auto mb-4" />
             <h3 className="text-lg font-medium text-gray-900 mb-2">No agent statistics</h3>
-            <p className="text-gray-600">No agents have been executed yet.</p>
+            <p className="text-gray-600">Your agents haven't been executed yet. Run an agent to see statistics here.</p>
           </div>
         ) : viewMode === 'cards' ? (
           /* Cards View */
@@ -205,15 +245,17 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
               return (
                 <div key={stat.agent_id} className="border border-gray-200 rounded-lg p-5 hover:shadow-md transition-shadow">
                   <div className="flex items-start justify-between mb-4">
-                    <div>
-                      <h3 className="font-semibold text-gray-900 mb-1">{stat.agent_name}</h3>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-semibold text-gray-900 mb-1 truncate" title={stat.agent_name}>
+                        {stat.agent_name}
+                      </h3>
                       <div className="flex items-center gap-2">
                         <span className={`text-xs px-2 py-1 rounded-full ${activityStatus.color} bg-current bg-opacity-10`}>
                           {activityStatus.label}
                         </span>
                       </div>
                     </div>
-                    <div className={`text-right px-3 py-1 rounded-full text-sm font-medium ${getSuccessRateColor(successRate)}`}>
+                    <div className={`text-right px-3 py-1 rounded-full text-sm font-medium ${getSuccessRateColor(successRate)} ml-2 flex-shrink-0`}>
                       {successRate}%
                     </div>
                   </div>
@@ -286,7 +328,9 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
                   return (
                     <tr key={stat.agent_id} className="border-b border-gray-100 hover:bg-gray-50">
                       <td className="py-4 px-4">
-                        <div className="font-medium text-gray-900">{stat.agent_name}</div>
+                        <div className="font-medium text-gray-900 truncate max-w-xs" title={stat.agent_name}>
+                          {stat.agent_name}
+                        </div>
                       </td>
                       <td className="py-4 px-4">
                         <span className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full ${activityStatus.color} bg-current bg-opacity-10`}>
@@ -313,7 +357,9 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
                       </td>
                       <td className="py-4 px-4">
                         <div className="text-gray-900">{formatTimeAgo(stat.last_run_at)}</div>
-                        <div className="text-sm text-gray-500">{new Date(stat.last_run_at).toLocaleDateString()}</div>
+                        {stat.last_run_at && (
+                          <div className="text-sm text-gray-500">{new Date(stat.last_run_at).toLocaleDateString()}</div>
+                        )}
                       </td>
                     </tr>
                   )

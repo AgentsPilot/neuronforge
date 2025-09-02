@@ -1,6 +1,60 @@
 // lib/plugins/strategies/chatgptResearchStrategy.ts
 import { PluginStrategy } from '../pluginRegistry'
 
+// Universal topic extraction function that works for any prompt
+function extractTopicFromPrompt(userPrompt: string): string | null {
+  if (!userPrompt) return null
+  
+  // First, preserve important capitalized words (likely proper nouns, company names, symbols)
+  const capitalizedWords = userPrompt.match(/\b[A-Z]{2,}\b/g) || []
+  if (capitalizedWords.length > 0) {
+    // If we find capitalized words, they're likely the main subject
+    return capitalizedWords[0].toLowerCase()
+  }
+  
+  // Remove only the most generic stop words and action words
+  const stopWords = ['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'being']
+  const actionWords = ['check', 'monitor', 'track', 'analyze', 'research', 'study', 'investigate', 'explore', 'report', 'find', 'get', 'provide', 'give', 'show', 'tell']
+  const modifiers = ['continuously', 'more', 'than', 'above', 'below', 'higher', 'lower', 'if', 'when', 'where']
+  
+  // Split into words and filter more selectively
+  const words = userPrompt
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter(word => 
+      word.length > 1 && 
+      !stopWords.includes(word) && 
+      !actionWords.includes(word) &&
+      !modifiers.includes(word)
+    )
+  
+  if (words.length > 0) {
+    // Return the most meaningful words (preserve context words like "stock", "price", etc.)
+    return words.slice(0, Math.min(2, words.length)).join(' ')
+  }
+  
+  return null
+}
+
+// Smart query generator that analyzes the topic and creates relevant search terms
+function generateSmartQueries(topic: string, maxQueries: number = 3): string[] {
+  const queries = []
+  const cleanTopic = topic.trim()
+  
+  // Always start with the exact topic
+  queries.push(cleanTopic)
+  
+  // Add contextual searches based on intelligent analysis
+  const currentYear = new Date().getFullYear()
+  
+  // Add temporal context for recent information
+  queries.push(`${cleanTopic} ${currentYear}`)
+  queries.push(`${cleanTopic} latest news`)
+  
+  return queries.slice(0, maxQueries)
+}
+
 // Generic web search function using Google Custom Search API
 async function searchWithGoogle(query: string): Promise<string> {
   try {
@@ -59,26 +113,17 @@ async function searchWithGoogle(query: string): Promise<string> {
   }
 }
 
-// Generic research function for any topic
-async function performWebResearch(query: string, searchTerms: string[] = []): Promise<string> {
+// Universal research function that adapts to any topic
+async function performWebResearch(topic: string, customSearchTerms: string[] = []): Promise<string> {
   const searchResults = []
   
-  // Use provided search terms or create smart queries based on the topic
-  let queries = searchTerms.length > 0 ? searchTerms : []
+  // Use custom search terms if provided, otherwise generate smart queries
+  const queries = customSearchTerms.length > 0 
+    ? customSearchTerms 
+    : generateSmartQueries(topic, 2) // Limit to 2 for API quota management
   
-  if (queries.length === 0) {
-    // Create intelligent queries based on the main query
-    if (query.toLowerCase().includes('stock market')) {
-      queries = ['stock market today', 'stock market news', 'S&P 500 Dow NASDAQ']
-    } else if (query.toLowerCase().includes('travel')) {
-      queries = [`${query} 2024`, `${query} guide`]
-    } else {
-      queries = [query, `${query} 2024`, `${query} news`]
-    }
-  }
-  
-  // Perform searches (limit to 2 to manage API quota)
-  for (const searchQuery of queries.slice(0, 2)) {
+  // Perform searches
+  for (const searchQuery of queries) {
     console.log('Searching:', searchQuery)
     const result = await searchWithGoogle(searchQuery)
     if (result && !result.includes('temporarily unavailable') && !result.includes('No current search results')) {
@@ -139,10 +184,19 @@ export const chatgptResearchStrategy: PluginStrategy = {
   },
 
   async run({ connection, userId, input_variables }: { connection: any; userId: string; input_variables: Record<string, any> }) {
-    // Extract research parameters from input variables
-    // If no explicit topic is provided, try to infer from the user prompt or use a default
-    const topic = input_variables.topic || input_variables.query || input_variables.search || 'stock market'
-    const date = input_variables.date || 'latest'
+    // Universal topic extraction - checks all possible input patterns
+    const topic = input_variables.reportTopic || 
+                  input_variables.topic || 
+                  input_variables.stockSymbol ||
+                  input_variables.query || 
+                  input_variables.search || 
+                  input_variables.subject ||
+                  input_variables.research_topic ||
+                  input_variables.analysis_topic ||
+                  extractTopicFromPrompt(input_variables.userPrompt) ||
+                  'general research'
+    
+    const date = input_variables.date || input_variables.currentDate || 'latest'
     const additionalContext = input_variables.context || input_variables.details || (date !== 'latest' ? `for ${date}` : '')
     const searchTerms = input_variables.search_terms ? input_variables.search_terms.split(',').map(s => s.trim()) : []
     
@@ -159,13 +213,12 @@ export const chatgptResearchStrategy: PluginStrategy = {
       const testResult = await searchWithGoogle('news')
       console.log('Test search result length:', testResult.length)
       
-      // Step 2: Perform actual web research
+      // Step 2: Perform intelligent web research
       console.log('Searching web for current information...')
       const mainQuery = additionalContext ? `${topic} ${additionalContext}` : topic
       const searchData = await performWebResearch(mainQuery, searchTerms)
       
-      
-      // Step 2: Determine if we have current data
+      // Step 3: Determine if we have current data
       const hasSearchData = searchData && 
         !searchData.includes('temporarily unavailable') && 
         !searchData.includes('No current web data available')
@@ -176,7 +229,7 @@ export const chatgptResearchStrategy: PluginStrategy = {
         preview: searchData.substring(0, 500)
       })
       
-      // Step 3: Construct research query
+      // Step 4: Construct adaptive research query
       let researchQuery: string
       let systemPrompt: string
       
@@ -185,30 +238,35 @@ export const chatgptResearchStrategy: PluginStrategy = {
 
 ${searchData}
 
-Based on the search results above, provide a detailed analysis of ${topic}${additionalContext ? ` ${additionalContext}` : ''}. The search results contain current information that you must use.
+Based on the search results above, provide a comprehensive analysis of ${topic}${additionalContext ? ` ${additionalContext}` : ''}. The search results contain current information that you must use.
 
-Your analysis should cover:
-- Current market conditions based on the search results
-- Specific data points and information from the sources
-- Recent developments mentioned in the search results
-- Key insights from the web sources provided
+Your analysis should intelligently adapt to the topic and include relevant aspects such as:
+- Current status, conditions, or state based on the search results
+- Key data points, metrics, or figures from the sources
+- Recent developments, news, or changes mentioned in the search results
+- Trends, patterns, or movements identified in the web sources
+- Important insights or implications drawn from the current data
+- Context and background information that helps explain the current situation
+- Future outlook or predictions if mentioned in the sources
 
-Use the search results as your primary source of information. Do not mention knowledge cutoffs or inability to access current data - you have current data in the search results above.`
+Tailor your response to the specific nature of the topic. Use the search results as your primary source of information. Do not mention knowledge cutoffs or inability to access current data - you have current data in the search results above.`
 
-        systemPrompt = 'You are analyzing current web search results provided to you. Treat the search results as current, real data. Analyze and present insights based on these results. Do not mention knowledge limitations or suggest external sources - you have been provided with current web data to analyze.'
+        systemPrompt = `You are analyzing current web search results provided to you about "${topic}". Treat the search results as current, real data. Analyze and present insights based on these results. Adapt your analysis style to match the topic - whether it's financial, technological, scientific, cultural, or any other domain. Do not mention knowledge limitations or suggest external sources - you have been provided with current web data to analyze.`
       } else {
-        researchQuery = `Provide comprehensive research and analysis about "${topic}"${additionalContext ? ` with focus on: ${additionalContext}` : ''}. Include:
+        researchQuery = `Provide comprehensive research and analysis about "${topic}"${additionalContext ? ` with focus on: ${additionalContext}` : ''}. 
 
+Structure your response to include relevant aspects for this topic, such as:
 - Current state and key information
 - Recent developments and trends
-- Important facts and data points
+- Important facts, data points, or metrics
 - Analysis and insights
+- Context and background
 - Practical implications or recommendations
 - Key takeaways
 
-Note: Current web data is not available, so provide analysis based on your knowledge base.`
+Adapt your analysis to the specific nature and domain of "${topic}". Note: Current web data is not available, so provide analysis based on your knowledge base.`
 
-        systemPrompt = 'You are a professional research analyst. Provide comprehensive analysis based on your knowledge base. Focus on delivering factual information, insights, and practical recommendations. Note that you are working from your training data rather than current web sources.'
+        systemPrompt = `You are a professional research analyst providing comprehensive analysis about "${topic}". Adapt your expertise and analysis style to match the topic domain. Focus on delivering factual information, insights, and practical recommendations. Note that you are working from your training data rather than current web sources.`
       }
 
       console.log('About to send to ChatGPT:', {

@@ -1,74 +1,159 @@
-import { pluginRegistry } from '@/lib/plugins/pluginRegistry'
-import { detectPluginsFromPrompt } from '@/lib/plugins/detectPluginsFromPrompt'
-import { interpolatePrompt } from '@/lib/utils/interpolatePrompt'
-import { sendEmailDraft } from '@/lib/plugins/google-mail/sendEmailDraft'
-import { extractPdfTextFromBase64 } from '@/lib/utils/extractPdfTextFromBase64'
+// /lib/utils/runAgentWithContext.ts - Fixed Main Orchestrator
+
+// Core imports
+import { RunAgentInput } from '../intelligence/core/types'
+
+// Analysis imports
+import { IntentAnalyzer } from '../intelligence/analysis/IntentAnalyzer'
+import { StrategyEngine } from '../intelligence/analysis/StrategyEngine'
+import { QualityValidator as OldQualityValidator } from '../intelligence/analysis/QualityValidator'
+
+// Memory imports
+import { SmartContextualMemory } from '../intelligence/memory/SmartContextualMemory'
+import { LearningModule } from '../intelligence/memory/LearningModule'
+
+// Execution imports
+import { PluginCoordinator } from '../intelligence/execution/PluginCoordinator'
+import { DocumentProcessor } from '../intelligence/execution/DocumentProcessor'
+import { PromptGenerator } from '../intelligence/execution/PromptGenerator'
+import { RecoverySystem } from '../intelligence/execution/RecoverySystem'
+
+// Utility imports
+import { EmailHandler } from '../intelligence/utils/EmailHandler'
 import OpenAI from 'openai'
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
 
-type RunAgentInput = {
-  supabase: any
-  agent: any
-  userId: string
-  input_variables: Record<string, any>
-  override_user_prompt?: string
-}
+// Initialize core components
+const intentAnalyzer = new IntentAnalyzer()
+const strategyEngine = new StrategyEngine()
+const oldQualityValidator = new OldQualityValidator()
+const smartMemory = new SmartContextualMemory()
+const learningModule = new LearningModule()
+const pluginCoordinator = new PluginCoordinator()
+const documentProcessor = new DocumentProcessor()
+const promptGenerator = new PromptGenerator()
+const recoverySystem = new RecoverySystem()
+const emailHandler = new EmailHandler()
 
-// Handle email output using existing sendEmailDraft function
-async function handleEmailOutput(agent: any, responseMessage: string, pluginContext: any, userId: string) {
-  if (agent.output_schema?.type === 'EmailDraft') {
-    try {
-      console.log('Processing EmailDraft output schema:', agent.output_schema)
-      
-      const outputSchema = agent.output_schema
-      const emailTo = outputSchema.to
-      const emailSubject = outputSchema.subject || 'Email Summary'
-      const includePdf = outputSchema.includePdf || false
-      
-      console.log('Sending email to:', emailTo, 'with PDF:', includePdf)
-      
-      const emailResult = await sendEmailDraft({
-        userId,
-        to: emailTo,
-        subject: emailSubject,
-        body: responseMessage,
-        includePdf
-      })
-      
-      return {
-        message: responseMessage,
-        pluginContext,
-        parsed_output: { 
-          summary: responseMessage,
-          emailSent: true,
-          emailTo: emailTo,
-          pdfGenerated: includePdf,
-          emailId: emailResult.id
-        },
-        send_status: `Email sent to ${emailTo}${includePdf ? ' with PDF attachment' : ''}`,
-      }
-      
-    } catch (error) {
-      console.error('Email sending failed:', error)
-      return {
-        message: responseMessage,
-        pluginContext,
-        parsed_output: { 
-          summary: responseMessage, 
-          emailError: error.message,
-          emailSent: false 
-        },
-        send_status: `Email failed: ${error.message}`,
-      }
+// Enhanced quality validator that focuses on actual usefulness
+class UniversalQualityValidator {
+  static validateResponse(response: string, originalData: any, intent: any): {
+    score: number
+    grade: string
+    confidence: number
+    issues: string[]
+    actuallyUseful: boolean
+  } {
+    
+    const issues: string[] = []
+    let score = 0.5
+    
+    // Generic checks - no business logic assumptions
+    const hasSpecificData = this.containsProcessedData(response)
+    const isGenericAdvice = this.isGenericAdviceResponse(response)
+    const hasDataDisclaimer = this.hasDataAccessDisclaimer(response)
+    const hasAvailableData = this.hasAnyProcessableData(originalData)
+    
+    if (hasSpecificData && !isGenericAdvice && !hasDataDisclaimer) {
+      score += 0.4
+      if (this.hasGoodStructure(response)) score += 0.2
+    } else if ((isGenericAdvice || hasDataDisclaimer) && hasAvailableData) {
+      score = 0.1
+      issues.push("Response provides generic advice instead of processing available data")
+    }
+    
+    const finalScore = Math.max(0.1, Math.min(1.0, score))
+    const grade = this.scoreToGrade(finalScore)
+    const confidence = finalScore + (hasSpecificData ? 0.2 : 0)
+    
+    return {
+      score: finalScore,
+      grade,
+      confidence: Math.min(1.0, confidence),
+      issues,
+      actuallyUseful: hasSpecificData && !isGenericAdvice && !hasDataDisclaimer
     }
   }
   
-  return {
-    message: responseMessage,
-    pluginContext: {},
-    parsed_output: { summary: responseMessage },
-    send_status: 'Agent completed successfully.',
+  private static containsProcessedData(response: string): boolean {
+    // Generic indicators of processed data - no domain-specific assumptions
+    const hasSpecificDetails = 
+      /[A-Z0-9]{3,}/.test(response) ||  // IDs, codes, numbers
+      /\$[\d,]+|\d+%|\d+\.?\d*[km]?\b/i.test(response) || // Numbers, percentages, amounts
+      /\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/.test(response) || // Dates
+      /(from|to|sender|recipient):\s*[^\n]+/i.test(response) || // Structured fields
+      response.includes('**') && response.length > 200 // Structured formatting
+    
+    return hasSpecificDetails
+  }
+  
+  private static isGenericAdviceResponse(response: string): boolean {
+    const genericPhrases = [
+      'you can look for',
+      'try searching for',
+      'here are some tips',
+      'you should check',
+      'consider looking at',
+      'i recommend',
+      'here\'s how to',
+      'you might want to'
+    ]
+    
+    return genericPhrases.some(phrase => 
+      response.toLowerCase().includes(phrase)
+    ) && response.length < 800
+  }
+  
+  private static hasDataAccessDisclaimer(response: string): boolean {
+    const disclaimerPhrases = [
+      'i don\'t have the capability to access',
+      'i can\'t access',
+      'i don\'t have access to',
+      'i cannot access',
+      'i\'m unable to access',
+      'i don\'t have the ability to'
+    ]
+    
+    return disclaimerPhrases.some(phrase => 
+      response.toLowerCase().includes(phrase)
+    )
+  }
+  
+  private static hasAnyProcessableData(originalData: any): boolean {
+    if (!originalData) return false
+    
+    // Generic check for any data structures
+    for (const [key, value] of Object.entries(originalData)) {
+      const result = value as any
+      if (result && !result.error && typeof result === 'object') {
+        // Check if there are any arrays with data
+        const hasArrayData = Object.values(result).some(val => 
+          Array.isArray(val) && val.length > 0
+        )
+        if (hasArrayData) return true
+        
+        // Check if there are any non-empty objects
+        const hasObjectData = Object.values(result).some(val => 
+          val && typeof val === 'object' && !Array.isArray(val) && Object.keys(val).length > 0
+        )
+        if (hasObjectData) return true
+      }
+    }
+    return false
+  }
+  
+  private static hasGoodStructure(response: string): boolean {
+    return /^#+\s/m.test(response) || response.includes('**') || /^\s*[\-\*\d\.]/m.test(response)
+  }
+  
+  private static scoreToGrade(score: number): string {
+    if (score >= 0.9) return 'A+'
+    if (score >= 0.8) return 'A'
+    if (score >= 0.7) return 'B'
+    if (score >= 0.6) return 'C'
+    if (score >= 0.5) return 'D'
+    return 'F'
   }
 }
 
@@ -81,310 +166,443 @@ export async function runAgentWithContext({
 }: RunAgentInput) {
   if (!agent) throw new Error('Agent is undefined in runAgentWithContext')
 
-  console.log('DEBUG: Starting runAgentWithContext', {
-    agentId: agent.id,
-    agentName: agent.agent_name,
-    pluginsRequired: agent.plugins_required,
-    userId: userId,
-    inputVariables: Object.keys(input_variables),
-    outputSchema: agent.output_schema
-  })
-
+  const executionId = `smart_exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
   const rawUserPrompt = override_user_prompt || agent.user_prompt
   let userPrompt = rawUserPrompt.trim()
-
-  for (const key of Object.keys(input_variables)) {
-    if (key.endsWith('Text') && typeof input_variables[key] === 'string') {
-      const truncated = input_variables[key].slice(0, 3000)
-      userPrompt += `\n\nThe user uploaded a document. Please extract the relevant information based on user prompt from this:\n\n\"\"\"${truncated}\"\"\"`
-    }
-  }
-
-  const schemaReminder =
-    agent.output_schema?.type === 'StructuredData'
-      ? `\n\n⚠️ IMPORTANT: Your output MUST be valid JSON only. Do not include explanations. Match this format:\n${JSON.stringify(
-          (agent.output_schema.fields || []).reduce((acc: any, f: any) => {
-            acc[f.name] = f.type === 'number' ? 0 : 'string'
-            return acc
-          }, {}),
-          null,
-          2
-        )}`
-      : ''
-
-  // Get user's plugin connections
-  const { data: pluginConnections, error: pluginError } = await supabase
-    .from('plugin_connections')
-    .select('*')
-    .eq('user_id', userId)
-
-  console.log('DEBUG: Plugin connections query', {
-    userId,
-    connectionsFound: pluginConnections?.length || 0,
-    connections: pluginConnections?.map(c => ({ plugin_key: c.plugin_key, username: c.username, expires_at: c.expires_at })),
-    error: pluginError
+  
+  console.log('🧠 Starting ULTRA-SMART agent execution', {
+    agentId: agent.id,
+    agentName: agent.agent_name,
+    userId: userId,
+    executionId,
+    intelligenceLevel: 'ADVANCED'
   })
 
-  const plugins: Record<string, any> = {}
-  pluginConnections?.forEach((conn) => {
-    plugins[conn.plugin_key] = {
-      access_token: conn.access_token,
-      refresh_token: conn.refresh_token,
-      username: conn.username,
-      expires_at: conn.expires_at,
-    }
-  })
+  const startTime = Date.now()
+  let userContext
 
-  console.log('DEBUG: Available plugins vs Required', {
-    availableInRegistry: Object.keys(pluginRegistry),
-    requiredByAgent: agent.plugins_required || [],
-    userConnectedPlugins: Object.keys(plugins),
-    registryHasRunFunction: Object.keys(pluginRegistry).map(key => ({
-      key,
-      hasRun: typeof pluginRegistry[key]?.run === 'function',
-      hasConnect: typeof pluginRegistry[key]?.connect === 'function'
-    }))
-  })
-
-  const pluginContext: Record<string, any> = {}
-  const requiredPlugins = agent.plugins_required || []
-
-  for (const pluginKey of requiredPlugins) {
-    console.log(`DEBUG: Processing plugin: ${pluginKey}`)
+  try {
+    // PHASE 1: Load contextual memory
+    console.log('🧠 Phase 1: Loading contextual memory')
+    userContext = await smartMemory.getOrCreateUserContext(userId, supabase)
     
-    const strategy = pluginRegistry[pluginKey]
-    let creds = plugins[pluginKey]
-
-    // Special handling for ChatGPT Research - it doesn't need user credentials
-    if (pluginKey === 'chatgpt-research') {
-      creds = {
-        access_token: 'platform-key', // Uses your platform's OpenAI API key
-        refresh_token: null,
-        username: 'ChatGPT',
-        expires_at: null
+    global.emitExecutionUpdate?.(executionId, {
+      currentPhase: 0,
+      phaseData: { 
+        memory: { 
+          patterns: Object.keys(userContext.userPatterns).length,
+          domains: Object.keys(userContext.domainKnowledge).length,
+          history: userContext.executionHistory.length 
+        } 
       }
-      console.log(`DEBUG: Using platform credentials for ChatGPT Research`)
-    }
-
-    console.log(`DEBUG: Plugin ${pluginKey} status:`, {
-      hasStrategy: !!strategy,
-      hasCreds: !!creds,
-      strategyHasRun: !!strategy?.run,
-      strategyHasConnect: !!strategy?.connect,
-      credDetails: creds ? {
-        hasAccessToken: !!creds.access_token,
-        hasRefreshToken: !!creds.refresh_token,
-        username: creds.username,
-        expiresAt: creds.expires_at
-      } : 'No credentials found'
     })
 
-    if (!strategy) {
-      console.error(`Plugin ${pluginKey} not found in registry`)
-      pluginContext[pluginKey] = {
-        summary: "Plugin not found in registry",
-        error: `Plugin ${pluginKey} is not registered`
+    // PHASE 2: Analyze intent with universal system
+    console.log('🧠 Phase 2: Analyzing intent with universal system')
+    const intentAnalysis = await intentAnalyzer.analyzeIntent(userPrompt, input_variables, userContext)
+    console.log('🎯 Universal Intent Analysis Complete:', {
+      primaryIntent: intentAnalysis.primaryIntent,
+      dataSource: intentAnalysis.dataSource,
+      actionType: intentAnalysis.actionType,
+      complexity: intentAnalysis.complexity,
+      urgency: intentAnalysis.urgency,
+      confidence: intentAnalysis.confidenceLevel,
+      businessContext: intentAnalysis.businessContext
+    })
+    
+    global.emitExecutionUpdate?.(executionId, {
+      currentPhase: 1,
+      phaseData: { 
+        intent: {
+          confidence: intentAnalysis.confidenceLevel,
+          complexity: intentAnalysis.complexity,
+          urgency: intentAnalysis.urgency,
+          businessContext: intentAnalysis.businessContext,
+          primaryIntent: intentAnalysis.primaryIntent,
+          dataSource: intentAnalysis.dataSource
+        }
       }
-      continue
-    }
+    })
 
-    if (!creds) {
-      console.error(`No credentials found for plugin ${pluginKey}`)
-      pluginContext[pluginKey] = {
-        summary: "User has not connected this service",
-        error: `No connection found for ${pluginKey}`
+    // PHASE 3: Generate adaptive strategy
+    console.log('🧠 Phase 3: Generating adaptive strategy')
+    const adaptiveStrategy = await strategyEngine.generateStrategy(
+      intentAnalysis, 
+      userContext, 
+      agent.plugins_required || []
+    )
+    
+    global.emitExecutionUpdate?.(executionId, {
+      currentPhase: 2,
+      phaseData: { 
+        strategy: {
+          primaryApproach: adaptiveStrategy.primaryApproach,
+          fallbacks: adaptiveStrategy.fallbackStrategies.length,
+          optimizations: adaptiveStrategy.performanceOptimizations.length
+        }
       }
-      continue
-    }
+    })
 
-    if (!strategy.run) {
-      console.error(`Plugin ${pluginKey} has no run function`)
-      pluginContext[pluginKey] = {
-        summary: "Plugin does not support data fetching",
-        error: `Plugin ${pluginKey} has connect function but no run function for data fetching`
+    // PHASE 4: Execute plugins with coordination
+    console.log('🧠 Phase 4: Executing plugin coordination')
+    const pluginContext = await pluginCoordinator.executeSmartCoordination(
+      agent.plugins_required || [],
+      { supabase, userId, input_variables },
+      intentAnalysis,
+      adaptiveStrategy,
+      executionId
+    )
+    
+    global.emitExecutionUpdate?.(executionId, {
+      currentPhase: 3,
+      phaseData: { 
+        plugins: {
+          total: Object.keys(pluginContext).length,
+          successful: Object.values(pluginContext).filter(r => !r.error).length,
+          failed: Object.values(pluginContext).filter(r => r.error).length
+        }
       }
-      continue
-    }
+    })
 
-    try {
-      const now = new Date()
-      const expires = creds.expires_at ? new Date(creds.expires_at) : null
-      const isExpired = expires && expires.getTime() < now.getTime()
+    // PHASE 5: Process documents
+    console.log('🧠 Phase 5: Processing documents')
+    await documentProcessor.processWithIntelligence(input_variables, pluginContext, intentAnalysis)
+    
+    global.emitExecutionUpdate?.(executionId, {
+      currentPhase: 4,
+      phaseData: { documents: { processed: true } }
+    })
 
-      console.log(`Token check for plugin ${pluginKey}:`, {
-        now: now.toISOString(),
-        expires_at: creds.expires_at,
-        isExpired,
-      })
+    // PHASE 6: Generate universal smart prompt
+    console.log('🧠 Phase 6: Generating universal smart prompt')
+    const smartPrompt = await promptGenerator.generateUltraSmartPrompt(
+      agent,
+      userPrompt,
+      pluginContext,
+      input_variables,
+      intentAnalysis,
+      adaptiveStrategy,
+      userContext
+    )
+    
+    global.emitExecutionUpdate?.(executionId, {
+      currentPhase: 5,
+      phaseData: { prompt: { generated: true, strategy: smartPrompt.strategy } }
+    })
 
-      // Skip token refresh for ChatGPT Research as it uses platform credentials
-      if (isExpired && strategy.refreshToken && pluginKey !== 'chatgpt-research') {
-        console.log(`Token expired for ${pluginKey}. Refreshing...`)
-        const refreshed = await strategy.refreshToken(creds)
-        creds.access_token = refreshed.access_token
-        creds.expires_at = refreshed.expires_at
-        console.log(`Token refreshed for ${pluginKey}`)
+    // PHASE 7: Execute with data-aware intelligence
+    console.log('🧠 Phase 7: Executing with data-aware intelligence')
+    const responseMessage = await executeWithDataAwareIntelligence(
+      smartPrompt.systemPrompt,
+      smartPrompt.userPrompt,
+      intentAnalysis,
+      adaptiveStrategy,
+      pluginContext
+    )
+    
+    global.emitExecutionUpdate?.(executionId, {
+      currentPhase: 6,
+      phaseData: { llm: { executed: true } }
+    })
 
-        await supabase
-          .from('plugin_connections')
-          .update({
-            access_token: refreshed.access_token,
-            expires_at: refreshed.expires_at
-          })
-          .eq('user_id', userId)
-          .eq('plugin_key', pluginKey)
-      }
-
-      console.log(`Running plugin ${pluginKey}...`)
-      const result = await strategy.run({
-        connection: creds,
-        userId,
-        input_variables,
-      })
-
-      console.log(`Plugin ${pluginKey} result:`, {
-        resultType: typeof result,
-        resultKeys: typeof result === 'object' ? Object.keys(result) : 'not object',
-        resultPreview: typeof result === 'string' ? result.substring(0, 200) : result
-      })
-
-      pluginContext[pluginKey] = result
-    } catch (err: any) {
-      console.error(`Plugin ${pluginKey} execution failed:`, {
-        error: err.message,
-        stack: err.stack?.split('\n').slice(0, 5).join('\n'),
-        errorType: err.constructor.name
-      })
+    // PHASE 8: Enhanced Quality validation with retry logic
+    console.log('🧠 Phase 8: Enhanced quality validation')
+    
+    const qualityResult = UniversalQualityValidator.validateResponse(
+      responseMessage,
+      pluginContext,
+      intentAnalysis
+    )
+    
+    let finalResponse = responseMessage
+    let finalQualityMetrics = qualityResult
+    
+    // Smart retry logic - only retry if we have good data but poor response
+    if (!qualityResult.actuallyUseful && hasProcessableData(pluginContext)) {
+      console.log('🔄 Response not useful despite having good data. Attempting focused retry...')
       
-      pluginContext[pluginKey] = {
-        summary: "Plugin execution failed",
-        error: err.message,
-        errorType: err.constructor.name
+      // Create a more aggressive prompt for retry
+      const retryPrompt = createAggressiveDataProcessingPrompt(
+        userPrompt,
+        pluginContext,
+        intentAnalysis
+      )
+      
+      const retryResponse = await executeWithDataAwareIntelligence(
+        retryPrompt.systemPrompt,
+        retryPrompt.userPrompt,
+        intentAnalysis,
+        adaptiveStrategy,
+        pluginContext,
+        true // isRetry flag
+      )
+      
+      const retryQuality = UniversalQualityValidator.validateResponse(
+        retryResponse,
+        pluginContext,
+        intentAnalysis
+      )
+      
+      if (retryQuality.actuallyUseful || retryQuality.score > qualityResult.score + 0.2) {
+        finalResponse = retryResponse
+        finalQualityMetrics = retryQuality
+        console.log('✅ Retry produced significantly better results')
+      } else {
+        console.log('⚠️ Retry did not improve results meaningfully')
       }
     }
-  }
-
-  console.log('DEBUG: Final plugin context:', {
-    pluginKeys: Object.keys(pluginContext),
-    contextSummary: Object.entries(pluginContext).map(([key, value]) => ({
-      plugin: key,
-      hasData: typeof value === 'object' && !value.error,
-      hasError: typeof value === 'object' && !!value.error,
-      preview: typeof value === 'object' && value.summary ? value.summary.substring(0, 100) : 'No summary'
-    }))
-  })
-
-  // Handle PDF uploads
-  for (const key of Object.keys(input_variables)) {
-    const value = input_variables[key]
-    if (typeof value === 'string' && value.startsWith('data:application/pdf')) {
-      try {
-        const extractedText = await extractPdfTextFromBase64(value)
-        console.log(`Extracted text from ${key}:\n`, extractedText.substring(0, 200) + '...')
-        input_variables[`${key}Text`] = extractedText
-      } catch (err) {
-        console.warn(`Failed to extract PDF text from ${key}:`, err)
+    
+    // Log quality assessment
+    if (finalQualityMetrics.issues.length > 0) {
+      console.log('⚠️ Quality issues detected:', finalQualityMetrics.issues)
+    }
+    
+    if (finalQualityMetrics.actuallyUseful) {
+      console.log('✅ Response contains useful processed data')
+    } else {
+      console.log('❌ Response does not contain useful processed data')
+    }
+    
+    const qualityMetrics = {
+      overallConfidence: finalQualityMetrics.confidence,
+      qualityGrade: finalQualityMetrics.grade,
+      validated: finalQualityMetrics.actuallyUseful,
+      adaptationsApplied: finalQualityMetrics.actuallyUseful ? 1 : 0
+    }
+    
+    global.emitExecutionUpdate?.(executionId, {
+      currentPhase: 7,
+      completed: true,
+      phaseData: { 
+        validation: {
+          confidence: qualityMetrics.overallConfidence,
+          qualityScore: qualityMetrics.qualityGrade,
+          validated: qualityMetrics.validated
+        }
       }
+    })
+
+    // Create advanced metrics
+    const advancedMetrics = {
+      confidence: qualityMetrics.overallConfidence,
+      qualityScore: qualityMetrics.qualityGrade,
+      dataSources: Object.keys(pluginContext).filter(k => !pluginContext[k].error).length,
+      businessContext: intentAnalysis.businessContext,
+      validated: qualityMetrics.validated,
+      autonomyLevel: 0.95,
+      executionTime: Date.now() - startTime,
+      strategiesUsed: [adaptiveStrategy.primaryApproach],
+      adaptationsApplied: qualityMetrics.adaptationsApplied || 0,
+      userPatternMatch: userContext.userPatterns ? Object.keys(userContext.userPatterns).length : 0,
+      dataProcessingSuccess: finalQualityMetrics.actuallyUseful
+    }
+
+    // Update learning system
+    await learningModule.updateAdvancedSystem(
+      executionId,
+      agent,
+      userPrompt,
+      intentAnalysis,
+      adaptiveStrategy,
+      qualityMetrics,
+      userContext,
+      userId,
+      supabase
+    )
+
+    // Generate final result
+    const finalResult = await emailHandler.handleSmartOutput(
+      agent, 
+      finalResponse,
+      pluginContext, 
+      userId, 
+      advancedMetrics
+    )
+    
+    console.log('🎉 ULTRA-SMART execution completed', {
+      executionId,
+      confidence: advancedMetrics.confidence,
+      qualityScore: advancedMetrics.qualityScore,
+      duration: advancedMetrics.executionTime,
+      businessContext: advancedMetrics.businessContext,
+      dataProcessed: advancedMetrics.dataProcessingSuccess
+    })
+
+    return finalResult
+
+  } catch (error: any) {
+    console.error('❌ Ultra-smart execution failed:', error)
+    
+    try {
+      console.log('🔄 Attempting advanced recovery...')
+      const recoveryResult = await recoverySystem.executeAdvancedRecovery(
+        agent,
+        userPrompt,
+        input_variables,
+        error,
+        userId,
+        supabase,
+        userContext || {
+          userPatterns: {},
+          domainKnowledge: {},
+          executionHistory: [],
+          preferredStrategies: ['basic_analysis'],
+          failurePatterns: [],
+          successFactors: []
+        }
+      )
+      
+      console.log('✅ Advanced recovery successful')
+      return recoveryResult
+      
+    } catch (recoveryError) {
+      console.error('💥 Advanced recovery failed:', recoveryError)
+      throw error
     }
   }
+}
 
-  if (
-    input_variables.__uploaded_file_text &&
-    typeof input_variables.__uploaded_file_text === 'string'
-  ) {
-    pluginContext['uploaded-file'] = input_variables.__uploaded_file_text
-  }
-
-  // Truncate large input variables
-  Object.keys(input_variables).forEach((key) => {
-    if (typeof input_variables[key] === 'string' && input_variables[key].length > 500) {
-      input_variables[key] = input_variables[key].slice(0, 500) + '... [truncated]'
-    }
-  })
-
-  const interpolatedPrompt = await interpolatePrompt(
-    userPrompt,
-    input_variables,
-    plugins,
-    userId,
-    agent.plugins_required || []
-  )
-
-  // Create flexible system prompt based on available context
-  const hasPluginData = Object.keys(pluginContext).length > 0 && Object.values(pluginContext).some(ctx => typeof ctx === 'object' && !ctx.error)
-  const hasInputData = Object.keys(input_variables).length > 0
-
-  let systemPrompt = `You are an AI agent designed to help users with their tasks. `
-
-  if (hasPluginData || hasInputData) {
-    systemPrompt += `You have access to the following information:\n\n`
-    
-    if (hasInputData) {
-      systemPrompt += `Input Data: Use the provided input variables to customize your response.\n`
-    }
-    
-    if (hasPluginData) {
-      systemPrompt += `Plugin Data: Use the connected service data when relevant to provide accurate, real-time information.\n`
-    }
-    
-    systemPrompt += `\nPrioritize using this provided data when answering the user's request.`
-  } else {
-    systemPrompt += `No external data sources are connected. Use your general knowledge to provide helpful information. For real-time data requests, mention that connecting relevant plugins would provide more current information.`
-  }
-
-  systemPrompt += `\n\nUser Request: ${userPrompt}\n\nBe helpful, accurate, and direct in your response.${schemaReminder}`
-
-  const contextString = [
-    `\n\n[Input Variables]\n${JSON.stringify(input_variables, null, 2)}`,
-    `\n\n[Plugin Context]\n${JSON.stringify(pluginContext, null, 2)}`,
-  ].join('\n')
-
-  const finalPrompt = `${interpolatedPrompt}\n${contextString}`
-
-  console.log('Plugin context summary before LLM:', 
-    Object.keys(pluginContext).length > 0 
-      ? Object.keys(pluginContext).map(key => `${key}: ${pluginContext[key].error ? 'ERROR' : 'SUCCESS'}`).join(', ')
-      : 'No plugins configured'
-  )
+// Helper function to check if plugin data has any processable content (universal)
+function hasProcessableData(pluginContext: any): boolean {
+  if (!pluginContext) return false
   
-  if (finalPrompt.length < 2000) {
-    console.log('Final prompt sent to OpenAI:\n', finalPrompt)
-  } else {
-    console.log('Final prompt length:', finalPrompt.length, 'chars (too long to log)')
+  // Generic check for any data structures without business assumptions
+  for (const [pluginName, pluginResult] of Object.entries(pluginContext)) {
+    const result = pluginResult as any
+    if (result.error) continue
+    
+    // Check if there are any arrays with content
+    const hasArrayData = Object.values(result).some(value => 
+      Array.isArray(value) && value.length > 0
+    )
+    if (hasArrayData) return true
+    
+    // Check if there are any non-empty objects
+    const hasObjectData = Object.values(result).some(value => 
+      value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0
+    )
+    if (hasObjectData) return true
+  }
+  
+  return false
+}
+
+// Create aggressive prompt for data processing retry
+function createAggressiveDataProcessingPrompt(
+  userPrompt: string,
+  pluginContext: any,
+  intentAnalysis: any
+): { systemPrompt: string; userPrompt: string } {
+  
+  const dataDescription = describeAvailableData(pluginContext)
+  
+  const systemPrompt = `You are a data processing AI. The user has connected their accounts and provided you with real data to analyze.
+
+CRITICAL INSTRUCTIONS:
+- You MUST process the actual data provided below
+- Do NOT respond with "I can't access" or give generic advice
+- The user expects you to work with their real data from connected services
+- Focus on extracting and presenting the actual information found
+
+USER REQUEST: "${userPrompt}"
+INTENT: ${intentAnalysis.primaryIntent} - ${intentAnalysis.actionType}
+
+AVAILABLE DATA: ${dataDescription}
+
+Your task is to process this data according to the user's request. Give specific, actionable results based on what you find in the data.`
+
+  return {
+    systemPrompt,
+    userPrompt: `Process the available data according to my request. Here is the data:\n\n${JSON.stringify(pluginContext, null, 2)}`
+  }
+}
+
+// Describe available data for retry prompt (universal)
+function describeAvailableData(pluginContext: any): string {
+  const descriptions = []
+  
+  for (const [pluginName, pluginResult] of Object.entries(pluginContext || {})) {
+    const result = pluginResult as any
+    if (result.error) continue
+    
+    // Generic data structure description
+    Object.entries(result).forEach(([key, value]) => {
+      if (Array.isArray(value) && value.length > 0) {
+        descriptions.push(`${value.length} items in ${pluginName}.${key}`)
+      } else if (value && typeof value === 'object' && Object.keys(value).length > 0) {
+        descriptions.push(`Data structure in ${pluginName}.${key}`)
+      }
+    })
+  }
+  
+  return descriptions.join(', ') || 'No processable data found'
+}
+
+// Enhanced LLM execution that's aware of data context
+async function executeWithDataAwareIntelligence(
+  systemPrompt: string,
+  userPrompt: string,
+  intent: any,
+  strategy: any,
+  pluginContext?: any,
+  isRetry: boolean = false
+): Promise<string> {
+  
+  let enhancedSystemPrompt = systemPrompt
+  
+  // Add data context awareness
+  if (pluginContext && hasProcessableData(pluginContext)) {
+    const dataOverride = `\n\nDATA PROCESSING OVERRIDE:
+- You have been provided with legitimate data from the user's connected accounts
+- This data should be processed according to the user's request
+- Do not claim you cannot access the data - it is provided in the user message
+- Give specific results based on the actual data, not generic advice`
+    
+    enhancedSystemPrompt += dataOverride
+  }
+  
+  // Make retry attempts more aggressive
+  if (isRetry) {
+    enhancedSystemPrompt += `\n\nRETRY MODE: Previous response was not helpful. Process the data directly and give specific results.`
   }
 
   try {
-    const completion = await openai.chat.completions.create({
+    console.log('🚀 Executing with GPT-4o and data-aware intelligence')
+    
+    const modelParams = {
       model: 'gpt-4o',
       messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: finalPrompt },
+        { role: 'system', content: enhancedSystemPrompt },
+        { role: 'user', content: userPrompt },
       ],
-      temperature: 0.3,
-    })
-
-    const responseMessage = completion.choices[0]?.message?.content || 'No response.'
-    console.log('OpenAI response preview:', responseMessage.substring(0, 200) + '...')
-
-    return await handleEmailOutput(agent, responseMessage, pluginContext, userId)
-  } catch (error: any) {
-    if (error?.status === 429) {
-      console.warn('GPT-4o quota exceeded. Falling back to GPT-3.5-turbo.')
-
-      const fallback = await openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: finalPrompt },
-        ],
-        temperature: 0.3,
-      })
-
-      const responseMessage = fallback.choices[0]?.message?.content || 'No response.'
-      return await handleEmailOutput(agent, responseMessage, pluginContext, userId)
+      temperature: isRetry ? 0.1 : (intent.complexity === 'simple' ? 0.1 : 
+                  intent.complexity === 'moderate' ? 0.2 : 0.3),
+      max_tokens: intent.urgency === 'critical' ? 3000 : 4000,
+      top_p: 0.9,
+      frequency_penalty: 0.1,
+      presence_penalty: 0.1
     }
 
-    console.error('OpenAI runAgentWithContext failed:', error)
+    const completion = await openai.chat.completions.create(modelParams)
+    return completion.choices[0]?.message?.content || 'Advanced AI response generation failed.'
+
+  } catch (error: any) {
+    if (error?.status === 429) {
+      console.warn('⚠️ GPT-4o rate limit. Intelligent fallback to GPT-3.5-turbo.')
+      
+      const fallback = await openai.chat.completions.create({
+        model: 'gpt-3.5-turbo-16k',
+        messages: [
+          { role: 'system', content: enhancedSystemPrompt.slice(0, 8000) },
+          { role: 'user', content: userPrompt.slice(0, 8000) },
+        ],
+        temperature: 0.2,
+        max_tokens: 3000,
+      })
+
+      return fallback.choices[0]?.message?.content || 'Fallback response generated.'
+    }
+
     throw error
   }
 }

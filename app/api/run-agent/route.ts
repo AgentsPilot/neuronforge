@@ -10,7 +10,7 @@ export const runtime = 'nodejs'
 
 export async function POST(req: Request) {
   const body = await req.json()
-  const { agent_id, input_variables = {}, override_user_prompt } = body
+  const { agent_id, input_variables = {}, override_user_prompt, execution_id } = body
   const cookieStore = await cookies()
 
   const supabase = createServerClient(
@@ -45,6 +45,26 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
   }
 
+  // Initialize execution tracking if execution_id provided
+  if (execution_id) {
+    console.log(`🚀 Starting execution tracking for: ${execution_id}`)
+    
+    // Update execution record to running status
+    const { error: execError } = await supabase
+      .from('agent_executions')
+      .update({
+        status: 'running',
+        created_at: new Date().toISOString()
+      })
+      .eq('id', execution_id)
+
+    if (execError) {
+      console.error('❌ Failed to update execution record:', execError)
+    } else {
+      console.log('✅ Execution record updated to running status')
+    }
+  }
+
   // Extract text from uploaded PDF (if exists)
   try {
     for (const key in input_variables) {
@@ -54,16 +74,82 @@ export async function POST(req: Request) {
         value.startsWith('data:application/pdf;base64,')
       ) {
         console.log('📄 Detected PDF upload, extracting text...')
+        
+        if (execution_id) {
+          const { error: logError } = await supabase.from('agent_execution_logs').insert({
+            execution_id,
+            agent_id: agent_id,
+            user_id: user.id,
+            timestamp: new Date().toISOString(),
+            level: 'info',
+            message: 'PDF upload detected, extracting text content',
+            phase: 'documents'
+          })
+          
+          if (logError) {
+            console.error('Failed to insert PDF detection log:', logError)
+          }
+        }
+        
         const text = await extractPdfTextFromBase64(value)
         input_variables.__uploaded_file_text = text
+        
+        if (execution_id) {
+          const { error: logError } = await supabase.from('agent_execution_logs').insert({
+            execution_id,
+            agent_id: agent_id,
+            user_id: user.id,
+            timestamp: new Date().toISOString(),
+            level: 'info',
+            message: `PDF text extraction completed. Extracted ${text.length} characters`,
+            phase: 'documents'
+          })
+          
+          if (logError) {
+            console.error('Failed to insert PDF completion log:', logError)
+          }
+        }
         break // Only process the first PDF for now
       }
     }
-  } catch (err) {
+  } catch (err: any) {
     console.error('❌ Failed to extract PDF text:', err)
+    if (execution_id) {
+      const { error: logError } = await supabase.from('agent_execution_logs').insert({
+        execution_id,
+        agent_id: agent_id,
+        user_id: user.id,
+        timestamp: new Date().toISOString(),
+        level: 'error',
+        message: `PDF text extraction failed: ${err.message}`,
+        phase: 'documents'
+      })
+      
+      if (logError) {
+        console.error('Failed to insert PDF error log:', logError)
+      }
+    }
   }
 
   try {
+    const startTime = Date.now()
+
+    if (execution_id) {
+      const { error: logError } = await supabase.from('agent_execution_logs').insert({
+        execution_id,
+        agent_id: agent_id,
+        user_id: user.id,
+        timestamp: new Date().toISOString(),
+        level: 'info',
+        message: 'Starting agent execution with interpolated prompt',
+        phase: 'prompt'
+      })
+      
+      if (logError) {
+        console.error('Failed to insert start execution log:', logError)
+      }
+    }
+
     const { message, parsed_output, pluginContext, send_status } = await runAgentWithContext({
       supabase,
       agent,
@@ -71,6 +157,36 @@ export async function POST(req: Request) {
       input_variables,
       override_user_prompt,
     })
+
+    const endTime = Date.now()
+    const executionDuration = endTime - startTime
+
+    if (execution_id) {
+      const { error: logError } = await supabase.from('agent_execution_logs').insert({
+        execution_id,
+        agent_id: agent_id,
+        user_id: user.id,
+        timestamp: new Date().toISOString(),
+        level: 'info',
+        message: `Agent execution completed successfully in ${executionDuration}ms`,
+        phase: 'validation'
+      })
+      
+      if (logError) {
+        console.error('Failed to insert completion log:', logError)
+      }
+
+      // Update execution record with final metrics
+      const { error: updateError } = await supabase.from('agent_executions').update({
+        status: 'completed',
+        duration_ms: executionDuration,
+        completed_at: new Date().toISOString()
+      }).eq('id', execution_id)
+      
+      if (updateError) {
+        console.error('Failed to update execution completion:', updateError)
+      }
+    }
 
     console.log('🪵 Inserting agent log...')
     const { data: logData, error: logInsertError } = await supabase
@@ -175,9 +291,38 @@ export async function POST(req: Request) {
         pluginContext,
         send_status,
       },
+      execution_id: execution_id || null,
     })
-  } catch (err) {
+
+  } catch (err: any) {
     console.error('❌ runAgentWithContext error:', err)
+    
+    if (execution_id) {
+      const { error: logError } = await supabase.from('agent_execution_logs').insert({
+        execution_id,
+        agent_id: agent_id,
+        user_id: user.id,
+        timestamp: new Date().toISOString(),
+        level: 'error',
+        message: `Critical error: ${err.message}`,
+        phase: 'validation'
+      })
+      
+      if (logError) {
+        console.error('Failed to insert error log:', logError)
+      }
+
+      // Update execution record as failed
+      const { error: updateError } = await supabase.from('agent_executions').update({
+        status: 'failed',
+        completed_at: new Date().toISOString()
+      }).eq('id', execution_id)
+      
+      if (updateError) {
+        console.error('Failed to update execution as failed:', updateError)
+      }
+    }
+    
     return NextResponse.json(
       { error: 'Failed to run agent using OpenAI' },
       { status: 500 }
