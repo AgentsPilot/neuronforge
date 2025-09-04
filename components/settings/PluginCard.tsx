@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { CheckCircle, PlugZap, XCircle, Loader2, AlertTriangle, Clock, Settings } from 'lucide-react'
+import { CheckCircle, PlugZap, XCircle, Loader2, AlertTriangle, Clock, Settings, ChevronDown, ChevronUp } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 import { useAuth } from '@/components/UserProvider'
@@ -13,6 +13,7 @@ interface PluginCardProps {
   pluginKey: string
   pluginName: string
   description: string
+  detailedDescription?: string
   icon?: React.ReactNode
   category?: string
   isPopular?: boolean
@@ -34,7 +35,8 @@ interface PluginConnection {
 export default function PluginCard({ 
   pluginKey, 
   pluginName, 
-  description, 
+  description,
+  detailedDescription,
   icon,
   category,
   isPopular,
@@ -45,6 +47,7 @@ export default function PluginCard({
   const [connecting, setConnecting] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showDetailed, setShowDetailed] = useState(false)
 
   const router = useRouter()
   const { user } = useAuth()
@@ -200,12 +203,12 @@ export default function PluginCard({
 
   return (
     <Card className={`
-      relative w-full max-w-sm bg-white border transition-all duration-200 hover:shadow-md
+      relative w-full max-w-sm bg-white border transition-all duration-200 hover:shadow-md h-full flex flex-col
       ${isConnected ? 'border-green-200' : 'border-gray-200'}
     `}>
       <ConnectionDot />
       
-      <CardContent className="p-6">
+      <CardContent className="p-6 flex-1 flex flex-col">
         {/* Coming Soon Badge */}
         {!isAvailable && (
           <div className="absolute top-4 right-4">
@@ -216,21 +219,52 @@ export default function PluginCard({
         )}
 
         {/* Icon and Title */}
-        <div className="flex flex-col items-center text-center mb-6">
+        <div className="flex flex-col items-center text-center mb-6 flex-shrink-0">
           <div className="mb-4">
             {icon || <PlugZap className="w-8 h-8 text-gray-600" />}
           </div>
           
           <div className="space-y-2">
-            <h3 className="text-base font-medium text-gray-900 leading-tight">
-              {description}
+            <h3 className="text-lg font-semibold text-gray-900 leading-tight">
+              {pluginName}
             </h3>
+            <p className="text-sm text-gray-600 leading-relaxed">
+              {description}
+            </p>
+            
+            {/* Detailed Description Toggle */}
+            {detailedDescription && detailedDescription !== description && (
+              <div className="space-y-2">
+                <button
+                  onClick={() => setShowDetailed(!showDetailed)}
+                  className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 transition-colors"
+                >
+                  {showDetailed ? (
+                    <>
+                      <ChevronUp className="w-3 h-3" />
+                      Show less
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="w-3 h-3" />
+                      More details
+                    </>
+                  )}
+                </button>
+                
+                {showDetailed && (
+                  <p className="text-xs text-gray-500 leading-relaxed bg-gray-50 p-3 rounded">
+                    {detailedDescription}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
         {/* Connection Details */}
         {isConnected && connection && (
-          <div className="mb-6 text-center">
+          <div className="mb-6 text-center flex-shrink-0">
             <p className="text-sm text-gray-900 font-medium mb-1">
               Connected as <span className="text-gray-700">{connection.username || connection.email}</span>
             </p>
@@ -241,8 +275,11 @@ export default function PluginCard({
           </div>
         )}
 
+        {/* Spacer to push content to bottom */}
+        <div className="flex-1"></div>
+
         {/* Status Section */}
-        <div className="flex items-center justify-center mb-6">
+        <div className="flex items-center justify-center mb-6 flex-shrink-0">
           <div className="flex items-center gap-6">
             {/* Connection Status */}
             <div className="flex items-center gap-2">
@@ -283,13 +320,13 @@ export default function PluginCard({
 
         {/* Error Message */}
         {error && (
-          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-center">
+          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-center flex-shrink-0">
             <p className="text-sm text-red-700">{error}</p>
           </div>
         )}
 
         {/* Action Button */}
-        <div className="flex justify-center">
+        <div className="flex justify-center flex-shrink-0">
           {isConnected ? (
             <div className="flex gap-2">
               <Button

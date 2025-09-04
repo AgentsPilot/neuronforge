@@ -8,13 +8,15 @@ import { generatePDF } from '@/lib/pdf/generatePDF'
 import { sendEmailDraft } from '@/lib/plugins/google-mail/sendEmailDraft'
 import { Brain, Database, FileText, Cog, CheckCircle, AlertCircle, Clock, Target, Shield, Lightbulb, Cpu, Activity, Eye, EyeOff } from 'lucide-react'
 
-// Types
+// Types - FIXED to include options property
 type Field = {
   name: string
   type: 'string' | 'number' | 'boolean' | 'date' | 'enum' | 'file'
   enum?: string[]
+  options?: string[] // Added this property to match SmartSchemaGenerator output
   description?: string
   required?: boolean
+  placeholder?: string
 }
 
 interface OutputField {
@@ -690,8 +692,11 @@ export default function AgentSandbox({
                     onChange={(e) => handleInputChange(field.name, e.target.value)}
                     value={formData[field.name] || ''}
                   >
-                    <option value="">Select an option</option>
-                    {field.enum?.map((opt) => (
+                    <option value="">
+                      {field.placeholder || 'Select an option'}
+                    </option>
+                    {/* FIXED: Check both enum and options properties */}
+                    {(field.enum || field.options || []).map((opt) => (
                       <option key={opt} value={opt}>{opt}</option>
                     ))}
                   </select>
@@ -725,7 +730,7 @@ export default function AgentSandbox({
                     className={`w-full border px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                       validationErrors[field.name] ? 'border-red-500' : 'border-gray-300'
                     }`}
-                    placeholder={`Enter ${field.name.toLowerCase()}`}
+                    placeholder={field.placeholder || `Enter ${field.name.toLowerCase()}`}
                     onChange={(e) => handleInputChange(field.name, e.target.value)}
                     value={formData[field.name] || ''}
                   />

@@ -291,7 +291,7 @@ export default function AgentStatsChart() {
 
   if (loading) {
     return (
-      <div className="bg-white rounded-xl border shadow-sm">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
         <div className="p-8 text-center">
           <div className="animate-spin h-8 w-8 border-2 border-blue-600 border-t-transparent rounded-full mx-auto mb-4"></div>
           <p className="text-gray-500">Loading chart data...</p>
@@ -302,7 +302,7 @@ export default function AgentStatsChart() {
 
   if (chartData.length === 0) {
     return (
-      <div className="bg-white rounded-xl border shadow-sm">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
         <div className="p-8 text-center">
           <BarChart3 className="h-12 w-12 text-gray-400 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-gray-900 mb-2">No data to display</h3>
@@ -313,7 +313,7 @@ export default function AgentStatsChart() {
   }
 
   return (
-    <div className="bg-white rounded-xl border shadow-sm">
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
       {/* Header */}
       <div className="p-6 border-b border-gray-200">
         <div className="flex items-center justify-between mb-4">

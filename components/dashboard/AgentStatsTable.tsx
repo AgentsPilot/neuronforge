@@ -134,7 +134,7 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
 
   if (loading) {
     return (
-      <div className="bg-white rounded-xl border shadow-sm">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
         <div className="p-8 text-center">
           <div className="animate-spin h-8 w-8 border-2 border-blue-600 border-t-transparent rounded-full mx-auto mb-4"></div>
           <p className="text-gray-500">Loading agent statistics...</p>
@@ -145,7 +145,7 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
 
   if (!user?.id) {
     return (
-      <div className="bg-white rounded-xl border shadow-sm">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
         <div className="p-8 text-center">
           <AlertTriangle className="h-8 w-8 text-yellow-500 mx-auto mb-4" />
           <p className="text-gray-500">Please log in to view agent statistics.</p>
@@ -155,7 +155,7 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
   }
 
   return (
-    <div className="bg-white rounded-xl border shadow-sm">
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
       {/* Header */}
       <div className="p-6 border-b border-gray-200">
         <div className="flex items-center justify-between mb-4">

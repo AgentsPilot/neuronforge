@@ -2,7 +2,7 @@
 
 import { useAuth } from '@/components/UserProvider'
 import { redirect, usePathname } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import clsx from 'clsx'
 import { useRouter } from 'next/navigation'
@@ -125,9 +125,11 @@ const SidebarSection = ({
 }
 
 export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth() // Add loading from useAuth
+  const { user, loading } = useAuth()
   const pathname = usePathname()
   const router = useRouter()
+  
+  // All hooks must be called before any conditional returns
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [isMobileOpen, setIsMobileOpen] = useState(false)
   const [agentCount, setAgentCount] = useState<number | null>(null)
@@ -135,37 +137,59 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const [searchResults, setSearchResults] = useState<any[]>([])
   const [isSearching, setIsSearching] = useState(false)
   const [showSearchResults, setShowSearchResults] = useState(false)
+  
+  // Use refs to prevent race conditions
+  const fetchAgentCountRef = useRef<AbortController | null>(null)
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut()
-    router.push('/login')
-  }
+  // Improved agent count fetching with proper cleanup
+  const fetchAgentCount = useCallback(async () => {
+    if (!user?.id) {
+      setAgentCount(null)
+      return
+    }
 
-  // Fetch agent count from Supabase - MOVED TO TOP
-  useEffect(() => {
-    let cancelled = false
-    async function fetchAgentCount() {
-      if (!user) {
-        setAgentCount(null)
-        return
-      }
+    // Cancel any existing request
+    if (fetchAgentCountRef.current) {
+      fetchAgentCountRef.current.abort()
+    }
+
+    // Create new abort controller
+    const controller = new AbortController()
+    fetchAgentCountRef.current = controller
+
+    try {
       const { count, error } = await supabase
         .from('agents')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', user.id)
+        .eq('is_archived', false) // Only count non-archived agents for consistency
 
-      if (!cancelled) {
-        setAgentCount(error ? null : (count ?? 0))
+      // Check if request was aborted
+      if (controller.signal.aborted) return
+
+      if (error) {
+        console.error('Error fetching agent count:', error)
+        setAgentCount(null)
+      } else {
+        setAgentCount(count ?? 0)
+      }
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        console.error('Agent count fetch error:', err)
+        setAgentCount(null)
+      }
+    } finally {
+      if (fetchAgentCountRef.current === controller) {
+        fetchAgentCountRef.current = null
       }
     }
-    fetchAgentCount()
-    return () => { cancelled = true }
-  }, [user])
+  }, [user?.id])
 
-  // Search functionality
-  const handleSearch = async (query: string) => {
-    setSearchQuery(query)
-    
+  // Improved search functionality
+  const handleSearch = useCallback(async (query: string) => {
+    if (!user?.id) return
+
     if (!query.trim()) {
       setSearchResults([])
       setShowSearchResults(false)
@@ -176,20 +200,15 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     setShowSearchResults(true)
 
     try {
-      // Updated to use correct column names from schema
       const searchTerm = `%${query.toLowerCase()}%`
       
       const { data, error } = await supabase
         .from('agents')
         .select('id, agent_name, description, status')
         .eq('user_id', user.id)
-        .eq('is_archived', false) // Only show non-archived agents
+        .eq('is_archived', false)
         .or(`agent_name.ilike.${searchTerm},description.ilike.${searchTerm}`)
         .limit(5)
-
-      console.log('Search query:', query)
-      console.log('Search results:', data)
-      console.log('Search error:', error)
 
       if (error) {
         console.error('Supabase search error:', error)
@@ -206,45 +225,81 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
             agent.description?.toLowerCase().includes(query.toLowerCase())
           ).slice(0, 5)
           setSearchResults(filtered)
+        } else {
+          setSearchResults([])
         }
       } else if (data) {
         setSearchResults(data)
       }
     } catch (err) {
       console.error('Search error:', err)
-      
-      // Final fallback: get all agents and filter
-      try {
-        const { data: allAgents } = await supabase
-          .from('agents')
-          .select('id, agent_name, description, status')
-          .eq('user_id', user.id)
-          .eq('is_archived', false)
-
-        if (allAgents) {
-          const filtered = allAgents.filter(agent => 
-            agent.agent_name?.toLowerCase().includes(query.toLowerCase()) ||
-            agent.description?.toLowerCase().includes(query.toLowerCase())
-          ).slice(0, 5)
-          setSearchResults(filtered)
-        }
-      } catch (fallbackErr) {
-        console.error('Fallback search failed:', fallbackErr)
-        setSearchResults([])
-      }
+      setSearchResults([])
     } finally {
       setIsSearching(false)
     }
-  }
+  }, [user?.id])
 
-  // Debounced search - MOVED TO TOP
+  // Function to refresh agent count - can be called from other parts of the app
+  const refreshAgentCount = useCallback(() => {
+    fetchAgentCount()
+  }, [fetchAgentCount])
+
+  const handleLogout = useCallback(async () => {
+    await supabase.auth.signOut()
+    router.push('/login')
+  }, [router])
+
+  const handleSearchResultClick = useCallback((agentId: string) => {
+    setShowSearchResults(false)
+    setSearchQuery('')
+    setIsMobileOpen(false)
+    router.push(`/agents/${agentId}`)
+  }, [router])
+
+  // Effect for fetching agent count
   useEffect(() => {
-    const debounceTimer = setTimeout(() => {
+    fetchAgentCount()
+    
+    // Cleanup on unmount
+    return () => {
+      if (fetchAgentCountRef.current) {
+        fetchAgentCountRef.current.abort()
+        fetchAgentCountRef.current = null
+      }
+    }
+  }, [fetchAgentCount])
+
+  // Debounced search effect
+  useEffect(() => {
+    // Clear existing timeout
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current)
+    }
+
+    // Set new timeout
+    searchTimeoutRef.current = setTimeout(() => {
       handleSearch(searchQuery)
     }, 300)
 
-    return () => clearTimeout(debounceTimer)
-  }, [searchQuery, user])
+    // Cleanup function
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current)
+      }
+    }
+  }, [searchQuery, handleSearch])
+
+  // Expose refreshAgentCount function globally (optional)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      (window as any).refreshAgentCount = refreshAgentCount
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        delete (window as any).refreshAgentCount
+      }
+    }
+  }, [refreshAgentCount])
 
   // Show loading spinner while auth state is being determined
   if (loading) {
@@ -262,13 +317,6 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   if (!user) {
     redirect('/login')
     return null
-  }
-
-  const handleSearchResultClick = (agentId: string) => {
-    setShowSearchResults(false)
-    setSearchQuery('')
-    setIsMobileOpen(false)
-    router.push(`/agents/${agentId}`)
   }
 
   const sidebarContent = (

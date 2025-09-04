@@ -71,18 +71,23 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
     setAgentData((prev) => ({ ...prev, ...data }))
   }, [])
 
-  // Stable validation change handler
-  const handleValidationChange = useCallback((stepNum: number) => 
-    (isValid: boolean, errorMsg?: string) => {
-      setStepValidation(prev => ({
-        ...prev,
-        [stepNum]: { isValid, error: errorMsg }
-      }))
-    }, []
-  )
+  // FIXED: Stable validation change handler - create individual handlers
+  const handleStep4ValidationChange = useCallback((isValid: boolean, errorMsg?: string) => {
+    setStepValidation(prev => ({
+      ...prev,
+      4: { isValid, error: errorMsg }
+    }))
+  }, [])
 
-  // Fix: Better plugin keys extraction with debugging
-  const getPluginKeys = useCallback(() => {
+  const handleStep5ValidationChange = useCallback((isValid: boolean, errorMsg?: string) => {
+    setStepValidation(prev => ({
+      ...prev,
+      5: { isValid, error: errorMsg }
+    }))
+  }, [])
+
+  // Fix: Memoize plugin keys properly with stable dependencies
+  const pluginKeys = useMemo(() => {
     const plugins = agentData.plugins || {}
     console.log('🔍 Current plugins object:', plugins)
     
@@ -99,57 +104,71 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
     
     console.log('🔍 Extracted plugin keys:', keys)
     return keys
-  }, [agentData.plugins])
+  }, [agentData.plugins]) // Direct dependency on plugins
 
-  const pluginKeys = useMemo(() => getPluginKeys(), [getPluginKeys])
+  // Remove the separate getPluginKeys function to avoid circular dependencies
 
+  // Fix: Add proper dependencies and prevent infinite loops
   useEffect(() => {
     const initialPrompt = searchParams.get('prompt')
     if (!agentId && user && initialPrompt) {
-      setAgentData((prev) => ({
-        ...prev,
-        userPrompt: prev.userPrompt?.trim() ? prev.userPrompt : initialPrompt
-      }))
+      setAgentData((prev) => {
+        // Only update if the prompt is actually different
+        if (prev.userPrompt?.trim() !== initialPrompt) {
+          return {
+            ...prev,
+            userPrompt: prev.userPrompt?.trim() ? prev.userPrompt : initialPrompt
+          }
+        }
+        return prev
+      })
     }
   }, [searchParams, agentId, user])
 
+  // Fix: Add proper loading state management
   useEffect(() => {
-    if (!agentId || !user) return
+    if (!agentId || !user || loadingDraft) return
+    
     const fetchAgent = async () => {
       setLoadingDraft(true)
-      const { data, error } = await supabase
-        .from('agents')
-        .select('*')
-        .eq('id', agentId)
-        .eq('user_id', user.id)
-        .single()
+      try {
+        const { data, error } = await supabase
+          .from('agents')
+          .select('*')
+          .eq('id', agentId)
+          .eq('user_id', user.id)
+          .single()
 
-      if (error || !data) {
+        if (error || !data) {
+          console.error('Failed to load agent data:', error)
+          alert('Failed to load agent data')
+          return
+        }
+
+        console.log('📥 Loaded agent data:', data)
+
+        setAgentData({
+          agentName: data.agent_name || '',
+          description: data.description || '',
+          systemPrompt: data.system_prompt || '',
+          userPrompt: data.user_prompt || '',
+          inputSchema: data.input_schema || [],
+          outputSchema: data.output_schema || [],
+          plugins: data.connected_plugins || {},
+          mode: data.mode || 'on_demand',
+          schedule_cron: data.schedule_cron || '',
+          trigger_conditions: JSON.stringify(data.trigger_conditions || {}),
+        })
+      } catch (err) {
+        console.error('Error fetching agent:', err)
         alert('Failed to load agent data')
+      } finally {
         setLoadingDraft(false)
-        return
       }
-
-      console.log('📥 Loaded agent data:', data)
-
-      setAgentData({
-        agentName: data.agent_name,
-        description: data.description,
-        systemPrompt: data.system_prompt,
-        userPrompt: data.user_prompt,
-        inputSchema: data.input_schema || [],
-        outputSchema: data.output_schema || [],
-        plugins: data.connected_plugins || {},
-        mode: data.mode || 'on_demand',
-        schedule_cron: data.schedule_cron || '',
-        trigger_conditions: JSON.stringify(data.trigger_conditions || {}),
-      })
-
-      setLoadingDraft(false)
     }
 
     fetchAgent()
-  }, [agentId, user])
+  }, [agentId, user]) // Removed loadingDraft from dependencies to prevent loops
 
   const validateStep = useCallback(() => {
     // Check step-specific validation first
@@ -195,51 +214,55 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
     setLoading(true)
     setError(null)
 
-    const currentPluginKeys = getPluginKeys()
     console.log('🧩 Final agentData.plugins:', agentData.plugins)
-    console.log('🔑 Final plugin keys:', currentPluginKeys)
+    console.log('🔑 Final plugin keys:', pluginKeys)
 
-    const payload = {
-      user_id: user.id,
-      agent_name: agentData.agentName,
-      description: agentData.description,
-      system_prompt: agentData.systemPrompt,
-      user_prompt: agentData.userPrompt,
-      input_schema: agentData.inputSchema,
-      output_schema: agentData.outputSchema,
-      connected_plugins: agentData.plugins,
-      plugins_required: currentPluginKeys,
-      mode: agentData.mode,
-      schedule_cron: agentData.schedule_cron || null,
-      trigger_conditions: agentData.trigger_conditions ? JSON.parse(agentData.trigger_conditions) : null,
-      status: 'active',
+    try {
+      const payload = {
+        user_id: user.id,
+        agent_name: agentData.agentName,
+        description: agentData.description,
+        system_prompt: agentData.systemPrompt,
+        user_prompt: agentData.userPrompt,
+        input_schema: agentData.inputSchema,
+        output_schema: agentData.outputSchema,
+        connected_plugins: agentData.plugins,
+        plugins_required: pluginKeys,
+        mode: agentData.mode,
+        schedule_cron: agentData.schedule_cron || null,
+        trigger_conditions: agentData.trigger_conditions ? JSON.parse(agentData.trigger_conditions) : null,
+        status: 'active',
+      }
+
+      console.log('💾 Saving payload:', payload)
+
+      let result
+      if (agentId) {
+        console.log('📝 Updating agent with ID:', agentId)
+        result = await supabase.from('agents').update(payload).eq('id', agentId).select()
+      } else {
+        console.log('✨ Creating new agent')
+        result = await supabase.from('agents').insert([payload]).select()
+      }
+
+      console.log('💾 Database result:', result)
+
+      const { error, data } = result
+
+      if (error) {
+        console.error('❌ Database error:', error)
+        setError(`Failed to save agent: ${error.message}`)
+      } else {
+        console.log('✅ Successfully saved agent:', data)
+        const savedAgentId = agentId || data[0]?.id
+        router.push(`/agents/${savedAgentId}`)
+      }
+    } catch (err) {
+      console.error('❌ Unexpected error:', err)
+      setError('An unexpected error occurred while saving the agent')
+    } finally {
+      setLoading(false)
     }
-
-    console.log('💾 Saving payload:', payload)
-
-    let result
-    if (agentId) {
-      console.log('📝 Updating agent with ID:', agentId)
-      result = await supabase.from('agents').update(payload).eq('id', agentId).select()
-    } else {
-      console.log('✨ Creating new agent')
-      result = await supabase.from('agents').insert([payload]).select()
-    }
-
-    console.log('💾 Database result:', result)
-
-    const { error, data } = result
-
-    if (error) {
-      console.error('❌ Database error:', error)
-      setError(`Failed to save agent: ${error.message}`)
-    } else {
-      console.log('✅ Successfully saved agent:', data)
-      const savedAgentId = agentId || data[0]?.id
-      router.push(`/agents/${savedAgentId}`)
-    }
-
-    setLoading(false)
   }
 
   const saveDraft = async () => {
@@ -247,42 +270,45 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
     setLoading(true)
     setError(null)
 
-    const currentPluginKeys = getPluginKeys()
+    try {
+      const payload = {
+        user_id: user.id,
+        agent_name: agentData.agentName || 'Untitled Agent',
+        description: agentData.description,
+        system_prompt: agentData.systemPrompt,
+        user_prompt: agentData.userPrompt,
+        input_schema: agentData.inputSchema,
+        output_schema: agentData.outputSchema,
+        connected_plugins: agentData.plugins,
+        plugins_required: pluginKeys,
+        mode: agentData.mode,
+        schedule_cron: agentData.schedule_cron || null,
+        trigger_conditions: agentData.trigger_conditions ? JSON.parse(agentData.trigger_conditions) : null,
+        status: 'draft',
+      }
 
-    const payload = {
-      user_id: user.id,
-      agent_name: agentData.agentName || 'Untitled Agent',
-      description: agentData.description,
-      system_prompt: agentData.systemPrompt,
-      user_prompt: agentData.userPrompt,
-      input_schema: agentData.inputSchema,
-      output_schema: agentData.outputSchema,
-      connected_plugins: agentData.plugins,
-      plugins_required: currentPluginKeys,
-      mode: agentData.mode,
-      schedule_cron: agentData.schedule_cron || null,
-      trigger_conditions: agentData.trigger_conditions ? JSON.parse(agentData.trigger_conditions) : null,
-      status: 'draft',
+      let result
+      if (agentId) {
+        result = await supabase.from('agents').update(payload).eq('id', agentId).select()
+      } else {
+        result = await supabase.from('agents').insert([payload]).select()
+      }
+
+      const { error, data } = result
+
+      if (error) {
+        console.error('❌ Draft save error:', error)
+        setError(`Failed to save draft: ${error.message}`)
+      } else {
+        const savedAgentId = agentId || data[0]?.id
+        router.push(`/agents/${savedAgentId}`)
+      }
+    } catch (err) {
+      console.error('❌ Unexpected error during draft save:', err)
+      setError('An unexpected error occurred while saving the draft')
+    } finally {
+      setLoading(false)
     }
-
-    let result
-    if (agentId) {
-      result = await supabase.from('agents').update(payload).eq('id', agentId).select()
-    } else {
-      result = await supabase.from('agents').insert([payload]).select()
-    }
-
-    const { error, data } = result
-
-    if (error) {
-      console.error('❌ Draft save error:', error)
-      setError(`Failed to save draft: ${error.message}`)
-    } else {
-      const savedAgentId = agentId || data[0]?.id
-      router.push(`/agents/${savedAgentId}`)
-    }
-
-    setLoading(false)
   }
 
   const progressPercent = (step / TOTAL_STEPS) * 100
@@ -410,8 +436,8 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
             {step === 1 && <Step1Basics data={agentData} onUpdate={updateData} />}
             {step === 2 && <Step2Prompts data={agentData} onUpdate={updateData} />}
             {step === 3 && <Step3Plugins data={agentData} onUpdate={updateData} />}
-            {step === 4 && <Step4Schema data={agentData} onUpdate={updateData} setStepLoading={setLoading} onValidationChange={handleValidationChange(4)} />}
-            {step === 5 && <Step5OutputSchema data={agentData} onUpdate={updateData} onValidationChange={handleValidationChange(5)} />}
+            {step === 4 && <Step4Schema data={agentData} onUpdate={updateData} setStepLoading={setLoading} onValidationChange={handleStep4ValidationChange} />}
+            {step === 5 && <Step5OutputSchema data={agentData} onUpdate={updateData} onValidationChange={handleStep5ValidationChange} />}
             {step === 6 && <Step4_5_Mode data={agentData} onUpdate={updateData} />}
             {step === 7 && <Step6Review data={agentData} onEditStep={(s) => setStep(s)} />}
           </div>

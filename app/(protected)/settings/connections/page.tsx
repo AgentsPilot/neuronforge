@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Input } from '@/components/ui/input'
-import { pluginList as availablePlugins } from '@/lib/plugins/pluginList'
+import { pluginList as availablePlugins, categoryMetadata } from '@/lib/plugins/pluginList'
 import PluginCard from '@/components/settings/PluginCard'
 import { supabase } from '@/lib/supabaseClient'
 import { useAuth } from '@/components/UserProvider'
@@ -10,6 +10,7 @@ import { useAuth } from '@/components/UserProvider'
 export default function ConnectionsPage() {
   const [search, setSearch] = useState('')
   const [connectedPlugins, setConnectedPlugins] = useState<string[]>([])
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const { user } = useAuth()
 
   // Fetch connected plugins
@@ -31,10 +32,25 @@ export default function ConnectionsPage() {
     fetchConnectedPlugins()
   }, [user])
 
-  const filteredPlugins = availablePlugins.filter((plugin) =>
-    plugin.name.toLowerCase().includes(search.toLowerCase()) ||
-    plugin.description.toLowerCase().includes(search.toLowerCase())
-  )
+  const handleConnectionChange = (pluginKey: string, connected: boolean) => {
+    if (connected) {
+      setConnectedPlugins(prev => [...prev, pluginKey])
+    } else {
+      setConnectedPlugins(prev => prev.filter(key => key !== pluginKey))
+    }
+  }
+
+  const filteredPlugins = availablePlugins.filter((plugin) => {
+    const matchesSearch = plugin.name.toLowerCase().includes(search.toLowerCase()) ||
+      plugin.description.toLowerCase().includes(search.toLowerCase())
+    
+    const matchesCategory = !selectedCategory || 
+      selectedCategory === 'connected' && connectedPlugins.includes(plugin.pluginKey) ||
+      selectedCategory === 'popular' && plugin.isPopular ||
+      plugin.category === selectedCategory
+
+    return matchesSearch && matchesCategory
+  })
 
   // Sort plugins: connected ones first, then alphabetical
   const sortedPlugins = filteredPlugins.sort((a, b) => {
@@ -51,6 +67,9 @@ export default function ConnectionsPage() {
   ).length
 
   const availableCount = sortedPlugins.length - connectedCount
+
+  // Get popular plugins count
+  const popularCount = availablePlugins.filter(plugin => plugin.isPopular).length
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
@@ -72,10 +91,10 @@ export default function ConnectionsPage() {
           {/* Connection Stats */}
           <div className="mt-6 flex justify-center gap-6">
             <div className="bg-green-50 px-4 py-2 rounded-full border border-green-200">
-              <span className="text-green-700 font-semibold">{connectedCount} Connected</span>
+              <span className="text-green-700 font-semibold">{connectedPlugins.length} Connected</span>
             </div>
             <div className="bg-blue-50 px-4 py-2 rounded-full border border-blue-200">
-              <span className="text-blue-700 font-semibold">{availableCount} Available</span>
+              <span className="text-blue-700 font-semibold">{availablePlugins.length - connectedPlugins.length} Available</span>
             </div>
           </div>
         </div>
@@ -110,7 +129,7 @@ export default function ConnectionsPage() {
             {/* Search Stats */}
             <div className="mt-4 text-center">
               <p className="text-sm text-slate-500">
-                {search ? (
+                {search || selectedCategory ? (
                   <>
                     Showing <span className="font-semibold text-blue-600">{sortedPlugins.length}</span> of {availablePlugins.length} integrations
                   </>
@@ -128,18 +147,57 @@ export default function ConnectionsPage() {
         {!search && (
           <div className="mb-12">
             <div className="flex flex-wrap justify-center gap-3">
-              <button className="px-6 py-2 bg-green-100 hover:bg-green-200 border border-green-300 rounded-full text-green-800 font-medium transition-all duration-200 hover:shadow-md hover:scale-105">
-                Connected ({connectedCount})
+              {/* Connected */}
+              <button 
+                onClick={() => setSelectedCategory(selectedCategory === 'connected' ? null : 'connected')}
+                className={`px-6 py-2 border rounded-full font-medium transition-all duration-200 hover:shadow-md hover:scale-105 ${
+                  selectedCategory === 'connected'
+                    ? 'bg-green-200 border-green-300 text-green-800'
+                    : 'bg-green-100 hover:bg-green-200 border-green-300 text-green-800'
+                }`}
+              >
+                Connected ({connectedPlugins.length})
               </button>
-              {['Popular', 'Productivity', 'Communication', 'Storage', 'Development'].map((category) => (
+              
+              {/* Popular */}
+              <button 
+                onClick={() => setSelectedCategory(selectedCategory === 'popular' ? null : 'popular')}
+                className={`px-6 py-2 border rounded-full font-medium transition-all duration-200 hover:shadow-md hover:scale-105 ${
+                  selectedCategory === 'popular'
+                    ? 'bg-yellow-200 border-yellow-300 text-yellow-800'
+                    : 'bg-white/70 backdrop-blur-sm hover:bg-yellow-50 border-yellow-200 text-yellow-700'
+                }`}
+              >
+                Popular ({popularCount})
+              </button>
+
+              {/* Category buttons */}
+              {Object.entries(categoryMetadata).map(([categoryKey, category]) => (
                 <button
-                  key={category}
-                  className="px-6 py-2 bg-white/70 backdrop-blur-sm hover:bg-blue-50 border border-blue-100 rounded-full text-blue-700 font-medium transition-all duration-200 hover:shadow-md hover:scale-105"
+                  key={categoryKey}
+                  onClick={() => setSelectedCategory(selectedCategory === categoryKey ? null : categoryKey)}
+                  className={`px-6 py-2 border rounded-full font-medium transition-all duration-200 hover:shadow-md hover:scale-105 ${
+                    selectedCategory === categoryKey
+                      ? 'bg-blue-200 border-blue-300 text-blue-800'
+                      : 'bg-white/70 backdrop-blur-sm hover:bg-blue-50 border-blue-100 text-blue-700'
+                  }`}
                 >
-                  {category}
+                  {category.label}
                 </button>
               ))}
             </div>
+
+            {/* Clear filter button */}
+            {selectedCategory && (
+              <div className="text-center mt-4">
+                <button
+                  onClick={() => setSelectedCategory(null)}
+                  className="text-sm text-slate-500 hover:text-slate-700 underline"
+                >
+                  Clear filter
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -148,7 +206,7 @@ export default function ConnectionsPage() {
           {sortedPlugins.length > 0 ? (
             <>
               {/* Connected Apps Section */}
-              {connectedCount > 0 && !search && (
+              {connectedCount > 0 && !search && !selectedCategory && (
                 <div className="mb-12">
                   <div className="flex items-center gap-3 mb-6">
                     <div className="w-2 h-2 bg-green-500 rounded-full"></div>
@@ -165,19 +223,16 @@ export default function ConnectionsPage() {
                         className="animate-in fade-in-0 slide-in-from-bottom-4 duration-300"
                         style={{ animationDelay: `${index * 50}ms` }}
                       >
-                        <div className="group h-full">
-                          <div className="bg-gradient-to-br from-green-50 to-white border-2 border-green-200 rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.02] h-full relative">
-                            <div className="absolute top-3 right-3">
-                              <div className="w-3 h-3 bg-green-500 rounded-full border-2 border-white shadow-sm"></div>
-                            </div>
-                            <PluginCard
-                              pluginKey={plugin.pluginKey}
-                              pluginName={plugin.name}
-                              description={plugin.description}
-                              icon={plugin.icon}
-                            />
-                          </div>
-                        </div>
+                        <PluginCard
+                          pluginKey={plugin.pluginKey}
+                          pluginName={plugin.name}
+                          description={plugin.description}
+                          detailedDescription={plugin.detailedDescription}
+                          icon={plugin.icon}
+                          category={plugin.category}
+                          isPopular={plugin.isPopular}
+                          onConnectionChange={handleConnectionChange}
+                        />
                       </div>
                     ))}
                   </div>
@@ -185,7 +240,7 @@ export default function ConnectionsPage() {
               )}
 
               {/* Available Apps Section */}
-              {availableCount > 0 && (
+              {availableCount > 0 && !selectedCategory && (
                 <div>
                   {!search && connectedCount > 0 && (
                     <div className="flex items-center gap-3 mb-6">
@@ -204,55 +259,62 @@ export default function ConnectionsPage() {
                         className="animate-in fade-in-0 slide-in-from-bottom-4 duration-300"
                         style={{ animationDelay: `${(index + connectedCount) * 50}ms` }}
                       >
-                        <div className="group h-full">
-                          <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.02] border border-white/40 h-full">
-                            <PluginCard
-                              pluginKey={plugin.pluginKey}
-                              pluginName={plugin.name}
-                              description={plugin.description}
-                              icon={plugin.icon}
-                            />
-                          </div>
-                        </div>
+                        <PluginCard
+                          pluginKey={plugin.pluginKey}
+                          pluginName={plugin.name}
+                          description={plugin.description}
+                          detailedDescription={plugin.detailedDescription}
+                          icon={plugin.icon}
+                          category={plugin.category}
+                          isPopular={plugin.isPopular}
+                          onConnectionChange={handleConnectionChange}
+                        />
                       </div>
                     ))}
                   </div>
                 </div>
               )}
 
-              {/* Search Results - All Apps */}
-              {search && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                  {sortedPlugins.map((plugin, index) => {
-                    const isConnected = connectedPlugins.includes(plugin.pluginKey)
-                    return (
-                      <div
-                        key={plugin.pluginKey}
-                        className="animate-in fade-in-0 slide-in-from-bottom-4 duration-300"
-                        style={{ animationDelay: `${index * 50}ms` }}
-                      >
-                        <div className="group h-full">
-                          <div className={`rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.02] h-full relative ${
-                            isConnected 
-                              ? 'bg-gradient-to-br from-green-50 to-white border-2 border-green-200'
-                              : 'bg-white/70 backdrop-blur-sm border border-white/40'
-                          }`}>
-                            {isConnected && (
-                              <div className="absolute top-3 right-3">
-                                <div className="w-3 h-3 bg-green-500 rounded-full border-2 border-white shadow-sm"></div>
-                              </div>
-                            )}
+              {/* Search/Filter Results - All Apps */}
+              {(search || selectedCategory) && (
+                <div>
+                  {selectedCategory && !search && (
+                    <div className="flex items-center gap-3 mb-6">
+                      <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+                      <h2 className="text-xl font-semibold text-slate-800">
+                        {selectedCategory === 'connected' ? 'Connected Apps' :
+                         selectedCategory === 'popular' ? 'Popular Apps' :
+                         categoryMetadata[selectedCategory]?.label || selectedCategory}
+                      </h2>
+                      <div className="flex-1 h-px bg-gradient-to-r from-purple-200 to-transparent"></div>
+                    </div>
+                  )}
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    {sortedPlugins.map((plugin, index) => {
+                      const isConnected = connectedPlugins.includes(plugin.pluginKey)
+                      return (
+                        <div
+                          key={plugin.pluginKey}
+                          className="animate-in fade-in-0 slide-in-from-bottom-4 duration-300 h-full"
+                          style={{ animationDelay: `${index * 50}ms` }}
+                        >
+                          <div className="h-full">
                             <PluginCard
                               pluginKey={plugin.pluginKey}
                               pluginName={plugin.name}
                               description={plugin.description}
+                              detailedDescription={plugin.detailedDescription}
                               icon={plugin.icon}
+                              category={plugin.category}
+                              isPopular={plugin.isPopular}
+                              onConnectionChange={handleConnectionChange}
                             />
                           </div>
                         </div>
-                      </div>
-                    )
-                  })}
+                      )
+                    })}
+                  </div>
                 </div>
               )}
             </>
@@ -266,14 +328,28 @@ export default function ConnectionsPage() {
               </div>
               <h3 className="text-xl font-semibold text-slate-700 mb-2">No integrations found</h3>
               <p className="text-slate-500 mb-6 max-w-md mx-auto">
-                We couldn't find any integrations matching "{search}". Try adjusting your search terms.
+                {search ? `We couldn't find any integrations matching "${search}".` : 
+                 selectedCategory ? `No integrations found in the selected category.` :
+                 'No integrations found.'} Try adjusting your search terms or filters.
               </p>
-              <button
-                onClick={() => setSearch('')}
-                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl transition-colors duration-200"
-              >
-                Clear Search
-              </button>
+              <div className="flex gap-3 justify-center">
+                {search && (
+                  <button
+                    onClick={() => setSearch('')}
+                    className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl transition-colors duration-200"
+                  >
+                    Clear Search
+                  </button>
+                )}
+                {selectedCategory && (
+                  <button
+                    onClick={() => setSelectedCategory(null)}
+                    className="px-6 py-2 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded-xl transition-colors duration-200"
+                  >
+                    Clear Filter
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </div>
