@@ -23,7 +23,10 @@ import {
   Zap,
   FileText,
   Hash,
-  Globe
+  Globe,
+  Mail,
+  Settings,
+  ExternalLink
 } from 'lucide-react'
 
 type LogEntry = {
@@ -82,7 +85,27 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
     setLoading(false)
   }
 
+  const isWorkflowResult = (output: any): boolean => {
+    return output && 
+           typeof output === 'object' && 
+           output.workflow_results && 
+           output.execution_summary &&
+           Array.isArray(output.workflow_results)
+  }
+
   const getStatusFromOutput = (output: any): { status: string; icon: any; color: string } => {
+    if (isWorkflowResult(output)) {
+      const { execution_summary } = output
+      const { completedSteps, failedSteps, totalSteps } = execution_summary
+      
+      if (failedSteps > 0) {
+        return completedSteps > 0 
+          ? { status: 'warning', icon: AlertTriangle, color: 'text-yellow-600' }
+          : { status: 'error', icon: XCircle, color: 'text-red-600' }
+      }
+      return { status: 'success', icon: CheckCircle, color: 'text-green-600' }
+    }
+
     if (typeof output === 'object' && output !== null) {
       if (output.error || output.status === 'error') {
         return { status: 'error', icon: XCircle, color: 'text-red-600' }
@@ -128,6 +151,171 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
       .replace(/\n/g, '<br>')
   }
 
+  const renderWorkflowResults = (workflowData: any) => {
+    const { workflow_results, execution_summary } = workflowData
+    const { totalSteps, completedSteps, failedSteps, executionDuration } = execution_summary
+
+    const overallStatus = failedSteps > 0 
+      ? (completedSteps > 0 ? 'partial' : 'failed')
+      : 'success'
+
+    const getOverallStatusDisplay = () => {
+      switch (overallStatus) {
+        case 'success':
+          return { icon: CheckCircle, color: 'text-green-600', label: 'Completed', bgColor: 'bg-green-50', borderColor: 'border-green-200' }
+        case 'partial':
+          return { icon: AlertTriangle, color: 'text-yellow-600', label: 'Partially Complete', bgColor: 'bg-yellow-50', borderColor: 'border-yellow-200' }
+        case 'failed':
+          return { icon: XCircle, color: 'text-red-600', label: 'Failed', bgColor: 'bg-red-50', borderColor: 'border-red-200' }
+        default:
+          return { icon: Clock, color: 'text-gray-600', label: 'Unknown', bgColor: 'bg-gray-50', borderColor: 'border-gray-200' }
+      }
+    }
+
+    const statusDisplay = getOverallStatusDisplay()
+    const StatusIcon = statusDisplay.icon
+
+    return (
+      <div className="space-y-4">
+        {/* Overall Status */}
+        <div className={`${statusDisplay.bgColor} ${statusDisplay.borderColor} border rounded-lg p-4`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-3">
+              <StatusIcon className={`h-6 w-6 ${statusDisplay.color}`} />
+              <div>
+                <h3 className="font-semibold text-gray-900">{statusDisplay.label}</h3>
+                <p className="text-sm text-gray-600">
+                  {completedSteps} of {totalSteps} steps completed in {Math.round(executionDuration / 1000)}s
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Step Progress */}
+        <div className="bg-white border border-gray-200 rounded-lg">
+          <div className="px-4 py-3 border-b border-gray-200">
+            <h4 className="font-medium text-gray-900 flex items-center gap-2">
+              <Activity className="h-4 w-4" />
+              Step Progress
+            </h4>
+          </div>
+          <div className="p-4 space-y-3">
+            {workflow_results.map((step: any, index: number) => {
+              const stepStatus = step.error ? 'error' : 'success'
+              const StepIcon = stepStatus === 'error' ? XCircle : CheckCircle
+              const iconColor = stepStatus === 'error' ? 'text-red-600' : 'text-green-600'
+              
+              return (
+                <div key={step.stepId || index} className="flex items-start gap-3">
+                  <StepIcon className={`h-5 w-5 ${iconColor} mt-0.5 flex-shrink-0`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-gray-900">
+                        Step {step.stepId}: {step.action || 'Unknown action'}
+                      </span>
+                      {step.pluginKey && (
+                        <span className="text-xs bg-gray-100 px-2 py-1 rounded">
+                          {step.pluginKey}
+                        </span>
+                      )}
+                    </div>
+                    
+                    {step.error && (
+                      <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded">
+                        <p className="text-sm text-red-800 font-medium">Error:</p>
+                        <p className="text-sm text-red-700">
+                          {step.error.includes('401 Unauthorized') 
+                            ? 'Authorization expired - please reconnect your account'
+                            : step.error
+                          }
+                        </p>
+                      </div>
+                    )}
+
+                    {step.result && !step.error && (
+                      <div className="mt-2 text-sm text-gray-600">
+                        {typeof step.result === 'object' ? (
+                          <div className="space-y-2">
+                            {step.result.summary && (
+                              <p><span className="font-medium">Summary:</span> {step.result.summary}</p>
+                            )}
+                            {step.result.totalEmails && (
+                              <p><span className="font-medium">Emails processed:</span> {step.result.totalEmails}</p>
+                            )}
+                            {step.result.response && (
+                              <p><span className="font-medium">Result:</span> {step.result.response}</p>
+                            )}
+                          </div>
+                        ) : (
+                          <p>{String(step.result)}</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Content Summary (if available) */}
+        {workflow_results.some((step: any) => step.result?.summary || step.result?.response) && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg">
+            <div className="px-4 py-3 border-b border-blue-200">
+              <h4 className="font-medium text-blue-900 flex items-center gap-2">
+                <Mail className="h-4 w-4" />
+                Content Summary
+              </h4>
+            </div>
+            <div className="p-4">
+              {workflow_results.map((step: any) => {
+                if (step.result?.response && typeof step.result.response === 'string') {
+                  return (
+                    <div key={step.stepId} className="prose prose-sm max-w-none text-blue-800">
+                      <div dangerouslySetInnerHTML={{ 
+                        __html: formatMarkdownText(step.result.response) 
+                      }} />
+                    </div>
+                  )
+                }
+                return null
+              }).filter(Boolean)}
+            </div>
+          </div>
+        )}
+
+        {/* Action Buttons for Failed Steps */}
+        {failedSteps > 0 && (
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <h4 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
+              <Settings className="h-4 w-4" />
+              Recommended Actions
+            </h4>
+            <div className="space-y-2 text-sm">
+              {workflow_results
+                .filter((step: any) => step.error)
+                .map((step: any) => (
+                  <div key={step.stepId} className="flex items-center justify-between p-2 bg-white border border-gray-200 rounded">
+                    <span>
+                      {step.error.includes('401 Unauthorized') 
+                        ? `Reconnect ${step.pluginKey} integration`
+                        : `Fix ${step.pluginKey} error`
+                      }
+                    </span>
+                    <button className="text-blue-600 hover:text-blue-800 flex items-center gap-1">
+                      <ExternalLink className="h-3 w-3" />
+                      <span>Fix</span>
+                    </button>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   const filteredLogs = logs.filter(log => {
     const matchesSearch = log.run_output?.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          log.id.toLowerCase().includes(searchQuery.toLowerCase())
@@ -150,6 +338,10 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
   }
 
   const renderStructuredOutput = (output: any) => {
+    if (isWorkflowResult(output)) {
+      return renderWorkflowResults(output)
+    }
+
     if (!output) {
       return (
         <div className="bg-gray-100 p-4 rounded-lg text-sm text-gray-600 text-center">
@@ -413,6 +605,7 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
               const statusInfo = getStatusFromOutput(log.full_output)
               const StatusIcon = statusInfo.icon
               const isExpanded = expandedLogId === log.id
+              const isWorkflow = isWorkflowResult(log.full_output)
 
               return (
                 <div key={log.id} className="bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors overflow-hidden">
@@ -425,6 +618,11 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
                           <span className="text-sm font-medium text-gray-900">
                             #{(currentPage - 1) * logsPerPage + index + 1}
                           </span>
+                          {isWorkflow && (
+                            <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                              Workflow
+                            </span>
+                          )}
                         </div>
 
                         <div className="flex-1 min-w-0">
@@ -440,6 +638,12 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
                               <Clock className="h-3 w-3" />
                               {new Date(log.created_at).toLocaleString()}
                             </span>
+                            {isWorkflow && log.full_output?.execution_summary && (
+                              <span className="flex items-center gap-1">
+                                <Activity className="h-3 w-3" />
+                                {log.full_output.execution_summary.completedSteps}/{log.full_output.execution_summary.totalSteps} steps
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -508,7 +712,9 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
                         </div>
 
                         <div>
-                          <label className="font-medium text-gray-700 mb-3 block">Full Output</label>
+                          <label className="font-medium text-gray-700 mb-3 block">
+                            {isWorkflow ? 'Workflow Results' : 'Full Output'}
+                          </label>
                           {renderStructuredOutput(log.full_output)}
                         </div>
                       </div>

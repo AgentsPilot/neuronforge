@@ -46,6 +46,7 @@ type Agent = {
   output_schema?: any
   connected_plugins?: Record<string, any>
   plugins_required?: string[]
+  workflow_steps?: any[]
   created_at?: string
   updated_at?: string
   mode?: string
@@ -69,7 +70,7 @@ export default function AgentPage() {
   const fetchAgent = async () => {
     const { data, error } = await supabase
       .from('agents')
-      .select('*, connected_plugins, plugins_required')
+      .select('*, connected_plugins, plugins_required, workflow_steps')
       .eq('id', agentId)
       .eq('user_id', user?.id)
       .maybeSingle()
@@ -218,6 +219,7 @@ export default function AgentPage() {
         output_schema: agent.output_schema,
         connected_plugins: agent.connected_plugins,
         plugins_required: agent.plugins_required,
+        workflow_steps: agent.workflow_steps,
         mode: agent.mode,
         status: 'draft'
       }
@@ -459,6 +461,8 @@ export default function AgentPage() {
                   outputSchema={agent.output_schema}
                   userPrompt={agent.user_prompt}
                   pluginsRequired={agent.plugins_required}
+                  workflowSteps={agent.workflow_steps}
+                  connectedPlugins={agent.connected_plugins}
                 />
               </div>
             </div>

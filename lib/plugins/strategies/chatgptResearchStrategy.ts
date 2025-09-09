@@ -1,158 +1,131 @@
 // lib/plugins/strategies/chatgptResearchStrategy.ts
 import { PluginStrategy } from '../pluginRegistry'
 
-// Universal topic extraction function that works for any prompt
-function extractTopicFromPrompt(userPrompt: string): string | null {
-  if (!userPrompt) return null
-  
-  // First, preserve important capitalized words (likely proper nouns, company names, symbols)
-  const capitalizedWords = userPrompt.match(/\b[A-Z]{2,}\b/g) || []
-  if (capitalizedWords.length > 0) {
-    // If we find capitalized words, they're likely the main subject
-    return capitalizedWords[0].toLowerCase()
+// Generic function to safely stringify any data with aggressive size limits
+function safeStringify(data: any, maxLength: number = 15000): string {
+  try {
+    if (data === null || data === undefined) {
+      return 'null'
+    }
+    
+    if (typeof data === 'string') {
+      return data.length > maxLength ? data.substring(0, maxLength) + '\n[Content truncated]' : data
+    }
+    
+    if (typeof data === 'number' || typeof data === 'boolean') {
+      return String(data)
+    }
+    
+    // For objects and arrays, convert to JSON with limited depth
+    const jsonString = JSON.stringify(data, (key, value) => {
+      if (typeof value === 'string' && value.length > 500) {
+        return value.substring(0, 500) + '...[truncated]'
+      }
+      return value
+    }, 2)
+    
+    return jsonString.length > maxLength 
+      ? jsonString.substring(0, maxLength) + '\n[Data truncated]' 
+      : jsonString
+      
+  } catch (error) {
+    return `[Unable to process data: ${error.message}]`
   }
-  
-  // Remove only the most generic stop words and action words
-  const stopWords = ['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'being']
-  const actionWords = ['check', 'monitor', 'track', 'analyze', 'research', 'study', 'investigate', 'explore', 'report', 'find', 'get', 'provide', 'give', 'show', 'tell']
-  const modifiers = ['continuously', 'more', 'than', 'above', 'below', 'higher', 'lower', 'if', 'when', 'where']
-  
-  // Split into words and filter more selectively
-  const words = userPrompt
-    .toLowerCase()
-    .replace(/[^\w\s]/g, ' ')
-    .split(/\s+/)
-    .filter(word => 
-      word.length > 1 && 
-      !stopWords.includes(word) && 
-      !actionWords.includes(word) &&
-      !modifiers.includes(word)
-    )
-  
-  if (words.length > 0) {
-    // Return the most meaningful words (preserve context words like "stock", "price", etc.)
-    return words.slice(0, Math.min(2, words.length)).join(' ')
-  }
-  
-  return null
 }
 
-// Smart query generator that analyzes the topic and creates relevant search terms
-function generateSmartQueries(topic: string, maxQueries: number = 3): string[] {
-  const queries = []
-  const cleanTopic = topic.trim()
-  
-  // Always start with the exact topic
-  queries.push(cleanTopic)
-  
-  // Add contextual searches based on intelligent analysis
-  const currentYear = new Date().getFullYear()
-  
-  // Add temporal context for recent information
-  queries.push(`${cleanTopic} ${currentYear}`)
-  queries.push(`${cleanTopic} latest news`)
-  
-  return queries.slice(0, maxQueries)
+// Estimate token count (rough approximation: 1 token ≈ 4 characters)
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4)
 }
 
-// Generic web search function using Google Custom Search API
+// Choose appropriate model based on content size
+function selectModel(estimatedTokens: number): { model: string, maxTokens: number } {
+  if (estimatedTokens > 6000) {
+    return { model: 'gpt-4-turbo-preview', maxTokens: 2000 } // Has 128k context
+  } else if (estimatedTokens > 4000) {
+    return { model: 'gpt-4-1106-preview', maxTokens: 2000 } // Has 128k context
+  } else {
+    return { model: 'gpt-4', maxTokens: 3000 } // Standard 8k context
+  }
+}
+
+// Extract research topics from user prompts using simple keyword detection
+function extractResearchTopics(userPrompt: string): string[] {
+  if (!userPrompt || typeof userPrompt !== 'string') return []
+  
+  // Look for quoted topics or specific research indicators
+  const quotedTopics = userPrompt.match(/"([^"]+)"/g)?.map(match => match.replace(/"/g, '')) || []
+  const afterResearchWords = userPrompt.match(/(?:research|analyze|study|investigate|find information about|search for|look up)\s+([^.,!?]+)/gi)
+  const extractedTopics = afterResearchWords?.map(match => match.replace(/^(?:research|analyze|study|investigate|find information about|search for|look up)\s+/i, '').trim()) || []
+  
+  return [...quotedTopics, ...extractedTopics].filter(topic => topic && topic.length > 2)
+}
+
+// Web search functionality
 async function searchWithGoogle(query: string): Promise<string> {
   try {
     const cx = process.env.GOOGLE_SEARCH_ENGINE_ID
     const apiKey = process.env.GOOGLE_SEARCH_API_KEY
     
-    console.log('Search credentials check:', {
-      hasCx: !!cx,
-      hasApiKey: !!apiKey,
-      cxPreview: cx ? cx.substring(0, 10) + '...' : 'none',
-      apiKeyPreview: apiKey ? apiKey.substring(0, 10) + '...' : 'none'
-    })
-    
     if (!cx || !apiKey) {
-      console.log('Google Search API credentials not configured')
-      return 'Web search temporarily unavailable. Providing analysis based on available knowledge.'
+      return 'Web search temporarily unavailable.'
     }
     
-    // Clean and encode the query
-    const cleanQuery = query.trim()
-    const searchUrl = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${cx}&q=${encodeURIComponent(cleanQuery)}&num=5`
-    console.log('Making search request for:', cleanQuery)
-    
+    const searchUrl = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${cx}&q=${encodeURIComponent(query.trim())}&num=5`
     const response = await fetch(searchUrl)
-    console.log('Search response status:', response.status)
     
     if (!response.ok) {
-      const errorText = await response.text()
-      console.error('Google Search API error:', response.status, errorText)
-      return 'Web search temporarily unavailable. Providing analysis based on available knowledge.'
+      return 'Web search temporarily unavailable.'
     }
     
     const data = await response.json()
-    console.log('Search results:', {
-      totalResults: data.searchInformation?.totalResults || 0,
-      itemsReturned: data.items?.length || 0
-    })
     
     if (data.items && data.items.length > 0) {
-      const results = data.items.map((item: any, index: number) => {
-        console.log(`Result ${index + 1}:`, { title: item.title, snippet: item.snippet?.substring(0, 100) })
-        return `**${item.title}**\n${item.snippet}\nSource: ${item.link}`
-      })
-      
-      const combinedResults = results.join('\n\n---\n\n')
-      console.log('Search successful, returning', combinedResults.length, 'characters of data')
-      return combinedResults
+      const results = data.items.map((item: any) => `**${item.title}**\n${item.snippet}\nSource: ${item.link}`)
+      return results.join('\n\n---\n\n')
     }
     
-    console.log('No search results found')
-    return 'No current search results found for this query.'
+    return 'No search results found.'
     
   } catch (error) {
-    console.error('Google search failed:', error)
-    return 'Web search temporarily unavailable. Providing analysis based on available knowledge.'
+    console.error('Search error:', error)
+    return 'Web search temporarily unavailable.'
   }
 }
 
-// Universal research function that adapts to any topic
-async function performWebResearch(topic: string, customSearchTerms: string[] = []): Promise<string> {
+// Perform web research if needed
+async function performWebResearch(topics: string[]): Promise<string> {
+  if (topics.length === 0) return ''
+  
   const searchResults = []
   
-  // Use custom search terms if provided, otherwise generate smart queries
-  const queries = customSearchTerms.length > 0 
-    ? customSearchTerms 
-    : generateSmartQueries(topic, 2) // Limit to 2 for API quota management
-  
-  // Perform searches
-  for (const searchQuery of queries) {
-    console.log('Searching:', searchQuery)
-    const result = await searchWithGoogle(searchQuery)
-    if (result && !result.includes('temporarily unavailable') && !result.includes('No current search results')) {
-      searchResults.push(`Search results for "${searchQuery}":\n\n${result}`)
+  for (const topic of topics.slice(0, 3)) { // Limit to 3 searches to manage API costs
+    const result = await searchWithGoogle(topic)
+    if (result && !result.includes('temporarily unavailable') && !result.includes('No search results')) {
+      searchResults.push(`**Research results for "${topic}":**\n\n${result}`)
     }
   }
   
-  return searchResults.length > 0 ? searchResults.join('\n\n=== NEXT SEARCH ===\n\n') : 'No current web data available.'
+  return searchResults.length > 0 ? searchResults.join('\n\n=== === ===\n\n') : ''
 }
 
 export const chatgptResearchStrategy: PluginStrategy = {
   pluginKey: 'chatgpt-research',
-  name: 'ChatGPT Research',
+  name: 'ChatGPT Universal Processor',
   
   async connect({ supabase, popup, userId }: { supabase: any; popup: Window; userId: string }) {
     try {
-      console.log('Connecting ChatGPT plugin for user:', userId)
-      
       const connectionData = {
         user_id: userId,
         plugin_key: 'chatgpt-research',
-        plugin_name: 'ChatGPT Research',
+        plugin_name: 'ChatGPT Universal Processor',
         access_token: 'platform-key',
         refresh_token: null,
         expires_at: null,
-        scope: 'research',
+        scope: 'universal',
         username: 'ChatGPT',
         email: null,
-        profile_data: { service: 'OpenAI ChatGPT with Web Search' },
+        profile_data: { service: 'OpenAI ChatGPT - Universal Data Processor' },
         settings: {},
         status: 'active',
         connected_at: new Date().toISOString()
@@ -184,96 +157,98 @@ export const chatgptResearchStrategy: PluginStrategy = {
   },
 
   async run({ connection, userId, input_variables }: { connection: any; userId: string; input_variables: Record<string, any> }) {
-    // Universal topic extraction - checks all possible input patterns
-    const topic = input_variables.reportTopic || 
-                  input_variables.topic || 
-                  input_variables.stockSymbol ||
-                  input_variables.query || 
-                  input_variables.search || 
-                  input_variables.subject ||
-                  input_variables.research_topic ||
-                  input_variables.analysis_topic ||
-                  extractTopicFromPrompt(input_variables.userPrompt) ||
-                  'general research'
-    
-    const date = input_variables.date || input_variables.currentDate || 'latest'
-    const additionalContext = input_variables.context || input_variables.details || (date !== 'latest' ? `for ${date}` : '')
-    const searchTerms = input_variables.search_terms ? input_variables.search_terms.split(',').map(s => s.trim()) : []
-    
-    console.log('ChatGPT Research with Web Search: Starting research...', {
+    console.log('ChatGPT Universal Processor: Starting...', {
       userId,
-      topic,
-      hasAdditionalContext: !!additionalContext,
-      searchTermsCount: searchTerms.length
+      inputKeys: Object.keys(input_variables),
+      hasUserPrompt: !!(input_variables.userPrompt || input_variables.prompt || input_variables.task || input_variables.instruction)
     })
 
     try {
-      // Step 1: Test with a simple query first
-      console.log('Testing search with simple query...')
-      const testResult = await searchWithGoogle('news')
-      console.log('Test search result length:', testResult.length)
-      
-      // Step 2: Perform intelligent web research
-      console.log('Searching web for current information...')
-      const mainQuery = additionalContext ? `${topic} ${additionalContext}` : topic
-      const searchData = await performWebResearch(mainQuery, searchTerms)
-      
-      // Step 3: Determine if we have current data
-      const hasSearchData = searchData && 
-        !searchData.includes('temporarily unavailable') && 
-        !searchData.includes('No current web data available')
-      
-      console.log('Search data status:', {
-        hasData: hasSearchData,
-        dataLength: searchData.length,
-        preview: searchData.substring(0, 500)
+      // Step 1: Extract user instructions from various possible keys
+      const userPrompt = input_variables.userPrompt || 
+                        input_variables.prompt || 
+                        input_variables.task || 
+                        input_variables.instruction || 
+                        input_variables.request ||
+                        input_variables.query ||
+                        'Analyze the provided data and give insights.'
+
+      console.log('User prompt extracted:', userPrompt.substring(0, 200))
+
+      // Step 2: Gather all available data (everything except the prompt itself)
+      const dataToAnalyze = {}
+      Object.entries(input_variables).forEach(([key, value]) => {
+        // Skip prompt-related keys and internal workflow keys
+        if (!['userPrompt', 'prompt', 'task', 'instruction', 'request', 'query'].includes(key) &&
+            !key.startsWith('_') && value !== undefined && value !== null) {
+          dataToAnalyze[key] = value
+        }
       })
-      
-      // Step 4: Construct adaptive research query
-      let researchQuery: string
-      let systemPrompt: string
-      
-      if (hasSearchData) {
-        researchQuery = `You are provided with CURRENT web search results about "${topic}". You must analyze this real, current data:
 
-${searchData}
+      console.log('Data keys to analyze:', Object.keys(dataToAnalyze))
 
-Based on the search results above, provide a comprehensive analysis of ${topic}${additionalContext ? ` ${additionalContext}` : ''}. The search results contain current information that you must use.
+      // Step 3: Check if user wants web research
+      const researchTopics = extractResearchTopics(userPrompt)
+      const needsWebSearch = researchTopics.length > 0 || 
+                            userPrompt.toLowerCase().includes('current') ||
+                            userPrompt.toLowerCase().includes('latest') ||
+                            userPrompt.toLowerCase().includes('recent') ||
+                            userPrompt.toLowerCase().includes('search') ||
+                            userPrompt.toLowerCase().includes('research')
 
-Your analysis should intelligently adapt to the topic and include relevant aspects such as:
-- Current status, conditions, or state based on the search results
-- Key data points, metrics, or figures from the sources
-- Recent developments, news, or changes mentioned in the search results
-- Trends, patterns, or movements identified in the web sources
-- Important insights or implications drawn from the current data
-- Context and background information that helps explain the current situation
-- Future outlook or predictions if mentioned in the sources
+      console.log('Web search needed:', needsWebSearch, 'Topics:', researchTopics)
 
-Tailor your response to the specific nature of the topic. Use the search results as your primary source of information. Do not mention knowledge cutoffs or inability to access current data - you have current data in the search results above.`
-
-        systemPrompt = `You are analyzing current web search results provided to you about "${topic}". Treat the search results as current, real data. Analyze and present insights based on these results. Adapt your analysis style to match the topic - whether it's financial, technological, scientific, cultural, or any other domain. Do not mention knowledge limitations or suggest external sources - you have been provided with current web data to analyze.`
-      } else {
-        researchQuery = `Provide comprehensive research and analysis about "${topic}"${additionalContext ? ` with focus on: ${additionalContext}` : ''}. 
-
-Structure your response to include relevant aspects for this topic, such as:
-- Current state and key information
-- Recent developments and trends
-- Important facts, data points, or metrics
-- Analysis and insights
-- Context and background
-- Practical implications or recommendations
-- Key takeaways
-
-Adapt your analysis to the specific nature and domain of "${topic}". Note: Current web data is not available, so provide analysis based on your knowledge base.`
-
-        systemPrompt = `You are a professional research analyst providing comprehensive analysis about "${topic}". Adapt your expertise and analysis style to match the topic domain. Focus on delivering factual information, insights, and practical recommendations. Note that you are working from your training data rather than current web sources.`
+      // Step 4: Perform web research if requested
+      let webResearchData = ''
+      if (needsWebSearch) {
+        console.log('Performing web research...')
+        webResearchData = await performWebResearch(researchTopics.length > 0 ? researchTopics : [userPrompt])
       }
 
-      console.log('About to send to ChatGPT:', {
-        hasSearchData,
-        queryLength: researchQuery.length,
-        systemPromptLength: systemPrompt.length
+      // Step 5: Prepare data for ChatGPT with aggressive size management
+      const dataString = safeStringify(dataToAnalyze, 12000) // Much more conservative limit
+      const webDataString = webResearchData ? safeStringify(webResearchData, 8000) : ''
+      
+      // Step 6: Construct the prompt with token awareness
+      let finalUserPrompt = userPrompt
+
+      // Add available data if we have any, with size checks
+      if (Object.keys(dataToAnalyze).length > 0) {
+        const dataSection = `\n\nAvailable data to work with:\n${dataString}`
+        if (estimateTokens(finalUserPrompt + dataSection) < 5500) { // Leave room for system prompt and response
+          finalUserPrompt += dataSection
+        } else {
+          finalUserPrompt += '\n\n[Large dataset available - processing summary only due to size limits]'
+        }
+      }
+
+      // Add web research results if available and space permits
+      if (webDataString && estimateTokens(finalUserPrompt + webDataString) < 6000) {
+        finalUserPrompt += `\n\nCurrent web research results:\n${webDataString}`
+      } else if (webDataString) {
+        finalUserPrompt += '\n\n[Web research completed - results available but truncated due to size limits]'
+      }
+
+      // If no specific instructions and no data, ask for clarification
+      if (!userPrompt || (userPrompt.includes('Analyze the provided data') && Object.keys(dataToAnalyze).length === 0)) {
+        finalUserPrompt = 'I need more specific instructions on what you would like me to do. Could you provide more details about your request?'
+      }
+
+      // Step 7: Select appropriate model and token limits BEFORE using them
+      const estimatedTokens = estimateTokens(finalUserPrompt) + 200 // Add buffer for system prompt
+      const modelSelection = selectModel(estimatedTokens)
+      const selectedModel = modelSelection.model
+      const maxResponseTokens = modelSelection.maxTokens
+      
+      console.log('Token management:', {
+        estimatedInputTokens: estimatedTokens,
+        selectedModel: selectedModel,
+        maxResponseTokens: maxResponseTokens,
+        finalPromptLength: finalUserPrompt.length
       })
+
+      // Step 8: Send to ChatGPT with selected model
+      const systemPrompt = 'You are a helpful AI assistant. Follow the user\'s instructions exactly and provide the response they are asking for.'
 
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
@@ -282,59 +257,53 @@ Adapt your analysis to the specific nature and domain of "${topic}". Note: Curre
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: 'gpt-4',
+          model: selectedModel,
           messages: [
-            {
-              role: 'system',
-              content: systemPrompt
-            },
-            {
-              role: 'user', 
-              content: researchQuery
-            }
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: finalUserPrompt }
           ],
-          max_tokens: 2500,
-          temperature: 0.2
+          max_tokens: maxResponseTokens,
+          temperature: 0.3
         })
       })
 
       if (!response.ok) {
         const errorText = await response.text()
         console.error('ChatGPT API error:', errorText)
-        throw new Error(`OpenAI API error: ${response.status}`)
+        throw new Error(`OpenAI API error: ${response.status} - ${errorText}`)
       }
 
-      const data = await response.json()
-      const researchContent = data.choices[0]?.message?.content || 'No research content returned'
+      const responseData = await response.json()
+      const assistantResponse = responseData.choices[0]?.message?.content || 'No response generated'
 
+      // Step 9: Return the result in a generic format
       const result = {
-        summary: `Research completed for: ${topic}`,
-        research: researchContent,
-        topic,
-        source: hasSearchData ? 'ChatGPT-4 with Current Web Data' : 'ChatGPT-4 (Knowledge Base)',
-        hasCurrentData: hasSearchData,
-        wordCount: researchContent.split(' ').length,
-        tokensUsed: data.usage?.total_tokens || 0,
-        searchStatus: hasSearchData ? 'Current web data included' : 'Based on AI knowledge only'
+        response: assistantResponse,
+        summary: 'ChatGPT processing completed',
+        userPrompt: userPrompt,
+        dataProcessed: Object.keys(dataToAnalyze).length,
+        webSearchPerformed: needsWebSearch,
+        tokensUsed: responseData.usage?.total_tokens || 0,
+        source: 'ChatGPT-4 Universal Processor'
       }
 
-      console.log('ChatGPT research successful:', {
-        topic,
-        hasCurrentData: hasSearchData,
-        wordCount: result.wordCount,
+      console.log('ChatGPT processing successful:', {
+        responseLength: assistantResponse.length,
+        dataKeys: Object.keys(dataToAnalyze).length,
+        webSearch: needsWebSearch,
         tokensUsed: result.tokensUsed
       })
 
       return result
 
     } catch (error) {
-      console.error('ChatGPT research failed:', error)
+      console.error('ChatGPT processing failed:', error)
       
       return {
-        summary: 'ChatGPT research encountered an error',
+        response: `I encountered an error while processing your request: ${error.message}`,
+        summary: 'ChatGPT processing encountered an error',
         error: error.message,
-        topic,
-        source: 'ChatGPT-4 with Web Search'
+        source: 'ChatGPT-4 Universal Processor'
       }
     }
   }
