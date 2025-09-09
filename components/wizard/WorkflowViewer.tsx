@@ -47,45 +47,77 @@ export const WorkflowViewer: React.FC<WorkflowViewerProps> = ({
   const processInputs = getInputsByPhase('process');
   const outputInputs = getInputsByPhase('output');
 
-  // Helper function to get connection status with enhanced details
+  // Helper function to get phase styles
+  const getPhaseStyles = (phase: 'input' | 'process' | 'output') => {
+    switch (phase) {
+      case 'input':
+        return {
+          bgLight: 'bg-blue-50',
+          border: 'border-blue-200',
+          bgDark: 'bg-blue-600',
+          text: 'text-blue-700',
+          bgMedium: 'bg-blue-100'
+        };
+      case 'process':
+        return {
+          bgLight: 'bg-purple-50',
+          border: 'border-purple-200',
+          bgDark: 'bg-purple-600',
+          text: 'text-purple-700',
+          bgMedium: 'bg-purple-100'
+        };
+      case 'output':
+        return {
+          bgLight: 'bg-emerald-50',
+          border: 'border-emerald-200',
+          bgDark: 'bg-emerald-600',
+          text: 'text-emerald-700',
+          bgMedium: 'bg-emerald-100'
+        };
+      default:
+        return {
+          bgLight: 'bg-gray-50',
+          border: 'border-gray-200',
+          bgDark: 'bg-gray-600',
+          text: 'text-gray-700',
+          bgMedium: 'bg-gray-100'
+        };
+    }
+  };
+
+  // Helper function to get connection status
   const getConnectionStatus = (pluginKey: string) => {
-    // Internal system outputs are always "connected"
-    if (['dashboard-alert', 'pdf-report', 'summary-block', 'agent-log'].includes(pluginKey)) {
+    const systemPlugins = ['dashboard-alert', 'pdf-report', 'summary-block', 'agent-log'];
+    
+    if (systemPlugins.includes(pluginKey)) {
       return { 
         status: 'connected', 
-        icon: <CheckCircle2 className="h-4 w-4 text-green-600" />, 
         color: 'text-green-600',
         details: null
       };
     }
     
-    // Check if plugin is in the missing plugins list (doesn't exist in system)
-    const isMissing = generatedPlan.missingPlugins.includes(pluginKey);
+    const isMissing = generatedPlan.missingPlugins && generatedPlan.missingPlugins.includes(pluginKey);
     if (isMissing) {
       return { 
         status: 'missing', 
-        icon: <XCircle className="h-4 w-4 text-red-600" />, 
         color: 'text-red-600',
         details: null
       };
     }
     
-    // Check if plugin is connected (exists in connectedPlugins array)
     const isConnected = connectedPlugins.includes(pluginKey);
     if (isConnected) {
       const details = connectionDetails ? connectionDetails[pluginKey] : null;
       return { 
         status: 'connected', 
-        icon: <CheckCircle2 className="h-4 w-4 text-green-600" />, 
         color: 'text-green-600',
         details: details
       };
     }
     
-    // Plugin exists but is not connected
     return { 
       status: 'disconnected', 
-      icon: <AlertTriangle className="h-4 w-4 text-yellow-600" />, 
       color: 'text-yellow-600',
       details: null
     };
@@ -122,35 +154,45 @@ export const WorkflowViewer: React.FC<WorkflowViewerProps> = ({
     }
   };
 
-  // Enhanced step card component
-  const StepCard = ({ step, phaseColor }: { step: any; phaseColor: string }) => {
+  // Step card component
+  const StepCard = ({ step, phase }: { step: any; phase: 'input' | 'process' | 'output' }) => {
     const connectionStatus = getConnectionStatus(step.pluginKey);
+    const styles = getPhaseStyles(phase);
     
     return (
-      <div className={`bg-${phaseColor}-50 border border-${phaseColor}-200 rounded-xl p-4 hover:shadow-md transition-shadow`}>
+      <div className={`${styles.bgLight} border ${styles.border} rounded-xl p-4 hover:shadow-md transition-shadow`}>
         <div className="flex items-start gap-3">
-          <div className={`w-8 h-8 bg-${phaseColor}-600 rounded-lg flex items-center justify-center text-white font-bold text-sm`}>
+          <div className={`w-8 h-8 ${styles.bgDark} rounded-lg flex items-center justify-center text-white font-bold text-sm`}>
             {step.order}
           </div>
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-lg">{step.icon}</span>
               <h5 className="font-semibold text-gray-900">{step.pluginName}</h5>
               <div className="flex items-center gap-1">
-                {connectionStatus.icon}
-                <span className={`text-xs font-medium ${connectionStatus.color}`}>
-                  {connectionStatus.status === 'connected' ? 'Connected' : 
-                   connectionStatus.status === 'missing' ? 'Missing' : 'Not Connected'}
-                </span>
+                {connectionStatus.status === 'connected' ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 text-green-600" />
+                    <span className="text-xs font-medium text-green-600">Connected</span>
+                  </>
+                ) : connectionStatus.status === 'missing' ? (
+                  <>
+                    <XCircle className="h-4 w-4 text-red-600" />
+                    <span className="text-xs font-medium text-red-600">Missing</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                    <span className="text-xs font-medium text-yellow-600">Not Connected</span>
+                  </>
+                )}
               </div>
             </div>
             
-            <p className={`text-sm text-${phaseColor}-700 bg-${phaseColor}-100 px-3 py-1 rounded-full mb-2 inline-block`}>
+            <p className={`text-sm ${styles.text} ${styles.bgMedium} px-3 py-1 rounded-full mb-2 inline-block`}>
               {step.action}
             </p>
             <p className="text-sm text-gray-700 mb-3">{step.description}</p>
             
-            {/* Enhanced connection details */}
             {connectionStatus.status === 'connected' && connectionStatus.details && (
               <div className="bg-white rounded-lg p-3 border border-gray-200 space-y-2">
                 <div className="flex items-center gap-2 text-xs text-gray-600">
@@ -174,7 +216,6 @@ export const WorkflowViewer: React.FC<WorkflowViewerProps> = ({
                   )}
                 </div>
 
-                {/* Profile picture if available */}
                 {connectionStatus.details.profileData?.picture && (
                   <div className="flex items-center gap-2 pt-1">
                     <img 
@@ -190,7 +231,6 @@ export const WorkflowViewer: React.FC<WorkflowViewerProps> = ({
               </div>
             )}
 
-            {/* Connection warning for unconnected plugins */}
             {connectionStatus.status === 'disconnected' && (
               <div className="bg-yellow-50 rounded-lg p-3 border border-yellow-200">
                 <p className="text-xs text-yellow-800">
@@ -200,12 +240,11 @@ export const WorkflowViewer: React.FC<WorkflowViewerProps> = ({
                   href="/settings/connections" 
                   className="text-xs text-yellow-700 hover:text-yellow-900 underline mt-1 inline-block"
                 >
-                  Connect {step.pluginName} →
+                  Connect {step.pluginName}
                 </a>
               </div>
             )}
 
-            {/* Missing plugin warning */}
             {connectionStatus.status === 'missing' && (
               <div className="bg-red-50 rounded-lg p-3 border border-red-200">
                 <p className="text-xs text-red-800">
@@ -238,7 +277,7 @@ export const WorkflowViewer: React.FC<WorkflowViewerProps> = ({
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {inputSteps.map((step: any) => (
-                  <StepCard key={step.id} step={step} phaseColor="blue" />
+                  <StepCard key={step.id} step={step} phase="input" />
                 ))}
               </div>
 
@@ -277,7 +316,6 @@ export const WorkflowViewer: React.FC<WorkflowViewerProps> = ({
         </div>
       </div>
 
-      {/* Flow Arrow */}
       <div className="flex justify-center">
         <div className="flex items-center gap-2 bg-gray-100 px-4 py-2 rounded-full">
           <ArrowRight className="h-5 w-5 text-gray-600" />
@@ -302,7 +340,7 @@ export const WorkflowViewer: React.FC<WorkflowViewerProps> = ({
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {processSteps.map((step: any) => (
-                  <StepCard key={step.id} step={step} phaseColor="purple" />
+                  <StepCard key={step.id} step={step} phase="process" />
                 ))}
               </div>
 
@@ -341,7 +379,6 @@ export const WorkflowViewer: React.FC<WorkflowViewerProps> = ({
         </div>
       </div>
 
-      {/* Flow Arrow */}
       <div className="flex justify-center">
         <div className="flex items-center gap-2 bg-gray-100 px-4 py-2 rounded-full">
           <ArrowRight className="h-5 w-5 text-gray-600" />
@@ -366,11 +403,11 @@ export const WorkflowViewer: React.FC<WorkflowViewerProps> = ({
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {outputSteps.map((step: any) => (
-                  <StepCard key={step.id} step={step} phaseColor="emerald" />
+                  <StepCard key={step.id} step={step} phase="output" />
                 ))}
               </div>
 
-              {generatedPlan.outputs.length > 0 && (
+              {generatedPlan.outputs && generatedPlan.outputs.length > 0 && (
                 <div className="border-t border-emerald-200 pt-4">
                   <h5 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
                     <FileText className="h-4 w-4" />

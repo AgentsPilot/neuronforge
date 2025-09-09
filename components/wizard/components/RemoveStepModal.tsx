@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, Database, Download, CheckCircle } from 'lucide-react';
+import { AlertTriangle, Database, Download, CheckCircle, Monitor } from 'lucide-react';
 import type { PluginStep, RequiredInput, Output } from '../types';
 
 interface StepToRemove {
@@ -32,6 +32,26 @@ export function RemoveStepModal({
     onConfirm(stepToRemove);
   };
 
+  // Helper function to safely render the step icon
+  const renderStepIcon = () => {
+    if (!step.icon) {
+      return <Monitor className="w-6 h-6" />;
+    }
+    
+    // If it's already a React element, render it
+    if (React.isValidElement(step.icon)) {
+      return step.icon;
+    }
+    
+    // If it's a string, render it as text
+    if (typeof step.icon === 'string') {
+      return <span className="text-2xl">{step.icon}</span>;
+    }
+    
+    // Fallback to a default icon
+    return <Monitor className="w-6 h-6" />;
+  };
+
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-300">
@@ -52,7 +72,9 @@ export function RemoveStepModal({
         <div className="p-6">
           {/* Plugin being removed */}
           <div className="flex items-center gap-4 p-4 bg-red-50 rounded-xl border border-red-200 mb-4">
-            <div className="text-2xl">{step.icon}</div>
+            <div className="flex items-center justify-center w-8 h-8">
+              {renderStepIcon()}
+            </div>
             <div className="flex-1">
               <h4 className="font-semibold text-red-900">{step.pluginName}</h4>
               <p className="text-red-700 text-sm">{step.action}</p>

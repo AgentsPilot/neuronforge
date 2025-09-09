@@ -474,10 +474,10 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
             isCollapsed={isCollapsed}
           />
           <SidebarLink 
-            href="/analytics" 
-            label="Analytics" 
+            href="/analytic" 
+            label="Tokens Analytic" 
             icon={BarChart3}
-            isActive={pathname === '/analytics'}
+            isActive={pathname === '/analytic'}
             onClick={() => setIsMobileOpen(false)}
             isCollapsed={isCollapsed}
           />

@@ -30,7 +30,7 @@ interface UseWorkflowActionsProps {
   // Functions from useWorkflowData
   generatePlan: () => void;
   regeneratePlan: () => Promise<void>;
-  markPlanAsAccepted: (plan: any) => void; // Add this new function
+  markPlanAsAccepted: (plan: any) => void;
   generatePluginConfiguration: (pluginKey: string, existingSteps: PluginStep[]) => Promise<{inputs: any[], outputs: any[]}>;
   getInputsByPhase: (phase: 'input' | 'process' | 'output') => RequiredInput[];
   getOutputsByPhase: (phase: 'input' | 'process' | 'output') => Output[];
@@ -38,6 +38,154 @@ interface UseWorkflowActionsProps {
   // Callbacks
   onUpdate: (updates: any) => void;
 }
+
+// PHASE VALIDATION: Ensure all phases have at least one plugin
+const validateWorkflowPhases = (steps: PluginStep[]) => {
+  const requiredPhases = ['input', 'process', 'output'];
+  const phaseGroups = steps.reduce((acc, step) => {
+    if (!acc[step.phase]) acc[step.phase] = 0;
+    acc[step.phase]++;
+    return acc;
+  }, {} as Record<string, number>);
+  
+  const errors: string[] = [];
+  
+  requiredPhases.forEach(phase => {
+    if (!phaseGroups[phase] || phaseGroups[phase] === 0) {
+      errors.push(`${phase.charAt(0).toUpperCase() + phase.slice(1)} phase must have at least one plugin`);
+    }
+  });
+  
+  return {
+    isValid: errors.length === 0,
+    errors,
+    phaseGroups
+  };
+};
+
+// SCHEMA BUILDING: Auto-populate inputs from plugin schema definitions
+const buildInputsFromPluginSchema = (plugin: any, stepId: number, phase: string): RequiredInput[] => {
+  // Check multiple possible schema locations in plugin definition
+  const inputSources = [
+    plugin.inputSchema,
+    plugin.inputs,
+    plugin.requiredInputs,
+    plugin.schema?.inputs,
+    plugin.config?.inputs,
+    plugin.configuration?.inputs
+  ].filter(Boolean);
+
+  if (inputSources.length === 0) {
+    console.log(`No input schema found for plugin ${plugin.name}`);
+    return [];
+  }
+
+  const inputDefinitions = inputSources[0];
+  if (!Array.isArray(inputDefinitions)) {
+    console.log(`Input schema for ${plugin.name} is not an array:`, inputDefinitions);
+    return [];
+  }
+
+  console.log(`Building ${inputDefinitions.length} inputs from ${plugin.name} schema`);
+
+  return inputDefinitions.map((inputDef: any, index: number) => {
+    // Support multiple naming conventions and properties
+    const baseInput: RequiredInput = {
+      name: inputDef.name || inputDef.label || inputDef.key || inputDef.field || `${plugin.name} Input ${index + 1}`,
+      type: inputDef.type || inputDef.inputType || inputDef.dataType || 'text',
+      description: inputDef.description || inputDef.help || inputDef.tooltip || `Input for ${plugin.name}`,
+      required: inputDef.required ?? inputDef.mandatory ?? inputDef.isRequired ?? true,
+      placeholder: inputDef.placeholder || inputDef.hint || inputDef.example || `Enter ${inputDef.name || 'value'}...`,
+      defaultValue: inputDef.defaultValue || inputDef.default || inputDef.initialValue || '',
+      options: inputDef.options || inputDef.choices || inputDef.enum || [],
+      phase,
+      pluginKey: plugin.pluginKey,
+      relatedStepId: stepId
+    };
+
+    // Include any additional properties from the schema
+    return { ...baseInput, ...inputDef };
+  });
+};
+
+// SCHEMA BUILDING: Auto-populate outputs from plugin schema definitions
+const buildOutputsFromPluginSchema = (plugin: any, stepId: number, phase: string): Output[] => {
+  // Check multiple possible schema locations in plugin definition
+  const outputSources = [
+    plugin.outputSchema,
+    plugin.outputs,
+    plugin.expectedOutputs,
+    plugin.schema?.outputs,
+    plugin.config?.outputs,
+    plugin.configuration?.outputs
+  ].filter(Boolean);
+
+  if (outputSources.length === 0) {
+    console.log(`No output schema found for plugin ${plugin.name}`);
+    return [];
+  }
+
+  const outputDefinitions = outputSources[0];
+  if (!Array.isArray(outputDefinitions)) {
+    console.log(`Output schema for ${plugin.name} is not an array:`, outputDefinitions);
+    return [];
+  }
+
+  console.log(`Building ${outputDefinitions.length} outputs from ${plugin.name} schema`);
+
+  return outputDefinitions.map((outputDef: any, index: number) => {
+    // Support multiple naming conventions and properties
+    const baseOutput: Output = {
+      type: outputDef.type || outputDef.name || outputDef.key || outputDef.field || `${plugin.name} Output ${index + 1}`,
+      name: outputDef.name || outputDef.label || outputDef.type || `Output ${index + 1}`,
+      description: outputDef.description || outputDef.help || outputDef.tooltip || `Output from ${plugin.name}`,
+      format: outputDef.format || outputDef.dataType || outputDef.mimeType || 'text',
+      destination: outputDef.destination || outputDef.target || outputDef.location || 'Output destination',
+      pluginKey: plugin.pluginKey,
+      phase,
+      relatedStepId: stepId
+    };
+
+    // Include any additional properties from the schema
+    return { ...baseOutput, ...outputDef };
+  });
+};
+
+// AI GENERATION: Fallback when no plugin schema exists
+const generateInputsOutputsWithAI = async (
+  pluginKey: string, 
+  existingSteps: PluginStep[], 
+  generatePluginConfiguration: (pluginKey: string, existingSteps: PluginStep[]) => Promise<{inputs: any[], outputs: any[]}>,
+  stepId: number,
+  phase: string
+) => {
+  try {
+    console.log(`Generating AI inputs/outputs for ${pluginKey}`);
+    const configuration = await generatePluginConfiguration(pluginKey, existingSteps);
+    
+    // Add metadata to AI-generated inputs/outputs
+    const aiInputs = configuration.inputs.map(input => ({
+      ...input,
+      phase,
+      pluginKey,
+      relatedStepId: stepId,
+      source: 'ai-generated'
+    }));
+
+    const aiOutputs = configuration.outputs.map(output => ({
+      ...output,
+      phase,
+      pluginKey,
+      relatedStepId: stepId,
+      source: 'ai-generated'
+    }));
+
+    return { inputs: aiInputs, outputs: aiOutputs };
+  } catch (error) {
+    console.error(`Error generating AI configuration for ${pluginKey}:`, error);
+    return { inputs: [], outputs: [] };
+  }
+};
 
 export function useWorkflowActions({
   generatedPlan,
@@ -59,7 +207,7 @@ export function useWorkflowActions({
   setPluginNotifications,
   generatePlan,
   regeneratePlan,
-  markPlanAsAccepted, // Add this parameter
+  markPlanAsAccepted,
   generatePluginConfiguration,
   getInputsByPhase,
   getOutputsByPhase,
@@ -74,9 +222,17 @@ export function useWorkflowActions({
   const handleAcceptPlan = async () => {
     if (!generatedPlan) return;
     
+    // PHASE VALIDATION: Check all phases before accepting
+    const currentSteps = isEditing ? editableSteps : generatedPlan.steps;
+    const validation = validateWorkflowPhases(currentSteps);
+    
+    if (!validation.isValid) {
+      alert(`Cannot accept plan: ${validation.errors.join(', ')}`);
+      return;
+    }
+    
     // Check if user is in edit mode with unsaved changes
     if (isEditing) {
-      // User must save their changes first before accepting
       alert('Please save your changes first before accepting the plan.');
       return;
     }
@@ -165,6 +321,14 @@ export function useWorkflowActions({
   };
 
   const handleEditSave = () => {
+    // PHASE VALIDATION: Check all phases before saving
+    const validation = validateWorkflowPhases(editableSteps);
+    
+    if (!validation.isValid) {
+      alert(`Cannot save: ${validation.errors.join(', ')}`);
+      return;
+    }
+    
     setIsEditing(false);
     if (generatedPlan) {
       // Update the current plan with saved changes
@@ -177,7 +341,6 @@ export function useWorkflowActions({
       setGeneratedPlan(updatedPlan);
     }
     
-    // After saving, the user can now accept the plan
     console.log('Changes saved - plan can now be accepted');
   };
 
@@ -202,7 +365,7 @@ export function useWorkflowActions({
     const step = editableSteps.find(s => s.id === stepId);
     if (!step) return;
 
-    // Find related inputs and outputs
+    // Find related inputs and outputs dynamically
     const relatedInputs = editableInputs.filter(input => 
       input.relatedStepId === stepId || 
       input.pluginKey === step.pluginKey ||
@@ -280,86 +443,180 @@ export function useWorkflowActions({
     setStepToRemove(null);
   };
 
-  // Enhanced handleAddStep with AI generation and notification
+  // ENHANCED STEP ADDITION: Priority order - Plugin Schema → AI Generation
   const handleAddStep = async (pluginKey: string, phase: 'input' | 'process' | 'output') => {
     const plugin = getPluginByKey(pluginKey);
-    if (!plugin) return;
+    if (!plugin) {
+      console.error(`Plugin not found: ${pluginKey}`);
+      return;
+    }
+
+    console.log(`Adding step for plugin: ${plugin.name} (${pluginKey}) to ${phase} phase`);
 
     const newStep: PluginStep = {
       id: Math.max(...editableSteps.map(s => s.id), 0) + 1,
       pluginKey: plugin.pluginKey,
       pluginName: plugin.name,
-      action: 'Process data',
-      description: `Use ${plugin.name} for workflow processing`,
+      action: plugin.action || plugin.defaultAction || 'Process data',
+      description: plugin.description || `Use ${plugin.name} for workflow processing`,
       icon: plugin.icon,
       order: editableSteps.length + 1,
       phase: phase,
-      confidence: 90
+      confidence: plugin.confidence || 90
     };
 
     // Add step immediately
     setEditableSteps(prev => [...prev, newStep]);
     
-    // Mark as newly added and show generating notification
+    // Mark as newly added
     setNewlyAddedPlugins(prev => [...prev, pluginKey]);
-    setPluginNotifications(prev => ({
-      ...prev,
-      [pluginKey]: {
-        isGenerating: true,
-        generated: null,
-        showNotification: true
-      }
-    }));
 
-    try {
-      // Generate AI configuration for this plugin
-      const configuration = await generatePluginConfiguration(pluginKey, editableSteps);
+    // PRIORITY 1: Try to build inputs/outputs from plugin schema definitions
+    const schemaInputs = buildInputsFromPluginSchema(plugin, newStep.id, phase);
+    const schemaOutputs = buildOutputsFromPluginSchema(plugin, newStep.id, phase);
+
+    if (schemaInputs.length > 0 || schemaOutputs.length > 0) {
+      // SUCCESS: Plugin has schema definitions
+      console.log(`Using plugin schema: ${schemaInputs.length} inputs, ${schemaOutputs.length} outputs`);
       
-      // Add generated inputs and outputs with proper phase association
-      const newInputs = configuration.inputs.map(input => ({
-        ...input,
-        phase: phase,
-        pluginKey: pluginKey,
-        relatedStepId: newStep.id
-      }));
+      if (schemaInputs.length > 0) {
+        setEditableInputs(prev => [...prev, ...schemaInputs]);
+      }
+      
+      if (schemaOutputs.length > 0) {
+        setEditableOutputs(prev => [...prev, ...schemaOutputs]);
+      }
 
-      const newOutputs = configuration.outputs.map(output => ({
-        ...output,
-        phase: phase,
-        pluginKey: pluginKey,
-        relatedStepId: newStep.id
-      }));
-
-      setEditableInputs(prev => [...prev, ...newInputs]);
-      setEditableOutputs(prev => [...prev, ...newOutputs]);
-
-      // Update notification with results
+      // Show notification about schema-based population
       setPluginNotifications(prev => ({
         ...prev,
         [pluginKey]: {
           isGenerating: false,
           generated: {
-            inputs: newInputs.length,
-            outputs: newOutputs.length
+            inputs: schemaInputs.length,
+            outputs: schemaOutputs.length
           },
-          showNotification: true
+          showNotification: true,
+          source: 'plugin-schema'
         }
       }));
 
-      console.log(`Generated ${newInputs.length} inputs and ${newOutputs.length} outputs for ${plugin.name}`);
+      console.log(`Schema-based population complete for ${plugin.name}`);
+      return;
+    }
+
+    // PRIORITY 2: No schema found, use AI generation as fallback
+    console.log(`No schema found for ${plugin.name}, using AI generation...`);
+    
+    setPluginNotifications(prev => ({
+      ...prev,
+      [pluginKey]: {
+        isGenerating: true,
+        generated: null,
+        showNotification: true,
+        source: 'ai-generation'
+      }
+    }));
+
+    const aiResult = await generateInputsOutputsWithAI(
+      pluginKey, 
+      editableSteps, 
+      generatePluginConfiguration, 
+      newStep.id, 
+      phase
+    );
+
+    if (aiResult.inputs.length > 0) {
+      setEditableInputs(prev => [...prev, ...aiResult.inputs]);
+    }
+    
+    if (aiResult.outputs.length > 0) {
+      setEditableOutputs(prev => [...prev, ...aiResult.outputs]);
+    }
+
+    // Update notification with AI results
+    setPluginNotifications(prev => ({
+      ...prev,
+      [pluginKey]: {
+        isGenerating: false,
+        generated: {
+          inputs: aiResult.inputs.length,
+          outputs: aiResult.outputs.length
+        },
+        showNotification: true,
+        source: 'ai-generation'
+      }
+    }));
+
+    console.log(`AI generation complete for ${plugin.name}: ${aiResult.inputs.length} inputs, ${aiResult.outputs.length} outputs`);
+  };
+
+  // PLUGIN REPLACEMENT: Handle replacing one plugin with another
+  const handleReplaceStep = async (oldStep: PluginStep, newPluginKey: string) => {
+    const newPlugin = getPluginByKey(newPluginKey);
+    if (!newPlugin) {
+      console.error(`New plugin not found: ${newPluginKey}`);
+      return;
+    }
+
+    console.log(`Replacing ${oldStep.pluginName} with ${newPlugin.name}`);
+
+    // Update the step
+    const updatedStep = {
+      ...oldStep,
+      pluginKey: newPluginKey,
+      pluginName: newPlugin.name,
+      action: newPlugin.action || newPlugin.defaultAction || oldStep.action,
+      description: newPlugin.description || `Use ${newPlugin.name} for workflow processing`
+    };
+
+    setEditableSteps(prev => prev.map(step => 
+      step.id === oldStep.id ? updatedStep : step
+    ));
+
+    // Remove old inputs/outputs
+    setEditableInputs(prev => prev.filter(input => 
+      input.relatedStepId !== oldStep.id && input.pluginKey !== oldStep.pluginKey
+    ));
+    
+    setEditableOutputs(prev => prev.filter(output => 
+      output.relatedStepId !== oldStep.id && output.pluginKey !== oldStep.pluginKey
+    ));
+
+    // Add new inputs/outputs using the same priority system
+    const schemaInputs = buildInputsFromPluginSchema(newPlugin, oldStep.id, oldStep.phase);
+    const schemaOutputs = buildOutputsFromPluginSchema(newPlugin, oldStep.id, oldStep.phase);
+
+    if (schemaInputs.length > 0 || schemaOutputs.length > 0) {
+      // Use plugin schema
+      if (schemaInputs.length > 0) {
+        setEditableInputs(prev => [...prev, ...schemaInputs]);
+      }
       
-    } catch (err) {
-      console.error('Error generating plugin configuration:', err);
+      if (schemaOutputs.length > 0) {
+        setEditableOutputs(prev => [...prev, ...schemaOutputs]);
+      }
+
+      console.log(`Replacement complete using schema: ${schemaInputs.length} inputs, ${schemaOutputs.length} outputs`);
+    } else {
+      // Use AI generation
+      const aiResult = await generateInputsOutputsWithAI(
+        newPluginKey, 
+        editableSteps, 
+        generatePluginConfiguration, 
+        oldStep.id, 
+        oldStep.phase
+      );
+
+      if (aiResult.inputs.length > 0) {
+        setEditableInputs(prev => [...prev, ...aiResult.inputs]);
+      }
       
-      // Update notification to show error/completion
-      setPluginNotifications(prev => ({
-        ...prev,
-        [pluginKey]: {
-          isGenerating: false,
-          generated: { inputs: 0, outputs: 0 },
-          showNotification: true
-        }
-      }));
+      if (aiResult.outputs.length > 0) {
+        setEditableOutputs(prev => [...prev, ...aiResult.outputs]);
+      }
+
+      console.log(`Replacement complete using AI: ${aiResult.inputs.length} inputs, ${aiResult.outputs.length} outputs`);
     }
   };
 
@@ -476,7 +733,10 @@ export function useWorkflowActions({
 
   // Utility functions
   const getAvailablePlugins = () => {
-    return pluginList;
+    return pluginList.filter(plugin => {
+      // Filter out deprecated/disabled plugins dynamically
+      return !plugin.deprecated && !plugin.disabled;
+    });
   };
 
   return {
@@ -493,6 +753,7 @@ export function useWorkflowActions({
     handleUpdateStep,
     handleRemoveStep,
     handleAddStep,
+    handleReplaceStep, // NEW: Plugin replacement support
     confirmRemoveStep,
     cancelRemoveStep,
     

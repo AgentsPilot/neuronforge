@@ -1,4 +1,4 @@
-// Enhanced EditablePhase.tsx - Added hideInputsOutputs prop support
+// Enhanced EditablePhase.tsx - Fixed React object rendering error
 
 import React, { useState } from 'react';
 import {
@@ -54,10 +54,10 @@ interface EditablePhaseProps {
   allOutputs: Output[];
   loading: boolean;
   onReplaceStep?: (oldStep: PluginStep, newPluginKey: string) => void;
-  hideInputsOutputs?: boolean; // NEW: Optional prop to hide inputs/outputs sections
+  hideInputsOutputs?: boolean;
 }
 
-// Enhanced EditableStepCard component with proper replacement handling
+// Enhanced EditableStepCard component with icon rendering fix
 const EditableStepCard: React.FC<{
   step: PluginStep;
   color: 'blue' | 'purple' | 'emerald';
@@ -106,12 +106,11 @@ const EditableStepCard: React.FC<{
 
   const colors = colorClasses[color];
 
-  // Connection status logic with proper data transformation
+  // Connection status logic
   const getConnectionStatus = () => {
     if (['dashboard-alert', 'pdf-report', 'summary-block', 'agent-log'].includes(step.pluginKey)) {
       return { 
         status: 'connected', 
-        icon: <CheckCircle2 className="h-4 w-4 text-green-600" />, 
         color: 'text-green-600',
         details: null,
         isTrulyMissing: false
@@ -137,19 +136,16 @@ const EditableStepCard: React.FC<{
       
       return { 
         status: 'connected', 
-        icon: <CheckCircle2 className="h-4 w-4 text-green-600" />, 
         color: 'text-green-600',
         details: transformedDetails,
         isTrulyMissing: false
       };
     }
     
-    // Check if plugin is truly missing vs just disconnected
     const isTrulyMissing = isMissing;
     
     return { 
       status: isTrulyMissing ? 'missing' : 'disconnected', 
-      icon: <AlertTriangle className="h-4 w-4 text-yellow-600" />, 
       color: 'text-yellow-600',
       details: null,
       isTrulyMissing
@@ -170,7 +166,7 @@ const EditableStepCard: React.FC<{
     setIsEditing(false);
   };
 
-  // Date formatting functions with proper null checking
+  // Date formatting functions
   const formatDate = (dateString: string) => {
     if (!dateString) return 'Unknown';
     try {
@@ -246,7 +242,6 @@ const EditableStepCard: React.FC<{
         </div>
       ) : (
         <div>
-          {/* FIXED: Only show "Plugin Not Available" warning for truly missing plugins */}
           {connectionStatus.isTrulyMissing && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl">
               <div className="flex items-center gap-2 text-red-700 text-sm font-medium">
@@ -266,16 +261,25 @@ const EditableStepCard: React.FC<{
             <div className="flex-1 min-w-0">
               <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <div className="text-xl flex-shrink-0">{step.icon}</div>
                   <div className="min-w-0 flex-1">
                     <h5 className="font-bold text-gray-900 truncate">{step.pluginName}</h5>
                     <div className="flex items-center gap-1 mt-1">
-                      {connectionStatus.icon}
-                      <span className={`text-xs font-medium ${connectionStatus.color}`}>
-                        {connectionStatus.status === 'connected' ? 'Connected' : 
-                         connectionStatus.status === 'missing' ? 'Missing' : 'Not Connected'}
-                      </span>
-                      {/* FIXED: Only show Missing badge for truly missing plugins */}
+                      {connectionStatus.status === 'connected' ? (
+                        <>
+                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                          <span className="text-xs font-medium text-green-600">Connected</span>
+                        </>
+                      ) : connectionStatus.status === 'missing' ? (
+                        <>
+                          <AlertTriangle className="h-4 w-4 text-red-600" />
+                          <span className="text-xs font-medium text-red-600">Missing</span>
+                        </>
+                      ) : (
+                        <>
+                          <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                          <span className="text-xs font-medium text-yellow-600">Not Connected</span>
+                        </>
+                      )}
                       {connectionStatus.isTrulyMissing && (
                         <span className="text-xs text-red-600 font-medium ml-2">• Missing</span>
                       )}
@@ -315,7 +319,6 @@ const EditableStepCard: React.FC<{
             </div>
           </div>
           
-          {/* Connection details with proper date handling */}
           {connectionStatus.status === 'connected' && connectionStatus.details && (
             <div className="bg-white rounded-lg p-3 border border-gray-200 space-y-2 mt-3">
               <div className="flex items-center gap-2 text-xs text-gray-600">
@@ -339,7 +342,6 @@ const EditableStepCard: React.FC<{
                 )}
               </div>
 
-              {/* Profile picture if available */}
               {connectionStatus.details.profileData?.picture && (
                 <div className="flex items-center gap-2 pt-1">
                   <img 
@@ -355,7 +357,6 @@ const EditableStepCard: React.FC<{
             </div>
           )}
 
-          {/* Connection warning for unconnected plugins */}
           {connectionStatus.status === 'disconnected' && (
             <div className="bg-yellow-50 rounded-lg p-3 border border-gray-200 mt-3">
               <p className="text-xs text-yellow-800">
@@ -366,7 +367,7 @@ const EditableStepCard: React.FC<{
                   href="/settings/connections" 
                   className="text-xs text-yellow-700 hover:text-yellow-900 underline"
                 >
-                  Connect {step.pluginName} →
+                  Connect {step.pluginName}
                 </a>
                 <button
                   onClick={onOpenReplaceModal}
@@ -378,7 +379,6 @@ const EditableStepCard: React.FC<{
             </div>
           )}
 
-          {/* Missing plugin warning - only shown for truly missing plugins */}
           {connectionStatus.status === 'missing' && (
             <div className="bg-red-50 rounded-lg p-3 border border-red-200 mt-3">
               <p className="text-xs text-red-800">
@@ -388,7 +388,7 @@ const EditableStepCard: React.FC<{
                 onClick={onOpenReplaceModal}
                 className="text-xs text-red-700 hover:text-red-900 underline mt-1 inline-block"
               >
-                Replace with available plugin →
+                Replace with available plugin
               </button>
             </div>
           )}
@@ -427,7 +427,7 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
   allOutputs,
   loading,
   onReplaceStep,
-  hideInputsOutputs = false // NEW: Default to false to maintain existing behavior
+  hideInputsOutputs = false
 }) => {
   const [showPluginBrowser, setShowPluginBrowser] = useState(false);
   const [replacingStep, setReplacingStep] = useState<PluginStep | null>(null);
@@ -472,21 +472,15 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
   const colors = colorClasses[color];
   const availablePlugins = getAvailablePlugins();
 
-  // Enhanced replace step handler
   const handleReplaceStep = (step: PluginStep) => {
     setReplacingStep(step);
     setShowPluginBrowser(true);
-    // Reset filters to show all options when replacing
     setSearchQuery('');
     setSelectedCategory('all');
     setShowConnectedOnly(false);
   };
 
-  // Internal replacement handler - works even if parent doesn't provide onReplaceStep
   const handleInternalReplacement = (oldStep: PluginStep, newPluginKey: string) => {
-    console.log('Internal replacement handler called:', oldStep.id, newPluginKey);
-    
-    // Find the new plugin details
     const availablePlugins = getAvailablePlugins();
     const newPlugin = availablePlugins.find(p => p.pluginKey === newPluginKey);
     if (!newPlugin) {
@@ -494,53 +488,34 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
       return;
     }
 
-    // Create the updated step with new plugin info but keep same id/order
     const updatedStep = {
       ...oldStep,
       pluginKey: newPluginKey,
       pluginName: newPlugin.name,
-      icon: newPlugin.icon,
       action: newPlugin.action || `Use ${newPlugin.name}`,
       description: newPlugin.description || `Execute ${newPlugin.name} plugin`
     };
 
-    // Use the existing onUpdateStep function to replace the step
     onUpdateStep(oldStep.id, updatedStep);
   };
 
-  // Enhanced plugin selection handler with replacement logic
   const handlePluginSelection = (pluginKey: string, selectedPhase?: 'input' | 'process' | 'output') => {
-    console.log('handlePluginSelection called:', { 
-      pluginKey, 
-      replacingStep: replacingStep?.id, 
-      isReplacement: replacingStep !== null,
-      onReplaceStepExists: typeof onReplaceStep === 'function'
-    });
-    
     if (replacingStep !== null) {
-      // We're in replacement mode
       if (typeof onReplaceStep === 'function') {
-        // Use parent's replacement function if provided
-        console.log('Using parent onReplaceStep for step:', replacingStep.id, 'with plugin:', pluginKey);
         onReplaceStep(replacingStep, pluginKey);
       } else {
-        // Fall back to internal replacement logic
-        console.log('Using internal replacement for step:', replacingStep.id, 'with plugin:', pluginKey);
         handleInternalReplacement(replacingStep, pluginKey);
       }
       
       setReplacingStep(null);
       setShowPluginBrowser(false);
-      return; // Exit early to avoid calling onAddStep
+      return;
     } 
     
-    // We're adding a new step
-    console.log('Adding new step with plugin:', pluginKey);
     onAddStep(pluginKey);
     setShowPluginBrowser(false);
   };
 
-  // Enhanced modal close handler
   const handleCloseModal = () => {
     setShowPluginBrowser(false);
     setReplacingStep(null);
@@ -582,7 +557,6 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
               <div>
                 <h3 className="text-xl font-bold">{title}</h3>
                 <p className="text-white/90">
-                  {/* UPDATED: Conditional description based on hideInputsOutputs */}
                   {hideInputsOutputs 
                     ? `${description} • ${steps.length} steps` 
                     : `${description} • ${steps.length} steps, ${inputs.length} inputs, ${outputs.length} outputs`
@@ -590,14 +564,23 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
                 </p>
               </div>
             </div>
-            <button
-              onClick={() => setShowPluginBrowser(true)}
-              className="bg-white/20 hover:bg-white/30 p-3 rounded-2xl transition-colors disabled:opacity-50"
-              disabled={loading}
-              title="Add new plugin step"
-            >
-              <Plus className="w-6 h-6" />
-            </button>
+            {/* FIXED: Only show + button for input and output phases, NOT process */}
+            {phase !== 'process' && (
+              <button
+                onClick={() => {
+                  if (phase !== 'process') {
+                    setShowPluginBrowser(true);
+                  }
+                }}
+                className={`bg-white/20 hover:bg-white/30 p-3 rounded-2xl transition-colors ${
+                  loading ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+                disabled={loading}
+                title="Add new plugin step"
+              >
+                <Plus className="w-6 h-6" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -632,18 +615,31 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
                 <div className="p-4 bg-gray-50 rounded-2xl w-fit mx-auto mb-4">
                   {icon}
                 </div>
-                <p className="text-gray-600 mb-4">No {title.toLowerCase()} steps defined</p>
-                <button
-                  onClick={() => setShowPluginBrowser(true)}
-                  className={`${colors.buttonBg} text-white px-6 py-3 rounded-xl transition-all font-medium`}
-                  disabled={loading}
-                >
-                  Add First Step
-                </button>
+                <p className="text-gray-600 mb-4">
+                  {phase === 'process' 
+                    ? 'Processing steps are configured automatically by AI'
+                    : `No ${title.toLowerCase()} steps defined`
+                  }
+                </p>
+                {phase !== 'process' && (
+                  <button
+                    onClick={() => setShowPluginBrowser(true)}
+                    className={`${colors.buttonBg} text-white px-6 py-3 rounded-xl transition-all font-medium`}
+                    disabled={loading}
+                  >
+                    Add First Step
+                  </button>
+                )}
+                {phase === 'process' && (
+                  <p className="text-sm text-gray-500">
+                    Processing steps are automatically generated based on your input and output phases
+                  </p>
+                )}
               </div>
             )}
 
-            {showAddPlugin && (
+            {/* FIXED: Only show add plugin section for non-process phases */}
+            {showAddPlugin && phase !== 'process' && (
               <div className="mt-6 p-6 bg-gray-50 rounded-2xl border-t">
                 <h5 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
                   Add Plugin from Available Plugins
@@ -662,9 +658,6 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
                         onClick={() => onAddStep(plugin.pluginKey)}
                         className="flex items-center gap-3 p-3 border border-gray-200 rounded-xl hover:bg-white hover:shadow-md text-left transition-all group"
                       >
-                        <div className="text-lg group-hover:scale-110 transition-transform">
-                          {plugin.icon}
-                        </div>
                         <span className="font-medium truncate text-sm">{plugin.name}</span>
                       </button>
                     ))}
@@ -699,10 +692,9 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
             )}
           </div>
 
-          {/* UPDATED: Conditionally render inputs and outputs sections */}
           {!hideInputsOutputs && (
             <>
-              {/* Configuration Inputs Section - FIXED with proper input handling */}
+              {/* Configuration Inputs Section */}
               <div>
                 <div className="flex items-center justify-between mb-6">
                   <h4 className="text-lg font-semibold text-gray-900 flex items-center gap-3">
@@ -724,7 +716,6 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
                         key={`${phase}-input-${index}-${input.name || input.label || 'untitled'}`}
                         input={{
                           ...input,
-                          // Ensure all required properties are present with fallbacks
                           name: input.name || input.label || `input-${index}`,
                           label: input.label || input.name || `Input ${index + 1}`,
                           type: input.type || 'text',
@@ -753,59 +744,65 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
                 )}
               </div>
 
-              {/* Expected Outputs Section - FIXED with proper output handling */}
-              <div>
-                <div className="flex items-center justify-between mb-6">
-                  <h4 className="text-lg font-semibold text-gray-900 flex items-center gap-3">
-                    <FileText className="w-5 h-5" />
-                    Expected Outputs ({outputs.length})
-                  </h4>
-                  <button
-                    onClick={onAddOutput}
-                    className={`${colors.buttonBg} text-white p-2 rounded-xl transition-all`}
-                  >
-                    <Plus className="w-4 h-4" />
-                  </button>
-                </div>
-
-                {outputs.length > 0 ? (
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {outputs.map((output, index) => (
-                      <EditableOutput
-                        key={`${phase}-output-${index}-${output.type || output.name || 'untitled'}`}
-                        output={{
-                          ...output,
-                          // Ensure all required properties are present with fallbacks
-                          type: output.type || output.name || `output-${index}`,
-                          name: output.name || output.type || `Output ${index + 1}`,
-                          description: output.description || '',
-                          format: output.format || 'text'
-                        }}
-                        index={index}
-                        onUpdate={(updates) => onUpdateOutput(index, updates)}
-                        onRemove={() => onRemoveOutput(index)}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-8 border-2 border-dashed border-gray-200 rounded-2xl">
-                    <FileText className="w-8 h-8 mx-auto mb-3 text-gray-400" />
-                    <p className="text-gray-600 mb-3">No outputs defined for this phase</p>
+              {/* Expected Outputs Section - Only show for Process and Output phases */}
+              {phase !== 'input' && (
+                <div>
+                  <div className="flex items-center justify-between mb-6">
+                    <h4 className="text-lg font-semibold text-gray-900 flex items-center gap-3">
+                      <FileText className="w-5 h-5" />
+                      Expected Outputs ({outputs.length})
+                    </h4>
                     <button
                       onClick={onAddOutput}
-                      className="text-emerald-600 hover:text-emerald-800 font-medium"
+                      className={`${colors.buttonBg} text-white p-2 rounded-xl transition-all`}
                     >
-                      Add expected output
+                      <Plus className="w-4 h-4" />
                     </button>
                   </div>
-                )}
-              </div>
+
+                  {outputs.length > 0 ? (
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      {outputs.map((output, index) => (
+                        <EditableOutput
+                          key={`${phase}-output-${index}-${output.type || output.name || 'untitled'}`}
+                          output={{
+                            ...output,
+                            type: output.type || output.name || `output-${index}`,
+                            name: output.name || output.type || `Output ${index + 1}`,
+                            description: output.description || '',
+                            format: output.format || 'text'
+                          }}
+                          index={index}
+                          onUpdate={(updates) => onUpdateOutput(index, updates)}
+                          onRemove={() => onRemoveOutput(index)}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 border-2 border-dashed border-gray-200 rounded-2xl">
+                      <FileText className="w-8 h-8 mx-auto mb-3 text-gray-400" />
+                      <p className="text-gray-600 mb-3">
+                        {phase === 'process' 
+                          ? 'No processing outputs defined for this phase'
+                          : 'No delivery outputs defined for this phase'
+                        }
+                      </p>
+                      <button
+                        onClick={onAddOutput}
+                        className="text-emerald-600 hover:text-emerald-800 font-medium"
+                      >
+                        Add expected output
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>
       </div>
 
-      {/* Enhanced Plugin Browser Modal with replacement mode */}
+      {/* Fixed AllPluginsBrowserModal rendering to prevent React object errors */}
       {showPluginBrowser && (
         <AllPluginsBrowserModal
           onClose={handleCloseModal}
@@ -822,9 +819,15 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
           setShowConnectedOnly={setShowConnectedOnly}
           getFilteredPlugins={getFilteredPlugins}
           loading={loading}
-          // NEW: Pass replacement mode info to modal
           isReplacementMode={replacingStep !== null}
-          replacingStep={replacingStep}
+          replacingStep={replacingStep ? {
+            id: replacingStep.id,
+            pluginKey: replacingStep.pluginKey,
+            pluginName: replacingStep.pluginName,
+            action: replacingStep.action,
+            description: replacingStep.description,
+            order: replacingStep.order
+          } : null}
         />
       )}
     </>

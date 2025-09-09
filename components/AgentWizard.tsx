@@ -120,8 +120,9 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
             steps: data.workflow_steps,
             requiredInputs: data.input_schema || [],
             outputs: data.output_schema || [],
-            reasoning: data.system_prompt || '',
-            confidence: 85,
+            reasoning: data.ai_reasoning || data.system_prompt || '', // Use ai_reasoning first, fallback to system_prompt
+            confidence: data.ai_confidence || 85,
+            detectedCategories: data.detected_categories || [],
             missingPlugins: [],
             unconnectedPlugins: []
           }
@@ -159,6 +160,26 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
 
     fetchAgent()
   }, [agentId, user])
+
+  // Track workflow analytics
+  const trackWorkflowAnalytics = async (agentId: string) => {
+    if (!agentData.generatedPlan) return;
+    
+    try {
+      await supabase.from('workflow_analytics').insert([{
+        agent_id: agentId,
+        user_prompt: agentData.userPrompt,
+        ai_reasoning: agentData.generatedPlan.reasoning,
+        confidence_score: agentData.generatedPlan.confidence,
+        steps_generated: agentData.generatedPlan.steps.length,
+        plugins_used: agentData.connectedPlugins,
+        user_accepted: agentData.planAccepted,
+        modifications_made: {} // Could track user modifications later
+      }]);
+    } catch (err) {
+      console.error('Failed to track analytics:', err);
+    }
+  };
 
   const validateStep = useCallback(() => {
     const currentStepValidation = stepValidation[step]
@@ -231,13 +252,21 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
         schedule_cron: agentData.schedule_cron || null,
         trigger_conditions: agentData.trigger_conditions ? JSON.parse(agentData.trigger_conditions) : null,
         status: 'active',
-        // Include workflow data from Step 2
+        
+        // Original fields
         system_prompt: agentData.generatedPlan?.reasoning || '',
         input_schema: agentData.inputSchema || [],
         output_schema: agentData.outputSchema || [],
         connected_plugins: agentData.connectedPlugins || {},
         plugins_required: agentData.pluginsRequired || [],
-        workflow_steps: agentData.workflowSteps || []
+        workflow_steps: agentData.workflowSteps || [],
+        
+        // NEW: Enhanced reasoning fields for learning
+        ai_reasoning: agentData.generatedPlan?.reasoning || null,
+        ai_confidence: agentData.generatedPlan?.confidence || null,
+        detected_categories: agentData.generatedPlan?.detectedCategories || null,
+        created_from_prompt: agentData.userPrompt,
+        ai_generated_at: agentData.generatedPlan ? new Date().toISOString() : null
       }
 
       let result
@@ -253,6 +282,10 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
         setError(`Failed to save agent: ${error.message}`)
       } else {
         const savedAgentId = agentId || data[0]?.id
+        
+        // Track analytics for learning
+        await trackWorkflowAnalytics(savedAgentId)
+        
         router.push(`/agents/${savedAgentId}`)
       }
     } catch (err) {
@@ -277,13 +310,21 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
         schedule_cron: agentData.schedule_cron || null,
         trigger_conditions: agentData.trigger_conditions ? JSON.parse(agentData.trigger_conditions) : null,
         status: 'draft',
-        // Include workflow data from Step 2
+        
+        // Original fields
         system_prompt: agentData.generatedPlan?.reasoning || '',
         input_schema: agentData.inputSchema || [],
         output_schema: agentData.outputSchema || [],
         connected_plugins: agentData.connectedPlugins || {},
         plugins_required: agentData.pluginsRequired || [],
-        workflow_steps: agentData.workflowSteps || []
+        workflow_steps: agentData.workflowSteps || [],
+        
+        // NEW: Enhanced reasoning fields for learning
+        ai_reasoning: agentData.generatedPlan?.reasoning || null,
+        ai_confidence: agentData.generatedPlan?.confidence || null,
+        detected_categories: agentData.generatedPlan?.detectedCategories || null,
+        created_from_prompt: agentData.userPrompt,
+        ai_generated_at: agentData.generatedPlan ? new Date().toISOString() : null
       }
 
       let result
@@ -299,6 +340,12 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
         setError(`Failed to save draft: ${error.message}`)
       } else {
         const savedAgentId = agentId || data[0]?.id
+        
+        // Track analytics for learning (even for drafts)
+        if (agentData.generatedPlan) {
+          await trackWorkflowAnalytics(savedAgentId)
+        }
+        
         router.push(`/agents/${savedAgentId}`)
       }
     } catch (err) {
@@ -491,6 +538,8 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
             <p>Can Proceed: {canProceedToNextStep ? 'Yes' : 'No'}</p>
             <p>Workflow Steps: {agentData.workflowSteps?.length || 0}</p>
             <p>Plan Accepted Flag: {agentData.planAccepted ? 'True' : 'False'}</p>
+            <p>AI Confidence: {agentData.generatedPlan?.confidence || 'N/A'}</p>
+            <p>Detected Categories: {agentData.generatedPlan?.detectedCategories?.length || 0}</p>
           </div>
         )}
 

@@ -1,3 +1,5 @@
+// Fixed Step2SmartPreview.tsx - Resolved React child rendering error
+
 import React from 'react';
 import { 
   Brain, 
@@ -9,7 +11,22 @@ import {
   Sparkles,
   ExternalLink,
   Download,
-  Zap
+  Zap,
+  Clock,
+  CheckCircle,
+  ArrowRight,
+  Users,
+  FileText,
+  Mail,
+  Calendar,
+  BarChart3,
+  Settings,
+  Globe,
+  Smartphone,
+  Monitor,
+  PlayCircle,
+  Shield,
+  Target
 } from 'lucide-react';
 import { getPluginByKey, pluginList } from '@/lib/plugins/pluginList';
 import { EditablePhase } from './EditablePhase';
@@ -21,6 +38,8 @@ import { WorkflowHeader } from './components/WorkflowHeader';
 import { WorkflowActions } from './components/WorkflowActions';
 import { PluginNotificationBanner } from './components/PluginNotificationBanner';
 import { RemoveStepModal } from './components/RemoveStepModal';
+import { usePluginReplacement } from './components/PluginNotificationBanner';
+import type { PluginStep } from './types';
 
 interface Props {
   data: {
@@ -39,9 +58,15 @@ export default function Step2SmartPreview({ data, onUpdate, onValidationChange, 
   const workflowActions = useWorkflowActions({
     ...workflowData,
     data,
-    onUpdate,
-    regeneratePlan: workflowData.regeneratePlan // ADD THIS CRITICAL LINE
+    onUpdate
   });
+
+  // Add plugin replacement hook
+  const { 
+    replacementState, 
+    startReplacement, 
+    dismissReplacement 
+  } = usePluginReplacement();
 
   // Destructure values from hooks
   const {
@@ -92,6 +117,100 @@ export default function Step2SmartPreview({ data, onUpdate, onValidationChange, 
     getAvailablePlugins
   } = workflowActions;
 
+  // Helper function to get appropriate icon for plugin - Dynamic version
+  const getIconForPlugin = (pluginName: string, size: string = "h-6 w-6") => {
+    // First try to get the plugin data to use its defined icon
+    const plugin = getPluginByKey(pluginName) || editableSteps.find(step => step.pluginName === pluginName);
+    
+    // If plugin has a defined icon, use it
+    if (plugin?.icon) {
+      // Handle different icon formats (component, string, etc.)
+      if (typeof plugin.icon === 'string') {
+        // If it's a string, try to match it to our available icons
+        const iconName = plugin.icon.toLowerCase();
+        if (iconName.includes('file')) return <FileText className={size} />;
+        if (iconName.includes('user') || iconName.includes('team')) return <Users className={size} />;
+        if (iconName.includes('mail')) return <Mail className={size} />;
+        if (iconName.includes('calendar')) return <Calendar className={size} />;
+        if (iconName.includes('chart') || iconName.includes('analytics')) return <BarChart3 className={size} />;
+        if (iconName.includes('spark') || iconName.includes('ai')) return <Sparkles className={size} />;
+        if (iconName.includes('globe') || iconName.includes('web')) return <Globe className={size} />;
+        if (iconName.includes('phone') || iconName.includes('mobile')) return <Smartphone className={size} />;
+        if (iconName.includes('database') || iconName.includes('data')) return <Database className={size} />;
+        if (iconName.includes('download')) return <Download className={size} />;
+        if (iconName.includes('zap') || iconName.includes('process')) return <Zap className={size} />;
+      }
+      // If plugin.icon is already a React component, we could render it here
+      // For now, fall through to category-based detection
+    }
+    
+    // Fallback to category-based detection using plugin metadata if available
+    if (plugin?.category) {
+      const category = plugin.category.toLowerCase();
+      if (category.includes('storage') || category.includes('file')) return <FileText className={size} />;
+      if (category.includes('communication') || category.includes('social')) return <Users className={size} />;
+      if (category.includes('email') || category.includes('messaging')) return <Mail className={size} />;
+      if (category.includes('calendar') || category.includes('scheduling')) return <Calendar className={size} />;
+      if (category.includes('analytics') || category.includes('reporting')) return <BarChart3 className={size} />;
+      if (category.includes('ai') || category.includes('machine-learning')) return <Sparkles className={size} />;
+      if (category.includes('web') || category.includes('browser')) return <Globe className={size} />;
+      if (category.includes('mobile') || category.includes('device')) return <Smartphone className={size} />;
+      if (category.includes('database') || category.includes('storage')) return <Database className={size} />;
+      if (category.includes('output') || category.includes('delivery')) return <Download className={size} />;
+      if (category.includes('processing') || category.includes('transformation')) return <Zap className={size} />;
+    }
+    
+    // Final fallback - use a generic monitor icon
+    return <Monitor className={size} />;
+  };
+
+  // Handle plugin replacement with AI processing banner
+  const handlePluginReplacement = (oldStep: PluginStep, newPluginKey: string) => {
+    const availablePlugins = getAvailablePlugins();
+    const newPlugin = availablePlugins.find(p => p.pluginKey === newPluginKey);
+    
+    if (!newPlugin) {
+      console.error('New plugin not found:', newPluginKey);
+      return;
+    }
+
+    // Start the replacement process with banner
+    startReplacement(oldStep.id, oldStep, newPluginKey, newPlugin.name);
+    
+    // Update the actual step in the workflow
+    const updatedStep = {
+      ...oldStep,
+      pluginKey: newPluginKey,
+      pluginName: newPlugin.name,
+      action: newPlugin.action || `Use ${newPlugin.name}`,
+      description: newPlugin.description || `Execute ${newPlugin.name} plugin`
+    };
+
+    // Call the existing update step handler
+    handleUpdateStep(oldStep.id, updatedStep);
+
+    // Update the main data structure
+    const updatedSteps = editableSteps.map(step => 
+      step.id === oldStep.id ? updatedStep : step
+    );
+
+    onUpdate({
+      ...data,
+      plugins: {
+        ...data.plugins,
+        steps: updatedSteps
+      }
+    });
+  };
+
+  // Filter replacement banners by phase
+  const getReplacementBannersByPhase = (phase: 'input' | 'process' | 'output') => {
+    return Object.entries(replacementState)
+      .filter(([stepId, replacement]) => 
+        getStepsByPhase(phase).some(step => step.id === Number(stepId))
+      );
+  };
+
   // Calculate current missing and unconnected plugins based on actual workflow state
   const getCurrentMissingPlugins = () => {
     const currentSteps = isEditing ? editableSteps : (generatedPlan?.steps || []);
@@ -108,7 +227,10 @@ export default function Step2SmartPreview({ data, onUpdate, onValidationChange, 
     const requiredPlugins = currentSteps.map(step => step.pluginKey);
     const systemPlugins = ['dashboard-alert', 'pdf-report', 'summary-block', 'agent-log'];
     
-    return requiredPlugins.filter(pluginKey => {
+    // Remove duplicates first, then filter
+    const uniqueRequiredPlugins = [...new Set(requiredPlugins)];
+    
+    return uniqueRequiredPlugins.filter(pluginKey => {
       const isSystemPlugin = systemPlugins.includes(pluginKey);
       const isConnectedDirectly = connectedPlugins.includes(pluginKey);
       return !isSystemPlugin && !isConnectedDirectly;
@@ -118,7 +240,27 @@ export default function Step2SmartPreview({ data, onUpdate, onValidationChange, 
   const currentMissingPlugins = getCurrentMissingPlugins();
   const currentUnconnectedPlugins = getCurrentUnconnectedPlugins();
 
-  // Loading states
+  // Local wrapper for step removal that also updates main data
+  const handleConfirmRemoveStep = (stepToRemoveData: any) => {
+    // Call the hook's confirmRemoveStep function
+    confirmRemoveStep(stepToRemoveData);
+    
+    // Also update the main data structure
+    if (stepToRemoveData?.step) {
+      const step = stepToRemoveData.step;
+      const updatedSteps = editableSteps.filter(s => s.id !== step.id);
+      
+      onUpdate({
+        ...data,
+        plugins: {
+          ...data.plugins,
+          steps: updatedSteps
+        }
+      });
+    }
+  };
+
+  // Loading states (keeping existing logic)
   if (!data.userPrompt || data.userPrompt.trim().length < 10) {
     return (
       <div className="text-center py-16">
@@ -250,130 +392,379 @@ export default function Step2SmartPreview({ data, onUpdate, onValidationChange, 
         <div className="p-6">
           {viewMode === 'business' ? (
             <div className="space-y-8">
-              {/* Workflow Visual Diagram */}
-              <div className="bg-gradient-to-br from-gray-50 to-blue-50 rounded-xl p-6 border border-gray-200">
-                <h4 className="text-lg font-semibold text-gray-900 mb-6 flex items-center gap-2">
-                  <Sparkles className="h-5 w-5 text-blue-600" />
-                  How Your Workflow Works
-                </h4>
-                
-                {/* Simple Flow */}
-                <div className="flex items-center justify-between max-w-4xl mx-auto">
-                  {/* Step 1 - Data Collection */}
-                  <div className="flex-1 text-center">
-                    <div className="w-16 h-16 bg-blue-500 rounded-full flex items-center justify-center mx-auto mb-3">
-                      <Database className="h-8 w-8 text-white" />
-                    </div>
-                    <h5 className="font-semibold text-gray-900 mb-1">Collect Data</h5>
-                    <p className="text-sm text-gray-600 mb-3">
-                      Gather information from {getStepsByPhase('input').length} source{getStepsByPhase('input').length !== 1 ? 's' : ''}
-                    </p>
-                    <div className="space-y-1">
-                      {getStepsByPhase('input').slice(0, 2).map(step => (
-                        <div key={step.id} className="text-xs text-gray-500">
-                          {step.pluginName}
-                        </div>
-                      ))}
-                      {getStepsByPhase('input').length > 2 && (
-                        <div className="text-xs text-gray-400">
-                          +{getStepsByPhase('input').length - 2} more
-                        </div>
-                      )}
-                    </div>
+              {/* COMPLETELY REDESIGNED Horizontal Business View */}
+              <div className="bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 rounded-3xl p-8 border-2 border-blue-100 shadow-xl">
+                {/* Hero Header */}
+                <div className="text-center mb-10">
+                  <div className="relative w-20 h-20 bg-gradient-to-br from-blue-500 via-purple-600 to-indigo-700 rounded-full flex items-center justify-center mx-auto mb-6 shadow-2xl">
+                    <Sparkles className="h-10 w-10 text-white" />
+                    <div className="absolute -inset-2 bg-gradient-to-r from-blue-400 to-purple-500 rounded-full opacity-20 animate-pulse"></div>
                   </div>
-
-                  {/* Arrow */}
-                  {getStepsByPhase('input').length > 0 && (getStepsByPhase('process').length > 0 || getStepsByPhase('output').length > 0) && (
-                    <div className="flex-shrink-0 mx-4">
-                      <div className="w-8 h-1 bg-gray-300"></div>
-                      <div className="w-0 h-0 border-l-8 border-l-gray-300 border-t-4 border-t-transparent border-b-4 border-b-transparent ml-8 -mt-2"></div>
-                    </div>
-                  )}
-
-                  {/* Step 2 - Processing (if exists) */}
-                  {getStepsByPhase('process').length > 0 && (
-                    <>
-                      <div className="flex-1 text-center">
-                        <div className="w-16 h-16 bg-purple-500 rounded-full flex items-center justify-center mx-auto mb-3">
-                          <Zap className="h-8 w-8 text-white" />
-                        </div>
-                        <h5 className="font-semibold text-gray-900 mb-1">Process</h5>
-                        <p className="text-sm text-gray-600 mb-3">
-                          Analyze and transform data
-                        </p>
-                        <div className="space-y-1">
-                          {getStepsByPhase('process').slice(0, 2).map(step => (
-                            <div key={step.id} className="text-xs text-gray-500">
-                              {step.pluginName}
-                            </div>
-                          ))}
-                          {getStepsByPhase('process').length > 2 && (
-                            <div className="text-xs text-gray-400">
-                              +{getStepsByPhase('process').length - 2} more
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Arrow */}
-                      {getStepsByPhase('output').length > 0 && (
-                        <div className="flex-shrink-0 mx-4">
-                          <div className="w-8 h-1 bg-gray-300"></div>
-                          <div className="w-0 h-0 border-l-8 border-l-gray-300 border-t-4 border-t-transparent border-b-4 border-b-transparent ml-8 -mt-2"></div>
-                        </div>
-                      )}
-                    </>
-                  )}
-
-                  {/* Step 3 - Delivery */}
-                  {getStepsByPhase('output').length > 0 && (
-                    <div className="flex-1 text-center">
-                      <div className="w-16 h-16 bg-emerald-500 rounded-full flex items-center justify-center mx-auto mb-3">
-                        <Download className="h-8 w-8 text-white" />
-                      </div>
-                      <h5 className="font-semibold text-gray-900 mb-1">Deliver Results</h5>
-                      <p className="text-sm text-gray-600 mb-3">
-                        Send to {getStepsByPhase('output').length} destination{getStepsByPhase('output').length !== 1 ? 's' : ''}
-                      </p>
-                      <div className="space-y-1">
-                        {getStepsByPhase('output').slice(0, 2).map(step => (
-                          <div key={step.id} className="text-xs text-gray-500">
-                            {step.pluginName}
-                          </div>
-                        ))}
-                        {getStepsByPhase('output').length > 2 && (
-                          <div className="text-xs text-gray-400">
-                            +{getStepsByPhase('output').length - 2} more
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Simple Summary */}
-                <div className="mt-8 pt-6 border-t border-gray-200 text-center">
-                  <p className="text-sm text-gray-600">
-                    Your workflow will automatically run these {generatedPlan.steps.length} steps to complete your task
+                  <h3 className="text-3xl font-bold bg-gradient-to-r from-gray-900 via-blue-800 to-purple-900 bg-clip-text text-transparent mb-3">
+                    Your AI Workflow Journey
+                  </h3>
+                  <p className="text-gray-600 text-lg font-medium max-w-2xl mx-auto">
+                    {(() => {
+                      const inputCount = getStepsByPhase('input').length;
+                      const processCount = getStepsByPhase('process').length;
+                      const outputCount = getStepsByPhase('output').length;
+                      const totalSteps = inputCount + processCount + outputCount;
+                      
+                      let phaseCount = 0;
+                      if (inputCount > 0) phaseCount++;
+                      if (processCount > 0) phaseCount++;
+                      if (outputCount > 0) phaseCount++;
+                      
+                      return `${phaseCount} phases • ${totalSteps} automated steps • Zero manual effort`;
+                    })()}
                   </p>
                 </div>
-              </div>
 
-              {/* Configuration Section */}
-              <SmartBusinessWorkflowConfig
-                editableInputs={editableInputs}
-                editableOutputs={editableOutputs}
-                onUpdateInput={handleUpdateInput}
-                onUpdateOutput={handleUpdateOutput}
-                onAddInput={() => handleAddInput('input')}
-                onAddOutput={() => handleAddOutput('output')}
-                onRemoveInput={(index) => handleRemoveInput('input', index)}
-                onRemoveOutput={(index) => handleRemoveOutput('output', index)}
-              />
+                {/* TRUE Horizontal Cards - Stacked Vertically */}
+                <div className="max-w-6xl mx-auto space-y-8">
+                  {/* Horizontal Card Layout for Each Phase */}
+                  
+                  {/* PHASE 1: DATA COLLECTION - Horizontal Card */}
+                  {getStepsByPhase('input').length > 0 && (
+                    <div className="relative">
+                      {/* Phase Badge */}
+                      <div className="absolute -top-4 left-8 z-20">
+                        <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full border-4 border-white shadow-xl flex items-center justify-center">
+                          <span className="text-white font-bold">1</span>
+                        </div>
+                      </div>
+
+                      {/* Horizontal Card */}
+                      <div className="bg-white rounded-2xl shadow-xl border border-blue-100 p-6 pt-10 hover:shadow-2xl transition-all duration-300">
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                          
+                          {/* Left: Phase Info */}
+                          <div className="lg:col-span-3 text-center lg:text-left">
+                            <div className="w-14 h-14 bg-blue-50 rounded-2xl flex items-center justify-center mx-auto lg:mx-0 mb-3">
+                              <Database className="h-7 w-7 text-blue-600" />
+                            </div>
+                            <h4 className="text-xl font-bold text-gray-900 mb-2">Data Collection</h4>
+                            <p className="text-gray-600 text-sm mb-3">Gathering from {getStepsByPhase('input').length} source{getStepsByPhase('input').length !== 1 ? 's' : ''}</p>
+                            <div className="bg-gradient-to-r from-blue-100 to-blue-200 rounded-lg px-3 py-2">
+                              <div className="flex items-center justify-center gap-1 text-blue-800">
+                                <Clock className="h-4 w-4" />
+                                <span className="text-sm font-bold">2-5 min</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Middle: Steps */}
+                          <div className="lg:col-span-6">
+                            <h5 className="text-sm font-bold text-gray-900 mb-4 flex items-center gap-2">
+                              <PlayCircle className="h-4 w-4 text-blue-600" />
+                              Automated Steps ({getStepsByPhase('input').length})
+                            </h5>
+                            <div className="space-y-3">
+                              {getStepsByPhase('input').map((step, index) => (
+                                <div key={step.id} className="flex items-center gap-3 p-3 bg-blue-50 rounded-xl border border-blue-100 hover:bg-blue-100 transition-colors">
+                                  <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center flex-shrink-0 border border-blue-200">
+                                    {getIconForPlugin(step.pluginName, "h-5 w-5")}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <h6 className="font-semibold text-gray-900 text-sm">{step.pluginName}</h6>
+                                      <span className="text-xs bg-blue-200 text-blue-800 px-2 py-0.5 rounded-full">
+                                        {index + 1}
+                                      </span>
+                                    </div>
+                                    <p className="text-gray-700 text-xs">{step.action}</p>
+                                  </div>
+                                  <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0" />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Right: Configuration */}
+                          <div className="lg:col-span-3">
+                            <h5 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
+                              <Settings className="h-4 w-4 text-blue-600" />
+                              Configuration
+                            </h5>
+                            {getInputsByPhase('input').length > 0 ? (
+                              <div className="space-y-2">
+                                {getInputsByPhase('input').slice(0, 3).map((input, index) => (
+                                  <div key={index} className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                                    <div className="flex items-center justify-between mb-1">
+                                      <h6 className="font-medium text-gray-900 text-xs">{input.name}</h6>
+                                      {input.required && (
+                                        <span className="text-xs bg-red-100 text-red-700 px-1 py-0.5 rounded">Req</span>
+                                      )}
+                                    </div>
+                                    <p className="text-gray-600 text-xs">{input.description}</p>
+                                  </div>
+                                ))}
+                                {getInputsByPhase('input').length > 3 && (
+                                  <p className="text-xs text-gray-500 text-center">+{getInputsByPhase('input').length - 3} more</p>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="bg-blue-50 rounded-lg p-4 text-center border border-blue-100">
+                                <Shield className="h-6 w-6 text-blue-600 mx-auto mb-2" />
+                                <p className="text-blue-800 font-medium text-xs">Fully Automated</p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Flow Arrow */}
+                      {(getStepsByPhase('process').length > 0 || getStepsByPhase('output').length > 0) && (
+                        <div className="flex justify-center mt-6">
+                          <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center shadow-lg">
+                            <ArrowRight className="h-4 w-4 text-white rotate-90" />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* PHASE 2: AI PROCESSING - Horizontal Card */}
+                  {getStepsByPhase('process').length > 0 && (
+                    <div className="relative">
+                      {/* Phase Badge */}
+                      <div className="absolute -top-4 left-8 z-20">
+                        <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-purple-600 rounded-full border-4 border-white shadow-xl flex items-center justify-center">
+                          <span className="text-white font-bold">{getStepsByPhase('input').length > 0 ? '2' : '1'}</span>
+                        </div>
+                      </div>
+
+                      {/* Horizontal Card */}
+                      <div className="bg-white rounded-2xl shadow-xl border border-purple-100 p-6 pt-10 hover:shadow-2xl transition-all duration-300">
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                          
+                          {/* Left: Phase Info */}
+                          <div className="lg:col-span-3 text-center lg:text-left">
+                            <div className="w-14 h-14 bg-purple-50 rounded-2xl flex items-center justify-center mx-auto lg:mx-0 mb-3">
+                              <Zap className="h-7 w-7 text-purple-600" />
+                            </div>
+                            <h4 className="text-xl font-bold text-gray-900 mb-2">AI Processing</h4>
+                            <p className="text-gray-600 text-sm mb-3">Intelligent analysis & transformation</p>
+                            <div className="bg-gradient-to-r from-purple-100 to-purple-200 rounded-lg px-3 py-2">
+                              <div className="flex items-center justify-center gap-1 text-purple-800">
+                                <Sparkles className="h-4 w-4" />
+                                <span className="text-sm font-bold">Real-time</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Middle: Steps */}
+                          <div className="lg:col-span-6">
+                            <h5 className="text-sm font-bold text-gray-900 mb-4 flex items-center gap-2">
+                              <Sparkles className="h-4 w-4 text-purple-600" />
+                              AI Operations ({getStepsByPhase('process').length})
+                            </h5>
+                            <div className="space-y-3">
+                              {getStepsByPhase('process').map((step, index) => (
+                                <div key={step.id} className="flex items-center gap-3 p-3 bg-purple-50 rounded-xl border border-purple-100 hover:bg-purple-100 transition-colors">
+                                  <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center flex-shrink-0 border border-purple-200">
+                                    {getIconForPlugin(step.pluginName, "h-5 w-5")}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <h6 className="font-semibold text-gray-900 text-sm">{step.pluginName}</h6>
+                                      <span className="text-xs bg-purple-200 text-purple-800 px-2 py-0.5 rounded-full">
+                                        AI {index + 1}
+                                      </span>
+                                    </div>
+                                    <p className="text-gray-700 text-xs">{step.action}</p>
+                                  </div>
+                                  <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0" />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Right: AI Intelligence */}
+                          <div className="lg:col-span-3">
+                            <h5 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
+                              <Sparkles className="h-4 w-4 text-purple-600" />
+                              AI Intelligence
+                            </h5>
+                            <div className="bg-purple-50 rounded-lg p-4 text-center border border-purple-100">
+                              <Sparkles className="h-6 w-6 text-purple-600 mx-auto mb-2" />
+                              <p className="text-purple-800 font-medium text-xs mb-1">Smart Processing</p>
+                              <p className="text-purple-600 text-xs">AI handles analysis automatically</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Flow Arrow */}
+                      {getStepsByPhase('output').length > 0 && (
+                        <div className="flex justify-center mt-6">
+                          <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-emerald-600 rounded-full flex items-center justify-center shadow-lg">
+                            <ArrowRight className="h-4 w-4 text-white rotate-90" />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* PHASE 3: RESULTS DELIVERY - Horizontal Card */}
+                  {getStepsByPhase('output').length > 0 && (
+                    <div className="relative">
+                      {/* Phase Badge */}
+                      <div className="absolute -top-4 left-8 z-20">
+                        <div className="w-12 h-12 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-full border-4 border-white shadow-xl flex items-center justify-center">
+                          <span className="text-white font-bold">
+                            {getStepsByPhase('input').length > 0 && getStepsByPhase('process').length > 0 ? '3' : 
+                             getStepsByPhase('input').length > 0 || getStepsByPhase('process').length > 0 ? '2' : '1'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Horizontal Card */}
+                      <div className="bg-white rounded-2xl shadow-xl border border-emerald-100 p-6 pt-10 hover:shadow-2xl transition-all duration-300">
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                          
+                          {/* Left: Phase Info */}
+                          <div className="lg:col-span-3 text-center lg:text-left">
+                            <div className="w-14 h-14 bg-emerald-50 rounded-2xl flex items-center justify-center mx-auto lg:mx-0 mb-3">
+                              <Download className="h-7 w-7 text-emerald-600" />
+                            </div>
+                            <h4 className="text-xl font-bold text-gray-900 mb-2">Results Delivery</h4>
+                            <p className="text-gray-600 text-sm mb-3">To {getStepsByPhase('output').length} destination{getStepsByPhase('output').length !== 1 ? 's' : ''}</p>
+                            <div className="bg-gradient-to-r from-emerald-100 to-emerald-200 rounded-lg px-3 py-2">
+                              <div className="flex items-center justify-center gap-1 text-emerald-800">
+                                <CheckCircle className="h-4 w-4" />
+                                <span className="text-sm font-bold">Complete!</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Middle: Steps */}
+                          <div className="lg:col-span-5">
+                            <h5 className="text-sm font-bold text-gray-900 mb-4 flex items-center gap-2">
+                              <Download className="h-4 w-4 text-emerald-600" />
+                              Final Steps ({getStepsByPhase('output').length})
+                            </h5>
+                            <div className="space-y-3">
+                              {getStepsByPhase('output').map((step, index) => (
+                                <div key={step.id} className="flex items-center gap-3 p-3 bg-emerald-50 rounded-xl border border-emerald-100 hover:bg-emerald-100 transition-colors">
+                                  <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center flex-shrink-0 border border-emerald-200">
+                                    {getIconForPlugin(step.pluginName, "h-5 w-5")}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <h6 className="font-semibold text-gray-900 text-sm">{step.pluginName}</h6>
+                                      <span className="text-xs bg-emerald-200 text-emerald-800 px-2 py-0.5 rounded-full">
+                                        {index + 1}
+                                      </span>
+                                    </div>
+                                    <p className="text-gray-700 text-xs">{step.action}</p>
+                                  </div>
+                                  <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0" />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Right: Results & Configuration */}
+                          <div className="lg:col-span-4 space-y-4">
+                            {/* Output Settings */}
+                            {getInputsByPhase('output').length > 0 && (
+                              <div>
+                                <h5 className="text-sm font-bold text-gray-900 mb-2 flex items-center gap-2">
+                                  <Settings className="h-4 w-4 text-emerald-600" />
+                                  Settings
+                                </h5>
+                                <div className="space-y-2">
+                                  {getInputsByPhase('output').slice(0, 2).map((input, index) => (
+                                    <div key={index} className="bg-emerald-50 rounded-lg p-3 border border-emerald-100">
+                                      <h6 className="font-medium text-gray-900 text-xs mb-1">{input.name}</h6>
+                                      <p className="text-gray-600 text-xs">{input.description}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Expected Results */}
+                            <div>
+                              <h5 className="text-sm font-bold text-gray-900 mb-2 flex items-center gap-2">
+                                <Target className="h-4 w-4 text-emerald-600" />
+                                You'll Receive
+                              </h5>
+                              {(getOutputsByPhase('output').length > 0 || (generatedPlan.outputs && generatedPlan.outputs.length > 0)) ? (
+                                <div className="space-y-2">
+                                  {(getOutputsByPhase('output').length > 0 ? getOutputsByPhase('output') : generatedPlan.outputs || []).slice(0, 2).map((output, index) => (
+                                    <div key={index} className="bg-emerald-50 rounded-lg p-3 border border-emerald-100">
+                                      <div className="flex items-center justify-between mb-1">
+                                        <h6 className="font-medium text-gray-900 text-xs">{output.type}</h6>
+                                        <span className="text-xs bg-emerald-200 text-emerald-800 px-2 py-0.5 rounded">{output.format}</span>
+                                      </div>
+                                      <p className="text-emerald-700 text-xs">→ {output.destination}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="bg-emerald-50 rounded-lg p-4 text-center border border-emerald-100">
+                                  <Target className="h-6 w-6 text-emerald-600 mx-auto mb-2" />
+                                  <p className="text-emerald-800 font-medium text-xs">Auto Delivery</p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Summary Section */}
+                <div className="mt-8 pt-6 border-t border-gray-200">
+                  <div className="bg-gradient-to-r from-gray-50 to-blue-50 rounded-2xl p-6 text-center">
+                    <div className="flex items-center justify-center gap-3 mb-4">
+                      <PlayCircle className="h-6 w-6 text-blue-600" />
+                      <h5 className="text-lg font-bold text-gray-900">Ready to Execute</h5>
+                    </div>
+                    <p className="text-gray-700 mb-4">
+                      Your workflow contains <span className="font-bold text-blue-600">{generatedPlan.steps.length} automated steps</span> that will run seamlessly
+                    </p>
+                    <div className="flex items-center justify-center gap-6 text-sm text-gray-600">
+                      <div className="flex items-center gap-2">
+                        <Shield className="h-4 w-4 text-green-500" />
+                        <span>Secure</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Clock className="h-4 w-4 text-blue-500" />
+                        <span>Automated</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <CheckCircle className="h-4 w-4 text-emerald-500" />
+                        <span>Zero Effort</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           ) : isEditing ? (
             <div className="space-y-6">
-              {/* Show notifications before each phase */}
+              {/* Technical editing view - keeping existing implementation */}
+              {getReplacementBannersByPhase('input').map(([stepId, replacement]) => (
+                <PluginNotificationBanner
+                  key={`replacement-input-${stepId}`}
+                  pluginKey={replacement.newPluginKey}
+                  step={replacement.oldStep}
+                  replacementNotification={{
+                    type: 'replacement',
+                    oldStep: replacement.oldStep,
+                    newPluginKey: replacement.newPluginKey,
+                    newPluginName: replacement.newPluginName,
+                    status: replacement.status,
+                    error: replacement.error
+                  }}
+                  onDismiss={() => dismissReplacement(Number(stepId))}
+                />
+              ))}
+
               {getStepsByPhase('input').map(step => 
                 newlyAddedPlugins.includes(step.pluginKey) && (
                   <PluginNotificationBanner 
@@ -396,7 +787,7 @@ export default function Step2SmartPreview({ data, onUpdate, onValidationChange, 
                 phase="input"
                 steps={getStepsByPhase('input')}
                 inputs={getInputsByPhase('input')}
-                outputs={getOutputsByPhase('input')}
+                outputs={[]}
                 showAddPlugin={false}
                 onToggleAddPlugin={() => {}}
                 onAddStep={(pluginKey) => handleAddStep(pluginKey, 'input')}
@@ -408,15 +799,33 @@ export default function Step2SmartPreview({ data, onUpdate, onValidationChange, 
                 onAddInput={() => handleAddInput('input')}
                 onRemoveInput={(localIndex) => handleRemoveInput('input', localIndex)}
                 onUpdateInput={(localIndex, updates) => handleUpdateInput('input', localIndex, updates)}
-                onAddOutput={() => handleAddOutput('input')}
-                onRemoveOutput={(localIndex) => handleRemoveOutput('input', localIndex)}
-                onUpdateOutput={(localIndex, updates) => handleUpdateOutput('input', localIndex, updates)}
+                onAddOutput={() => {}}
+                onRemoveOutput={() => {}}
+                onUpdateOutput={() => {}}
                 getAvailablePlugins={getAvailablePlugins}
                 missingPlugins={generatedPlan.missingPlugins}
                 allInputs={editableInputs}
                 allOutputs={editableOutputs}
                 loading={false}
+                onReplaceStep={handlePluginReplacement}
               />
+
+              {getReplacementBannersByPhase('process').map(([stepId, replacement]) => (
+                <PluginNotificationBanner
+                  key={`replacement-process-${stepId}`}
+                  pluginKey={replacement.newPluginKey}
+                  step={replacement.oldStep}
+                  replacementNotification={{
+                    type: 'replacement',
+                    oldStep: replacement.oldStep,
+                    newPluginKey: replacement.newPluginKey,
+                    newPluginName: replacement.newPluginName,
+                    status: replacement.status,
+                    error: replacement.error
+                  }}
+                  onDismiss={() => dismissReplacement(Number(stepId))}
+                />
+              ))}
 
               {getStepsByPhase('process').map(step => 
                 newlyAddedPlugins.includes(step.pluginKey) && (
@@ -434,7 +843,7 @@ export default function Step2SmartPreview({ data, onUpdate, onValidationChange, 
 
               <EditablePhase
                 title="Process Phase"
-                description="Analysis and transformation - Configure processing steps only"
+                description="Analysis and transformation - Steps configured automatically"
                 icon={<Zap className="h-6 w-6" />}
                 color="purple"
                 phase="process"
@@ -443,7 +852,7 @@ export default function Step2SmartPreview({ data, onUpdate, onValidationChange, 
                 outputs={[]}
                 showAddPlugin={false}
                 onToggleAddPlugin={() => {}}
-                onAddStep={(pluginKey) => handleAddStep(pluginKey, 'process')}
+                onAddStep={() => {}}
                 onRemoveStep={handleRemoveStep}
                 onUpdateStep={handleUpdateStep}
                 onOpenReplaceModal={() => {}}
@@ -461,7 +870,25 @@ export default function Step2SmartPreview({ data, onUpdate, onValidationChange, 
                 allOutputs={[]}
                 loading={false}
                 hideInputsOutputs={true}
+                onReplaceStep={handlePluginReplacement}
               />
+
+              {getReplacementBannersByPhase('output').map(([stepId, replacement]) => (
+                <PluginNotificationBanner
+                  key={`replacement-output-${stepId}`}
+                  pluginKey={replacement.newPluginKey}
+                  step={replacement.oldStep}
+                  replacementNotification={{
+                    type: 'replacement',
+                    oldStep: replacement.oldStep,
+                    newPluginKey: replacement.newPluginKey,
+                    newPluginName: replacement.newPluginName,
+                    status: replacement.status,
+                    error: replacement.error
+                  }}
+                  onDismiss={() => dismissReplacement(Number(stepId))}
+                />
+              ))}
 
               {getStepsByPhase('output').map(step => 
                 newlyAddedPlugins.includes(step.pluginKey) && (
@@ -505,6 +932,7 @@ export default function Step2SmartPreview({ data, onUpdate, onValidationChange, 
                 allInputs={editableInputs}
                 allOutputs={editableOutputs}
                 loading={false}
+                onReplaceStep={handlePluginReplacement}
               />
             </div>
           ) : (
@@ -598,7 +1026,7 @@ export default function Step2SmartPreview({ data, onUpdate, onValidationChange, 
       <RemoveStepModal
         isOpen={showRemoveConfirmation}
         stepToRemove={stepToRemove}
-        onConfirm={confirmRemoveStep}
+        onConfirm={handleConfirmRemoveStep}
         onCancel={cancelRemoveStep}
       />
     </div>

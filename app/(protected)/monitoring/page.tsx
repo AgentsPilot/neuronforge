@@ -486,7 +486,7 @@ const AgentPilotMonitoring = () => {
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
             <h2 className="text-xl font-semibold mb-6 flex items-center gap-2 text-gray-900">
               <Workflow className="w-5 h-5 text-indigo-500" />
-              Active Agents Orchestration
+              Active Agents Orchestration 
             </h2>
             <div className="space-y-4">
               {workflows.map((workflow) => {
