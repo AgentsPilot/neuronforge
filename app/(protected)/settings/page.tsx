@@ -3,12 +3,13 @@
 import React, { useState, useEffect } from 'react'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
-import { Settings, RefreshCw, PlugZap, User, Bell, Shield } from 'lucide-react'
+import { Settings, RefreshCw, PlugZap, User, Bell, Shield, BarChart3 } from 'lucide-react'
 import PluginsTab from '@/components/settings/PluginsTab'
 import ProfileTab from '@/components/settings/ProfileTab'
 import NotificationsTab from '@/components/settings/NotificationsTab'
 import SecurityTab from '@/components/settings/SecurityTab'
 import PreferencesTab from '@/components/settings/PreferencesTab'
+import UsageTab from '@/components/settings/UsageTab'
 import { UserProfile, UserPreferences, NotificationSettings, PluginConnection } from '@/types/settings'
 
 export default function SettingsPage() {
@@ -32,7 +33,8 @@ export default function SettingsPage() {
     { id: 'profile', label: 'Profile', icon: <User className="w-4 h-4" /> },
     { id: 'notifications', label: 'Notifications', icon: <Bell className="w-4 h-4" /> },
     { id: 'security', label: 'Security', icon: <Shield className="w-4 h-4" /> },
-    { id: 'preferences', label: 'Preferences', icon: <Settings className="w-4 h-4" /> }
+    { id: 'preferences', label: 'Preferences', icon: <Settings className="w-4 h-4" /> },
+    { id: 'usage', label: 'Usage & Analytics', icon: <BarChart3 className="w-4 h-4" /> }
   ]
 
   useEffect(() => {
@@ -93,9 +95,11 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full"></div>
-        <span className="ml-3 text-gray-600 dark:text-gray-300">Loading settings...</span>
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors">
+        <div className="flex items-center justify-center py-12">
+          <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full"></div>
+          <span className="ml-3 text-gray-600 dark:text-gray-300">Loading settings...</span>
+        </div>
       </div>
     )
   }
@@ -177,6 +181,7 @@ export default function SettingsPage() {
               onSave={() => {/* handle save */}}
             />
           )}
+          {activeTab === 'usage' && <UsageTab />}
         </div>
       </div>
     </div>

@@ -18,7 +18,8 @@ import {
   AlertCircle,
   Lightbulb,
   Code,
-  Database
+  Database,
+  Plus
 } from 'lucide-react'
 
 // AI Assistant Messages for each execution mode
@@ -132,7 +133,7 @@ const CRON_EXAMPLES = [
   { expression: "0 8,12,17 * * 1-5", description: "8 AM, 12 PM, 5 PM on weekdays", use: "Three times daily updates" }
 ]
 
-const Step4_5_Mode = ({ data, onUpdate }) => {
+const Step3ExecutionMode = ({ data, onUpdate }) => {
   const { mode = "on_demand", schedule_cron = "", trigger_conditions = "" } = data
 
   // AI Assistant state
@@ -801,4 +802,4 @@ const Step4_5_Mode = ({ data, onUpdate }) => {
   )
 }
 
-export default Step4_5_Mode
+export default Step3ExecutionMode

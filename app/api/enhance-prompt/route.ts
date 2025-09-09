@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { trackUsage } from '@/lib/utils/usageTracker'
 
 export async function POST(req: NextRequest) {
   try {
-    const { prompt } = await req.json()
+    const { prompt, userId } = await req.json()
 
     if (!prompt) {
       return NextResponse.json({ error: 'Prompt is required' }, { status: 400 })
     }
+
+    // Get user ID from request headers if not in body (fallback method)
+    const userIdToUse = userId || req.headers.get('x-user-id') || 'anonymous'
 
     const OPENAI_API_KEY = process.env.OPENAI_API_KEY
 
@@ -14,6 +18,9 @@ export async function POST(req: NextRequest) {
       console.error('OPENAI_API_KEY not found in environment variables')
       return NextResponse.json({ error: 'OpenAI API key not configured' }, { status: 500 })
     }
+
+    console.log('🚀 Processing enhancement request for user:', userIdToUse)
+    console.log('📝 Original prompt length:', prompt.length)
 
     const enhancementPrompt = `You are an expert at writing clear, specific prompts for AI agents and automation workflows.
 
@@ -80,7 +87,55 @@ Enhanced prompt:`
 
     const enhancedPrompt = data.choices[0].message.content.trim()
     
-    return NextResponse.json({ enhancedPrompt })
+    // Extract usage data from OpenAI response
+    const inputTokens = data.usage?.prompt_tokens || 0
+    const outputTokens = data.usage?.completion_tokens || 0
+    const totalTokens = data.usage?.total_tokens || 0
+
+    console.log('📊 Token usage:', {
+      input: inputTokens,
+      output: outputTokens,
+      total: totalTokens
+    })
+
+    // Track usage in database - only if we have a real user ID
+    if (userIdToUse !== 'anonymous') {
+      console.log('💾 Tracking usage for user:', userIdToUse)
+      
+      const trackingSuccess = await trackUsage({
+        userId: userIdToUse,
+        provider: 'openai',
+        modelName: 'gpt-4o-mini',
+        inputTokens: inputTokens,
+        outputTokens: outputTokens,
+        requestType: 'prompt_enhancement',
+        metadata: {
+          originalPromptLength: prompt.length,
+          enhancedPromptLength: enhancedPrompt.length,
+          timestamp: new Date().toISOString()
+        }
+      })
+      
+      if (trackingSuccess) {
+        console.log('✅ Usage tracking successful')
+      } else {
+        console.warn('⚠️ Usage tracking failed, but continuing with response')
+      }
+    } else {
+      console.log('⚠️ Skipping usage tracking - anonymous user')
+    }
+
+    // Return enhanced prompt with usage data for tracking
+    return NextResponse.json({ 
+      enhancedPrompt,
+      usage: {
+        provider: 'openai',
+        model: 'gpt-4o-mini',
+        inputTokens: inputTokens,
+        outputTokens: outputTokens,
+        totalTokens: totalTokens
+      }
+    })
   } catch (error) {
     console.error('Enhancement error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

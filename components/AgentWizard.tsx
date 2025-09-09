@@ -2,13 +2,9 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import Step1Basics from './wizard/Step1Basics'
-import Step2Prompts from './wizard/Step2Prompts'
-import Step3Plugins from './wizard/Step3Plugins'
-import Step4Schema from './wizard/Step4Schemas'
-import Step4_5_Mode from './wizard/Step4_5_mode'
-import Step5OutputSchema from './wizard/Step5OutputSchema'
-import Step6Review from './wizard/Step5Review'
+import Step1BasicsPrompts from './wizard/Step1BasicsPrompts'
+import Step2SmartPreview from './wizard/Step2SmartPreview'
+import Step3ExecutionMode from './wizard/Step3ExecutionMode'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 import {
@@ -19,25 +15,18 @@ import {
   Save,
   AlertTriangle,
   Loader2,
-  Settings,
   MessageSquare,
-  Puzzle,
-  Database,
-  Calendar,
-  Eye,
+  Sparkles,
+  Settings,
   CheckCircle
 } from 'lucide-react'
 
-const TOTAL_STEPS = 7
+const TOTAL_STEPS = 3
 
 const STEP_CONFIG = [
-  { id: 1, title: 'Basic Info', icon: Bot, description: 'Name and description' },
-  { id: 2, title: 'Prompts', icon: MessageSquare, description: 'System and user prompts' },
-  { id: 3, title: 'Plugins', icon: Puzzle, description: 'Connect external services' },
-  { id: 4, title: 'Input Schema', icon: Database, description: 'Define input structure' },
-  { id: 5, title: 'Output Schema', icon: Database, description: 'Define output format' },
-  { id: 6, title: 'Mode & Schedule', icon: Calendar, description: 'Execution settings' },
-  { id: 7, title: 'Review', icon: Eye, description: 'Final review and deploy' }
+  { id: 1, title: 'Setup & Prompts', icon: Bot, description: 'Name, description, and task configuration' },
+  { id: 2, title: 'Smart Preview', icon: Sparkles, description: 'AI-generated plan and suggestions' },
+  { id: 3, title: 'Execution Mode', icon: Settings, description: 'When and how your agent runs' }
 ]
 
 export default function AgentWizard({ agentId }: { agentId?: string }) {
@@ -49,83 +38,61 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
   const router = useRouter()
   const searchParams = useSearchParams()
 
+  // Debug user in parent component
+  useEffect(() => {
+    console.log('AgentWizard user state:', { user, userId: user?.id, email: user?.email })
+  }, [user])
+
   // Step validation states
   const [stepValidation, setStepValidation] = useState<Record<number, { isValid: boolean; error?: string }>>({})
 
   const [agentData, setAgentData] = useState({
     agentName: '',
     description: '',
-    systemPrompt: '',
     userPrompt: '',
-    inputSchema: [],
-    outputSchema: [],
-    plugins: {},
     mode: 'on_demand',
     schedule_cron: '',
     trigger_conditions: '',
+    // Smart preview fields
+    generatedPlan: null,
+    suggestedPlugins: {},
+    suggestedInputs: [],
+    suggestedOutputs: [],
+    planAccepted: false, // This should start as false
+    // Additional fields from Step 2 plan acceptance
+    plugins: {},
+    inputSchema: [],
+    outputSchema: [],
+    aiGenerated: false,
+    finalWorkflowSteps: [],
+    workflowSteps: [],
+    connectedPlugins: {},
+    pluginsRequired: []
   })
 
-  // Memoize the update function to prevent recreation on every render
   const updateData = useCallback((data: Partial<typeof agentData>) => {
     console.log('🔄 Updating agent data:', data)
+    console.log('🔄 planAccepted in update:', data.planAccepted)
     setAgentData((prev) => ({ ...prev, ...data }))
   }, [])
 
-  // FIXED: Stable validation change handler - create individual handlers
-  const handleStep4ValidationChange = useCallback((isValid: boolean, errorMsg?: string) => {
-    setStepValidation(prev => ({
-      ...prev,
-      4: { isValid, error: errorMsg }
-    }))
+  // Validation change handlers
+  const handleStep2ValidationChange = useCallback((isValid: boolean, errorMsg?: string) => {
+    setStepValidation(prev => ({ ...prev, 2: { isValid, error: errorMsg } }))
   }, [])
 
-  const handleStep5ValidationChange = useCallback((isValid: boolean, errorMsg?: string) => {
-    setStepValidation(prev => ({
-      ...prev,
-      5: { isValid, error: errorMsg }
-    }))
-  }, [])
-
-  // Fix: Memoize plugin keys properly with stable dependencies
-  const pluginKeys = useMemo(() => {
-    const plugins = agentData.plugins || {}
-    console.log('🔍 Current plugins object:', plugins)
-    
-    // Handle different plugin data structures
-    let keys = []
-    if (typeof plugins === 'object' && plugins !== null) {
-      // If plugins is an object with plugin names as keys and boolean/config as values
-      keys = Object.keys(plugins).filter(key => {
-        const value = plugins[key]
-        // Include if value is true, or if it's an object (plugin config)
-        return value === true || (typeof value === 'object' && value !== null)
-      })
-    }
-    
-    console.log('🔍 Extracted plugin keys:', keys)
-    return keys
-  }, [agentData.plugins]) // Direct dependency on plugins
-
-  // Remove the separate getPluginKeys function to avoid circular dependencies
-
-  // Fix: Add proper dependencies and prevent infinite loops
   useEffect(() => {
     const initialPrompt = searchParams.get('prompt')
     if (!agentId && user && initialPrompt) {
       setAgentData((prev) => {
-        // Only update if the prompt is actually different
         if (prev.userPrompt?.trim() !== initialPrompt) {
-          return {
-            ...prev,
-            userPrompt: prev.userPrompt?.trim() ? prev.userPrompt : initialPrompt
-          }
+          return { ...prev, userPrompt: prev.userPrompt?.trim() ? prev.userPrompt : initialPrompt }
         }
         return prev
       })
     }
   }, [searchParams, agentId, user])
 
-  // Fix: Add proper loading state management
   useEffect(() => {
     if (!agentId || !user || loadingDraft) return
     
@@ -141,61 +108,101 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
 
         if (error || !data) {
           console.error('Failed to load agent data:', error)
-          alert('Failed to load agent data')
           return
         }
 
-        console.log('📥 Loaded agent data:', data)
+        // Reconstruct generatedPlan from saved data if workflow exists
+        let reconstructedPlan = null
+        let isPlanAccepted = false
+        
+        if (data.workflow_steps && data.workflow_steps.length > 0) {
+          reconstructedPlan = {
+            steps: data.workflow_steps,
+            requiredInputs: data.input_schema || [],
+            outputs: data.output_schema || [],
+            reasoning: data.system_prompt || '',
+            confidence: 85,
+            missingPlugins: [],
+            unconnectedPlugins: []
+          }
+          isPlanAccepted = true // If we have workflow steps, plan was accepted
+        }
 
         setAgentData({
           agentName: data.agent_name || '',
           description: data.description || '',
-          systemPrompt: data.system_prompt || '',
           userPrompt: data.user_prompt || '',
-          inputSchema: data.input_schema || [],
-          outputSchema: data.output_schema || [],
-          plugins: data.connected_plugins || {},
           mode: data.mode || 'on_demand',
           schedule_cron: data.schedule_cron || '',
           trigger_conditions: JSON.stringify(data.trigger_conditions || {}),
+          generatedPlan: reconstructedPlan,
+          suggestedPlugins: data.connected_plugins || {},
+          suggestedInputs: data.input_schema || [],
+          suggestedOutputs: data.output_schema || [],
+          planAccepted: isPlanAccepted, // Set based on whether we have workflow data
+          // Load workflow data from database
+          plugins: data.connected_plugins || {},
+          inputSchema: data.input_schema || [],
+          outputSchema: data.output_schema || [],
+          aiGenerated: !!reconstructedPlan,
+          finalWorkflowSteps: data.workflow_steps || [],
+          workflowSteps: data.workflow_steps || [],
+          connectedPlugins: data.connected_plugins || {},
+          pluginsRequired: data.plugins_required || []
         })
       } catch (err) {
         console.error('Error fetching agent:', err)
-        alert('Failed to load agent data')
       } finally {
         setLoadingDraft(false)
       }
     }
 
     fetchAgent()
-  }, [agentId, user]) // Removed loadingDraft from dependencies to prevent loops
+  }, [agentId, user])
 
   const validateStep = useCallback(() => {
-    // Check step-specific validation first
     const currentStepValidation = stepValidation[step]
     if (currentStepValidation && !currentStepValidation.isValid) {
       setError(currentStepValidation.error || 'Please complete all required fields')
       return false
     }
 
-    // Fallback to basic validation for steps without complex validation
     switch (step) {
       case 1:
         if (!agentData.agentName.trim()) {
           setError('Agent name is required.')
           return false
         }
-        return true
-      case 2:
         if (!agentData.userPrompt.trim()) {
           setError('User prompt is required.')
+          return false
+        }
+        return true
+      case 2:
+        if (!agentData.planAccepted) {
+          setError('Please generate and accept an agent plan.')
+          return false
+        }
+        return true
+      case 3:
+        // Validate execution mode configuration
+        if (!agentData.mode) {
+          setError('Please select an execution mode.')
+          return false
+        }
+        if (agentData.mode === 'scheduled' && !agentData.schedule_cron.trim()) {
+          setError('Schedule configuration is required for scheduled mode.')
+          return false
+        }
+        if (agentData.mode === 'triggered' && !agentData.trigger_conditions.trim()) {
+          setError('Trigger conditions are required for triggered mode.')
           return false
         }
         return true
       default:
         return true
     }
-  }, [step, stepValidation, agentData.agentName, agentData.userPrompt])
+  }, [step, stepValidation, agentData.agentName, agentData.userPrompt, agentData.planAccepted, agentData.mode, agentData.schedule_cron, agentData.trigger_conditions])
 
   const nextStep = useCallback(() => {
     if (validateStep()) {
@@ -214,51 +221,41 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
     setLoading(true)
     setError(null)
 
-    console.log('🧩 Final agentData.plugins:', agentData.plugins)
-    console.log('🔑 Final plugin keys:', pluginKeys)
-
     try {
       const payload = {
         user_id: user.id,
         agent_name: agentData.agentName,
         description: agentData.description,
-        system_prompt: agentData.systemPrompt,
         user_prompt: agentData.userPrompt,
-        input_schema: agentData.inputSchema,
-        output_schema: agentData.outputSchema,
-        connected_plugins: agentData.plugins,
-        plugins_required: pluginKeys,
         mode: agentData.mode,
         schedule_cron: agentData.schedule_cron || null,
         trigger_conditions: agentData.trigger_conditions ? JSON.parse(agentData.trigger_conditions) : null,
         status: 'active',
+        // Include workflow data from Step 2
+        system_prompt: agentData.generatedPlan?.reasoning || '',
+        input_schema: agentData.inputSchema || [],
+        output_schema: agentData.outputSchema || [],
+        connected_plugins: agentData.connectedPlugins || {},
+        plugins_required: agentData.pluginsRequired || [],
+        workflow_steps: agentData.workflowSteps || []
       }
-
-      console.log('💾 Saving payload:', payload)
 
       let result
       if (agentId) {
-        console.log('📝 Updating agent with ID:', agentId)
         result = await supabase.from('agents').update(payload).eq('id', agentId).select()
       } else {
-        console.log('✨ Creating new agent')
         result = await supabase.from('agents').insert([payload]).select()
       }
-
-      console.log('💾 Database result:', result)
 
       const { error, data } = result
 
       if (error) {
-        console.error('❌ Database error:', error)
         setError(`Failed to save agent: ${error.message}`)
       } else {
-        console.log('✅ Successfully saved agent:', data)
         const savedAgentId = agentId || data[0]?.id
         router.push(`/agents/${savedAgentId}`)
       }
     } catch (err) {
-      console.error('❌ Unexpected error:', err)
       setError('An unexpected error occurred while saving the agent')
     } finally {
       setLoading(false)
@@ -275,16 +272,18 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
         user_id: user.id,
         agent_name: agentData.agentName || 'Untitled Agent',
         description: agentData.description,
-        system_prompt: agentData.systemPrompt,
         user_prompt: agentData.userPrompt,
-        input_schema: agentData.inputSchema,
-        output_schema: agentData.outputSchema,
-        connected_plugins: agentData.plugins,
-        plugins_required: pluginKeys,
         mode: agentData.mode,
         schedule_cron: agentData.schedule_cron || null,
         trigger_conditions: agentData.trigger_conditions ? JSON.parse(agentData.trigger_conditions) : null,
         status: 'draft',
+        // Include workflow data from Step 2
+        system_prompt: agentData.generatedPlan?.reasoning || '',
+        input_schema: agentData.inputSchema || [],
+        output_schema: agentData.outputSchema || [],
+        connected_plugins: agentData.connectedPlugins || {},
+        plugins_required: agentData.pluginsRequired || [],
+        workflow_steps: agentData.workflowSteps || []
       }
 
       let result
@@ -297,14 +296,12 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
       const { error, data } = result
 
       if (error) {
-        console.error('❌ Draft save error:', error)
         setError(`Failed to save draft: ${error.message}`)
       } else {
         const savedAgentId = agentId || data[0]?.id
         router.push(`/agents/${savedAgentId}`)
       }
     } catch (err) {
-      console.error('❌ Unexpected error during draft save:', err)
       setError('An unexpected error occurred while saving the draft')
     } finally {
       setLoading(false)
@@ -315,11 +312,65 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
   const currentStepConfig = STEP_CONFIG[step - 1]
   const StepIcon = currentStepConfig?.icon || Bot
 
-  // Check if current step is valid for navigation
   const canProceed = useMemo(() => {
     const currentStepValidation = stepValidation[step]
     return !currentStepValidation || currentStepValidation.isValid
   }, [stepValidation, step])
+
+  // Check if plan has been generated and accepted for step navigation
+  const hasPlanGenerated = useMemo(() => {
+    console.log('🔍 hasPlanGenerated check:', !!agentData.generatedPlan)
+    return !!agentData.generatedPlan
+  }, [agentData.generatedPlan])
+
+  const hasPlanAccepted = useMemo(() => {
+    console.log('🔍 hasPlanAccepted check:', {
+      planAccepted: agentData.planAccepted,
+      generatedPlan: !!agentData.generatedPlan,
+      workflowSteps: agentData.workflowSteps?.length
+    })
+    return !!agentData.planAccepted
+  }, [agentData.planAccepted])
+
+  // Check if we can proceed to next step - this is the key fix
+  const canProceedToNextStep = useMemo(() => {
+    switch (step) {
+      case 1:
+        return agentData.agentName.trim() && agentData.userPrompt.trim()
+      case 2:
+        // CRITICAL: Only allow proceeding if plan is actually accepted
+        return hasPlanAccepted && agentData.planAccepted === true
+      case 3:
+        return true
+      default:
+        return false
+    }
+  }, [step, agentData.agentName, agentData.userPrompt, hasPlanAccepted, agentData.planAccepted])
+
+  // Determine button text and state for Step 2
+  const getStep2ButtonConfig = useMemo(() => {
+    if (!hasPlanGenerated) {
+      return {
+        text: 'Generate AI Plan',
+        icon: <Sparkles className="h-4 w-4" />,
+        disabled: false
+      }
+    }
+    
+    if (hasPlanGenerated && !hasPlanAccepted) {
+      return {
+        text: 'Continue to Execution',
+        icon: <Check className="h-4 w-4" />,
+        disabled: true // Disabled until they click Accept AI Plan in Step 2
+      }
+    }
+    
+    return {
+      text: 'Continue to Execution',
+      icon: <ArrowRight className="h-4 w-4" />,
+      disabled: false
+    }
+  }, [hasPlanGenerated, hasPlanAccepted])
 
   if (loadingDraft) {
     return (
@@ -336,7 +387,7 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <div className="bg-white border-b border-gray-200 px-6 py-4">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
+        <div className="max-w-5xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button
               onClick={() => router.push(agentId ? `/agents/${agentId}` : '/agents')}
@@ -361,7 +412,7 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
         </div>
       </div>
 
-      <div className="max-w-4xl mx-auto p-6">
+      <div className="max-w-5xl mx-auto p-6">
         {/* Progress Steps */}
         <div className="mb-8">
           <div className="flex items-center justify-between mb-6">
@@ -373,7 +424,7 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
               return (
                 <div key={stepConfig.id} className="flex items-center">
                   <div className="flex flex-col items-center">
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center border-2 transition-colors ${
+                    <div className={`w-12 h-12 rounded-full flex items-center justify-center border-2 transition-colors ${
                       isCompleted 
                         ? 'bg-green-100 border-green-500 text-green-600' 
                         : isCurrent 
@@ -381,18 +432,18 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
                         : 'bg-gray-100 border-gray-300 text-gray-400'
                     }`}>
                       {isCompleted ? (
-                        <CheckCircle className="h-5 w-5" />
+                        <CheckCircle className="h-6 w-6" />
                       ) : (
-                        <StepIconComponent className="h-5 w-5" />
+                        <StepIconComponent className="h-6 w-6" />
                       )}
                     </div>
-                    <div className="mt-2 text-center">
-                      <p className={`text-xs font-medium ${
+                    <div className="mt-3 text-center">
+                      <p className={`text-sm font-medium ${
                         isCurrent ? 'text-blue-600' : isCompleted ? 'text-green-600' : 'text-gray-500'
                       }`}>
                         {stepConfig.title}
                       </p>
-                      <p className="text-xs text-gray-400 mt-1 max-w-20">
+                      <p className="text-xs text-gray-400 mt-1 max-w-24">
                         {stepConfig.description}
                       </p>
                     </div>
@@ -409,9 +460,9 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
           </div>
 
           {/* Progress Bar */}
-          <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden">
+          <div className="w-full bg-gray-200 h-3 rounded-full overflow-hidden">
             <div
-              className="bg-gradient-to-r from-blue-500 to-blue-600 h-2 rounded-full transition-all duration-500 ease-out"
+              className="bg-gradient-to-r from-blue-500 to-blue-600 h-3 rounded-full transition-all duration-500 ease-out"
               style={{ width: `${progressPercent}%` }}
             />
           </div>
@@ -420,8 +471,8 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
         {/* Current Step Header */}
         <div className="mb-8 text-center">
           <div className="flex items-center justify-center gap-3 mb-4">
-            <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
-              <StepIcon className="h-6 w-6 text-blue-600" />
+            <div className="w-16 h-16 bg-blue-100 rounded-xl flex items-center justify-center">
+              <StepIcon className="h-8 w-8 text-blue-600" />
             </div>
             <div>
               <h2 className="text-2xl font-bold text-gray-900">{currentStepConfig?.title}</h2>
@@ -430,16 +481,43 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
           </div>
         </div>
 
+        {/* Debug Info */}
+        {process.env.NODE_ENV === 'development' && (
+          <div className="mb-4 p-4 bg-gray-100 rounded-lg text-sm">
+            <p><strong>Debug Info:</strong></p>
+            <p>Step: {step}</p>
+            <p>Has Plan Generated: {hasPlanGenerated ? 'Yes' : 'No'}</p>
+            <p>Plan Accepted: {hasPlanAccepted ? 'Yes' : 'No'}</p>
+            <p>Can Proceed: {canProceedToNextStep ? 'Yes' : 'No'}</p>
+            <p>Workflow Steps: {agentData.workflowSteps?.length || 0}</p>
+            <p>Plan Accepted Flag: {agentData.planAccepted ? 'True' : 'False'}</p>
+          </div>
+        )}
+
         {/* Step Content */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm mb-8">
           <div className="p-8">
-            {step === 1 && <Step1Basics data={agentData} onUpdate={updateData} />}
-            {step === 2 && <Step2Prompts data={agentData} onUpdate={updateData} />}
-            {step === 3 && <Step3Plugins data={agentData} onUpdate={updateData} />}
-            {step === 4 && <Step4Schema data={agentData} onUpdate={updateData} setStepLoading={setLoading} onValidationChange={handleStep4ValidationChange} />}
-            {step === 5 && <Step5OutputSchema data={agentData} onUpdate={updateData} onValidationChange={handleStep5ValidationChange} />}
-            {step === 6 && <Step4_5_Mode data={agentData} onUpdate={updateData} />}
-            {step === 7 && <Step6Review data={agentData} onEditStep={(s) => setStep(s)} />}
+            {step === 1 && (
+              <Step1BasicsPrompts 
+                data={agentData} 
+                onUpdate={updateData} 
+                userId={user?.id}
+              />
+            )}
+            {step === 2 && (
+              <Step2SmartPreview 
+                data={agentData} 
+                onUpdate={updateData} 
+                onValidationChange={handleStep2ValidationChange}
+                userId={user?.id}
+              />
+            )}
+            {step === 3 && (
+              <Step3ExecutionMode 
+                data={agentData} 
+                onUpdate={updateData} 
+              />
+            )}
           </div>
         </div>
 
@@ -451,25 +529,6 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
               <p className="text-red-800 font-medium">Error</p>
               <p className="text-red-700 text-sm mt-1">{error}</p>
             </div>
-          </div>
-        )}
-
-        {/* Debug Info */}
-        {process.env.NODE_ENV === 'development' && (
-          <div className="mb-6 p-4 bg-gray-100 rounded-lg">
-            <details>
-              <summary className="cursor-pointer font-medium text-gray-700 mb-2">
-                Debug Information
-              </summary>
-              <div className="text-xs text-gray-600 space-y-1">
-                <p><strong>Plugins:</strong> {JSON.stringify(agentData.plugins)}</p>
-                <p><strong>Plugin Keys:</strong> {JSON.stringify(pluginKeys)}</p>
-                <p><strong>Current Step:</strong> {step}</p>
-                <p><strong>Agent ID:</strong> {agentId || 'New Agent'}</p>
-                <p><strong>Step Validation:</strong> {JSON.stringify(stepValidation)}</p>
-                <p><strong>Can Proceed:</strong> {canProceed ? 'Yes' : 'No'}</p>
-              </div>
-            </details>
           </div>
         )}
 
@@ -487,14 +546,42 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
           <div className="flex items-center gap-4">
             {step < TOTAL_STEPS ? (
               <button
-                className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className={`flex items-center gap-2 px-6 py-3 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${
+                  step === 1 
+                    ? 'bg-purple-600 hover:bg-purple-700' 
+                    : step === 2 
+                    ? 'bg-green-600 hover:bg-green-700'
+                    : 'bg-blue-600 hover:bg-blue-700'
+                }`}
                 onClick={nextStep}
-                disabled={loading || !canProceed}
+                disabled={loading || !canProceedToNextStep}
+                title={
+                  step === 2 && !canProceedToNextStep 
+                    ? 'Please accept the AI plan first by clicking "Accept AI Plan" button in Step 2'
+                    : ''
+                }
               >
                 {loading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Loading...
+                  </>
+                ) : step === 1 ? (
+                  hasPlanGenerated ? (
+                    <>
+                      Next
+                      <ArrowRight className="h-4 w-4" />
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="h-4 w-4" />
+                      Generate AI Plan
+                    </>
+                  )
+                ) : step === 2 ? (
+                  <>
+                    {getStep2ButtonConfig.icon}
+                    {getStep2ButtonConfig.text}
                   </>
                 ) : (
                   <>
