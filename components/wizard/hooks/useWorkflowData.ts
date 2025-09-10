@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { generateAgentPlan, type GeneratedPlan } from '../workflowAnalysis';
 import { getPluginByKey } from '@/lib/plugins/pluginList';
 import type { PluginStep, RequiredInput, Output } from '../types';
@@ -33,7 +33,7 @@ const SYSTEM_PLUGINS = ['dashboard-alert', 'pdf-report', 'summary-block', 'agent
 export function useWorkflowData({ data, onUpdate, onValidationChange, userId }: Props) {
   // Core state
   const [generatedPlan, setGeneratedPlan] = useState<GeneratedPlan | null>(data.generatedPlan || null);
-  const [acceptedPlan, setAcceptedPlan] = useState<GeneratedPlan | null>(null); // Store the accepted plan separately
+  const [acceptedPlan, setAcceptedPlan] = useState<GeneratedPlan | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAnalysisDetails, setShowAnalysisDetails] = useState(false);
@@ -44,6 +44,7 @@ export function useWorkflowData({ data, onUpdate, onValidationChange, userId }: 
   const [hasGeneratedPlan, setHasGeneratedPlan] = useState(!!data.generatedPlan);
   const lastPromptRef = useRef<string>('');
   const isAutoGeneratingRef = useRef(false);
+  const lastProcessedPlanRef = useRef<string>('');
   
   // Editable data arrays
   const [editableSteps, setEditableSteps] = useState<PluginStep[]>([]);
@@ -68,11 +69,13 @@ export function useWorkflowData({ data, onUpdate, onValidationChange, userId }: 
   
   const { user } = useAuth();
 
-  // Initialize from existing plan data - check for accepted plan first
+  // FIXED: Stable values with proper memoization
+  const stableUserPrompt = useMemo(() => data.userPrompt, [data.userPrompt]);
+
+  // Initialize from existing plan data - check for accepted plan first  
   useEffect(() => {
     if (data.planAccepted && data.workflowSteps && data.workflowSteps.length > 0) {
-      // If we have an accepted plan (from navigation back), reconstruct it
-      console.log('🔄 Initializing from accepted plan data');
+      console.log('Initializing from accepted plan data');
       const reconstructedAcceptedPlan = {
         steps: data.workflowSteps,
         requiredInputs: data.inputSchema || [],
@@ -82,18 +85,39 @@ export function useWorkflowData({ data, onUpdate, onValidationChange, userId }: 
         missingPlugins: [],
         unconnectedPlugins: []
       };
-      setAcceptedPlan(reconstructedAcceptedPlan);
-      setGeneratedPlan(reconstructedAcceptedPlan); // Show the accepted plan
-      setHasGeneratedPlan(true);
-      lastPromptRef.current = data.userPrompt;
+      
+      // Only update if different
+      setAcceptedPlan(prev => 
+        JSON.stringify(prev) !== JSON.stringify(reconstructedAcceptedPlan) 
+          ? reconstructedAcceptedPlan 
+          : prev
+      );
+      setGeneratedPlan(prev => 
+        JSON.stringify(prev) !== JSON.stringify(reconstructedAcceptedPlan) 
+          ? reconstructedAcceptedPlan 
+          : prev
+      );
+      
+      if (!hasGeneratedPlan) {
+        setHasGeneratedPlan(true);
+      }
+      
+      if (lastPromptRef.current !== data.userPrompt) {
+        lastPromptRef.current = data.userPrompt;
+      }
     } else if (data.generatedPlan && !generatedPlan) {
-      // Otherwise, initialize from the original generated plan
-      console.log('🔄 Initializing from original plan data');
+      console.log('Initializing from original plan data');
       setGeneratedPlan(data.generatedPlan);
-      setHasGeneratedPlan(true);
-      lastPromptRef.current = data.userPrompt;
+      
+      if (!hasGeneratedPlan) {
+        setHasGeneratedPlan(true);
+      }
+      
+      if (lastPromptRef.current !== data.userPrompt) {
+        lastPromptRef.current = data.userPrompt;
+      }
     }
-  }, [data.generatedPlan, data.planAccepted, data.workflowSteps, data.inputSchema, data.outputSchema]);
+  }, [data.generatedPlan, data.planAccepted, data.workflowSteps, data.inputSchema, data.outputSchema, data.userPrompt, data.systemPrompt]);
 
   // Fetch connected plugins from database
   useEffect(() => {
@@ -109,7 +133,13 @@ export function useWorkflowData({ data, onUpdate, onValidationChange, userId }: 
 
         if (!error && pluginData) {
           const pluginKeys = pluginData.map(connection => connection.plugin_key);
-          setConnectedPlugins(pluginKeys);
+          
+          // Only update if different
+          setConnectedPlugins(prev => 
+            JSON.stringify(prev.sort()) !== JSON.stringify(pluginKeys.sort()) 
+              ? pluginKeys 
+              : prev
+          );
           
           console.log('Connected plugins found:', pluginKeys);
           
@@ -125,7 +155,13 @@ export function useWorkflowData({ data, onUpdate, onValidationChange, userId }: 
               ...connection
             };
           });
-          setConnectionDetails(details);
+          
+          // Only update if different
+          setConnectionDetails(prev => 
+            JSON.stringify(prev) !== JSON.stringify(details) 
+              ? details 
+              : prev
+          );
         }
       } catch (err) {
         console.error('Error fetching connected plugins:', err);
@@ -133,82 +169,158 @@ export function useWorkflowData({ data, onUpdate, onValidationChange, userId }: 
     };
 
     fetchConnectedPlugins();
-  }, [user]);
+  }, [user?.id]);
 
-  // Generate plan when prompt changes (but only if no plan exists yet or prompt significantly changed)
+  // FIXED: Generate plan when prompt changes - simplified dependencies
   useEffect(() => {
-    const shouldGenerate = data.userPrompt && 
-                          data.userPrompt.trim().length > 10 && 
+    const shouldGenerate = stableUserPrompt && 
+                          stableUserPrompt.trim().length > 10 && 
                           !hasGeneratedPlan && 
                           !isGenerating &&
                           !isAutoGeneratingRef.current &&
-                          lastPromptRef.current !== data.userPrompt;
-
-    console.log('🔍 Auto-generation check:', {
-      hasPrompt: !!data.userPrompt,
-      promptLength: data.userPrompt?.trim().length,
-      hasGeneratedPlan,
-      isGenerating,
-      isAutoGenerating: isAutoGeneratingRef.current,
-      promptChanged: lastPromptRef.current !== data.userPrompt,
-      shouldGenerate,
-      connectedPluginsCount: connectedPlugins.length
-    });
+                          lastPromptRef.current !== stableUserPrompt;
 
     if (shouldGenerate) {
-      console.log('🚀 Auto-generating plan for new prompt');
-      lastPromptRef.current = data.userPrompt;
+      console.log('Auto-generating plan for new prompt');
+      lastPromptRef.current = stableUserPrompt;
       isAutoGeneratingRef.current = true;
       
-      generatePlan().finally(() => {
-        isAutoGeneratingRef.current = false;
-      });
-    } else if (!data.userPrompt || data.userPrompt.trim().length <= 10) {
-      // Reset state if prompt becomes invalid
-      setGeneratedPlan(null);
-      setAcceptedPlan(null);
-      setError(null);
-      setHasGeneratedPlan(false);
+      (async () => {
+        setIsGenerating(true);
+        setError(null);
+        
+        try {
+          const plan = await generateAgentPlan(stableUserPrompt, connectedPlugins, user?.id);
+          
+          if (!plan?.steps || plan.steps.length === 0) {
+            throw new Error('No workflow steps generated');
+          }
+          
+          const requiredPlugins = plan.steps.map(step => step.pluginKey);
+          const actuallyUnconnected = requiredPlugins.filter(pluginKey => 
+            !SYSTEM_PLUGINS.includes(pluginKey) && !connectedPlugins.includes(pluginKey)
+          );
+          const missingPlugins = requiredPlugins.filter(pluginKey => 
+            !SYSTEM_PLUGINS.includes(pluginKey) && !getPluginByKey(pluginKey)
+          );
+          
+          const correctedPlan = { ...plan, unconnectedPlugins: actuallyUnconnected, missingPlugins };
+          
+          setGeneratedPlan(correctedPlan);
+          setAcceptedPlan(null);
+          setHasGeneratedPlan(true);
+          
+          // Use setTimeout to break out of render cycle
+          setTimeout(() => {
+            onUpdate({
+              generatedPlan: correctedPlan,
+              suggestedPlugins: correctedPlan.steps.reduce((acc, step) => ({ ...acc, [step.pluginKey]: true }), {}),
+              suggestedInputs: correctedPlan.requiredInputs || [],
+              suggestedOutputs: correctedPlan.outputs || []
+            });
+            
+            if (onValidationChange) {
+              const isValid = correctedPlan.steps.length > 0 && correctedPlan.missingPlugins.length === 0;
+              onValidationChange(isValid, correctedPlan.missingPlugins.length > 0 ? `Missing plugins: ${correctedPlan.missingPlugins.join(', ')}` : undefined);
+            }
+          }, 0);
+          
+        } catch (err) {
+          setError(err.message || 'Failed to generate workflow plan');
+          setTimeout(() => onValidationChange?.(false, err.message), 0);
+        } finally {
+          setIsGenerating(false);
+          isAutoGeneratingRef.current = false;
+        }
+      })();
+    } else if (!stableUserPrompt || stableUserPrompt.trim().length <= 10) {
+      // Reset state when prompt becomes invalid
+      if (generatedPlan || acceptedPlan || error || hasGeneratedPlan) {
+        setGeneratedPlan(null);
+        setAcceptedPlan(null);
+        setError(null);
+        setHasGeneratedPlan(false);
+      }
       lastPromptRef.current = '';
       isAutoGeneratingRef.current = false;
     }
-  }, [data.userPrompt, hasGeneratedPlan, isGenerating, connectedPlugins]);
+  }, [stableUserPrompt, hasGeneratedPlan, isGenerating]); 
+  // REMOVED connectedPlugins and user?.id to prevent circular updates
 
-  // Update editable arrays when plan changes - use accepted plan if available
+  // FIXED: Dynamic relationship establishment with better change detection
   useEffect(() => {
     const currentPlan = acceptedPlan || generatedPlan;
-    if (currentPlan) {
-      console.log('🔄 Updating editable arrays from:', acceptedPlan ? 'accepted plan' : 'generated plan');
-      setEditableSteps([...currentPlan.steps]);
-      
-      // Clean inputs - remove any that reference non-existent plugins
-      const validInputs = currentPlan.requiredInputs.filter(input => {
-        const relatedStep = currentPlan.steps.find(step => 
-          input.name?.toLowerCase().includes(step.pluginName.toLowerCase()) ||
-          step.pluginName.toLowerCase().includes(input.name?.toLowerCase()?.split(' ')[0] || '')
-        );
-        return relatedStep || !input.name?.toLowerCase().includes('plugin');
-      });
-      setEditableInputs(validInputs);
-      
-      // Clean outputs - remove any that reference non-existent plugins
-      const validOutputs = currentPlan.outputs.filter(output => {
-        const relatedStep = currentPlan.steps.find(step => step.pluginKey === output.pluginKey);
-        return relatedStep || output.pluginKey === 'system' || !output.pluginKey;
-      });
-      setEditableOutputs(validOutputs);
-      
-      console.log('Cleaned up data:', {
-        originalInputs: currentPlan.requiredInputs.length,
-        validInputs: validInputs.length,
-        originalOutputs: currentPlan.outputs.length,
-        validOutputs: validOutputs.length
-      });
+    if (!currentPlan?.steps?.length) return;
+
+    // Create a stable signature for the plan
+    const planSignature = JSON.stringify({
+      steps: currentPlan.steps.length,
+      inputs: currentPlan.requiredInputs?.length || 0,
+      outputs: currentPlan.outputs?.length || 0,
+      stepsIds: currentPlan.steps.map(s => s.id).sort()
+    });
+    
+    if (lastProcessedPlanRef.current === planSignature) {
+      return;
     }
-  }, [generatedPlan, acceptedPlan]);
+
+    // Process inputs to establish relationships
+    const correctedInputs = currentPlan.requiredInputs?.map(input => {
+      if (input.pluginKey || input.relatedStepId || input.phase) {
+        return input;
+      }
+      
+      const owningStep = currentPlan.steps.find(step => {
+        const plugin = getPluginByKey(step.pluginKey);
+        return plugin?.inputSchema?.some(schema => 
+          schema.name === input.name || schema.key === input.name
+        ) || plugin?.requiredInputs?.includes(input.name);
+      });
+      
+      return owningStep ? { ...input, pluginKey: owningStep.pluginKey, relatedStepId: owningStep.id } : input;
+    }) || [];
+    
+    // Only update if actually different
+    const needsInputUpdate = JSON.stringify(correctedInputs) !== JSON.stringify(currentPlan.requiredInputs);
+    if (needsInputUpdate) {
+      const correctedPlan = { ...currentPlan, requiredInputs: correctedInputs };
+      
+      if (acceptedPlan) {
+        setAcceptedPlan(correctedPlan);
+      } else {
+        setGeneratedPlan(correctedPlan);
+      }
+    }
+
+    // Update editable arrays only if different - use functional updates to prevent issues
+    setEditableSteps(prev => {
+      const newSteps = [...currentPlan.steps];
+      return JSON.stringify(prev) !== JSON.stringify(newSteps) ? newSteps : prev;
+    });
+    
+    const validInputs = correctedInputs.filter(input => 
+      !input.pluginKey || currentPlan.steps.some(step => step.pluginKey === input.pluginKey)
+    );
+    
+    setEditableInputs(prev => {
+      return JSON.stringify(prev) !== JSON.stringify(validInputs) ? validInputs : prev;
+    });
+    
+    const validOutputs = (currentPlan.outputs || []).filter(output => 
+      !output.pluginKey || currentPlan.steps.some(step => step.pluginKey === output.pluginKey) || output.pluginKey === 'system'
+    );
+    
+    setEditableOutputs(prev => {
+      return JSON.stringify(prev) !== JSON.stringify(validOutputs) ? validOutputs : prev;
+    });
+
+    lastProcessedPlanRef.current = planSignature;
+  }, [generatedPlan, acceptedPlan]); // Only these two dependencies
 
   // Auto-dismiss notifications after 10 seconds
   useEffect(() => {
+    const timers: NodeJS.Timeout[] = [];
+    
     Object.keys(pluginNotifications).forEach(pluginKey => {
       const notification = pluginNotifications[pluginKey];
       if (notification.showNotification && !notification.isGenerating) {
@@ -219,196 +331,49 @@ export function useWorkflowData({ data, onUpdate, onValidationChange, userId }: 
           }));
         }, 10000);
         
-        return () => clearTimeout(timer);
+        timers.push(timer);
       }
     });
+
+    return () => {
+      timers.forEach(timer => clearTimeout(timer));
+    };
   }, [pluginNotifications]);
 
-  // Generate plan function with comprehensive debugging
-  const generatePlan = async () => {
-    setIsGenerating(true);
-    setError(null);
-    
-    try {
-      console.log('=== GENERATION START DEBUG ===');
-      console.log('Call type:', hasGeneratedPlan ? 'REGENERATION' : 'FIRST_GENERATION');
-      console.log('User prompt:', data.userPrompt);
-      console.log('Prompt length:', data.userPrompt?.length);
-      console.log('Connected plugins:', connectedPlugins);
-      console.log('Connected plugins length:', connectedPlugins.length);
-      console.log('User ID:', user?.id);
-      console.log('Has generated plan flag:', hasGeneratedPlan);
-      console.log('generateAgentPlan function type:', typeof generateAgentPlan);
-      
-      const plan = await generateAgentPlan(data.userPrompt, connectedPlugins, user?.id);
-      
-      console.log('=== API RESPONSE DEBUG ===');
-      console.log('Raw plan response:', plan);
-      console.log('Plan type:', typeof plan);
-      console.log('Plan has steps:', !!plan?.steps);
-      console.log('Steps array:', plan?.steps);
-      console.log('Steps length:', plan?.steps?.length);
-      console.log('Required inputs length:', plan?.requiredInputs?.length);
-      console.log('Outputs length:', plan?.outputs?.length);
-      
-      // Check for empty or invalid response
-      if (!plan) {
-        console.error('❌ API returned null/undefined response');
-        throw new Error('API returned null/undefined response');
-      }
-      
-      if (!plan.steps || !Array.isArray(plan.steps)) {
-        console.error('❌ Invalid steps array:', plan.steps);
-        throw new Error('API response missing valid steps array');
-      }
-      
-      if (plan.steps.length === 0) {
-        console.error('❌ Empty steps array returned');
-        throw new Error('No workflow steps generated. Try being more specific about your automation goals.');
-      }
-      
-      // Recalculate connection status
-      const requiredPlugins = plan.steps.map(step => step.pluginKey);
-      
-      // Correctly identify truly unconnected plugins (exclude system plugins)
-      const actuallyUnconnected = requiredPlugins.filter(pluginKey => {
-        const isSystemPlugin = SYSTEM_PLUGINS.includes(pluginKey);
-        const isConnectedDirectly = connectedPlugins.includes(pluginKey);
-        
-        // Only mark as unconnected if it's NOT a system plugin AND NOT connected
-        const shouldBeMarkedUnconnected = !isSystemPlugin && !isConnectedDirectly;
-        
-        console.log(`Plugin ${pluginKey}:`, {
-          isSystemPlugin,
-          isConnected: isConnectedDirectly,
-          shouldBeMarkedUnconnected
-        });
-        
-        return shouldBeMarkedUnconnected;
-      });
-      
-      // Check for missing plugins (not available in plugin list, excluding system plugins)
-      const missingPlugins = requiredPlugins.filter(pluginKey => {
-        const isSystemPlugin = SYSTEM_PLUGINS.includes(pluginKey);
-        if (isSystemPlugin) return false; // System plugins are never missing
-        
-        const plugin = getPluginByKey(pluginKey);
-        return !plugin;
-      });
-      
-      const correctedPlan = {
-        ...plan,
-        unconnectedPlugins: actuallyUnconnected,
-        missingPlugins: missingPlugins
-      };
-      
-      console.log('=== FINAL RESULTS ===');
-      console.log('Required plugins:', requiredPlugins);
-      console.log('System plugins detected:', requiredPlugins.filter(p => SYSTEM_PLUGINS.includes(p)));
-      console.log('Actually unconnected:', actuallyUnconnected);
-      console.log('Missing plugins:', missingPlugins);
-      console.log('Final corrected plan:', correctedPlan);
-      
-      setGeneratedPlan(correctedPlan);
-      setAcceptedPlan(null); // Clear accepted plan when generating new
-      setHasGeneratedPlan(true);
-      
-      onUpdate({
-        generatedPlan: correctedPlan,
-        suggestedPlugins: correctedPlan.steps ? correctedPlan.steps.reduce((acc, step) => {
-          acc[step.pluginKey] = true;
-          return acc;
-        }, {} as Record<string, boolean>) : {},
-        suggestedInputs: correctedPlan.requiredInputs || [],
-        suggestedOutputs: correctedPlan.outputs || []
-      });
-
-      if (onValidationChange) {
-        const isValid = correctedPlan.steps.length > 0 && correctedPlan.missingPlugins.length === 0;
-        let errorMsg: string | undefined;
-        
-        if (correctedPlan.missingPlugins.length > 0) {
-          errorMsg = `Missing plugins not available in system: ${correctedPlan.missingPlugins.join(', ')}`;
-        } else if (correctedPlan.steps.length === 0) {
-          errorMsg = 'No workflow steps generated';
-        }
-        
-        onValidationChange(isValid, errorMsg);
-      }
-      
-    } catch (err: any) {
-      console.error('=== GENERATION ERROR ===');
-      console.error('Error type:', typeof err);
-      console.error('Error message:', err.message);
-      console.error('Error stack:', err.stack);
-      console.error('Full error object:', err);
-      
-      const errorMessage = err.message || 'Failed to generate workflow plan';
-      setError(errorMessage);
-      
-      if (onValidationChange) {
-        onValidationChange(false, errorMessage);
-      }
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  // Manual regenerate function that resets the flag and generates fresh
-  const regeneratePlan = async () => {
-    console.log('🔄 regeneratePlan() called - MANUAL regeneration...');
-    console.log('Resetting hasGeneratedPlan flag from:', hasGeneratedPlan, 'to false');
+  // MEMOIZED functions to prevent recreation
+  const regeneratePlan = useCallback(async () => {
+    console.log('Regenerating plan...');
     setHasGeneratedPlan(false);
     setGeneratedPlan(null);
-    setAcceptedPlan(null); // Clear accepted plan when regenerating
+    setAcceptedPlan(null);
     setError(null);
     isAutoGeneratingRef.current = false;
-    await generatePlan();
-  };
+    lastProcessedPlanRef.current = '';
+    lastPromptRef.current = ''; // This will trigger the useEffect to regenerate
+  }, []);
 
-  // Store accepted plan when plan is accepted
-  const markPlanAsAccepted = (plan: GeneratedPlan) => {
-    console.log('🔄 Marking plan as accepted and storing it');
+  const markPlanAsAccepted = useCallback((plan: GeneratedPlan) => {
     setAcceptedPlan(plan);
-    // Update the current displayed plan to the accepted version
     setGeneratedPlan(plan);
-  };
+  }, []);
 
-  // Generate AI configuration for newly added plugin
-  const generatePluginConfiguration = async (pluginKey: string, existingSteps: PluginStep[]) => {
+  const generatePluginConfiguration = useCallback(async (pluginKey: string, existingSteps: PluginStep[]) => {
     try {
-      // Create context about existing workflow
-      const workflowContext = {
-        userPrompt: data.userPrompt,
-        existingSteps: existingSteps.map(step => ({
-          pluginName: step.pluginName,
-          phase: step.phase,
-          action: step.action
-        })),
-        newPluginKey: pluginKey
-      };
-
-      // Use existing generateAgentPlan function but focused on single plugin
-      const singlePluginPrompt = `Given this workflow: "${data.userPrompt}". 
+      const singlePluginPrompt = `Given this workflow: "${stableUserPrompt}". 
       The user just added ${pluginKey} plugin. 
       Existing steps: ${existingSteps.map(s => s.pluginName).join(', ')}.
       Generate only the input/output configuration needed for the ${pluginKey} plugin.`;
 
       const partialPlan = await generateAgentPlan(singlePluginPrompt, connectedPlugins, user?.id);
       
-      // Filter only inputs/outputs related to the new plugin
-      const plugin = getPluginByKey(pluginKey);
-      const pluginName = plugin?.name || pluginKey;
-      
       const relatedInputs = partialPlan.requiredInputs.filter(input => 
-        input.name?.toLowerCase().includes(pluginName.toLowerCase()) ||
-        input.name?.toLowerCase().includes(pluginKey.toLowerCase()) ||
-        input.pluginKey === pluginKey
+        input.pluginKey === pluginKey ||
+        input.relatedStepId === existingSteps.find(s => s.pluginKey === pluginKey)?.id
       );
 
       const relatedOutputs = partialPlan.outputs.filter(output => 
         output.pluginKey === pluginKey ||
-        (output.type || output.name || '').toLowerCase().includes(pluginName.toLowerCase())
+        output.relatedStepId === existingSteps.find(s => s.pluginKey === pluginKey)?.id
       );
 
       return {
@@ -419,94 +384,235 @@ export function useWorkflowData({ data, onUpdate, onValidationChange, userId }: 
       console.error('Error generating plugin configuration:', err);
       return { inputs: [], outputs: [] };
     }
-  };
+  }, [stableUserPrompt, connectedPlugins, user?.id]);
 
-  // Helper functions for filtering data by phase
-  const getStepsByPhase = (phase: 'input' | 'process' | 'output') => {
+  // Helper functions for filtering data by phase - MEMOIZED to prevent recreation
+  const getStepsByPhase = useCallback((phase: 'input' | 'process' | 'output') => {
     const steps = isEditing ? editableSteps : (generatedPlan?.steps || []);
     return steps.filter(step => step.phase === phase);
-  };
+  }, [isEditing, editableSteps, generatedPlan?.steps]);
 
-  const getInputsByPhase = (phase: 'input' | 'process' | 'output') => {
+  // MEMOIZED phase-based input filtering
+  const getInputsByPhase = useCallback((phase: 'input' | 'process' | 'output') => {
     const inputs = isEditing ? editableInputs : (generatedPlan?.requiredInputs || []);
+    const steps = isEditing ? editableSteps : (generatedPlan?.steps || []);
     
     return inputs.filter(input => {
-      if (input.phase) {
-        return input.phase === phase;
+      // PRIORITY 1: Direct phase assignment (most reliable)
+      if (input.phase === phase) {
+        return true;
       }
       
-      const steps = isEditing ? editableSteps : (generatedPlan?.steps || []);
-      const relatedStep = steps.find(step => 
-        input.name.toLowerCase().includes(step.pluginName.toLowerCase()) ||
-        step.pluginName.toLowerCase().includes(input.name.toLowerCase().split(' ')[0])
-      );
-      
-      const inputKeywords = ['search', 'filter', 'query', 'time range', 'source', 'fetch', 'retrieve'];
-      const processKeywords = ['analysis', 'focus', 'transform', 'calculate', 'process'];
-      const outputKeywords = ['recipient', 'folder', 'phone', 'alert', 'report', 'widget', 'log', 'send', 'save', 'notify'];
-      
-      const inputName = input.name.toLowerCase();
-      
-      const isInputRelated = relatedStep?.phase === 'input' || 
-                           inputKeywords.some(keyword => inputName.includes(keyword)) ||
-                           inputName.includes('new input');
-      
-      const isProcessRelated = relatedStep?.phase === 'process' || 
-                             processKeywords.some(keyword => inputName.includes(keyword)) ||
-                             inputName.includes('new process');
-      
-      const isOutputRelated = relatedStep?.phase === 'output' || 
-                            outputKeywords.some(keyword => inputName.includes(keyword)) ||
-                            inputName.includes('new output');
-      
-      if (phase === 'input') {
-        return isInputRelated;
-      } else if (phase === 'process') {
-        return isProcessRelated;
-      } else {
-        return isOutputRelated || (!isInputRelated && !isProcessRelated);
+      // PRIORITY 2: Check related step ID (direct relationship)
+      if (input.relatedStepId) {
+        const relatedStep = steps.find(step => step.id === input.relatedStepId);
+        if (relatedStep) {
+          return relatedStep.phase === phase;
+        }
       }
+      
+      // PRIORITY 3: Check plugin key relationship with steps in the requested phase
+      if (input.pluginKey) {
+        const relatedStepsInPhase = steps.filter(step => 
+          step.pluginKey === input.pluginKey && step.phase === phase
+        );
+        
+        if (relatedStepsInPhase.length > 0) {
+          const plugin = getPluginByKey(input.pluginKey);
+          
+          if (plugin?.inputSchema) {
+            const inputSchemaDefinition = plugin.inputSchema.find(schema => 
+              schema.name === input.name || 
+              schema.key === input.name ||
+              schema.field === input.name
+            );
+            
+            if (inputSchemaDefinition?.phase === phase) {
+              return true;
+            }
+            
+            // Authentication/connection inputs belong to INPUT phase
+            const inputPurpose = inputSchemaDefinition?.purpose || inputSchemaDefinition?.category;
+            if (inputPurpose === 'authentication' || 
+                inputPurpose === 'connection' || 
+                inputPurpose === 'credentials' ||
+                inputSchemaDefinition?.isAuthentication || 
+                inputSchemaDefinition?.isConnection) {
+              return phase === 'input';
+            }
+            
+            // Output-specific configuration belongs to OUTPUT phase
+            if (inputPurpose === 'output-config' ||
+                inputPurpose === 'delivery' ||
+                input.name.toLowerCase().includes('destination') ||
+                input.name.toLowerCase().includes('format') ||
+                input.name.toLowerCase().includes('output')) {
+              return phase === 'output';
+            }
+          }
+          
+          return true;
+        }
+      }
+      
+      // PRIORITY 4: Semantic analysis
+      const inputNameLower = (input.name || '').toLowerCase();
+      const inputDescLower = (input.description || '').toLowerCase();
+      
+      const isOutputRelated = inputNameLower.includes('destination') ||
+                             inputNameLower.includes('format') ||
+                             inputNameLower.includes('output') ||
+                             inputNameLower.includes('delivery') ||
+                             inputDescLower.includes('output format') ||
+                             inputDescLower.includes('destination');
+      
+      if (isOutputRelated && phase === 'output') return true;
+      
+      const isInputRelated = inputNameLower.includes('search') ||
+                            inputNameLower.includes('query') ||
+                            inputNameLower.includes('source') ||
+                            inputNameLower.includes('auth') ||
+                            inputDescLower.includes('search for') ||
+                            inputDescLower.includes('data source');
+      
+      if (isInputRelated && phase === 'input') return true;
+      
+      // Default assignment for orphaned inputs
+      if (phase === 'input' && 
+          !input.phase && 
+          !input.relatedStepId && 
+          !input.pluginKey &&
+          !isOutputRelated) {
+        return true;
+      }
+      
+      return false;
     });
-  };
+  }, [isEditing, editableInputs, editableSteps, generatedPlan?.requiredInputs, generatedPlan?.steps]);
 
-  const getOutputsByPhase = (phase: 'input' | 'process' | 'output') => {
+  const getOutputsByPhase = useCallback((phase: 'input' | 'process' | 'output') => {
     const outputs = isEditing ? editableOutputs : (generatedPlan?.outputs || []);
+    const steps = isEditing ? editableSteps : (generatedPlan?.steps || []);
     
     return outputs.filter(output => {
-      if (output.phase) {
-        return output.phase === phase;
+      if (output.phase) return output.phase === phase;
+      
+      if (output.relatedStepId) {
+        const relatedStep = steps.find(step => step.id === output.relatedStepId);
+        if (relatedStep) return relatedStep.phase === phase;
       }
       
-      const outputType = output.type?.toLowerCase() || '';
-      const pluginKey = output.pluginKey?.toLowerCase() || '';
-      
-      const isInputRelated = pluginKey.includes('input') || outputType.includes('input');
-      const isProcessRelated = pluginKey.includes('process') || outputType.includes('process');
-      const isOutputRelated = pluginKey.includes('output') || outputType.includes('output') || 
-                            outputType.includes('report') || outputType.includes('alert') || 
-                            outputType.includes('notification') || outputType.includes('dashboard');
-      
-      if (phase === 'input') {
-        return isInputRelated;
-      } else if (phase === 'process') {
-        return isProcessRelated;
-      } else {
-        return isOutputRelated || (!isInputRelated && !isProcessRelated);
+      if (output.pluginKey) {
+        const relatedStep = steps.find(step => step.pluginKey === output.pluginKey);
+        if (relatedStep) return relatedStep.phase === phase;
       }
+      
+      return phase === 'output'; // Default to output phase
     });
-  };
+  }, [isEditing, editableOutputs, editableSteps, generatedPlan?.outputs, generatedPlan?.steps]);
 
-  // Plugin connection helpers
-  const isConnected = (pluginKey: string) => {
-    if (SYSTEM_PLUGINS.includes(pluginKey)) {
-      return true;
-    }
+  // Plugin connection helpers - MEMOIZED
+  const isConnected = useCallback((pluginKey: string) => {
+    if (SYSTEM_PLUGINS.includes(pluginKey)) return true;
     return connectedPlugins.includes(pluginKey);
-  };
+  }, [connectedPlugins]);
 
-  const getPluginConnection = (pluginKey: string) => {
+  const getPluginConnection = useCallback((pluginKey: string) => {
     return connectionDetails[pluginKey] || null;
-  };
+  }, [connectionDetails]);
+
+  // Schema helper functions - MEMOIZED
+  const hasInputSchema = useCallback(() => {
+    const currentPlan = acceptedPlan || generatedPlan;
+    const hasExplicitSchema = currentPlan?.inputSchema && currentPlan.inputSchema.length > 0;
+    
+    const stepsCanWorkWithPromptOnly = currentPlan?.steps?.every(step => {
+      const plugin = getPluginByKey(step.pluginKey);
+      return plugin?.acceptsTextInput || plugin?.inputSchema?.length === 0 || step.phase !== 'input';
+    });
+    
+    return hasExplicitSchema || stepsCanWorkWithPromptOnly;
+  }, [acceptedPlan, generatedPlan]);
+
+  const hasInputSteps = useCallback(() => {
+    return getStepsByPhase('input').length > 0;
+  }, [getStepsByPhase]);
+
+  const getInputPhaseType = useCallback(() => {
+    const currentPlan = acceptedPlan || generatedPlan;
+    const hasExplicitSchema = currentPlan?.inputSchema && currentPlan.inputSchema.length > 0;
+    
+    if (hasExplicitSchema) return 'schema';
+    if (hasInputSteps()) return 'plugins';
+    
+    const canWorkWithPromptOnly = currentPlan?.steps?.every(step => {
+      const plugin = getPluginByKey(step.pluginKey);
+      return plugin?.acceptsTextInput || step.phase !== 'input';
+    });
+    
+    if (canWorkWithPromptOnly) return 'prompt';
+    return 'none';
+  }, [acceptedPlan, generatedPlan, hasInputSteps]);
+
+  const shouldShowInputPhase = useCallback(() => {
+    const currentPlan = acceptedPlan || generatedPlan;
+    const hasExplicitSchema = currentPlan?.inputSchema && currentPlan.inputSchema.length > 0;
+    
+    return hasExplicitSchema || hasInputSteps() || getInputPhaseType() === 'prompt';
+  }, [acceptedPlan, generatedPlan, hasInputSteps, getInputPhaseType]);
+
+  const getInputSchema = useCallback(() => {
+    const currentPlan = acceptedPlan || generatedPlan;
+    return currentPlan?.inputSchema || [];
+  }, [acceptedPlan, generatedPlan]);
+
+  const getInputPhaseDisplay = useCallback(() => {
+    const inputType = getInputPhaseType();
+    
+    switch (inputType) {
+      case 'plugins':
+        return {
+          title: 'Input Plugins',
+          description: 'Data will be collected using connected plugins',
+          showSteps: true,
+          showSchema: false,
+          showPromptInfo: false
+        };
+      
+      case 'schema':
+        return {
+          title: 'Input Schema',
+          description: 'Data will be collected using defined input fields',
+          showSteps: false,
+          showSchema: true,
+          showPromptInfo: false
+        };
+      
+      case 'prompt':
+        return {
+          title: 'Topic Research',
+          description: 'Workflow will use your prompt as the research topic',
+          showSteps: false,
+          showSchema: false,
+          showPromptInfo: true,
+          promptPreview: stableUserPrompt?.substring(0, 100) + (stableUserPrompt?.length > 100 ? '...' : '')
+        };
+      
+      default:
+        return {
+          title: 'Input Configuration',
+          description: 'No input method configured',
+          showSteps: false,
+          showSchema: false,
+          showPromptInfo: false
+        };
+    }
+  }, [getInputPhaseType, stableUserPrompt]);
+
+  // DUMMY generatePlan function for compatibility
+  const generatePlan = useCallback(() => {
+    console.log('generatePlan called - this is handled by useEffect');
+  }, []);
 
   return {
     // State
@@ -556,6 +662,14 @@ export function useWorkflowData({ data, onUpdate, onValidationChange, userId }: 
     getOutputsByPhase,
     isConnected,
     getPluginConnection,
+    
+    // Schema-related functions
+    hasInputSchema,
+    hasInputSteps,
+    getInputPhaseType,
+    shouldShowInputPhase,
+    getInputSchema,
+    getInputPhaseDisplay,
     
     // User data
     user

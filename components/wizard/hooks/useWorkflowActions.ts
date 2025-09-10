@@ -35,13 +35,15 @@ interface UseWorkflowActionsProps {
   getInputsByPhase: (phase: 'input' | 'process' | 'output') => RequiredInput[];
   getOutputsByPhase: (phase: 'input' | 'process' | 'output') => Output[];
   
+  // NEW: Schema helper function
+  hasInputSchema: () => boolean;
+  
   // Callbacks
   onUpdate: (updates: any) => void;
 }
 
-// PHASE VALIDATION: Ensure all phases have at least one plugin
-const validateWorkflowPhases = (steps: PluginStep[]) => {
-  const requiredPhases = ['input', 'process', 'output'];
+// FLEXIBLE PHASE VALIDATION: Support workflows with or without input plugins
+const validateWorkflowPhases = (steps: PluginStep[], hasInputSchema?: boolean, userPrompt?: string) => {
   const phaseGroups = steps.reduce((acc, step) => {
     if (!acc[step.phase]) acc[step.phase] = 0;
     acc[step.phase]++;
@@ -50,22 +52,107 @@ const validateWorkflowPhases = (steps: PluginStep[]) => {
   
   const errors: string[] = [];
   
-  requiredPhases.forEach(phase => {
-    if (!phaseGroups[phase] || phaseGroups[phase] === 0) {
-      errors.push(`${phase.charAt(0).toUpperCase() + phase.slice(1)} phase must have at least one plugin`);
-    }
-  });
+  // INPUT PHASE VALIDATION: More flexible approach
+  const hasInputSteps = phaseGroups['input'] && phaseGroups['input'] > 0;
+  const hasInputSchemaData = hasInputSchema && hasInputSchema();
+  
+  // Check if the workflow can work with just the user prompt (e.g., topic research)
+  const canWorkWithPromptOnly = userPrompt && userPrompt.trim().length > 0;
+  
+  // Determine if this is a research-type workflow that doesn't need complex input
+  const isSimpleResearchWorkflow = userPrompt && (
+    userPrompt.toLowerCase().includes('research') ||
+    userPrompt.toLowerCase().includes('analyze') ||
+    userPrompt.toLowerCase().includes('find information') ||
+    userPrompt.toLowerCase().includes('topic') ||
+    userPrompt.toLowerCase().includes('study') ||
+    userPrompt.toLowerCase().includes('investigate')
+  );
+  
+  // Input phase is valid if ANY of these conditions are met:
+  const hasValidInput = hasInputSteps || 
+                       hasInputSchemaData || 
+                       (isSimpleResearchWorkflow && canWorkWithPromptOnly) ||
+                       (phaseGroups['process'] > 0 || phaseGroups['output'] > 0);
+  
+  if (!hasValidInput) {
+    errors.push('Workflow must have either: input plugins, input schema, or be a research-type workflow');
+  }
+  
+  // OUTPUT PHASE: Required for all workflows
+  const hasOutputSteps = phaseGroups['output'] && phaseGroups['output'] > 0;
+  
+  if (!hasOutputSteps) {
+    errors.push('Output phase must have at least one plugin');
+  }
   
   return {
     isValid: errors.length === 0,
     errors,
-    phaseGroups
+    phaseGroups,
+    inputType: hasInputSteps ? 'plugins' : 
+               hasInputSchemaData ? 'schema' : 
+               isSimpleResearchWorkflow ? 'prompt' : 'none'
   };
 };
 
-// SCHEMA BUILDING: Auto-populate inputs from plugin schema definitions
-const buildInputsFromPluginSchema = (plugin: any, stepId: number, phase: string): RequiredInput[] => {
-  // Check multiple possible schema locations in plugin definition
+// COMPLETELY REWRITTEN: Phase determination logic with strict plugin-phase relationship
+const determineInputPhase = (inputDef: any, stepPhase: string, pluginKey: string): string => {
+  // Priority 1: ALWAYS respect explicit phase assignment
+  if (inputDef.phase) {
+    console.log(`Input "${inputDef.name}" using explicit phase: ${inputDef.phase}`);
+    return inputDef.phase;
+  }
+  
+  // Priority 2: Check for authentication/connection inputs - these ALWAYS go to INPUT phase
+  // regardless of where the step is
+  if (inputDef.purpose || inputDef.category) {
+    const purpose = (inputDef.purpose || inputDef.category).toLowerCase();
+    
+    if (purpose === 'authentication' || 
+        purpose === 'connection' || 
+        purpose === 'credentials' ||
+        purpose === 'auth' ||
+        purpose === 'login') {
+      console.log(`Input "${inputDef.name}" is authentication - forcing to INPUT phase`);
+      return 'input';
+    }
+  }
+  
+  // Priority 3: Check input name for authentication patterns - these go to INPUT phase
+  const inputNameLower = (inputDef.name || inputDef.label || inputDef.key || '').toLowerCase();
+  const inputDescLower = (inputDef.description || inputDef.help || '').toLowerCase();
+  
+  // Authentication/connection inputs always go to INPUT phase
+  const authKeywords = ['auth', 'credential', 'login', 'password', 'token', 'key', 'secret', 'username', 'connection'];
+  const isAuthRelated = authKeywords.some(keyword => 
+    inputNameLower.includes(keyword) || inputDescLower.includes(keyword)
+  );
+  
+  if (isAuthRelated) {
+    console.log(`Input "${inputDef.name}" contains auth keywords - assigning to INPUT phase`);
+    return 'input';
+  }
+  
+  // Priority 4: Check for OUTPUT-specific inputs based on very specific patterns
+  const outputKeywords = ['destination', 'output path', 'save to', 'export to', 'file path', 'folder path', 'target directory'];
+  const isOutputSpecific = outputKeywords.some(keyword => 
+    inputNameLower.includes(keyword) || inputDescLower.includes(keyword)
+  );
+  
+  if (isOutputSpecific) {
+    console.log(`Input "${inputDef.name}" is output-specific - assigning to OUTPUT phase`);
+    return 'output';
+  }
+  
+  // Priority 5: For all other inputs, ALWAYS use the step's phase
+  // This ensures inputs stay with their plugin
+  console.log(`Input "${inputDef.name}" using step phase: ${stepPhase} (plugin: ${pluginKey})`);
+  return stepPhase;
+};
+
+// COMPLETELY REWRITTEN: Schema building with proper plugin-phase relationship
+const buildInputsFromPluginSchema = (plugin: any, stepId: number, stepPhase: string): RequiredInput[] => {
   const inputSources = [
     plugin.inputSchema,
     plugin.inputs,
@@ -86,10 +173,14 @@ const buildInputsFromPluginSchema = (plugin: any, stepId: number, phase: string)
     return [];
   }
 
-  console.log(`Building ${inputDefinitions.length} inputs from ${plugin.name} schema`);
+  console.log(`Building ${inputDefinitions.length} inputs from ${plugin.name} schema (step phase: ${stepPhase})`);
 
   return inputDefinitions.map((inputDef: any, index: number) => {
-    // Support multiple naming conventions and properties
+    // Use the improved phase determination logic
+    const inputPhase = determineInputPhase(inputDef, stepPhase, plugin.pluginKey);
+    
+    console.log(`✓ Input "${inputDef.name || inputDef.label}" → ${inputPhase} phase (from ${plugin.name} in ${stepPhase})`);
+
     const baseInput: RequiredInput = {
       name: inputDef.name || inputDef.label || inputDef.key || inputDef.field || `${plugin.name} Input ${index + 1}`,
       type: inputDef.type || inputDef.inputType || inputDef.dataType || 'text',
@@ -98,19 +189,18 @@ const buildInputsFromPluginSchema = (plugin: any, stepId: number, phase: string)
       placeholder: inputDef.placeholder || inputDef.hint || inputDef.example || `Enter ${inputDef.name || 'value'}...`,
       defaultValue: inputDef.defaultValue || inputDef.default || inputDef.initialValue || '',
       options: inputDef.options || inputDef.choices || inputDef.enum || [],
-      phase,
+      phase: inputPhase, // Use the determined phase
       pluginKey: plugin.pluginKey,
       relatedStepId: stepId
     };
 
-    // Include any additional properties from the schema
-    return { ...baseInput, ...inputDef };
+    // Include any additional properties from the schema, but preserve our phase determination
+    return { ...inputDef, ...baseInput, phase: inputPhase };
   });
 };
 
-// SCHEMA BUILDING: Auto-populate outputs from plugin schema definitions
-const buildOutputsFromPluginSchema = (plugin: any, stepId: number, phase: string): Output[] => {
-  // Check multiple possible schema locations in plugin definition
+// IMPROVED: Output schema building with proper phase assignment
+const buildOutputsFromPluginSchema = (plugin: any, stepId: number, stepPhase: string): Output[] => {
   const outputSources = [
     plugin.outputSchema,
     plugin.outputs,
@@ -134,7 +224,16 @@ const buildOutputsFromPluginSchema = (plugin: any, stepId: number, phase: string
   console.log(`Building ${outputDefinitions.length} outputs from ${plugin.name} schema`);
 
   return outputDefinitions.map((outputDef: any, index: number) => {
-    // Support multiple naming conventions and properties
+    // For outputs, use explicit phase if provided, otherwise use step's phase
+    let outputPhase = outputDef.phase || stepPhase;
+    
+    // Special rule: If this is clearly a final deliverable, assign to output phase
+    if ((stepPhase === 'input' || stepPhase === 'process') && 
+        (outputDef.isFinal || outputDef.delivery || outputDef.destination)) {
+      outputPhase = 'output';
+      console.log(`Output "${outputDef.name}" is final deliverable - assigning to OUTPUT phase`);
+    }
+
     const baseOutput: Output = {
       type: outputDef.type || outputDef.name || outputDef.key || outputDef.field || `${plugin.name} Output ${index + 1}`,
       name: outputDef.name || outputDef.label || outputDef.type || `Output ${index + 1}`,
@@ -142,16 +241,17 @@ const buildOutputsFromPluginSchema = (plugin: any, stepId: number, phase: string
       format: outputDef.format || outputDef.dataType || outputDef.mimeType || 'text',
       destination: outputDef.destination || outputDef.target || outputDef.location || 'Output destination',
       pluginKey: plugin.pluginKey,
-      phase,
+      phase: outputPhase,
       relatedStepId: stepId
     };
 
-    // Include any additional properties from the schema
-    return { ...baseOutput, ...outputDef };
+    console.log(`✓ Output "${baseOutput.name}" → ${outputPhase} phase (from ${plugin.name} in ${stepPhase})`);
+    
+    return { ...outputDef, ...baseOutput, phase: outputPhase };
   });
 };
 
-// AI GENERATION: Fallback when no plugin schema exists
+// UPDATED: AI generation with improved phase assignment
 const generateInputsOutputsWithAI = async (
   pluginKey: string, 
   existingSteps: PluginStep[], 
@@ -160,25 +260,37 @@ const generateInputsOutputsWithAI = async (
   phase: string
 ) => {
   try {
-    console.log(`Generating AI inputs/outputs for ${pluginKey}`);
+    console.log(`Generating AI inputs/outputs for ${pluginKey} (step phase: ${phase})`);
     const configuration = await generatePluginConfiguration(pluginKey, existingSteps);
     
-    // Add metadata to AI-generated inputs/outputs
-    const aiInputs = configuration.inputs.map(input => ({
-      ...input,
-      phase,
-      pluginKey,
-      relatedStepId: stepId,
-      source: 'ai-generated'
-    }));
+    // Add metadata to AI-generated inputs/outputs with improved phase assignment
+    const aiInputs = configuration.inputs.map(input => {
+      // Apply the same phase determination logic to AI-generated inputs
+      const correctedPhase = determineInputPhase(input, phase, pluginKey);
+      
+      console.log(`✓ AI Input "${input.name}" → ${correctedPhase} phase (from ${pluginKey} in ${phase})`);
+      
+      return {
+        ...input,
+        phase: correctedPhase,
+        pluginKey,
+        relatedStepId: stepId,
+        source: 'ai-generated'
+      };
+    });
 
-    const aiOutputs = configuration.outputs.map(output => ({
-      ...output,
-      phase,
-      pluginKey,
-      relatedStepId: stepId,
-      source: 'ai-generated'
-    }));
+    const aiOutputs = configuration.outputs.map(output => {
+      const outputPhase = output.phase || phase;
+      console.log(`✓ AI Output "${output.name || output.type}" → ${outputPhase} phase (from ${pluginKey} in ${phase})`);
+      
+      return {
+        ...output,
+        phase: outputPhase,
+        pluginKey,
+        relatedStepId: stepId,
+        source: 'ai-generated'
+      };
+    });
 
     return { inputs: aiInputs, outputs: aiOutputs };
   } catch (error) {
@@ -211,6 +323,7 @@ export function useWorkflowActions({
   generatePluginConfiguration,
   getInputsByPhase,
   getOutputsByPhase,
+  hasInputSchema,
   onUpdate
 }: UseWorkflowActionsProps) {
 
@@ -222,14 +335,21 @@ export function useWorkflowActions({
   const handleAcceptPlan = async () => {
     if (!generatedPlan) return;
     
-    // PHASE VALIDATION: Check all phases before accepting
+    // PHASE VALIDATION: Check all phases before accepting (including schema support and userPrompt)
     const currentSteps = isEditing ? editableSteps : generatedPlan.steps;
-    const validation = validateWorkflowPhases(currentSteps);
+    const validation = validateWorkflowPhases(currentSteps, hasInputSchema, data.userPrompt);
     
     if (!validation.isValid) {
+      console.log('Accept plan validation failed:', {
+        errors: validation.errors,
+        phaseGroups: validation.phaseGroups,
+        inputType: validation.inputType
+      });
       alert(`Cannot accept plan: ${validation.errors.join(', ')}`);
       return;
     }
+    
+    console.log('Plan accepted with input type:', validation.inputType);
     
     // Check if user is in edit mode with unsaved changes
     if (isEditing) {
@@ -241,12 +361,19 @@ export function useWorkflowActions({
     const finalInputs = editableInputs;
     const finalOutputs = editableOutputs;
     
+    // Debug: Show final phase assignments
+    console.log('Final input phase assignments:');
+    finalInputs.forEach(input => {
+      console.log(`- ${input.name} → ${input.phase} phase (plugin: ${input.pluginKey})`);
+    });
+    
     // Create the final accepted plan with current editable data
     const acceptedPlan = {
       ...generatedPlan,
       steps: finalSteps,
       requiredInputs: finalInputs,
-      outputs: finalOutputs
+      outputs: finalOutputs,
+      inputType: validation.inputType
     };
     
     // Store the accepted plan for navigation back
@@ -304,7 +431,8 @@ export function useWorkflowActions({
         icon: step.icon
       })),
       connectedPlugins: connectedPluginsObj,
-      pluginsRequired: pluginsRequired
+      pluginsRequired: pluginsRequired,
+      inputType: validation.inputType
     });
 
     console.log('Plan accepted and stored for navigation back');
@@ -321,13 +449,21 @@ export function useWorkflowActions({
   };
 
   const handleEditSave = () => {
-    // PHASE VALIDATION: Check all phases before saving
-    const validation = validateWorkflowPhases(editableSteps);
+    // PHASE VALIDATION: Check all phases before saving (including schema support and userPrompt)
+    const validation = validateWorkflowPhases(editableSteps, hasInputSchema, data.userPrompt);
     
     if (!validation.isValid) {
+      console.log('Validation failed:', {
+        errors: validation.errors,
+        phaseGroups: validation.phaseGroups,
+        inputType: validation.inputType,
+        userPrompt: data.userPrompt
+      });
       alert(`Cannot save: ${validation.errors.join(', ')}`);
       return;
     }
+    
+    console.log('Validation passed with input type:', validation.inputType);
     
     setIsEditing(false);
     if (generatedPlan) {
@@ -336,7 +472,8 @@ export function useWorkflowActions({
         ...generatedPlan,
         steps: editableSteps,
         requiredInputs: editableInputs,
-        outputs: editableOutputs
+        outputs: editableOutputs,
+        inputType: validation.inputType // Store how input is handled
       };
       setGeneratedPlan(updatedPlan);
     }
@@ -451,7 +588,7 @@ export function useWorkflowActions({
       return;
     }
 
-    console.log(`Adding step for plugin: ${plugin.name} (${pluginKey}) to ${phase} phase`);
+    console.log(`\n🔧 Adding step for plugin: ${plugin.name} (${pluginKey}) to ${phase} phase`);
 
     const newStep: PluginStep = {
       id: Math.max(...editableSteps.map(s => s.id), 0) + 1,
@@ -477,13 +614,17 @@ export function useWorkflowActions({
 
     if (schemaInputs.length > 0 || schemaOutputs.length > 0) {
       // SUCCESS: Plugin has schema definitions
-      console.log(`Using plugin schema: ${schemaInputs.length} inputs, ${schemaOutputs.length} outputs`);
+      console.log(`✅ Using plugin schema: ${schemaInputs.length} inputs, ${schemaOutputs.length} outputs`);
       
       if (schemaInputs.length > 0) {
+        console.log('📝 Schema inputs with phases:');
+        schemaInputs.forEach(i => console.log(`   - ${i.name} → ${i.phase} phase`));
         setEditableInputs(prev => [...prev, ...schemaInputs]);
       }
       
       if (schemaOutputs.length > 0) {
+        console.log('📤 Schema outputs with phases:');
+        schemaOutputs.forEach(o => console.log(`   - ${o.name} → ${o.phase} phase`));
         setEditableOutputs(prev => [...prev, ...schemaOutputs]);
       }
 
@@ -501,12 +642,12 @@ export function useWorkflowActions({
         }
       }));
 
-      console.log(`Schema-based population complete for ${plugin.name}`);
+      console.log(`✅ Schema-based population complete for ${plugin.name}\n`);
       return;
     }
 
     // PRIORITY 2: No schema found, use AI generation as fallback
-    console.log(`No schema found for ${plugin.name}, using AI generation...`);
+    console.log(`❌ No schema found for ${plugin.name}, using AI generation...`);
     
     setPluginNotifications(prev => ({
       ...prev,
@@ -527,10 +668,14 @@ export function useWorkflowActions({
     );
 
     if (aiResult.inputs.length > 0) {
+      console.log('🤖 AI inputs with phases:');
+      aiResult.inputs.forEach(i => console.log(`   - ${i.name} → ${i.phase} phase`));
       setEditableInputs(prev => [...prev, ...aiResult.inputs]);
     }
     
     if (aiResult.outputs.length > 0) {
+      console.log('🤖 AI outputs with phases:');
+      aiResult.outputs.forEach(o => console.log(`   - ${o.name} → ${o.phase} phase`));
       setEditableOutputs(prev => [...prev, ...aiResult.outputs]);
     }
 
@@ -548,7 +693,7 @@ export function useWorkflowActions({
       }
     }));
 
-    console.log(`AI generation complete for ${plugin.name}: ${aiResult.inputs.length} inputs, ${aiResult.outputs.length} outputs`);
+    console.log(`✅ AI generation complete for ${plugin.name}: ${aiResult.inputs.length} inputs, ${aiResult.outputs.length} outputs\n`);
   };
 
   // PLUGIN REPLACEMENT: Handle replacing one plugin with another
@@ -559,7 +704,7 @@ export function useWorkflowActions({
       return;
     }
 
-    console.log(`Replacing ${oldStep.pluginName} with ${newPlugin.name}`);
+    console.log(`🔄 Replacing ${oldStep.pluginName} with ${newPlugin.name}`);
 
     // Update the step
     const updatedStep = {
@@ -597,7 +742,7 @@ export function useWorkflowActions({
         setEditableOutputs(prev => [...prev, ...schemaOutputs]);
       }
 
-      console.log(`Replacement complete using schema: ${schemaInputs.length} inputs, ${schemaOutputs.length} outputs`);
+      console.log(`✅ Replacement complete using schema: ${schemaInputs.length} inputs, ${schemaOutputs.length} outputs`);
     } else {
       // Use AI generation
       const aiResult = await generateInputsOutputsWithAI(
@@ -616,7 +761,7 @@ export function useWorkflowActions({
         setEditableOutputs(prev => [...prev, ...aiResult.outputs]);
       }
 
-      console.log(`Replacement complete using AI: ${aiResult.inputs.length} inputs, ${aiResult.outputs.length} outputs`);
+      console.log(`✅ Replacement complete using AI: ${aiResult.inputs.length} inputs, ${aiResult.outputs.length} outputs`);
     }
   };
 
@@ -739,6 +884,50 @@ export function useWorkflowActions({
     });
   };
 
+  // HELPER FUNCTION: Get input phase display info based on validation
+  const getInputPhaseDisplay = () => {
+    const validation = validateWorkflowPhases(editableSteps, hasInputSchema, data.userPrompt);
+    
+    switch (validation.inputType) {
+      case 'plugins':
+        return {
+          title: 'Input Plugins',
+          description: 'Data will be collected using connected plugins',
+          showSteps: true,
+          showSchema: false,
+          showPromptInfo: false
+        };
+      
+      case 'schema':
+        return {
+          title: 'Input Schema',
+          description: 'Data will be collected using defined input fields',
+          showSteps: false,
+          showSchema: true,
+          showPromptInfo: false
+        };
+      
+      case 'prompt':
+        return {
+          title: 'Topic Research',
+          description: 'Workflow will use your prompt as the research topic',
+          showSteps: false,
+          showSchema: false,
+          showPromptInfo: true,
+          promptPreview: data.userPrompt?.substring(0, 100) + (data.userPrompt?.length > 100 ? '...' : '')
+        };
+      
+      default:
+        return {
+          title: 'Input Configuration',
+          description: 'No input method configured',
+          showSteps: false,
+          showSchema: false,
+          showPromptInfo: false
+        };
+    }
+  };
+
   return {
     // Plan actions
     handleRegeneratePlan,
@@ -773,6 +962,7 @@ export function useWorkflowActions({
     dismissPluginNotification,
     
     // Utilities
-    getAvailablePlugins
+    getAvailablePlugins,
+    getInputPhaseDisplay
   };
 }

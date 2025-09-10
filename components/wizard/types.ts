@@ -42,4 +42,34 @@ export interface PluginConnection {
   profile_data?: any;
 }
 
+// NEW: Input Schema for schema-driven workflows
+export interface InputSchema {
+  id: string;
+  name: string;
+  type: 'text' | 'textarea' | 'dropdown' | 'multiselect' | 'date' | 'number' | 'boolean' | 'slider';
+  label: string;
+  description?: string;
+  required: boolean;
+  placeholder?: string;
+  options?: string[];  // for dropdown/multiselect
+  defaultValue?: any;
+  min?: number;       // for number/slider
+  max?: number;       // for number/slider
+  step?: number;      // for number/slider
+  validation?: {
+    minLength?: number;
+    maxLength?: number;
+    pattern?: string;
+  };
+}
+
+// NEW: Workflow Plan interface (this might need to be added to wherever WorkflowPlan is defined)
+export interface WorkflowData {
+  steps: PluginStep[];
+  inputs: RequiredInput[];
+  outputs: Output[];
+  inputSchema?: InputSchema[];  // NEW: Optional input schema for schema-driven workflows
+  // Keep all existing fields that might be in your current workflow data structure
+}
+
 export { type PluginCategory };

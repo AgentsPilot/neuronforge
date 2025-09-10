@@ -1,6 +1,6 @@
 // Fixed Step2SmartPreview.tsx - Resolved React child rendering error
 
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   Brain, 
   Loader2, 
@@ -39,6 +39,7 @@ import { WorkflowActions } from './components/WorkflowActions';
 import { PluginNotificationBanner } from './components/PluginNotificationBanner';
 import { RemoveStepModal } from './components/RemoveStepModal';
 import { usePluginReplacement } from './components/PluginNotificationBanner';
+import { InputSchemaCard } from './components/InputSchemaCard';
 import type { PluginStep } from './types';
 
 interface Props {
@@ -68,6 +69,18 @@ export default function Step2SmartPreview({ data, onUpdate, onValidationChange, 
     dismissReplacement 
   } = usePluginReplacement();
 
+  // NEW: Schema form state management
+  const [schemaValues, setSchemaValues] = useState<Record<string, any>>({});
+  const [schemaErrors, setSchemaErrors] = useState<Record<string, string>>({});
+
+  const handleSchemaChange = (fieldId: string, value: any) => {
+    setSchemaValues(prev => ({ ...prev, [fieldId]: value }));
+    // Clear error when user starts typing
+    if (schemaErrors[fieldId]) {
+      setSchemaErrors(prev => ({ ...prev, [fieldId]: '' }));
+    }
+  };
+
   // Destructure values from hooks
   const {
     generatedPlan,
@@ -91,7 +104,13 @@ export default function Step2SmartPreview({ data, onUpdate, onValidationChange, 
     getInputsByPhase,
     getOutputsByPhase,
     isConnected,
-    getPluginConnection
+    getPluginConnection,
+    // NEW: Schema helper functions
+    hasInputSchema,
+    hasInputSteps,
+    getInputPhaseType,
+    shouldShowInputPhase,
+    getInputSchema
   } = workflowData;
 
   const {
@@ -405,15 +424,11 @@ export default function Step2SmartPreview({ data, onUpdate, onValidationChange, 
                   </h3>
                   <p className="text-gray-600 text-lg font-medium max-w-2xl mx-auto">
                     {(() => {
-                      const inputCount = getStepsByPhase('input').length;
-                      const processCount = getStepsByPhase('process').length;
-                      const outputCount = getStepsByPhase('output').length;
-                      const totalSteps = inputCount + processCount + outputCount;
-                      
-                      let phaseCount = 0;
-                      if (inputCount > 0) phaseCount++;
-                      if (processCount > 0) phaseCount++;
-                      if (outputCount > 0) phaseCount++;
+                      const inputCount = shouldShowInputPhase() ? 1 : 0;
+                      const processCount = getStepsByPhase('process').length > 0 ? 1 : 0;
+                      const outputCount = getStepsByPhase('output').length > 0 ? 1 : 0;
+                      const totalSteps = getStepsByPhase('input').length + getStepsByPhase('process').length + getStepsByPhase('output').length;
+                      const phaseCount = inputCount + processCount + outputCount;
                       
                       return `${phaseCount} phases • ${totalSteps} automated steps • Zero manual effort`;
                     })()}
@@ -424,8 +439,8 @@ export default function Step2SmartPreview({ data, onUpdate, onValidationChange, 
                 <div className="max-w-6xl mx-auto space-y-8">
                   {/* Horizontal Card Layout for Each Phase */}
                   
-                  {/* PHASE 1: DATA COLLECTION - Horizontal Card */}
-                  {getStepsByPhase('input').length > 0 && (
+                  {/* PHASE 1: INPUT COLLECTION - Schema or Plugin Based */}
+                  {shouldShowInputPhase() && (
                     <div className="relative">
                       {/* Phase Badge */}
                       <div className="absolute -top-4 left-8 z-20">
@@ -443,41 +458,64 @@ export default function Step2SmartPreview({ data, onUpdate, onValidationChange, 
                             <div className="w-14 h-14 bg-blue-50 rounded-2xl flex items-center justify-center mx-auto lg:mx-0 mb-3">
                               <Database className="h-7 w-7 text-blue-600" />
                             </div>
-                            <h4 className="text-xl font-bold text-gray-900 mb-2">Data Collection</h4>
-                            <p className="text-gray-600 text-sm mb-3">Gathering from {getStepsByPhase('input').length} source{getStepsByPhase('input').length !== 1 ? 's' : ''}</p>
+                            <h4 className="text-xl font-bold text-gray-900 mb-2">
+                              {getInputPhaseType() === 'schema' ? 'Input Collection' : 'Data Collection'}
+                            </h4>
+                            <p className="text-gray-600 text-sm mb-3">
+                              {getInputPhaseType() === 'schema' 
+                                ? `${getInputSchema().length} field${getInputSchema().length !== 1 ? 's' : ''} to configure`
+                                : `Gathering from ${getStepsByPhase('input').length} source${getStepsByPhase('input').length !== 1 ? 's' : ''}`
+                              }
+                            </p>
                             <div className="bg-gradient-to-r from-blue-100 to-blue-200 rounded-lg px-3 py-2">
                               <div className="flex items-center justify-center gap-1 text-blue-800">
                                 <Clock className="h-4 w-4" />
-                                <span className="text-sm font-bold">2-5 min</span>
+                                <span className="text-sm font-bold">
+                                  {getInputPhaseType() === 'schema' ? '30 sec' : '2-5 min'}
+                                </span>
                               </div>
                             </div>
                           </div>
 
-                          {/* Middle: Steps */}
+                          {/* Middle: Schema Form or Plugin Steps */}
                           <div className="lg:col-span-6">
-                            <h5 className="text-sm font-bold text-gray-900 mb-4 flex items-center gap-2">
-                              <PlayCircle className="h-4 w-4 text-blue-600" />
-                              Automated Steps ({getStepsByPhase('input').length})
-                            </h5>
-                            <div className="space-y-3">
-                              {getStepsByPhase('input').map((step, index) => (
-                                <div key={step.id} className="flex items-center gap-3 p-3 bg-blue-50 rounded-xl border border-blue-100 hover:bg-blue-100 transition-colors">
-                                  <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center flex-shrink-0 border border-blue-200">
-                                    {getIconForPlugin(step.pluginName, "h-5 w-5")}
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2 mb-1">
-                                      <h6 className="font-semibold text-gray-900 text-sm">{step.pluginName}</h6>
-                                      <span className="text-xs bg-blue-200 text-blue-800 px-2 py-0.5 rounded-full">
-                                        {index + 1}
-                                      </span>
+                            {getInputPhaseType() === 'schema' ? (
+                              // Schema-based input collection with dedicated component
+                              <InputSchemaCard
+                                inputSchema={getInputSchema()}
+                                values={schemaValues}
+                                onChange={handleSchemaChange}
+                                errors={schemaErrors}
+                                className="shadow-none border-0 p-0 bg-transparent"
+                              />
+                            ) : (
+                              // Plugin-based steps (existing logic)
+                              <div>
+                                <h5 className="text-sm font-bold text-gray-900 mb-4 flex items-center gap-2">
+                                  <PlayCircle className="h-4 w-4 text-blue-600" />
+                                  Automated Steps ({getStepsByPhase('input').length})
+                                </h5>
+                                <div className="space-y-3">
+                                  {getStepsByPhase('input').map((step, index) => (
+                                    <div key={step.id} className="flex items-center gap-3 p-3 bg-blue-50 rounded-xl border border-blue-100 hover:bg-blue-100 transition-colors">
+                                      <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center flex-shrink-0 border border-blue-200">
+                                        {getIconForPlugin(step.pluginName, "h-5 w-5")}
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 mb-1">
+                                          <h6 className="font-semibold text-gray-900 text-sm">{step.pluginName}</h6>
+                                          <span className="text-xs bg-blue-200 text-blue-800 px-2 py-0.5 rounded-full">
+                                            {index + 1}
+                                          </span>
+                                        </div>
+                                        <p className="text-gray-700 text-xs">{step.action}</p>
+                                      </div>
+                                      <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0" />
                                     </div>
-                                    <p className="text-gray-700 text-xs">{step.action}</p>
-                                  </div>
-                                  <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0" />
+                                  ))}
                                 </div>
-                              ))}
-                            </div>
+                              </div>
+                            )}
                           </div>
 
                           {/* Right: Configuration */}
@@ -486,7 +524,13 @@ export default function Step2SmartPreview({ data, onUpdate, onValidationChange, 
                               <Settings className="h-4 w-4 text-blue-600" />
                               Configuration
                             </h5>
-                            {getInputsByPhase('input').length > 0 ? (
+                            {getInputPhaseType() === 'schema' ? (
+                              <div className="bg-blue-50 rounded-lg p-4 text-center border border-blue-100">
+                                <FileText className="h-6 w-6 text-blue-600 mx-auto mb-2" />
+                                <p className="text-blue-800 font-medium text-xs mb-1">Form Collection</p>
+                                <p className="text-blue-600 text-xs">User provides inputs via form</p>
+                              </div>
+                            ) : getInputsByPhase('input').length > 0 ? (
                               <div className="space-y-2">
                                 {getInputsByPhase('input').slice(0, 3).map((input, index) => (
                                   <div key={index} className="bg-gray-50 rounded-lg p-3 border border-gray-200">
@@ -530,7 +574,7 @@ export default function Step2SmartPreview({ data, onUpdate, onValidationChange, 
                       {/* Phase Badge */}
                       <div className="absolute -top-4 left-8 z-20">
                         <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-purple-600 rounded-full border-4 border-white shadow-xl flex items-center justify-center">
-                          <span className="text-white font-bold">{getStepsByPhase('input').length > 0 ? '2' : '1'}</span>
+                          <span className="text-white font-bold">{shouldShowInputPhase() ? '2' : '1'}</span>
                         </div>
                       </div>
 
@@ -613,8 +657,8 @@ export default function Step2SmartPreview({ data, onUpdate, onValidationChange, 
                       <div className="absolute -top-4 left-8 z-20">
                         <div className="w-12 h-12 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-full border-4 border-white shadow-xl flex items-center justify-center">
                           <span className="text-white font-bold">
-                            {getStepsByPhase('input').length > 0 && getStepsByPhase('process').length > 0 ? '3' : 
-                             getStepsByPhase('input').length > 0 || getStepsByPhase('process').length > 0 ? '2' : '1'}
+                            {shouldShowInputPhase() && getStepsByPhase('process').length > 0 ? '3' : 
+                             shouldShowInputPhase() || getStepsByPhase('process').length > 0 ? '2' : '1'}
                           </span>
                         </div>
                       </div>
