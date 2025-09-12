@@ -452,115 +452,163 @@ export default function AgentSandbox({
     }
   }
 
-  const handleRun = async (withVisualizer = false) => {
-    if (!validateForm()) {
+  // Key changes needed in AgentSandbox component
+
+// 1. Update the handleRun function to use the correct endpoint
+const handleRun = async (withVisualizer = false) => {
+  if (!validateForm()) {
+    return
+  }
+
+  try {
+    setLoading(true)
+    setSendStatus(null)
+    setResult(null)
+    setExecutionTime(null)
+
+    if (missingPlugins.length > 0) {
+      setResult({ error: `Missing required plugin(s): ${missingPlugins.join(', ')}` })
       return
     }
 
-    try {
-      setLoading(true)
-      setSendStatus(null)
-      setResult(null)
-      setExecutionTime(null)
-
-      if (missingPlugins.length > 0) {
-        setResult({ error: `Missing required plugin(s): ${missingPlugins.join(', ')}` })
-        return
+    if (withVisualizer) {
+      const executionId = initializeVisualization()
+      
+      const streamUrl = '/api/agent-stream'
+      const requestBody = {
+        agent_id: agentId,
+        input_variables: formData,
+        user_prompt: userPrompt,
+        execution_id: executionId
       }
 
-      if (withVisualizer) {
-        const executionId = initializeVisualization()
-        
-        const streamUrl = '/api/agent-stream'
-        const requestBody = {
-          agent_id: agentId,
-          input_variables: formData,
-          user_prompt: userPrompt,
-          execution_id: executionId
-        }
+      const response = await fetch(streamUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      })
 
-        const response = await fetch(streamUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(requestBody),
-        })
+      if (!response.ok) {
+        throw new Error(`Stream failed: ${response.statusText}`)
+      }
 
-        if (!response.ok) {
-          throw new Error(`Stream failed: ${response.statusText}`)
-        }
+      if (!response.body) {
+        throw new Error('No response body for stream')
+      }
 
-        if (!response.body) {
-          throw new Error('No response body for stream')
-        }
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
 
-        const reader = response.body.getReader()
-        const decoder = new TextDecoder()
+      const readStream = async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
 
-        const readStream = async () => {
-          try {
-            while (true) {
-              const { done, value } = await reader.read()
-              if (done) break
+            const chunk = decoder.decode(value, { stream: true })
+            const lines = chunk.split('\n')
 
-              const chunk = decoder.decode(value, { stream: true })
-              const lines = chunk.split('\n')
-
-              for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                  const eventData = line.slice(6)
-                  if (eventData.trim()) {
-                    handleStreamEvent({ data: eventData } as MessageEvent)
-                  }
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const eventData = line.slice(6)
+                if (eventData.trim()) {
+                  handleStreamEvent({ data: eventData } as MessageEvent)
                 }
               }
             }
-          } catch (error) {
-            console.error('Stream reading error:', error)
-            setResult({ error: 'Stream connection failed' })
-          } finally {
-            setLoading(false)
-            setIsLiveExecution(false)
           }
+        } catch (error) {
+          console.error('Stream reading error:', error)
+          setResult({ error: 'Stream connection failed' })
+        } finally {
+          setLoading(false)
+          setIsLiveExecution(false)
         }
-
-        readStream()
-
-      } else {
-        const interpolatedPrompt = await interpolatePrompt(userPrompt, formData, undefined, user?.id)
-        
-        const response = await fetch(`/api/agents/${agentId}/execute-workflow`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            inputVariables: formData,
-            testMode: true
-          }),
-        })
-        if (!response.ok) {
-          throw new Error(`Agent execution failed: ${response.statusText}`)
-        }
-
-        const res = await response.json()
-        const finalResult = res?.result || 'No output returned.'
-        setResult(finalResult)
-
-        if (finalResult?.send_status) {
-          setSendStatus(finalResult.send_status)
-        }
-
-        setLoading(false)
       }
 
-    } catch (err: any) {
-      setResult({ error: err.message })
+      readStream()
+
+    } else {
+      // FIXED: Use the correct workflow execution endpoint
+      const startTime = Date.now()
+      
+      const response = await fetch(`/api/agents/${agentId}/execute-workflow`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          inputVariables: formData, // Pass the form data as input variables
+          testMode: true
+        }),
+      })
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`Workflow execution failed: ${response.statusText} - ${errorText}`)
+      }
+
+      const res = await response.json()
+      const endTime = Date.now()
+      setExecutionTime(endTime - startTime)
+      
+      console.log('Workflow execution response:', res)
+      
+      // Handle different response formats from workflow execution
+      let finalResult
+      
+      if (res?.result) {
+        // If there's a result field, use it
+        finalResult = res.result
+      } else if (res?.output) {
+        // If there's an output field, use it
+        finalResult = res.output
+      } else if (res?.message) {
+        // If there's just a message, use it
+        finalResult = res.message
+      } else {
+        // Fallback to the entire response
+        finalResult = res
+      }
+      
+      setResult(finalResult)
+
+      // Set status based on execution result
+      if (finalResult?.send_status) {
+        setSendStatus(finalResult.send_status)
+      } else if (res?.success === false) {
+        setSendStatus('Workflow execution failed')
+      } else if (typeof finalResult === 'string' && finalResult.includes('error')) {
+        setSendStatus('Execution completed with errors')
+      } else {
+        // Check output schema to set appropriate success message
+        const hasEmailOutput = safeOutputSchema.some(f => 
+          f.type === 'EmailDraft' || f.name.toLowerCase().includes('email')
+        )
+        const hasReportOutput = safeOutputSchema.some(f => 
+          f.type === 'SummaryBlock' || f.name.toLowerCase().includes('report')
+        )
+        
+        if (hasEmailOutput) {
+          setSendStatus('Email report generated successfully')
+        } else if (hasReportOutput) {
+          setSendStatus('Report generated successfully')
+        } else {
+          setSendStatus('Workflow execution completed')
+        }
+      }
+
       setLoading(false)
-      setIsLiveExecution(false)
     }
+
+  } catch (err: any) {
+    setResult({ error: err.message })
+    setLoading(false)
+    setIsLiveExecution(false)
   }
+}
 
   const handleDownloadPDF = () => {
     if (result && safeOutputSchema.length > 0) {

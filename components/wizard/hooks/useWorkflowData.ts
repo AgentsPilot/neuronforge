@@ -72,19 +72,30 @@ export function useWorkflowData({ data, onUpdate, onValidationChange, userId }: 
   // FIXED: Stable values with proper memoization
   const stableUserPrompt = useMemo(() => data.userPrompt, [data.userPrompt]);
 
-  // Initialize from existing plan data - check for accepted plan first  
+  // FIXED: Initialize from existing plan data with debug logging for AI reasoning
   useEffect(() => {
+    console.log('🔍 DEBUG - useWorkflowData data received:', {
+      'data.systemPrompt': data.systemPrompt,
+      'data.userPrompt': data.userPrompt,
+      'data.planAccepted': data.planAccepted,
+      'data keys': Object.keys(data)
+    });
+
     if (data.planAccepted && data.workflowSteps && data.workflowSteps.length > 0) {
       console.log('Initializing from accepted plan data');
+      console.log('🔍 DEBUG - data.systemPrompt for reasoning:', data.systemPrompt);
+      
       const reconstructedAcceptedPlan = {
         steps: data.workflowSteps,
         requiredInputs: data.inputSchema || [],
         outputs: data.outputSchema || [],
-        reasoning: data.systemPrompt || '',
+        reasoning: data.systemPrompt || data.userPrompt || 'No AI reasoning provided from database', // FIXED: Use data.systemPrompt first
         confidence: 85,
         missingPlugins: [],
         unconnectedPlugins: []
       };
+      
+      console.log('🔍 DEBUG - reconstructed plan reasoning:', reconstructedAcceptedPlan.reasoning);
       
       // Only update if different
       setAcceptedPlan(prev => 
@@ -107,6 +118,8 @@ export function useWorkflowData({ data, onUpdate, onValidationChange, userId }: 
       }
     } else if (data.generatedPlan && !generatedPlan) {
       console.log('Initializing from original plan data');
+      console.log('🔍 DEBUG - original plan reasoning:', data.generatedPlan.reasoning);
+      
       setGeneratedPlan(data.generatedPlan);
       
       if (!hasGeneratedPlan) {
@@ -205,6 +218,8 @@ export function useWorkflowData({ data, onUpdate, onValidationChange, userId }: 
           );
           
           const correctedPlan = { ...plan, unconnectedPlugins: actuallyUnconnected, missingPlugins };
+          
+          console.log('🔍 DEBUG - newly generated plan reasoning:', correctedPlan.reasoning);
           
           setGeneratedPlan(correctedPlan);
           setAcceptedPlan(null);
@@ -357,14 +372,33 @@ export function useWorkflowData({ data, onUpdate, onValidationChange, userId }: 
     setGeneratedPlan(plan);
   }, []);
 
-  const generatePluginConfiguration = useCallback(async (pluginKey: string, existingSteps: PluginStep[]) => {
+  const generatePluginConfiguration = useCallback(async (
+    pluginKey: string, 
+    existingSteps: PluginStep[], 
+    context?: any
+  ) => {
     try {
-      const singlePluginPrompt = `Given this workflow: "${stableUserPrompt}". 
-      The user just added ${pluginKey} plugin. 
-      Existing steps: ${existingSteps.map(s => s.pluginName).join(', ')}.
-      Generate only the input/output configuration needed for the ${pluginKey} plugin.`;
+      // Use context if provided, otherwise create a simple prompt
+      let promptToUse = stableUserPrompt;
+      
+      if (context) {
+        // If context is provided (from useWorkflowActions), use it for more sophisticated generation
+        promptToUse = `${context.userWorkflowPrompt || stableUserPrompt}
+        
+Target Phase: ${context.targetPhase || 'unknown'}
+Plugin: ${pluginKey}
+Existing Steps: ${existingSteps.map(s => s.pluginName).join(', ')}
 
-      const partialPlan = await generateAgentPlan(singlePluginPrompt, connectedPlugins, user?.id);
+${context.PHASE_ISOLATION?.instructions || ''}`;
+      } else {
+        // Fallback to simple prompt
+        promptToUse = `Given this workflow: "${stableUserPrompt}". 
+        The user just added ${pluginKey} plugin. 
+        Existing steps: ${existingSteps.map(s => s.pluginName).join(', ')}.
+        Generate only the input/output configuration needed for the ${pluginKey} plugin.`;
+      }
+
+      const partialPlan = await generateAgentPlan(promptToUse, connectedPlugins, user?.id);
       
       const relatedInputs = partialPlan.requiredInputs.filter(input => 
         input.pluginKey === pluginKey ||
@@ -378,11 +412,16 @@ export function useWorkflowData({ data, onUpdate, onValidationChange, userId }: 
 
       return {
         inputs: relatedInputs,
-        outputs: relatedOutputs
+        outputs: relatedOutputs,
+        confidence: partialPlan.confidence || 85
       };
     } catch (err) {
       console.error('Error generating plugin configuration:', err);
-      return { inputs: [], outputs: [] };
+      return { 
+        inputs: [], 
+        outputs: [],
+        confidence: 0
+      };
     }
   }, [stableUserPrompt, connectedPlugins, user?.id]);
 

@@ -2,9 +2,10 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import Step1BasicsPrompts from './wizard/Step1BasicsPrompts'
-import Step2SmartPreview from './wizard/Step2SmartPreview'
-import Step3ExecutionMode from './wizard/Step3ExecutionMode'
+import Step1ClarificationQuestions from './wizard/Step1ClarificationQuestions'
+import Step2BasicsPrompts from './wizard/Step1BasicsPrompts'
+import Step3SmartPreview from './wizard/Step3SmartPreview'
+import Step4ExecutionMode from './wizard/Step4ExecutionMode'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 import {
@@ -18,16 +19,34 @@ import {
   MessageSquare,
   Sparkles,
   Settings,
-  CheckCircle
+  CheckCircle,
+  Brain
 } from 'lucide-react'
 
-const TOTAL_STEPS = 3
+const TOTAL_STEPS = 4
 
 const STEP_CONFIG = [
-  { id: 1, title: 'Setup & Prompts', icon: Bot, description: 'Name, description, and task configuration' },
-  { id: 2, title: 'Smart Preview', icon: Sparkles, description: 'AI-generated plan and suggestions' },
-  { id: 3, title: 'Execution Mode', icon: Settings, description: 'When and how your agent runs' }
+  { id: 1, title: 'AI Questions', icon: Brain, description: 'Clarification questions from AI' },
+  { id: 2, title: 'Setup & Prompts', icon: Bot, description: 'Name, description, and task configuration' },
+  { id: 3, title: 'Smart Preview', icon: Sparkles, description: 'AI-generated plan and suggestions' },
+  { id: 4, title: 'Execution Mode', icon: Settings, description: 'When and how your agent runs' }
 ]
+
+interface ClarificationData {
+  questions: Array<{
+    id: string
+    question: string
+    placeholder?: string
+    required?: boolean
+    type?: 'text' | 'textarea' | 'select'
+    options?: string[]
+  }>
+  answers: Record<string, string>
+  questionsGenerated: boolean
+  questionsSkipped: boolean
+  aiReasoning?: string
+  confidence?: number
+}
 
 export default function AgentWizard({ agentId }: { agentId?: string }) {
   const [step, setStep] = useState(1)
@@ -53,13 +72,20 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
     mode: 'on_demand',
     schedule_cron: '',
     trigger_conditions: '',
+    // NEW: Clarification data
+    clarificationData: {
+      questions: [],
+      answers: {},
+      questionsGenerated: false,
+      questionsSkipped: false
+    } as ClarificationData,
     // Smart preview fields
     generatedPlan: null,
     suggestedPlugins: {},
     suggestedInputs: [],
     suggestedOutputs: [],
-    planAccepted: false, // This should start as false
-    // Additional fields from Step 2 plan acceptance
+    planAccepted: false,
+    // Additional fields from Step 3 plan acceptance
     plugins: {},
     inputSchema: [],
     outputSchema: [],
@@ -72,24 +98,26 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
 
   const updateData = useCallback((data: Partial<typeof agentData>) => {
     console.log('🔄 Updating agent data:', data)
-    console.log('🔄 planAccepted in update:', data.planAccepted)
     setAgentData((prev) => ({ ...prev, ...data }))
   }, [])
 
-  // Validation change handlers
-  const handleStep2ValidationChange = useCallback((isValid: boolean, errorMsg?: string) => {
-    setStepValidation(prev => ({ ...prev, 2: { isValid, error: errorMsg } }))
+  // Validation change handlers - CORRECTED FOR NEW SEQUENCE
+  const handleStep1ValidationChange = useCallback((isValid: boolean, errorMsg?: string) => {
+    setStepValidation(prev => ({ ...prev, 1: { isValid, error: errorMsg } }))
+  }, [])
+
+  const handleStep3ValidationChange = useCallback((isValid: boolean, errorMsg?: string) => {
+    setStepValidation(prev => ({ ...prev, 3: { isValid, error: errorMsg } }))
   }, [])
 
   useEffect(() => {
     const initialPrompt = searchParams.get('prompt')
     if (!agentId && user && initialPrompt) {
-      setAgentData((prev) => {
-        if (prev.userPrompt?.trim() !== initialPrompt) {
-          return { ...prev, userPrompt: prev.userPrompt?.trim() ? prev.userPrompt : initialPrompt }
-        }
-        return prev
-      })
+      console.log('Setting initial prompt from URL:', initialPrompt)
+      setAgentData((prev) => ({
+        ...prev,
+        userPrompt: initialPrompt
+      }))
     }
   }, [searchParams, agentId, user])
 
@@ -120,13 +148,35 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
             steps: data.workflow_steps,
             requiredInputs: data.input_schema || [],
             outputs: data.output_schema || [],
-            reasoning: data.ai_reasoning || data.system_prompt || '', // Use ai_reasoning first, fallback to system_prompt
+            reasoning: data.ai_reasoning || data.system_prompt || '',
             confidence: data.ai_confidence || 85,
             detectedCategories: data.detected_categories || [],
             missingPlugins: [],
             unconnectedPlugins: []
           }
-          isPlanAccepted = true // If we have workflow steps, plan was accepted
+          isPlanAccepted = true
+        }
+
+        // Reconstruct clarification data if it exists
+        let clarificationData: ClarificationData = {
+          questions: [],
+          answers: {},
+          questionsGenerated: false,
+          questionsSkipped: false
+        }
+
+        if (data.clarification_questions && data.clarification_answers) {
+          clarificationData = {
+            questions: data.clarification_questions,
+            answers: data.clarification_answers,
+            questionsGenerated: true,
+            questionsSkipped: false,
+            aiReasoning: data.clarification_reasoning,
+            confidence: data.clarification_confidence
+          }
+        } else if (data.clarification_skipped) {
+          clarificationData.questionsSkipped = true
+          clarificationData.questionsGenerated = true
         }
 
         setAgentData({
@@ -136,11 +186,12 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
           mode: data.mode || 'on_demand',
           schedule_cron: data.schedule_cron || '',
           trigger_conditions: JSON.stringify(data.trigger_conditions || {}),
+          clarificationData,
           generatedPlan: reconstructedPlan,
           suggestedPlugins: data.connected_plugins || {},
           suggestedInputs: data.input_schema || [],
           suggestedOutputs: data.output_schema || [],
-          planAccepted: isPlanAccepted, // Set based on whether we have workflow data
+          planAccepted: isPlanAccepted,
           // Load workflow data from database
           plugins: data.connected_plugins || {},
           inputSchema: data.input_schema || [],
@@ -174,13 +225,16 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
         steps_generated: agentData.generatedPlan.steps.length,
         plugins_used: agentData.connectedPlugins,
         user_accepted: agentData.planAccepted,
-        modifications_made: {} // Could track user modifications later
+        modifications_made: {},
+        clarification_questions: agentData.clarificationData.questions,
+        clarification_answers: agentData.clarificationData.answers
       }]);
     } catch (err) {
       console.error('Failed to track analytics:', err);
     }
   };
 
+  // CORRECTED VALIDATION FOR NEW SEQUENCE
   const validateStep = useCallback(() => {
     const currentStepValidation = stepValidation[step]
     if (currentStepValidation && !currentStepValidation.isValid) {
@@ -189,7 +243,22 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
     }
 
     switch (step) {
-      case 1:
+      case 1: // AI QUESTIONS FIRST
+        if (!agentData.clarificationData.questionsGenerated) {
+          setError('Please generate clarification questions or skip this step.')
+          return false
+        }
+        if (!agentData.clarificationData.questionsSkipped) {
+          const hasAnsweredRequired = agentData.clarificationData.questions.every(q => 
+            !q.required || (agentData.clarificationData.answers[q.id]?.trim() || '').length > 0
+          )
+          if (!hasAnsweredRequired) {
+            setError('Please answer all required clarification questions.')
+            return false
+          }
+        }
+        return true
+      case 2: // SETUP & PROMPTS SECOND
         if (!agentData.agentName.trim()) {
           setError('Agent name is required.')
           return false
@@ -199,14 +268,13 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
           return false
         }
         return true
-      case 2:
+      case 3: // SMART PREVIEW THIRD
         if (!agentData.planAccepted) {
           setError('Please generate and accept an agent plan.')
           return false
         }
         return true
-      case 3:
-        // Validate execution mode configuration
+      case 4: // EXECUTION MODE FOURTH
         if (!agentData.mode) {
           setError('Please select an execution mode.')
           return false
@@ -223,7 +291,7 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
       default:
         return true
     }
-  }, [step, stepValidation, agentData.agentName, agentData.userPrompt, agentData.planAccepted, agentData.mode, agentData.schedule_cron, agentData.trigger_conditions])
+  }, [step, stepValidation, agentData])
 
   const nextStep = useCallback(() => {
     if (validateStep()) {
@@ -253,6 +321,13 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
         trigger_conditions: agentData.trigger_conditions ? JSON.parse(agentData.trigger_conditions) : null,
         status: 'active',
         
+        // Clarification data
+        clarification_questions: agentData.clarificationData.questions,
+        clarification_answers: agentData.clarificationData.answers,
+        clarification_reasoning: agentData.clarificationData.aiReasoning,
+        clarification_confidence: agentData.clarificationData.confidence,
+        clarification_skipped: agentData.clarificationData.questionsSkipped,
+        
         // Original fields
         system_prompt: agentData.generatedPlan?.reasoning || '',
         input_schema: agentData.inputSchema || [],
@@ -261,7 +336,7 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
         plugins_required: agentData.pluginsRequired || [],
         workflow_steps: agentData.workflowSteps || [],
         
-        // NEW: Enhanced reasoning fields for learning
+        // Enhanced reasoning fields for learning
         ai_reasoning: agentData.generatedPlan?.reasoning || null,
         ai_confidence: agentData.generatedPlan?.confidence || null,
         detected_categories: agentData.generatedPlan?.detectedCategories || null,
@@ -311,6 +386,13 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
         trigger_conditions: agentData.trigger_conditions ? JSON.parse(agentData.trigger_conditions) : null,
         status: 'draft',
         
+        // Clarification data
+        clarification_questions: agentData.clarificationData.questions,
+        clarification_answers: agentData.clarificationData.answers,
+        clarification_reasoning: agentData.clarificationData.aiReasoning,
+        clarification_confidence: agentData.clarificationData.confidence,
+        clarification_skipped: agentData.clarificationData.questionsSkipped,
+        
         // Original fields
         system_prompt: agentData.generatedPlan?.reasoning || '',
         input_schema: agentData.inputSchema || [],
@@ -319,7 +401,7 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
         plugins_required: agentData.pluginsRequired || [],
         workflow_steps: agentData.workflowSteps || [],
         
-        // NEW: Enhanced reasoning fields for learning
+        // Enhanced reasoning fields for learning
         ai_reasoning: agentData.generatedPlan?.reasoning || null,
         ai_confidence: agentData.generatedPlan?.confidence || null,
         detected_categories: agentData.generatedPlan?.detectedCategories || null,
@@ -366,58 +448,32 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
 
   // Check if plan has been generated and accepted for step navigation
   const hasPlanGenerated = useMemo(() => {
-    console.log('🔍 hasPlanGenerated check:', !!agentData.generatedPlan)
     return !!agentData.generatedPlan
   }, [agentData.generatedPlan])
 
   const hasPlanAccepted = useMemo(() => {
-    console.log('🔍 hasPlanAccepted check:', {
-      planAccepted: agentData.planAccepted,
-      generatedPlan: !!agentData.generatedPlan,
-      workflowSteps: agentData.workflowSteps?.length
-    })
     return !!agentData.planAccepted
   }, [agentData.planAccepted])
 
-  // Check if we can proceed to next step - this is the key fix
+  // CORRECTED NAVIGATION LOGIC FOR NEW SEQUENCE
   const canProceedToNextStep = useMemo(() => {
     switch (step) {
-      case 1:
+      case 1: // AI QUESTIONS - check if questions generated/skipped and answered
+        return agentData.clarificationData.questionsGenerated && 
+          (agentData.clarificationData.questionsSkipped || 
+           agentData.clarificationData.questions.every(q => 
+             !q.required || (agentData.clarificationData.answers[q.id]?.trim() || '').length > 0
+           ))
+      case 2: // SETUP & PROMPTS - check if name and prompt filled
         return agentData.agentName.trim() && agentData.userPrompt.trim()
-      case 2:
-        // CRITICAL: Only allow proceeding if plan is actually accepted
+      case 3: // SMART PREVIEW - check if plan accepted
         return hasPlanAccepted && agentData.planAccepted === true
-      case 3:
+      case 4: // EXECUTION MODE
         return true
       default:
         return false
     }
-  }, [step, agentData.agentName, agentData.userPrompt, hasPlanAccepted, agentData.planAccepted])
-
-  // Determine button text and state for Step 2
-  const getStep2ButtonConfig = useMemo(() => {
-    if (!hasPlanGenerated) {
-      return {
-        text: 'Generate AI Plan',
-        icon: <Sparkles className="h-4 w-4" />,
-        disabled: false
-      }
-    }
-    
-    if (hasPlanGenerated && !hasPlanAccepted) {
-      return {
-        text: 'Continue to Execution',
-        icon: <Check className="h-4 w-4" />,
-        disabled: true // Disabled until they click Accept AI Plan in Step 2
-      }
-    }
-    
-    return {
-      text: 'Continue to Execution',
-      icon: <ArrowRight className="h-4 w-4" />,
-      disabled: false
-    }
-  }, [hasPlanGenerated, hasPlanAccepted])
+  }, [step, agentData, hasPlanAccepted])
 
   if (loadingDraft) {
     return (
@@ -528,41 +584,34 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
           </div>
         </div>
 
-        {/* Debug Info */}
-        {process.env.NODE_ENV === 'development' && (
-          <div className="mb-4 p-4 bg-gray-100 rounded-lg text-sm">
-            <p><strong>Debug Info:</strong></p>
-            <p>Step: {step}</p>
-            <p>Has Plan Generated: {hasPlanGenerated ? 'Yes' : 'No'}</p>
-            <p>Plan Accepted: {hasPlanAccepted ? 'Yes' : 'No'}</p>
-            <p>Can Proceed: {canProceedToNextStep ? 'Yes' : 'No'}</p>
-            <p>Workflow Steps: {agentData.workflowSteps?.length || 0}</p>
-            <p>Plan Accepted Flag: {agentData.planAccepted ? 'True' : 'False'}</p>
-            <p>AI Confidence: {agentData.generatedPlan?.confidence || 'N/A'}</p>
-            <p>Detected Categories: {agentData.generatedPlan?.detectedCategories?.length || 0}</p>
-          </div>
-        )}
-
-        {/* Step Content */}
+        {/* Step Content - CORRECTED ORDER */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm mb-8">
           <div className="p-8">
             {step === 1 && (
-              <Step1BasicsPrompts 
-                data={agentData} 
-                onUpdate={updateData} 
+              <Step1ClarificationQuestions
+                data={agentData}
+                onUpdate={updateData}
+                onValidationChange={handleStep1ValidationChange}
                 userId={user?.id}
               />
             )}
             {step === 2 && (
-              <Step2SmartPreview 
+              <Step2BasicsPrompts 
                 data={agentData} 
                 onUpdate={updateData} 
-                onValidationChange={handleStep2ValidationChange}
                 userId={user?.id}
               />
             )}
             {step === 3 && (
-              <Step3ExecutionMode 
+              <Step3SmartPreview 
+                data={agentData} 
+                onUpdate={updateData} 
+                onValidationChange={handleStep3ValidationChange}
+                userId={user?.id}
+              />
+            )}
+            {step === 4 && (
+              <Step4ExecutionMode 
                 data={agentData} 
                 onUpdate={updateData} 
               />
@@ -595,42 +644,14 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
           <div className="flex items-center gap-4">
             {step < TOTAL_STEPS ? (
               <button
-                className={`flex items-center gap-2 px-6 py-3 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${
-                  step === 1 
-                    ? 'bg-purple-600 hover:bg-purple-700' 
-                    : step === 2 
-                    ? 'bg-green-600 hover:bg-green-700'
-                    : 'bg-blue-600 hover:bg-blue-700'
-                }`}
+                className="flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 onClick={nextStep}
                 disabled={loading || !canProceedToNextStep}
-                title={
-                  step === 2 && !canProceedToNextStep 
-                    ? 'Please accept the AI plan first by clicking "Accept AI Plan" button in Step 2'
-                    : ''
-                }
               >
                 {loading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Loading...
-                  </>
-                ) : step === 1 ? (
-                  hasPlanGenerated ? (
-                    <>
-                      Next
-                      <ArrowRight className="h-4 w-4" />
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="h-4 w-4" />
-                      Generate AI Plan
-                    </>
-                  )
-                ) : step === 2 ? (
-                  <>
-                    {getStep2ButtonConfig.icon}
-                    {getStep2ButtonConfig.text}
                   </>
                 ) : (
                   <>

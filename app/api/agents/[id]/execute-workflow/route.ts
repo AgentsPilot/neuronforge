@@ -302,6 +302,87 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     console.log(`Found agent: ${agent.agent_name}`)
 
+    // ADDED: Check if this is a complex AI agent that needs advanced processing
+    const isComplexAIAgent = (
+      agent.user_prompt && 
+      agent.user_prompt.length > 200 &&
+      (agent.user_prompt.toLowerCase().includes('comprehensive') ||
+       agent.user_prompt.toLowerCase().includes('generate') ||
+       agent.user_prompt.toLowerCase().includes('report') ||
+       agent.user_prompt.toLowerCase().includes('analyze') ||
+       agent.user_prompt.toLowerCase().includes('create'))
+    )
+
+    if (isComplexAIAgent) {
+      console.log('Using advanced AI system for complex agent')
+      
+      try {
+        // Import the advanced system
+        const { runAgentWithContext } = await import('@/lib/utils/runAgentWithContext')
+        
+        const advancedResult = await runAgentWithContext({
+          supabase,
+          agent,
+          userId: user.id,
+          input_variables: inputVariables,
+          override_user_prompt: null
+        })
+        
+        // Log the result like the workflow system does
+        const { data: logData, error: logInsertError } = await supabase
+          .from('agent_logs')
+          .insert({
+            agent_id: agentId,
+            user_id: user.id,
+            run_output: advancedResult.message || advancedResult.parsed_output || 'Advanced processing completed',
+            full_output: advancedResult,
+            status: 'Success',
+            created_at: new Date().toISOString(),
+          })
+          .select('id')
+          .single()
+
+        if (!logInsertError && logData?.id) {
+          await supabase.from('agent_output_context').insert({
+            user_id: user.id,
+            source_agent_id: agentId,
+            run_id: logData.id,
+            context_key: 'advanced_ai_result',
+            context_data: advancedResult
+          })
+        }
+
+        // Update execution record
+        await supabase.from('agent_executions').update({
+          status: 'completed',
+          duration_ms: Date.now() - startTime,
+          completed_at: new Date().toISOString()
+        }).eq('id', executionId)
+
+        // Update agent stats
+        await supabase.rpc('increment_agent_stats', {
+          agent_id_input: agentId,
+          user_id_input: user.id,
+          success: true,
+        })
+
+        return NextResponse.json({
+          success: true,
+          result: advancedResult.message || advancedResult.parsed_output || 'Advanced processing completed',
+          executionMethod: 'advanced_ai',
+          agentId,
+          executionId,
+          executedAt: new Date().toISOString(),
+          executionDuration: Date.now() - startTime
+        })
+        
+      } catch (advancedError) {
+        console.error('Advanced AI system failed, falling back to workflow:', advancedError)
+        // Continue with normal workflow execution below
+      }
+    }
+
+    // Continue with normal workflow execution for simple agents or if advanced system failed
     const workflowSteps = agent.workflow_steps || []
     if (workflowSteps.length === 0) {
       throw new Error('No workflow steps defined for this agent')
@@ -349,6 +430,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       }
 
       const stepParameters = buildStepParameters(step, inputVariables, executionContext, agent.input_schema || [])
+
+      if (step.pluginKey === 'chatgpt-research' && agent?.user_prompt) {
+         stepParameters.userPrompt = agent.user_prompt
+      }
 
       const plugin = pluginRegistry[step.pluginKey]
       if (!plugin) {
@@ -613,7 +698,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       finalResult,
       executionContext: testMode ? executionContext : undefined,
       executedAt: new Date().toISOString(),
-      executionDuration
+      executionDuration,
+      executionMethod: 'workflow'
     })
 
   } catch (error: any) {

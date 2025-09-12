@@ -1,4 +1,4 @@
-// Enhanced EditablePhase.tsx - Fixed React object rendering error
+// Enhanced EditablePhase.tsx - Fixed plugin replacement and input generation
 
 import React, { useState } from 'react';
 import {
@@ -23,6 +23,7 @@ import {
 import { EditableInput } from './EditableInput';
 import { EditableOutput } from './EditableOutput';
 import { AllPluginsBrowserModal } from './AllPluginsBrowserModal';
+import { getPluginByKey } from '@/lib/plugins/pluginList';
 import type { PluginStep, RequiredInput, Output, PluginConnection, PluginCategory } from './types';
 
 interface EditablePhaseProps {
@@ -42,12 +43,12 @@ interface EditablePhaseProps {
   onOpenReplaceModal: (step: PluginStep) => void;
   isConnected: (pluginKey: string) => boolean;
   getPluginConnection: (pluginKey: string) => PluginConnection | null;
-  onAddInput: () => void;
-  onRemoveInput: (index: number) => void;
-  onUpdateInput: (index: number, updates: Partial<RequiredInput>) => void;
-  onAddOutput: () => void;
-  onRemoveOutput: (index: number) => void;
-  onUpdateOutput: (index: number, updates: Partial<Output>) => void;
+  onAddInput?: () => void;
+  onRemoveInput?: (index: number) => void;
+  onUpdateInput?: (index: number, updates: Partial<RequiredInput>) => void;
+  onAddOutput?: () => void;
+  onRemoveOutput?: (index: number) => void;
+  onUpdateOutput?: (index: number, updates: Partial<Output>) => void;
   getAvailablePlugins: () => any[];
   missingPlugins: string[];
   allInputs: RequiredInput[];
@@ -55,9 +56,37 @@ interface EditablePhaseProps {
   loading: boolean;
   onReplaceStep?: (oldStep: PluginStep, newPluginKey: string) => void;
   hideInputsOutputs?: boolean;
+  hideInputSection?: boolean;
+  hideOutputSection?: boolean;
+  // NEW: Input management callbacks
+  onGeneratePluginInputs?: (pluginKey: string, stepId: number) => void;
+  onClearPluginInputs?: (pluginKey: string, stepId: number) => void;
 }
 
-// Enhanced EditableStepCard component with icon rendering fix
+// Helper function to generate inputs from plugin schema
+const generateInputsFromPlugin = (pluginKey: string, stepId: number): RequiredInput[] => {
+  const plugin = getPluginByKey(pluginKey);
+  if (!plugin || !plugin.inputSchema) {
+    return [];
+  }
+
+  return plugin.inputSchema.map((schema, index) => ({
+    name: schema.name || schema.key || schema.field || `${pluginKey}_input_${index}`,
+    label: schema.label || schema.displayName || schema.name || `${plugin.name} ${schema.type}`,
+    type: schema.type || 'string',
+    description: schema.description || `Input for ${plugin.name}`,
+    required: schema.required !== false, // Default to true unless explicitly false
+    placeholder: schema.placeholder || schema.example || `Enter ${schema.name || 'value'}`,
+    defaultValue: schema.defaultValue || '',
+    options: schema.options || (schema.enum ? schema.enum : undefined),
+    // Link this input to the specific plugin step
+    pluginKey: pluginKey,
+    relatedStepId: stepId,
+    phase: 'input'
+  }));
+};
+
+// Enhanced EditableStepCard component with proper input management
 const EditableStepCard: React.FC<{
   step: PluginStep;
   color: 'blue' | 'purple' | 'emerald';
@@ -67,6 +96,10 @@ const EditableStepCard: React.FC<{
   isConnected: (pluginKey: string) => boolean;
   getPluginConnection: (pluginKey: string) => PluginConnection | null;
   isMissing: boolean;
+  // NEW: Input management props
+  onGenerateInputs?: (pluginKey: string, stepId: number) => void;
+  onClearInputs?: (pluginKey: string, stepId: number) => void;
+  phase: 'input' | 'process' | 'output';
 }> = ({
   step,
   color,
@@ -75,7 +108,10 @@ const EditableStepCard: React.FC<{
   onOpenReplaceModal,
   isConnected,
   getPluginConnection,
-  isMissing
+  isMissing,
+  onGenerateInputs,
+  onClearInputs,
+  phase
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [localStep, setLocalStep] = useState(step);
@@ -106,7 +142,7 @@ const EditableStepCard: React.FC<{
 
   const colors = colorClasses[color];
 
-  // Connection status logic
+  // Connection status logic (same as before)
   const getConnectionStatus = () => {
     if (['dashboard-alert', 'pdf-report', 'summary-block', 'agent-log'].includes(step.pluginKey)) {
       return { 
@@ -166,7 +202,13 @@ const EditableStepCard: React.FC<{
     setIsEditing(false);
   };
 
-  // Date formatting functions
+  // Check if plugin has input schema
+  const hasInputSchema = () => {
+    const plugin = getPluginByKey(step.pluginKey);
+    return plugin && plugin.inputSchema && plugin.inputSchema.length > 0;
+  };
+
+  // Date formatting functions (same as before)
   const formatDate = (dateString: string) => {
     if (!dateString) return 'Unknown';
     try {
@@ -316,9 +358,36 @@ const EditableStepCard: React.FC<{
                 {step.action}
               </div>
               <p className="text-gray-700 leading-relaxed">{step.description}</p>
+
+              {/* NEW: Input Schema Management for Input Phase */}
+              {phase === 'input' && hasInputSchema() && onGenerateInputs && onClearInputs && (
+                <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-xl">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-blue-900">Input Configuration Available</p>
+                      <p className="text-xs text-blue-700">This plugin has configurable input fields</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => onGenerateInputs(step.pluginKey, step.id)}
+                        className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition-colors"
+                      >
+                        Generate Inputs
+                      </button>
+                      <button
+                        onClick={() => onClearInputs(step.pluginKey, step.id)}
+                        className="px-3 py-1.5 bg-gray-500 text-white text-xs rounded-lg hover:bg-gray-600 transition-colors"
+                      >
+                        Clear Inputs
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           
+          {/* Connection status details (same as before) */}
           {connectionStatus.status === 'connected' && connectionStatus.details && (
             <div className="bg-white rounded-lg p-3 border border-gray-200 space-y-2 mt-3">
               <div className="flex items-center gap-2 text-xs text-gray-600">
@@ -427,7 +496,11 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
   allOutputs,
   loading,
   onReplaceStep,
-  hideInputsOutputs = false
+  hideInputsOutputs = false,
+  hideInputSection = false,
+  hideOutputSection = false,
+  onGeneratePluginInputs,
+  onClearPluginInputs
 }) => {
   const [showPluginBrowser, setShowPluginBrowser] = useState(false);
   const [replacingStep, setReplacingStep] = useState<PluginStep | null>(null);
@@ -472,6 +545,10 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
   const colors = colorClasses[color];
   const availablePlugins = getAvailablePlugins();
 
+  // Determine if input/output sections should be shown
+  const shouldShowInputSection = !hideInputsOutputs && !hideInputSection && (onAddInput || onRemoveInput || onUpdateInput);
+  const shouldShowOutputSection = !hideInputsOutputs && !hideOutputSection && (onAddOutput || onRemoveOutput || onUpdateOutput);
+
   const handleReplaceStep = (step: PluginStep) => {
     setReplacingStep(step);
     setShowPluginBrowser(true);
@@ -480,6 +557,7 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
     setShowConnectedOnly(false);
   };
 
+  // ENHANCED: Plugin replacement with proper input management
   const handleInternalReplacement = (oldStep: PluginStep, newPluginKey: string) => {
     const availablePlugins = getAvailablePlugins();
     const newPlugin = availablePlugins.find(p => p.pluginKey === newPluginKey);
@@ -488,6 +566,12 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
       return;
     }
 
+    // STEP 1: Clear old plugin inputs if we're in input phase
+    if (phase === 'input' && onClearPluginInputs) {
+      onClearPluginInputs(oldStep.pluginKey, oldStep.id);
+    }
+
+    // STEP 2: Update the step
     const updatedStep = {
       ...oldStep,
       pluginKey: newPluginKey,
@@ -497,8 +581,17 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
     };
 
     onUpdateStep(oldStep.id, updatedStep);
+
+    // STEP 3: Generate new inputs if we're in input phase and new plugin has schema
+    if (phase === 'input' && onGeneratePluginInputs) {
+      const newPluginData = getPluginByKey(newPluginKey);
+      if (newPluginData && newPluginData.inputSchema && newPluginData.inputSchema.length > 0) {
+        onGeneratePluginInputs(newPluginKey, oldStep.id);
+      }
+    }
   };
 
+  // ENHANCED: Plugin selection with proper input management
   const handlePluginSelection = (pluginKey: string, selectedPhase?: 'input' | 'process' | 'output') => {
     if (replacingStep !== null) {
       if (typeof onReplaceStep === 'function') {
@@ -512,7 +605,19 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
       return;
     } 
     
+    // Adding new step
     onAddStep(pluginKey);
+    
+    // If adding to input phase, auto-generate inputs
+    if (phase === 'input' && onGeneratePluginInputs) {
+      const plugin = getPluginByKey(pluginKey);
+      if (plugin && plugin.inputSchema && plugin.inputSchema.length > 0) {
+        // Get the next step ID (assuming it will be assigned)
+        const nextStepId = Math.max(...steps.map(s => s.id), 0) + 1;
+        onGeneratePluginInputs(pluginKey, nextStepId);
+      }
+    }
+    
     setShowPluginBrowser(false);
   };
 
@@ -545,6 +650,19 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
     return filtered;
   };
 
+  // Input generation handlers
+  const handleGenerateInputs = (pluginKey: string, stepId: number) => {
+    if (onGeneratePluginInputs) {
+      onGeneratePluginInputs(pluginKey, stepId);
+    }
+  };
+
+  const handleClearInputs = (pluginKey: string, stepId: number) => {
+    if (onClearPluginInputs) {
+      onClearPluginInputs(pluginKey, stepId);
+    }
+  };
+
   return (
     <>
       <div className="bg-white/80 backdrop-blur-sm border border-white/20 rounded-3xl overflow-hidden shadow-xl">
@@ -564,23 +682,16 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
                 </p>
               </div>
             </div>
-            {/* FIXED: Only show + button for input and output phases, NOT process */}
-            {phase !== 'process' && (
-              <button
-                onClick={() => {
-                  if (phase !== 'process') {
-                    setShowPluginBrowser(true);
-                  }
-                }}
-                className={`bg-white/20 hover:bg-white/30 p-3 rounded-2xl transition-colors ${
-                  loading ? 'opacity-50 cursor-not-allowed' : ''
-                }`}
-                disabled={loading}
-                title="Add new plugin step"
-              >
-                <Plus className="w-6 h-6" />
-              </button>
-            )}
+            <button
+              onClick={() => setShowPluginBrowser(true)}
+              className={`bg-white/20 hover:bg-white/30 p-3 rounded-2xl transition-colors ${
+                loading ? 'opacity-50 cursor-not-allowed' : ''
+              }`}
+              disabled={loading}
+              title="Add new plugin step"
+            >
+              <Plus className="w-6 h-6" />
+            </button>
           </div>
         </div>
 
@@ -607,6 +718,9 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
                     isConnected={isConnected}
                     getPluginConnection={getPluginConnection}
                     isMissing={missingPlugins.includes(step.pluginKey)}
+                    onGenerateInputs={phase === 'input' ? handleGenerateInputs : undefined}
+                    onClearInputs={phase === 'input' ? handleClearInputs : undefined}
+                    phase={phase}
                   />
                 ))}
               </div>
@@ -616,30 +730,20 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
                   {icon}
                 </div>
                 <p className="text-gray-600 mb-4">
-                  {phase === 'process' 
-                    ? 'Processing steps are configured automatically by AI'
-                    : `No ${title.toLowerCase()} steps defined`
-                  }
+                  No {title.toLowerCase()} steps defined
                 </p>
-                {phase !== 'process' && (
-                  <button
-                    onClick={() => setShowPluginBrowser(true)}
-                    className={`${colors.buttonBg} text-white px-6 py-3 rounded-xl transition-all font-medium`}
-                    disabled={loading}
-                  >
-                    Add First Step
-                  </button>
-                )}
-                {phase === 'process' && (
-                  <p className="text-sm text-gray-500">
-                    Processing steps are automatically generated based on your input and output phases
-                  </p>
-                )}
+                <button
+                  onClick={() => setShowPluginBrowser(true)}
+                  className={`${colors.buttonBg} text-white px-6 py-3 rounded-xl transition-all font-medium`}
+                  disabled={loading}
+                >
+                  Add First Step
+                </button>
               </div>
             )}
 
-            {/* FIXED: Only show add plugin section for non-process phases */}
-            {showAddPlugin && phase !== 'process' && (
+            {/* Add plugin section */}
+            {showAddPlugin && (
               <div className="mt-6 p-6 bg-gray-50 rounded-2xl border-t">
                 <h5 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
                   Add Plugin from Available Plugins
@@ -655,7 +759,7 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
                     {availablePlugins.slice(0, 8).map((plugin) => (
                       <button
                         key={plugin.pluginKey}
-                        onClick={() => onAddStep(plugin.pluginKey)}
+                        onClick={() => handlePluginSelection(plugin.pluginKey)}
                         className="flex items-center gap-3 p-3 border border-gray-200 rounded-xl hover:bg-white hover:shadow-md text-left transition-all group"
                       >
                         <span className="font-medium truncate text-sm">{plugin.name}</span>
@@ -692,117 +796,123 @@ export const EditablePhase: React.FC<EditablePhaseProps> = ({
             )}
           </div>
 
-          {!hideInputsOutputs && (
-            <>
-              {/* Configuration Inputs Section */}
-              <div>
-                <div className="flex items-center justify-between mb-6">
-                  <h4 className="text-lg font-semibold text-gray-900 flex items-center gap-3">
-                    <Settings className="w-5 h-5" />
-                    Configuration Inputs ({inputs.length})
-                  </h4>
+          {/* Input Section */}
+          {shouldShowInputSection && (
+            <div>
+              <div className="flex items-center justify-between mb-6">
+                <h4 className="text-lg font-semibold text-gray-900 flex items-center gap-3">
+                  <Settings className="w-5 h-5" />
+                  Configuration Inputs ({inputs.length})
+                </h4>
+                {onAddInput && (
                   <button
                     onClick={onAddInput}
                     className={`${colors.buttonBg} text-white p-2 rounded-xl transition-all`}
                   >
                     <Plus className="w-4 h-4" />
                   </button>
-                </div>
+                )}
+              </div>
 
-                {inputs.length > 0 ? (
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {inputs.map((input, index) => (
-                      <EditableInput
-                        key={`${phase}-input-${index}-${input.name || input.label || 'untitled'}`}
-                        input={{
-                          ...input,
-                          name: input.name || input.label || `input-${index}`,
-                          label: input.label || input.name || `Input ${index + 1}`,
-                          type: input.type || 'text',
-                          description: input.description || '',
-                          required: input.required ?? true,
-                          placeholder: input.placeholder || '',
-                          defaultValue: input.defaultValue || ''
-                        }}
-                        index={index}
-                        onUpdate={(updates) => onUpdateInput(index, updates)}
-                        onRemove={() => onRemoveInput(index)}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-8 border-2 border-dashed border-gray-200 rounded-2xl">
-                    <Settings className="w-8 h-8 mx-auto mb-3 text-gray-400" />
-                    <p className="text-gray-600 mb-3">No configuration inputs for this phase</p>
+              {inputs.length > 0 ? (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {inputs.map((input, index) => (
+                    <EditableInput
+                      key={`${phase}-input-${index}-${input.name || input.label || 'untitled'}`}
+                      input={{
+                        ...input,
+                        name: input.name || input.label || `input-${index}`,
+                        label: input.label || input.name || `Input ${index + 1}`,
+                        type: input.type || 'string',
+                        description: input.description || '',
+                        required: input.required ?? true,
+                        placeholder: input.placeholder || '',
+                        defaultValue: input.defaultValue || ''
+                      }}
+                      index={index}
+                      onUpdate={onUpdateInput ? (updates) => onUpdateInput(index, updates) : () => {}}
+                      onRemove={onRemoveInput ? () => onRemoveInput(index) : () => {}}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 border-2 border-dashed border-gray-200 rounded-2xl">
+                  <Settings className="w-8 h-8 mx-auto mb-3 text-gray-400" />
+                  <p className="text-gray-600 mb-3">No configuration inputs for this phase</p>
+                  {onAddInput && (
                     <button
                       onClick={onAddInput}
                       className="text-blue-600 hover:text-blue-800 font-medium"
                     >
                       Add configuration input
                     </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Expected Outputs Section - Only show for Process and Output phases */}
-              {phase !== 'input' && (
-                <div>
-                  <div className="flex items-center justify-between mb-6">
-                    <h4 className="text-lg font-semibold text-gray-900 flex items-center gap-3">
-                      <FileText className="w-5 h-5" />
-                      Expected Outputs ({outputs.length})
-                    </h4>
-                    <button
-                      onClick={onAddOutput}
-                      className={`${colors.buttonBg} text-white p-2 rounded-xl transition-all`}
-                    >
-                      <Plus className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  {outputs.length > 0 ? (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                      {outputs.map((output, index) => (
-                        <EditableOutput
-                          key={`${phase}-output-${index}-${output.type || output.name || 'untitled'}`}
-                          output={{
-                            ...output,
-                            type: output.type || output.name || `output-${index}`,
-                            name: output.name || output.type || `Output ${index + 1}`,
-                            description: output.description || '',
-                            format: output.format || 'text'
-                          }}
-                          index={index}
-                          onUpdate={(updates) => onUpdateOutput(index, updates)}
-                          onRemove={() => onRemoveOutput(index)}
-                        />
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-center py-8 border-2 border-dashed border-gray-200 rounded-2xl">
-                      <FileText className="w-8 h-8 mx-auto mb-3 text-gray-400" />
-                      <p className="text-gray-600 mb-3">
-                        {phase === 'process' 
-                          ? 'No processing outputs defined for this phase'
-                          : 'No delivery outputs defined for this phase'
-                        }
-                      </p>
-                      <button
-                        onClick={onAddOutput}
-                        className="text-emerald-600 hover:text-emerald-800 font-medium"
-                      >
-                        Add expected output
-                      </button>
-                    </div>
                   )}
                 </div>
               )}
-            </>
+            </div>
+          )}
+
+          {/* Output Section */}
+          {shouldShowOutputSection && (
+            <div>
+              <div className="flex items-center justify-between mb-6">
+                <h4 className="text-lg font-semibold text-gray-900 flex items-center gap-3">
+                  <FileText className="w-5 h-5" />
+                  Expected Outputs ({outputs.length})
+                </h4>
+                {onAddOutput && (
+                  <button
+                    onClick={onAddOutput}
+                    className={`${colors.buttonBg} text-white p-2 rounded-xl transition-all`}
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+
+              {outputs.length > 0 ? (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {outputs.map((output, index) => (
+                    <EditableOutput
+                      key={`${phase}-output-${index}-${output.type || output.name || 'untitled'}`}
+                      output={{
+                        ...output,
+                        type: output.type || output.name || `output-${index}`,
+                        name: output.name || output.type || `Output ${index + 1}`,
+                        description: output.description || '',
+                        format: output.format || 'text'
+                      }}
+                      index={index}
+                      onUpdate={onUpdateOutput ? (updates) => onUpdateOutput(index, updates) : () => {}}
+                      onRemove={onRemoveOutput ? () => onRemoveOutput(index) : () => {}}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 border-2 border-dashed border-gray-200 rounded-2xl">
+                  <FileText className="w-8 h-8 mx-auto mb-3 text-gray-400" />
+                  <p className="text-gray-600 mb-3">
+                    {phase === 'process' 
+                      ? 'No processing outputs defined for this phase'
+                      : 'No delivery outputs defined for this phase'
+                    }
+                  </p>
+                  {onAddOutput && (
+                    <button
+                      onClick={onAddOutput}
+                      className="text-emerald-600 hover:text-emerald-800 font-medium"
+                    >
+                      Add expected output
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>
 
-      {/* Fixed AllPluginsBrowserModal rendering to prevent React object errors */}
+      {/* Plugin Browser Modal */}
       {showPluginBrowser && (
         <AllPluginsBrowserModal
           onClose={handleCloseModal}

@@ -49,15 +49,27 @@ export class PluginCoordinator {
         // Smart credential management
         await this.handleCredentialIntelligently(pluginKey, creds, pluginStrategy, context)
 
+        // FIXED: Enhanced plugin parameters with agent prompt support
+        const pluginParams = {
+          connection: creds,
+          userId: context.userId,
+          input_variables: context.input_variables,
+          intentContext: intentAnalysis
+        }
+
+        // Add agent prompt specifically for ChatGPT plugin
+        if (pluginKey === 'chatgpt-research' && context.agentPrompt) {
+          pluginParams.input_variables = {
+            ...context.input_variables,
+            userPrompt: context.agentPrompt
+          }
+          console.log(`📝 Agent prompt passed to ChatGPT: ${context.agentPrompt.substring(0, 100)}...`)
+        }
+
         // Execute with advanced retry logic
         const result = await this.executePluginWithSmartRetry(
           pluginStrategy,
-          {
-            connection: creds,
-            userId: context.userId,
-            input_variables: context.input_variables,
-            intentContext: intentAnalysis
-          },
+          pluginParams,
           pluginKey,
           strategy.riskMitigation.includes('high_complexity_failure_risk') ? 5 : 3
         )

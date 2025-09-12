@@ -41,7 +41,7 @@ export async function POST(req: Request) {
   const connectedPlugins = pluginRows?.map((p) => p.plugin_key) || []
 
   const clarificationCompletion = await openai.chat.completions.create({
-    model: 'gpt-4',
+    model: 'gpt-4o',
     messages: [
       {
         role: 'system',
@@ -97,7 +97,7 @@ Connected plugins: ${connectedPlugins.join(', ') || 'None'}
 Does this request need clarification questions?`,
       },
     ],
-    temperature: 0.2,
+    temperature: 0.1,
   })
 
   const clarificationRaw = clarificationCompletion.choices[0]?.message?.content || ''
@@ -163,7 +163,7 @@ Does this request need clarification questions?`,
   }
 
   const completion = await openai.chat.completions.create({
-    model: 'gpt-4',
+    model: 'gpt-4o',
     messages: [
       {
         role: 'system',
@@ -225,7 +225,7 @@ Connected plugins: ${connectedPlugins.join(', ') || 'None'}
 ✅ ONLY create fields for functional parameters like quantities, dates, labels, search terms, etc.`,
       },
     ],
-    temperature: 0.2,
+    temperature: 0.1,
   })
 
   const raw = completion.choices[0]?.message?.content || ''

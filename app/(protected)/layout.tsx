@@ -133,6 +133,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [isMobileOpen, setIsMobileOpen] = useState(false)
   const [agentCount, setAgentCount] = useState<number | null>(null)
+  const [templateCount, setTemplateCount] = useState<number | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<any[]>([])
   const [isSearching, setIsSearching] = useState(false)
@@ -140,6 +141,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   
   // Use refs to prevent race conditions
   const fetchAgentCountRef = useRef<AbortController | null>(null)
+  const fetchTemplateCountRef = useRef<AbortController | null>(null)
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   // Improved agent count fetching with proper cleanup
@@ -185,6 +187,43 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       }
     }
   }, [user?.id])
+
+  // Template count fetching with proper cleanup
+  const fetchTemplateCount = useCallback(async () => {
+    // Cancel any existing request
+    if (fetchTemplateCountRef.current) {
+      fetchTemplateCountRef.current.abort()
+    }
+
+    // Create new abort controller
+    const controller = new AbortController()
+    fetchTemplateCountRef.current = controller
+
+    try {
+      const { count, error } = await supabase
+        .from('shared_agents')
+        .select('*', { count: 'exact', head: true })
+
+      // Check if request was aborted
+      if (controller.signal.aborted) return
+
+      if (error) {
+        console.error('Error fetching template count:', error)
+        setTemplateCount(null)
+      } else {
+        setTemplateCount(count ?? 0)
+      }
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        console.error('Template count fetch error:', err)
+        setTemplateCount(null)
+      }
+    } finally {
+      if (fetchTemplateCountRef.current === controller) {
+        fetchTemplateCountRef.current = null
+      }
+    }
+  }, [])
 
   // Improved search functionality
   const handleSearch = useCallback(async (query: string) => {
@@ -239,10 +278,20 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     }
   }, [user?.id])
 
-  // Function to refresh agent count - can be called from other parts of the app
+  // Function to refresh counts - can be called from other parts of the app
+  const refreshCounts = useCallback(() => {
+    fetchAgentCount()
+    fetchTemplateCount()
+  }, [fetchAgentCount, fetchTemplateCount])
+
+  // Individual refresh functions
   const refreshAgentCount = useCallback(() => {
     fetchAgentCount()
   }, [fetchAgentCount])
+
+  const refreshTemplateCount = useCallback(() => {
+    fetchTemplateCount()
+  }, [fetchTemplateCount])
 
   const handleLogout = useCallback(async () => {
     await supabase.auth.signOut()
@@ -256,9 +305,10 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     router.push(`/agents/${agentId}`)
   }, [router])
 
-  // Effect for fetching agent count
+  // Effect for fetching counts
   useEffect(() => {
     fetchAgentCount()
+    fetchTemplateCount()
     
     // Cleanup on unmount
     return () => {
@@ -266,8 +316,12 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         fetchAgentCountRef.current.abort()
         fetchAgentCountRef.current = null
       }
+      if (fetchTemplateCountRef.current) {
+        fetchTemplateCountRef.current.abort()
+        fetchTemplateCountRef.current = null
+      }
     }
-  }, [fetchAgentCount])
+  }, [fetchAgentCount, fetchTemplateCount])
 
   // Debounced search effect
   useEffect(() => {
@@ -289,17 +343,29 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     }
   }, [searchQuery, handleSearch])
 
-  // Expose refreshAgentCount function globally (optional)
+  // Expose refresh functions globally (optional)
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      (window as any).refreshAgentCount = refreshAgentCount
-    }
-    return () => {
-      if (typeof window !== 'undefined') {
-        delete (window as any).refreshAgentCount
+    if (typeof window !== 'undefined' && window) {
+      try {
+        (window as any).refreshAgentCount = refreshAgentCount
+        (window as any).refreshTemplateCount = refreshTemplateCount
+        (window as any).refreshCounts = refreshCounts
+      } catch (error) {
+        console.warn('Failed to set global refresh functions:', error)
       }
     }
-  }, [refreshAgentCount])
+    return () => {
+      if (typeof window !== 'undefined' && window) {
+        try {
+          delete (window as any).refreshAgentCount
+          delete (window as any).refreshTemplateCount
+          delete (window as any).refreshCounts
+        } catch (error) {
+          console.warn('Failed to cleanup global refresh functions:', error)
+        }
+      }
+    }
+  }, [refreshAgentCount, refreshTemplateCount, refreshCounts])
 
   // Show loading spinner while auth state is being determined
   if (loading) {
@@ -481,14 +547,12 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
             onClick={() => setIsMobileOpen(false)}
             isCollapsed={isCollapsed}
           />
-        </SidebarSection>
-
-        <SidebarSection title="Automation" isCollapsed={isCollapsed}>
           <SidebarLink 
-            href="/orchestration" 
-            label="Agent Orchestration" 
+            href="/templates" 
+            label="Templates" 
             icon={Workflow}
-            isActive={pathname === '/orchestration'}
+            badge={templateCount !== null ? templateCount : undefined}
+            isActive={pathname === '/templates'}
             onClick={() => setIsMobileOpen(false)}
             isCollapsed={isCollapsed}
           />          

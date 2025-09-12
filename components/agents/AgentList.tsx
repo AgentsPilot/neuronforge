@@ -21,7 +21,10 @@ import {
   Zap,
   Calendar,
   Activity,
-  Settings
+  Settings,
+  SortAsc,
+  ArrowUpDown,
+  ChevronDown
 } from 'lucide-react'
 
 type Agent = {
@@ -37,6 +40,7 @@ type Agent = {
 
 type FilterType = 'all' | 'active' | 'inactive' | 'draft'
 type ViewType = 'grid' | 'list'
+type SortType = 'created_desc' | 'created_asc' | 'name_asc' | 'name_desc' | 'status_asc' | 'status_desc'
 
 export default function AgentList() {
   const [agents, setAgents] = useState<Agent[]>([])
@@ -44,6 +48,7 @@ export default function AgentList() {
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<FilterType>('all')
   const [viewType, setViewType] = useState<ViewType>('grid')
+  const [sortBy, setSortBy] = useState<SortType>('created_desc')
 
   useEffect(() => {
     async function fetchAgents() {
@@ -65,12 +70,36 @@ export default function AgentList() {
     fetchAgents()
   }, [])
 
-  const filteredAgents = agents.filter(agent => {
-    const matchesSearch = agent.agent_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         agent.description?.toLowerCase().includes(searchQuery.toLowerCase())
-    const matchesFilter = statusFilter === 'all' || agent.status === statusFilter
-    return matchesSearch && matchesFilter
-  })
+  const sortAgents = (agents: Agent[], sortType: SortType) => {
+    return [...agents].sort((a, b) => {
+      switch (sortType) {
+        case 'created_desc':
+          return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+        case 'created_asc':
+          return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
+        case 'name_asc':
+          return a.agent_name.localeCompare(b.agent_name)
+        case 'name_desc':
+          return b.agent_name.localeCompare(a.agent_name)
+        case 'status_asc':
+          return a.status.localeCompare(b.status)
+        case 'status_desc':
+          return b.status.localeCompare(a.status)
+        default:
+          return 0
+      }
+    })
+  }
+
+  const filteredAndSortedAgents = sortAgents(
+    agents.filter(agent => {
+      const matchesSearch = agent.agent_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                           agent.description?.toLowerCase().includes(searchQuery.toLowerCase())
+      const matchesFilter = statusFilter === 'all' || agent.status === statusFilter
+      return matchesSearch && matchesFilter
+    }),
+    sortBy
+  )
 
   const getStatusConfig = (status: string) => {
     switch (status) {
@@ -79,7 +108,7 @@ export default function AgentList() {
           icon: CheckCircle,
           color: 'text-green-600',
           bg: 'bg-green-50',
-          badge: 'bg-green-100 text-green-800',
+          badge: 'bg-green-100 text-green-800 border-green-200',
           label: 'Active'
         }
       case 'inactive':
@@ -87,7 +116,7 @@ export default function AgentList() {
           icon: Pause,
           color: 'text-red-600',
           bg: 'bg-red-50',
-          badge: 'bg-red-100 text-red-800',
+          badge: 'bg-red-100 text-red-800 border-red-200',
           label: 'Inactive'
         }
       case 'draft':
@@ -95,7 +124,7 @@ export default function AgentList() {
           icon: FileText,
           color: 'text-yellow-600',
           bg: 'bg-yellow-50',
-          badge: 'bg-yellow-100 text-yellow-800',
+          badge: 'bg-yellow-100 text-yellow-800 border-yellow-200',
           label: 'Draft'
         }
       default:
@@ -103,7 +132,7 @@ export default function AgentList() {
           icon: Clock,
           color: 'text-gray-600',
           bg: 'bg-gray-50',
-          badge: 'bg-gray-100 text-gray-800',
+          badge: 'bg-gray-100 text-gray-800 border-gray-200',
           label: status
         }
     }
@@ -130,30 +159,50 @@ export default function AgentList() {
     return date.toLocaleDateString()
   }
 
+  const getSortLabel = (sortType: SortType) => {
+    switch (sortType) {
+      case 'created_desc': return 'Newest First'
+      case 'created_asc': return 'Oldest First'
+      case 'name_asc': return 'Name A-Z'
+      case 'name_desc': return 'Name Z-A'
+      case 'status_asc': return 'Status A-Z'
+      case 'status_desc': return 'Status Z-A'
+      default: return 'Sort'
+    }
+  }
+
   const AgentCard = ({ agent }: { agent: Agent }) => {
     const statusConfig = getStatusConfig(agent.status)
     const StatusIcon = statusConfig.icon
     const ModeIcon = getModeIcon(agent.mode || 'on_demand')
 
     return (
-      <div className="group bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-gray-300 transition-all duration-200">
+      <div className="group bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-lg hover:border-gray-300 transition-all duration-300">
+        {/* Status bar */}
+        <div className={`h-1 rounded-t-2xl ${
+          agent.status === 'active' ? 'bg-gradient-to-r from-green-400 to-green-600' :
+          agent.status === 'inactive' ? 'bg-gradient-to-r from-red-400 to-red-600' :
+          agent.status === 'draft' ? 'bg-gradient-to-r from-yellow-400 to-yellow-600' :
+          'bg-gradient-to-r from-gray-400 to-gray-600'
+        }`}></div>
+        
         {/* Header */}
         <div className="p-6 pb-4">
-          <div className="flex items-start justify-between mb-3">
-            <div className="flex items-center gap-3">
-              <div className={`w-10 h-10 rounded-lg ${statusConfig.bg} flex items-center justify-center`}>
-                <Bot className={`h-5 w-5 ${statusConfig.color}`} />
+          <div className="flex items-start justify-between mb-4">
+            <div className="flex items-center gap-4 flex-1">
+              <div className={`w-12 h-12 rounded-xl ${statusConfig.bg} flex items-center justify-center group-hover:scale-105 transition-transform shadow-sm`}>
+                <Bot className={`h-6 w-6 ${statusConfig.color}`} />
               </div>
-              <div>
-                <h3 className="font-semibold text-gray-900 group-hover:text-blue-600 transition-colors">
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-lg text-gray-900 group-hover:text-blue-600 transition-colors mb-2 truncate">
                   {agent.agent_name}
                 </h3>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className={`inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full ${statusConfig.badge}`}>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-full border ${statusConfig.badge}`}>
                     <StatusIcon className="h-3 w-3" />
                     {statusConfig.label}
                   </span>
-                  <span className="inline-flex items-center gap-1 px-2 py-1 text-xs text-gray-600 bg-gray-100 rounded-full">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-gray-600 bg-gray-100 border border-gray-200 rounded-full">
                     <ModeIcon className="h-3 w-3" />
                     {(agent.mode || 'on_demand').replace('_', ' ')}
                   </span>
@@ -161,12 +210,16 @@ export default function AgentList() {
               </div>
             </div>
             
-            <button className="opacity-0 group-hover:opacity-100 p-2 hover:bg-gray-100 rounded-lg transition-all">
-              <MoreVertical className="h-4 w-4 text-gray-500" />
-            </button>
+            <Link
+              href={`/agents/${agent.id}/edit`}
+              className="opacity-0 group-hover:opacity-100 p-2 hover:bg-blue-50 text-blue-600 rounded-xl transition-all"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Edit className="h-4 w-4" />
+            </Link>
           </div>
 
-          <p className="text-sm text-gray-600 line-clamp-2 min-h-[2.5rem]">
+          <p className="text-sm text-gray-600 line-clamp-2 min-h-[2.5rem] leading-relaxed">
             {agent.description || (
               <span className="italic text-gray-400">No description provided</span>
             )}
@@ -174,26 +227,33 @@ export default function AgentList() {
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-gray-100 bg-gray-50/50">
-          <div className="flex items-center justify-between text-xs text-gray-500">
-            <span className="flex items-center gap-1">
+        <div className="px-6 py-4 border-t border-gray-100 bg-gradient-to-r from-gray-50 to-gray-100">
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-1.5 text-xs font-medium text-gray-600">
               <Calendar className="h-3 w-3" />
               Created {agent.created_at ? formatTimeAgo(agent.created_at) : 'Unknown'}
             </span>
-            {/* ✅ Changed from Link to span - whole card will be clickable via outer Link */}
-            <span className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg group-hover:bg-blue-700 transition-colors cursor-pointer">
+            
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                window.location.href = `/agents/${agent.id}`;
+              }}
+              className="inline-flex items-center gap-1 px-3 py-1.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-xs font-semibold rounded-lg group-hover:from-blue-700 group-hover:to-blue-800 transition-all shadow-sm hover:shadow-md cursor-pointer"
+            >
               <Settings className="h-3 w-3" />
               Manage
-            </span>
+            </button>
           </div>
         </div>
 
         {/* Inactive reason */}
         {agent.status === 'inactive' && agent.deactivation_reason && (
-          <div className="px-6 py-3 border-t border-red-100 bg-red-50">
+          <div className="px-6 py-3 border-t border-red-200 bg-gradient-to-r from-red-50 to-red-100">
             <div className="flex items-start gap-2">
-              <AlertCircle className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
-              <p className="text-xs text-red-700">{agent.deactivation_reason}</p>
+              <AlertCircle className="h-4 w-4 text-red-600 mt-0.5 flex-shrink-0" />
+              <p className="text-xs font-medium text-red-800">{agent.deactivation_reason}</p>
             </div>
           </div>
         )}
@@ -207,22 +267,30 @@ export default function AgentList() {
     const ModeIcon = getModeIcon(agent.mode || 'on_demand')
 
     return (
-      <div className="bg-white rounded-lg border border-gray-200 hover:border-gray-300 hover:shadow-sm transition-all">
-        <div className="p-4">
+      <div className="group bg-white rounded-xl border border-gray-200 hover:border-gray-300 hover:shadow-md transition-all overflow-hidden">
+        {/* Status indicator */}
+        <div className={`h-0.5 ${
+          agent.status === 'active' ? 'bg-gradient-to-r from-green-400 to-green-600' :
+          agent.status === 'inactive' ? 'bg-gradient-to-r from-red-400 to-red-600' :
+          agent.status === 'draft' ? 'bg-gradient-to-r from-yellow-400 to-yellow-600' :
+          'bg-gradient-to-r from-gray-400 to-gray-600'
+        }`}></div>
+        
+        <div className="p-5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4 flex-1 min-w-0">
-              <div className={`w-8 h-8 rounded-lg ${statusConfig.bg} flex items-center justify-center flex-shrink-0`}>
-                <Bot className={`h-4 w-4 ${statusConfig.color}`} />
+              <div className={`w-10 h-10 rounded-xl ${statusConfig.bg} flex items-center justify-center flex-shrink-0 shadow-sm`}>
+                <Bot className={`h-5 w-5 ${statusConfig.color}`} />
               </div>
               
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-3 mb-1">
-                  <h3 className="font-medium text-gray-900 truncate">{agent.agent_name}</h3>
-                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full ${statusConfig.badge}`}>
+                  <h3 className="font-semibold text-gray-900 truncate">{agent.agent_name}</h3>
+                  <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-semibold rounded-full border ${statusConfig.badge}`}>
                     <StatusIcon className="h-3 w-3" />
                     {statusConfig.label}
                   </span>
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs text-gray-600 bg-gray-100 rounded-full">
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-medium text-gray-600 bg-gray-100 border border-gray-200 rounded-full">
                     <ModeIcon className="h-3 w-3" />
                     {(agent.mode || 'on_demand').replace('_', ' ')}
                   </span>
@@ -234,22 +302,25 @@ export default function AgentList() {
             </div>
 
             <div className="flex items-center gap-3">
-              <span className="text-xs text-gray-500">
+              <span className="text-xs font-medium text-gray-600">
                 {agent.created_at ? formatTimeAgo(agent.created_at) : 'Unknown'}
               </span>
-              {/* ✅ Changed from Link to span - whole row will be clickable via outer Link */}
-              <span className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 transition-colors cursor-pointer">
+              
+              <Link
+                href={`/agents/${agent.id}`}
+                className="inline-flex items-center gap-1 px-3 py-1.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-xs font-semibold rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all shadow-sm"
+              >
                 <Settings className="h-3 w-3" />
                 Manage
-              </span>
+              </Link>
             </div>
           </div>
 
           {agent.status === 'inactive' && agent.deactivation_reason && (
-            <div className="mt-3 pt-3 border-t border-red-100">
+            <div className="mt-3 pt-3 border-t border-red-200">
               <div className="flex items-start gap-2">
-                <AlertCircle className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
-                <p className="text-xs text-red-700">{agent.deactivation_reason}</p>
+                <AlertCircle className="h-4 w-4 text-red-600 mt-0.5 flex-shrink-0" />
+                <p className="text-xs font-medium text-red-800">{agent.deactivation_reason}</p>
               </div>
             </div>
           )}
@@ -274,128 +345,161 @@ export default function AgentList() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <Bot className="h-6 w-6 text-blue-600" />
+          <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
+            <div className="w-10 h-10 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
+              <Bot className="h-6 w-6 text-white" />
+            </div>
             AI Agents
           </h1>
-          <p className="text-gray-600 mt-1">Manage and monitor your intelligent automation agents</p>
+          <p className="text-gray-600 mt-2 font-medium">Manage and monitor your intelligent automation agents</p>
         </div>
         
         <Link
           href="/agents/new"
-          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
+          className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold rounded-xl hover:from-blue-700 hover:to-purple-700 transition-all transform hover:scale-105 shadow-lg"
         >
-          <Plus className="h-4 w-4" />
+          <Plus className="h-5 w-5" />
           New Agent
         </Link>
       </div>
 
-      {/* Controls */}
-      <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-white p-4 rounded-lg border border-gray-200">
-        <div className="flex items-center gap-4 flex-1">
-          {/* Search */}
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search agents..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
+      {/* Enhanced Controls */}
+      <div className="flex flex-col gap-4 bg-white p-6 rounded-2xl border border-gray-200 shadow-sm">
+        <div className="flex flex-col lg:flex-row gap-4 items-center justify-between">
+          <div className="flex items-center gap-4 flex-1 w-full lg:w-auto">
+            {/* Search */}
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search agents..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+
+            {/* Filters */}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <Filter className="h-4 w-4 text-gray-500" />
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value as FilterType)}
+                  className="border border-gray-300 rounded-xl px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="all">All Status</option>
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                  <option value="draft">Draft</option>
+                </select>
+              </div>
+              
+              {/* Sort */}
+              <div className="flex items-center gap-2">
+                <ArrowUpDown className="h-4 w-4 text-gray-500" />
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as SortType)}
+                  className="border border-gray-300 rounded-xl px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="created_desc">Newest First</option>
+                  <option value="created_asc">Oldest First</option>
+                  <option value="name_asc">Name A-Z</option>
+                  <option value="name_desc">Name Z-A</option>
+                  <option value="status_asc">Status A-Z</option>
+                  <option value="status_desc">Status Z-A</option>
+                </select>
+              </div>
+            </div>
           </div>
 
-          {/* Filter */}
-          <div className="flex items-center gap-2">
-            <Filter className="h-4 w-4 text-gray-500" />
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as FilterType)}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          {/* View Toggle */}
+          <div className="flex bg-gray-100 rounded-xl p-1">
+            <button
+              onClick={() => setViewType('grid')}
+              className={`px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${
+                viewType === 'grid' 
+                  ? 'bg-white text-gray-900 shadow-sm' 
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
             >
-              <option value="all">All Status</option>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-              <option value="draft">Draft</option>
-            </select>
+              Grid
+            </button>
+            <button
+              onClick={() => setViewType('list')}
+              className={`px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${
+                viewType === 'list' 
+                  ? 'bg-white text-gray-900 shadow-sm' 
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              List
+            </button>
           </div>
         </div>
-
-        {/* View Toggle */}
-        <div className="flex bg-gray-100 rounded-lg p-1">
-          <button
-            onClick={() => setViewType('grid')}
-            className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
-              viewType === 'grid' 
-                ? 'bg-white text-gray-900 shadow-sm' 
-                : 'text-gray-600 hover:text-gray-900'
-            }`}
-          >
-            Grid
-          </button>
-          <button
-            onClick={() => setViewType('list')}
-            className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
-              viewType === 'list' 
-                ? 'bg-white text-gray-900 shadow-sm' 
-                : 'text-gray-600 hover:text-gray-900'
-            }`}
-          >
-            List
-          </button>
+        
+        {/* Results summary */}
+        <div className="flex items-center justify-between text-sm text-gray-600 pt-2 border-t border-gray-100">
+          <span>
+            Showing {filteredAndSortedAgents.length} of {agents.length} agents
+            {searchQuery && ` for "${searchQuery}"`}
+            {statusFilter !== 'all' && ` with status "${statusFilter}"`}
+          </span>
+          <span>Sorted by {getSortLabel(sortBy)}</span>
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white p-4 rounded-lg border border-gray-200">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center">
-              <Bot className="h-4 w-4 text-blue-600" />
+      {/* Enhanced Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-2xl border-2 border-blue-200 shadow-sm">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-blue-500 rounded-2xl flex items-center justify-center shadow-lg">
+              <Bot className="h-6 w-6 text-white" />
             </div>
             <div>
-              <p className="text-sm text-gray-600">Total Agents</p>
-              <p className="text-lg font-semibold text-gray-900">{agents.length}</p>
+              <p className="text-sm text-blue-700 font-semibold">Total Agents</p>
+              <p className="text-2xl font-bold text-blue-900">{agents.length}</p>
             </div>
           </div>
         </div>
         
-        <div className="bg-white p-4 rounded-lg border border-gray-200">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-green-50 rounded-lg flex items-center justify-center">
-              <CheckCircle className="h-4 w-4 text-green-600" />
+        <div className="bg-gradient-to-br from-green-50 to-green-100 p-6 rounded-2xl border-2 border-green-200 shadow-sm">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-green-500 rounded-2xl flex items-center justify-center shadow-lg">
+              <CheckCircle className="h-6 w-6 text-white" />
             </div>
             <div>
-              <p className="text-sm text-gray-600">Active</p>
-              <p className="text-lg font-semibold text-gray-900">
+              <p className="text-sm text-green-700 font-semibold">Active</p>
+              <p className="text-2xl font-bold text-green-900">
                 {agents.filter(a => a.status === 'active').length}
               </p>
             </div>
           </div>
         </div>
         
-        <div className="bg-white p-4 rounded-lg border border-gray-200">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-yellow-50 rounded-lg flex items-center justify-center">
-              <FileText className="h-4 w-4 text-yellow-600" />
+        <div className="bg-gradient-to-br from-yellow-50 to-yellow-100 p-6 rounded-2xl border-2 border-yellow-200 shadow-sm">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-yellow-500 rounded-2xl flex items-center justify-center shadow-lg">
+              <FileText className="h-6 w-6 text-white" />
             </div>
             <div>
-              <p className="text-sm text-gray-600">Drafts</p>
-              <p className="text-lg font-semibold text-gray-900">
+              <p className="text-sm text-yellow-700 font-semibold">Drafts</p>
+              <p className="text-2xl font-bold text-yellow-900">
                 {agents.filter(a => a.status === 'draft').length}
               </p>
             </div>
           </div>
         </div>
         
-        <div className="bg-white p-4 rounded-lg border border-gray-200">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-red-50 rounded-lg flex items-center justify-center">
-              <Pause className="h-4 w-4 text-red-600" />
+        <div className="bg-gradient-to-br from-red-50 to-red-100 p-6 rounded-2xl border-2 border-red-200 shadow-sm">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-red-500 rounded-2xl flex items-center justify-center shadow-lg">
+              <Pause className="h-6 w-6 text-white" />
             </div>
             <div>
-              <p className="text-sm text-gray-600">Inactive</p>
-              <p className="text-lg font-semibold text-gray-900">
+              <p className="text-sm text-red-700 font-semibold">Inactive</p>
+              <p className="text-2xl font-bold text-red-900">
                 {agents.filter(a => a.status === 'inactive').length}
               </p>
             </div>
@@ -404,23 +508,25 @@ export default function AgentList() {
       </div>
 
       {/* Agent List */}
-      {filteredAgents.length === 0 ? (
-        <div className="text-center py-12">
-          <Bot className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">
+      {filteredAndSortedAgents.length === 0 ? (
+        <div className="text-center py-16 bg-white rounded-2xl border border-gray-200">
+          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Bot className="h-8 w-8 text-gray-400" />
+          </div>
+          <h3 className="text-xl font-semibold text-gray-900 mb-2">
             {searchQuery || statusFilter !== 'all' ? 'No agents found' : 'No agents yet'}
           </h3>
-          <p className="text-gray-600 mb-6">
+          <p className="text-gray-600 mb-8 max-w-md mx-auto">
             {searchQuery || statusFilter !== 'all' 
-              ? 'Try adjusting your search or filter criteria.' 
-              : 'Get started by creating your first AI agent.'}
+              ? 'Try adjusting your search or filter criteria to find what you\'re looking for.' 
+              : 'Get started by creating your first AI agent to automate your workflows.'}
           </p>
           {!searchQuery && statusFilter === 'all' && (
             <Link
               href="/agents/new"
-              className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
+              className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold rounded-xl hover:from-blue-700 hover:to-purple-700 transition-all transform hover:scale-105 shadow-lg"
             >
-              <Plus className="h-4 w-4" />
+              <Plus className="h-5 w-5" />
               Create Your First Agent
             </Link>
           )}
@@ -428,14 +534,13 @@ export default function AgentList() {
       ) : (
         <div className={
           viewType === 'grid' 
-            ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6'
-            : 'space-y-3'
+            ? 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6'
+            : 'space-y-4'
         }>
-          {/* ✅ FIXED: Each agent wrapped in Link - no nested Links inside components */}
-          {filteredAgents.map((agent) => (
-            <Link key={agent.id} href={`/agents/${agent.id}`} className="block">
-              {viewType === 'grid' ? <AgentCard agent={agent} /> : <AgentRow agent={agent} />}
-            </Link>
+          {filteredAndSortedAgents.map((agent) => (
+            viewType === 'grid' ? 
+              <AgentCard key={agent.id} agent={agent} /> : 
+              <AgentRow key={agent.id} agent={agent} />
           ))}
         </div>
       )}

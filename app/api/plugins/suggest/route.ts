@@ -26,12 +26,12 @@ Respond ONLY with a JSON array of plugin keys from the list above.
 Example: ["google-mail", "notion"]`
 
   const completion = await openai.chat.completions.create({
-    model: 'gpt-4',
+    model: 'gpt-4o',
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: prompt },
     ],
-    temperature: 0.2,
+    temperature: 0.1,
   })
 
   const responseText = completion.choices[0].message.content ?? '[]'

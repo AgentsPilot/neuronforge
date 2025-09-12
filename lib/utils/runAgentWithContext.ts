@@ -591,12 +591,12 @@ async function executeWithDataAwareIntelligence(
       console.warn('⚠️ GPT-4o rate limit. Intelligent fallback to GPT-3.5-turbo.')
       
       const fallback = await openai.chat.completions.create({
-        model: 'gpt-3.5-turbo-16k',
+        model: 'gpt-4o',
         messages: [
           { role: 'system', content: enhancedSystemPrompt.slice(0, 8000) },
           { role: 'user', content: userPrompt.slice(0, 8000) },
         ],
-        temperature: 0.2,
+        temperature: 0.1,
         max_tokens: 3000,
       })
 

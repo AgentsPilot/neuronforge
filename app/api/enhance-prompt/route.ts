@@ -54,7 +54,7 @@ Enhanced prompt:`
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: 'gpt-4o',
         messages: [
           {
             role: 'system',
@@ -66,7 +66,7 @@ Enhanced prompt:`
           }
         ],
         max_tokens: 300,
-        temperature: 0.7,
+        temperature: 0.1,
         presence_penalty: 0.1
       })
     })

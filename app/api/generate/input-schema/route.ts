@@ -31,8 +31,8 @@ Prompt: ${prompt}
 ${pluginContext}`
 
   const completion = await openai.chat.completions.create({
-    model: 'gpt-4',
-    temperature: 0.3,
+    model: 'gpt-4o',
+    temperature: 0.1,
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: prompt },

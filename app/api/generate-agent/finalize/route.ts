@@ -36,7 +36,7 @@ export async function POST(req: Request) {
   const formattedAnswers = answers.map((a: string, i: number) => `Q${i + 1}: ${a}`).join('\n')
 
   const completion = await openai.chat.completions.create({
-    model: 'gpt-4',
+    model: 'gpt-4o',
     messages: [
       {
         role: 'system',
@@ -61,7 +61,7 @@ Answers to follow-up questions:
 ${formattedAnswers}`,
       },
     ],
-    temperature: 0.4,
+    temperature: 0.1,
   })
 
   const raw = completion.choices[0]?.message?.content || ''
