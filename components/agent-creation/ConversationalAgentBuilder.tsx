@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import SmartAgentBuilder from './SmartAgentBuilder'; // Should point to index.tsx
 import { useAuth } from '@/components/UserProvider';
 import { 
   Send, 
@@ -115,10 +116,19 @@ interface ProjectState {
 
 interface ConversationalAgentBuilderProps {
   initialPrompt?: string;
+  // NEW: Add integration props
+  onPromptApproved?: (data: {
+    prompt: string;
+    promptType: 'original' | 'enhanced';
+    clarificationAnswers: Record<string, string>;
+  }) => void;
+  onCancel?: () => void;
 }
 
 export default function ConversationalAgentBuilder({ 
-  initialPrompt 
+  initialPrompt,
+  onPromptApproved, // NEW: Integration prop
+  onCancel         // NEW: Integration prop
 }: ConversationalAgentBuilderProps) {
   const { user } = useAuth();
   
@@ -893,8 +903,10 @@ This breaks down exactly what your agent will do in everyday language. Would you
     }
   };
 
-  // Enhanced prompt handling functions
+  // UPDATED: Enhanced prompt handling functions with Smart Agent Builder integration
   const handleApproveEnhanced = () => {
+    console.log('✅ User approved enhanced plan');
+    
     setProjectState(prev => ({
       ...prev,
       userApproved: true,
@@ -902,9 +914,21 @@ This breaks down exactly what your agent will do in everyday language. Would you
     }));
     
     addMessage("Excellent! I'll use the enhanced plan. Now let's move to the smart build phase.", 'ai');
+    
+    // NEW: Trigger transition to Smart Agent Builder
+    if (onPromptApproved) {
+      console.log('🚀 Triggering Smart Agent Builder with enhanced prompt');
+      onPromptApproved({
+        prompt: projectState.enhancedPrompt,
+        promptType: 'enhanced',
+        clarificationAnswers: projectState.clarificationAnswers
+      });
+    }
   };
 
   const handleUseOriginal = () => {
+    console.log('✅ User chose to use original prompt');
+    
     setProjectState(prev => ({
       ...prev,
       userApproved: true,
@@ -912,6 +936,16 @@ This breaks down exactly what your agent will do in everyday language. Would you
     }));
     
     addMessage("No problem! I'll use your original request. Let's proceed to build your agent.", 'ai');
+    
+    // NEW: Trigger transition to Smart Agent Builder
+    if (onPromptApproved) {
+      console.log('🚀 Triggering Smart Agent Builder with original prompt');
+      onPromptApproved({
+        prompt: projectState.originalPrompt,
+        promptType: 'original',
+        clarificationAnswers: projectState.clarificationAnswers
+      });
+    }
   };
 
   const handleEditEnhanced = () => {
@@ -945,6 +979,14 @@ This breaks down exactly what your agent will do in everyday language. Would you
       isEditingEnhanced: false,
       editedEnhancedPrompt: ''
     }));
+  };
+
+  // NEW: Handle cancellation
+  const handleCancel = () => {
+    console.log('❌ User cancelled agent builder');
+    if (onCancel) {
+      onCancel();
+    }
   };
 
   // FIXED: Function to clear an answer and make options visible again
@@ -1163,14 +1205,25 @@ This breaks down exactly what your agent will do in everyday language. Would you
       <div className="flex-1 flex flex-col bg-white border-r border-gray-200">
         {/* Chat Header */}
         <div className="bg-white border-b border-gray-200 px-6 py-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-              <Bot className="h-6 w-6 text-blue-600" />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                <Bot className="h-6 w-6 text-blue-600" />
+              </div>
+              <div>
+                <h1 className="text-lg font-semibold text-gray-900">AI Agent Builder</h1>
+                <p className="text-sm text-gray-500">Conversational Agent Creation</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-lg font-semibold text-gray-900">AI Agent Builder</h1>
-              <p className="text-sm text-gray-500">Conversational Agent Creation</p>
-            </div>
+            {/* NEW: Add cancel button if onCancel prop provided */}
+            {onCancel && (
+              <button
+                onClick={handleCancel}
+                className="text-gray-500 hover:text-gray-700 transition-colors px-3 py-1 rounded"
+              >
+                Cancel
+              </button>
+            )}
           </div>
         </div>
 

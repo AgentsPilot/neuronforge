@@ -29,6 +29,6 @@
     "**/*.tsx",
     ".next/types/**/*.ts",
     "components/ui/skeleton.tsx"
-  ],
+, "app/(protected)/agents/new/page.tsxold", "app/api/auth/[...nextauth]"  ],
   "exclude": ["node_modules"]
 }
