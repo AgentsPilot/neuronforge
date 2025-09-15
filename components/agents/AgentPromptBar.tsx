@@ -36,7 +36,8 @@ export default function AgentPromptBar() {
     setLoading(true)
     try {
       const encodedPrompt = encodeURIComponent(prompt.trim())
-      router.push(`/agents/new?prompt=${encodedPrompt}`)
+      // Changed to redirect to conversational interface
+      router.push(`/agents/new/chat?prompt=${encodedPrompt}`)
     } catch (err) {
       console.error('🚨 Redirect failed:', err)
     } finally {
@@ -59,7 +60,7 @@ export default function AgentPromptBar() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Create Your AI Agent</h1>
-            <p className="text-gray-600">Describe what you want to automate, and we'll build it for you</p>
+            <p className="text-gray-600">Chat with AI to build your perfect automation agent</p>
           </div>
         </div>
       </div>
@@ -77,7 +78,7 @@ export default function AgentPromptBar() {
               <textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Describe your automation idea... (e.g., 'Monitor my emails for important keywords and send me daily summaries')"
+                placeholder="Describe your automation idea... I'll chat with you to understand exactly what you need!"
                 className="flex-1 resize-none border-none focus:ring-0 bg-transparent placeholder-gray-500 text-gray-900 text-base leading-relaxed min-h-[60px] max-h-32"
                 disabled={loading}
                 rows={1}
@@ -96,12 +97,12 @@ export default function AgentPromptBar() {
                 {loading ? (
                   <div className="flex items-center gap-2">
                     <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                    <span>Creating...</span>
+                    <span>Starting Chat...</span>
                   </div>
                 ) : (
                   <div className="flex items-center gap-2">
-                    <Wand2 className="w-4 h-4" />
-                    <span>Create Agent</span>
+                    <MessageSquare className="w-4 h-4" />
+                    <span>Start Chat</span>
                     <ArrowRight className="w-4 h-4" />
                   </div>
                 )}
@@ -149,8 +150,8 @@ export default function AgentPromptBar() {
           onClick={() => router.push('/agents/new')}
           className="group flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-gray-50 to-slate-50 text-gray-700 border-2 border-gray-200 rounded-xl font-medium hover:border-gray-300 hover:from-gray-100 hover:to-slate-100 transition-all duration-200 hover:shadow-md"
         >
-          <Bot className="w-4 h-4 transition-transform group-hover:scale-110" />
-          <span>Manual Setup</span>
+          <Bot className="w-4 w-4 transition-transform group-hover:scale-110" />
+          <span>Classic Wizard</span>
           <ArrowRight className="w-3 h-3 opacity-60 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" />
         </button>
       </div>
@@ -177,7 +178,7 @@ export default function AgentPromptBar() {
                   <div>
                     <p className="text-sm text-gray-900 leading-relaxed">{example}</p>
                     <p className="text-xs text-blue-600 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      Click to use this example →
+                      Click to start chat with this example →
                     </p>
                   </div>
                 </div>
@@ -187,7 +188,7 @@ export default function AgentPromptBar() {
           
           <div className="mt-4 p-3 bg-blue-100 rounded-lg">
             <p className="text-xs text-blue-800">
-              💡 <strong>Tip:</strong> Be specific about your goals. The more detail you provide, the better your agent will be!
+              💡 <strong>Tip:</strong> Don't worry about being perfect - I'll ask questions to understand exactly what you need!
             </p>
           </div>
         </div>
@@ -197,26 +198,26 @@ export default function AgentPromptBar() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
         <div className="text-center p-4">
           <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center mx-auto mb-3">
-            <Zap className="w-6 h-6 text-green-600" />
+            <MessageSquare className="w-6 h-6 text-green-600" />
           </div>
-          <h4 className="font-medium text-gray-900 mb-2">Instant Setup</h4>
-          <p className="text-sm text-gray-600">AI analyzes your prompt and configures the agent automatically</p>
+          <h4 className="font-medium text-gray-900 mb-2">Conversational Setup</h4>
+          <p className="text-sm text-gray-600">Chat naturally with AI to define your perfect automation</p>
         </div>
         
         <div className="text-center p-4">
           <div className="w-12 h-12 bg-purple-100 rounded-xl flex items-center justify-center mx-auto mb-3">
             <Bot className="w-6 h-6 text-purple-600" />
           </div>
-          <h4 className="font-medium text-gray-900 mb-2">Smart Automation</h4>
-          <p className="text-sm text-gray-600">Connects to your tools and works 24/7 without supervision</p>
+          <h4 className="font-medium text-gray-900 mb-2">Smart Questions</h4>
+          <p className="text-sm text-gray-600">AI asks the right questions to build exactly what you need</p>
         </div>
         
         <div className="text-center p-4">
           <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center mx-auto mb-3">
             <Sparkles className="w-6 h-6 text-blue-600" />
           </div>
-          <h4 className="font-medium text-gray-900 mb-2">Always Learning</h4>
-          <p className="text-sm text-gray-600">Gets smarter over time and adapts to your preferences</p>
+          <h4 className="font-medium text-gray-900 mb-2">Enhanced Prompts</h4>
+          <p className="text-sm text-gray-600">Your ideas get enhanced with technical details automatically</p>
         </div>
       </div>
     </div>

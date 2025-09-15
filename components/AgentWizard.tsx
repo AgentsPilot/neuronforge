@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Step1ClarificationQuestions from './wizard/Step1ClarificationQuestions'
-import Step2BasicsPrompts from './wizard/Step1BasicsPrompts'
+import Step2BasicsPrompts from './wizard/Step2BasicsPrompts'
 import Step3SmartPreview from './wizard/Step3SmartPreview'
 import Step4ExecutionMode from './wizard/Step4ExecutionMode'
 import { useAuth } from '@/components/UserProvider'
@@ -27,7 +27,7 @@ const TOTAL_STEPS = 4
 
 const STEP_CONFIG = [
   { id: 1, title: 'AI Questions', icon: Brain, description: 'Clarification questions from AI' },
-  { id: 2, title: 'Setup & Prompts', icon: Bot, description: 'Name, description, and task configuration' },
+  { id: 2, title: 'User Prompts', icon: Bot, description: 'Name, description, and task configuration' },
   { id: 3, title: 'Smart Preview', icon: Sparkles, description: 'AI-generated plan and suggestions' },
   { id: 4, title: 'Execution Mode', icon: Settings, description: 'When and how your agent runs' }
 ]
@@ -53,6 +53,7 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadingDraft, setLoadingDraft] = useState(false)
+  const [isEnhancing, setIsEnhancing] = useState(false) // NEW: Track enhancement status
   const { user } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -69,6 +70,7 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
     agentName: '',
     description: '',
     userPrompt: '',
+    originalPrompt: '', // NEW: Track original prompt separately
     mode: 'on_demand',
     schedule_cron: '',
     trigger_conditions: '',
@@ -93,12 +95,38 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
     finalWorkflowSteps: [],
     workflowSteps: [],
     connectedPlugins: {},
-    pluginsRequired: []
+    pluginsRequired: [],
+    // NEW: Enhancement state tracking
+    enhancedPrompt: '',
+    enhancementComplete: false,
+    userChoice: null as 'original' | 'enhanced' | null,
+    enhancementError: '',
+    enhancementRationale: '' // NEW: Store rationale for backend
   })
 
   const updateData = useCallback((data: Partial<typeof agentData>) => {
-    console.log('🔄 Updating agent data:', data)
-    setAgentData((prev) => ({ ...prev, ...data }))
+    console.log('🔄 AgentWizard updateData called with:', data)
+    console.log('🔄 Previous agentData.originalPrompt:', agentData.originalPrompt)
+    console.log('🔄 Previous agentData.userPrompt:', agentData.userPrompt)
+    console.log('🔄 New data.originalPrompt:', data.originalPrompt)
+    console.log('🔄 New data.userPrompt:', data.userPrompt)
+    
+    setAgentData((prev) => {
+      const newData = { ...prev, ...data }
+      console.log('🔄 AgentWizard final agentData after update:', {
+        originalPrompt: newData.originalPrompt,
+        userPrompt: newData.userPrompt,
+        userChoice: newData.userChoice,
+        enhancementComplete: newData.enhancementComplete
+      })
+      return newData
+    })
+  }, [agentData.originalPrompt, agentData.userPrompt])
+
+  // NEW: Handle enhancement status changes from Step2
+  const handleEnhancementStatusChange = useCallback((enhancing: boolean) => {
+    console.log('🔄 Enhancement status changed:', enhancing)
+    setIsEnhancing(enhancing)
   }, [])
 
   // Validation change handlers - CORRECTED FOR NEW SEQUENCE
@@ -183,6 +211,7 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
           agentName: data.agent_name || '',
           description: data.description || '',
           userPrompt: data.user_prompt || '',
+          originalPrompt: data.original_prompt || data.user_prompt || '', // NEW: Load original prompt
           mode: data.mode || 'on_demand',
           schedule_cron: data.schedule_cron || '',
           trigger_conditions: JSON.stringify(data.trigger_conditions || {}),
@@ -200,7 +229,13 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
           finalWorkflowSteps: data.workflow_steps || [],
           workflowSteps: data.workflow_steps || [],
           connectedPlugins: data.connected_plugins || {},
-          pluginsRequired: data.plugins_required || []
+          pluginsRequired: data.plugins_required || [],
+          // NEW: Load enhancement state from database if available
+          enhancedPrompt: data.enhanced_prompt || '',
+          enhancementComplete: data.enhancement_complete || false,
+          userChoice: data.user_choice || null,
+          enhancementError: '',
+          enhancementRationale: data.enhancement_rationale || '' // NEW: Load rationale
         })
       } catch (err) {
         console.error('Error fetching agent:', err)
@@ -234,7 +269,7 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
     }
   };
 
-  // CORRECTED VALIDATION FOR NEW SEQUENCE
+  // CORRECTED VALIDATION FOR NEW SEQUENCE - AGENT NAME REMOVED FROM STEP 2
   const validateStep = useCallback(() => {
     const currentStepValidation = stepValidation[step]
     if (currentStepValidation && !currentStepValidation.isValid) {
@@ -258,17 +293,27 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
           }
         }
         return true
-      case 2: // SETUP & PROMPTS SECOND
-        if (!agentData.agentName.trim()) {
-          setError('Agent name is required.')
-          return false
-        }
+      case 2: // SETUP & PROMPTS SECOND - NO AGENT NAME REQUIRED
         if (!agentData.userPrompt.trim()) {
           setError('User prompt is required.')
           return false
         }
+        // Check if enhancement is complete and user has made a choice
+        if (agentData.enhancementComplete && agentData.userChoice === null) {
+          setError('Please select either the original or enhanced prompt to continue.')
+          return false
+        }
+        // FIXED: Check if currently enhancing
+        if (isEnhancing) {
+          setError('Please wait for prompt enhancement to complete.')
+          return false
+        }
         return true
-      case 3: // SMART PREVIEW THIRD
+      case 3: // SMART PREVIEW THIRD - AGENT NAME REQUIRED HERE
+        if (!agentData.agentName.trim()) {
+          setError('Agent name is required.')
+          return false
+        }
         if (!agentData.planAccepted) {
           setError('Please generate and accept an agent plan.')
           return false
@@ -291,7 +336,7 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
       default:
         return true
     }
-  }, [step, stepValidation, agentData])
+  }, [step, stepValidation, agentData, isEnhancing]) // Added isEnhancing dependency
 
   const nextStep = useCallback(() => {
     if (validateStep()) {
@@ -316,6 +361,7 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
         agent_name: agentData.agentName,
         description: agentData.description,
         user_prompt: agentData.userPrompt,
+        original_prompt: agentData.originalPrompt, // NEW: Save original prompt
         mode: agentData.mode,
         schedule_cron: agentData.schedule_cron || null,
         trigger_conditions: agentData.trigger_conditions ? JSON.parse(agentData.trigger_conditions) : null,
@@ -327,6 +373,12 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
         clarification_reasoning: agentData.clarificationData.aiReasoning,
         clarification_confidence: agentData.clarificationData.confidence,
         clarification_skipped: agentData.clarificationData.questionsSkipped,
+        
+        // NEW: Enhancement state persistence
+        enhanced_prompt: agentData.enhancedPrompt,
+        enhancement_complete: agentData.enhancementComplete,
+        user_choice: agentData.userChoice,
+        enhancement_rationale: agentData.enhancementRationale, // NEW: Save rationale
         
         // Original fields
         system_prompt: agentData.generatedPlan?.reasoning || '',
@@ -381,6 +433,7 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
         agent_name: agentData.agentName || 'Untitled Agent',
         description: agentData.description,
         user_prompt: agentData.userPrompt,
+        original_prompt: agentData.originalPrompt, // NEW: Save original prompt
         mode: agentData.mode,
         schedule_cron: agentData.schedule_cron || null,
         trigger_conditions: agentData.trigger_conditions ? JSON.parse(agentData.trigger_conditions) : null,
@@ -392,6 +445,12 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
         clarification_reasoning: agentData.clarificationData.aiReasoning,
         clarification_confidence: agentData.clarificationData.confidence,
         clarification_skipped: agentData.clarificationData.questionsSkipped,
+        
+        // NEW: Enhancement state persistence
+        enhanced_prompt: agentData.enhancedPrompt,
+        enhancement_complete: agentData.enhancementComplete,
+        user_choice: agentData.userChoice,
+        enhancement_rationale: agentData.enhancementRationale, // NEW: Save rationale
         
         // Original fields
         system_prompt: agentData.generatedPlan?.reasoning || '',
@@ -455,7 +514,7 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
     return !!agentData.planAccepted
   }, [agentData.planAccepted])
 
-  // CORRECTED NAVIGATION LOGIC FOR NEW SEQUENCE
+  // CORRECTED NAVIGATION LOGIC FOR NEW SEQUENCE - AGENT NAME REMOVED FROM STEP 2
   const canProceedToNextStep = useMemo(() => {
     switch (step) {
       case 1: // AI QUESTIONS - check if questions generated/skipped and answered
@@ -464,16 +523,24 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
            agentData.clarificationData.questions.every(q => 
              !q.required || (agentData.clarificationData.answers[q.id]?.trim() || '').length > 0
            ))
-      case 2: // SETUP & PROMPTS - check if name and prompt filled
-        return agentData.agentName.trim() && agentData.userPrompt.trim()
-      case 3: // SMART PREVIEW - check if plan accepted
-        return hasPlanAccepted && agentData.planAccepted === true
+      case 2: // SETUP & PROMPTS - check if prompt filled AND enhancement choice made (NO AGENT NAME)
+        const hasUserPrompt = agentData.userPrompt.trim()
+        const hasEnhancementChoice = agentData.enhancementComplete 
+          ? agentData.userChoice !== null 
+          : true // If enhancement not complete, don't require choice yet
+        
+        // FIXED: Also check if currently enhancing
+        const notCurrentlyEnhancing = !isEnhancing
+        
+        return hasUserPrompt && hasEnhancementChoice && notCurrentlyEnhancing
+      case 3: // SMART PREVIEW - check if agent name filled and plan accepted
+        return agentData.agentName.trim() && hasPlanAccepted && agentData.planAccepted === true
       case 4: // EXECUTION MODE
         return true
       default:
         return false
     }
-  }, [step, agentData, hasPlanAccepted])
+  }, [step, agentData, hasPlanAccepted, isEnhancing]) // Added isEnhancing dependency
 
   if (loadingDraft) {
     return (
@@ -600,8 +667,11 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
                 data={agentData} 
                 onUpdate={updateData} 
                 userId={user?.id}
+                clarificationAnswers={agentData.clarificationData?.answers || {}}
+                onStepLoad={() => console.log('Step 2 loaded')}
+                onEnhancementStatusChange={handleEnhancementStatusChange}
               />
-            )}
+            )}            
             {step === 3 && (
               <Step3SmartPreview 
                 data={agentData} 
@@ -618,6 +688,32 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
             )}
           </div>
         </div>
+
+        {/* DEBUG INFO - Enhanced with enhancement status */}
+        {step === 2 && (
+          <div className="bg-gray-100 border border-gray-300 rounded-xl p-4 mb-6 text-sm">
+            <h4 className="font-bold text-gray-700 mb-2">DEBUG INFO (Step 2 - Fixed Enhancement Logic):</h4>
+            <div className="space-y-1 text-gray-600">
+              <p>User Prompt: "{agentData.userPrompt?.slice(0, 50)}..." (length: {agentData.userPrompt?.length || 0})</p>
+              <p>User Choice: {agentData.userChoice || 'null'}</p>
+              <p>Enhancement Complete: {agentData.enhancementComplete ? 'true' : 'false'}</p>
+              <p>Enhanced Prompt Exists: {agentData.enhancedPrompt ? 'true' : 'false'}</p>
+              <p>Is Enhancing: {isEnhancing ? 'true' : 'false'}</p>
+              <p>Has Prompt: {agentData.userPrompt?.trim() ? 'YES' : 'NO'}</p>
+              <p>Has Enhancement Choice: {(agentData.userChoice !== null || !agentData.enhancementComplete) ? 'YES' : 'NO'}</p>
+              <p>Not Currently Enhancing: {!isEnhancing ? 'YES' : 'NO'}</p>
+              <p>Can Proceed: {canProceedToNextStep ? 'YES' : 'NO'}</p>
+              <p>Next Button Disabled: {(loading || !canProceedToNextStep) ? 'YES' : 'NO'}</p>
+              <p>Manual Check: {(() => {
+                const hasPrompt = !!(agentData.userPrompt?.trim())
+                const hasEnhancementChoice = agentData.userChoice !== null || !agentData.enhancementComplete
+                const notCurrentlyEnhancing = !isEnhancing
+                const manualResult = hasPrompt && hasEnhancementChoice && notCurrentlyEnhancing
+                return `hasPrompt(${hasPrompt}) && hasEnhancementChoice(${hasEnhancementChoice}) && notCurrentlyEnhancing(${notCurrentlyEnhancing}) = ${manualResult}`
+              })()}</p>
+            </div>
+          </div>
+        )}
 
         {/* Error Message */}
         {error && (
@@ -648,10 +744,10 @@ export default function AgentWizard({ agentId }: { agentId?: string }) {
                 onClick={nextStep}
                 disabled={loading || !canProceedToNextStep}
               >
-                {loading ? (
+                {loading || isEnhancing ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Loading...
+                    {isEnhancing ? 'Enhancing...' : 'Loading...'}
                   </>
                 ) : (
                   <>

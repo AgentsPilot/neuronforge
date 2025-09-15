@@ -10,10 +10,19 @@ export interface TokenUsage {
   total_tokens: number
   cost_usd: number
   request_type: 'chat' | 'completion' | 'embedding' | 'image' | 'audio' | string
+  category: string  // NEW: Added category field
   session_id?: string
   metadata?: Record<string, any>
   created_at: string
   updated_at: string
+}
+
+// NEW: Category enum for standardization
+export enum LLMCategory {
+  QUESTION_CLARIFICATION = 'question_clarification',
+  USER_PROMPT_ENHANCE = 'prompt_enhancement', 
+  AGENT_EXECUTION = 'agent_execution',
+  SMART_PLAN_BUILD = 'ai_smart_plan_build',
 }
 
 export interface UsageStats {
@@ -23,9 +32,11 @@ export interface UsageStats {
   avgTokensPerRequest: number
   topModel: string
   topProvider: string
+  topCategory: string  // NEW: Most used category
   currentMonthTokens: number
   currentMonthCost: number
   dailyUsage: DailyUsage[]
+  categoryBreakdown: CategoryUsage[]  // NEW: Usage by category
 }
 
 export interface DailyUsage {
@@ -35,11 +46,21 @@ export interface DailyUsage {
   requests: number
 }
 
+// NEW: Category usage tracking
+export interface CategoryUsage {
+  category: string
+  tokens: number
+  cost: number
+  requests: number
+  percentage: number
+}
+
 export interface MonthlyUsage {
   month: string
   user_id: string
   provider: string
   model_name: string
+  category: string  // NEW: Added category
   request_count: number
   total_input_tokens: number
   total_output_tokens: number
@@ -56,6 +77,7 @@ export interface UsageSummary {
   avg_tokens_per_request: number
   most_used_model: string
   most_used_provider: string
+  most_used_category: string  // NEW: Added category
 }
 
 export interface ModelPricing {
@@ -178,7 +200,7 @@ export function calculateCost(
   return inputCost + outputCost
 }
 
-// Utility function to track usage (call this after LLM requests)
+// UPDATED: Utility function to track usage (call this after LLM requests)
 export async function trackTokenUsage(
   supabase: any,
   userId: string,
@@ -188,6 +210,7 @@ export async function trackTokenUsage(
     inputTokens: number
     outputTokens: number
     requestType?: string
+    category: string  // NEW: Required category field
     sessionId?: string
     metadata?: Record<string, any>
   }
@@ -210,6 +233,7 @@ export async function trackTokenUsage(
         output_tokens: data.outputTokens,
         cost_usd: cost,
         request_type: data.requestType || 'chat',
+        category: data.category,  // NEW: Added category
         session_id: data.sessionId,
         metadata: data.metadata
       })
@@ -234,6 +258,7 @@ export interface UsageFilters {
   provider?: string
   model?: string
   requestType?: string
+  category?: string  // NEW: Filter by category
 }
 
 // Chart data types for visualization

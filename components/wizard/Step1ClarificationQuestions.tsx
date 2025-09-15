@@ -54,6 +54,7 @@ export default function Step1ClarificationQuestions({
 }: Step1ClarificationQuestionsProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [debugInfo, setDebugInfo] = useState<any>(null) // NEW: Debug info
   const [answers, setAnswers] = useState<Record<string, string>>(
     data.clarificationData?.answers || {}
   )
@@ -99,27 +100,70 @@ export default function Step1ClarificationQuestions({
 
     setLoading(true)
     setError(null)
+    setDebugInfo(null)
 
     try {
-      const response = await fetch('/api/agents/generate-clarification-questions', {
+      // Prepare payload with validation - use 'original_prompt' field as expected by API
+      const payload = {
+        original_prompt: data.userPrompt.trim(), // ✅ Fixed: Changed from 'prompt' to 'original_prompt'
+        agent_name: data.agentName?.trim() || '',
+        description: data.description?.trim() || '',
+        connected_plugins: data.connectedPlugins || {},
+        user_id: userId || 'anonymous'
+      }
+
+      console.log('🚀 Sending request to /api/generate-clarification-questions')
+      console.log('📝 Payload:', JSON.stringify(payload, null, 2))
+
+      const response = await fetch('/api/generate-clarification-questions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          original_prompt: data.userPrompt,
-          agent_name: data.agentName || '',
-          description: data.description || '',
-          connected_plugins: data.connectedPlugins || {},
-          user_id: userId
-        })
+        body: JSON.stringify(payload)
       })
 
+      console.log('📊 Response status:', response.status)
+      console.log('📊 Response headers:', Object.fromEntries(response.headers.entries()))
+
+      // Get response text first for debugging
+      const responseText = await response.text()
+      console.log('📄 Raw response:', responseText)
+
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
+        
+        // Try to parse error details
+        try {
+          const errorData = JSON.parse(responseText)
+          errorMessage = errorData.error || errorData.message || errorMessage
+          setDebugInfo({
+            status: response.status,
+            statusText: response.statusText,
+            errorData: errorData,
+            payload: payload
+          })
+        } catch (parseError) {
+          setDebugInfo({
+            status: response.status,
+            statusText: response.statusText,
+            rawResponse: responseText,
+            payload: payload
+          })
+        }
+        
+        throw new Error(errorMessage)
       }
 
-      const result = await response.json()
+      // Parse successful response
+      let result
+      try {
+        result = JSON.parse(responseText)
+      } catch (parseError) {
+        throw new Error('Invalid JSON response from server')
+      }
+
+      console.log('✅ Parsed result:', result)
 
       const newClarificationData: ClarificationData = {
         questions: result.questions || [],
@@ -136,9 +180,9 @@ export default function Step1ClarificationQuestions({
 
       setAnswers({})
 
-    } catch (err) {
-      console.error('Error generating clarification questions:', err)
-      setError('Failed to generate clarification questions. Please try again.')
+    } catch (err: any) {
+      console.error('❌ Error generating clarification questions:', err)
+      setError(err.message || 'Failed to generate clarification questions. Please try again.')
     } finally {
       setLoading(false)
     }
@@ -180,6 +224,8 @@ export default function Step1ClarificationQuestions({
       }
     })
     setAnswers({})
+    setError(null)
+    setDebugInfo(null)
     await generateQuestions()
   }
 
@@ -234,21 +280,8 @@ export default function Step1ClarificationQuestions({
         </div>
       )}
 
-      {/* Skip Option During Loading */}
-      {!clarificationData.questionsGenerated && loading && (
-        <div className="text-center">
-          <button
-            onClick={skipQuestions}
-            className="flex items-center gap-2 px-6 py-3 bg-gray-100 text-gray-700 rounded-xl font-medium hover:bg-gray-200 transition-colors mx-auto"
-          >
-            <ChevronRight className="w-4 h-4" />
-            Skip Questions & Continue
-          </button>
-        </div>
-      )}
-
       {/* Questions Section */}
-      {clarificationData.questionsGenerated && !clarificationData.questionsSkipped && (
+      {clarificationData.questionsGenerated && (
         <div className="space-y-6">
           {/* AI Analysis Header */}
           {clarificationData.aiReasoning && (
@@ -404,21 +437,18 @@ export default function Step1ClarificationQuestions({
               </div>
             </div>
           )}
-        </div>
-      )}
 
-      {/* Skipped Questions Message */}
-      {clarificationData.questionsSkipped && (
-        <div className="text-center py-12 space-y-4">
-          <div className="w-16 h-16 bg-blue-100 rounded-2xl flex items-center justify-center mx-auto">
-            <ArrowRight className="w-8 w-8 text-blue-600" />
-          </div>
-          <div>
-            <h3 className="text-xl font-semibold text-gray-900 mb-2">Questions Skipped</h3>
-            <p className="text-gray-600 max-w-lg mx-auto">
-              You've chosen to skip the clarification questions. We'll proceed with your original prompt.
-            </p>
-          </div>
+          {/* Skip Questions Option */}
+          {clarificationData.questions.length > 0 && !clarificationData.questionsSkipped && (
+            <div className="text-center">
+              <button
+                onClick={skipQuestions}
+                className="text-gray-500 hover:text-gray-700 text-sm font-medium"
+              >
+                Skip clarification questions and proceed
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -427,9 +457,37 @@ export default function Step1ClarificationQuestions({
         <div className="bg-red-50 border border-red-200 rounded-xl p-4">
           <div className="flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
-            <div>
+            <div className="flex-1">
               <h4 className="font-medium text-red-900">Error</h4>
               <p className="text-red-700 text-sm mt-1">{error}</p>
+              
+              {/* Debug Information */}
+              {debugInfo && (
+                <details className="mt-3">
+                  <summary className="text-red-700 text-sm cursor-pointer">Debug Information</summary>
+                  <div className="mt-2 p-3 bg-red-100 rounded-lg">
+                    <pre className="text-xs text-red-800 whitespace-pre-wrap">
+                      {JSON.stringify(debugInfo, null, 2)}
+                    </pre>
+                  </div>
+                </details>
+              )}
+              
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={generateQuestions}
+                  disabled={loading}
+                  className="text-sm bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700 disabled:opacity-50"
+                >
+                  Try Again
+                </button>
+                <button
+                  onClick={skipQuestions}
+                  className="text-sm bg-gray-600 text-white px-3 py-1 rounded hover:bg-gray-700"
+                >
+                  Skip Questions
+                </button>
+              </div>
             </div>
           </div>
         </div>
