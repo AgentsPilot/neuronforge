@@ -41,6 +41,59 @@ export default function InputSchemaEditor({
     }
   };
 
+  const getFieldTypeColor = (type: string) => {
+    switch (type) {
+      case 'email':
+        return {
+          bg: 'bg-blue-50',
+          text: 'text-blue-600',
+          border: 'border-blue-200'
+        };
+      case 'date':
+        return {
+          bg: 'bg-green-50',
+          text: 'text-green-600',
+          border: 'border-green-200'
+        };
+      case 'time':
+        return {
+          bg: 'bg-purple-50',
+          text: 'text-purple-600',
+          border: 'border-purple-200'
+        };
+      case 'number':
+        return {
+          bg: 'bg-orange-50',
+          text: 'text-orange-600',
+          border: 'border-orange-200'
+        };
+      case 'select':
+        return {
+          bg: 'bg-indigo-50',
+          text: 'text-indigo-600',
+          border: 'border-indigo-200'
+        };
+      case 'textarea':
+        return {
+          bg: 'bg-yellow-50',
+          text: 'text-yellow-600',
+          border: 'border-yellow-200'
+        };
+      case 'file':
+        return {
+          bg: 'bg-pink-50',
+          text: 'text-pink-600',
+          border: 'border-pink-200'
+        };
+      default: // string
+        return {
+          bg: 'bg-gray-50',
+          text: 'text-gray-600',
+          border: 'border-gray-200'
+        };
+    }
+  };
+
   const getDefaultDescription = (field: InputField) => {
     // Smart descriptions based on field name and type
     const name = field.name.toLowerCase();

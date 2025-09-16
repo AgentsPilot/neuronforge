@@ -4,12 +4,12 @@
 import { useSearchParams } from 'next/navigation'
 import { Suspense, useEffect } from 'react'
 import { useAuth } from '@/components/UserProvider'
-import AgentBuilderIntegration from '@/components/agent-creation/AgentBuilderIntegration' // CHANGED
-import { useRouter } from 'next/navigation' // ADD THIS
+import AgentBuilderParent from '@/components/agent-creation/AgentBuilderParent' // CHANGED from AgentBuilderIntegration
+import { useRouter } from 'next/navigation'
 
 function ChatPageContent() {
   const searchParams = useSearchParams()
-  const router = useRouter() // ADD THIS
+  const router = useRouter()
   const initialPrompt = searchParams.get('prompt')
   const { user } = useAuth()
 
@@ -21,8 +21,8 @@ function ChatPageContent() {
     console.log('🔍 user:', user ? { id: user.id, email: user.email } : 'No user')
   }, [searchParams, initialPrompt, user])
 
-  // ADD THESE HANDLERS
-  const handleAgentCompleted = (agent: any) => {
+  // Updated handlers for AgentBuilderParent
+  const handleComplete = (agent: any) => {
     console.log('🎉 Agent creation completed:', {
       agentId: agent.id,
       agentName: agent.agent_name,
@@ -47,16 +47,16 @@ function ChatPageContent() {
     )
   }
 
-  console.log('✅ Rendering AgentBuilderIntegration with:', {
+  console.log('✅ Rendering AgentBuilderParent with:', {
     initialPrompt,
     userId: user.id
   })
 
   return (
     <div className="min-h-screen">
-      <AgentBuilderIntegration
+      <AgentBuilderParent
         initialPrompt={initialPrompt || undefined}
-        onAgentCompleted={handleAgentCompleted}
+        onComplete={handleComplete}
         onCancel={handleCancel}
       />
     </div>

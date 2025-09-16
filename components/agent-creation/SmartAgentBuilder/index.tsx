@@ -1,6 +1,6 @@
 // components/agent-creation/SmartAgentBuilder/index.tsx
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/components/UserProvider';
 import { 
   Brain, 
@@ -25,15 +25,38 @@ import { useAgentTesting } from './hooks/useAgentTesting';
 // Import types
 import { Agent, SmartAgentBuilderProps } from './types/agent';
 
+// NEW: Enhanced props for state persistence
+interface SmartAgentBuilderPropsWithPersistence extends SmartAgentBuilderProps {
+  // State restoration props
+  restoredAgent?: Agent;
+  sessionId?: string;
+  onStateChange?: (state: {
+    agent: Agent | null;
+    isEditing: boolean;
+    editedAgent: Agent | null;
+    sessionId: string;
+  }) => void;
+}
+
 export default function SmartAgentBuilder({
   prompt,
   promptType,
   clarificationAnswers = {},
   onAgentCreated,
   onBack,
-  onCancel
-}: SmartAgentBuilderProps) {
+  onCancel,
+  // NEW: Persistence props
+  restoredAgent,
+  sessionId: providedSessionId,
+  onStateChange
+}: SmartAgentBuilderPropsWithPersistence) {
   const { user } = useAuth();
+  
+  // NEW: Generate session ID for state persistence
+  const sessionId = useRef(providedSessionId || `smart-session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
+  
+  // NEW: Track if generation has been initiated to prevent duplicates
+  const hasInitiatedGeneration = useRef(false);
   
   // DEBUG: Log props received
   console.log('🚀 SmartAgentBuilder mounted with props:', {
@@ -43,11 +66,21 @@ export default function SmartAgentBuilder({
     hasOnAgentCreated: !!onAgentCreated,
     hasOnBack: !!onBack,
     hasOnCancel: !!onCancel,
-    userId: user?.id
+    userId: user?.id,
+    hasRestoredAgent: !!restoredAgent,
+    sessionId: sessionId.current
   });
   
-  // State management
-  const [agent, setAgent] = useState<Agent | null>(null);
+  // NEW: Initialize state with restoration
+  const [agent, setAgent] = useState<Agent | null>(() => {
+    if (restoredAgent) {
+      console.log('🔄 Restoring agent from state:', restoredAgent.agent_name);
+      hasInitiatedGeneration.current = true; // Mark as already generated
+      return restoredAgent;
+    }
+    return null;
+  });
+  
   const [isEditing, setIsEditing] = useState(false);
   const [editedAgent, setEditedAgent] = useState<Agent | null>(null);
   
@@ -60,16 +93,38 @@ export default function SmartAgentBuilder({
     clearTestResults 
   } = useAgentTesting();
 
-  // Generate agent on mount
+  // NEW: Notify parent of state changes for persistence
+  useEffect(() => {
+    if (onStateChange) {
+      onStateChange({
+        agent,
+        isEditing,
+        editedAgent,
+        sessionId: sessionId.current
+      });
+    }
+  }, [agent, isEditing, editedAgent, onStateChange]);
+
+  // NEW: Enhanced generation trigger with duplicate prevention
   useEffect(() => {
     console.log('🔄 SmartAgentBuilder useEffect triggered:', {
       hasUser: !!user?.id,
       hasPrompt: !!prompt,
-      promptLength: prompt?.length || 0
+      promptLength: prompt?.length || 0,
+      hasInitiated: hasInitiatedGeneration.current,
+      hasAgent: !!agent,
+      isGenerating
     });
+    
+    // NEW: Prevent generation if already initiated or if we have a restored agent
+    if (hasInitiatedGeneration.current || agent || isGenerating) {
+      console.log('⚠️ Skipping generation - already initiated or agent exists');
+      return;
+    }
     
     if (user?.id && prompt) {
       console.log('✅ Starting agent generation...');
+      hasInitiatedGeneration.current = true; // Mark as initiated
       handleGenerateAgent();
     } else {
       console.log('❌ Missing requirements for agent generation:', {
@@ -77,17 +132,37 @@ export default function SmartAgentBuilder({
         prompt: !!prompt
       });
     }
-  }, [user?.id, prompt]);
+  }, [user?.id, prompt, agent, isGenerating]);
 
   const handleGenerateAgent = async () => {
+    // NEW: Additional safeguard to prevent duplicate calls
+    if (isGenerating || agent) {
+      console.log('⚠️ Generation already in progress or agent exists, skipping');
+      return;
+    }
+    
     console.log('🎯 handleGenerateAgent called with prompt:', prompt?.slice(0, 100));
     clearTestResults();
-    const generatedAgent = await generateAgent(prompt);
-    if (generatedAgent) {
-      console.log('✅ Agent generated successfully:', generatedAgent.agent_name);
-      setAgent(generatedAgent);
-    } else {
-      console.log('❌ Agent generation failed');
+    
+    try {
+      const generatedAgent = await generateAgent(prompt, {
+        sessionId: sessionId.current,
+        clarificationAnswers,
+        promptType
+      });
+      
+      if (generatedAgent) {
+        console.log('✅ Agent generated successfully:', generatedAgent.agent_name);
+        setAgent(generatedAgent);
+      } else {
+        console.log('❌ Agent generation failed');
+        // Reset the flag if generation failed so user can retry
+        hasInitiatedGeneration.current = false;
+      }
+    } catch (error) {
+      console.error('❌ Generation error:', error);
+      // Reset the flag on error so user can retry
+      hasInitiatedGeneration.current = false;
     }
   };
 
@@ -131,14 +206,27 @@ export default function SmartAgentBuilder({
     }
   };
 
+  // NEW: Enhanced retry function that resets state properly
+  const handleRetryGeneration = () => {
+    console.log('🔄 Retrying agent generation...');
+    hasInitiatedGeneration.current = false; // Reset the flag
+    setAgent(null); // Clear existing agent
+    clearTestResults(); // Clear test results
+    
+    // Trigger regeneration
+    setTimeout(() => {
+      handleGenerateAgent();
+    }, 100);
+  };
+
   const updateEditedAgent = (updates: Partial<Agent>) => {
     if (editedAgent) {
       setEditedAgent({ ...editedAgent, ...updates });
     }
   };
 
-  // Loading state
-  if (isGenerating) {
+  // Loading state - don't show if we have a restored agent
+  if (isGenerating && !agent) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="max-w-md w-full bg-white rounded-xl p-8 shadow-lg text-center">
@@ -174,7 +262,7 @@ export default function SmartAgentBuilder({
   }
 
   // Error state
-  if (error) {
+  if (error && !agent) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="max-w-md w-full bg-white rounded-xl p-8 shadow-lg text-center">
@@ -187,7 +275,7 @@ export default function SmartAgentBuilder({
           
           <div className="space-y-3">
             <button
-              onClick={handleGenerateAgent}
+              onClick={handleRetryGeneration}
               className="w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
             >
               <RefreshCw className="h-4 w-4" />
@@ -208,8 +296,8 @@ export default function SmartAgentBuilder({
     );
   }
 
-  // No agent generated
-  if (!agent) {
+  // No agent generated (and not restored)
+  if (!agent && !isGenerating) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="max-w-md w-full bg-white rounded-xl p-8 shadow-lg text-center">
@@ -224,7 +312,7 @@ export default function SmartAgentBuilder({
           
           <div className="space-y-3">
             <button
-              onClick={handleGenerateAgent}
+              onClick={handleRetryGeneration}
               className="w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
             >
               Retry Generation
@@ -261,6 +349,8 @@ export default function SmartAgentBuilder({
             onCancel={handleCancelEdit}
             onTest={handleTestAgent}
             onCreate={handleCreateAgent}
+            // NEW: Add retry option
+            onRetry={error ? handleRetryGeneration : undefined}
           />
         </div>
       </div>
