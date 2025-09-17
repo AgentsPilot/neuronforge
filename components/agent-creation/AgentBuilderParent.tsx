@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import ConversationalAgentBuilder from './ConversationalAgentBuilder';
-import SmartAgentBuilder from './SmartAgentBuilder';
+import SmartAgentBuilder from './SmartAgentBuilder/SmartAgentBuilder';
 import { Agent } from './SmartAgentBuilder/types/agent';
 
 // Enhanced state interfaces with proper completion tracking
@@ -172,6 +172,26 @@ export default function AgentBuilderParent({
 
       if (savedSmart) {
         parsedSmart = JSON.parse(savedSmart);
+      }
+
+      // NEW: Simple session-based fresh start detection
+      // If we have stored data but it's from a different browser session, clear it
+      const currentSessionKey = `session_${Date.now()}`;
+      const lastSessionKey = localStorage.getItem('agent_builder_session_key');
+      const sessionTimeout = 30 * 60 * 1000; // 30 minutes
+      
+      if (parsedConversational?.lastUpdated) {
+        const timeSinceLastUpdate = Date.now() - parsedConversational.lastUpdated;
+        const isStaleSession = timeSinceLastUpdate > sessionTimeout;
+        
+        if (isStaleSession && !initialPrompt) {
+          console.log('🗑️ Clearing stale session data (older than 30 minutes)');
+          clearAllStorage();
+          localStorage.setItem('agent_builder_session_key', currentSessionKey);
+          setCurrentPhase('conversational');
+          setIsInitialized(true);
+          return;
+        }
       }
 
       // Clean URL if using existing work

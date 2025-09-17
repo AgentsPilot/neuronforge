@@ -355,8 +355,8 @@ export async function POST(request: NextRequest) {
     // Get connected plugins once, reuse throughout
     const connectedPlugins = await getConnectedPlugins(userIdToUse, connected_plugins)
 
-    // SIMPLIFIED: Check for missing plugins and modify prompt if needed
-    let finalPrompt = prompt.trim()
+    // FIXED: Keep original prompt, only create warning if needed
+    const finalPrompt = prompt.trim() // Use original prompt unchanged
     let pluginWarning = null
     
     if (!bypassPluginValidation) {
@@ -365,23 +365,13 @@ export async function POST(request: NextRequest) {
       if (!pluginValidation.isValid) {
         console.log('Missing required plugins:', pluginValidation.missingPlugins)
         
-        // Create warning message
+        // Create warning message - but don't modify the prompt
         pluginWarning = {
           missingServices: pluginValidation.missingPlugins,
           message: `Note: Your request mentions ${pluginValidation.missingPlugins.join(', ')} but ${pluginValidation.missingPlugins.length === 1 ? 'this service isn\'t' : 'these services aren\'t'} connected. I'll help you create the automation using your available services instead.`
         }
         
-        // Modify prompt to replace unconnected services
-        finalPrompt = prompt
-        for (const missing of pluginValidation.missingPlugins) {
-          const aliases = PLUGIN_REQUIREMENTS[missing as keyof typeof PLUGIN_REQUIREMENTS] || [missing]
-          for (const alias of aliases) {
-            const regex = new RegExp(alias, 'gi')
-            finalPrompt = finalPrompt.replace(regex, 'available service')
-          }
-        }
-        
-        console.log('Modified prompt:', finalPrompt)
+        console.log('Plugin validation warning created, but keeping original prompt intact')
       }
     }
 
@@ -394,7 +384,7 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    const cacheKey = `${userIdToUse}-${finalPrompt}-${connectedPlugins.join(',')}-${bypassPluginValidation ? 'bypass' : 'normal'}-v5`
+    const cacheKey = `${userIdToUse}-${finalPrompt}-${connectedPlugins.join(',')}-${bypassPluginValidation ? 'bypass' : 'normal'}-v6`
     const now = Date.now()
 
     const cached = requestCache.get(cacheKey)

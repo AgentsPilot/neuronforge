@@ -435,9 +435,13 @@ ${restoredState.isInReviewMode ?
             clarificationAnswers: finalAnswers,
             userId: user.id,
             sessionId: sessionId.current,
+            connected_plugins: user?.connectedPlugins || {},
+            // FIXED: Pass missing plugins from plugin warning
             missingPlugins: projectState.missingPlugins || [],
-            pluginValidationError: projectState.pluginValidationError || false,
-            suggestions: projectState.suggestions || [],
+            pluginWarning: projectState.pluginWarning ? {
+              missingServices: projectState.missingPlugins || [],
+              message: `Note: Your request mentions services that aren't connected.`
+            } : undefined
           }),
         });
 
@@ -482,10 +486,10 @@ This breaks down exactly what your agent will do. Would you like to use this enh
         isCurrentlyProcessing.current = false;
       }
     },
-    [projectState, isProcessing, user?.id, addMessage]
+    [projectState, isProcessing, user?.id, user?.connectedPlugins, addMessage]
   );
 
-  // BULLETPROOF initial prompt processing - Enhanced with completion checks
+  // BULLETPROOF initial prompt processing - Enhanced with completion checks and restored state validation
   useEffect(() => {
     // ULTIMATE CHECK: Should we process the initial prompt?
     if (!initialPrompt) return;
@@ -493,8 +497,32 @@ This breaks down exactly what your agent will do. Would you like to use this enh
     if (hasProcessedInitialPrompt.current) return;
     if (isCurrentlyProcessing.current) return;
     if (projectState.originalPrompt) return;
-    if (projectState.conversationCompleted) return; // NEW: Don't process if already completed
-    if (projectState.isInReviewMode) return; // NEW: Don't process in review mode
+    if (projectState.conversationCompleted) return;
+    if (projectState.isInReviewMode) return;
+
+    // NEW: Critical check - if we have restored state with existing work, don't process new prompt
+    if (restoredState && (
+        restoredState.enhancementComplete || 
+        restoredState.planApproved || 
+        restoredState.conversationCompleted ||
+        restoredState.workflowPhase === 'completed' ||
+        restoredState.workflowPhase === 'approval'
+      )) {
+      console.log('🚫 Skipping initial prompt processing - restored state has completed work', {
+        enhancementComplete: restoredState.enhancementComplete,
+        planApproved: restoredState.planApproved,
+        conversationCompleted: restoredState.conversationCompleted,
+        workflowPhase: restoredState.workflowPhase
+      });
+      return;
+    }
+
+    // NEW: Check if prompt matches existing work in restored state - don't reprocess
+    if (restoredState?.originalPrompt && 
+        restoredState.originalPrompt.trim().toLowerCase() === initialPrompt.trim().toLowerCase()) {
+      console.log('🚫 Skipping initial prompt processing - same prompt as restored state');
+      return;
+    }
 
     console.log('🚀 Processing initial prompt:', initialPrompt.slice(0, 50));
     
@@ -572,7 +600,20 @@ This breaks down exactly what your agent will do. Would you like to use this enh
     // Small delay to ensure state is ready
     setTimeout(processPrompt, 500);
     
-  }, [initialPrompt, shouldSkipAIProcessing, projectState.originalPrompt, projectState.conversationCompleted, projectState.isInReviewMode, addMessage, startEnhancement]);
+  }, [
+    initialPrompt, 
+    shouldSkipAIProcessing, 
+    projectState.originalPrompt, 
+    projectState.conversationCompleted, 
+    projectState.isInReviewMode, 
+    restoredState?.enhancementComplete, 
+    restoredState?.planApproved, 
+    restoredState?.conversationCompleted, 
+    restoredState?.originalPrompt,
+    restoredState?.workflowPhase,
+    addMessage, 
+    startEnhancement
+  ]);
 
   // Question flow logic
   const proceedToNextQuestion = useCallback(() => {
@@ -780,6 +821,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
           prompt: prompt.trim(),
           userId: user.id,
           sessionId: sessionId.current,
+          connected_plugins: user?.connectedPlugins || {},
           bypassPluginValidation: false,
         }),
       });
@@ -824,6 +866,13 @@ This breaks down exactly what your agent will do. Would you like to use this enh
   const updateRequirementsFromAnalysis = (analysis: ClarityAnalysis) => {
     if (analysis.pluginWarning) {
       addMessage(`💡 FYI: ${analysis.pluginWarning.message}`, 'ai');
+      
+      // Store plugin warning info in project state
+      setProjectState((prev) => ({
+        ...prev,
+        missingPlugins: analysis.pluginWarning?.missingServices || [],
+        pluginWarning: analysis.pluginWarning
+      }));
     }
 
     const updatedRequirements = projectState.requirements.map((req) => {

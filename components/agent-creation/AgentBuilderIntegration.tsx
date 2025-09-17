@@ -3,7 +3,7 @@
 
 import React, { useState } from 'react';
 import ConversationalAgentBuilder from './ConversationalAgentBuilder';
-import SmartAgentBuilder from './SmartAgentBuilder';
+import SmartAgentBuilder from './SmartAgentBuilder/SmartAgentBuilder';
 
 interface AgentBuilderIntegrationProps {
   initialPrompt?: string;

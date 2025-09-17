@@ -29,12 +29,31 @@ export default function AgentPromptBar() {
   const [showExamples, setShowExamples] = useState(false)
   const router = useRouter()
 
+  // FIXED: Clear all agent builder storage before starting new agent
+  const clearAgentBuilderStorage = () => {
+    try {
+      // Clear all agent builder related storage
+      localStorage.removeItem('agent_builder_conversational_state')
+      localStorage.removeItem('agent_builder_smart_state')
+      localStorage.removeItem('agent_builder_current_phase')
+      localStorage.removeItem('agent_builder_user_view_preference')
+      localStorage.removeItem('agent_builder_session_key')
+      
+      console.log('✅ Cleared all agent builder storage for new agent creation')
+    } catch (error) {
+      console.error('❌ Error clearing storage:', error)
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!prompt.trim()) return
 
     setLoading(true)
     try {
+      // CRITICAL FIX: Clear storage before navigation to ensure fresh start
+      clearAgentBuilderStorage()
+      
       const encodedPrompt = encodeURIComponent(prompt.trim())
       // Changed to redirect to conversational interface
       router.push(`/agents/new/chat?prompt=${encodedPrompt}`)
@@ -147,7 +166,11 @@ export default function AgentPromptBar() {
         <div className="w-px h-8 bg-gradient-to-b from-transparent via-gray-300 to-transparent"></div>
         
         <button
-          onClick={() => router.push('/agents/new')}
+          onClick={() => {
+            // FIXED: Also clear storage when going to classic wizard
+            clearAgentBuilderStorage()
+            router.push('/agents/new')
+          }}
           className="group flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-gray-50 to-slate-50 text-gray-700 border-2 border-gray-200 rounded-xl font-medium hover:border-gray-300 hover:from-gray-100 hover:to-slate-100 transition-all duration-200 hover:shadow-md"
         >
           <Bot className="w-4 w-4 transition-transform group-hover:scale-110" />

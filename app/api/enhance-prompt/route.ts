@@ -76,7 +76,10 @@ async function getConnectedPlugins(userId: string, connected_plugins?: any): Pro
 
 export async function POST(req: NextRequest) {
   try {
-    const { prompt, userId, clarificationAnswers = {}, connected_plugins } = await req.json()
+    const { prompt, userId, clarificationAnswers = {}, connected_plugins, missingPlugins = [], pluginWarning } = await req.json()
+    
+    // Extract missing plugins from pluginWarning if not provided directly (backward compatibility)
+    const finalMissingPlugins = missingPlugins.length > 0 ? missingPlugins : (pluginWarning?.missingServices || [])
 
     if (!prompt) {
       return NextResponse.json({ error: 'Prompt is required' }, { status: 400 })
@@ -95,19 +98,26 @@ export async function POST(req: NextRequest) {
     console.log('🚀 Processing enhancement request for user:', userIdToUse)
     console.log('📝 Original prompt length:', prompt.length)
     console.log('📋 Clarification answers:', Object.keys(clarificationAnswers).length, 'items')
+    console.log('🔌 Missing plugins:', finalMissingPlugins)
 
     // Get connected plugins for context-aware enhancement
     const connectedPlugins = await getConnectedPlugins(userIdToUse, connected_plugins)
 
-    // Generate completely dynamic plugin context
+    // FIXED: Intelligent plugin context that handles missing services
     const pluginContext = connectedPlugins.length > 0 
       ? `
 
 CONNECTED SERVICES: User has these services available: ${connectedPlugins.join(', ')}
-- Use SPECIFIC service names ONLY when they're relevant to the user's request
-- Don't force all connected services into the workflow just because they're available
+${finalMissingPlugins.length > 0 ? `MISSING SERVICES: User mentioned these unavailable services: ${finalMissingPlugins.join(', ')}` : ''}
+
+CRITICAL INSTRUCTIONS FOR SERVICE HANDLING:
+- Use SPECIFIC service names ONLY when they're relevant AND available to the user
+- For unavailable services that the user mentioned, suggest appropriate alternatives from connected services
+- If user mentioned unavailable services, use phrases like "available storage service" or "alternative note-taking app"
+- DO NOT use the specific names of unavailable services in your enhanced prompt
+- Example: If user wants "Notion" but it's unavailable, suggest "note-taking service" or use available alternatives like "Google Drive"
 - Only mention services that are actually needed for the task
-- Use service names naturally where they fit the user's actual needs`
+- Don't force all connected services into the workflow just because they're available`
       : `
 
 NO CONNECTED SERVICES: User has no specific services connected
@@ -127,19 +137,32 @@ ${Object.entries(clarificationAnswers)
 Use these answers to make the prompt more specific and actionable, filling in details that were previously vague or missing.`
     }
 
-    const enhancementPrompt = `You are an expert at writing clear, user-friendly instructions for automated workflows that regular people can understand.
+    const enhancementPrompt = `You are an expert at creating clear, structured execution plans for automated workflows that both users and build systems can easily understand.
 
 Transform this user request: "${prompt}"${clarificationContext}${pluginContext}
 
-Your goal: Create an enhanced version that's SPECIFIC but CONCISE. Focus on clarity for smart build processing.
+Your goal: Create a structured EXECUTION PLAN with clear bullet points. This makes it easy for users to understand and for smart build systems to process.
 
-Enhancement Requirements:
-1. **What Data**: Be specific about what information to use
-2. **What Actions**: Clearly describe core steps
-3. **When to Run**: Specify timing (use user's clarification or simple placeholders)
-4. **What to Create**: Describe the output
-5. **Where to Send**: Be specific about delivery using relevant services only
-6. **If Problems**: Brief error handling
+REQUIRED EXECUTION PLAN FORMAT:
+Create a bullet-point execution plan with these sections:
+
+**Data Source:**
+• What specific information to monitor/read
+
+**Trigger Conditions:**
+• When the automation should activate
+
+**Processing Steps:**
+• What actions to take with the data
+
+**Output Creation:**
+• What gets generated/created
+
+**Delivery Method:**
+• How and where to send results
+
+**Error Handling:**
+• What to do if something fails
 
 CRITICAL WRITING RULES:
 ${Object.keys(clarificationAnswers).length > 0 
@@ -148,30 +171,45 @@ ${Object.keys(clarificationAnswers).length > 0
 - NEVER add specific times like "8:00 AM" unless user provided it
 - Keep all user-provided details exactly as they specified`
   : `- Use simple, friendly language
-- Use relevant service names when connected (only if needed for the task)
+- Use available service names when connected and relevant
+- For unavailable services, use appropriate generic alternatives
 - Avoid any technical jargon or system terminology`
 }
 
 LANGUAGE STYLE REQUIREMENTS:
 - Write like you're explaining to a friend, not a computer
 - Use "you" and "your" throughout 
-- Avoid ALL technical jargon
 - Use simple action words: "check", "read", "create", "send", "save"
-- Keep sentences short and clear
-- Focus on ESSENTIAL steps only
+- Keep bullet points concise but complete
+- Each bullet point should be one clear action or condition
 
-STRUCTURE YOUR RESPONSE:
-1. What it will check/read (use specific service names only if relevant)
-2. What it will do with that information  
-3. What it will create
-4. How/where it will deliver results (only relevant services)
-5. Brief error handling
+EXAMPLE FORMAT:
+**Data Source:**
+• Monitor your Gmail inbox for new emails from clients
 
-Keep the enhanced version conversational but CONCISE (100-150 words). Focus on essential information for smart build processing.
+**Trigger Conditions:**
+• When a new email arrives with "urgent" in the subject line
+
+**Processing Steps:**
+• Read the email content and extract key information
+• Create a summary of the urgent request
+
+**Output Creation:**
+• Generate a brief summary with sender, subject, and main points
+
+**Delivery Method:**
+• Send summary via Slack to your team channel
+• Save details to your project management tool
+
+**Error Handling:**
+• If email can't be read, log the issue and try again in 5 minutes
+• If Slack is down, send summary via email instead
+
+IMPORTANT: Your response must be valid JSON. Do not include any markdown formatting or extra text outside the JSON.
 
 Respond with only a JSON object:
 {
-  "enhanced_prompt": "Your user-friendly enhanced version that anyone can understand",
+  "enhanced_prompt": "Your structured execution plan in bullet-point format using the exact format shown above",
   "rationale": "Brief explanation of what you made clearer and more specific"
 }`
 
@@ -186,7 +224,7 @@ Respond with only a JSON object:
         messages: [
           {
             role: 'system',
-            content: `You are an expert prompt engineer who specializes in making automation instructions clear and user-friendly for regular people. You write in simple, conversational language that anyone can understand, completely avoiding technical jargon. You excel at taking vague automation requests and making them specific and actionable while keeping the language friendly and approachable. You naturally incorporate available services to make instructions more specific. ${Object.keys(clarificationAnswers).length > 0 
+            content: `You are an expert prompt engineer who specializes in creating structured, user-friendly automation execution plans. You write in simple, conversational language that anyone can understand, completely avoiding technical jargon. You excel at taking vague automation requests and making them specific and actionable while keeping the language friendly and approachable. You naturally incorporate available services to make instructions more specific, and when services aren't available, you suggest appropriate alternatives rather than using unavailable service names. You always respond with valid JSON only - no markdown, no extra text, just clean JSON. ${Object.keys(clarificationAnswers).length > 0 
               ? 'You are excellent at incorporating user-provided clarification answers to create specific, actionable prompts using only the details the user actually provided.'
               : 'You avoid making assumptions about specific parameters and use friendly placeholder language instead.'
             }`
@@ -196,28 +234,37 @@ Respond with only a JSON object:
             content: enhancementPrompt
           }
         ],
-        max_tokens: 400,
+        max_tokens: 800,
         temperature: 0.1,
         presence_penalty: 0.1
       })
     })
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}))
-      console.error('OpenAI API Error:', errorData)
+      const errorText = await response.text().catch(() => 'Unknown error');
+      console.error('OpenAI API Error:', {
+        status: response.status,
+        statusText: response.statusText,
+        body: errorText
+      });
       return NextResponse.json({ 
-        error: errorData.error?.message || 'OpenAI API call failed' 
+        error: `OpenAI API call failed: ${response.status} - ${response.statusText}`,
+        details: errorText
       }, { status: response.status })
     }
 
     const data = await response.json()
     
     if (!data.choices || !data.choices[0] || !data.choices[0].message) {
-      return NextResponse.json({ error: 'Invalid response from OpenAI' }, { status: 500 })
+      console.error('Invalid OpenAI response structure:', data);
+      return NextResponse.json({ 
+        error: 'Invalid response from OpenAI',
+        details: 'Missing choices or message in response'
+      }, { status: 500 })
     }
 
     let fullResponse = data.choices[0].message.content.trim()
-    console.log('🤖 Raw OpenAI response:', fullResponse)
+    console.log('🤖 Raw OpenAI response:', fullResponse.slice(0, 200) + '...')
     
     // Parse the JSON response with better error handling
     let enhancedPrompt = ''
@@ -237,15 +284,86 @@ Respond with only a JSON object:
         }
       }
       
-      console.log('🔍 Cleaned response for parsing:', fullResponse)
+      console.log('🔍 Cleaned response for parsing:', fullResponse.slice(0, 100) + '...')
       
       const parsedResponse = JSON.parse(fullResponse)
-      enhancedPrompt = parsedResponse.enhanced_prompt || parsedResponse.enhancedPrompt || ''
+      let rawEnhancedPrompt = parsedResponse.enhanced_prompt || parsedResponse.enhancedPrompt || ''
       rationale = parsedResponse.rationale || ''
+      
+      // CRITICAL FIX: Handle both string and object formats for enhanced_prompt
+      if (typeof rawEnhancedPrompt === 'object' && rawEnhancedPrompt !== null) {
+        // Convert object format to structured string format
+        console.log('🔄 Converting object format to structured string');
+        const sections = [];
+        
+        if (rawEnhancedPrompt['Data Source']) {
+          sections.push('**Data Source:**');
+          const items = Array.isArray(rawEnhancedPrompt['Data Source']) 
+            ? rawEnhancedPrompt['Data Source'] 
+            : [rawEnhancedPrompt['Data Source']];
+          items.forEach(item => sections.push(`• ${item}`));
+          sections.push('');
+        }
+        
+        if (rawEnhancedPrompt['Trigger Conditions']) {
+          sections.push('**Trigger Conditions:**');
+          const items = Array.isArray(rawEnhancedPrompt['Trigger Conditions']) 
+            ? rawEnhancedPrompt['Trigger Conditions'] 
+            : [rawEnhancedPrompt['Trigger Conditions']];
+          items.forEach(item => sections.push(`• ${item}`));
+          sections.push('');
+        }
+        
+        if (rawEnhancedPrompt['Processing Steps']) {
+          sections.push('**Processing Steps:**');
+          const items = Array.isArray(rawEnhancedPrompt['Processing Steps']) 
+            ? rawEnhancedPrompt['Processing Steps'] 
+            : [rawEnhancedPrompt['Processing Steps']];
+          items.forEach(item => sections.push(`• ${item}`));
+          sections.push('');
+        }
+        
+        if (rawEnhancedPrompt['Output Creation']) {
+          sections.push('**Output Creation:**');
+          const items = Array.isArray(rawEnhancedPrompt['Output Creation']) 
+            ? rawEnhancedPrompt['Output Creation'] 
+            : [rawEnhancedPrompt['Output Creation']];
+          items.forEach(item => sections.push(`• ${item}`));
+          sections.push('');
+        }
+        
+        if (rawEnhancedPrompt['Delivery Method']) {
+          sections.push('**Delivery Method:**');
+          const items = Array.isArray(rawEnhancedPrompt['Delivery Method']) 
+            ? rawEnhancedPrompt['Delivery Method'] 
+            : [rawEnhancedPrompt['Delivery Method']];
+          items.forEach(item => sections.push(`• ${item}`));
+          sections.push('');
+        }
+        
+        if (rawEnhancedPrompt['Error Handling']) {
+          sections.push('**Error Handling:**');
+          const items = Array.isArray(rawEnhancedPrompt['Error Handling']) 
+            ? rawEnhancedPrompt['Error Handling'] 
+            : [rawEnhancedPrompt['Error Handling']];
+          items.forEach(item => sections.push(`• ${item}`));
+        }
+        
+        enhancedPrompt = sections.join('\n');
+      } else if (typeof rawEnhancedPrompt === 'string') {
+        enhancedPrompt = rawEnhancedPrompt;
+      } else {
+        throw new Error('Enhanced prompt is neither string nor valid object format');
+      }
+      
+      if (!enhancedPrompt || enhancedPrompt.length < 10) {
+        throw new Error('Enhanced prompt is too short or empty');
+      }
       
       console.log('✅ Successfully parsed:', {
         enhancedPromptLength: enhancedPrompt.length,
-        rationaleLength: rationale.length
+        rationaleLength: rationale.length,
+        hasStructuredFormat: enhancedPrompt.includes('**Data Source:**')
       })
       
     } catch (parseError) {
@@ -258,11 +376,15 @@ Respond with only a JSON object:
         const jsonMatch = fullResponse.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const extractedJson = jsonMatch[0];
-          console.log('🔄 Attempting to parse extracted JSON:', extractedJson);
+          console.log('🔄 Attempting to parse extracted JSON:', extractedJson.slice(0, 100) + '...');
           
           const parsedResponse = JSON.parse(extractedJson);
           enhancedPrompt = parsedResponse.enhanced_prompt || parsedResponse.enhancedPrompt || '';
           rationale = parsedResponse.rationale || '';
+          
+          if (!enhancedPrompt || enhancedPrompt.length < 10) {
+            throw new Error('Enhanced prompt from extracted JSON is too short');
+          }
           
           console.log('✅ Successfully parsed extracted JSON');
         } else {
@@ -271,20 +393,38 @@ Respond with only a JSON object:
       } catch (secondParseError) {
         console.error('❌ All parsing attempts failed:', secondParseError);
         
-        // Final fallback: treat entire response as enhanced prompt
-        enhancedPrompt = fullResponse.replace(/```json|```/g, '').trim();
-        rationale = 'Enhanced prompt with improved clarity and user-friendly language.';
-        
-        console.log('⚠️ Using fallback - treating entire response as enhanced prompt');
+        // Final fallback: create a basic structured prompt from the raw response
+        if (fullResponse.length > 20) {
+          enhancedPrompt = `**Data Source:**
+• ${prompt.split('.')[0] || 'Your specified data source'}
+
+**Trigger Conditions:**
+• Based on your requirements
+
+**Processing Steps:**
+• Process the data according to your needs
+• Apply the necessary transformations
+
+**Output Creation:**
+• Generate the required output format
+
+**Delivery Method:**
+• Send results to your preferred destination
+
+**Error Handling:**
+• Log any errors and retry as needed
+• Send notifications if critical failures occur`;
+          rationale = 'Created structured execution plan from your request.';
+          
+          console.log('⚠️ Using emergency fallback - created basic structured prompt');
+        } else {
+          console.error('❌ All fallback attempts failed - response too short');
+          return NextResponse.json({ 
+            error: 'Failed to generate a valid enhanced prompt',
+            details: 'All parsing and fallback attempts failed'
+          }, { status: 500 });
+        }
       }
-    }
-    
-    // Validate that we have a meaningful enhanced prompt
-    if (!enhancedPrompt || enhancedPrompt.length < 10) {
-      console.error('❌ Enhanced prompt is too short or empty:', enhancedPrompt);
-      return NextResponse.json({ 
-        error: 'Failed to generate a valid enhanced prompt' 
-      }, { status: 500 });
     }
     
     // Extract usage data from OpenAI response
@@ -315,7 +455,9 @@ Respond with only a JSON object:
             clarificationAnswersCount: Object.keys(clarificationAnswers).length,
             clarificationAnswers: clarificationAnswers,
             connectedPlugins: connectedPlugins,
+            missingPlugins: finalMissingPlugins,
             enhancementType: Object.keys(clarificationAnswers).length > 0 ? 'with_clarification' : 'basic',
+            hadMissingPlugins: finalMissingPlugins.length > 0,
             isUserFriendly: true,
             isContextAware: true,
             timestamp: new Date().toISOString()
@@ -331,9 +473,10 @@ Respond with only a JSON object:
 
     // Return clean, parsed response
     console.log('🎉 Returning context-aware enhanced prompt:', {
-      enhancedPromptPreview: enhancedPrompt.substring(0, 100) + '...',
-      rationalePreview: rationale.substring(0, 50) + '...',
-      connectedPlugins: connectedPlugins
+      enhancedPromptPreview: typeof enhancedPrompt === 'string' ? enhancedPrompt.substring(0, 100) + '...' : 'Object format converted to string',
+      rationalePreview: typeof rationale === 'string' ? rationale.substring(0, 50) + '...' : 'N/A',
+      connectedPlugins: connectedPlugins,
+      missingPlugins: finalMissingPlugins
     })
 
     return NextResponse.json({ 
@@ -345,6 +488,8 @@ Respond with only a JSON object:
         enhancementType: Object.keys(clarificationAnswers).length > 0 ? 'with_clarification' : 'basic',
         clarificationAnswersCount: Object.keys(clarificationAnswers).length,
         connectedPlugins: connectedPlugins,
+        missingPlugins: finalMissingPlugins,
+        hadMissingPlugins: finalMissingPlugins.length > 0,
         isUserFriendly: true,
         isContextAware: true
       }
