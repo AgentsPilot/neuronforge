@@ -119,64 +119,63 @@ export default function AgentPage() {
   const [currentFormIsComplete, setCurrentFormIsComplete] = useState(false)
 
   // Check if agent has required configuration
-  const checkAgentConfiguration = async (agentData: Agent) => {
-    if (!user?.id || !agentData.input_schema) {
-      setIsConfigured(true) // If no input schema, consider it configured
-      return
-    }
-
-    const inputSchema = Array.isArray(agentData.input_schema) ? agentData.input_schema : []
-    const hasRequiredFields = inputSchema.some((field: any) => field.required)
-
-    if (!hasRequiredFields) {
-      setIsConfigured(true) // If no required fields, consider it configured
-      return
-    }
-
-    try {
-      const { data, error } = await supabase
-        .from('agent_executions')
-        .select('input_values, status, created_at')
-        .eq('agent_id', agentData.id)
-        .eq('user_id', user.id)
-        .in('status', ['completed', 'configured']) // Look for both statuses
-        .order('created_at', { ascending: false })
-        .limit(10) // Get more records to find configuration saves
-
-      if (error && error.code !== 'PGRST116') {
-        console.error('Error checking configuration:', error)
-        setIsConfigured(false)
-        return
-      }
-
-      if (data && data.length > 0) {
-        // Look for the most recent configuration save (marked with _configuration_save: true)
-        const configSave = data.find(record => 
-          record.input_values && 
-          record.input_values._configuration_save === true
-        )
-
-        if (configSave && configSave.input_values) {
-          // Check if all required fields have values in the saved configuration
-          const requiredFields = inputSchema.filter((field: any) => field.required)
-          const hasAllRequiredValues = requiredFields.every((field: any) => {
-            const value = configSave.input_values[field.name]
-            return value !== undefined && value !== null && value !== ''
-          })
-          
-          setIsConfigured(hasAllRequiredValues)
-        } else {
-          setIsConfigured(false)
-        }
-      } else {
-        setIsConfigured(false)
-      }
-    } catch (error) {
-      console.error('Unexpected error checking configuration:', error)
-      setIsConfigured(false)
-    }
+// Check if agent has required configuration
+const checkAgentConfiguration = async (agentData: Agent) => {
+  if (!user?.id || !agentData.input_schema) {
+    setIsConfigured(true) // If no input schema, consider it configured
+    return
   }
 
+  const inputSchema = Array.isArray(agentData.input_schema) ? agentData.input_schema : []
+  const hasRequiredFields = inputSchema.some((field: any) => field.required)
+
+  if (!hasRequiredFields) {
+    setIsConfigured(true) // If no required fields, consider it configured
+    return
+  }
+
+  try {
+    // UPDATED: Look for the most recent configured record
+    const { data, error } = await supabase
+      .from('agent_executions') // Fixed: use correct table name
+      .select('input_values, status, created_at')
+      .eq('agent_id', agentData.id)
+      .eq('user_id', user.id)
+      .eq('status', 'configured') // Look specifically for configured status
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle() // Use maybeSingle to avoid errors when no records exist
+
+    if (error) {
+      console.error('Error checking configuration:', error)
+      setIsConfigured(false)
+      return
+    }
+
+    if (data && data.input_values) {
+      // Check if all required fields have values in the saved configuration
+      const requiredFields = inputSchema.filter((field: any) => field.required)
+      const hasAllRequiredValues = requiredFields.every((field: any) => {
+        const value = data.input_values[field.name]
+        return value !== undefined && value !== null && value !== ''
+      })
+      
+      console.log('Configuration check result:', {
+        hasConfigRecord: !!data,
+        requiredFields: requiredFields.map(f => f.name),
+        hasAllRequiredValues
+      })
+      
+      setIsConfigured(hasAllRequiredValues)
+    } else {
+      console.log('No configuration record found')
+      setIsConfigured(false)
+    }
+  } catch (error) {
+    console.error('Unexpected error checking configuration:', error)
+    setIsConfigured(false)
+  }
+}
   const fetchAgent = async () => {
     // Enhanced validation for agentId
     console.log('fetchAgent called with agentId:', agentId)

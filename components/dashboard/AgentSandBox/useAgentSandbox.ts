@@ -1,3 +1,5 @@
+// COMPLETE FIX: useAgentSandbox hook changes
+
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { useAuth } from '@/components/UserProvider'
@@ -39,6 +41,9 @@ export function useAgentSandbox({
   // Configuration state
   const [savedConfiguration, setSavedConfiguration] = useState<Record<string, any> | null>(null)
   const [isConfigurationSaved, setIsConfigurationSaved] = useState(false)
+  
+  // ADDED: Track if configuration has been loaded to prevent re-loading
+  const [configurationLoaded, setConfigurationLoaded] = useState(false)
   
   // UI State
   const [showVisualizer, setShowVisualizer] = useState(false)
@@ -198,10 +203,11 @@ export function useAgentSandbox({
     }
   }, [agentId, inputSchema])
 
-  // Load saved configuration - works with either props schema or DB schema
+  // FIXED: Load saved configuration ONLY ONCE when component mounts and has schema
   useEffect(() => {
     const loadSavedConfiguration = async () => {
-      if (!user?.id || !agentId) return
+      // IMPORTANT: Only load if we haven't loaded before and have necessary data
+      if (!user?.id || !agentId || configurationLoaded) return
       
       // Check if we have any schema available (props or DB)
       const hasSchema = (inputSchema && Array.isArray(inputSchema) && inputSchema.length > 0) || 
@@ -211,53 +217,42 @@ export function useAgentSandbox({
       
       setLoadingConfiguration(true)
       try {
-        console.log('Loading saved configuration for agent:', agentId)
+        console.log('Loading saved configuration for agent (one time only):', agentId)
         
+        // FIXED: Use maybeSingle() to avoid errors when no records exist
         const { data, error } = await supabase
-          .from('agent_executions')
+          .from('agent_executions') // FIXED: Use correct table name (plural)
           .select('input_values, status')
           .eq('agent_id', agentId)
           .eq('user_id', user.id)
-          .in('status', ['completed', 'configured']) // Look for both statuses
+          .eq('status', 'configured')
           .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle() // This won't throw errors when no records exist
 
-        if (error && error.code !== 'PGRST116') {
-          console.error('Error loading configuration:', error)
-          return
-        }
-
-        if (data && data.length > 0) {
-          // Look for the most recent configuration save (marked with _configuration_save: true)
-          const configSave = data.find(record => 
-            record.input_values && 
-            record.input_values._configuration_save === true
-          )
-
-          if (configSave && configSave.input_values) {
-            console.log('Found saved configuration:', configSave)
-            const cleanValues = { ...configSave.input_values }
-            // Remove internal markers
-            delete cleanValues._configuration_save
-            delete cleanValues._saved_at
-            
-            setSavedConfiguration(cleanValues)
-            setFormData(cleanValues)
-            setIsConfigurationSaved(true)
-          } else {
-            console.log('No configuration save found')
-          }
+        // Handle the results - no error logging for missing table or empty results
+        if (data && data.input_values) {
+          console.log('Found saved configuration:', data)
+          setSavedConfiguration(data.input_values)
+          setFormData(data.input_values)
+          setIsConfigurationSaved(true)
         } else {
-          console.log('No records found')
+          console.log('No saved configuration found')
+          setSavedConfiguration(null)
+          setIsConfigurationSaved(false)
         }
       } catch (error) {
-        console.log('No saved configuration found:', error)
+        console.log('Error loading saved configuration:', error)
+        setSavedConfiguration(null)
+        setIsConfigurationSaved(false)
       } finally {
         setLoadingConfiguration(false)
+        setConfigurationLoaded(true) // Mark as loaded so we don't load again
       }
     }
     
     loadSavedConfiguration()
-  }, [user?.id, agentId, inputSchema, schemaLoaded, dbInputSchema])
+  }, [user?.id, agentId, schemaLoaded]) // REMOVED: inputSchema and dbInputSchema from dependencies
 
   // Debug logging
   useEffect(() => {
@@ -267,9 +262,10 @@ export function useAgentSandbox({
       dbInputSchemaLength: dbInputSchema.length,
       schemaLoaded,
       actualSchemaLength: safeInputSchema.length,
-      filteredSchemaLength: filteredInputSchema.length
+      filteredSchemaLength: filteredInputSchema.length,
+      configurationLoaded
     })
-  }, [agentId, inputSchema, dbInputSchema, schemaLoaded, safeInputSchema, filteredInputSchema])
+  }, [agentId, inputSchema, dbInputSchema, schemaLoaded, safeInputSchema, filteredInputSchema, configurationLoaded])
 
   const initializeVisualization = () => {
     const executionId = `exec_${agentId}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
@@ -284,7 +280,7 @@ export function useAgentSandbox({
       title: pattern.title,
       icon: pattern.icon,
       color: pattern.color,
-      status: 'pending' as const, // Fixed: changed back to 'pending'
+      status: 'pending' as const,
       logs: [],
       progress: 0
     }))
@@ -685,7 +681,9 @@ export function useAgentSandbox({
     return isFormValid()
   })()
 
+  // FIXED: handleInputChange no longer triggers any database operations
   const handleInputChange = (name: string, value: any) => {
+    // ONLY update local state - no database operations
     setFormData((prev) => ({ ...prev, [name]: value }))
     
     // Clear existing error for this field
@@ -697,7 +695,7 @@ export function useAgentSandbox({
       })
     }
     
-    // Real-time validation for better UX
+    // Real-time validation for better UX - NO DATABASE CALLS
     const field = filteredInputSchema.find(f => f.name === name)
     if (field) {
       const error = validateField(name, value, field)
@@ -710,82 +708,10 @@ export function useAgentSandbox({
     }
   }
 
-  const handleSaveConfiguration = async () => {
-    if (!validateForm()) {
-      return false
-    }
-
-    if (missingPlugins.length > 0) {
-      setResult({ error: `Missing required plugin(s): ${missingPlugins.join(', ')}` })
-      return false
-    }
-
-    if (!user?.id) {
-      setResult({ error: 'User not authenticated' })
-      return false
-    }
-
-    try {
-      setLoading(true)
-      setSendStatus(null)
-      setResult(null)
-
-      // Create a unique execution ID for this configuration save
-      const executionId = `config_${agentId}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-      
-      // Add a special marker to identify this as a configuration save
-      const configurationData = {
-        ...formData,
-        _configuration_save: true,
-        _saved_at: new Date().toISOString()
-      }
-      
-      const { data, error } = await supabase
-        .from('agent_executions')
-        .insert({
-          id: executionId,
-          agent_id: agentId,
-          user_id: user.id,
-          status: 'configured',
-          input_values: configurationData,
-          created_at: new Date().toISOString()
-        })
-        .select()
-        .single()
-
-      if (error) {
-        throw new Error(`Failed to save configuration: ${error.message}`)
-      }
-
-      setSavedConfiguration(formData)
-      setIsConfigurationSaved(true)
-      setSendStatus('Configuration saved successfully! Your agent is now ready to be activated.')
-      setResult({ message: 'Agent configuration saved successfully' })
-      
-      // Notify parent component about configuration completion if callback exists
-      if (onExecutionComplete) {
-        onExecutionComplete(executionId)
-      }
-      
-      return true
-
-    } catch (err: any) {
-      setResult({ error: err.message })
-      setSendStatus('Failed to save configuration')
-      return false
-    } finally {
-      setLoading(false)
-    }
-  }
-
   const handleRun = async (withVisualizer = false) => {
-    // If in configure mode, save configuration instead of running
-    if (executionContext === 'configure') {
-      return await handleSaveConfiguration()
-    }
-
+    // Validate form first
     if (!validateForm()) {
-      return
+      return false
     }
 
     try {
@@ -794,12 +720,55 @@ export function useAgentSandbox({
       setResult(null)
       setExecutionTime(null)
 
+      // Check for missing plugins
       if (missingPlugins.length > 0) {
         setResult({ error: `Missing required plugin(s): ${missingPlugins.join(', ')}` })
-        return
+        return false
       }
 
-      if (withVisualizer) {
+      // ADDED: Handle configure mode - save directly to agent_execution
+      if (executionContext === 'configure') {
+        try {
+          const configId = `config_${agentId}_${user?.id}`
+          
+          const { error } = await supabase
+            .from('agent_executions')
+            .upsert({
+              id: configId,
+              agent_id: agentId,
+              user_id: user?.id,
+              input_values: formData,
+              status: 'configured',
+              created_at: new Date().toISOString() // This will be updated on each upsert
+            }, {
+              onConflict: 'id'
+            })
+
+          if (error) {
+            throw new Error(`Failed to save configuration: ${error.message}`)
+          }
+
+          // Update local state
+          setSavedConfiguration(formData)
+          setIsConfigurationSaved(true)
+          setSendStatus('✅ Configuration saved successfully! Your agent is now activated and ready to use.')
+          setResult({ message: 'Agent configuration saved successfully' })
+          
+          // Notify parent component about configuration completion
+          if (onExecutionComplete) {
+            onExecutionComplete(configId)
+          }
+          
+          return true
+        } catch (configError: any) {
+          setResult({ error: configError.message })
+          setSendStatus(`❌ Failed to save configuration: ${configError.message}`)
+          return false
+        }
+      }
+
+      // Handle visualizer mode (streaming execution) - only in test mode
+      if (withVisualizer && executionContext === 'test') {
         const executionId = initializeVisualization()
         
         const streamUrl = '/api/agent-stream'
@@ -857,50 +826,65 @@ export function useAgentSandbox({
         }
 
         readStream()
+        return true
+      }
 
-      } else {
-        const startTime = Date.now()
+      // Handle regular execution via execute-workflow route
+      const startTime = Date.now()
+      
+      const requestBody = {
+        inputVariables: formData,
+        testMode: executionContext === 'test',
+        useConfiguration: true // Always try to use saved configuration as defaults
+      }
+
+      console.log('Sending request to execute-workflow:', {
+        agentId,
+        executionContext,
+        requestBody
+      })
+      
+      const response = await fetch(`/api/agents/${agentId}/execute-workflow`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      })
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`Execution failed: ${response.statusText} - ${errorText}`)
+      }
+
+      const res = await response.json()
+      const endTime = Date.now()
+      setExecutionTime(endTime - startTime)
+
+      console.log('Execute-workflow response:', res)
+      
+      // Handle configuration save response (configure mode)
+      if (res.configurationSaved) {
+        setSavedConfiguration(res.savedConfiguration || formData)
+        setIsConfigurationSaved(true)
+        setSendStatus('✅ Configuration saved successfully! Your agent is now activated and ready to use.')
+        setResult({ message: 'Agent configuration saved successfully' })
         
-        const response = await fetch(`/api/agents/${agentId}/execute-workflow`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            inputVariables: formData,
-            testMode: true
-          }),
-        })
-        
-        if (!response.ok) {
-          const errorText = await response.text()
-          throw new Error(`Workflow execution failed: ${response.statusText} - ${errorText}`)
+        // Notify parent component about configuration completion
+        if (onExecutionComplete) {
+          onExecutionComplete(res.executionId)
         }
-
-        const res = await response.json()
-        const endTime = Date.now()
-        setExecutionTime(endTime - startTime)
         
-        let finalResult
+        return true
+      }
+      
+      // Handle execution results (test mode)
+      if (res.success && res.result) {
+        setResult(res.result)
         
-        if (res?.result) {
-          finalResult = res.result
-        } else if (res?.output) {
-          finalResult = res.output
-        } else if (res?.message) {
-          finalResult = res.message
-        } else {
-          finalResult = res
-        }
-        
-        setResult(finalResult)
-
-        if (finalResult?.send_status) {
-          setSendStatus(finalResult.send_status)
-        } else if (res?.success === false) {
-          setSendStatus('Workflow execution failed')
-        } else if (typeof finalResult === 'string' && finalResult.includes('error')) {
-          setSendStatus('Execution completed with errors')
+        // Set appropriate success message based on output type
+        if (res.result?.send_status) {
+          setSendStatus(res.result.send_status)
         } else {
           const hasEmailOutput = safeOutputSchema.some(f => 
             f.type === 'EmailDraft' || f.name.toLowerCase().includes('email')
@@ -910,22 +894,48 @@ export function useAgentSandbox({
           )
           
           if (hasEmailOutput) {
-            setSendStatus('Email draft generated successfully')
+            setSendStatus('✅ Email draft generated successfully')
           } else if (hasReportOutput) {
-            setSendStatus('Report generated successfully')
+            setSendStatus('✅ Report generated successfully')
           } else {
-            setSendStatus('Agent execution completed')
+            setSendStatus('✅ Agent execution completed successfully')
           }
         }
-
-        setLoading(false)
+        
+        // Notify parent component about execution completion
+        if (onExecutionComplete) {
+          onExecutionComplete(res.executionId)
+        }
+        
+        return true
       }
+      
+      // Handle errors
+      if (res.error) {
+        setResult({ error: res.error })
+        setSendStatus(`❌ Execution failed: ${res.error}`)
+        return false
+      }
+      
+      // Fallback for unexpected response format
+      setResult(res)
+      setSendStatus('Agent execution completed')
+      return true
 
     } catch (err: any) {
+      console.error('handleRun error:', err)
       setResult({ error: err.message })
+      setSendStatus(`❌ Execution failed: ${err.message}`)
+      return false
+    } finally {
       setLoading(false)
       setIsLiveExecution(false)
     }
+  }
+
+  // Simplified handleSaveConfiguration that just calls handleRun in configure mode
+  const handleSaveConfiguration = async () => {
+    return await handleRun(false)
   }
 
   const handleDownloadPDF = () => {
@@ -954,7 +964,7 @@ export function useAgentSandbox({
     const reader = new FileReader()
     reader.onload = () => {
       const base64 = reader.result?.toString()
-      handleInputChange(name, base64)
+      handleInputChange(name, base64) // This only updates local state now
     }
     reader.readAsDataURL(file)
   }

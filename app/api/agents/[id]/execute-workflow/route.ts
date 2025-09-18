@@ -7,8 +7,81 @@ import { pluginRegistry } from '@/lib/plugins/pluginRegistry'
 export const runtime = 'nodejs'
 
 interface WorkflowExecutionRequest {
-  inputVariables: Record<string, any>
+  inputVariables?: Record<string, any>
   testMode?: boolean
+  useConfiguration?: boolean // NEW: Flag to use saved configuration
+}
+
+// NEW: Function to merge saved configuration with provided input variables
+async function getEffectiveInputVariables(
+  supabase: any,
+  agentId: string,
+  userId: string,
+  providedInputVariables: Record<string, any> = {},
+  useConfiguration: boolean = false
+): Promise<Record<string, any>> {
+  // If not using configuration or no provided variables, return as-is
+  if (!useConfiguration && Object.keys(providedInputVariables).length > 0) {
+    return providedInputVariables
+  }
+
+  // Try to get the most recent saved configuration for this agent
+  const { data: savedExecution, error } = await supabase
+    .from('agent_execution')
+    .select('input_values')
+    .eq('agent_id', agentId)
+    .eq('user_id', userId)
+    .eq('status', 'configured') // Only get successfully configured executions
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single()
+
+  if (error || !savedExecution?.input_values) {
+    console.log('No saved configuration found, using provided variables')
+    return providedInputVariables
+  }
+
+  const savedInputValues = savedExecution.input_values
+
+  // Merge: provided variables take precedence over saved ones
+  const mergedInputVariables = {
+    ...savedInputValues,
+    ...providedInputVariables
+  }
+
+  console.log('Merged input variables from saved configuration:', {
+    savedKeys: Object.keys(savedInputValues),
+    providedKeys: Object.keys(providedInputVariables),
+    finalKeys: Object.keys(mergedInputVariables)
+  })
+
+  return mergedInputVariables
+}
+
+// NEW: Function to save execution configuration
+async function saveExecutionConfiguration(
+  supabase: any,
+  agentId: string,
+  userId: string,
+  inputVariables: Record<string, any>,
+  executionId: string
+): Promise<void> {
+  const { error } = await supabase
+    .from('agent_execution')
+    .insert({
+      id: executionId + '_config',
+      agent_id: agentId,
+      user_id: userId,
+      input_values: inputVariables,
+      status: 'configured',
+      created_at: new Date().toISOString()
+    })
+
+  if (error) {
+    console.error('Failed to save execution configuration:', error)
+  } else {
+    console.log('Execution configuration saved successfully')
+  }
 }
 
 interface WorkflowStep {
@@ -143,7 +216,6 @@ function findDataInContext(context: Record<string, any>, phaseType: 'input' | 'p
     
     if (value && typeof value === 'object') {
       if (phaseType === 'input') {
-        // Check for input data structures
         const hasInputData = value.emails || value.emailsReturned || value.documents || value.data || value.files
         console.log(`Input data check for ${key}:`, {
           hasEmails: !!value.emails,
@@ -183,7 +255,6 @@ function findDataInContext(context: Record<string, any>, phaseType: 'input' | 'p
   return null
 }
 
-// ADDED: Helper function to generate formatted result like the old mechanism
 function generateFormattedResult(
   results: any[],
   inputVariables: Record<string, any>,
@@ -191,16 +262,13 @@ function generateFormattedResult(
 ): string {
   let formattedResult = ''
   
-  // Find the process step result (usually step 2 in your workflow)
   const processStep = results.find(r => r.phase === 'process' && r.result?.response)
   
   if (processStep?.result?.response) {
     formattedResult = processStep.result.response
   } else {
-    // Fallback: construct from available data
     formattedResult = `### Agent Execution Summary\n\n`
     
-    // Add input information
     if (Object.keys(inputVariables).length > 0) {
       formattedResult += `**Input Variables:**\n`
       Object.entries(inputVariables).forEach(([key, value]) => {
@@ -209,7 +277,6 @@ function generateFormattedResult(
       formattedResult += `\n`
     }
     
-    // Add results from each step
     results.forEach((result, index) => {
       if (result.result && !result.error) {
         formattedResult += `**Step ${result.stepId} (${result.pluginKey}):** ${result.action}\n`
@@ -259,15 +326,60 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     console.log('Authenticated user:', user.email)
 
     const agentId = (await params).id
-    const { inputVariables = {}, testMode = false }: WorkflowExecutionRequest = await req.json()
-    const startTime = Date.now()
+    const { 
+      inputVariables: providedInputVariables = {}, 
+      testMode = false, 
+      useConfiguration = false 
+    }: WorkflowExecutionRequest = await req.json()
     
-    // Generate execution ID for tracking
+    const startTime = Date.now()
     const executionId = `workflow_${agentId}_${Date.now()}`
     
     console.log(`Starting workflow execution for agent ${agentId}`)
-    console.log('Input variables:', Object.keys(inputVariables))
+    console.log('Provided input variables:', Object.keys(providedInputVariables))
+    console.log('Use configuration:', useConfiguration)
     
+    // Fetch agent
+    const { data: agent, error } = await supabase
+      .from('agents')
+      .select('*')
+      .eq('id', agentId)
+      .eq('user_id', user.id)
+      .single()
+
+    if (error || !agent) {
+      console.log('Agent lookup error:', error)
+      throw new Error(`Agent not found: ${agentId}`)
+    }
+
+    console.log(`Found agent: ${agent.agent_name}`)
+
+    // NEW: Get effective input variables (merge saved + provided)
+    const effectiveInputVariables = await getEffectiveInputVariables(
+      supabase,
+      agentId,
+      user.id,
+      providedInputVariables,
+      useConfiguration
+    )
+
+    console.log('Effective input variables:', Object.keys(effectiveInputVariables))
+
+    // NEW: If this is a configuration save request (not test mode and has input variables)
+    if (!testMode && Object.keys(effectiveInputVariables).length > 0) {
+      console.log('Saving execution configuration...')
+      await saveExecutionConfiguration(supabase, agentId, user.id, effectiveInputVariables, executionId)
+      
+      return NextResponse.json({
+        success: true,
+        configurationSaved: true,
+        agentId,
+        executionId,
+        savedConfiguration: effectiveInputVariables,
+        message: 'Agent configuration saved successfully'
+      })
+    }
+
     // Initialize execution tracking
     console.log(`Starting execution tracking for: ${executionId}`)
     
@@ -287,22 +399,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       console.log('Execution record created successfully')
     }
     
-    // Fetch agent
-    const { data: agent, error } = await supabase
-      .from('agents')
-      .select('*')
-      .eq('id', agentId)
-      .eq('user_id', user.id)
-      .single()
-
-    if (error || !agent) {
-      console.log('Agent lookup error:', error)
-      throw new Error(`Agent not found: ${agentId}`)
-    }
-
-    console.log(`Found agent: ${agent.agent_name}`)
-
-    // ADDED: Check if this is a complex AI agent that needs advanced processing
+    // Check if this is a complex AI agent that needs advanced processing
     const isComplexAIAgent = (
       agent.user_prompt && 
       agent.user_prompt.length > 200 &&
@@ -317,18 +414,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       console.log('Using advanced AI system for complex agent')
       
       try {
-        // Import the advanced system
         const { runAgentWithContext } = await import('@/lib/utils/runAgentWithContext')
         
         const advancedResult = await runAgentWithContext({
           supabase,
           agent,
           userId: user.id,
-          input_variables: inputVariables,
+          input_variables: effectiveInputVariables, // Use effective variables
           override_user_prompt: null
         })
         
-        // Log the result like the workflow system does
         const { data: logData, error: logInsertError } = await supabase
           .from('agent_logs')
           .insert({
@@ -352,14 +447,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           })
         }
 
-        // Update execution record
         await supabase.from('agent_executions').update({
           status: 'completed',
           duration_ms: Date.now() - startTime,
           completed_at: new Date().toISOString()
         }).eq('id', executionId)
 
-        // Update agent stats
         await supabase.rpc('increment_agent_stats', {
           agent_id_input: agentId,
           user_id_input: user.id,
@@ -378,11 +471,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         
       } catch (advancedError) {
         console.error('Advanced AI system failed, falling back to workflow:', advancedError)
-        // Continue with normal workflow execution below
       }
     }
 
-    // Continue with normal workflow execution for simple agents or if advanced system failed
+    // Continue with normal workflow execution
     const workflowSteps = agent.workflow_steps || []
     if (workflowSteps.length === 0) {
       throw new Error('No workflow steps defined for this agent')
@@ -391,7 +483,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const sortedSteps = [...workflowSteps].sort((a, b) => a.id - b.id)
     console.log(`Executing ${sortedSteps.length} workflow steps:`, sortedSteps.map(s => `${s.id}:${s.pluginKey}`))
 
-    // Log workflow start
     const { error: startLogError } = await supabase.from('agent_execution_logs').insert({
       execution_id: executionId,
       agent_id: agentId,
@@ -410,11 +501,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const results: any[] = []
     let finalResult: any = null
 
-    // Execute steps sequentially
+    // Execute steps sequentially using effective input variables
     for (const [stepIndex, step] of sortedSteps.entries()) {
       console.log(`Executing step ${step.id}: ${step.action} (${step.pluginKey})`)
 
-      // Log step start
       const { error: stepStartLogError } = await supabase.from('agent_execution_logs').insert({
         execution_id: executionId,
         agent_id: agentId,
@@ -429,7 +519,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         console.error('Failed to insert step start log:', stepStartLogError)
       }
 
-      const stepParameters = buildStepParameters(step, inputVariables, executionContext, agent.input_schema || [])
+      const stepParameters = buildStepParameters(step, effectiveInputVariables, executionContext, agent.input_schema || [])
 
       if (step.pluginKey === 'chatgpt-research' && agent?.user_prompt) {
          stepParameters.userPrompt = agent.user_prompt
@@ -439,7 +529,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       if (!plugin) {
         const errorMsg = `Plugin not found: ${step.pluginKey}`
         
-        // Log plugin error
         const { error: pluginLogError } = await supabase.from('agent_execution_logs').insert({
           execution_id: executionId,
           agent_id: agentId,
@@ -457,7 +546,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         throw new Error(errorMsg)
       }
 
-      // Get connection
       let connection = null
       if (plugin.run) {
         const { data: connectionData } = await supabase
@@ -496,7 +584,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
         console.log(`Step ${step.id} completed successfully`)
 
-        // Log step completion
         const { error: stepCompleteLogError } = await supabase.from('agent_execution_logs').insert({
           execution_id: executionId,
           agent_id: agentId,
@@ -526,7 +613,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         results.push(errorOutput)
         executionContext[`${step.phase}_${step.pluginKey}_${step.id}_error`] = stepError.message
 
-        // Log step error
         const { error: stepErrorLogError } = await supabase.from('agent_execution_logs').insert({
           execution_id: executionId,
           agent_id: agentId,
@@ -552,10 +638,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const failedSteps = results.filter(r => r.error).length
     const overallSuccess = completedSteps > 0
 
-    // MODIFIED: Generate formatted result like the old mechanism
-    const formattedResult = generateFormattedResult(results, inputVariables, agent)
+    const formattedResult = generateFormattedResult(results, effectiveInputVariables, agent)
 
-    // Log workflow completion
     const { error: completeLogError } = await supabase.from('agent_execution_logs').insert({
       execution_id: executionId,
       agent_id: agentId,
@@ -570,7 +654,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       console.error('Failed to insert completion log:', completeLogError)
     }
 
-    // Update execution record
     const { error: updateError } = await supabase.from('agent_executions').update({
       status: overallSuccess ? (failedSteps > 0 ? 'partial' : 'completed') : 'failed',
       duration_ms: executionDuration,
@@ -581,14 +664,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       console.error('Failed to update execution completion:', updateError)
     }
 
-    // MODIFIED: Insert main agent log with formatted result like old mechanism
     console.log('Inserting agent log...')
     const { data: logData, error: logInsertError } = await supabase
       .from('agent_logs')
       .insert({
         agent_id: agentId,
         user_id: user.id,
-        // CHANGED: Use formatted result instead of JSON stringified finalResult
         run_output: formattedResult,
         full_output: { 
           workflow_results: results,
@@ -611,13 +692,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     } else {
       console.log('Agent log inserted successfully')
 
-      // Insert output context for each step result
       if (logData?.id) {
         console.log('Inserting agent output context...')
         
         const contextEntries = []
         
-        // Add overall workflow context
         contextEntries.push({
           user_id: user.id,
           source_agent_id: agentId,
@@ -632,7 +711,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           }
         })
 
-        // Add individual step results
         results.forEach(stepResult => {
           if (stepResult.result) {
             contextEntries.push({
@@ -645,14 +723,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           }
         })
         
-        // Add input variables as context
-        if (inputVariables && Object.keys(inputVariables).length > 0) {
+        if (effectiveInputVariables && Object.keys(effectiveInputVariables).length > 0) {
           contextEntries.push({
             user_id: user.id,
             source_agent_id: agentId,
             run_id: logData.id,
             context_key: 'input_variables',
-            context_data: inputVariables
+            context_data: effectiveInputVariables
           })
         }
 
@@ -670,7 +747,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       }
     }
 
-    // Update agent stats
     console.log('Updating agent_stats...')
     const { error: statsError } = await supabase.rpc('increment_agent_stats', {
       agent_id_input: agentId,
@@ -684,7 +760,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       console.log('agent_stats updated')
     }
 
-    // MODIFIED: Return response that includes the formatted result like old mechanism
     return NextResponse.json({
       success: true,
       agentId,
@@ -693,19 +768,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       completedSteps,
       failedSteps,
       results,
-      // ADDED: Include the formatted result in the response like the old mechanism
       result: formattedResult,
       finalResult,
       executionContext: testMode ? executionContext : undefined,
       executedAt: new Date().toISOString(),
       executionDuration,
-      executionMethod: 'workflow'
+      executionMethod: 'workflow',
+      usedConfiguration: useConfiguration,
+      effectiveInputVariables: testMode ? effectiveInputVariables : undefined
     })
 
   } catch (error: any) {
     console.error('Workflow execution failed:', error)
     
-    // Log critical error if we have execution context
     const agentId = (await params).id
     const executionId = `workflow_${agentId}_${Date.now()}`
     
@@ -726,7 +801,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       const { data: { user } } = await supabase.auth.getUser()
 
       if (user) {
-        // Log the critical error
         await supabase.from('agent_execution_logs').insert({
           execution_id: executionId,
           agent_id: agentId,
@@ -737,7 +811,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           phase: 'workflow'
         })
 
-        // Update execution as failed if it exists
         await supabase.from('agent_executions').update({
           status: 'failed',
           completed_at: new Date().toISOString()
