@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabaseClient'
 import Link from 'next/link'
 import AgentStatsBlock from '@/components/dashboard/AgentStatsTable'
 import AgentHistoryBlock from '@/components/dashboard/AgentHistoryBlock'
-import AgentSandbox from '@/components/dashboard/AgentSandbox'
+import AgentSandbox from '@/components/dashboard/AgentSandBox/AgentSandbox'
 import {
   Bot,
   Edit,
@@ -114,6 +114,68 @@ export default function AgentPage() {
   const [isOwner, setIsOwner] = useState(false)
   const [showSuccessNotification, setShowSuccessNotification] = useState(false)
   const [showTechDetails, setShowTechDetails] = useState(false)
+  const [isConfigured, setIsConfigured] = useState(false)
+  const [showActivationWarning, setShowActivationWarning] = useState(false)
+  const [currentFormIsComplete, setCurrentFormIsComplete] = useState(false)
+
+  // Check if agent has required configuration
+  const checkAgentConfiguration = async (agentData: Agent) => {
+    if (!user?.id || !agentData.input_schema) {
+      setIsConfigured(true) // If no input schema, consider it configured
+      return
+    }
+
+    const inputSchema = Array.isArray(agentData.input_schema) ? agentData.input_schema : []
+    const hasRequiredFields = inputSchema.some((field: any) => field.required)
+
+    if (!hasRequiredFields) {
+      setIsConfigured(true) // If no required fields, consider it configured
+      return
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('agent_executions')
+        .select('input_values, status, created_at')
+        .eq('agent_id', agentData.id)
+        .eq('user_id', user.id)
+        .in('status', ['completed', 'configured']) // Look for both statuses
+        .order('created_at', { ascending: false })
+        .limit(10) // Get more records to find configuration saves
+
+      if (error && error.code !== 'PGRST116') {
+        console.error('Error checking configuration:', error)
+        setIsConfigured(false)
+        return
+      }
+
+      if (data && data.length > 0) {
+        // Look for the most recent configuration save (marked with _configuration_save: true)
+        const configSave = data.find(record => 
+          record.input_values && 
+          record.input_values._configuration_save === true
+        )
+
+        if (configSave && configSave.input_values) {
+          // Check if all required fields have values in the saved configuration
+          const requiredFields = inputSchema.filter((field: any) => field.required)
+          const hasAllRequiredValues = requiredFields.every((field: any) => {
+            const value = configSave.input_values[field.name]
+            return value !== undefined && value !== null && value !== ''
+          })
+          
+          setIsConfigured(hasAllRequiredValues)
+        } else {
+          setIsConfigured(false)
+        }
+      } else {
+        setIsConfigured(false)
+      }
+    } catch (error) {
+      console.error('Unexpected error checking configuration:', error)
+      setIsConfigured(false)
+    }
+  }
 
   const fetchAgent = async () => {
     // Enhanced validation for agentId
@@ -157,6 +219,10 @@ export default function AgentPage() {
           setIsSharedAgent(false)
           setIsOwner(true)
           setEditedName(regularAgent.agent_name || '')
+          
+          // Check configuration status
+          await checkAgentConfiguration(regularAgent)
+          
           setLoading(false)
           return
         }
@@ -192,6 +258,7 @@ export default function AgentPage() {
         setIsSharedAgent(true)
         setIsOwner(sharedAgent.user_id === user?.id)
         setEditedName(sharedAgent.agent_name || '')
+        setIsConfigured(true) // Shared agents are always considered configured
         setLoading(false)
         return
       }
@@ -307,6 +374,12 @@ export default function AgentPage() {
     if (!isOwner || isSharedAgent) return
     
     const newStatus = agent?.status === 'active' ? 'inactive' : 'active'
+    
+    // Check if trying to activate an unconfigured agent
+    if (newStatus === 'active' && !isConfigured) {
+      setShowActivationWarning(true)
+      return
+    }
     
     // Only show confirmation for deactivating active agents
     if (agent?.status === 'active' && !showDeactivateConfirm) {
@@ -614,6 +687,12 @@ export default function AgentPage() {
     }
   }
 
+  const hasRequiredFields = () => {
+    if (!agent?.input_schema) return false
+    const inputSchema = Array.isArray(agent.input_schema) ? agent.input_schema : []
+    return inputSchema.some((field: any) => field.required)
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center">
@@ -676,6 +755,9 @@ export default function AgentPage() {
   const modeConfig = getModeConfig(agent.mode || 'on_demand')
   const StatusIcon = statusConfig.icon
   const ModeIcon = modeConfig.icon
+  
+  // Check if activation is blocked - improved logic
+  const canActivate = isConfigured || !hasRequiredFields() || currentFormIsComplete
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
@@ -777,6 +859,20 @@ export default function AgentPage() {
                     <span className="text-sm font-medium">{modeConfig.label}</span>
                   </div>
 
+                  {/* Configuration Status Indicator */}
+                  {!isSharedAgent && hasRequiredFields() && (
+                    <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full ${
+                      isConfigured 
+                        ? 'bg-green-100 text-green-700'
+                        : 'bg-amber-100 text-amber-700'
+                    }`}>
+                      <Settings className="h-3.5 w-3.5" />
+                      <span className="text-sm font-medium">
+                        {isConfigured ? 'Configured' : 'Needs Configuration'}
+                      </span>
+                    </div>
+                  )}
+
                   {isSharedAgent && agent.shared_at && (
                     <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-purple-100 text-purple-700">
                       <Heart className="h-3.5 w-3.5" />
@@ -815,21 +911,26 @@ export default function AgentPage() {
 
                   <button
                     onClick={() => agent?.status === 'active' ? setShowDeactivateConfirm(true) : handleToggleStatus()}
-                    disabled={actionLoading === 'toggle'}
-                    className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-xl transition-colors ${
+                    disabled={actionLoading === 'toggle' || (agent?.status !== 'active' && !canActivate)}
+                    title={!canActivate ? 'Please configure required settings first' : ''}
+                    className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                       agent.status === 'active'
                         ? 'bg-red-100 text-red-700 hover:bg-red-200'
-                        : 'bg-green-100 text-green-700 hover:bg-green-200'
+                        : canActivate
+                        ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                        : 'bg-amber-100 text-amber-700'
                     }`}
                   >
                     {actionLoading === 'toggle' ? (
                       <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
                     ) : agent.status === 'active' ? (
                       <PowerOff className="h-4 w-4" />
-                    ) : (
+                    ) : canActivate ? (
                       <Power className="h-4 w-4" />
+                    ) : (
+                      <AlertTriangle className="h-4 w-4" />
                     )}
-                    {agent.status === 'active' ? 'Pause' : 'Activate'}
+                    {agent.status === 'active' ? 'Pause' : canActivate ? 'Activate' : 'Configure First'}
                   </button>
 
                   <Link
@@ -859,6 +960,27 @@ export default function AgentPage() {
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
           {/* Main Content */}
           <div className="lg:col-span-3 space-y-8">
+            {/* Configuration Warning for unconfigured agents */}
+            {!isSharedAgent && hasRequiredFields() && !isConfigured && (
+              <div className="bg-amber-50 border-2 border-amber-200 rounded-2xl p-6">
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <Settings className="h-6 w-6 text-amber-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-semibold text-amber-900 mb-2">Configuration Required</h3>
+                    <p className="text-amber-800 mb-4">
+                      This agent has required settings that need to be configured before it can be activated. 
+                      Use the "Configure" mode in the sandbox below to set up all required fields.
+                    </p>
+                    <div className="text-sm text-amber-700 bg-amber-100 px-3 py-2 rounded-lg">
+                      💡 Switch to "Configure" mode in the sandbox and fill out all required fields to activate your agent.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Test Agent Card */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="px-6 py-5 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-slate-200">
@@ -868,7 +990,7 @@ export default function AgentPage() {
                   </div>
                   <div>
                     <h2 className="text-xl font-semibold text-slate-900">Try It Out</h2>
-                    <p className="text-slate-600 text-sm">Test your agent with custom inputs</p>
+                    <p className="text-slate-600 text-sm">Test your agent with custom inputs or configure it for activation</p>
                   </div>
                 </div>
               </div>
@@ -881,6 +1003,18 @@ export default function AgentPage() {
                   pluginsRequired={agent.plugins_required}
                   workflowSteps={agent.workflow_steps}
                   connectedPlugins={agent.connected_plugins}
+                  onFormCompletionChange={(isComplete) => {
+                    setCurrentFormIsComplete(isComplete)
+                  }}
+                  onExecutionComplete={(executionId) => {
+                    // Refresh configuration status after execution
+                    if (hasRequiredFields()) {
+                      // Small delay to ensure database write is complete
+                      setTimeout(() => {
+                        checkAgentConfiguration(agent)
+                      }, 500)
+                    }
+                  }}
                 />
               </div>
             </div>
@@ -931,20 +1065,31 @@ export default function AgentPage() {
                   <div>
                     <h3 className="text-xl font-semibold text-amber-900 mb-2">Still in Draft Mode</h3>
                     <p className="text-amber-800 mb-4">
-                      Your agent is ready but not active yet. Once you activate it, you'll see performance stats and activity here.
+                      Your agent is ready but not active yet. 
+                      {hasRequiredFields() && !isConfigured 
+                        ? ' Please configure the required settings first, then you can activate it.'
+                        : ' Once you activate it, you\'ll see performance stats and activity here.'
+                      }
                     </p>
                     {isOwner && (
                       <button
                         onClick={handleToggleStatus}
-                        disabled={actionLoading === 'toggle'}
-                        className="inline-flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-xl hover:bg-amber-700 transition-colors font-medium"
+                        disabled={actionLoading === 'toggle' || !canActivate}
+                        title={!canActivate ? 'Please configure required settings first' : ''}
+                        className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                          canActivate 
+                            ? 'bg-amber-600 text-white hover:bg-amber-700' 
+                            : 'bg-amber-300 text-amber-700'
+                        }`}
                       >
                         {actionLoading === 'toggle' ? (
                           <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                        ) : (
+                        ) : canActivate ? (
                           <Power className="h-4 w-4" />
+                        ) : (
+                          <AlertTriangle className="h-4 w-4" />
                         )}
-                        Activate Agent
+                        {canActivate ? 'Activate Agent' : 'Configure Required Settings'}
                       </button>
                     )}
                   </div>
@@ -992,6 +1137,38 @@ export default function AgentPage() {
                       <p className="text-sm text-slate-500">No tools connected</p>
                     )}
                   </div>
+
+                  {/* Configuration Status */}
+                  {!isSharedAgent && hasRequiredFields() && (
+                    <div>
+                      <label className="text-sm font-medium text-slate-700 mb-2 block">Configuration Status</label>
+                      <div className={`p-3 rounded-lg border-2 ${
+                        isConfigured 
+                          ? 'bg-green-50 border-green-200'
+                          : 'bg-amber-50 border-amber-200'
+                      }`}>
+                        <div className="flex items-center gap-2">
+                          {isConfigured ? (
+                            <>
+                              <CheckCircle className="h-4 w-4 text-green-600" />
+                              <span className="text-sm font-medium text-green-800">All Set</span>
+                            </>
+                          ) : (
+                            <>
+                              <AlertTriangle className="h-4 w-4 text-amber-600" />
+                              <span className="text-sm font-medium text-amber-800">Needs Setup</span>
+                            </>
+                          )}
+                        </div>
+                        <p className="text-xs mt-1 text-slate-600">
+                          {isConfigured 
+                            ? 'Required fields are configured'
+                            : 'Use Configure mode to set required fields'
+                          }
+                        </p>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Dates */}
                   <div className="pt-2 space-y-3 text-sm">
@@ -1129,6 +1306,33 @@ export default function AgentPage() {
           </div>
         </div>
       </div>
+
+      {/* Activation Warning Modal */}
+      {showActivationWarning && (
+        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-slate-200">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="h-6 w-6 text-amber-600" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-xl font-semibold text-slate-900 mb-2">Configuration Required</h3>
+                <p className="text-slate-600 mb-6">
+                  This agent has required fields that must be configured before activation. Please use the "Configure" mode in the sandbox to set up all required settings first.
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowActivationWarning(false)}
+                    className="flex-1 px-4 py-3 text-sm font-medium text-slate-700 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
+                  >
+                    Got It
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Share Agent Confirmation Modal - Only for owned agents */}
       {showShareConfirm && !isSharedAgent && (

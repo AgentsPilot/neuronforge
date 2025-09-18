@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabaseClient'
 import Link from 'next/link'
 import AgentStatsBlock from '@/components/dashboard/AgentStatsTable'
 import AgentHistoryBlock from '@/components/dashboard/AgentHistoryBlock'
-import AgentSandbox from '@/components/dashboard/AgentSandbox'
+import AgentSandbox from '@/components/dashboard/AgentSandBox/AgentSandbox'
 
 type Agent = {
   id: string
