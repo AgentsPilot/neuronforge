@@ -552,13 +552,12 @@ export default function VisualAgentFlow({
     return () => window.removeEventListener('resize', updateSize);
   }, []);
 
-  // REMOVED: Auto-play useEffect - no automatic execution
-  // useEffect(() => {
-  //   if (autoPlay && nodes.length > 0) {
-  //     const timer = setTimeout(handlePlay, 1000);
-  //     return () => clearTimeout(timer);
-  //   }
-  // }, [autoPlay, nodes.length]);
+  useEffect(() => {
+    if (autoPlay && nodes.length > 0) {
+      const timer = setTimeout(handlePlay, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [autoPlay, nodes.length]);
 
   const handlePlay = async () => {
     if (isPlaying) return;
@@ -842,6 +841,9 @@ export default function VisualAgentFlow({
           );
         })}
       </div>
+
+      {/* Completion Message */}
+      {/* Removed completion message */}
     </div>
   );
 }

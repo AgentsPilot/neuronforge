@@ -270,32 +270,50 @@ Return only valid JSON with no additional text or formatting.`
       reasoning: outputInference.reasoning
     })
 
-    // Prepare agent data using standard fields
+    // 🔧 UPDATED: Create agent data structure mapped to database schema
+    // Using enhanced prompt for execution, simple prompt for reference
     const agentData = {
       user_id: user.id,
       agent_name: extracted.agent_name || 'Untitled Agent',
-      user_prompt: extracted.user_prompt,
+      
+      // Use the enhanced structured prompt for AI execution
+      user_prompt: fullPrompt, // This contains the structured version with sections
+      
       system_prompt: extracted.system_prompt || 'You are a helpful assistant.',
+      
+      // Use the simple version for description/display
       description: extracted.description || '',
+      
+      // Map to database schema fields
       plugins_required: detectedPlugins,
+      connected_plugins: detectedPlugins, // Track connected plugins separately if needed
       input_schema: extracted.input_schema || [],
-      output_schema: outputInference.outputs, // ENHANCED: Use intelligent output schema
-      status: 'draft'
+      output_schema: outputInference.outputs,
+      
+      // Additional database fields
+      status: 'draft',
+      mode: extracted.schedule ? 'scheduled' : 'on_demand',
+      schedule_cron: extracted.schedule || null,
+      
+      // Store the AI-generated simple prompt for reference
+      created_from_prompt: extracted.user_prompt,
+      
+      // Store AI generation metadata
+      ai_reasoning: outputInference.reasoning,
+      ai_confidence: Math.round((outputInference.confidence || 0) * 100),
+      ai_generated_at: new Date().toISOString(),
+      
+      // Store workflow and error handling
+      workflow_steps: extracted.workflow_steps || null,
+      trigger_conditions: extracted.error_notifications ? {
+        error_handling: extracted.error_notifications
+      } : null,
+      
+      // Store additional metadata
+      detected_categories: detectedPlugins.map(plugin => ({ plugin, detected: true }))
     }
 
-    // Save agent to database
-    const { data: newAgent, error } = await supabase
-      .from('agents')
-      .insert(agentData)
-      .select()
-      .single()
-
-    if (error) {
-      console.error('❌ Database error:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
-
-    console.log('✅ Agent created successfully:', newAgent.id)
+    console.log('✅ Agent data prepared (NOT saved to DB):', agentData.agent_name)
     
     // Log the enhanced extraction for debugging
     console.log('📊 Enhanced extraction captured:', {
@@ -306,8 +324,10 @@ Return only valid JSON with no additional text or formatting.`
       outputFormat: extracted.output_format || null
     })
     
+    // 🔧 FIXED: Return agent data WITHOUT database ID 
+    // The agent will only get saved when user clicks "Create Agent"
     return NextResponse.json({ 
-      agent: newAgent,
+      agent: agentData, // Return the structure, but no DB save
       // Return the enhanced data for frontend processing (not stored in DB)
       extraction_details: {
         detected_plugins: detectedPlugins,

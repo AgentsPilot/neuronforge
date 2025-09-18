@@ -164,19 +164,6 @@ export default function AgentPromptBar() {
         </button>
         
         <div className="w-px h-8 bg-gradient-to-b from-transparent via-gray-300 to-transparent"></div>
-        
-        <button
-          onClick={() => {
-            // FIXED: Also clear storage when going to classic wizard
-            clearAgentBuilderStorage()
-            router.push('/agents/new')
-          }}
-          className="group flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-gray-50 to-slate-50 text-gray-700 border-2 border-gray-200 rounded-xl font-medium hover:border-gray-300 hover:from-gray-100 hover:to-slate-100 transition-all duration-200 hover:shadow-md"
-        >
-          <Bot className="w-4 w-4 transition-transform group-hover:scale-110" />
-          <span>Classic Wizard</span>
-          <ArrowRight className="w-3 h-3 opacity-60 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" />
-        </button>
       </div>
 
       {/* Example Prompts */}

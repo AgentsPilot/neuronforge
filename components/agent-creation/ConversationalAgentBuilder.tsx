@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Bot,
   User,
@@ -18,7 +18,10 @@ import {
   ArrowRight,
   Clock,
   Zap,
-  Settings
+  Settings,
+  HelpCircle,
+  ChevronDown,
+  Info
 } from 'lucide-react';
 import QuestionRenderer from './QuestionRenderer';
 import { useConversationalBuilder } from './useConversationalBuilder';
@@ -28,6 +31,105 @@ import { ClarificationQuestion, ConversationalAgentBuilderProps } from './types'
 interface EnhancedConversationalAgentBuilderProps extends ConversationalAgentBuilderProps {
   onReturnToSmartBuilder?: () => void;
 }
+
+// Inline Guide Banner Component
+const InlineGuideBanner = ({ currentStep, onDismiss, isVisible }) => {
+  const stepGuides = {
+    'start': {
+      title: 'Welcome! Start by describing your automation',
+      message: 'Tell me what you want your agent to do in the chat below. Be as detailed as you like.',
+      icon: MessageSquare,
+      color: 'blue'
+    },
+    'questions': {
+      title: 'Please answer the questions to clarify your needs',
+      message: 'I need a few more details to build the perfect agent for you.',
+      icon: HelpCircle,
+      color: 'yellow'
+    },
+    'processing': {
+      title: 'Creating your enhanced plan...',
+      message: 'Analyzing your responses and building a detailed automation plan.',
+      icon: Settings,
+      color: 'purple'
+    },
+    'review': {
+      title: 'Review your enhanced plan',
+      message: 'Perfect! Check the plan below. You can edit it, approve it, or go back to your original idea.',
+      icon: Eye,
+      color: 'green'
+    },
+    'ready': {
+      title: 'Ready to build your agent!',
+      message: 'Your plan is complete. Click "Continue" in the top-right to start building.',
+      icon: Zap,
+      color: 'emerald'
+    }
+  };
+
+  const guide = stepGuides[currentStep];
+  if (!guide || !isVisible) return null;
+
+  const Icon = guide.icon;
+
+  return (
+    <div className={`mb-4 p-4 rounded-xl border backdrop-blur-sm transition-all duration-300 ${
+      guide.color === 'blue' ? 'bg-blue-50/80 border-blue-200 text-blue-800' :
+      guide.color === 'yellow' ? 'bg-yellow-50/80 border-yellow-200 text-yellow-800' :
+      guide.color === 'purple' ? 'bg-purple-50/80 border-purple-200 text-purple-800' :
+      guide.color === 'green' ? 'bg-green-50/80 border-green-200 text-green-800' :
+      'bg-emerald-50/80 border-emerald-200 text-emerald-800'
+    }`}>
+      <div className="flex items-start gap-3">
+        <div className={`flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center ${
+          guide.color === 'blue' ? 'bg-blue-500' :
+          guide.color === 'yellow' ? 'bg-yellow-500' :
+          guide.color === 'purple' ? 'bg-purple-500' :
+          guide.color === 'green' ? 'bg-green-500' :
+          'bg-emerald-500'
+        }`}>
+          <Icon className="h-4 w-4 text-white" />
+        </div>
+        
+        <div className="flex-1">
+          <h3 className="font-semibold text-sm mb-1">{guide.title}</h3>
+          <p className="text-xs leading-relaxed opacity-90">{guide.message}</p>
+        </div>
+        
+        <button
+          onClick={onDismiss}
+          className="flex-shrink-0 text-current opacity-50 hover:opacity-70 transition-opacity"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// Progress Indicator Component
+const ProgressIndicator = ({ currentStep, steps }) => {
+  return (
+    <div className="bg-white/90 backdrop-blur-xl rounded-xl p-3 shadow-lg border border-white/20 mb-4">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-medium text-gray-600">Progress</span>
+        <span className="text-xs text-gray-500">{steps.indexOf(currentStep) + 1} of {steps.length}</span>
+      </div>
+      <div className="flex gap-2">
+        {steps.map((step, index) => (
+          <div
+            key={step}
+            className={`flex-1 h-1.5 rounded-full ${
+              index <= steps.indexOf(currentStep) 
+                ? 'bg-gradient-to-r from-blue-500 to-indigo-500' 
+                : 'bg-gray-200'
+            }`}
+          />
+        ))}
+      </div>
+    </div>
+  );
+};
 
 // Helper function to safely format timestamps
 const formatMessageTimestamp = (timestamp: any) => {
@@ -52,6 +154,17 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
     onStateChange,
     onReturnToSmartBuilder,
   } = props;
+
+  // Simple ref for messages container
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+
+  // Guide system state
+  const [showGuide, setShowGuide] = useState(true);
+  const [currentGuideStep, setCurrentGuideStep] = useState('start');
+  const guideSteps = ['start', 'questions', 'processing', 'review', 'ready'];
+  
+  // Stable reference for initialPrompt to avoid useEffect dependency issues
+  const hasInitialPrompt = useRef(!!initialPrompt);
 
   const {
     user,
@@ -84,58 +197,94 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
     onCancel,
   });
 
+  // Update guide step based on conversation state
+  useEffect(() => {
+    if (!showGuide) return;
+
+    if (projectState.isReadyToBuild && projectState.allowNavigation) {
+      setCurrentGuideStep('ready');
+    } else if (projectState.enhancedPrompt && !projectState.planApproved) {
+      setCurrentGuideStep('review');
+    } else if (projectState.conversationCompleted && !projectState.enhancedPrompt) {
+      setCurrentGuideStep('processing');
+    } else if (projectState.currentQuestionIndex >= 0) {
+      setCurrentGuideStep('questions');
+    } else if (projectState.originalPrompt && !projectState.conversationCompleted) {
+      // User has already provided initial prompt, move to questions phase
+      setCurrentGuideStep('questions');
+    } else if (!projectState.originalPrompt && !hasInitialPrompt.current) {
+      setCurrentGuideStep('start');
+    } else {
+      // If we have initialPrompt, skip the start message
+      setCurrentGuideStep('questions');
+    }
+  }, [projectState, showGuide]); // Removed initialPrompt from dependencies
+
+  const handleDismissGuide = () => {
+    setShowGuide(false);
+  };
+
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'clear':
-        return <CheckCircle className="h-4 w-4 text-green-500" />;
+        return <CheckCircle className="h-3 w-3 text-green-500" />;
       case 'partial':
-        return <AlertCircle className="h-4 w-4 text-yellow-500" />;
+        return <AlertCircle className="h-3 w-3 text-yellow-500" />;
       default:
-        return <div className="h-4 w-4 border-2 border-gray-300 rounded-full" />;
+        return <div className="h-3 w-3 border border-gray-300 rounded-full" />;
     }
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
-      {/* Modern Header with Glassmorphism */}
-      <div className="sticky top-0 z-50 backdrop-blur-xl bg-white/80 border-b border-white/20 shadow-lg">
-        <div className="max-w-7xl mx-auto px-6 py-4">
+      {/* Compact Header */}
+      <div className="sticky top-0 z-40 backdrop-blur-xl bg-white/80 border-b border-white/20 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 py-2">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
               <div className="relative">
-                <div className="w-12 h-12 bg-gradient-to-br from-blue-500 via-purple-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
-                  <Bot className="h-7 w-7 text-white" />
+                <div className="w-8 h-8 bg-gradient-to-br from-blue-500 via-purple-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-md">
+                  <Bot className="h-4 w-4 text-white" />
                 </div>
-                <div className="absolute -top-1 -right-1 w-4 h-4 bg-green-400 rounded-full border-2 border-white animate-pulse"></div>
+                <div className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-green-400 rounded-full border border-white"></div>
               </div>
               <div>
-                <h1 className="text-2xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">
+                <h1 className="text-lg font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">
                   AI Agent Builder
                 </h1>
-                <p className="text-sm text-gray-500 font-medium">Conversational Agent Creation</p>
+                <p className="text-xs text-gray-500">Conversational Agent Creation</p>
               </div>
             </div>
             
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              {/* Help Button */}
+              <button
+                onClick={() => setShowGuide(true)}
+                className="text-gray-500 hover:text-blue-600 transition-colors p-1.5 rounded-lg hover:bg-blue-50"
+                title="Show guide"
+              >
+                <HelpCircle className="h-4 w-4" />
+              </button>
+
               {projectState.isReadyToBuild && (
-                <div className="hidden md:flex items-center gap-2 px-4 py-2 bg-green-100 text-green-700 rounded-full text-sm font-medium">
-                  <CheckCircle className="h-4 w-4" />
-                  Ready to Build
+                <div className="hidden md:flex items-center gap-1.5 px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium animate-pulse">
+                  <CheckCircle className="h-3 w-3" />
+                  Ready
                 </div>
               )}
               {onReturnToSmartBuilder && projectState.allowNavigation && (
                 <button 
                   onClick={onReturnToSmartBuilder} 
-                  className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-6 py-2.5 rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all duration-200 flex items-center gap-2 shadow-lg font-medium"
+                  className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-4 py-1.5 rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all duration-200 flex items-center gap-1.5 shadow-md text-xs font-medium animate-pulse ring-2 ring-blue-300"
                 >
-                  <ArrowRight className="h-4 w-4" />
-                  Continue to Builder
+                  <ArrowRight className="h-3 w-3" />
+                  Continue
                 </button>
               )}
               {onCancel && (
                 <button 
                   onClick={onCancel} 
-                  className="text-gray-500 hover:text-gray-700 transition-colors px-4 py-2 rounded-xl hover:bg-white/50"
+                  className="text-gray-500 hover:text-gray-700 transition-colors px-3 py-1.5 rounded-lg hover:bg-white/50 text-xs"
                 >
                   Cancel
                 </button>
@@ -143,26 +292,44 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
             </div>
           </div>
         </div>
+
+        {/* Sticky Inline Guide Banner - Part of Header */}
+        {showGuide && (
+          <div className="border-t border-white/20">
+            <div className="max-w-7xl mx-auto px-4">
+              <InlineGuideBanner 
+                currentStep={currentGuideStep}
+                onDismiss={handleDismissGuide}
+                isVisible={showGuide}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
-      <div className="max-w-7xl mx-auto p-6">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 min-h-[calc(100vh-140px)]">
-          {/* Main Chat Area - Enhanced */}
-          <div className="lg:col-span-2 flex flex-col">
-            <div className="bg-white/70 backdrop-blur-xl rounded-3xl shadow-xl border border-white/20 flex-1 flex flex-col overflow-hidden">
+      {/* Main Content */}
+      <div className="max-w-7xl mx-auto p-4">
+        {/* Progress Indicator */}
+        <ProgressIndicator currentStep={currentGuideStep} steps={guideSteps} />
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          
+          {/* Main Chat Area */}
+          <div className="lg:col-span-2">
+            <div className="bg-white/70 backdrop-blur-xl rounded-2xl shadow-lg border border-white/20 flex flex-col overflow-hidden h-[calc(100vh-120px)]">
               
-              {/* Enhanced Review Mode Banner */}
+              {/* Compact Review Mode Banner */}
               {projectState.isInReviewMode && (
-                <div className="m-6 p-6 bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-purple-500/10 border border-blue-200/50 rounded-2xl backdrop-blur-sm">
-                  <div className="flex items-start gap-4">
-                    <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center">
-                      <Eye className="h-5 w-5 text-white" />
+                <div className="flex-shrink-0 m-3 p-3 bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-purple-500/10 border border-blue-200/50 rounded-xl backdrop-blur-sm">
+                  <div className="flex items-start gap-3">
+                    <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center">
+                      <Eye className="h-3 w-3 text-white" />
                     </div>
                     <div>
-                      <h4 className="text-lg font-semibold text-blue-900 mb-2">Review Mode</h4>
-                      <p className="text-blue-800">
-                        You're reviewing your completed conversation. Questions are read-only. 
-                        {projectState.allowNavigation && ' You can navigate back to Smart Builder or create a new agent.'}
+                      <h4 className="text-sm font-semibold text-blue-900 mb-1">Review Mode</h4>
+                      <p className="text-xs text-blue-800">
+                        Questions are read-only. 
+                        {projectState.allowNavigation && ' Navigate back to Smart Builder when ready.'}
                       </p>
                     </div>
                   </div>
@@ -170,15 +337,18 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
               )}
 
               {/* Messages Area */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-8">
+              <div 
+                ref={messagesContainerRef}
+                className="flex-1 overflow-y-auto p-3 space-y-4"
+              >
                 {messages.map((message) => {
                   // System "question answered" chip
                   if (message.type === 'system' && message.content.startsWith('✅ Question')) {
                     return (
                       <div key={message.id} className="flex justify-center">
-                        <div className="inline-flex items-center gap-3 bg-gradient-to-r from-emerald-500/20 to-green-500/20 text-emerald-700 px-6 py-3 rounded-2xl text-sm font-semibold border border-emerald-200/50 backdrop-blur-sm shadow-sm">
-                          <div className="w-6 h-6 bg-emerald-500 rounded-full flex items-center justify-center">
-                            <CheckCircle className="h-3 w-3 text-white" />
+                        <div className="inline-flex items-center gap-2 bg-gradient-to-r from-emerald-500/20 to-green-500/20 text-emerald-700 px-3 py-1.5 rounded-lg text-xs font-medium border border-emerald-200/50 backdrop-blur-sm">
+                          <div className="w-4 h-4 bg-emerald-500 rounded-full flex items-center justify-center">
+                            <CheckCircle className="h-2 w-2 text-white" />
                           </div>
                           Question Completed
                         </div>
@@ -186,7 +356,7 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
                     );
                   }
 
-                  // System question payload -> render interactive block (WITH READ-ONLY SUPPORT)
+                  // System question payload -> render interactive block
                   if (message.type === 'system' && message.content.startsWith('{')) {
                     try {
                       const question = JSON.parse(message.content) as ClarificationQuestion;
@@ -206,13 +376,13 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
                       );
                     } catch (e) {
                       return (
-                        <div key={message.id} className="flex gap-4 justify-start">
-                          <div className="w-12 h-12 bg-gradient-to-br from-red-500 to-red-600 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-lg">
-                            <AlertCircle className="h-5 w-5 text-white" />
+                        <div key={message.id} className="flex gap-3 justify-start">
+                          <div className="w-8 h-8 bg-gradient-to-br from-red-500 to-red-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-md">
+                            <AlertCircle className="h-4 w-4 text-white" />
                           </div>
                           <div className="flex-1 max-w-2xl">
-                            <div className="bg-gradient-to-br from-red-50 to-red-50 border-2 border-red-200 rounded-2xl p-6 shadow-sm">
-                              <p className="text-red-800 font-medium">Error loading question. Please try again.</p>
+                            <div className="bg-gradient-to-br from-red-50 to-red-50 border border-red-200 rounded-lg p-3 shadow-sm">
+                              <p className="text-red-800 text-sm font-medium">Error loading question. Please try again.</p>
                             </div>
                           </div>
                         </div>
@@ -222,40 +392,40 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
 
                   // Regular AI/User message bubble
                   return (
-                    <div key={message.id} className={`flex gap-4 ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div key={message.id} className={`flex gap-3 ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
                       {message.type === 'ai' && (
                         <div className="flex-shrink-0">
-                          <div className="w-12 h-12 bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg">
-                            <Bot className="h-6 w-6 text-white" />
+                          <div className="w-8 h-8 bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-600 rounded-lg flex items-center justify-center shadow-md">
+                            <Bot className="h-4 w-4 text-white" />
                           </div>
                         </div>
                       )}
 
-                      <div className={`max-w-2xl relative ${message.type === 'user' ? 'ml-16' : 'mr-16'}`}>
+                      <div className={`max-w-2xl relative ${message.type === 'user' ? 'ml-12' : 'mr-12'}`}>
                         <div
-                          className={`rounded-3xl px-6 py-4 shadow-lg backdrop-blur-sm relative border ${
+                          className={`rounded-xl px-3 py-2 shadow-md backdrop-blur-sm relative border text-sm ${
                             message.type === 'user'
                               ? `bg-gradient-to-br from-blue-600 to-indigo-700 text-white border-blue-600 ${
-                                  message.isQuestionAnswer ? 'ring-2 ring-green-300 ring-offset-2' : ''
+                                  message.isQuestionAnswer ? 'ring-1 ring-green-300 ring-offset-1' : ''
                                 }`
                               : message.content.includes('🚨 MISSING SERVICES:') ||
                                 (message.content.includes('FYI:') &&
                                   (message.content.includes("service isn't connected") || message.content.includes("services aren't connected")))
-                              ? 'bg-gradient-to-br from-yellow-50 to-orange-50 text-orange-900 border-2 border-orange-300 shadow-lg'
+                              ? 'bg-gradient-to-br from-yellow-50 to-orange-50 text-orange-900 border border-orange-300'
                               : 'bg-white/80 text-gray-800 border-white/30 hover:bg-white/90 transition-colors'
                           }`}
                         >
                           {message.isQuestionAnswer && (
-                            <div className="absolute -top-2 -right-2 w-7 h-7 bg-gradient-to-br from-emerald-400 to-green-500 rounded-full flex items-center justify-center shadow-lg">
-                              <CheckCircle className="h-4 w-4 text-white" />
+                            <div className="absolute -top-1 -right-1 w-4 h-4 bg-gradient-to-br from-emerald-400 to-green-500 rounded-full flex items-center justify-center shadow-md">
+                              <CheckCircle className="h-2 w-2 text-white" />
                             </div>
                           )}
 
                           {(message.content.includes('🚨 MISSING SERVICES:') ||
                             (message.content.includes('FYI:') &&
                               (message.content.includes("service isn't connected") || message.content.includes("services aren't connected")))) && (
-                            <div className="absolute -top-2 -right-2 w-7 h-7 bg-gradient-to-br from-orange-500 to-orange-600 rounded-full flex items-center justify-center shadow-lg animate-pulse">
-                              <AlertCircle className="h-4 w-4 text-white" />
+                            <div className="absolute -top-1 -right-1 w-4 h-4 bg-gradient-to-br from-orange-500 to-orange-600 rounded-full flex items-center justify-center shadow-md animate-pulse">
+                              <AlertCircle className="h-2 w-2 text-white" />
                             </div>
                           )}
 
@@ -271,8 +441,8 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
                             {message.content}
                           </div>
 
-                          <div className={`text-xs mt-3 flex items-center gap-2 ${message.type === 'user' ? 'text-blue-100' : 'text-gray-500'}`}>
-                            <Clock className="h-3 w-3" />
+                          <div className={`text-xs mt-2 flex items-center gap-1 ${message.type === 'user' ? 'text-blue-100' : 'text-gray-500'}`}>
+                            <Clock className="h-2.5 w-2.5" />
                             {formatMessageTimestamp(message.timestamp)}
                           </div>
 
@@ -282,64 +452,64 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
                             message.content.includes('Enhanced Plan:') &&
                             !projectState.planApproved &&
                             !projectState.isInReviewMode && (
-                              <div className="mt-6 space-y-4">
+                              <div className="mt-3 space-y-2">
                                 {projectState.isEditingEnhanced ? (
-                                  <div className="bg-gray-50/90 backdrop-blur-sm rounded-2xl p-5 space-y-4 border border-gray-200/50">
-                                    <div className="flex items-center gap-2">
-                                      <Edit className="h-4 w-4 text-gray-600" />
-                                      <span className="text-sm font-medium text-gray-700">Edit your enhanced plan:</span>
+                                  <div className="bg-gray-50/90 backdrop-blur-sm rounded-lg p-3 space-y-2 border border-gray-200/50">
+                                    <div className="flex items-center gap-1.5">
+                                      <Edit className="h-3 w-3 text-gray-600" />
+                                      <span className="text-xs font-medium text-gray-700">Edit enhanced plan:</span>
                                     </div>
                                     <textarea
                                       value={projectState.editedEnhancedPrompt}
                                       onChange={(e) => setProjectState((prev) => ({ ...prev, editedEnhancedPrompt: e.target.value }))}
-                                      className="w-full px-4 py-3 bg-white/90 text-gray-900 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-purple-500 focus:border-transparent min-h-[120px] resize-none text-sm leading-relaxed backdrop-blur-sm"
+                                      className="w-full px-3 py-2 bg-white/90 text-gray-900 border border-gray-300 rounded-lg focus:ring-1 focus:ring-purple-500 focus:border-transparent min-h-[80px] resize-none text-xs leading-relaxed backdrop-blur-sm"
                                       placeholder="Edit your enhanced plan..."
                                       autoFocus
                                     />
-                                    <div className="flex gap-3">
+                                    <div className="flex gap-2">
                                       <button
                                         onClick={handleSaveEnhancedEdit}
                                         disabled={!projectState.editedEnhancedPrompt.trim()}
-                                        className="flex-1 bg-gradient-to-r from-purple-600 to-purple-700 text-white px-4 py-3 rounded-2xl hover:from-purple-700 hover:to-purple-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center gap-2 text-sm font-medium shadow-lg"
+                                        className="flex-1 bg-gradient-to-r from-purple-600 to-purple-700 text-white px-3 py-2 rounded-lg hover:from-purple-700 hover:to-purple-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center gap-1.5 text-xs font-medium shadow-md"
                                       >
-                                        <Save className="h-4 w-4" />
-                                        Save Changes
+                                        <Save className="h-3 w-3" />
+                                        Save
                                       </button>
                                       <button
                                         onClick={handleCancelEnhancedEdit}
-                                        className="px-4 py-3 bg-gray-100/90 text-gray-700 rounded-2xl hover:bg-gray-200/90 transition-colors flex items-center justify-center border border-gray-200"
+                                        className="px-3 py-2 bg-gray-100/90 text-gray-700 rounded-lg hover:bg-gray-200/90 transition-colors flex items-center justify-center border border-gray-200"
                                       >
-                                        <X className="h-4 w-4" />
+                                        <X className="h-3 w-3" />
                                       </button>
                                     </div>
                                   </div>
                                 ) : (
-                                  <div className="space-y-3">
+                                  <div className="space-y-2">
                                     <button
                                       onClick={handleApproveEnhanced}
-                                      className="w-full group bg-gradient-to-r from-emerald-500 to-green-600 text-white px-6 py-4 rounded-2xl hover:from-emerald-600 hover:to-green-700 transition-all duration-200 flex items-center justify-center gap-3 font-semibold shadow-lg transform hover:scale-[1.02]"
+                                      className="w-full group bg-gradient-to-r from-emerald-500 to-green-600 text-white px-4 py-2.5 rounded-lg hover:from-emerald-600 hover:to-green-700 transition-all duration-200 flex items-center justify-center gap-2 font-medium shadow-md transform hover:scale-[1.01] text-sm"
                                     >
-                                      <div className="w-8 h-8 bg-white/20 rounded-xl flex items-center justify-center">
-                                        <CheckCircle className="h-5 w-5" />
+                                      <div className="w-5 h-5 bg-white/20 rounded-lg flex items-center justify-center">
+                                        <CheckCircle className="h-3 w-3" />
                                       </div>
                                       Use Enhanced Plan
-                                      <ChevronRight className="h-4 w-4 group-hover:translate-x-1 transition-transform" />
+                                      <ChevronRight className="h-3 w-3 group-hover:translate-x-0.5 transition-transform" />
                                     </button>
                                     
-                                    <div className="grid grid-cols-2 gap-3">
+                                    <div className="grid grid-cols-2 gap-2">
                                       <button
                                         onClick={handleEditEnhanced}
-                                        className="bg-white/90 text-gray-700 px-4 py-3 rounded-2xl hover:bg-white transition-all duration-200 flex items-center justify-center gap-2 font-medium shadow-sm border border-gray-200"
+                                        className="bg-white/90 text-gray-700 px-3 py-2 rounded-lg hover:bg-white transition-all duration-200 flex items-center justify-center gap-1.5 font-medium shadow-sm border border-gray-200 text-xs"
                                       >
-                                        <Edit className="h-4 w-4" />
-                                        Edit Plan
+                                        <Edit className="h-3 w-3" />
+                                        Edit
                                       </button>
                                       <button
                                         onClick={handleUseOriginal}
-                                        className="bg-gray-600/90 text-white px-4 py-3 rounded-2xl hover:bg-gray-700 transition-all duration-200 flex items-center justify-center gap-2 font-medium shadow-sm"
+                                        className="bg-gray-600/90 text-white px-3 py-2 rounded-lg hover:bg-gray-700 transition-all duration-200 flex items-center justify-center gap-1.5 font-medium shadow-sm text-xs"
                                       >
-                                        <MessageSquare className="h-4 w-4" />
-                                        Use Original
+                                        <MessageSquare className="h-3 w-3" />
+                                        Original
                                       </button>
                                     </div>
                                   </div>
@@ -351,8 +521,8 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
 
                       {message.type === 'user' && (
                         <div className="flex-shrink-0">
-                          <div className="w-12 h-12 bg-gradient-to-br from-gray-400 to-gray-600 rounded-2xl flex items-center justify-center shadow-lg">
-                            <User className="h-6 w-6 text-white" />
+                          <div className="w-8 h-8 bg-gradient-to-br from-gray-400 to-gray-600 rounded-lg flex items-center justify-center shadow-md">
+                            <User className="h-4 w-4 text-white" />
                           </div>
                         </div>
                       )}
@@ -361,18 +531,18 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
                 })}
 
                 {isProcessing && (
-                  <div className="flex gap-4 justify-start">
-                    <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
-                      <Bot className="h-6 w-6 text-white" />
+                  <div className="flex gap-3 justify-start">
+                    <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-md">
+                      <Bot className="h-4 w-4 text-white" />
                     </div>
-                    <div className="bg-white/80 backdrop-blur-sm border border-white/30 rounded-3xl px-6 py-4 mr-16 shadow-lg">
-                      <div className="flex items-center gap-4">
+                    <div className="bg-white/80 backdrop-blur-sm border border-white/30 rounded-lg px-3 py-2 mr-12 shadow-md">
+                      <div className="flex items-center gap-3">
                         <div className="flex space-x-1">
-                          <div className="w-3 h-3 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                          <div className="w-3 h-3 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                          <div className="w-3 h-3 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                          <div className="w-2 h-2 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                          <div className="w-2 h-2 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                          <div className="w-2 h-2 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                         </div>
-                        <span className="text-gray-700 font-medium">AI is thinking...</span>
+                        <span className="text-gray-700 text-sm font-medium">AI thinking...</span>
                       </div>
                     </div>
                   </div>
@@ -380,122 +550,93 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
 
                 <div ref={messagesEndRef} />
               </div>
-
-              {/* Input (kept hidden like original) */}
-              {false && (
-                <div className="border-t border-gray-200 p-4">
-                  <div className="flex gap-3">
-                    <div className="flex-1 relative">
-                      <input
-                        type="text"
-                        value={inputValue}
-                        onChange={(e) => setInputValue(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                        placeholder="Describe what you want your agent to do..."
-                        className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-12"
-                        disabled={isProcessing || projectState.currentQuestionIndex >= 0}
-                      />
-                    </div>
-                    <button
-                      onClick={handleSendMessage}
-                      disabled={!inputValue.trim() || isProcessing || projectState.currentQuestionIndex >= 0}
-                      className="bg-blue-600 text-white p-3 rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                      <Send className="h-5 w-5" />
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
 
-          {/* Enhanced Sidebar */}
-          <div className="space-y-6">
+          {/* Compact Sidebar */}
+          <div className="space-y-3">
+            
             {/* Progress Card */}
-            <div className="bg-white/70 backdrop-blur-xl rounded-3xl p-6 shadow-xl border border-white/20">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl flex items-center justify-center">
-                  <Brain className="h-5 w-5 text-white" />
+            <div className="bg-white/70 backdrop-blur-xl rounded-2xl p-4 shadow-lg border border-white/20">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-6 h-6 bg-gradient-to-br from-purple-500 to-pink-500 rounded-lg flex items-center justify-center">
+                  <Brain className="h-3 w-3 text-white" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-800">Understanding Progress</h3>
-                  <p className="text-sm text-gray-500">AI comprehension level</p>
+                  <h3 className="text-sm font-semibold text-gray-800">Progress</h3>
+                  <p className="text-xs text-gray-500">AI comprehension</p>
                 </div>
               </div>
 
-              <div className="space-y-4">
+              <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-gray-600 font-medium">Clarity Score</span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
-                      {projectState.clarityScore}%
-                    </span>
-                  </div>
+                  <span className="text-gray-600 text-sm font-medium">Clarity</span>
+                  <span className="text-lg font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+                    {projectState.clarityScore}%
+                  </span>
                 </div>
 
-                <div className="w-full bg-gray-200/50 rounded-full h-3 overflow-hidden">
+                <div className="w-full bg-gray-200/50 rounded-full h-2 overflow-hidden">
                   <div 
-                    className="bg-gradient-to-r from-purple-500 via-pink-500 to-purple-600 h-full rounded-full transition-all duration-1000 ease-out shadow-sm"
+                    className="bg-gradient-to-r from-purple-500 via-pink-500 to-purple-600 h-full rounded-full transition-all duration-1000 ease-out"
                     style={{ width: `${projectState.clarityScore}%` }}
                   />
                 </div>
 
                 {projectState.questionsSequence.length > 0 && (
-                  <div className="text-sm text-gray-600">
+                  <div className="text-xs text-gray-600">
                     Question {Math.max(0, projectState.currentQuestionIndex + 1)} of {projectState.questionsSequence.length}
-                    {projectState.isProcessingQuestion && <span className="ml-2 text-blue-600">(processing...)</span>}
+                    {projectState.isProcessingQuestion && <span className="ml-1 text-blue-600">(processing...)</span>}
                   </div>
                 )}
 
                 {projectState.isReadyToBuild && (
-                  <div className="flex items-center gap-3 p-3 bg-green-50 rounded-2xl border border-green-200">
-                    <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center">
-                      <CheckCircle className="h-3 w-3 text-white" />
+                  <div className="flex items-center gap-2 p-2 bg-green-50 rounded-lg border border-green-200">
+                    <div className="w-4 h-4 bg-green-500 rounded-full flex items-center justify-center">
+                      <CheckCircle className="h-2 w-2 text-white" />
                     </div>
-                    <span className="text-green-700 font-medium">Ready to build!</span>
+                    <span className="text-green-700 text-xs font-medium">Ready to build!</span>
                   </div>
                 )}
               </div>
             </div>
 
             {/* Requirements Card */}
-            <div className="bg-white/70 backdrop-blur-xl rounded-3xl p-6 shadow-xl border border-white/20">
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-xl flex items-center justify-center">
-                    <CheckSquare className="h-5 w-5 text-white" />
+            <div className="bg-white/70 backdrop-blur-xl rounded-2xl p-4 shadow-lg border border-white/20">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-lg flex items-center justify-center">
+                    <CheckSquare className="h-3 w-3 text-white" />
                   </div>
                   <div>
-                    <h3 className="text-lg font-semibold text-gray-800">Requirements</h3>
-                    <p className="text-sm text-gray-500">
+                    <h3 className="text-sm font-semibold text-gray-800">Requirements</h3>
+                    <p className="text-xs text-gray-500">
                       {projectState.requirements.filter((r) => r.status === 'clear').length} of {projectState.requirements.length} complete
                     </p>
                   </div>
                 </div>
-                <div className="text-right">
-                  <div className="text-2xl font-bold text-blue-600">
-                    {Math.round(
-                      (projectState.requirements.filter((r) => r.status === 'clear').length / projectState.requirements.length) * 100
-                    )}%
-                  </div>
+                <div className="text-lg font-bold text-blue-600">
+                  {Math.round(
+                    (projectState.requirements.filter((r) => r.status === 'clear').length / projectState.requirements.length) * 100
+                  )}%
                 </div>
               </div>
 
-              <div className="space-y-4">
+              <div className="space-y-2">
                 {projectState.requirements.map((req, index) => (
                   <div key={req.id} className="group relative">
                     <div
-                      className={`rounded-2xl border-2 transition-all duration-300 ${
+                      className={`rounded-lg border transition-all duration-300 ${
                         req.status === 'clear'
                           ? 'border-green-200 bg-green-50/80'
                           : req.status === 'partial'
                           ? 'border-yellow-200 bg-yellow-50/80'
-                          : 'border-gray-200 bg-gray-50/50 group-hover:border-gray-300 group-hover:bg-gray-50/80'
+                          : 'border-gray-200 bg-gray-50/50 group-hover:border-gray-300'
                       }`}
                     >
-                      <div className="flex items-center p-4">
+                      <div className="flex items-center p-3">
                         <div
-                          className={`flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center transition-all ${
+                          className={`flex-shrink-0 w-5 h-5 rounded-lg flex items-center justify-center transition-all ${
                             req.status === 'clear'
                               ? 'bg-green-500'
                               : req.status === 'partial'
@@ -503,22 +644,22 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
                               : 'bg-gray-300 group-hover:bg-gray-400'
                           }`}
                         >
-                          {req.status === 'clear' && <CheckCircle className="h-4 w-4 text-white" />}
-                          {req.status === 'partial' && <AlertCircle className="h-4 w-4 text-white" />}
-                          {req.status === 'missing' && <div className="w-3 h-3 bg-white rounded-full" />}
+                          {req.status === 'clear' && <CheckCircle className="h-2.5 w-2.5 text-white" />}
+                          {req.status === 'partial' && <AlertCircle className="h-2.5 w-2.5 text-white" />}
+                          {req.status === 'missing' && <div className="w-2 h-2 bg-white rounded-full" />}
                         </div>
 
-                        <div className="ml-4 flex-1">
-                          <div className="flex items-center justify-between mb-1">
+                        <div className="ml-3 flex-1">
+                          <div className="flex items-center justify-between mb-0.5">
                             <h4
-                              className={`font-semibold ${
+                              className={`text-sm font-medium ${
                                 req.status === 'clear' ? 'text-green-800' : req.status === 'partial' ? 'text-yellow-800' : 'text-gray-700'
                               }`}
                             >
                               {req.label}
                             </h4>
                             <span
-                              className={`px-2 py-1 rounded-full text-xs font-medium ${
+                              className={`px-1.5 py-0.5 rounded-full text-xs font-medium ${
                                 req.status === 'clear'
                                   ? 'bg-green-100 text-green-700'
                                   : req.status === 'partial'
@@ -532,7 +673,7 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
 
                           {req.detected && (
                             <p className="text-xs text-gray-600 leading-relaxed">
-                              {req.detected.length > 60 ? `${req.detected.slice(0, 60)}...` : req.detected}
+                              {req.detected.length > 50 ? `${req.detected.slice(0, 50)}...` : req.detected}
                             </p>
                           )}
                         </div>
@@ -542,19 +683,18 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
                 ))}
               </div>
 
-              <div className="mt-6 pt-4 border-t border-gray-100">
-                <div className="flex items-center justify-between text-xs text-gray-600 mb-2">
-                  <span>Overall Progress</span>
+              <div className="mt-3 pt-3 border-t border-gray-100">
+                <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
+                  <span>Overall</span>
                   <span>
                     {Math.round(
                       (projectState.requirements.filter((r) => r.status === 'clear').length / projectState.requirements.length) * 100
-                    )}
-                    %
+                    )}%
                   </span>
                 </div>
-                <div className="w-full bg-gray-200/50 rounded-full h-2">
+                <div className="w-full bg-gray-200/50 rounded-full h-1.5">
                   <div
-                    className="bg-gradient-to-r from-blue-500 to-green-500 h-2 rounded-full transition-all duration-500"
+                    className="bg-gradient-to-r from-blue-500 to-green-500 h-1.5 rounded-full transition-all duration-500"
                     style={{
                       width: `${
                         (projectState.requirements.filter((r) => r.status === 'clear').length / projectState.requirements.length) * 100
@@ -567,29 +707,29 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
 
             {/* Plugin validation error */}
             {projectState.pluginValidationError && (
-              <div className="bg-white/70 backdrop-blur-xl rounded-3xl p-6 shadow-xl border border-red-200/50">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-10 h-10 bg-gradient-to-br from-red-500 to-red-600 rounded-xl flex items-center justify-center">
-                    <AlertCircle className="h-5 w-5 text-white" />
+              <div className="bg-white/70 backdrop-blur-xl rounded-2xl p-4 shadow-lg border border-red-200/50">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-6 h-6 bg-gradient-to-br from-red-500 to-red-600 rounded-lg flex items-center justify-center">
+                    <AlertCircle className="h-3 w-3 text-white" />
                   </div>
-                  <h3 className="text-lg font-semibold text-gray-800">Missing Connections</h3>
+                  <h3 className="text-sm font-semibold text-gray-800">Missing Connections</h3>
                 </div>
 
-                <div className="space-y-4">
-                  <p className="text-sm text-gray-700">Your automation requires these services:</p>
+                <div className="space-y-3">
+                  <p className="text-xs text-gray-700">Required services:</p>
 
-                  <div className="space-y-2">
+                  <div className="space-y-1">
                     {projectState.missingPlugins?.map((plugin) => (
-                      <div key={plugin} className="flex items-center gap-3 p-3 bg-red-50/80 rounded-xl border border-red-200/50">
-                        <div className="w-6 h-6 bg-red-500 rounded-lg flex items-center justify-center">
-                          <AlertCircle className="h-3 w-3 text-white" />
+                      <div key={plugin} className="flex items-center gap-2 p-2 bg-red-50/80 rounded-lg border border-red-200/50">
+                        <div className="w-4 h-4 bg-red-500 rounded-md flex items-center justify-center">
+                          <AlertCircle className="h-2 w-2 text-white" />
                         </div>
-                        <span className="text-sm font-medium text-red-800 capitalize">{plugin}</span>
+                        <span className="text-xs font-medium text-red-800 capitalize">{plugin}</span>
                       </div>
                     ))}
                   </div>
 
-                  <div className="space-y-2">
+                  <div className="space-y-1">
                     {projectState.suggestions?.map((suggestion, index) => (
                       <p key={index} className="text-xs text-gray-600 leading-relaxed">
                         • {suggestion}
@@ -597,17 +737,17 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
                     ))}
                   </div>
 
-                  <div className="grid gap-2">
+                  <div className="grid gap-1.5">
                     <button
                       onClick={() => typeof window !== 'undefined' && window.open('/settings/integrations', '_blank')}
-                      className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-4 py-3 rounded-2xl hover:from-blue-700 hover:to-indigo-700 transition-colors text-sm font-medium shadow-lg"
+                      className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-3 py-2 rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-colors text-xs font-medium shadow-md"
                     >
                       Connect Services
                     </button>
 
                     <button
                       onClick={clearPluginValidationError}
-                      className="w-full bg-gray-600 text-white px-4 py-3 rounded-2xl hover:bg-gray-700 transition-colors text-sm font-medium"
+                      className="w-full bg-gray-600 text-white px-3 py-2 rounded-lg hover:bg-gray-700 transition-colors text-xs font-medium"
                     >
                       Continue Anyway
                     </button>
@@ -618,127 +758,91 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
 
             {/* Original Request */}
             {projectState.originalPrompt && (
-              <div className="bg-gradient-to-br from-emerald-50/50 to-green-50/50 backdrop-blur-xl rounded-3xl p-6 shadow-xl border border-emerald-200/30">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-8 h-8 bg-gradient-to-br from-emerald-500 to-green-500 rounded-xl flex items-center justify-center">
-                    <MessageSquare className="h-4 w-4 text-white" />
+              <div className="bg-gradient-to-br from-emerald-50/50 to-green-50/50 backdrop-blur-xl rounded-2xl p-4 shadow-lg border border-emerald-200/30">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-5 h-5 bg-gradient-to-br from-emerald-500 to-green-500 rounded-lg flex items-center justify-center">
+                    <MessageSquare className="h-2.5 w-2.5 text-white" />
                   </div>
-                  <h3 className="text-lg font-semibold text-gray-800">Original Request</h3>
+                  <h3 className="text-sm font-semibold text-gray-800">Original Request</h3>
                 </div>
-                <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-4 border border-white/30">
-                  <p className="text-gray-700 leading-relaxed">{projectState.originalPrompt}</p>
+                <div className="bg-white/80 backdrop-blur-sm rounded-lg p-3 border border-white/30">
+                  <p className="text-gray-700 text-xs leading-relaxed">{projectState.originalPrompt}</p>
                 </div>
               </div>
             )}
 
             {/* Enhanced Plan Preview */}
             {projectState.enhancedPrompt && (
-              <div className="bg-gradient-to-br from-purple-50/50 to-indigo-50/50 backdrop-blur-xl rounded-3xl p-6 shadow-xl border border-purple-200/30">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-8 h-8 bg-gradient-to-br from-purple-500 to-indigo-500 rounded-xl flex items-center justify-center">
-                    <Sparkles className="h-4 w-4 text-white" />
+              <div className="bg-gradient-to-br from-purple-50/50 to-indigo-50/50 backdrop-blur-xl rounded-2xl p-4 shadow-lg border border-purple-200/30">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-5 h-5 bg-gradient-to-br from-purple-500 to-indigo-500 rounded-lg flex items-center justify-center">
+                    <Sparkles className="h-2.5 w-2.5 text-white" />
                   </div>
-                  <h3 className="text-lg font-semibold text-gray-800">Enhanced Plan</h3>
+                  <h3 className="text-sm font-semibold text-gray-800">Enhanced Plan</h3>
                 </div>
-                <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-4 border border-white/30">
-                  <p className="text-gray-700 leading-relaxed whitespace-pre-wrap text-sm">{projectState.enhancedPrompt}</p>
+                <div className="bg-white/80 backdrop-blur-sm rounded-lg p-3 border border-white/30">
+                  <p className="text-gray-700 text-xs leading-relaxed whitespace-pre-wrap">{projectState.enhancedPrompt}</p>
                 </div>
               </div>
             )}
 
             {/* Next Steps */}
-            <div className="bg-white/70 backdrop-blur-xl rounded-3xl p-6 shadow-xl border border-white/20">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 bg-gradient-to-br from-orange-500 to-red-500 rounded-xl flex items-center justify-center">
-                  <Target className="h-5 w-5 text-white" />
+            <div className="bg-white/70 backdrop-blur-xl rounded-2xl p-4 shadow-lg border border-white/20">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-6 h-6 bg-gradient-to-br from-orange-500 to-red-500 rounded-lg flex items-center justify-center">
+                  <Target className="h-3 w-3 text-white" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-800">Next Steps</h3>
-                  <p className="text-sm text-gray-500">What's coming up</p>
+                  <h3 className="text-sm font-semibold text-gray-800">Next Steps</h3>
+                  <p className="text-xs text-gray-500">What's coming up</p>
                 </div>
               </div>
 
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {projectState.isInReviewMode ? (
-                  <div className="flex items-center gap-3 p-4 bg-blue-50 rounded-2xl border border-blue-200">
-                    <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center">
-                      <Eye className="h-3 w-3 text-white" />
+                  <div className="flex items-center gap-2 p-2 bg-blue-50 rounded-lg border border-blue-200">
+                    <div className="w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center">
+                      <Eye className="h-2 w-2 text-white" />
                     </div>
-                    <span className="text-blue-700 font-medium">Review your conversation and return to Smart Builder when ready</span>
+                    <span className="text-blue-700 text-xs font-medium">Review complete - ready for next step</span>
                   </div>
                 ) : (
                   <>
                     {!projectState.originalPrompt && (
-                      <div className="flex items-center gap-3 p-4 bg-blue-50 rounded-2xl border border-blue-200">
-                        <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center animate-pulse">
-                          <Settings className="h-3 w-3 text-white" />
+                      <div className="flex items-center gap-2 p-2 bg-blue-50 rounded-lg border border-blue-200">
+                        <div className="w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center animate-pulse">
+                          <Settings className="h-2 w-2 text-white" />
                         </div>
-                        <span className="text-blue-700 font-medium">Describe your automation need</span>
+                        <span className="text-blue-700 text-xs font-medium">Describe your automation need</span>
                       </div>
                     )}
 
                     {projectState.originalPrompt && projectState.currentQuestionIndex >= 0 && !projectState.conversationCompleted && (
-                      <div className="flex items-center gap-3 p-4 bg-yellow-50 rounded-2xl border border-yellow-200">
-                        <div className="w-6 h-6 bg-yellow-500 rounded-full flex items-center justify-center animate-pulse">
-                          <MessageSquare className="h-3 w-3 text-white" />
+                      <div className="flex items-center gap-2 p-2 bg-yellow-50 rounded-lg border border-yellow-200">
+                        <div className="w-4 h-4 bg-yellow-500 rounded-full flex items-center justify-center animate-pulse">
+                          <MessageSquare className="h-2 w-2 text-white" />
                         </div>
-                        <span className="text-yellow-700 font-medium">
-                          Answer question {projectState.currentQuestionIndex + 1} of {projectState.questionsSequence.length}
+                        <span className="text-yellow-700 text-xs font-medium">
+                          Answer question {projectState.currentQuestionIndex + 1}/{projectState.questionsSequence.length}
                         </span>
                       </div>
                     )}
 
-                    {projectState.originalPrompt && projectState.currentQuestionIndex < 0 && !projectState.conversationCompleted && !projectState.enhancementComplete && (
-                      <div className="flex items-center gap-3 p-4 bg-yellow-50 rounded-2xl border border-yellow-200">
-                        <div className="w-6 h-6 bg-yellow-500 rounded-full flex items-center justify-center animate-pulse">
-                          <Settings className="h-3 w-3 text-white" />
-                        </div>
-                        <span className="text-yellow-700 font-medium">Analyzing your request...</span>
-                      </div>
-                    )}
-
-                    {projectState.conversationCompleted && !projectState.enhancedPrompt && (
-                      <div className="flex items-center gap-3 p-4 bg-purple-50 rounded-2xl border border-purple-200">
-                        <div className="w-6 h-6 bg-purple-500 rounded-full flex items-center justify-center animate-pulse">
-                          <Sparkles className="h-3 w-3 text-white" />
-                        </div>
-                        <span className="text-purple-700 font-medium">Creating enhanced plan...</span>
-                      </div>
-                    )}
-
-                    {projectState.enhancedPrompt && !projectState.planApproved && !projectState.isEditingEnhanced && (
-                      <div className="flex items-center gap-3 p-4 bg-purple-50 rounded-2xl border border-purple-200">
-                        <div className="w-6 h-6 bg-purple-500 rounded-full flex items-center justify-center">
-                          <Sparkles className="h-3 w-3 text-white" />
-                        </div>
-                        <span className="text-purple-700 font-medium">Review, edit, or approve your enhanced plan</span>
-                      </div>
-                    )}
-
-                    {projectState.isEditingEnhanced && (
-                      <div className="flex items-center gap-3 p-4 bg-purple-50 rounded-2xl border border-purple-200">
-                        <div className="w-6 h-6 bg-purple-500 rounded-full flex items-center justify-center animate-pulse">
-                          <Edit className="h-3 w-3 text-white" />
-                        </div>
-                        <span className="text-purple-700 font-medium">Editing your enhanced plan</span>
-                      </div>
-                    )}
-
                     {projectState.planApproved && projectState.isReadyToBuild && (
-                      <div className="flex items-center gap-3 p-4 bg-green-50 rounded-2xl border border-green-200">
-                        <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center">
-                          <Zap className="h-3 w-3 text-white" />
+                      <div className="flex items-center gap-2 p-2 bg-green-50 rounded-lg border border-green-200">
+                        <div className="w-4 h-4 bg-green-500 rounded-full flex items-center justify-center">
+                          <Zap className="h-2 w-2 text-white" />
                         </div>
-                        <span className="text-green-700 font-medium">Ready for smart build phase</span>
+                        <span className="text-green-700 text-xs font-medium">Ready for smart build phase</span>
                       </div>
                     )}
 
                     {isProcessing && (
-                      <div className="flex items-center gap-3 p-4 bg-blue-50 rounded-2xl border border-blue-200">
-                        <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center animate-pulse">
-                          <Settings className="h-3 w-3 text-white" />
+                      <div className="flex items-center gap-2 p-2 bg-blue-50 rounded-lg border border-blue-200">
+                        <div className="w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center animate-pulse">
+                          <Settings className="h-2 w-2 text-white" />
                         </div>
-                        <span className="text-blue-700 font-medium">Processing...</span>
+                        <span className="text-blue-700 text-xs font-medium">Processing...</span>
                       </div>
                     )}
                   </>

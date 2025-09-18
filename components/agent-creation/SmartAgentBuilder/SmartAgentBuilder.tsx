@@ -68,6 +68,250 @@ interface SmartAgentBuilderPropsWithPersistence extends SmartAgentBuilderProps {
   }) => void;
 }
 
+// Agent validation function
+const validateAgent = (agent: Agent): string | null => {
+  if (!agent.agent_name?.trim()) {
+    return 'Agent name is required';
+  }
+  if (!agent.user_prompt?.trim()) {
+    return 'User prompt is required';
+  }
+  if (agent.agent_name.length > 100) {
+    return 'Agent name must be less than 100 characters';
+  }
+  if (agent.user_prompt.length > 5000) {
+    return 'User prompt must be less than 5000 characters';
+  }
+  return null;
+};
+
+// Debug Panel Component
+const DebugPanel = ({ agent, prompt, promptType, clarificationAnswers, isEditing, editedAgent, sessionId }) => {
+  const [showDebug, setShowDebug] = useState(false);
+  const [activeTab, setActiveTab] = useState('agent');
+
+  const debugData = {
+    agent: agent,
+    editedAgent: editedAgent,
+    prompt: prompt,
+    promptType: promptType,
+    clarificationAnswers: clarificationAnswers,
+    sessionId: sessionId,
+    isEditing: isEditing,
+    currentAgent: isEditing ? editedAgent : agent
+  };
+
+  const tabs = [
+    { id: 'agent', label: 'Agent Data', icon: Brain },
+    { id: 'input', label: 'Input Schema', icon: Settings },
+    { id: 'plugins', label: 'Plugins', icon: Zap },
+    { id: 'prompts', label: 'Prompts', icon: MessageSquare },
+    { id: 'full', label: 'Full JSON', icon: Code2 }
+  ];
+
+  return (
+    <div className="bg-gray-900/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-gray-700/50 overflow-hidden">
+      <div className="p-4 border-b border-gray-700/50">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 bg-green-500 rounded-lg flex items-center justify-center">
+              <Code className="h-4 w-4 text-white" />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold text-white">Debug Panel</h3>
+              <p className="text-xs text-gray-400">Real-time data inspection</p>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowDebug(!showDebug)}
+            className="text-gray-400 hover:text-white transition-colors p-2 rounded-lg hover:bg-gray-800"
+          >
+            {showDebug ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
+          </button>
+        </div>
+      </div>
+
+      {showDebug && (
+        <div className="p-4">
+          {/* Tab Navigation */}
+          <div className="flex flex-wrap gap-2 mb-4 border-b border-gray-700/50 pb-4">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`
+                    px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all
+                    ${activeTab === tab.id 
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                    }
+                  `}
+                >
+                  <Icon className="h-4 w-4" />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Tab Content */}
+          <div className="max-h-96 overflow-auto">
+            {activeTab === 'agent' && (
+              <div className="space-y-4">
+                <div className="bg-gray-800/50 rounded-lg p-4">
+                  <h4 className="text-white font-medium mb-2 flex items-center gap-2">
+                    <Database className="h-4 w-4 text-blue-400" />
+                    Agent Structure (Database Fields)
+                  </h4>
+                  <pre className="text-xs text-green-400 whitespace-pre-wrap overflow-x-auto">
+                    {JSON.stringify({
+                      id: agent?.id || 'NOT_SAVED_YET',
+                      user_id: agent?.user_id || 'USER_ID',
+                      agent_name: agent?.agent_name || 'N/A',
+                      description: agent?.description || 'N/A',
+                      status: agent?.status || 'draft',
+                      plugins_required: agent?.plugins_required || [],
+                      input_schema: agent?.input_schema || [],
+                      output_schema: agent?.output_schema || [],
+                      system_prompt: (agent?.system_prompt || '').substring(0, 100) + '...',
+                      user_prompt: (agent?.user_prompt || '').substring(0, 100) + '...',
+                      created_at: agent?.created_at || 'NOT_CREATED',
+                      updated_at: agent?.updated_at || 'NOT_UPDATED'
+                    }, null, 2)}
+                  </pre>
+                </div>
+                
+                {isEditing && editedAgent && (
+                  <div className="bg-yellow-900/20 border border-yellow-600/30 rounded-lg p-4">
+                    <h4 className="text-yellow-400 font-medium mb-2 flex items-center gap-2">
+                      <Edit className="h-4 w-4" />
+                      Edited Agent (Unsaved Changes)
+                    </h4>
+                    <pre className="text-xs text-yellow-300 whitespace-pre-wrap overflow-x-auto">
+                      {JSON.stringify(editedAgent, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'input' && (
+              <div className="bg-gray-800/50 rounded-lg p-4">
+                <h4 className="text-white font-medium mb-2 flex items-center gap-2">
+                  <Settings className="h-4 w-4 text-cyan-400" />
+                  Input Schema Structure
+                </h4>
+                <pre className="text-xs text-cyan-400 whitespace-pre-wrap overflow-x-auto">
+                  {JSON.stringify(agent?.input_schema || [], null, 2)}
+                </pre>
+                {(agent?.input_schema?.length || 0) === 0 && (
+                  <p className="text-gray-500 text-sm mt-2">No input schema defined</p>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'plugins' && (
+              <div className="space-y-4">
+                <div className="bg-gray-800/50 rounded-lg p-4">
+                  <h4 className="text-white font-medium mb-2 flex items-center gap-2">
+                    <Zap className="h-4 w-4 text-purple-400" />
+                    Required Plugins
+                  </h4>
+                  <pre className="text-xs text-purple-400 whitespace-pre-wrap overflow-x-auto">
+                    {JSON.stringify(agent?.plugins_required || [], null, 2)}
+                  </pre>
+                </div>
+
+                <div className="bg-gray-800/50 rounded-lg p-4">
+                  <h4 className="text-white font-medium mb-2 flex items-center gap-2">
+                    <Network className="h-4 w-4 text-pink-400" />
+                    Output Schema
+                  </h4>
+                  <pre className="text-xs text-pink-400 whitespace-pre-wrap overflow-x-auto">
+                    {JSON.stringify(agent?.output_schema || [], null, 2)}
+                  </pre>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'prompts' && (
+              <div className="space-y-4">
+                <div className="bg-gray-800/50 rounded-lg p-4">
+                  <h4 className="text-white font-medium mb-2 flex items-center gap-2">
+                    <MessageSquare className="h-4 w-4 text-green-400" />
+                    Original User Prompt
+                  </h4>
+                  <div className="text-xs text-green-400 whitespace-pre-wrap p-3 bg-gray-900/50 rounded border">
+                    {prompt || 'No prompt provided'}
+                  </div>
+                </div>
+
+                <div className="bg-gray-800/50 rounded-lg p-4">
+                  <h4 className="text-white font-medium mb-2 flex items-center gap-2">
+                    <Brain className="h-4 w-4 text-blue-400" />
+                    Generated System Prompt
+                  </h4>
+                  <div className="text-xs text-blue-400 whitespace-pre-wrap p-3 bg-gray-900/50 rounded border max-h-40 overflow-y-auto">
+                    {agent?.system_prompt || 'No system prompt generated'}
+                  </div>
+                </div>
+
+                <div className="bg-gray-800/50 rounded-lg p-4">
+                  <h4 className="text-white font-medium mb-2 flex items-center gap-2">
+                    <FileText className="h-4 w-4 text-orange-400" />
+                    Clarification Answers
+                  </h4>
+                  <pre className="text-xs text-orange-400 whitespace-pre-wrap overflow-x-auto">
+                    {JSON.stringify(clarificationAnswers || {}, null, 2)}
+                  </pre>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'full' && (
+              <div className="bg-gray-800/50 rounded-lg p-4">
+                <h4 className="text-white font-medium mb-2 flex items-center gap-2">
+                  <Code2 className="h-4 w-4 text-red-400" />
+                  Complete Debug Data
+                </h4>
+                <pre className="text-xs text-red-400 whitespace-pre-wrap overflow-x-auto">
+                  {JSON.stringify(debugData, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+
+          {/* Quick Stats */}
+          <div className="mt-4 pt-4 border-t border-gray-700/50">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+              <div className="bg-gray-800/30 rounded-lg p-3 text-center">
+                <div className="text-cyan-400 font-medium">{agent?.input_schema?.length || 0}</div>
+                <div className="text-gray-400">Input Fields</div>
+              </div>
+              <div className="bg-gray-800/30 rounded-lg p-3 text-center">
+                <div className="text-purple-400 font-medium">{agent?.plugins_required?.length || 0}</div>
+                <div className="text-gray-400">Plugins</div>
+              </div>
+              <div className="bg-gray-800/30 rounded-lg p-3 text-center">
+                <div className="text-pink-400 font-medium">{agent?.output_schema?.length || 0}</div>
+                <div className="text-gray-400">Outputs</div>
+              </div>
+              <div className="bg-gray-800/30 rounded-lg p-3 text-center">
+                <div className={`font-medium ${agent?.id ? 'text-green-400' : 'text-yellow-400'}`}>
+                  {agent?.id ? 'SAVED' : 'DRAFT'}
+                </div>
+                <div className="text-gray-400">Status</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // Collapsible Section Component
 const CollapsibleSection = ({ 
   title, 
@@ -179,7 +423,7 @@ export default function SmartAgentBuilder({
   const sessionId = useRef(providedSessionId || `smart-session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
   const hasInitiatedGeneration = useRef(false);
   
-  console.log('🚀 SmartAgentBuilder mounted with props:', {
+  console.log('SmartAgentBuilder mounted with props:', {
     prompt: prompt?.slice(0, 100) + '...',
     promptType,
     clarificationAnswersCount: Object.keys(clarificationAnswers).length,
@@ -193,7 +437,7 @@ export default function SmartAgentBuilder({
   
   const [agent, setAgent] = useState<Agent | null>(() => {
     if (restoredAgent) {
-      console.log('🔄 Restoring agent from state:', restoredAgent.agent_name);
+      console.log('Restoring agent from state:', restoredAgent.agent_name);
       hasInitiatedGeneration.current = true;
       return restoredAgent;
     }
@@ -203,6 +447,8 @@ export default function SmartAgentBuilder({
   const [isEditing, setIsEditing] = useState(false);
   const [editedAgent, setEditedAgent] = useState<Agent | null>(null);
   const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [creationError, setCreationError] = useState<string | null>(null);
   
   const { generateAgent, isGenerating, error } = useAgentGeneration();
   const { 
@@ -231,7 +477,7 @@ export default function SmartAgentBuilder({
   }, [isEditing]);
 
   useEffect(() => {
-    console.log('🔄 SmartAgentBuilder useEffect triggered:', {
+    console.log('SmartAgentBuilder useEffect triggered:', {
       hasUser: !!user?.id,
       hasPrompt: !!prompt,
       promptLength: prompt?.length || 0,
@@ -241,16 +487,16 @@ export default function SmartAgentBuilder({
     });
     
     if (hasInitiatedGeneration.current || agent || isGenerating) {
-      console.log('⚠️ Skipping generation - already initiated or agent exists');
+      console.log('Skipping generation - already initiated or agent exists');
       return;
     }
     
     if (user?.id && prompt) {
-      console.log('✅ Starting agent generation...');
+      console.log('Starting agent generation...');
       hasInitiatedGeneration.current = true;
       handleGenerateAgent();
     } else {
-      console.log('❌ Missing requirements for agent generation:', {
+      console.log('Missing requirements for agent generation:', {
         userId: user?.id,
         prompt: !!prompt
       });
@@ -259,11 +505,11 @@ export default function SmartAgentBuilder({
 
   const handleGenerateAgent = async () => {
     if (isGenerating || agent) {
-      console.log('⚠️ Generation already in progress or agent exists, skipping');
+      console.log('Generation already in progress or agent exists, skipping');
       return;
     }
     
-    console.log('🎯 handleGenerateAgent called with prompt:', prompt?.slice(0, 100));
+    console.log('handleGenerateAgent called with prompt:', prompt?.slice(0, 100));
     clearTestResults();
     
     try {
@@ -274,14 +520,14 @@ export default function SmartAgentBuilder({
       });
       
       if (generatedAgent) {
-        console.log('✅ Agent generated successfully:', generatedAgent.agent_name);
+        console.log('Agent generated successfully:', generatedAgent.agent_name);
         setAgent(generatedAgent);
       } else {
-        console.log('❌ Agent generation failed');
+        console.log('Agent generation failed');
         hasInitiatedGeneration.current = false;
       }
     } catch (error) {
-      console.error('❌ Generation error:', error);
+      console.error('Generation error:', error);
       hasInitiatedGeneration.current = false;
     }
   };
@@ -311,21 +557,103 @@ export default function SmartAgentBuilder({
     }
   };
 
-  const handleCreateAgent = () => {
+  const handleCreateAgent = async () => {
     const finalAgent = isEditing ? editedAgent : agent;
-    console.log('🎉 Creating agent:', finalAgent?.agent_name);
-    if (finalAgent && onAgentCreated) {
-      onAgentCreated(finalAgent);
-    } else {
-      console.error('❌ Cannot create agent:', {
-        hasFinalAgent: !!finalAgent,
-        hasCallback: !!onAgentCreated
+    console.log('Creating agent:', finalAgent?.agent_name);
+    
+    if (!finalAgent) {
+      console.error('No agent to create');
+      setCreationError('No agent data available to create');
+      return;
+    }
+
+    if (!user?.id) {
+      console.error('No user logged in');
+      setCreationError('You must be logged in to create an agent');
+      return;
+    }
+
+    // Validate agent data
+    const validationError = validateAgent(finalAgent);
+    if (validationError) {
+      setCreationError(validationError);
+      return;
+    }
+
+    try {
+      // Set loading state
+      setIsCreating(true);
+      setCreationError(null);
+
+      // Prepare agent data for API
+      const agentData = {
+        ...finalAgent,
+        user_id: user.id,
+        agent_name: finalAgent.agent_name.trim(),
+        description: finalAgent.description?.trim() || '',
+        user_prompt: finalAgent.user_prompt.trim(),
+        status: 'draft', // Start as draft
+        created_from_prompt: prompt,
+        ai_generated_at: new Date().toISOString()
+      };
+
+      console.log('Saving agent via API:', agentData.agent_name);
+
+      // FIXED: Use the correct API endpoint that matches your file structure
+      const response = await fetch('/api/create-agent', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ agent: agentData }),
       });
+
+      // Debug: Check what we're getting back
+      console.log('Response status:', response.status);
+      console.log('Response headers:', Object.fromEntries(response.headers.entries()));
+      
+      const responseText = await response.text();
+      console.log('Raw response (first 500 chars):', responseText.substring(0, 500));
+      
+      // Check if it's HTML (DOCTYPE indicates HTML)
+      if (responseText.includes('<!DOCTYPE')) {
+        console.error('ERROR: Received HTML instead of JSON!');
+        console.error('This usually means the API endpoint is not working');
+        throw new Error('API endpoint returned HTML instead of JSON. Check if /api/create-agent exists and is working.');
+      }
+
+      let result;
+      try {
+        result = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('JSON parse error:', parseError);
+        console.error('Response was not JSON. First 200 chars:', responseText.substring(0, 200));
+        throw new Error('Server returned invalid JSON. Check the API endpoint.');
+      }
+
+      if (!response.ok) {
+        throw new Error(result.error || `HTTP error! status: ${response.status}`);
+      }
+
+      const savedAgent = result.agent;
+      console.log('Agent saved via API:', savedAgent.id);
+
+      // Call the callback with the saved agent (now has an ID)
+      if (onAgentCreated) {
+        onAgentCreated(savedAgent);
+      }
+
+    } catch (error) {
+      console.error('Creation error:', error);
+      // Show error to user
+      setCreationError(error.message || 'Failed to create agent');
+    } finally {
+      setIsCreating(false);
     }
   };
 
   const handleRetryGeneration = () => {
-    console.log('🔄 Retrying agent generation...');
+    console.log('Retrying agent generation...');
     hasInitiatedGeneration.current = false;
     setAgent(null);
     clearTestResults();
@@ -341,48 +669,36 @@ export default function SmartAgentBuilder({
     }
   };
 
-  // Loading state with enhanced design
+  // Loading state with compact design
   if (isGenerating && !agent) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 flex items-center justify-center p-6">
-        <div className="max-w-lg w-full bg-white/70 backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-white/20 text-center">
-          <div className="relative mb-8">
-            <div className="w-24 h-24 bg-gradient-to-br from-blue-500 via-purple-500 to-indigo-600 rounded-3xl flex items-center justify-center mx-auto shadow-2xl">
-              <Brain className="h-12 w-12 text-white" />
+        <div className="max-w-md w-full bg-white/70 backdrop-blur-xl rounded-2xl p-6 shadow-xl border border-white/20 text-center">
+          <div className="relative mb-6">
+            <div className="w-16 h-16 bg-gradient-to-br from-blue-500 via-purple-500 to-indigo-600 rounded-2xl flex items-center justify-center mx-auto shadow-lg">
+              <Brain className="h-8 w-8 text-white" />
             </div>
-            <div className="absolute -top-2 -right-2 w-8 h-8 bg-gradient-to-r from-green-400 to-emerald-500 rounded-full flex items-center justify-center animate-pulse">
-              <Sparkles className="h-4 w-4 text-white" />
+            <div className="absolute -top-1 -right-1 w-5 h-5 bg-gradient-to-r from-green-400 to-emerald-500 rounded-full flex items-center justify-center animate-pulse">
+              <Sparkles className="h-3 w-3 text-white" />
             </div>
-            <Loader2 className="h-8 w-8 text-blue-500 animate-spin absolute top-8 left-1/2 transform -translate-x-1/2" />
           </div>
           
-          <h3 className="text-2xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent mb-4">
+          <h3 className="text-xl font-bold text-gray-900 mb-2">
             Building Your Smart Agent
           </h3>
-          <p className="text-gray-600 mb-8 leading-relaxed">
-            AI is analyzing your <span className="font-semibold text-blue-600">{promptType}</span> prompt and creating the intelligent agent structure...
+          <p className="text-gray-600 text-sm mb-6">
+            AI is analyzing your <span className="font-semibold text-blue-600">{promptType}</span> prompt...
           </p>
           
-          <div className="space-y-4">
-            <div className="flex items-center gap-4 p-4 bg-green-50/80 backdrop-blur-sm rounded-2xl border border-green-200/50">
-              <div className="w-8 h-8 bg-green-500 rounded-xl flex items-center justify-center flex-shrink-0">
-                <CheckCircle className="h-4 w-4 text-white" />
-              </div>
-              <span className="text-green-800 font-medium">Prompt analyzed and requirements extracted</span>
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 p-3 bg-green-50/80 backdrop-blur-sm rounded-xl border border-green-200/50">
+              <CheckCircle className="h-4 w-4 text-green-600 flex-shrink-0" />
+              <span className="text-green-800 text-sm font-medium">Requirements extracted</span>
             </div>
             
-            <div className="flex items-center gap-4 p-4 bg-green-50/80 backdrop-blur-sm rounded-2xl border border-green-200/50">
-              <div className="w-8 h-8 bg-green-500 rounded-xl flex items-center justify-center flex-shrink-0">
-                <CheckCircle className="h-4 w-4 text-white" />
-              </div>
-              <span className="text-green-800 font-medium">Detecting required plugins and services</span>
-            </div>
-            
-            <div className="flex items-center gap-4 p-4 bg-blue-50/80 backdrop-blur-sm rounded-2xl border border-blue-200/50">
-              <div className="w-8 h-8 bg-blue-500 rounded-xl flex items-center justify-center flex-shrink-0">
-                <Loader2 className="h-4 w-4 animate-spin text-white" />
-              </div>
-              <span className="text-blue-800 font-medium">Generating agent configuration...</span>
+            <div className="flex items-center gap-3 p-3 bg-blue-50/80 backdrop-blur-sm rounded-xl border border-blue-200/50">
+              <Loader2 className="h-4 w-4 animate-spin text-blue-600 flex-shrink-0" />
+              <span className="text-blue-800 text-sm font-medium">Generating configuration...</span>
             </div>
           </div>
         </div>
@@ -548,10 +864,20 @@ export default function SmartAgentBuilder({
                     
                     <button
                       onClick={handleCreateAgent}
-                      className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-6 py-2.5 rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all duration-200 flex items-center gap-2 shadow-lg font-semibold"
+                      disabled={isCreating}
+                      className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-6 py-2.5 rounded-xl hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 transition-all duration-200 flex items-center gap-2 shadow-lg font-semibold"
                     >
-                      <Zap className="h-4 w-4" />
-                      Create Agent
+                      {isCreating ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Creating...
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="h-4 w-4" />
+                          Create Agent
+                        </>
+                      )}
                     </button>
                   </div>
                 )}
@@ -560,6 +886,25 @@ export default function SmartAgentBuilder({
           </div>
         </div>
       </div>
+
+      {/* Creation Error Display */}
+      {creationError && (
+        <div className="max-w-7xl mx-auto px-6 pt-4">
+          <div className="bg-red-50/80 backdrop-blur-xl border border-red-200 rounded-xl p-4 flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5 flex-shrink-0" />
+            <div className="flex-1">
+              <h4 className="font-medium text-red-800">Failed to Create Agent</h4>
+              <p className="text-red-600 text-sm mt-1">{creationError}</p>
+              <button
+                onClick={() => setCreationError(null)}
+                className="text-red-600 hover:text-red-800 text-sm mt-2 underline"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto p-6 space-y-8">
@@ -576,11 +921,32 @@ export default function SmartAgentBuilder({
 
         {/* Visual Agent Flow Card - Always Visible */}
         <div className="bg-white/70 backdrop-blur-xl rounded-3xl shadow-xl border border-white/20 p-8">
-          <VisualAgentFlow
-            agent={currentAgent}
-            autoPlay={!isEditing} // Only auto-play when not editing
-          />
+          {VisualAgentFlow ? (
+            <VisualAgentFlow
+              agent={currentAgent}
+              autoPlay={!isEditing} // Only auto-play when not editing
+            />
+          ) : (
+            <div className="text-center py-8">
+              <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <Play className="h-8 w-8 text-white" />
+              </div>
+              <h3 className="text-lg font-semibold text-gray-800 mb-2">Agent Workflow Visualization</h3>
+              <p className="text-gray-600">Visual flow component loading...</p>
+            </div>
+          )}
         </div>
+
+        {/* Debug Panel - Always Visible for Development */}
+        <DebugPanel
+          agent={agent}
+          prompt={prompt}
+          promptType={promptType}
+          clarificationAnswers={clarificationAnswers}
+          isEditing={isEditing}
+          editedAgent={editedAgent}
+          sessionId={sessionId.current}
+        />
 
         {/* Technical Details Toggle */}
         <TechnicalDetailsToggle 

@@ -67,14 +67,34 @@ type Agent = {
   user_id?: string
 }
 
+// Helper function to validate UUID format
+const isValidUUID = (str: string): boolean => {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  return uuidRegex.test(str)
+}
+
 export default function AgentPage() {
   const { user } = useAuth()
   const router = useRouter()
   const params = useParams()
-  const agentId = params.id as string
+  
+  // Enhanced parameter extraction with debugging
+  const agentId = (() => {
+    console.log('Raw params:', params)
+    console.log('params.id type:', typeof params.id)
+    console.log('params.id value:', params.id)
+    
+    if (Array.isArray(params.id)) {
+      return params.id[0]
+    }
+    return params.id as string
+  })()
+
+  console.log('Final agentId:', agentId)
 
   const [agent, setAgent] = useState<Agent | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [showFullPrompt, setShowFullPrompt] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
@@ -88,79 +108,134 @@ export default function AgentPage() {
   const [showSuccessNotification, setShowSuccessNotification] = useState(false)
 
   const fetchAgent = async () => {
-    if (!agentId) return
+    // Enhanced validation for agentId
+    console.log('fetchAgent called with agentId:', agentId)
+    
+    if (!agentId || agentId === 'undefined' || agentId === 'null' || agentId.trim() === '') {
+      console.error('Invalid or missing agent ID:', agentId)
+      setError('Invalid or missing agent ID. Please check the URL and try again.')
+      setLoading(false)
+      return
+    }
 
-    // First try to fetch from regular agents table
-    if (user?.id) {
-      const { data: regularAgent, error: regularError } = await supabase
-        .from('agents')
-        .select('*, connected_plugins, plugins_required, workflow_steps')
+    if (!isValidUUID(agentId)) {
+      console.error('Invalid UUID format for agent ID:', agentId)
+      setError('Invalid agent ID format. Please check the URL and try again.')
+      setLoading(false)
+      return
+    }
+
+    console.log('Fetching agent with validated ID:', agentId)
+    
+    try {
+      // First try to fetch from regular agents table
+      if (user?.id) {
+        console.log('Checking regular agents table for user:', user.id)
+        const { data: regularAgent, error: regularError } = await supabase
+          .from('agents')
+          .select('*, connected_plugins, plugins_required, workflow_steps')
+          .eq('id', agentId)
+          .eq('user_id', user.id)
+          .maybeSingle()
+
+        if (regularError) {
+          console.error('Error fetching regular agent:', regularError.message)
+          // Don't return here, continue to check shared agents
+        }
+
+        if (regularAgent) {
+          console.log('Found regular agent:', regularAgent.agent_name)
+          setAgent(regularAgent)
+          setIsSharedAgent(false)
+          setIsOwner(true)
+          setEditedName(regularAgent.agent_name || '')
+          setLoading(false)
+          return
+        }
+      }
+
+      // If not found in regular agents, try shared_agents table
+      console.log('Checking shared_agents table')
+      const { data: sharedAgent, error: sharedError } = await supabase
+        .from('shared_agents')
+        .select('*')
         .eq('id', agentId)
-        .eq('user_id', user.id)
         .maybeSingle()
 
-      if (regularAgent) {
-        setAgent(regularAgent)
-        setIsSharedAgent(false)
-        setIsOwner(true)
-        setEditedName(regularAgent.agent_name || '')
+      if (sharedError) {
+        console.error('Failed to fetch shared agent:', {
+          message: sharedError.message,
+          details: sharedError.details,
+          hint: sharedError.hint,
+          code: sharedError.code
+        })
+        setError(`Failed to fetch agent: ${sharedError.message}`)
         setLoading(false)
         return
       }
-    }
 
-    // If not found in regular agents, try shared_agents table
-    const { data: sharedAgent, error: sharedError } = await supabase
-      .from('shared_agents')
-      .select('*')
-      .eq('id', agentId)
-      .maybeSingle()
+      if (sharedAgent) {
+        console.log('Found shared agent:', sharedAgent.agent_name)
+        setAgent({
+          ...sharedAgent,
+          // Shared agents don't have status, so we'll show as 'shared'
+          status: 'shared'
+        })
+        setIsSharedAgent(true)
+        setIsOwner(sharedAgent.user_id === user?.id)
+        setEditedName(sharedAgent.agent_name || '')
+        setLoading(false)
+        return
+      }
 
-    if (sharedError) {
-      console.error('Failed to fetch shared agent:', sharedError.message)
+      // Agent not found in either table
+      console.log('Agent not found in any table')
+      setError('Agent not found')
       setLoading(false)
-      return
-    }
 
-    if (sharedAgent) {
-      setAgent({
-        ...sharedAgent,
-        // Shared agents don't have status, so we'll show as 'shared'
-        status: 'shared'
-      })
-      setIsSharedAgent(true)
-      setIsOwner(sharedAgent.user_id === user?.id)
-      setEditedName(sharedAgent.agent_name || '')
+    } catch (error) {
+      console.error('Unexpected error fetching agent:', error)
+      setError('An unexpected error occurred while fetching the agent')
       setLoading(false)
-      return
     }
-
-    // Agent not found in either table
-    setLoading(false)
   }
 
   const fetchUserCredits = async () => {
     if (!user?.id) return
 
-    const { data, error } = await supabase
-      .from('user_credits')
-      .select('credits')
-      .eq('user_id', user.id)
-      .maybeSingle()
+    try {
+      const { data, error } = await supabase
+        .from('user_credits')
+        .select('credits')
+        .eq('user_id', user.id)
+        .maybeSingle()
 
-    if (error && error.code !== 'PGRST116') {
-      console.error('Failed to fetch user credits:', error.message)
-      return
+      if (error && error.code !== 'PGRST116') {
+        console.error('Failed to fetch user credits:', error.message)
+        return
+      }
+
+      setUserCredits(data?.credits || 0)
+    } catch (error) {
+      console.error('Unexpected error fetching user credits:', error)
     }
-
-    setUserCredits(data?.credits || 0)
   }
 
   useEffect(() => {
-    if (agentId) {
+    console.log('useEffect triggered:', { agentId, user: !!user })
+    
+    // Only fetch if we have a valid agentId
+    if (agentId && agentId !== 'undefined' && agentId !== 'null' && isValidUUID(agentId)) {
       fetchAgent()
       if (user) {
         fetchUserCredits()
+      }
+    } else {
+      console.log('Skipping fetch due to invalid agentId:', agentId)
+      // Set error state if agentId is invalid
+      if (agentId && (agentId === 'undefined' || agentId === 'null' || !isValidUUID(agentId))) {
+        setError('Invalid agent ID in URL. Please check the link and try again.')
+        setLoading(false)
       }
     }
   }, [user, agentId])
@@ -509,20 +584,41 @@ export default function AgentPage() {
     )
   }
 
-  if (!agent) {
+  if (error || !agent) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
           <Bot className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <h2 className="text-xl font-medium text-gray-900 mb-2">Agent not found</h2>
-          <p className="text-gray-600 mb-6">This agent doesn't exist or you don't have access to it.</p>
-          <Link
-            href="/agents"
-            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back to Agents
-          </Link>
+          <h2 className="text-xl font-medium text-gray-900 mb-2">
+            {error || 'Agent not found'}
+          </h2>
+          <p className="text-gray-600 mb-6">
+            {error 
+              ? 'There was an error loading this agent. Please check the URL and try again.'
+              : 'This agent doesn\'t exist or you don\'t have access to it.'
+            }
+          </p>
+          <div className="space-y-3">
+            {error && (
+              <button
+                onClick={() => {
+                  setError(null)
+                  setLoading(true)
+                  fetchAgent()
+                }}
+                className="block w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Try Again
+              </button>
+            )}
+            <Link
+              href="/agents"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back to Agents
+            </Link>
+          </div>
         </div>
       </div>
     )

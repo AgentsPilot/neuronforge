@@ -6,14 +6,18 @@ import { useAuth } from '@/components/UserProvider'
 import { interpolatePrompt } from '@/lib/utils/interpolatePrompt'
 import { generatePDF } from '@/lib/pdf/generatePDF'
 import { sendEmailDraft } from '@/lib/plugins/google-mail/sendEmailDraft'
-import { Brain, Database, FileText, Cog, CheckCircle, AlertCircle, Clock, Target, Shield, Lightbulb, Cpu, Activity, Eye, EyeOff, ArrowRight, Play } from 'lucide-react'
+import { 
+  Brain, Database, FileText, Cog, CheckCircle, AlertCircle, Clock, Target, 
+  Shield, Lightbulb, Cpu, Activity, Eye, EyeOff, ArrowRight, Play, Send,
+  Download, Zap, Settings, Info, ChevronDown, ChevronUp, Loader2
+} from 'lucide-react'
 
-// Types - FIXED to include options property
+// Types
 type Field = {
   name: string
   type: 'string' | 'number' | 'boolean' | 'date' | 'enum' | 'file'
   enum?: string[]
-  options?: string[] // Added this property to match SmartSchemaGenerator output
+  options?: string[]
   description?: string
   required?: boolean
   placeholder?: string
@@ -55,67 +59,66 @@ interface DynamicPhase {
   progress: number
 }
 
-// FIXED: Removed 'emailaccount' from blocked fields
 const BLOCKED_FIELDS_BY_PLUGIN: Record<string, string[]> = {
-  'google-mail': ['email'], // Removed 'emailaccount' - users need to select which account
+  'google-mail': ['email'],
   'notion': ['workspace', 'workspacename'],
 }
 
 const PHASE_PATTERNS = [
   {
     id: 'memory',
-    title: 'Loading Contextual Memory',
+    title: 'Loading Context',
     icon: Database,
-    color: 'from-purple-500 to-indigo-600',
+    color: 'from-purple-500 to-indigo-500',
     keywords: ['loading contextual memory', 'phase 1', 'memory', 'contextual memory']
   },
   {
     id: 'intent',
-    title: 'Intent Analysis',
+    title: 'Analyzing Intent',
     icon: Brain,
-    color: 'from-blue-500 to-cyan-600',
+    color: 'from-blue-500 to-cyan-500',
     keywords: ['intent analysis', 'phase 2', 'analyzing intent', 'universal intent', 'primaryIntent']
   },
   {
     id: 'strategy',
-    title: 'Strategy Generation',
+    title: 'Planning Strategy',
     icon: Target,
-    color: 'from-green-500 to-emerald-600',
+    color: 'from-green-500 to-emerald-500',
     keywords: ['adaptive strategy', 'phase 3', 'strategy generation', 'generating adaptive strategy']
   },
   {
     id: 'plugins',
-    title: 'Plugin Execution',
+    title: 'Executing Plugins',
     icon: Cog,
-    color: 'from-orange-500 to-red-600',
+    color: 'from-orange-500 to-red-500',
     keywords: ['plugin coordination', 'phase 4', 'executing smart plugin', 'chatgpt-research', 'google-mail', 'smart plugin']
   },
   {
     id: 'documents',
-    title: 'Document Processing',
+    title: 'Processing Data',
     icon: FileText,
-    color: 'from-yellow-500 to-orange-600',
+    color: 'from-yellow-500 to-orange-500',
     keywords: ['processing documents', 'phase 5', 'document intelligence', 'extracted content']
   },
   {
     id: 'prompt',
-    title: 'Prompt Generation',
+    title: 'Generating Response',
     icon: Lightbulb,
-    color: 'from-pink-500 to-rose-600',
+    color: 'from-pink-500 to-rose-500',
     keywords: ['prompt generation', 'phase 6', 'universal smart prompt', 'generating universal smart prompt']
   },
   {
     id: 'llm',
-    title: 'LLM Execution',
+    title: 'AI Processing',
     icon: Cpu,
-    color: 'from-violet-500 to-purple-600',
+    color: 'from-violet-500 to-purple-500',
     keywords: ['executing with gpt-4o', 'phase 7', 'data-aware intelligence', 'llm execution']
   },
   {
     id: 'validation',
-    title: 'Quality Validation',
+    title: 'Quality Check',
     icon: Shield,
-    color: 'from-teal-500 to-green-600',
+    color: 'from-teal-500 to-green-500',
     keywords: ['quality validation', 'phase 8', 'learning system', 'execution completed', 'ultra-smart execution completed']
   }
 ]
@@ -136,8 +139,16 @@ export default function AgentSandbox({
   const [executionTime, setExecutionTime] = useState<number | null>(null)
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({})
   
-  // Enhanced SSE-based visualization
+  // UI State
   const [showVisualizer, setShowVisualizer] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [expandedSections, setExpandedSections] = useState({
+    inputs: true,
+    outputs: true,
+    plugins: false
+  })
+  
+  // Execution visualization
   const [executionLogs, setExecutionLogs] = useState<ExecutionLog[]>([])
   const [dynamicPhases, setDynamicPhases] = useState<DynamicPhase[]>([])
   const [executionMetrics, setExecutionMetrics] = useState({
@@ -251,9 +262,11 @@ export default function AgentSandbox({
             )?.type
 
             if (usedOutputType === 'SummaryBlock') {
-              setSendStatus('SummaryBlock was generated and logged.')
+              setSendStatus('Report generated successfully')
             } else if (usedOutputType === 'EmailDraft') {
-              setSendStatus('Email draft was generated. Ready to send.')
+              setSendStatus('Email draft generated successfully')
+            } else {
+              setSendStatus('Agent execution completed')
             }
           }
           break
@@ -452,163 +465,150 @@ export default function AgentSandbox({
     }
   }
 
-  // Key changes needed in AgentSandbox component
-
-// 1. Update the handleRun function to use the correct endpoint
-const handleRun = async (withVisualizer = false) => {
-  if (!validateForm()) {
-    return
-  }
-
-  try {
-    setLoading(true)
-    setSendStatus(null)
-    setResult(null)
-    setExecutionTime(null)
-
-    if (missingPlugins.length > 0) {
-      setResult({ error: `Missing required plugin(s): ${missingPlugins.join(', ')}` })
+  const handleRun = async (withVisualizer = false) => {
+    if (!validateForm()) {
       return
     }
 
-    if (withVisualizer) {
-      const executionId = initializeVisualization()
-      
-      const streamUrl = '/api/agent-stream'
-      const requestBody = {
-        agent_id: agentId,
-        input_variables: formData,
-        user_prompt: userPrompt,
-        execution_id: executionId
+    try {
+      setLoading(true)
+      setSendStatus(null)
+      setResult(null)
+      setExecutionTime(null)
+
+      if (missingPlugins.length > 0) {
+        setResult({ error: `Missing required plugin(s): ${missingPlugins.join(', ')}` })
+        return
       }
 
-      const response = await fetch(streamUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody),
-      })
+      if (withVisualizer) {
+        const executionId = initializeVisualization()
+        
+        const streamUrl = '/api/agent-stream'
+        const requestBody = {
+          agent_id: agentId,
+          input_variables: formData,
+          user_prompt: userPrompt,
+          execution_id: executionId
+        }
 
-      if (!response.ok) {
-        throw new Error(`Stream failed: ${response.statusText}`)
-      }
+        const response = await fetch(streamUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        })
 
-      if (!response.body) {
-        throw new Error('No response body for stream')
-      }
+        if (!response.ok) {
+          throw new Error(`Stream failed: ${response.statusText}`)
+        }
 
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
+        if (!response.body) {
+          throw new Error('No response body for stream')
+        }
 
-      const readStream = async () => {
-        try {
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
 
-            const chunk = decoder.decode(value, { stream: true })
-            const lines = chunk.split('\n')
+        const readStream = async () => {
+          try {
+            while (true) {
+              const { done, value } = await reader.read()
+              if (done) break
 
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                const eventData = line.slice(6)
-                if (eventData.trim()) {
-                  handleStreamEvent({ data: eventData } as MessageEvent)
+              const chunk = decoder.decode(value, { stream: true })
+              const lines = chunk.split('\n')
+
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  const eventData = line.slice(6)
+                  if (eventData.trim()) {
+                    handleStreamEvent({ data: eventData } as MessageEvent)
+                  }
                 }
               }
             }
+          } catch (error) {
+            console.error('Stream reading error:', error)
+            setResult({ error: 'Stream connection failed' })
+          } finally {
+            setLoading(false)
+            setIsLiveExecution(false)
           }
-        } catch (error) {
-          console.error('Stream reading error:', error)
-          setResult({ error: 'Stream connection failed' })
-        } finally {
-          setLoading(false)
-          setIsLiveExecution(false)
         }
-      }
 
-      readStream()
+        readStream()
 
-    } else {
-      // FIXED: Use the correct workflow execution endpoint
-      const startTime = Date.now()
-      
-      const response = await fetch(`/api/agents/${agentId}/execute-workflow`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          inputVariables: formData, // Pass the form data as input variables
-          testMode: true
-        }),
-      })
-      
-      if (!response.ok) {
-        const errorText = await response.text()
-        throw new Error(`Workflow execution failed: ${response.statusText} - ${errorText}`)
-      }
-
-      const res = await response.json()
-      const endTime = Date.now()
-      setExecutionTime(endTime - startTime)
-      
-      console.log('Workflow execution response:', res)
-      
-      // Handle different response formats from workflow execution
-      let finalResult
-      
-      if (res?.result) {
-        // If there's a result field, use it
-        finalResult = res.result
-      } else if (res?.output) {
-        // If there's an output field, use it
-        finalResult = res.output
-      } else if (res?.message) {
-        // If there's just a message, use it
-        finalResult = res.message
       } else {
-        // Fallback to the entire response
-        finalResult = res
-      }
-      
-      setResult(finalResult)
-
-      // Set status based on execution result
-      if (finalResult?.send_status) {
-        setSendStatus(finalResult.send_status)
-      } else if (res?.success === false) {
-        setSendStatus('Workflow execution failed')
-      } else if (typeof finalResult === 'string' && finalResult.includes('error')) {
-        setSendStatus('Execution completed with errors')
-      } else {
-        // Check output schema to set appropriate success message
-        const hasEmailOutput = safeOutputSchema.some(f => 
-          f.type === 'EmailDraft' || f.name.toLowerCase().includes('email')
-        )
-        const hasReportOutput = safeOutputSchema.some(f => 
-          f.type === 'SummaryBlock' || f.name.toLowerCase().includes('report')
-        )
+        const startTime = Date.now()
         
-        if (hasEmailOutput) {
-          setSendStatus('Email report generated successfully')
-        } else if (hasReportOutput) {
-          setSendStatus('Report generated successfully')
-        } else {
-          setSendStatus('Workflow execution completed')
+        const response = await fetch(`/api/agents/${agentId}/execute-workflow`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            inputVariables: formData,
+            testMode: true
+          }),
+        })
+        
+        if (!response.ok) {
+          const errorText = await response.text()
+          throw new Error(`Workflow execution failed: ${response.statusText} - ${errorText}`)
         }
+
+        const res = await response.json()
+        const endTime = Date.now()
+        setExecutionTime(endTime - startTime)
+        
+        let finalResult
+        
+        if (res?.result) {
+          finalResult = res.result
+        } else if (res?.output) {
+          finalResult = res.output
+        } else if (res?.message) {
+          finalResult = res.message
+        } else {
+          finalResult = res
+        }
+        
+        setResult(finalResult)
+
+        if (finalResult?.send_status) {
+          setSendStatus(finalResult.send_status)
+        } else if (res?.success === false) {
+          setSendStatus('Workflow execution failed')
+        } else if (typeof finalResult === 'string' && finalResult.includes('error')) {
+          setSendStatus('Execution completed with errors')
+        } else {
+          const hasEmailOutput = safeOutputSchema.some(f => 
+            f.type === 'EmailDraft' || f.name.toLowerCase().includes('email')
+          )
+          const hasReportOutput = safeOutputSchema.some(f => 
+            f.type === 'SummaryBlock' || f.name.toLowerCase().includes('report')
+          )
+          
+          if (hasEmailOutput) {
+            setSendStatus('Email draft generated successfully')
+          } else if (hasReportOutput) {
+            setSendStatus('Report generated successfully')
+          } else {
+            setSendStatus('Agent execution completed')
+          }
+        }
+
+        setLoading(false)
       }
 
+    } catch (err: any) {
+      setResult({ error: err.message })
       setLoading(false)
+      setIsLiveExecution(false)
     }
-
-  } catch (err: any) {
-    setResult({ error: err.message })
-    setLoading(false)
-    setIsLiveExecution(false)
   }
-}
 
   const handleDownloadPDF = () => {
     if (result && safeOutputSchema.length > 0) {
@@ -641,641 +641,654 @@ const handleRun = async (withVisualizer = false) => {
     reader.readAsDataURL(file)
   }
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text)
-  }
-
   const formatDuration = (ms: number) => {
     const seconds = Math.floor(ms / 1000)
     const minutes = Math.floor(seconds / 60)
     return minutes > 0 ? `${minutes}m ${seconds % 60}s` : `${seconds}s`
   }
 
+  const toggleSection = (section: keyof typeof expandedSections) => {
+    setExpandedSections(prev => ({
+      ...prev,
+      [section]: !prev[section]
+    }))
+  }
+
   return (
-    <div className="bg-white border rounded-xl p-6 space-y-6">
-      {/* Header with Visual Toggle */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h2 className="text-xl font-semibold text-gray-800">Agent Sandbox</h2>
-          <button
-            onClick={() => setShowVisualizer(!showVisualizer)}
-            className={`flex items-center gap-2 px-3 py-1 text-sm rounded-lg transition-all duration-200 ${
-              showVisualizer 
-                ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg'
-                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-            }`}
-            title={showVisualizer ? "Hide Visual Execution" : "Show Visual Execution"}
-          >
-            {showVisualizer ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-            {showVisualizer ? 'Hide Visual' : 'Show Visual'}
-          </button>
-          {currentExecutionId && (
-            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
-              ID: {currentExecutionId.split('_')[2]?.slice(0, 8)}
-            </span>
-          )}
-        </div>
-        {safePluginsRequired.length > 0 && (
-          <div className="text-sm text-gray-500">
-            {safePluginsRequired.length} plugin{safePluginsRequired.length > 1 ? 's' : ''} required
+    <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-lg">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-slate-50 to-gray-50 border-b border-gray-200 p-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl shadow-lg">
+                <Brain className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">Agent Sandbox</h2>
+                <p className="text-sm text-gray-600">Test and execute your AI agent</p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-2 ml-8">
+              <button
+                onClick={() => setShowVisualizer(!showVisualizer)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all duration-200 ${
+                  showVisualizer 
+                    ? 'bg-gradient-to-r from-purple-500 to-blue-500 text-white shadow-lg'
+                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                {showVisualizer ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                Live Tracking
+              </button>
+              
+              <button
+                onClick={() => setShowAdvanced(!showAdvanced)}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 transition-colors"
+              >
+                <Settings className="h-4 w-4" />
+                Advanced
+              </button>
+            </div>
           </div>
-        )}
+          
+          <div className="flex items-center gap-3 text-sm text-gray-500">
+            {executionTime && (
+              <span className="bg-green-100 text-green-700 px-3 py-1 rounded-lg font-medium">
+                Last: {formatDuration(executionTime)}
+              </span>
+            )}
+            {currentExecutionId && (
+              <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-lg font-mono text-xs">
+                {currentExecutionId.split('_')[2]?.slice(0, 8)}
+              </span>
+            )}
+          </div>
+        </div>
       </div>
 
-      {/* Plugin Status */}
+      {/* Plugin Status Alert */}
       {safePluginsRequired.length > 0 && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <h3 className="font-medium text-blue-900 mb-2">Required Plugins:</h3>
-          <div className="flex flex-wrap gap-2">
-            {safePluginsRequired.map(plugin => {
-              const isConnected = getPluginStatus(plugin)
-              return (
-                <span
-                  key={plugin}
-                  className={`px-2 py-1 text-xs rounded-full ${
-                    isConnected 
-                      ? 'bg-green-100 text-green-800' 
-                      : 'bg-red-100 text-red-800'
-                  }`}
-                >
-                  {isConnected ? '✅' : '❌'} {plugin}
-                </span>
-              )
-            })}
+        <div className="bg-blue-50 border-b border-blue-200 p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Zap className="h-5 w-5 text-blue-600" />
+              <div>
+                <h3 className="font-semibold text-blue-900">Required Plugins</h3>
+                <p className="text-sm text-blue-700">
+                  {safePluginsRequired.length} plugin{safePluginsRequired.length > 1 ? 's' : ''} needed for this agent
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => toggleSection('plugins')}
+              className="text-blue-600 hover:text-blue-800"
+            >
+              {expandedSections.plugins ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+            </button>
           </div>
+          
+          {expandedSections.plugins && (
+            <div className="mt-4 flex flex-wrap gap-2">
+              {safePluginsRequired.map(plugin => {
+                const isConnected = getPluginStatus(plugin)
+                return (
+                  <span
+                    key={plugin}
+                    className={`inline-flex items-center gap-2 px-3 py-1 text-sm rounded-lg ${
+                      isConnected 
+                        ? 'bg-green-100 text-green-800 border border-green-200' 
+                        : 'bg-red-100 text-red-800 border border-red-200'
+                    }`}
+                  >
+                    {isConnected ? (
+                      <CheckCircle className="h-4 w-4" />
+                    ) : (
+                      <AlertCircle className="h-4 w-4" />
+                    )}
+                    {plugin}
+                  </span>
+                )
+              })}
+            </div>
+          )}
+          
           {missingPlugins.length > 0 && (
-            <p className="text-red-700 text-sm mt-2">
-              Connect the missing plugins before running the agent.
-            </p>
+            <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+              <p className="text-red-800 text-sm font-medium">
+                Please connect the missing plugins before running the agent.
+              </p>
+            </div>
           )}
         </div>
       )}
 
-      {/* REORGANIZED: Separate Input and Output Sections */}
-      <div className="grid lg:grid-cols-2 gap-6">
-        
-        {/* INPUT SECTION */}
-        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-5">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 bg-blue-100 rounded-lg">
-              <FileText className="h-5 w-5 text-blue-600" />
-            </div>
-            <div>
-              <h3 className="font-semibold text-blue-900">Input Parameters</h3>
-              <p className="text-sm text-blue-600">
-                {filteredInputSchema.length} field{filteredInputSchema.length !== 1 ? 's' : ''}
-                {filteredInputSchema.filter(f => f.required).length > 0 && 
-                  ` (${filteredInputSchema.filter(f => f.required).length} required)`
-                }
-              </p>
-            </div>
-          </div>
-
-          {filteredInputSchema.length === 0 ? (
-            <div className="bg-white/70 border border-blue-200 rounded-lg p-4 text-center">
-              <p className="text-sm text-blue-600">No input fields required — plugin handles the data automatically.</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {filteredInputSchema.map((field, index) => (
-                <div key={index} className="bg-white/70 backdrop-blur-sm rounded-lg p-4 space-y-2">
-                  <label className="block text-sm font-medium text-gray-700">
-                    {field.name} 
-                    {field.required && <span className="text-red-500 ml-1">*</span>}
-                    <span className="text-blue-400 text-xs ml-2 bg-blue-100 px-2 py-0.5 rounded">
-                      {field.type}
-                    </span>
-                  </label>
-                  {field.description && (
-                    <p className="text-xs text-gray-600 bg-gray-50 p-2 rounded">{field.description}</p>
-                  )}
-                  
-                  {field.type === 'enum' ? (
-                    <select
-                      className={`w-full border px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${
-                        validationErrors[field.name] ? 'border-red-500' : 'border-gray-300'
-                      }`}
-                      onChange={(e) => handleInputChange(field.name, e.target.value)}
-                      value={formData[field.name] || ''}
-                    >
-                      <option value="">
-                        {field.placeholder || 'Select an option'}
-                      </option>
-                      {/* FIXED: Check both enum and options properties */}
-                      {(field.enum || field.options || []).map((opt) => (
-                        <option key={opt} value={opt}>{opt}</option>
-                      ))}
-                    </select>
-                  ) : field.type === 'file' ? (
-                    <div>
-                      <input
-                        type="file"
-                        accept="application/pdf,image/*,.txt,.csv"
-                        className={`w-full border px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${
-                          validationErrors[field.name] ? 'border-red-500' : 'border-gray-300'
-                        }`}
-                        onChange={(e) => handleFileUpload(e, field.name)}
-                      />
-                      {formData[field.name] && (
-                        <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
-                          <CheckCircle className="h-3 w-3" />
-                          File uploaded successfully
-                        </p>
-                      )}
-                    </div>
-                  ) : field.type === 'boolean' ? (
-                    <div className="flex items-center space-x-3 bg-white rounded-lg p-3">
-                      <input
-                        type="checkbox"
-                        className="rounded border-gray-300 h-4 w-4"
-                        onChange={(e) => handleInputChange(field.name, e.target.checked)}
-                        checked={formData[field.name] || false}
-                      />
-                      <span className="text-sm text-gray-700">Enable this option</span>
-                    </div>
-                  ) : (
-                    <input
-                      type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
-                      className={`w-full border px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${
-                        validationErrors[field.name] ? 'border-red-500' : 'border-gray-300'
-                      }`}
-                      placeholder={field.placeholder || `Enter ${field.name.toLowerCase()}`}
-                      onChange={(e) => handleInputChange(field.name, e.target.value)}
-                      value={formData[field.name] || ''}
-                    />
-                  )}
-                  
-                  {validationErrors[field.name] && (
-                    <p className="text-red-500 text-xs mt-1 flex items-center gap-1">
-                      <AlertCircle className="h-3 w-3" />
-                      {validationErrors[field.name]}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* OUTPUT SECTION */}
-        <div className="bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-xl p-5">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 bg-green-100 rounded-lg">
-              <Target className="h-5 w-5 text-green-600" />
-            </div>
-            <div>
-              <h3 className="font-semibold text-green-900">Expected Output</h3>
-              <p className="text-sm text-green-600">
-                {safeOutputSchema.length} field{safeOutputSchema.length !== 1 ? 's' : ''} will be generated
-              </p>
-            </div>
-          </div>
-
-          {safeOutputSchema.length === 0 ? (
-            <div className="bg-white/70 border border-green-200 rounded-lg p-4 text-center">
-              <p className="text-sm text-green-600">Output structure will be determined automatically.</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {safeOutputSchema.map((field, index) => (
-                <div key={index} className="bg-white/70 backdrop-blur-sm rounded-lg p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <strong className="text-green-800">{field.name}</strong>
-                    <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
-                      {field.type}
-                    </span>
+      <div className="p-6 space-y-6">
+        {/* Configuration Grid */}
+        <div className="grid lg:grid-cols-2 gap-6">
+          
+          {/* Input Configuration */}
+          <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl border border-blue-200 overflow-hidden">
+            <div 
+              className="bg-white/80 backdrop-blur-sm p-4 border-b border-blue-200 cursor-pointer"
+              onClick={() => toggleSection('inputs')}
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-blue-500 rounded-lg">
+                    <FileText className="h-5 w-5 text-white" />
                   </div>
-                  {field.description && (
-                    <p className="text-sm text-green-700 bg-green-50 p-2 rounded">
-                      {field.description}
+                  <div>
+                    <h3 className="font-semibold text-blue-900">Input Parameters</h3>
+                    <p className="text-sm text-blue-600">
+                      {filteredInputSchema.length} field{filteredInputSchema.length !== 1 ? 's' : ''}
+                      {filteredInputSchema.filter(f => f.required).length > 0 && 
+                        ` • ${filteredInputSchema.filter(f => f.required).length} required`
+                      }
                     </p>
-                  )}
-                  {!result && (
-                    <div className="text-xs text-green-600 italic mt-2">
-                      Waiting for agent execution...
-                    </div>
-                  )}
+                  </div>
                 </div>
-              ))}
+                {expandedSections.inputs ? 
+                  <ChevronUp className="h-5 w-5 text-blue-600" /> : 
+                  <ChevronDown className="h-5 w-5 text-blue-600" />
+                }
+              </div>
             </div>
-          )}
-        </div>
-      </div>
 
-      {/* Execution Controls */}
-      <div className="bg-gradient-to-r from-gray-50 to-slate-50 border border-gray-200 rounded-xl p-5">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-purple-100 rounded-lg">
-              <Play className="h-5 w-5 text-purple-600" />
+            {expandedSections.inputs && (
+              <div className="p-4">
+                {filteredInputSchema.length === 0 ? (
+                  <div className="bg-white/70 border border-blue-200 rounded-xl p-6 text-center">
+                    <Info className="h-8 w-8 text-blue-500 mx-auto mb-2" />
+                    <p className="text-blue-700 font-medium">No Input Required</p>
+                    <p className="text-sm text-blue-600 mt-1">
+                      This agent handles data automatically through connected plugins
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {filteredInputSchema.map((field, index) => (
+                      <div key={index} className="bg-white/70 backdrop-blur-sm rounded-xl p-4 border border-blue-100">
+                        <div className="flex items-center gap-2 mb-3">
+                          <label className="font-medium text-gray-900">
+                            {field.name}
+                          </label>
+                          {field.required && <span className="text-red-500">*</span>}
+                          <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-lg">
+                            {field.type}
+                          </span>
+                        </div>
+                        
+                        {field.description && (
+                          <p className="text-sm text-gray-600 mb-3 bg-gray-50 p-2 rounded-lg">
+                            {field.description}
+                          </p>
+                        )}
+                        
+                        {field.type === 'enum' ? (
+                          <select
+                            className={`w-full border px-4 py-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white transition-all ${
+                              validationErrors[field.name] ? 'border-red-500' : 'border-gray-300'
+                            }`}
+                            onChange={(e) => handleInputChange(field.name, e.target.value)}
+                            value={formData[field.name] || ''}
+                          >
+                            <option value="">
+                              {field.placeholder || 'Select an option'}
+                            </option>
+                            {(field.enum || field.options || []).map((opt) => (
+                              <option key={opt} value={opt}>{opt}</option>
+                            ))}
+                          </select>
+                        ) : field.type === 'file' ? (
+                          <div>
+                            <input
+                              type="file"
+                              accept="application/pdf,image/*,.txt,.csv"
+                              className={`w-full border px-4 py-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white transition-all ${
+                                validationErrors[field.name] ? 'border-red-500' : 'border-gray-300'
+                              }`}
+                              onChange={(e) => handleFileUpload(e, field.name)}
+                            />
+                            {formData[field.name] && (
+                              <div className="mt-2 flex items-center gap-2 text-green-600 text-sm">
+                                <CheckCircle className="h-4 w-4" />
+                                File uploaded successfully
+                              </div>
+                            )}
+                          </div>
+                        ) : field.type === 'boolean' ? (
+                          <div className="flex items-center gap-3 bg-white rounded-xl p-4 border border-gray-200">
+                            <input
+                              type="checkbox"
+                              className="rounded border-gray-300 h-5 w-5 text-blue-600 focus:ring-blue-500"
+                              onChange={(e) => handleInputChange(field.name, e.target.checked)}
+                              checked={formData[field.name] || false}
+                            />
+                            <span className="text-gray-700">Enable this option</span>
+                          </div>
+                        ) : (
+                          <input
+                            type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
+                            className={`w-full border px-4 py-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white transition-all ${
+                              validationErrors[field.name] ? 'border-red-500' : 'border-gray-300'
+                            }`}
+                            placeholder={field.placeholder || `Enter ${field.name.toLowerCase()}`}
+                            onChange={(e) => handleInputChange(field.name, e.target.value)}
+                            value={formData[field.name] || ''}
+                          />
+                        )}
+                        
+                        {validationErrors[field.name] && (
+                          <div className="mt-2 flex items-center gap-2 text-red-600 text-sm">
+                            <AlertCircle className="h-4 w-4" />
+                            {validationErrors[field.name]}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Output Configuration */}
+          <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-2xl border border-green-200 overflow-hidden">
+            <div 
+              className="bg-white/80 backdrop-blur-sm p-4 border-b border-green-200 cursor-pointer"
+              onClick={() => toggleSection('outputs')}
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-green-500 rounded-lg">
+                    <Target className="h-5 w-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-green-900">Expected Output</h3>
+                    <p className="text-sm text-green-600">
+                      {safeOutputSchema.length} field{safeOutputSchema.length !== 1 ? 's' : ''} to generate
+                    </p>
+                  </div>
+                </div>
+                {expandedSections.outputs ? 
+                  <ChevronUp className="h-5 w-5 text-green-600" /> : 
+                  <ChevronDown className="h-5 w-5 text-green-600" />
+                }
+              </div>
             </div>
-            <div>
-              <h3 className="font-semibold text-gray-900">Agent Execution</h3>
-              <p className="text-sm text-gray-600">Run your agent with the provided parameters</p>
+
+            {expandedSections.outputs && (
+              <div className="p-4">
+                {safeOutputSchema.length === 0 ? (
+                  <div className="bg-white/70 border border-green-200 rounded-xl p-6 text-center">
+                    <Target className="h-8 w-8 text-green-500 mx-auto mb-2" />
+                    <p className="text-green-700 font-medium">Dynamic Output</p>
+                    <p className="text-sm text-green-600 mt-1">
+                      Output structure will be determined automatically
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {safeOutputSchema.map((field, index) => (
+                      <div key={index} className="bg-white/70 backdrop-blur-sm rounded-xl p-4 border border-green-100">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="font-semibold text-green-900">{field.name}</span>
+                          <span className="bg-green-100 text-green-700 text-xs px-2 py-1 rounded-lg">
+                            {field.type}
+                          </span>
+                        </div>
+                        {field.description && (
+                          <p className="text-sm text-green-700 bg-green-50 p-2 rounded-lg">
+                            {field.description}
+                          </p>
+                        )}
+                        {!result && (
+                          <div className="text-xs text-green-600 italic mt-2 flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            Waiting for execution...
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Execution Controls */}
+        <div className="bg-gradient-to-r from-slate-50 to-gray-50 rounded-2xl border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-gradient-to-br from-purple-500 to-indigo-500 rounded-xl shadow-lg">
+                <Play className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Execute Agent</h3>
+                <p className="text-sm text-gray-600">Run your agent with the configured parameters</p>
+              </div>
             </div>
           </div>
-          {executionTime && (
-            <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-lg">
-              Last run: {formatDuration(executionTime)}
-            </span>
-          )}
-        </div>
 
-        <div className="flex items-center gap-4 flex-wrap">
-          <button
-            className={`px-6 py-3 rounded-lg flex items-center gap-2 transition-all duration-200 font-medium ${
-              canRun && !loading
-                ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg hover:shadow-xl'
-                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-            }`}
-            onClick={() => handleRun(false)}
-            disabled={!canRun || loading}
-          >
-            {loading && !showVisualizer ? (
-              <>
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                Running Agent...
-              </>
-            ) : (
-              <>
-                <Play className="h-4 w-4" />
-                Run Agent
-              </>
-            )}
-          </button>
-
-          {showVisualizer && (
+          <div className="flex items-center gap-4 flex-wrap">
             <button
-              className={`px-6 py-3 rounded-lg flex items-center gap-2 transition-all duration-200 font-medium ${
+              className={`px-8 py-4 rounded-xl flex items-center gap-3 text-lg font-semibold transition-all duration-200 ${
                 canRun && !loading
-                  ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-700 hover:to-blue-700 shadow-lg hover:shadow-xl'
+                  ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white hover:from-blue-700 hover:to-blue-800 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5'
                   : 'bg-gray-300 text-gray-500 cursor-not-allowed'
               }`}
-              onClick={() => handleRun(true)}
+              onClick={() => handleRun(false)}
               disabled={!canRun || loading}
-              title="Run with live streaming visualization"
             >
-              {loading && showVisualizer && isLiveExecution ? (
+              {loading && !showVisualizer ? (
                 <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  Live Streaming...
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  Running...
                 </>
               ) : (
                 <>
-                  <Brain className="h-4 w-4" />
-                  Run with Live Tracking
+                  <Play className="h-5 w-5" />
+                  Run Agent
                 </>
               )}
             </button>
-          )}
-          
-          {!canRun && !loading && (
-            <div className="flex items-center gap-2 text-sm text-amber-600 bg-amber-50 px-3 py-2 rounded-lg border border-amber-200">
-              <AlertCircle className="h-4 w-4" />
-              {missingPlugins.length > 0 
-                ? 'Missing required plugins'
-                : !isFormValid() 
-                ? 'Fill all required fields to run'
-                : ''
-              }
-            </div>
-          )}
-        </div>
-      </div>
 
-      {/* Live Execution Visualizer */}
-      {showVisualizer && (dynamicPhases.length > 0 || executionLogs.length > 0) && (
-        <div className="bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 rounded-xl p-6 text-white">
-          <div className="mb-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold flex items-center gap-2">
-                <Brain className="h-5 w-5 text-blue-400" />
-                Live Agent Execution
-                {isLiveExecution && (
-                  <div className="flex items-center gap-2 ml-4">
-                    <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                    <span className="text-xs text-green-400">LIVE</span>
-                  </div>
+            {showVisualizer && (
+              <button
+                className={`px-8 py-4 rounded-xl flex items-center gap-3 text-lg font-semibold transition-all duration-200 ${
+                  canRun && !loading
+                    ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white hover:from-purple-700 hover:to-indigo-700 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5'
+                    : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                }`}
+                onClick={() => handleRun(true)}
+                disabled={!canRun || loading}
+              >
+                {loading && showVisualizer && isLiveExecution ? (
+                  <>
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    Live Streaming...
+                  </>
+                ) : (
+                  <>
+                    <Brain className="h-5 w-5" />
+                    Run with Live Tracking
+                  </>
                 )}
-              </h3>
-              {currentExecutionId && (
-                <span className="text-xs text-blue-300 bg-blue-900/50 px-2 py-1 rounded">
-                  {currentExecutionId.split('_')[2]?.slice(0, 8) || currentExecutionId.slice(-8)}
+              </button>
+            )}
+            
+            {!canRun && !loading && (
+              <div className="flex items-center gap-3 text-amber-700 bg-amber-50 px-4 py-3 rounded-xl border border-amber-200">
+                <AlertCircle className="h-5 w-5" />
+                <span className="font-medium">
+                  {missingPlugins.length > 0 
+                    ? 'Missing required plugins'
+                    : !isFormValid() 
+                    ? 'Complete all required fields'
+                    : ''
+                  }
                 </span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Live Execution Visualizer */}
+        {showVisualizer && (dynamicPhases.length > 0 || executionLogs.length > 0) && (
+          <div className="bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 rounded-2xl p-6 text-white">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <Brain className="h-6 w-6 text-blue-400" />
+                <div>
+                  <h3 className="text-xl font-bold">Live Agent Execution</h3>
+                  <p className="text-blue-300">Real-time monitoring and insights</p>
+                </div>
+              </div>
+              {isLiveExecution && (
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse"></div>
+                  <span className="text-green-400 font-semibold">LIVE</span>
+                </div>
               )}
             </div>
             
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-              <div className="text-center">
-                <div className="text-xl font-bold text-blue-400">{executionLogs.length}</div>
-                <div className="text-gray-400 text-xs">Total Logs</div>
+            {/* Metrics Grid */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <div className="bg-slate-800/50 rounded-xl p-4 text-center">
+                <div className="text-2xl font-bold text-blue-400">{executionLogs.length}</div>
+                <div className="text-gray-400 text-sm">Total Logs</div>
               </div>
-              <div className="text-center">
-                <div className="text-xl font-bold text-green-400">
-                  {executionMetrics.confidence > 0 ? (executionMetrics.confidence * 100).toFixed(1) + '%' : 
-                   executionLogs.some(log => log.message.toLowerCase().includes('confidence')) ? '87.3%' : 'N/A'}
+              <div className="bg-slate-800/50 rounded-xl p-4 text-center">
+                <div className="text-2xl font-bold text-green-400">
+                  {executionMetrics.confidence > 0 ? (executionMetrics.confidence * 100).toFixed(1) + '%' : 'N/A'}
                 </div>
-                <div className="text-gray-400 text-xs">Confidence</div>
+                <div className="text-gray-400 text-sm">Confidence</div>
               </div>
-              <div className="text-center">
-                <div className="text-xl font-bold text-purple-400">
-                  {executionMetrics.qualityScore !== 'B' ? executionMetrics.qualityScore :
-                   executionLogs.some(log => log.message.toLowerCase().includes('quality_score')) ? 'A+' : 'B'}
+              <div className="bg-slate-800/50 rounded-xl p-4 text-center">
+                <div className="text-2xl font-bold text-purple-400">
+                  {executionMetrics.qualityScore}
                 </div>
-                <div className="text-gray-400 text-xs">Quality</div>
+                <div className="text-gray-400 text-sm">Quality</div>
               </div>
-              <div className="text-center">
-                <div className="text-xl font-bold text-cyan-400">
+              <div className="bg-slate-800/50 rounded-xl p-4 text-center">
+                <div className="text-2xl font-bold text-cyan-400">
                   {executionTime ? formatDuration(executionTime) : formatDuration(executionMetrics.duration)}
                 </div>
-                <div className="text-gray-400 text-xs">Duration</div>
+                <div className="text-gray-400 text-sm">Duration</div>
               </div>
             </div>
-          </div>
 
-          <div className="space-y-3">
-            <h4 className="font-medium text-gray-300 mb-3 flex items-center gap-2">
-              <Activity className="h-4 w-4" />
-              Execution Phases ({executionLogs.length} logs streamed)
-            </h4>
-            
-            {dynamicPhases.map((phase, index) => {
-              const IconComponent = phase.icon
-
-              return (
-                <div
-                  key={phase.id}
-                  className={`bg-slate-800/30 backdrop-blur-sm rounded-lg p-4 border transition-all duration-300 ${
-                    phase.status === 'active' 
-                      ? 'border-blue-500/50 shadow-lg shadow-blue-500/20' 
-                      : phase.status === 'completed'
-                      ? 'border-green-500/50'
-                      : phase.status === 'error'
-                      ? 'border-red-500/50'
-                      : 'border-slate-700/30'
-                  }`}
-                >
-                  <div className="flex items-center gap-3 mb-3">
-                    <div className={`p-2 rounded-lg bg-gradient-to-r ${phase.color} shadow-lg`}>
-                      <IconComponent className="h-4 w-4 text-white" />
-                    </div>
-                    <div className="flex-1">
-                      <h5 className="font-semibold text-white text-sm">{phase.title}</h5>
-                      <p className="text-gray-400 text-xs">
-                        {phase.logs.length} log{phase.logs.length !== 1 ? 's' : ''}
-                        {phase.startTime && ` • Started ${new Date(phase.startTime).toLocaleTimeString()}`}
-                        {phase.endTime && ` • Completed ${new Date(phase.endTime).toLocaleTimeString()}`}
-                      </p>
-                    </div>
-                    <div>
-                      {phase.status === 'completed' && (
-                        <CheckCircle className="h-5 w-5 text-green-400" />
-                      )}
-                      {phase.status === 'active' && (
-                        <div className="animate-spin">
-                          <Clock className="h-5 w-5 text-blue-400" />
-                        </div>
-                      )}
-                      {phase.status === 'error' && (
-                        <AlertCircle className="h-5 w-5 text-red-400" />
-                      )}
-                      {phase.status === 'pending' && (
-                        <div className="w-5 h-5 border-2 border-gray-600 rounded-full" />
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="mb-3">
-                    <div className="w-full bg-slate-700 rounded-full h-1.5 overflow-hidden">
-                      <div
-                        className={`h-full bg-gradient-to-r ${
-                          phase.status === 'error' ? 'from-red-500 to-red-600' : phase.color
-                        } transition-all duration-300`}
-                        style={{ width: `${phase.progress}%` }}
-                      />
-                    </div>
-                    <div className="text-right text-xs text-gray-400 mt-1">
-                      {phase.progress.toFixed(1)}%
-                    </div>
-                  </div>
-
-                  {phase.logs.length > 0 && (
-                    <div className="space-y-1">
-                      <div className="text-xs text-gray-400 mb-2">Recent logs:</div>
-                      {phase.logs.slice(-2).map((log, logIndex) => (
-                        <div
-                          key={logIndex}
-                          className={`text-xs p-2 rounded ${
-                            log.level === 'error' ? 'bg-red-900/50 text-red-300' :
-                            log.level === 'warn' ? 'bg-yellow-900/50 text-yellow-300' :
-                            'bg-slate-700/50 text-gray-300'
-                          }`}
-                        >
-                          <div className="font-mono text-xs break-all">
-                            {log.message.slice(0, 120)}
-                            {log.message.length > 120 && '...'}
+            {/* Execution Phases */}
+            <div className="space-y-4">
+              <h4 className="font-semibold text-gray-300 mb-4 flex items-center gap-2">
+                <Activity className="h-5 w-5" />
+                Execution Phases
+              </h4>
+              
+              {dynamicPhases.map((phase, index) => {
+                const IconComponent = phase.icon
+                return (
+                  <div
+                    key={phase.id}
+                    className={`bg-slate-800/30 backdrop-blur-sm rounded-xl p-5 border transition-all duration-300 ${
+                      phase.status === 'active' 
+                        ? 'border-blue-500/50 shadow-lg shadow-blue-500/20' 
+                        : phase.status === 'completed'
+                        ? 'border-green-500/50'
+                        : phase.status === 'error'
+                        ? 'border-red-500/50'
+                        : 'border-slate-700/30'
+                    }`}
+                  >
+                    <div className="flex items-center gap-4 mb-4">
+                      <div className={`p-3 rounded-xl bg-gradient-to-r ${phase.color} shadow-lg`}>
+                        <IconComponent className="h-5 w-5 text-white" />
+                      </div>
+                      <div className="flex-1">
+                        <h5 className="font-semibold text-white text-lg">{phase.title}</h5>
+                        <p className="text-gray-400 text-sm">
+                          {phase.logs.length} log{phase.logs.length !== 1 ? 's' : ''}
+                          {phase.startTime && ` • Started ${new Date(phase.startTime).toLocaleTimeString()}`}
+                        </p>
+                      </div>
+                      <div>
+                        {phase.status === 'completed' && (
+                          <CheckCircle className="h-6 w-6 text-green-400" />
+                        )}
+                        {phase.status === 'active' && (
+                          <div className="animate-spin">
+                            <Loader2 className="h-6 w-6 text-blue-400" />
                           </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-
-          <div className="mt-6">
-            <h4 className="font-medium text-gray-300 mb-3 flex items-center gap-2">
-              <Eye className="h-4 w-4" />
-              Live Stream Logs
-            </h4>
-            <div className="bg-slate-800/40 rounded-lg p-4 h-48 overflow-y-auto">
-              {executionLogs.length === 0 ? (
-                <div className="text-center text-gray-400 py-8">
-                  <Clock className="h-6 w-6 mx-auto mb-2" />
-                  <p className="text-sm">Waiting for stream data...</p>
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  {executionLogs.slice(-20).map((log, index) => (
-                    <div
-                      key={index}
-                      className={`text-xs p-2 rounded ${
-                        log.level === 'error' ? 'bg-red-800/30 text-red-300' :
-                        log.level === 'warn' ? 'bg-yellow-800/30 text-yellow-300' :
-                        'bg-slate-700/30 text-gray-300'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-gray-500">
-                          {new Date(log.timestamp).toLocaleTimeString()}
-                        </span>
-                        <span className={`text-xs px-2 py-0.5 rounded uppercase ${
-                          log.level === 'error' ? 'bg-red-500/20 text-red-300' :
-                          log.level === 'warn' ? 'bg-yellow-500/20 text-yellow-300' :
-                          'bg-blue-500/20 text-blue-300'
-                        }`}>
-                          {log.level}
-                        </span>
-                        {log.phase && (
-                          <span className="px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded text-xs">
-                            {log.phase}
-                          </span>
+                        )}
+                        {phase.status === 'error' && (
+                          <AlertCircle className="h-6 w-6 text-red-400" />
                         )}
                       </div>
-                      <div className="font-mono text-xs break-all">
-                        {log.message}
+                    </div>
+
+                    <div className="mb-4">
+                      <div className="w-full bg-slate-700 rounded-full h-2 overflow-hidden">
+                        <div
+                          className={`h-full bg-gradient-to-r ${phase.color} transition-all duration-500`}
+                          style={{ width: `${phase.progress}%` }}
+                        />
+                      </div>
+                      <div className="text-right text-sm text-gray-400 mt-2">
+                        {phase.progress.toFixed(1)}%
+                      </div>
+                    </div>
+
+                    {phase.logs.length > 0 && (
+                      <div className="space-y-2">
+                        <div className="text-sm text-gray-400">Recent logs:</div>
+                        {phase.logs.slice(-2).map((log, logIndex) => (
+                          <div
+                            key={logIndex}
+                            className="text-sm p-3 rounded-lg bg-slate-700/50 text-gray-300 border border-slate-600/30"
+                          >
+                            <div className="font-mono text-xs break-all">
+                              {log.message.slice(0, 150)}
+                              {log.message.length > 150 && '...'}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Status Message */}
+        {sendStatus && (
+          <div className={`p-4 rounded-xl border flex items-center gap-3 ${
+            sendStatus.includes('successfully') 
+              ? 'bg-green-50 border-green-200 text-green-800' 
+              : sendStatus.includes('failed') || sendStatus.includes('Failed')
+              ? 'bg-red-50 border-red-200 text-red-800'
+              : 'bg-blue-50 border-blue-200 text-blue-800'
+          }`}>
+            {sendStatus.includes('successfully') ? (
+              <CheckCircle className="h-5 w-5" />
+            ) : sendStatus.includes('failed') || sendStatus.includes('Failed') ? (
+              <AlertCircle className="h-5 w-5" />
+            ) : (
+              <Clock className="h-5 w-5" />
+            )}
+            <p className="font-semibold">{sendStatus}</p>
+          </div>
+        )}
+
+        {/* Results Display */}
+        {result && (
+          <div className={`border rounded-2xl overflow-hidden ${
+            result.error 
+              ? 'bg-red-50 border-red-200' 
+              : 'bg-gray-50 border-gray-200'
+          }`}>
+            <div className={`p-5 border-b ${
+              result.error ? 'border-red-200' : 'border-gray-200'
+            }`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={`p-3 rounded-xl ${
+                    result.error ? 'bg-red-100' : 'bg-green-100'
+                  }`}>
+                    {result.error ? (
+                      <AlertCircle className="h-6 w-6 text-red-600" />
+                    ) : (
+                      <CheckCircle className="h-6 w-6 text-green-600" />
+                    )}
+                  </div>
+                  <div>
+                    <h3 className={`text-lg font-bold ${
+                      result.error ? 'text-red-900' : 'text-green-900'
+                    }`}>
+                      {result.error ? 'Execution Error' : 'Agent Results'}
+                    </h3>
+                    <p className={`text-sm ${
+                      result.error ? 'text-red-600' : 'text-green-600'
+                    }`}>
+                      {result.error ? 'Something went wrong during execution' : 'Agent completed successfully'}
+                    </p>
+                  </div>
+                </div>
+                
+                {!result.error && (
+                  <div className="flex gap-2">
+                    {(connectedPluginKeys.includes('google-mail') && result?.to && result?.subject && result?.body) && (
+                      <button
+                        className="bg-green-600 text-white px-4 py-2 rounded-xl hover:bg-green-700 flex items-center gap-2 font-medium transition-colors"
+                        onClick={handleSendEmail}
+                      >
+                        <Send className="h-4 w-4" />
+                        Send Email
+                      </button>
+                    )}
+
+                    {(safeOutputSchema.some((f) => ['SummaryBlock', 'EmailDraft'].includes(f.type))) && (
+                      <button
+                        className="bg-gray-700 text-white px-4 py-2 rounded-xl hover:bg-gray-800 flex items-center gap-2 font-medium transition-colors"
+                        onClick={handleDownloadPDF}
+                      >
+                        <Download className="h-4 w-4" />
+                        Download PDF
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="p-5">
+              {result.error ? (
+                <div className="bg-white border border-red-200 rounded-xl p-4">
+                  <code className="text-red-700 text-sm font-mono">{result.error}</code>
+                </div>
+              ) : typeof result === 'object' ? (
+                <div className="space-y-4">
+                  {safeOutputSchema.map((field) => (
+                    <div key={field.name} className="bg-white border border-gray-200 rounded-xl p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <span className="font-semibold text-gray-900">{field.name}</span>
+                        <span className="bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-lg">
+                          {field.type}
+                        </span>
+                      </div>
+                      <div className="text-gray-900">
+                        {result[field.name] ? (
+                          typeof result[field.name] === 'object' ? (
+                            <pre className="text-sm bg-gray-100 p-4 rounded-xl overflow-x-auto font-mono">
+                              {JSON.stringify(result[field.name], null, 2)}
+                            </pre>
+                          ) : (
+                            <div className="break-words bg-gray-50 p-4 rounded-xl">
+                              {result[field.name]}
+                            </div>
+                          )
+                        ) : (
+                          <span className="text-gray-400 italic bg-gray-100 p-4 rounded-xl block">
+                            No data returned for this field
+                          </span>
+                        )}
                       </div>
                     </div>
                   ))}
                 </div>
-              )}
-            </div>
-          </div>
-
-          {!isLiveExecution && executionLogs.length > 0 && (
-            <div className="mt-4 bg-gradient-to-r from-green-500/10 to-emerald-500/10 rounded-lg p-4 border border-green-500/20">
-              <div className="flex items-center gap-2 mb-2">
-                <CheckCircle className="h-5 w-5 text-green-400" />
-                <span className="font-semibold text-green-400">Execution Summary</span>
-              </div>
-              <div className="grid grid-cols-3 gap-4 text-center">
-                <div>
-                  <div className="text-lg font-bold text-green-400">
-                    {executionMetrics.confidence > 0 ? (executionMetrics.confidence * 100).toFixed(1) + '%' : 'N/A'}
-                  </div>
-                  <div className="text-gray-400 text-xs">Confidence</div>
-                </div>
-                <div>
-                  <div className="text-lg font-bold text-purple-400">{executionMetrics.qualityScore}</div>
-                  <div className="text-gray-400 text-xs">Quality Grade</div>
-                </div>
-                <div>
-                  <div className="text-lg font-bold text-blue-400">{executionMetrics.dataProcessed ? 'Yes' : 'No'}</div>
-                  <div className="text-gray-400 text-xs">Data Processed</div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Status Messages */}
-      {sendStatus && (
-        <div className={`p-4 rounded-lg border flex items-center gap-2 ${
-          sendStatus.includes('successfully') 
-            ? 'bg-green-50 border-green-200 text-green-800' 
-            : sendStatus.includes('Failed')
-            ? 'bg-red-50 border-red-200 text-red-800'
-            : 'bg-blue-50 border-blue-200 text-blue-800'
-        }`}>
-          {sendStatus.includes('successfully') ? (
-            <CheckCircle className="h-5 w-5" />
-          ) : sendStatus.includes('Failed') ? (
-            <AlertCircle className="h-5 w-5" />
-          ) : (
-            <Clock className="h-5 w-5" />
-          )}
-          <p className="font-medium">{sendStatus}</p>
-        </div>
-      )}
-
-      {/* Results Display */}
-      {result && (
-        <div className={`border rounded-xl p-5 text-sm space-y-4 ${
-          result.error 
-            ? 'bg-red-50 border-red-200 text-red-800' 
-            : 'bg-gray-50 border-gray-200 text-gray-800'
-        }`}>
-          <div className="flex items-center gap-3 mb-4">
-            <div className={`p-2 rounded-lg ${
-              result.error ? 'bg-red-100' : 'bg-green-100'
-            }`}>
-              {result.error ? (
-                <AlertCircle className="h-5 w-5 text-red-600" />
               ) : (
-                <CheckCircle className="h-5 w-5 text-green-600" />
+                <div className="bg-white border border-gray-200 rounded-xl p-4">
+                  <p className="break-words text-gray-900">{result}</p>
+                </div>
               )}
-            </div>
-            <div>
-              <h3 className={`font-semibold ${
-                result.error ? 'text-red-900' : 'text-green-900'
-              }`}>
-                {result.error ? 'Execution Error' : 'Agent Results'}
-              </h3>
-              <p className={`text-sm ${
-                result.error ? 'text-red-600' : 'text-green-600'
-              }`}>
-                {result.error ? 'Something went wrong' : 'Agent completed successfully'}
-              </p>
             </div>
           </div>
-
-          {result.error ? (
-            <div className="bg-white border border-red-200 rounded-lg p-4">
-              <code className="text-red-700 text-sm">{result.error}</code>
-            </div>
-          ) : typeof result === 'object' ? (
-            <div className="space-y-3">
-              {safeOutputSchema.map((field) => (
-                <div key={field.name} className="bg-white border border-gray-200 rounded-lg p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <strong className="text-gray-700">{field.name}</strong>
-                    <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded">
-                      {field.type}
-                    </span>
-                  </div>
-                  <div className="text-gray-900">
-                    {result[field.name] ? (
-                      typeof result[field.name] === 'object' ? (
-                        <pre className="text-xs bg-gray-100 p-3 rounded overflow-x-auto font-mono">
-                          {JSON.stringify(result[field.name], null, 2)}
-                        </pre>
-                      ) : (
-                        <div className="break-words bg-gray-50 p-3 rounded">
-                          {result[field.name]}
-                        </div>
-                      )
-                    ) : (
-                      <span className="text-gray-400 italic bg-gray-100 p-3 rounded block">
-                        No data returned for this field
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="bg-white border border-gray-200 rounded-lg p-4">
-              <p className="break-words">{result}</p>
-            </div>
-          )}
-
-          {!result.error && (
-            <div className="flex gap-3 pt-4 border-t border-gray-300">
-              {(connectedPluginKeys.includes('google-mail') && result?.to && result?.subject && result?.body) && (
-                <button
-                  className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center gap-2 font-medium transition-colors"
-                  onClick={handleSendEmail}
-                >
-                  <ArrowRight className="h-4 w-4" />
-                  Send Email via Gmail
-                </button>
-              )}
-
-              {(safeOutputSchema.some((f) => ['SummaryBlock', 'EmailDraft'].includes(f.type))) && (
-                <button
-                  className="bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-800 flex items-center gap-2 font-medium transition-colors"
-                  onClick={handleDownloadPDF}
-                >
-                  <FileText className="h-4 w-4" />
-                  Download PDF
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }
