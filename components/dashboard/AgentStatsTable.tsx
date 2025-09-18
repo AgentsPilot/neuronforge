@@ -135,9 +135,9 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
   if (loading) {
     return (
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
-        <div className="p-8 text-center">
-          <div className="animate-spin h-8 w-8 border-2 border-blue-600 border-t-transparent rounded-full mx-auto mb-4"></div>
-          <p className="text-gray-500">Loading agent statistics...</p>
+        <div className="p-6 text-center">
+          <div className="animate-spin h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full mx-auto mb-3"></div>
+          <p className="text-gray-500 text-sm">Loading agent statistics...</p>
         </div>
       </div>
     )
@@ -146,9 +146,9 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
   if (!user?.id) {
     return (
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
-        <div className="p-8 text-center">
-          <AlertTriangle className="h-8 w-8 text-yellow-500 mx-auto mb-4" />
-          <p className="text-gray-500">Please log in to view agent statistics.</p>
+        <div className="p-6 text-center">
+          <AlertTriangle className="h-6 w-6 text-yellow-500 mx-auto mb-3" />
+          <p className="text-gray-500 text-sm">Please log in to view agent statistics.</p>
         </div>
       </div>
     )
@@ -156,21 +156,21 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
-      {/* Header */}
-      <div className="p-6 border-b border-gray-200">
-        <div className="flex items-center justify-between mb-4">
+      {/* Compact Header */}
+      <div className="p-4 border-b border-gray-200">
+        <div className="flex items-center justify-between mb-3">
           <div>
-            <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-              <BarChart3 className="h-6 w-6 text-blue-600" />
+            <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+              <BarChart3 className="h-5 w-5 text-blue-600" />
               Agent Performance
             </h2>
-            <p className="text-gray-600 mt-1">Monitor your agent execution statistics and performance metrics</p>
+            <p className="text-gray-600 text-xs mt-0.5">Monitor execution statistics and performance metrics</p>
           </div>
           
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
             <button
               onClick={() => setViewMode('cards')}
-              className={`px-3 py-2 text-sm rounded-lg transition-colors ${
+              className={`px-2 py-1 text-xs rounded-md transition-colors ${
                 viewMode === 'cards' 
                   ? 'bg-blue-100 text-blue-700' 
                   : 'text-gray-600 hover:bg-gray-100'
@@ -180,7 +180,7 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
             </button>
             <button
               onClick={() => setViewMode('table')}
-              className={`px-3 py-2 text-sm rounded-lg transition-colors ${
+              className={`px-2 py-1 text-xs rounded-md transition-colors ${
                 viewMode === 'table' 
                   ? 'bg-blue-100 text-blue-700' 
                   : 'text-gray-600 hover:bg-gray-100'
@@ -191,114 +191,114 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
           </div>
         </div>
 
-        {/* Summary Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="bg-blue-50 rounded-lg p-4">
-            <div className="flex items-center gap-2 mb-1">
-              <Activity className="h-4 w-4 text-blue-600" />
-              <span className="text-sm font-medium text-blue-900">Total Runs</span>
+        {/* Compact Summary Stats */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="bg-blue-50 rounded-lg p-3">
+            <div className="flex items-center gap-1.5 mb-1">
+              <Activity className="h-3 w-3 text-blue-600" />
+              <span className="text-xs font-medium text-blue-900">Total Runs</span>
             </div>
-            <div className="text-2xl font-bold text-blue-700">{totalRuns.toLocaleString()}</div>
+            <div className="text-lg font-bold text-blue-700">{totalRuns.toLocaleString()}</div>
           </div>
           
-          <div className="bg-green-50 rounded-lg p-4">
-            <div className="flex items-center gap-2 mb-1">
-              <CheckCircle className="h-4 w-4 text-green-600" />
-              <span className="text-sm font-medium text-green-900">Success Rate</span>
+          <div className="bg-green-50 rounded-lg p-3">
+            <div className="flex items-center gap-1.5 mb-1">
+              <CheckCircle className="h-3 w-3 text-green-600" />
+              <span className="text-xs font-medium text-green-900">Success Rate</span>
             </div>
-            <div className="text-2xl font-bold text-green-700">{averageSuccessRate}%</div>
+            <div className="text-lg font-bold text-green-700">{averageSuccessRate}%</div>
           </div>
           
-          <div className="bg-purple-50 rounded-lg p-4">
-            <div className="flex items-center gap-2 mb-1">
-              <Zap className="h-4 w-4 text-purple-600" />
-              <span className="text-sm font-medium text-purple-900">Active Agents</span>
+          <div className="bg-purple-50 rounded-lg p-3">
+            <div className="flex items-center gap-1.5 mb-1">
+              <Zap className="h-3 w-3 text-purple-600" />
+              <span className="text-xs font-medium text-purple-900">Active Agents</span>
             </div>
-            <div className="text-2xl font-bold text-purple-700">{activeAgents}</div>
+            <div className="text-lg font-bold text-purple-700">{activeAgents}</div>
           </div>
           
-          <div className="bg-gray-50 rounded-lg p-4">
-            <div className="flex items-center gap-2 mb-1">
-              <Target className="h-4 w-4 text-gray-600" />
-              <span className="text-sm font-medium text-gray-900">Total Agents</span>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <div className="flex items-center gap-1.5 mb-1">
+              <Target className="h-3 w-3 text-gray-600" />
+              <span className="text-xs font-medium text-gray-900">Total Agents</span>
             </div>
-            <div className="text-2xl font-bold text-gray-700">{stats.length}</div>
+            <div className="text-lg font-bold text-gray-700">{stats.length}</div>
           </div>
         </div>
       </div>
 
-      {/* Content */}
-      <div className="p-6">
+      {/* Compact Content */}
+      <div className="p-4">
         {stats.length === 0 ? (
-          <div className="text-center py-12">
-            <BarChart3 className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No agent statistics</h3>
-            <p className="text-gray-600">Your agents haven't been executed yet. Run an agent to see statistics here.</p>
+          <div className="text-center py-8">
+            <BarChart3 className="h-10 w-10 text-gray-400 mx-auto mb-3" />
+            <h3 className="text-base font-medium text-gray-900 mb-1">No agent statistics</h3>
+            <p className="text-gray-600 text-sm">Your agents haven't been executed yet. Run an agent to see statistics here.</p>
           </div>
         ) : viewMode === 'cards' ? (
-          /* Cards View */
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          /* Compact Cards View */
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {stats.map((stat) => {
               const successRate = calculateSuccessRate(stat.success_count, stat.run_count)
               const activityStatus = getActivityStatus(stat.last_run_at)
               
               return (
-                <div key={stat.agent_id} className="border border-gray-200 rounded-lg p-5 hover:shadow-md transition-shadow">
-                  <div className="flex items-start justify-between mb-4">
+                <div key={stat.agent_id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                  <div className="flex items-start justify-between mb-3">
                     <div className="flex-1 min-w-0">
-                      <h3 className="font-semibold text-gray-900 mb-1 truncate" title={stat.agent_name}>
+                      <h3 className="font-semibold text-gray-900 text-sm mb-1 truncate" title={stat.agent_name}>
                         {stat.agent_name}
                       </h3>
                       <div className="flex items-center gap-2">
-                        <span className={`text-xs px-2 py-1 rounded-full ${activityStatus.color} bg-current bg-opacity-10`}>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${activityStatus.color} bg-current bg-opacity-10`}>
                           {activityStatus.label}
                         </span>
                       </div>
                     </div>
-                    <div className={`text-right px-3 py-1 rounded-full text-sm font-medium ${getSuccessRateColor(successRate)} ml-2 flex-shrink-0`}>
+                    <div className={`text-right px-2 py-1 rounded-full text-xs font-medium ${getSuccessRateColor(successRate)} ml-2 flex-shrink-0`}>
                       {successRate}%
                     </div>
                   </div>
 
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <PlayCircle className="h-4 w-4 text-gray-500" />
-                        <span className="text-sm text-gray-600">Total Runs</span>
+                      <div className="flex items-center gap-1.5">
+                        <PlayCircle className="h-3 w-3 text-gray-500" />
+                        <span className="text-xs text-gray-600">Total Runs</span>
                       </div>
-                      <span className="font-medium text-gray-900">{stat.run_count.toLocaleString()}</span>
+                      <span className="font-medium text-gray-900 text-sm">{stat.run_count.toLocaleString()}</span>
                     </div>
 
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <CheckCircle className="h-4 w-4 text-green-500" />
-                        <span className="text-sm text-gray-600">Successes</span>
+                      <div className="flex items-center gap-1.5">
+                        <CheckCircle className="h-3 w-3 text-green-500" />
+                        <span className="text-xs text-gray-600">Successes</span>
                       </div>
-                      <span className="font-medium text-green-600">{stat.success_count.toLocaleString()}</span>
+                      <span className="font-medium text-green-600 text-sm">{stat.success_count.toLocaleString()}</span>
                     </div>
 
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <XCircle className="h-4 w-4 text-red-500" />
-                        <span className="text-sm text-gray-600">Failures</span>
+                      <div className="flex items-center gap-1.5">
+                        <XCircle className="h-3 w-3 text-red-500" />
+                        <span className="text-xs text-gray-600">Failures</span>
                       </div>
-                      <span className="font-medium text-red-600">{(stat.run_count - stat.success_count).toLocaleString()}</span>
+                      <span className="font-medium text-red-600 text-sm">{(stat.run_count - stat.success_count).toLocaleString()}</span>
                     </div>
 
                     <div className="flex items-center justify-between pt-2 border-t border-gray-100">
-                      <div className="flex items-center gap-2">
-                        <Timer className="h-4 w-4 text-gray-400" />
-                        <span className="text-sm text-gray-600">Last Run</span>
+                      <div className="flex items-center gap-1.5">
+                        <Timer className="h-3 w-3 text-gray-400" />
+                        <span className="text-xs text-gray-600">Last Run</span>
                       </div>
-                      <span className="text-sm text-gray-500">{formatTimeAgo(stat.last_run_at)}</span>
+                      <span className="text-xs text-gray-500">{formatTimeAgo(stat.last_run_at)}</span>
                     </div>
                   </div>
 
-                  {/* Progress Bar */}
-                  <div className="mt-4">
-                    <div className="w-full bg-gray-200 rounded-full h-2">
+                  {/* Compact Progress Bar */}
+                  <div className="mt-3">
+                    <div className="w-full bg-gray-200 rounded-full h-1.5">
                       <div 
-                        className="bg-gradient-to-r from-green-500 to-green-600 h-2 rounded-full transition-all duration-300"
+                        className="bg-gradient-to-r from-green-500 to-green-600 h-1.5 rounded-full transition-all duration-300"
                         style={{ width: `${successRate}%` }}
                       ></div>
                     </div>
@@ -308,16 +308,16 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
             })}
           </div>
         ) : (
-          /* Table View */
+          /* Compact Table View */
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-200">
-                  <th className="text-left py-3 px-4 font-semibold text-gray-700">Agent</th>
-                  <th className="text-left py-3 px-4 font-semibold text-gray-700">Status</th>
-                  <th className="text-left py-3 px-4 font-semibold text-gray-700">Runs</th>
-                  <th className="text-left py-3 px-4 font-semibold text-gray-700">Success Rate</th>
-                  <th className="text-left py-3 px-4 font-semibold text-gray-700">Last Run</th>
+                  <th className="text-left py-2 px-3 font-semibold text-gray-700 text-sm">Agent</th>
+                  <th className="text-left py-2 px-3 font-semibold text-gray-700 text-sm">Status</th>
+                  <th className="text-left py-2 px-3 font-semibold text-gray-700 text-sm">Runs</th>
+                  <th className="text-left py-2 px-3 font-semibold text-gray-700 text-sm">Success Rate</th>
+                  <th className="text-left py-2 px-3 font-semibold text-gray-700 text-sm">Last Run</th>
                 </tr>
               </thead>
               <tbody>
@@ -327,38 +327,38 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
                   
                   return (
                     <tr key={stat.agent_id} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="py-4 px-4">
-                        <div className="font-medium text-gray-900 truncate max-w-xs" title={stat.agent_name}>
+                      <td className="py-3 px-3">
+                        <div className="font-medium text-gray-900 truncate max-w-xs text-sm" title={stat.agent_name}>
                           {stat.agent_name}
                         </div>
                       </td>
-                      <td className="py-4 px-4">
-                        <span className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full ${activityStatus.color} bg-current bg-opacity-10`}>
-                          <div className={`w-2 h-2 rounded-full ${activityStatus.color} bg-current`}></div>
+                      <td className="py-3 px-3">
+                        <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${activityStatus.color} bg-current bg-opacity-10`}>
+                          <div className={`w-1.5 h-1.5 rounded-full ${activityStatus.color} bg-current`}></div>
                           {activityStatus.label}
                         </span>
                       </td>
-                      <td className="py-4 px-4">
-                        <div className="text-gray-900">{stat.run_count.toLocaleString()}</div>
-                        <div className="text-sm text-gray-500">{stat.success_count} successful</div>
+                      <td className="py-3 px-3">
+                        <div className="text-gray-900 text-sm">{stat.run_count.toLocaleString()}</div>
+                        <div className="text-xs text-gray-500">{stat.success_count} successful</div>
                       </td>
-                      <td className="py-4 px-4">
+                      <td className="py-3 px-3">
                         <div className="flex items-center gap-2">
-                          <span className={`text-sm font-medium px-2 py-1 rounded ${getSuccessRateColor(successRate)}`}>
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded ${getSuccessRateColor(successRate)}`}>
                             {successRate}%
                           </span>
-                          <div className="w-16 bg-gray-200 rounded-full h-2">
+                          <div className="w-12 bg-gray-200 rounded-full h-1.5">
                             <div 
-                              className="bg-gradient-to-r from-green-500 to-green-600 h-2 rounded-full"
+                              className="bg-gradient-to-r from-green-500 to-green-600 h-1.5 rounded-full"
                               style={{ width: `${successRate}%` }}
                             ></div>
                           </div>
                         </div>
                       </td>
-                      <td className="py-4 px-4">
-                        <div className="text-gray-900">{formatTimeAgo(stat.last_run_at)}</div>
+                      <td className="py-3 px-3">
+                        <div className="text-gray-900 text-sm">{formatTimeAgo(stat.last_run_at)}</div>
                         {stat.last_run_at && (
-                          <div className="text-sm text-gray-500">{new Date(stat.last_run_at).toLocaleDateString()}</div>
+                          <div className="text-xs text-gray-500">{new Date(stat.last_run_at).toLocaleDateString()}</div>
                         )}
                       </td>
                     </tr>

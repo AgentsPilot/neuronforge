@@ -36,7 +36,14 @@ import {
   Share2,
   Coins,
   Users,
-  Heart
+  Heart,
+  ChevronDown,
+  ChevronUp,
+  Code2,
+  Info,
+  Sparkles,
+  Timer,
+  Puzzle
 } from 'lucide-react'
 
 type Agent = {
@@ -106,6 +113,7 @@ export default function AgentPage() {
   const [isSharedAgent, setIsSharedAgent] = useState(false)
   const [isOwner, setIsOwner] = useState(false)
   const [showSuccessNotification, setShowSuccessNotification] = useState(false)
+  const [showTechDetails, setShowTechDetails] = useState(false)
 
   const fetchAgent = async () => {
     // Enhanced validation for agentId
@@ -524,61 +532,99 @@ export default function AgentPage() {
       case 'active':
         return {
           icon: CheckCircle,
-          color: 'text-green-600',
-          bg: 'bg-green-50',
-          badge: 'bg-green-100 text-green-800 border-green-200',
-          label: 'Active'
+          color: 'text-emerald-600',
+          bg: 'bg-emerald-50',
+          badge: 'bg-emerald-100 text-emerald-700',
+          label: 'Active & Ready',
+          dot: 'bg-emerald-400'
         }
       case 'inactive':
         return {
           icon: Pause,
-          color: 'text-red-600',
-          bg: 'bg-red-50',
-          badge: 'bg-red-100 text-red-800 border-red-200',
-          label: 'Inactive'
+          color: 'text-slate-500',
+          bg: 'bg-slate-50',
+          badge: 'bg-slate-100 text-slate-600',
+          label: 'Paused',
+          dot: 'bg-slate-400'
         }
       case 'draft':
         return {
           icon: FileText,
-          color: 'text-yellow-600',
-          bg: 'bg-yellow-50',
-          badge: 'bg-yellow-100 text-yellow-800 border-yellow-200',
-          label: 'Draft'
+          color: 'text-amber-600',
+          bg: 'bg-amber-50',
+          badge: 'bg-amber-100 text-amber-700',
+          label: 'In Draft',
+          dot: 'bg-amber-400'
         }
       case 'shared':
         return {
           icon: Users,
           color: 'text-blue-600',
           bg: 'bg-blue-50',
-          badge: 'bg-blue-100 text-blue-800 border-blue-200',
-          label: 'Shared'
+          badge: 'bg-blue-100 text-blue-700',
+          label: 'Community',
+          dot: 'bg-blue-400'
         }
       default:
         return {
           icon: Clock,
           color: 'text-gray-600',
           bg: 'bg-gray-50',
-          badge: 'bg-gray-100 text-gray-800 border-gray-200',
-          label: status
+          badge: 'bg-gray-100 text-gray-600',
+          label: status,
+          dot: 'bg-gray-400'
         }
     }
   }
 
-  const getModeIcon = (mode: string) => {
+  const getModeConfig = (mode: string) => {
     switch (mode) {
-      case 'on_demand': return Play
-      case 'scheduled': return Calendar
-      case 'triggered': return Zap
-      default: return Activity
+      case 'on_demand': 
+        return { 
+          icon: Play, 
+          label: 'On Demand', 
+          desc: 'Runs when you trigger it',
+          color: 'text-blue-600',
+          bg: 'bg-blue-50'
+        }
+      case 'scheduled': 
+        return { 
+          icon: Calendar, 
+          label: 'Scheduled', 
+          desc: 'Runs automatically on schedule',
+          color: 'text-purple-600',
+          bg: 'bg-purple-50'
+        }
+      case 'triggered': 
+        return { 
+          icon: Zap, 
+          label: 'Event Triggered', 
+          desc: 'Runs when events happen',
+          color: 'text-orange-600',
+          bg: 'bg-orange-50'
+        }
+      default: 
+        return { 
+          icon: Activity, 
+          label: 'Standard', 
+          desc: 'Basic operation mode',
+          color: 'text-gray-600',
+          bg: 'bg-gray-50'
+        }
     }
   }
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin h-8 w-8 border-2 border-blue-600 border-t-transparent rounded-full mx-auto mb-4"></div>
-          <p className="text-gray-500">Loading agent...</p>
+          <div className="relative">
+            <div className="w-16 h-16 bg-blue-100 rounded-2xl flex items-center justify-center mb-6 mx-auto">
+              <Bot className="h-8 w-8 text-blue-600" />
+            </div>
+            <div className="absolute inset-0 w-16 h-16 border-4 border-blue-200 border-t-blue-600 rounded-2xl animate-spin mx-auto"></div>
+          </div>
+          <p className="text-slate-600 font-medium">Loading your agent...</p>
         </div>
       </div>
     )
@@ -586,15 +632,17 @@ export default function AgentPage() {
 
   if (error || !agent) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <Bot className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <h2 className="text-xl font-medium text-gray-900 mb-2">
-            {error || 'Agent not found'}
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center">
+        <div className="text-center max-w-md">
+          <div className="w-16 h-16 bg-red-100 rounded-2xl flex items-center justify-center mb-6 mx-auto">
+            <Bot className="h-8 w-8 text-red-500" />
+          </div>
+          <h2 className="text-2xl font-bold text-slate-900 mb-3">
+            {error ? 'Something went wrong' : 'Agent not found'}
           </h2>
-          <p className="text-gray-600 mb-6">
+          <p className="text-slate-600 mb-8">
             {error 
-              ? 'There was an error loading this agent. Please check the URL and try again.'
+              ? 'We had trouble loading this agent. Please check the link and try again.'
               : 'This agent doesn\'t exist or you don\'t have access to it.'
             }
           </p>
@@ -606,14 +654,14 @@ export default function AgentPage() {
                   setLoading(true)
                   fetchAgent()
                 }}
-                className="block w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                className="w-full px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors font-medium"
               >
                 Try Again
               </button>
             )}
             <Link
               href="/agents"
-              className="inline-flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+              className="inline-flex items-center gap-2 px-6 py-3 bg-white text-slate-700 border border-slate-300 rounded-xl hover:bg-slate-50 transition-colors font-medium"
             >
               <ArrowLeft className="h-4 w-4" />
               Back to Agents
@@ -625,32 +673,33 @@ export default function AgentPage() {
   }
 
   const statusConfig = getStatusConfig(agent.status || 'unknown')
+  const modeConfig = getModeConfig(agent.mode || 'on_demand')
   const StatusIcon = statusConfig.icon
-  const ModeIcon = getModeIcon(agent.mode || 'on_demand')
+  const ModeIcon = modeConfig.icon
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
       {/* Success Notification */}
       {showSuccessNotification && (
-        <div className="fixed top-4 right-4 z-50 animate-in slide-in-from-top-2 duration-300">
-          <div className="bg-white border border-green-200 rounded-xl shadow-lg p-4 max-w-sm">
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
-                <CheckCircle className="h-5 w-5 text-green-600" />
+        <div className="fixed top-6 right-6 z-50 animate-in slide-in-from-top-2 duration-300">
+          <div className="bg-white rounded-2xl shadow-xl border border-green-200 p-5 max-w-sm">
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                <Sparkles className="h-5 w-5 text-green-600" />
               </div>
               <div className="flex-1">
-                <h4 className="font-semibold text-gray-900 mb-1">Agent Shared Successfully!</h4>
-                <p className="text-sm text-gray-600 mb-2">
-                  "{agent?.agent_name}" is now available in the community marketplace.
+                <h4 className="font-semibold text-slate-900 mb-1">Shared Successfully!</h4>
+                <p className="text-sm text-slate-600 mb-3">
+                  "{agent?.agent_name}" is now live in the community.
                 </p>
-                <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 rounded-lg px-2 py-1">
-                  <Coins className="h-3 w-3" />
-                  <span>You earned 500 credits!</span>
+                <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 rounded-lg px-3 py-1.5">
+                  <Coins className="h-4 w-4" />
+                  <span className="font-medium">+500 credits earned!</span>
                 </div>
               </div>
               <button
                 onClick={() => setShowSuccessNotification(false)}
-                className="text-gray-400 hover:text-gray-600 p-1"
+                className="text-slate-400 hover:text-slate-600 p-1"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -660,103 +709,114 @@ export default function AgentPage() {
       )}
 
       {/* Header */}
-      <div className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
+      <div className="bg-white/80 backdrop-blur-sm border-b border-slate-200">
+        <div className="max-w-7xl mx-auto px-6 py-6">
+          <div className="flex items-start justify-between">
+            <div className="flex items-start gap-4 min-w-0 flex-1">
               <Link
                 href={isSharedAgent ? "/community" : "/agents"}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                className="p-2 hover:bg-slate-100 rounded-xl transition-colors flex-shrink-0 mt-1"
               >
-                <ArrowLeft className="h-5 w-5 text-gray-600" />
+                <ArrowLeft className="h-5 w-5 text-slate-600" />
               </Link>
               
-              <div className={`w-12 h-12 rounded-xl ${statusConfig.bg} flex items-center justify-center`}>
-                <Bot className={`h-6 w-6 ${statusConfig.color}`} />
-              </div>
-              
-              <div>
+              <div className="min-w-0 flex-1">
+                {/* Agent Name */}
                 {isEditingName && isOwner && !isSharedAgent ? (
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-3 mb-3">
                     <input
                       type="text"
                       value={editedName}
                       onChange={(e) => setEditedName(e.target.value)}
                       onKeyDown={handleKeyPress}
                       onBlur={handleSaveAgentName}
-                      className="text-2xl font-bold text-gray-900 bg-white border border-gray-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="text-2xl font-bold text-slate-900 bg-white border-2 border-blue-300 rounded-xl px-3 py-2 focus:outline-none focus:border-blue-500 min-w-0"
                       autoFocus
                     />
                     <button
                       onClick={handleSaveAgentName}
                       disabled={actionLoading === 'saveName'}
-                      className="p-1 text-green-600 hover:text-green-800"
+                      className="p-2 text-green-600 hover:text-green-700 hover:bg-green-50 rounded-xl flex-shrink-0"
                     >
                       {actionLoading === 'saveName' ? (
-                        <div className="w-4 h-4 border-2 border-green-600 border-t-transparent rounded-full animate-spin"></div>
+                        <div className="w-5 h-5 border-2 border-green-600 border-t-transparent rounded-full animate-spin"></div>
                       ) : (
-                        <CheckCircle className="h-4 w-4" />
+                        <CheckCircle className="h-5 w-5" />
                       )}
                     </button>
                     <button
                       onClick={handleCancelNameEdit}
-                      className="p-1 text-gray-400 hover:text-gray-600"
+                      className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl flex-shrink-0"
                     >
-                      <X className="h-4 w-4" />
+                      <X className="h-5 w-5" />
                     </button>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-2">
-                    <h1 className="text-2xl font-bold text-gray-900">{agent.agent_name}</h1>
+                  <div className="flex items-center gap-3 mb-3">
+                    <h1 className="text-2xl font-bold text-slate-900 truncate">{agent.agent_name}</h1>
                     {isOwner && !isSharedAgent && (
                       <button
                         onClick={() => setIsEditingName(true)}
-                        className="p-1 text-gray-400 hover:text-gray-600"
+                        className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl flex-shrink-0"
                       >
                         <Edit className="h-4 w-4" />
                       </button>
                     )}
                   </div>
                 )}
-                <div className="flex items-center gap-3 mt-1">
-                  <span className={`inline-flex items-center gap-1 px-3 py-1 text-sm font-medium rounded-full border ${statusConfig.badge}`}>
-                    <StatusIcon className="h-3 w-3" />
-                    {statusConfig.label}
-                  </span>
-                  <span className="inline-flex items-center gap-1 px-3 py-1 text-sm text-gray-600 bg-gray-100 rounded-full">
-                    <ModeIcon className="h-3 w-3" />
-                    {(agent.mode || 'on_demand').replace('_', ' ')}
-                  </span>
+                
+                {/* Status and Mode Pills */}
+                <div className="flex flex-wrap items-center gap-3 mb-4">
+                  <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full ${statusConfig.badge}`}>
+                    <div className={`w-2 h-2 rounded-full ${statusConfig.dot}`}></div>
+                    <span className="text-sm font-medium">{statusConfig.label}</span>
+                  </div>
+                  
+                  <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-100 text-slate-700`}>
+                    <ModeIcon className="h-3.5 w-3.5" />
+                    <span className="text-sm font-medium">{modeConfig.label}</span>
+                  </div>
+
                   {isSharedAgent && agent.shared_at && (
-                    <span className="inline-flex items-center gap-1 px-3 py-1 text-sm text-purple-700 bg-purple-100 rounded-full">
-                      <Heart className="h-3 w-3" />
-                      Shared {new Date(agent.shared_at).toLocaleDateString()}
-                    </span>
+                    <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-purple-100 text-purple-700">
+                      <Heart className="h-3.5 w-3.5" />
+                      <span className="text-sm font-medium">
+                        Shared {new Date(agent.shared_at).toLocaleDateString()}
+                      </span>
+                    </div>
                   )}
                 </div>
+
+                {/* Description */}
+                {agent.description && (
+                  <div className="bg-white/70 rounded-xl p-4 border border-slate-200">
+                    <p className="text-slate-700">{agent.description}</p>
+                  </div>
+                )}
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
+            {/* Action Buttons */}
+            <div className="flex items-center gap-2 flex-shrink-0 ml-6">
               {!isSharedAgent && isOwner && (
                 <>
                   <button
                     onClick={() => setShowShareConfirm(true)}
                     disabled={actionLoading === 'share' || agent.status !== 'active'}
-                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-blue-700 bg-blue-100 border border-blue-300 rounded-lg hover:bg-blue-200 transition-colors disabled:opacity-50"
+                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-blue-700 bg-blue-100 rounded-xl hover:bg-blue-200 transition-colors disabled:opacity-50"
                   >
                     {actionLoading === 'share' ? (
                       <div className="w-4 h-4 border-2 border-blue-700 border-t-transparent rounded-full animate-spin"></div>
                     ) : (
                       <Share2 className="h-4 w-4" />
                     )}
-                    Share Agent
+                    Share
                   </button>
 
                   <button
                     onClick={() => agent?.status === 'active' ? setShowDeactivateConfirm(true) : handleToggleStatus()}
                     disabled={actionLoading === 'toggle'}
-                    className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                    className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-xl transition-colors ${
                       agent.status === 'active'
                         ? 'bg-red-100 text-red-700 hover:bg-red-200'
                         : 'bg-green-100 text-green-700 hover:bg-green-200'
@@ -769,12 +829,12 @@ export default function AgentPage() {
                     ) : (
                       <Power className="h-4 w-4" />
                     )}
-                    {agent.status === 'active' ? 'Deactivate' : 'Activate'}
+                    {agent.status === 'active' ? 'Pause' : 'Activate'}
                   </button>
 
                   <Link
                     href={`/agents/${agent.id}/edit`}
-                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-xl hover:bg-slate-50 transition-colors"
                   >
                     <Edit className="h-4 w-4" />
                     Edit
@@ -783,37 +843,34 @@ export default function AgentPage() {
                   <button
                     onClick={() => setShowDeleteConfirm(true)}
                     disabled={actionLoading === 'delete'}
-                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-red-700 bg-white border border-red-300 rounded-lg hover:bg-red-50 transition-colors"
+                    className="p-2 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-xl transition-colors"
                   >
                     <Trash2 className="h-4 w-4" />
-                    Delete
                   </button>
                 </>
               )}
             </div>
           </div>
-
-          {agent.description && (
-            <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-              <p className="text-gray-700">{agent.description}</p>
-            </div>
-          )}
         </div>
       </div>
 
       {/* Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="max-w-7xl mx-auto px-6 py-8">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
           {/* Main Content */}
-          <div className="lg:col-span-2 space-y-8">
-            {/* Agent Sandbox */}
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
-              <div className="px-6 py-4 border-b border-gray-200">
-                <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                  <Play className="h-5 w-5 text-blue-600" />
-                  Test Agent
-                </h2>
-                <p className="text-gray-600 text-sm mt-1">Run your agent with custom inputs to test its functionality</p>
+          <div className="lg:col-span-3 space-y-8">
+            {/* Test Agent Card */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="px-6 py-5 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-slate-200">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
+                    <Play className="h-5 w-5 text-blue-600" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-semibold text-slate-900">Try It Out</h2>
+                    <p className="text-slate-600 text-sm">Test your agent with custom inputs</p>
+                  </div>
+                </div>
               </div>
               <div className="p-6">
                 <AgentSandbox
@@ -831,24 +888,34 @@ export default function AgentPage() {
             {/* Stats and History - Only for owned agents, not shared */}
             {!isSharedAgent && agent.status !== 'draft' ? (
               <>
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
-                  <div className="px-6 py-4 border-b border-gray-200">
-                    <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                      <Activity className="h-5 w-5 text-blue-600" />
-                      Performance Stats
-                    </h2>
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="px-6 py-5 bg-gradient-to-r from-emerald-50 to-teal-50 border-b border-slate-200">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
+                        <Activity className="h-5 w-5 text-emerald-600" />
+                      </div>
+                      <div>
+                        <h2 className="text-xl font-semibold text-slate-900">Performance</h2>
+                        <p className="text-slate-600 text-sm">How your agent is performing</p>
+                      </div>
+                    </div>
                   </div>
                   <div className="p-6">
                     <AgentStatsBlock agentId={agent.id} />
                   </div>
                 </div>
 
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
-                  <div className="px-6 py-4 border-b border-gray-200">
-                    <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                      <Clock className="h-5 w-5 text-blue-600" />
-                      Execution History
-                    </h2>
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="px-6 py-5 bg-gradient-to-r from-purple-50 to-pink-50 border-b border-slate-200">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center">
+                        <Clock className="h-5 w-5 text-purple-600" />
+                      </div>
+                      <div>
+                        <h2 className="text-xl font-semibold text-slate-900">Recent Activity</h2>
+                        <p className="text-slate-600 text-sm">Latest runs and results</p>
+                      </div>
+                    </div>
                   </div>
                   <div className="p-6">
                     <AgentHistoryBlock agentId={agent.id} />
@@ -856,14 +923,30 @@ export default function AgentPage() {
                 </div>
               </>
             ) : !isSharedAgent && agent.status === 'draft' ? (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-6">
-                <div className="flex items-start gap-3">
-                  <AlertTriangle className="h-6 w-6 text-yellow-600 mt-0.5" />
+              <div className="bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-amber-200 rounded-2xl p-8">
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <AlertTriangle className="h-6 w-6 text-amber-600" />
+                  </div>
                   <div>
-                    <h3 className="font-medium text-yellow-900 mb-2">Draft Mode</h3>
-                    <p className="text-yellow-800 text-sm">
-                      This agent is in draft mode. Activate it to start collecting performance statistics and execution history.
+                    <h3 className="text-xl font-semibold text-amber-900 mb-2">Still in Draft Mode</h3>
+                    <p className="text-amber-800 mb-4">
+                      Your agent is ready but not active yet. Once you activate it, you'll see performance stats and activity here.
                     </p>
+                    {isOwner && (
+                      <button
+                        onClick={handleToggleStatus}
+                        disabled={actionLoading === 'toggle'}
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-xl hover:bg-amber-700 transition-colors font-medium"
+                      >
+                        {actionLoading === 'toggle' ? (
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        ) : (
+                          <Power className="h-4 w-4" />
+                        )}
+                        Activate Agent
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -872,160 +955,175 @@ export default function AgentPage() {
 
           {/* Sidebar */}
           <div className="space-y-6">
-            {/* Agent Details */}
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
-              <div className="px-6 py-4 border-b border-gray-200">
-                <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-                  <Settings className="h-4 w-4 text-gray-600" />
-                  Agent Details
+            {/* Quick Info Card */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="p-6">
+                <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
+                  <Info className="h-5 w-5 text-slate-600" />
+                  Quick Info
                 </h3>
-              </div>
-              <div className="p-6 space-y-4">
-                <div>
-                  <label className="text-sm font-medium text-gray-700">Agent ID</label>
-                  <div className="mt-1 flex items-center gap-2">
-                    <code className="text-xs bg-gray-100 px-2 py-1 rounded font-mono text-gray-600">
-                      {agent.id.substring(0, 8)}...
-                    </code>
-                    <button 
-                      onClick={() => copyToClipboard(agent.id)}
-                      className="p-1 hover:bg-gray-100 rounded"
-                    >
-                      <Copy className="h-3 w-3 text-gray-500" />
-                    </button>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-sm font-medium text-gray-700">Status</label>
-                  <div className="mt-1">
-                    <span className={`inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full ${statusConfig.badge}`}>
-                      <StatusIcon className="h-3 w-3" />
-                      {statusConfig.label}
-                    </span>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-sm font-medium text-gray-700">Mode</label>
-                  <div className="mt-1">
-                    <span className="inline-flex items-center gap-1 px-2 py-1 text-xs text-gray-600 bg-gray-100 rounded-full">
-                      <ModeIcon className="h-3 w-3" />
-                      {(agent.mode || 'on_demand').replace('_', ' ')}
-                    </span>
-                  </div>
-                </div>
-
-                {/* User Prompt */}
-                <div>
-                  <div className="flex items-center justify-between">
-                    <label className="text-sm font-medium text-gray-700">User Prompt</label>
-                    {agent.user_prompt && agent.user_prompt.length > 150 && (
-                      <button
-                        onClick={() => setShowFullPrompt(!showFullPrompt)}
-                        className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
-                      >
-                        {showFullPrompt ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                        {showFullPrompt ? 'Hide' : 'Show Full'}
-                      </button>
-                    )}
-                  </div>
-                  <div className="mt-1">
-                    <div className="bg-gray-50 rounded-lg p-3">
-                      <p className="text-xs text-gray-700 font-mono whitespace-pre-wrap">
-                        {showFullPrompt || (agent.user_prompt && agent.user_prompt.length <= 150)
-                          ? agent.user_prompt 
-                          : `${agent.user_prompt?.substring(0, 150)}...`
-                        }
-                      </p>
+                
+                <div className="space-y-4">
+                  {/* Mode Info */}
+                  <div className={`p-4 rounded-xl ${modeConfig.bg}`}>
+                    <div className="flex items-center gap-3 mb-2">
+                      <ModeIcon className={`h-5 w-5 ${modeConfig.color}`} />
+                      <span className={`font-medium ${modeConfig.color}`}>{modeConfig.label}</span>
                     </div>
-                    <button
-                      onClick={() => copyToClipboard(agent.user_prompt || '')}
-                      className="mt-2 text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
-                    >
-                      <Copy className="h-3 w-3" />
-                      Copy prompt
-                    </button>
+                    <p className="text-sm text-slate-600">{modeConfig.desc}</p>
                   </div>
-                </div>
 
-                <div>
-                  <label className="text-sm font-medium text-gray-700">Connected Plugins</label>
-                  <div className="mt-1">
+                  {/* Plugins */}
+                  <div>
+                    <label className="text-sm font-medium text-slate-700 mb-2 block">Connected Tools</label>
                     {agent.plugins_required && agent.plugins_required.length > 0 ? (
-                      <div className="space-y-1">
+                      <div className="flex flex-wrap gap-2">
                         {agent.plugins_required.map((plugin) => (
                           <span
                             key={plugin}
-                            className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full mr-1"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-blue-100 text-blue-700 rounded-lg"
                           >
-                            <Link2 className="h-3 w-3" />
+                            <Puzzle className="h-3.5 w-3.5" />
                             {plugin}
                           </span>
                         ))}
                       </div>
                     ) : (
-                      <span className="text-xs text-gray-500">No plugins connected</span>
+                      <p className="text-sm text-slate-500">No tools connected</p>
                     )}
                   </div>
+
+                  {/* Dates */}
+                  <div className="pt-2 space-y-3 text-sm">
+                    {agent.created_at && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-600">Created</span>
+                        <span className="font-medium text-slate-900">
+                          {new Date(agent.created_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                    )}
+
+                    {isSharedAgent && agent.shared_at && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-600">Shared</span>
+                        <span className="font-medium text-slate-900">
+                          {new Date(agent.shared_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Tech Details Toggle */}
+                  <div className="pt-4 border-t border-slate-100">
+                    <button
+                      onClick={() => setShowTechDetails(!showTechDetails)}
+                      className="flex items-center justify-between w-full p-3 text-sm text-slate-600 hover:text-slate-900 hover:bg-slate-50 rounded-xl transition-colors"
+                    >
+                      <span className="flex items-center gap-2">
+                        <Code2 className="h-4 w-4" />
+                        Technical Details
+                      </span>
+                      {showTechDetails ? (
+                        <ChevronUp className="h-4 w-4" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
                 </div>
-
-                {agent.created_at && (
-                  <div>
-                    <label className="text-sm font-medium text-gray-700">Created</label>
-                    <p className="mt-1 text-sm text-gray-600">
-                      {new Date(agent.created_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                )}
-
-                {isSharedAgent && agent.shared_at && (
-                  <div>
-                    <label className="text-sm font-medium text-gray-700">Shared</label>
-                    <p className="mt-1 text-sm text-gray-600">
-                      {new Date(agent.shared_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                )}
               </div>
+
+              {/* Collapsible Tech Details */}
+              {showTechDetails && (
+                <div className="px-6 pb-6 border-t border-slate-100">
+                  <div className="pt-4 space-y-4">
+                    <div>
+                      <label className="text-sm font-medium text-slate-700 mb-2 block">Agent ID</label>
+                      <div className="flex items-center gap-2">
+                        <code className="text-xs bg-slate-100 px-3 py-2 rounded-lg font-mono text-slate-600 flex-1">
+                          {agent.id.substring(0, 8)}...
+                        </code>
+                        <button 
+                          onClick={() => copyToClipboard(agent.id)}
+                          className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                        >
+                          <Copy className="h-4 w-4 text-slate-500" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* User Prompt */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="text-sm font-medium text-slate-700">Instructions</label>
+                        {agent.user_prompt && agent.user_prompt.length > 100 && (
+                          <button
+                            onClick={() => setShowFullPrompt(!showFullPrompt)}
+                            className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                          >
+                            {showFullPrompt ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                            {showFullPrompt ? 'Less' : 'More'}
+                          </button>
+                        )}
+                      </div>
+                      <div className="bg-slate-50 rounded-lg p-3">
+                        <p className="text-xs text-slate-700 font-mono whitespace-pre-wrap">
+                          {showFullPrompt || (agent.user_prompt && agent.user_prompt.length <= 100)
+                            ? agent.user_prompt 
+                            : `${agent.user_prompt?.substring(0, 100)}...`
+                          }
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => copyToClipboard(agent.user_prompt || '')}
+                        className="mt-2 text-xs text-slate-500 hover:text-slate-700 flex items-center gap-1"
+                      >
+                        <Copy className="h-3 w-3" />
+                        Copy instructions
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* Quick Actions */}
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
-              <div className="px-6 py-4 border-b border-gray-200">
-                <h3 className="font-semibold text-gray-900">Quick Actions</h3>
-              </div>
-              <div className="p-6 space-y-3">
-                {!isSharedAgent && isOwner && (
-                  <Link
-                    href={`/agents/${agent.id}/edit`}
-                    className="flex items-center gap-3 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg transition-colors"
-                  >
-                    <Edit className="h-4 w-4" />
-                    Edit Configuration
-                  </Link>
-                )}
-
-                <button 
-                  onClick={exportAgentSettings}
-                  className="flex items-center gap-3 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg transition-colors"
-                >
-                  <Download className="h-4 w-4" />
-                  Export Settings
-                </button>
-
-                <button 
-                  onClick={duplicateAgent}
-                  disabled={actionLoading === 'duplicate' || !user}
-                  className="flex items-center gap-3 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg transition-colors disabled:opacity-50"
-                >
-                  {actionLoading === 'duplicate' ? (
-                    <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin"></div>
-                  ) : (
-                    <Copy className="h-4 w-4" />
+            {/* Actions Card */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="p-6">
+                <h3 className="font-semibold text-slate-900 mb-4">Actions</h3>
+                <div className="space-y-2">
+                  {!isSharedAgent && isOwner && (
+                    <Link
+                      href={`/agents/${agent.id}/edit`}
+                      className="flex items-center gap-3 w-full px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 rounded-xl transition-colors"
+                    >
+                      <Edit className="h-4 w-4" />
+                      Edit Settings
+                    </Link>
                   )}
-                  {isSharedAgent ? 'Clone Agent' : 'Duplicate Agent'}
-                </button>
+
+                  <button 
+                    onClick={exportAgentSettings}
+                    className="flex items-center gap-3 w-full px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 rounded-xl transition-colors"
+                  >
+                    <Download className="h-4 w-4" />
+                    Export Settings
+                  </button>
+
+                  <button 
+                    onClick={duplicateAgent}
+                    disabled={actionLoading === 'duplicate' || !user}
+                    className="flex items-center gap-3 w-full px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 rounded-xl transition-colors disabled:opacity-50"
+                  >
+                    {actionLoading === 'duplicate' ? (
+                      <div className="w-4 h-4 border-2 border-slate-600 border-t-transparent rounded-full animate-spin"></div>
+                    ) : (
+                      <Copy className="h-4 w-4" />
+                    )}
+                    {isSharedAgent ? 'Clone Agent' : 'Make a Copy'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1034,43 +1132,40 @@ export default function AgentPage() {
 
       {/* Share Agent Confirmation Modal - Only for owned agents */}
       {showShareConfirm && !isSharedAgent && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-none flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl border border-gray-200">
+        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-slate-200">
             <div className="flex items-start gap-4">
-              <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+              <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center flex-shrink-0">
                 <Share2 className="h-6 w-6 text-blue-600" />
               </div>
               <div className="flex-1">
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">Share Agent with Community</h3>
-                <div className="text-gray-600 mb-4 space-y-2">
-                  <p>You're about to share "{agent.agent_name}" with the public community.</p>
-                  <div className="bg-blue-50 p-3 rounded-lg">
+                <h3 className="text-xl font-semibold text-slate-900 mb-2">Share with Community</h3>
+                <div className="text-slate-600 mb-6 space-y-3">
+                  <p>Share "{agent.agent_name}" with everyone and help others discover great agents.</p>
+                  <div className="bg-blue-50 p-4 rounded-xl">
                     <div className="flex items-center gap-2 text-blue-800 font-medium mb-1">
                       <Coins className="h-4 w-4" />
-                      Reward: 500 Credits
+                      You'll earn 500 credits!
                     </div>
                     <p className="text-blue-700 text-sm">
-                      You'll earn 500 credits when you share this agent. These credits can be used for future premium features.
+                      Credits can be used for premium features and advanced capabilities.
                     </p>
                   </div>
-                  <p className="text-sm">
-                    <strong>What gets shared:</strong> Agent configuration, prompts, and settings (excluding execution history and personal data).
-                  </p>
-                  <p className="text-sm">
-                    <strong>Note:</strong> If you've shared this agent before, it will be updated with the latest configuration.
+                  <p className="text-sm text-slate-500">
+                    We'll share your agent's setup and instructions, but keep your personal data private.
                   </p>
                 </div>
                 <div className="flex gap-3">
                   <button
                     onClick={() => setShowShareConfirm(false)}
-                    className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+                    className="flex-1 px-4 py-3 text-sm font-medium text-slate-700 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
                   >
                     Cancel
                   </button>
                   <button
                     onClick={handleShareAgent}
                     disabled={actionLoading === 'share'}
-                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                    className="flex-1 px-4 py-3 text-sm font-medium text-white bg-blue-600 rounded-xl hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2 transition-colors"
                   >
                     {actionLoading === 'share' ? (
                       <>
@@ -1080,7 +1175,7 @@ export default function AgentPage() {
                     ) : (
                       <>
                         <Share2 className="h-4 w-4" />
-                        Share & Earn Credits
+                        Share & Earn
                       </>
                     )}
                   </button>
@@ -1093,28 +1188,28 @@ export default function AgentPage() {
 
       {/* Delete Confirmation Modal - Only for owned agents */}
       {showDeleteConfirm && !isSharedAgent && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-none flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl border border-gray-200">
+        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-slate-200">
             <div className="flex items-start gap-4">
-              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+              <div className="w-12 h-12 bg-red-100 rounded-xl flex items-center justify-center flex-shrink-0">
                 <AlertTriangle className="h-6 w-6 text-red-600" />
               </div>
               <div className="flex-1">
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">Delete Agent</h3>
-                <p className="text-gray-600 mb-4">
-                  Are you sure you want to delete "{agent.agent_name}"? This action cannot be undone and will permanently remove the agent and all its execution history.
+                <h3 className="text-xl font-semibold text-slate-900 mb-2">Delete Agent</h3>
+                <p className="text-slate-600 mb-6">
+                  Are you sure you want to delete "{agent.agent_name}"? This will permanently remove the agent and all its history. This can't be undone.
                 </p>
                 <div className="flex gap-3">
                   <button
                     onClick={() => setShowDeleteConfirm(false)}
-                    className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+                    className="flex-1 px-4 py-3 text-sm font-medium text-slate-700 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
                   >
                     Cancel
                   </button>
                   <button
                     onClick={handleDelete}
                     disabled={actionLoading === 'delete'}
-                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                    className="flex-1 px-4 py-3 text-sm font-medium text-white bg-red-600 rounded-xl hover:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2 transition-colors"
                   >
                     {actionLoading === 'delete' ? (
                       <>
@@ -1122,7 +1217,7 @@ export default function AgentPage() {
                         Deleting...
                       </>
                     ) : (
-                      'Delete Agent'
+                      'Delete Forever'
                     )}
                   </button>
                 </div>
@@ -1134,36 +1229,36 @@ export default function AgentPage() {
 
       {/* Deactivate Confirmation Modal - Only for owned agents */}
       {showDeactivateConfirm && !isSharedAgent && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-none flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl border border-gray-200">
+        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-slate-200">
             <div className="flex items-start gap-4">
-              <div className="w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center flex-shrink-0">
-                <PowerOff className="h-6 w-6 text-yellow-600" />
+              <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                <PowerOff className="h-6 w-6 text-amber-600" />
               </div>
               <div className="flex-1">
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">Deactivate Agent</h3>
-                <p className="text-gray-600 mb-4">
-                  Are you sure you want to deactivate "{agent.agent_name}"? The agent will stop running and won't be able to execute tasks until reactivated.
+                <h3 className="text-xl font-semibold text-slate-900 mb-2">Pause Agent</h3>
+                <p className="text-slate-600 mb-6">
+                  Pausing "{agent.agent_name}" will stop it from running. You can reactivate it anytime.
                 </p>
                 <div className="flex gap-3">
                   <button
                     onClick={() => setShowDeactivateConfirm(false)}
-                    className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+                    className="flex-1 px-4 py-3 text-sm font-medium text-slate-700 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
                   >
                     Cancel
                   </button>
                   <button
                     onClick={handleToggleStatus}
                     disabled={actionLoading === 'toggle'}
-                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-yellow-600 rounded-lg hover:bg-yellow-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                    className="flex-1 px-4 py-3 text-sm font-medium text-white bg-amber-600 rounded-xl hover:bg-amber-700 disabled:opacity-50 flex items-center justify-center gap-2 transition-colors"
                   >
                     {actionLoading === 'toggle' ? (
                       <>
                         <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                        Deactivating...
+                        Pausing...
                       </>
                     ) : (
-                      'Deactivate'
+                      'Pause Agent'
                     )}
                   </button>
                 </div>

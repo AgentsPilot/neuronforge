@@ -11,22 +11,12 @@ import {
   ChevronDown,
   ChevronRight,
   Calendar,
-  Play,
   Filter,
   Search,
-  Download,
   RefreshCw,
-  Eye,
   Copy,
-  MoreVertical,
   Activity,
-  Zap,
-  FileText,
-  Hash,
-  Globe,
-  Mail,
-  Settings,
-  ExternalLink
+  FileText
 } from 'lucide-react'
 
 type LogEntry = {
@@ -55,18 +45,6 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
     fetchLogs()
   }, [agentId, user])
 
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as Element
-      if (expandedLogId && expandedLogId.includes('-export') && !target.closest('.log-export-menu')) {
-        setExpandedLogId(null)
-      }
-    }
-
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [expandedLogId])
-
   const fetchLogs = async () => {
     setLoading(true)
     const { data, error } = await supabase
@@ -75,7 +53,7 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
       .eq('agent_id', agentId)
       .eq('user_id', user?.id)
       .order('created_at', { ascending: false })
-      .limit(100)
+      .limit(50)
 
     if (error) {
       console.error('Failed to fetch logs:', error.message)
@@ -85,25 +63,9 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
     setLoading(false)
   }
 
-  const isWorkflowResult = (output: any): boolean => {
-    return output && 
-           typeof output === 'object' && 
-           output.workflow_results && 
-           output.execution_summary &&
-           Array.isArray(output.workflow_results)
-  }
-
   const getStatusFromOutput = (output: any): { status: string; icon: any; color: string } => {
-    if (isWorkflowResult(output)) {
-      const { execution_summary } = output
-      const { completedSteps, failedSteps, totalSteps } = execution_summary
-      
-      if (failedSteps > 0) {
-        return completedSteps > 0 
-          ? { status: 'warning', icon: AlertTriangle, color: 'text-yellow-600' }
-          : { status: 'error', icon: XCircle, color: 'text-red-600' }
-      }
-      return { status: 'success', icon: CheckCircle, color: 'text-green-600' }
+    if (!output) {
+      return { status: 'unknown', icon: Clock, color: 'text-gray-600' }
     }
 
     if (typeof output === 'object' && output !== null) {
@@ -115,6 +77,15 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
       }
       if (output.success !== false && output.status !== 'failed') {
         return { status: 'success', icon: CheckCircle, color: 'text-green-600' }
+      }
+    }
+    
+    if (typeof output === 'string') {
+      if (output.toLowerCase().includes('error') || output.toLowerCase().includes('failed')) {
+        return { status: 'error', icon: XCircle, color: 'text-red-600' }
+      }
+      if (output.toLowerCase().includes('warning')) {
+        return { status: 'warning', icon: AlertTriangle, color: 'text-yellow-600' }
       }
     }
     
@@ -137,181 +108,208 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
     navigator.clipboard.writeText(text)
   }
 
-  const isLongText = (text: string) => {
-    return text.length > 500 || text.includes('\n') || text.includes('###') || text.includes('####')
-  }
-
-  const formatMarkdownText = (text: string) => {
-    return text
-      .replace(/### (.*$)/gim, '<h3 style="font-size: 18px; font-weight: 600; color: #1f2937; margin: 20px 0 10px 0; border-bottom: 1px solid #e5e7eb; padding-bottom: 5px;">$1</h3>')
-      .replace(/#### (.*$)/gim, '<h4 style="font-size: 16px; font-weight: 500; color: #374151; margin: 15px 0 8px 0;">$1</h4>')
-      .replace(/\*\*(.*?)\*\*/g, '<strong style="font-weight: 600; color: #1f2937;">$1</strong>')
-      .replace(/\*(.*?)\*/g, '<em style="font-style: italic; color: #374151;">$1</em>')
-      .replace(/\n\n/g, '</p><p style="margin-bottom: 12px;">')
-      .replace(/\n/g, '<br>')
-  }
-
-  const renderWorkflowResults = (workflowData: any) => {
-    const { workflow_results, execution_summary } = workflowData
-    const { totalSteps, completedSteps, failedSteps, executionDuration } = execution_summary
-
-    const overallStatus = failedSteps > 0 
-      ? (completedSteps > 0 ? 'partial' : 'failed')
-      : 'success'
-
-    const getOverallStatusDisplay = () => {
-      switch (overallStatus) {
-        case 'success':
-          return { icon: CheckCircle, color: 'text-green-600', label: 'Completed', bgColor: 'bg-green-50', borderColor: 'border-green-200' }
-        case 'partial':
-          return { icon: AlertTriangle, color: 'text-yellow-600', label: 'Partially Complete', bgColor: 'bg-yellow-50', borderColor: 'border-yellow-200' }
-        case 'failed':
-          return { icon: XCircle, color: 'text-red-600', label: 'Failed', bgColor: 'bg-red-50', borderColor: 'border-red-200' }
-        default:
-          return { icon: Clock, color: 'text-gray-600', label: 'Unknown', bgColor: 'bg-gray-50', borderColor: 'border-gray-200' }
+  const formatText = (text: string) => {
+    // Split into paragraphs and clean up
+    const paragraphs = text.split(/\n\s*\n/).filter(p => p.trim())
+    
+    return paragraphs.map(paragraph => {
+      // Format headers
+      if (paragraph.startsWith('###')) {
+        return `<h3 class="text-lg font-semibold text-gray-900 mt-4 mb-2 border-b border-gray-200 pb-1">${paragraph.replace(/^###\s*/, '')}</h3>`
       }
+      if (paragraph.startsWith('##')) {
+        return `<h2 class="text-xl font-bold text-gray-900 mt-4 mb-2">${paragraph.replace(/^##\s*/, '')}</h2>`
+      }
+      if (paragraph.startsWith('#')) {
+        return `<h1 class="text-2xl font-bold text-gray-900 mt-4 mb-3">${paragraph.replace(/^#\s*/, '')}</h1>`
+      }
+      
+      // Format lists
+      if (paragraph.includes('\n- ') || paragraph.includes('\n* ')) {
+        const lines = paragraph.split('\n')
+        let html = ''
+        let inList = false
+        
+        lines.forEach(line => {
+          const trimmed = line.trim()
+          if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+            if (!inList) {
+              html += '<ul class="list-disc list-inside space-y-1 my-2">'
+              inList = true
+            }
+            html += `<li class="text-gray-800">${trimmed.substring(2)}</li>`
+          } else if (trimmed) {
+            if (inList) {
+              html += '</ul>'
+              inList = false
+            }
+            html += `<p class="text-gray-800 mb-2">${trimmed}</p>`
+          }
+        })
+        
+        if (inList) html += '</ul>'
+        return html
+      }
+      
+      // Format numbered lists
+      if (/^\d+\./.test(paragraph.trim())) {
+        const lines = paragraph.split('\n')
+        let html = '<ol class="list-decimal list-inside space-y-1 my-2">'
+        
+        lines.forEach(line => {
+          const trimmed = line.trim()
+          if (/^\d+\./.test(trimmed)) {
+            html += `<li class="text-gray-800">${trimmed.replace(/^\d+\.\s*/, '')}</li>`
+          } else if (trimmed) {
+            html += `<p class="text-gray-800 ml-4">${trimmed}</p>`
+          }
+        })
+        
+        html += '</ol>'
+        return html
+      }
+      
+      // Regular paragraphs with basic formatting
+      let formatted = paragraph
+        .replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-gray-900">$1</strong>')
+        .replace(/\*(.*?)\*/g, '<em class="italic text-gray-700">$1</em>')
+        .replace(/`(.*?)`/g, '<code class="bg-gray-100 px-1 py-0.5 rounded text-sm font-mono text-gray-800">$1</code>')
+      
+      return `<p class="text-gray-800 mb-3 leading-relaxed">${formatted}</p>`
+    }).join('')
+  }
+
+  const renderOutput = (output: any) => {
+    if (!output) {
+      return (
+        <div className="bg-gray-100 p-4 rounded-lg text-sm text-gray-600 text-center">
+          No output data available
+        </div>
+      )
     }
 
-    const statusDisplay = getOverallStatusDisplay()
-    const StatusIcon = statusDisplay.icon
+    if (typeof output === 'string') {
+      const isLongText = output.length > 200 || output.includes('\n')
+      
+      return (
+        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+          <div className="flex items-center justify-between p-3 border-b border-gray-200 bg-gray-50">
+            <div className="flex items-center gap-2">
+              <FileText className="h-4 w-4 text-gray-600" />
+              <span className="text-sm font-medium text-gray-700">Output</span>
+              <span className="text-xs text-gray-500">({output.length} characters)</span>
+            </div>
+            <button
+              onClick={() => copyToClipboard(output)}
+              className="p-1.5 hover:bg-gray-200 rounded transition-colors"
+              title="Copy text"
+            >
+              <Copy className="h-4 w-4 text-gray-500" />
+            </button>
+          </div>
+          <div className="p-4">
+            {isLongText ? (
+              <div 
+                className="prose prose-sm max-w-none"
+                dangerouslySetInnerHTML={{ __html: formatText(output) }}
+              />
+            ) : (
+              <p className="text-sm text-gray-800">{output}</p>
+            )}
+          </div>
+        </div>
+      )
+    }
+
+    if (typeof output === 'object') {
+      // Check if it has a message field that's long text
+      if (output.message && typeof output.message === 'string' && output.message.length > 200) {
+        return (
+          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+            <div className="flex items-center justify-between p-3 border-b border-gray-200 bg-blue-50">
+              <div className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-blue-600" />
+                <span className="text-sm font-medium text-blue-800">Output</span>
+                <span className="text-xs text-blue-600">({output.message.length} characters)</span>
+              </div>
+              <button
+                onClick={() => copyToClipboard(output.message)}
+                className="p-1.5 hover:bg-blue-100 rounded transition-colors"
+                title="Copy message"
+              >
+                <Copy className="h-4 w-4 text-blue-600" />
+              </button>
+            </div>
+            <div className="p-4 max-h-96 overflow-y-auto">
+              <div 
+                className="prose prose-sm max-w-none"
+                dangerouslySetInnerHTML={{ __html: formatText(output.message) }}
+              />
+            </div>
+          </div>
+        )
+      }
+
+      // Regular structured object
+      return (
+        <div className="bg-white border border-gray-200 rounded-lg">
+          <div className="flex items-center justify-between p-3 border-b border-gray-200 bg-gray-50">
+            <div className="flex items-center gap-2">
+              <FileText className="h-4 w-4 text-gray-600" />
+              <span className="text-sm font-medium text-gray-700">Structured Output</span>
+              <span className="text-xs text-gray-500">({Object.keys(output).length} fields)</span>
+            </div>
+            <button
+              onClick={() => copyToClipboard(JSON.stringify(output, null, 2))}
+              className="p-1.5 hover:bg-gray-200 rounded transition-colors"
+              title="Copy full object"
+            >
+              <Copy className="h-4 w-4 text-gray-500" />
+            </button>
+          </div>
+          <div className="p-3 space-y-3 max-h-80 overflow-y-auto">
+            {Object.entries(output).map(([key, value]) => (
+              <div key={key} className="border-b border-gray-100 pb-2 last:border-0 last:pb-0">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm font-medium text-gray-700 capitalize">
+                    {key.replace(/_/g, ' ')}
+                  </label>
+                  <button
+                    onClick={() => copyToClipboard(typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value))}
+                    className="p-1 hover:bg-gray-200 rounded transition-colors"
+                    title="Copy value"
+                  >
+                    <Copy className="h-3 w-3 text-gray-500" />
+                  </button>
+                </div>
+                <div className="text-sm">
+                  {typeof value === 'object' ? (
+                    <pre className="bg-gray-900 text-green-400 p-3 rounded text-xs overflow-x-auto font-mono">
+                      {JSON.stringify(value, null, 2)}
+                    </pre>
+                  ) : typeof value === 'string' && value.length > 200 ? (
+                    <div className="bg-gray-50 border border-gray-200 rounded p-3 max-h-32 overflow-y-auto">
+                      <div 
+                        className="prose prose-xs max-w-none"
+                        dangerouslySetInnerHTML={{ __html: formatText(value) }}
+                      />
+                    </div>
+                  ) : (
+                    <div className="bg-gray-50 border border-gray-200 rounded p-3">
+                      <span className="text-gray-800 break-words">{String(value) || 'null'}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )
+    }
 
     return (
-      <div className="space-y-4">
-        {/* Overall Status */}
-        <div className={`${statusDisplay.bgColor} ${statusDisplay.borderColor} border rounded-lg p-4`}>
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-3">
-              <StatusIcon className={`h-6 w-6 ${statusDisplay.color}`} />
-              <div>
-                <h3 className="font-semibold text-gray-900">{statusDisplay.label}</h3>
-                <p className="text-sm text-gray-600">
-                  {completedSteps} of {totalSteps} steps completed in {Math.round(executionDuration / 1000)}s
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Step Progress */}
-        <div className="bg-white border border-gray-200 rounded-lg">
-          <div className="px-4 py-3 border-b border-gray-200">
-            <h4 className="font-medium text-gray-900 flex items-center gap-2">
-              <Activity className="h-4 w-4" />
-              Step Progress
-            </h4>
-          </div>
-          <div className="p-4 space-y-3">
-            {workflow_results.map((step: any, index: number) => {
-              const stepStatus = step.error ? 'error' : 'success'
-              const StepIcon = stepStatus === 'error' ? XCircle : CheckCircle
-              const iconColor = stepStatus === 'error' ? 'text-red-600' : 'text-green-600'
-              
-              return (
-                <div key={step.stepId || index} className="flex items-start gap-3">
-                  <StepIcon className={`h-5 w-5 ${iconColor} mt-0.5 flex-shrink-0`} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-gray-900">
-                        Step {step.stepId}: {step.action || 'Unknown action'}
-                      </span>
-                      {step.pluginKey && (
-                        <span className="text-xs bg-gray-100 px-2 py-1 rounded">
-                          {step.pluginKey}
-                        </span>
-                      )}
-                    </div>
-                    
-                    {step.error && (
-                      <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded">
-                        <p className="text-sm text-red-800 font-medium">Error:</p>
-                        <p className="text-sm text-red-700">
-                          {step.error.includes('401 Unauthorized') 
-                            ? 'Authorization expired - please reconnect your account'
-                            : step.error
-                          }
-                        </p>
-                      </div>
-                    )}
-
-                    {step.result && !step.error && (
-                      <div className="mt-2 text-sm text-gray-600">
-                        {typeof step.result === 'object' ? (
-                          <div className="space-y-2">
-                            {step.result.summary && (
-                              <p><span className="font-medium">Summary:</span> {step.result.summary}</p>
-                            )}
-                            {step.result.totalEmails && (
-                              <p><span className="font-medium">Emails processed:</span> {step.result.totalEmails}</p>
-                            )}
-                            {step.result.response && (
-                              <p><span className="font-medium">Result:</span> {step.result.response}</p>
-                            )}
-                          </div>
-                        ) : (
-                          <p>{String(step.result)}</p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-
-        {/* Content Summary (if available) */}
-        {workflow_results.some((step: any) => step.result?.summary || step.result?.response) && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg">
-            <div className="px-4 py-3 border-b border-blue-200">
-              <h4 className="font-medium text-blue-900 flex items-center gap-2">
-                <Mail className="h-4 w-4" />
-                Content Summary
-              </h4>
-            </div>
-            <div className="p-4">
-              {workflow_results.map((step: any) => {
-                if (step.result?.response && typeof step.result.response === 'string') {
-                  return (
-                    <div key={step.stepId} className="prose prose-sm max-w-none text-blue-800">
-                      <div dangerouslySetInnerHTML={{ 
-                        __html: formatMarkdownText(step.result.response) 
-                      }} />
-                    </div>
-                  )
-                }
-                return null
-              }).filter(Boolean)}
-            </div>
-          </div>
-        )}
-
-        {/* Action Buttons for Failed Steps */}
-        {failedSteps > 0 && (
-          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-            <h4 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
-              <Settings className="h-4 w-4" />
-              Recommended Actions
-            </h4>
-            <div className="space-y-2 text-sm">
-              {workflow_results
-                .filter((step: any) => step.error)
-                .map((step: any) => (
-                  <div key={step.stepId} className="flex items-center justify-between p-2 bg-white border border-gray-200 rounded">
-                    <span>
-                      {step.error.includes('401 Unauthorized') 
-                        ? `Reconnect ${step.pluginKey} integration`
-                        : `Fix ${step.pluginKey} error`
-                      }
-                    </span>
-                    <button className="text-blue-600 hover:text-blue-800 flex items-center gap-1">
-                      <ExternalLink className="h-3 w-3" />
-                      <span>Fix</span>
-                    </button>
-                  </div>
-                ))}
-            </div>
-          </div>
-        )}
+      <div className="bg-gray-100 p-3 rounded-lg text-sm text-gray-600">
+        <code>{typeof output}: {String(output)}</code>
       </div>
     )
   }
@@ -337,206 +335,21 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
     setExpandedLogId(prev => prev === logId ? null : logId)
   }
 
-  const renderStructuredOutput = (output: any) => {
-    if (isWorkflowResult(output)) {
-      return renderWorkflowResults(output)
-    }
-
-    if (!output) {
-      return (
-        <div className="bg-gray-100 p-4 rounded-lg text-sm text-gray-600 text-center">
-          No output data available
-        </div>
-      )
-    }
-
-    if (typeof output === 'string') {
-      try {
-        const parsed = JSON.parse(output)
-        return renderStructuredOutput(parsed)
-      } catch {
-        if (isLongText(output)) {
-          const formattedText = formatMarkdownText(output)
-          return (
-            <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-              <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-gray-600" />
-                  <span className="text-sm font-medium text-gray-700">Research Report</span>
-                  <span className="text-xs text-gray-500">({output.length} characters)</span>
-                </div>
-                <button
-                  onClick={() => copyToClipboard(output)}
-                  className="p-1 hover:bg-gray-200 rounded transition-colors"
-                  title="Copy full text"
-                >
-                  <Copy className="h-3 w-3 text-gray-500" />
-                </button>
-              </div>
-              <div className="p-4 max-h-96 overflow-y-auto">
-                <div 
-                  className="prose prose-sm max-w-none text-gray-800 leading-relaxed"
-                  dangerouslySetInnerHTML={{ __html: `<p style="margin-bottom: 12px;">${formattedText}</p>` }}
-                />
-              </div>
-            </div>
-          )
-        } else {
-          return (
-            <div className="bg-white border border-gray-200 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium text-gray-700">Text Output</span>
-                <button
-                  onClick={() => copyToClipboard(output)}
-                  className="p-1 hover:bg-gray-200 rounded transition-colors"
-                  title="Copy text"
-                >
-                  <Copy className="h-3 w-3 text-gray-500" />
-                </button>
-              </div>
-              <p className="text-sm text-gray-800 break-words">{output}</p>
-            </div>
-          )
-        }
-      }
-    }
-
-    if (typeof output === 'object') {
-      if (output.message && typeof output.message === 'string' && isLongText(output.message)) {
-        return (
-          <div className="space-y-4">
-            <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-              <div className="bg-blue-50 px-4 py-2 border-b border-blue-200 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Globe className="h-4 w-4 text-blue-600" />
-                  <span className="text-sm font-medium text-blue-800">Research Output</span>
-                  <span className="text-xs text-blue-600">({output.message.length} characters)</span>
-                </div>
-                <button
-                  onClick={() => copyToClipboard(output.message)}
-                  className="p-1 hover:bg-blue-100 rounded transition-colors"
-                  title="Copy research content"
-                >
-                  <Copy className="h-3 w-3 text-blue-600" />
-                </button>
-              </div>
-              <div className="p-4 max-h-96 overflow-y-auto">
-                <div 
-                  className="prose prose-sm max-w-none text-gray-800 leading-relaxed"
-                  dangerouslySetInnerHTML={{ __html: `<p style="margin-bottom: 12px;">${formatMarkdownText(output.message)}</p>` }}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {Object.entries(output).filter(([key]) => key !== 'message').map(([key, value]) => (
-                <div key={key} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs font-medium text-gray-600 capitalize">
-                      {key.replace(/_/g, ' ')}
-                    </label>
-                    <button
-                      onClick={() => copyToClipboard(typeof value === 'object' ? JSON.stringify(value) : String(value))}
-                      className="p-1 hover:bg-gray-200 rounded transition-colors"
-                      title="Copy value"
-                    >
-                      <Copy className="h-2 w-2 text-gray-400" />
-                    </button>
-                  </div>
-                  <div className="text-xs text-gray-800">
-                    {typeof value === 'object' ? (
-                      <code className="bg-gray-800 text-green-400 px-1 rounded">
-                        {JSON.stringify(value)}
-                      </code>
-                    ) : (
-                      <span className="break-words">{String(value)}</span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )
-      }
-
-      return (
-        <div className="bg-gray-50 border border-gray-200 rounded-lg overflow-hidden">
-          <div className="bg-gray-100 px-4 py-2 border-b border-gray-200 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Hash className="h-4 w-4 text-gray-600" />
-              <span className="text-sm font-medium text-gray-700">Structured Output</span>
-              <span className="text-xs text-gray-500">({Object.keys(output).length} fields)</span>
-            </div>
-            <button
-              onClick={() => copyToClipboard(JSON.stringify(output, null, 2))}
-              className="p-1 hover:bg-gray-200 rounded transition-colors"
-              title="Copy full object"
-            >
-              <Copy className="h-3 w-3 text-gray-500" />
-            </button>
-          </div>
-          <div className="p-4 space-y-3 max-h-96 overflow-y-auto">
-            {Object.entries(output).map(([key, value]) => (
-              <div key={key} className="border-b border-gray-200 pb-3 last:border-0 last:pb-0">
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm font-medium text-gray-700 capitalize">
-                    {key.replace(/_/g, ' ')}
-                  </label>
-                  <button
-                    onClick={() => copyToClipboard(typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value))}
-                    className="p-1 hover:bg-gray-200 rounded transition-colors"
-                    title="Copy value"
-                  >
-                    <Copy className="h-3 w-3 text-gray-500" />
-                  </button>
-                </div>
-                <div className="text-sm">
-                  {typeof value === 'object' ? (
-                    <pre className="bg-gray-900 text-green-400 p-3 rounded text-xs overflow-x-auto font-mono">
-                      {JSON.stringify(value, null, 2)}
-                    </pre>
-                  ) : typeof value === 'string' && isLongText(String(value)) ? (
-                    <div className="bg-white border border-gray-200 rounded p-3 max-h-48 overflow-y-auto">
-                      <div 
-                        className="prose prose-xs max-w-none text-gray-700 leading-relaxed"
-                        dangerouslySetInnerHTML={{ __html: formatMarkdownText(String(value)) }}
-                      />
-                    </div>
-                  ) : (
-                    <div className="bg-white border border-gray-200 rounded p-2">
-                      <span className="text-gray-800 break-words">{String(value) || 'null'}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )
-    }
-
-    return (
-      <div className="bg-gray-100 p-4 rounded-lg text-sm text-gray-600">
-        <code>{typeof output}: {String(output)}</code>
-      </div>
-    )
-  }
-
   if (loading) {
     return (
-      <div className="p-8 text-center">
-        <div className="animate-spin h-8 w-8 border-2 border-blue-600 border-t-transparent rounded-full mx-auto mb-4"></div>
-        <p className="text-gray-500">Loading execution history...</p>
+      <div className="p-6 text-center">
+        <div className="animate-spin h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full mx-auto mb-3"></div>
+        <p className="text-gray-500 text-sm">Loading execution history...</p>
       </div>
     )
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+          <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
             <Activity className="h-5 w-5 text-blue-600" />
             Execution History
           </h2>
@@ -545,20 +358,18 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
           </p>
         </div>
         
-        <div className="flex items-center gap-2">
-          <button
-            onClick={fetchLogs}
-            disabled={loading}
-            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-            title="Refresh"
-          >
-            <RefreshCw className={`h-4 w-4 text-gray-500 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-        </div>
+        <button
+          onClick={fetchLogs}
+          disabled={loading}
+          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+          title="Refresh"
+        >
+          <RefreshCw className={`h-4 w-4 text-gray-500 ${loading ? 'animate-spin' : ''}`} />
+        </button>
       </div>
 
       {/* Controls */}
-      <div className="flex flex-col sm:flex-row gap-4 items-center">
+      <div className="flex flex-col sm:flex-row gap-3 items-center">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
           <input
@@ -605,24 +416,18 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
               const statusInfo = getStatusFromOutput(log.full_output)
               const StatusIcon = statusInfo.icon
               const isExpanded = expandedLogId === log.id
-              const isWorkflow = isWorkflowResult(log.full_output)
 
               return (
                 <div key={log.id} className="bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors overflow-hidden">
                   {/* Log Header */}
                   <div className="p-4">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4 flex-1 min-w-0">
+                      <div className="flex items-center gap-3 flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <StatusIcon className={`h-5 w-5 ${statusInfo.color}`} />
                           <span className="text-sm font-medium text-gray-900">
                             #{(currentPage - 1) * logsPerPage + index + 1}
                           </span>
-                          {isWorkflow && (
-                            <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-                              Workflow
-                            </span>
-                          )}
                         </div>
 
                         <div className="flex-1 min-w-0">
@@ -638,12 +443,6 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
                               <Clock className="h-3 w-3" />
                               {new Date(log.created_at).toLocaleString()}
                             </span>
-                            {isWorkflow && log.full_output?.execution_summary && (
-                              <span className="flex items-center gap-1">
-                                <Activity className="h-3 w-3" />
-                                {log.full_output.execution_summary.completedSteps}/{log.full_output.execution_summary.totalSteps} steps
-                              </span>
-                            )}
                           </div>
                         </div>
                       </div>
@@ -659,7 +458,7 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
                         
                         <button
                           onClick={() => toggleDetails(log.id)}
-                          className="flex items-center gap-1 px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          className="flex items-center gap-1 px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                         >
                           {isExpanded ? (
                             <>
@@ -712,10 +511,10 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
                         </div>
 
                         <div>
-                          <label className="font-medium text-gray-700 mb-3 block">
-                            {isWorkflow ? 'Workflow Results' : 'Full Output'}
+                          <label className="font-medium text-gray-700 mb-2 block">
+                            Full Output
                           </label>
-                          {renderStructuredOutput(log.full_output)}
+                          {renderOutput(log.full_output)}
                         </div>
                       </div>
                     </div>
