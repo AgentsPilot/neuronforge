@@ -3,7 +3,7 @@ export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
 import { pluginRegistry } from '@/lib/plugins/pluginRegistry'
-import { supabaseAdmin } from '@/lib/supabaseAdmin'
+import { createClient } from '@supabase/supabase-js';
 
 export async function POST(
   req: Request,
@@ -31,7 +31,7 @@ export async function POST(
     return NextResponse.json({ error: `No strategy found for plugin: ${plugin}` }, { status: 404 })
   }
 
-  const { data: connection, error } = await supabaseAdmin
+  const { data: connection, error } = await createClient
     .from('plugin_connections')
     .select('*')
     .eq('user_id', userId)
@@ -63,13 +63,13 @@ export async function POST(
     ...(refreshed.expires_at && { expires_at: refreshed.expires_at }),
   }
 
-  await supabaseAdmin
+  await createClient
     .from('plugin_connections')
     .update(update)
     .eq('user_id', userId)
     .eq('plugin_key', plugin)
 
-  const { data: refreshedConnection, error: fetchError } = await supabaseAdmin
+  const { data: refreshedConnection, error: fetchError } = await createClient
     .from('plugin_connections')
     .select('*')
     .eq('user_id', userId)
