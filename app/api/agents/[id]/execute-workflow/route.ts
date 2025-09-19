@@ -9,10 +9,9 @@ export const runtime = 'nodejs'
 interface WorkflowExecutionRequest {
   inputVariables?: Record<string, any>
   testMode?: boolean
-  useConfiguration?: boolean // NEW: Flag to use saved configuration
+  useConfiguration?: boolean
 }
 
-// NEW: Function to merge saved configuration with provided input variables
 async function getEffectiveInputVariables(
   supabase: any,
   agentId: string,
@@ -20,18 +19,16 @@ async function getEffectiveInputVariables(
   providedInputVariables: Record<string, any> = {},
   useConfiguration: boolean = false
 ): Promise<Record<string, any>> {
-  // If not using configuration or no provided variables, return as-is
   if (!useConfiguration && Object.keys(providedInputVariables).length > 0) {
     return providedInputVariables
   }
 
-  // Try to get the most recent saved configuration for this agent
   const { data: savedExecution, error } = await supabase
     .from('agent_execution')
     .select('input_values')
     .eq('agent_id', agentId)
     .eq('user_id', userId)
-    .eq('status', 'configured') // Only get successfully configured executions
+    .eq('status', 'configured')
     .order('created_at', { ascending: false })
     .limit(1)
     .single()
@@ -42,8 +39,6 @@ async function getEffectiveInputVariables(
   }
 
   const savedInputValues = savedExecution.input_values
-
-  // Merge: provided variables take precedence over saved ones
   const mergedInputVariables = {
     ...savedInputValues,
     ...providedInputVariables
@@ -58,7 +53,6 @@ async function getEffectiveInputVariables(
   return mergedInputVariables
 }
 
-// NEW: Function to save execution configuration
 async function saveExecutionConfiguration(
   supabase: any,
   agentId: string,
@@ -208,6 +202,7 @@ function filterParametersForOutputPhase(
   return filtered
 }
 
+// FIXED: Enhanced data context detection
 function findDataInContext(context: Record<string, any>, phaseType: 'input' | 'process'): any {
   console.log(`Looking for ${phaseType} data in context:`, Object.keys(context))
   
@@ -216,13 +211,17 @@ function findDataInContext(context: Record<string, any>, phaseType: 'input' | 'p
     
     if (value && typeof value === 'object') {
       if (phaseType === 'input') {
-        const hasInputData = value.emails || value.emailsReturned || value.documents || value.data || value.files
+        // Match what plugins actually return
+        const hasInputData = value.emails || value.files || value.documents || value.data || 
+                            value.items || value.content || value.totalEmails > 0
         console.log(`Input data check for ${key}:`, {
           hasEmails: !!value.emails,
-          hasEmailsReturned: !!value.emailsReturned,
+          hasFiles: !!value.files,
           hasDocuments: !!value.documents,
           hasData: !!value.data,
-          hasFiles: !!value.files,
+          hasItems: !!value.items,
+          hasContent: !!value.content,
+          hasTotalEmails: !!value.totalEmails,
           found: !!hasInputData
         })
         
@@ -233,13 +232,15 @@ function findDataInContext(context: Record<string, any>, phaseType: 'input' | 'p
       }
       
       if (phaseType === 'process') {
-        const hasProcessData = value.summary || value.analysis || value.result || value.processed || value.research
+        // Match what chatgpt-research actually returns
+        const hasProcessData = value.response || value.summary || value.analysis || 
+                              value.result || value.processed
         console.log(`Process data check for ${key}:`, {
+          hasResponse: !!value.response,
           hasSummary: !!value.summary,
           hasAnalysis: !!value.analysis,
           hasResult: !!value.result,
           hasProcessed: !!value.processed,
-          hasResearch: !!value.research,
           found: !!hasProcessData
         })
         
@@ -354,7 +355,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     console.log(`Found agent: ${agent.agent_name}`)
 
-    // NEW: Get effective input variables (merge saved + provided)
+    // Get effective input variables (merge saved + provided)
     const effectiveInputVariables = await getEffectiveInputVariables(
       supabase,
       agentId,
@@ -365,7 +366,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     console.log('Effective input variables:', Object.keys(effectiveInputVariables))
 
-    // NEW: If this is a configuration save request (not test mode and has input variables)
+    // If this is a configuration save request (not test mode and has input variables)
     if (!testMode && Object.keys(effectiveInputVariables).length > 0) {
       console.log('Saving execution configuration...')
       await saveExecutionConfiguration(supabase, agentId, user.id, effectiveInputVariables, executionId)
@@ -420,7 +421,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           supabase,
           agent,
           userId: user.id,
-          input_variables: effectiveInputVariables, // Use effective variables
+          input_variables: effectiveInputVariables,
           override_user_prompt: null
         })
         
@@ -521,8 +522,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
       const stepParameters = buildStepParameters(step, effectiveInputVariables, executionContext, agent.input_schema || [])
 
-      if (step.pluginKey === 'chatgpt-research' && agent?.user_prompt) {
-         stepParameters.userPrompt = agent.user_prompt
+      // FIXED: Pass both user prompt and system prompt to ChatGPT
+      if (step.pluginKey === 'chatgpt-research') {
+        if (agent?.user_prompt) {
+          stepParameters.userPrompt = agent.user_prompt
+        }
+        if (agent?.system_prompt) {
+          stepParameters.systemPrompt = agent.system_prompt
+        }
       }
 
       const plugin = pluginRegistry[step.pluginKey]

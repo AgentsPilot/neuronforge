@@ -142,6 +142,8 @@ function buildAISystemPrompt(connectedPlugins: string[], userPrompt: string) {
 USER REQUEST: "${userPrompt}"
 CONNECTED SERVICES: ${connectedPlugins.length > 0 ? connectedPlugins.join(', ') : 'None'}
 
+CRITICAL: Only ask questions about services in the CONNECTED SERVICES list above. Do not reference any other services.
+
 REQUIRED AUTOMATION DETAILS - ASK ABOUT ANY THAT ARE MISSING:
 
 1. DATA/WHAT TO MONITOR: What specific thing to track (stock symbol, file type, email criteria, etc.)
@@ -158,23 +160,7 @@ ANALYSIS RULES:
 - Don't assume timing - if not specified, ask about frequency/schedule
 - Don't assume output format - if unclear, ask what should be created
 - Don't assume error handling - if not mentioned, ask how to handle failures
-
-FOR STOCK MONITORING EXAMPLE:
-From "I want to monitor stock and send alert once reach to certain number":
-- Data: "stock" mentioned but which symbol? → ASK
-- Trigger: "certain number" mentioned but what price? → ASK  
-- Timing: Not mentioned - how often to check? → ASK
-- Output: "alert" mentioned but what should it contain? → ASK
-- Delivery: "send" mentioned but how (email/SMS/notification)? → ASK
-- Error Handling: Not mentioned - what if stock API fails? → ASK
-
-EXPECTED QUESTIONS FOR STOCK MONITORING:
-1. Which stock symbol would you like to monitor?
-2. What price should trigger the alert?
-3. How often should I check the stock price?
-4. What information should the alert contain?
-5. How should I deliver the alert to you?
-6. How should I handle errors if stock data is unavailable?
+- ONLY use connected services in your questions and suggestions
 
 CLARITY SCORING:
 - 90-100: All 6 dimensions clearly specified
@@ -222,6 +208,11 @@ function validateAIResponse(aiResult: any, prompt: string): { isValid: boolean, 
   if (aiResult.questionsSequence.length > 0) {
     for (const question of aiResult.questionsSequence) {
       const qLower = question.question.toLowerCase()
+      
+      // Check for mentions of unconnected services
+      if (qLower.includes('notion') || qLower.includes('airtable') || qLower.includes('trello')) {
+        return { isValid: false, reason: 'Questions about unconnected services detected' }
+      }
       
       // Stock monitoring shouldn't have file/email scope questions
       if ((promptLower.includes('stock') || promptLower.includes('price')) && 
@@ -353,11 +344,12 @@ export async function POST(request: NextRequest) {
     }
 
     // Get connected plugins once, reuse throughout
-    const connectedPlugins = await getConnectedPlugins(userIdToUse, connected_plugins)
+    let connectedPlugins = await getConnectedPlugins(userIdToUse, connected_plugins)
 
-    // FIXED: Keep original prompt, only create warning if needed
-    const finalPrompt = prompt.trim() // Use original prompt unchanged
+    // Keep original prompt, only create warning if needed
+    const finalPrompt = prompt.trim()
     let pluginWarning = null
+    let filteredConnectedPlugins = connectedPlugins
     
     if (!bypassPluginValidation) {
       const pluginValidation = validatePluginRequirements(prompt, connectedPlugins)
@@ -365,13 +357,34 @@ export async function POST(request: NextRequest) {
       if (!pluginValidation.isValid) {
         console.log('Missing required plugins:', pluginValidation.missingPlugins)
         
-        // Create warning message - but don't modify the prompt
+        // Create warning message
         pluginWarning = {
           missingServices: pluginValidation.missingPlugins,
           message: `Note: Your request mentions ${pluginValidation.missingPlugins.join(', ')} but ${pluginValidation.missingPlugins.length === 1 ? 'this service isn\'t' : 'these services aren\'t'} connected. I'll help you create the automation using your available services instead.`
         }
         
-        console.log('Plugin validation warning created, but keeping original prompt intact')
+        console.log('Plugin validation warning created:', pluginWarning.message)
+
+        // CRITICAL FIX: Filter out unconnected plugins from AI context
+        const unconnectedAliases = pluginValidation.missingPlugins.flatMap(service => 
+          PLUGIN_REQUIREMENTS[service as keyof typeof PLUGIN_REQUIREMENTS] || [service]
+        )
+        
+        console.log('Filtering out unconnected aliases:', unconnectedAliases)
+        
+        filteredConnectedPlugins = connectedPlugins.filter(plugin => {
+          const pluginLower = plugin.toLowerCase()
+          const shouldRemove = unconnectedAliases.some(alias => 
+            pluginLower.includes(alias.toLowerCase())
+          )
+          if (shouldRemove) {
+            console.log(`Removing unconnected plugin from AI context: ${plugin}`)
+          }
+          return !shouldRemove
+        })
+        
+        console.log('Original connected plugins:', connectedPlugins)
+        console.log('Filtered connected plugins for AI:', filteredConnectedPlugins)
       }
     }
 
@@ -384,7 +397,7 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    const cacheKey = `${userIdToUse}-${finalPrompt}-${connectedPlugins.join(',')}-${bypassPluginValidation ? 'bypass' : 'normal'}-v6`
+    const cacheKey = `${userIdToUse}-${finalPrompt}-${filteredConnectedPlugins.join(',')}-${bypassPluginValidation ? 'bypass' : 'normal'}-v7`
     const now = Date.now()
 
     const cached = requestCache.get(cacheKey)
@@ -402,8 +415,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const systemPrompt = buildAISystemPrompt(connectedPlugins, finalPrompt)
-    console.log('Calling OpenAI for analysis...')
+    // Use filtered plugins for AI system prompt
+    const systemPrompt = buildAISystemPrompt(filteredConnectedPlugins, finalPrompt)
+    console.log('Calling OpenAI for analysis with filtered plugins...')
 
     const processingPromise = async () => {
       let response
@@ -470,7 +484,8 @@ export async function POST(request: NextRequest) {
 
       const finalResult = {
         ...aiResult,
-        connectedPlugins: connectedPlugins,
+        connectedPlugins: connectedPlugins, // Return original connected plugins list
+        filteredPlugins: filteredConnectedPlugins, // Also return filtered list for debugging
         pluginValidationError: false,
         ...(pluginWarning && { pluginWarning })
       }
@@ -487,7 +502,8 @@ export async function POST(request: NextRequest) {
             metadata: {
               clarityScore: finalResult.clarityScore,
               questionsCount: finalResult.questionsSequence?.length || 0,
-              connectedPlugins,
+              originalConnectedPlugins: connectedPlugins,
+              filteredConnectedPlugins: filteredConnectedPlugins,
               aiValidationFailed: finalResult.aiValidationFailed || false,
               validationFailureReason: finalResult.validationFailureReason,
               bypassPluginValidation: bypassPluginValidation || false,
@@ -522,7 +538,9 @@ export async function POST(request: NextRequest) {
         needsClarification: result.needsClarification,
         aiValidationFailed: result.aiValidationFailed || false,
         bypassedPluginValidation: bypassPluginValidation || false,
-        hadPluginWarning: !!result.pluginWarning
+        hadPluginWarning: !!result.pluginWarning,
+        originalPluginsCount: connectedPlugins.length,
+        filteredPluginsCount: filteredConnectedPlugins.length
       })
 
       return NextResponse.json(result)

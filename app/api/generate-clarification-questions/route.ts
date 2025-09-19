@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import OpenAI from 'openai'
-import { trackTokenUsage, LLMCategory } from '../../../components/orchestration/types/usage'  // Import your types
+import { trackTokenUsage, LLMCategory } from '../../../components/orchestration/types/usage'
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
 
@@ -10,148 +10,152 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-function buildClarifySystemPrompt(connectedPlugins: string[]) {
+// Plugin requirements mapping
+const PLUGIN_REQUIREMENTS = {
+  'google drive': ['googledrive', 'google_drive', 'drive', 'google-drive'],
+  'google sheets': ['googlesheets', 'google_sheets', 'sheets'],
+  'gmail': ['gmail', 'email', 'google_email', 'google-mail'],
+  'dropbox': ['dropbox'],
+  'slack': ['slack'],
+  'notion': ['notion'],
+  'airtable': ['airtable'],
+  'calendar': ['calendar', 'google_calendar', 'gcal'],
+  'onedrive': ['onedrive', 'microsoft_onedrive'],
+  'trello': ['trello'],
+  'asana': ['asana'],
+  'monday': ['monday', 'monday_com']
+}
+
+export function buildClarifySystemPrompt(connectedPlugins: string[]) {
   return `
-You are a clarification assistant for AgentPilot, a no-code AI agent builder.
+You are the Clarification Engine for AgentPilot, a no-code AI agent platform.
 
-Your job is to analyze ANY user automation request and ask 2-5 precise clarification questions that will help build a complete, working AI agent.
+Your role is to analyze user automation requests and identify what additional information is needed to build a complete, actionable agent configuration.
 
----
+INPUTS:
+- userPrompt: The user's description of their desired automation
+- connectedPlugins: List of currently authenticated integrations
 
-🎯 CORE GOAL:
-Transform vague user requests into specific, actionable automation instructions by identifying gaps in:
-- DATA SOURCE: Which plugin/service to connect to
-- FILTERS/CONDITIONS: What specific data to process  
-- ACTIONS: What to do with the data
-- OUTPUT FORMAT: How to structure results
-- DELIVERY: Where/how to send results
-- TIMING: When/how often to run
+CORE PRINCIPLES:
+1. Ask only essential questions needed to build the automation
+2. Prioritize clarity over completeness - better to ask fewer, more targeted questions
+3. Consider workflows that span multiple steps and plugins
+4. Handle both simple tasks and complex multi-stage automations
+5. Support conditional logic and decision-making workflows
 
----
+ANALYSIS DIMENSIONS:
 
-📊 CONNECTED PLUGINS AVAILABLE:
-${JSON.stringify(connectedPlugins)}
+Evaluate these aspects and ask clarifying questions only when information is missing or ambiguous:
 
----
+**Data & Input Sources**
+- What data does the agent need to access?
+- Which plugins/sources contain this data?
+- Are there specific filters, criteria, or timeframes?
+- How should the agent handle multiple data sources?
 
-🧠 ANALYSIS FRAMEWORK:
-For ANY automation request, identify what's MISSING or VAGUE:
+**Processing & Logic**
+- What operations should be performed on the data?
+- Are there conditional rules or decision points?
+- Should different actions happen based on data content?
+- Are there multi-step processing requirements?
 
-1. **DATA SOURCE CLARITY**
-   - If multiple plugins could work, ask which one
-   - If specific data location unclear, ask for details
+**Output & Actions**
+- What should the agent produce or do?
+- What format should outputs take?
+- Where should results be delivered or stored?
+- Should multiple actions happen simultaneously or sequentially?
 
-2. **FILTERING & CONDITIONS** 
-   - Ask for specific criteria, labels, keywords, date ranges
-   - Clarify "important" or subjective terms
+**Execution Context**
+- When/how often should this run?
+- What triggers should initiate the agent?
+- How should errors or edge cases be handled?
+- Are there approval steps or human checkpoints needed?
 
-3. **PROCESSING REQUIREMENTS**
-   - Ask about format, length, style of summaries/reports
-   - Clarify any transformations needed
+**Integration Requirements**
+- Which plugins are needed for this automation?
+- How should data flow between different tools?
+- Are there authentication or permission considerations?
 
-4. **OUTPUT SPECIFICATIONS**
-   - Ask about structure, recipients, content details
-   - Clarify delivery preferences and destinations
+PLUGIN HANDLING:
 
-5. **TIMING & TRIGGERS**
-   - Ask about frequency, timing, or trigger conditions
-   - Clarify scheduling preferences
+Connected Plugins: ${JSON.stringify(connectedPlugins)}
 
----
+IMPORTANT: Only ask questions about connected plugins. If the user mentions a service that isn't connected, do NOT generate questions about it. Focus on alternatives using connected plugins or suggest they connect the required service first.
 
-📝 QUESTION TYPES & EXAMPLES:
+For plugin references:
+- If a plugin is connected: Use it in your questions and automation planning
+- If a plugin is mentioned but not connected: Do NOT ask questions about it - instead suggest connecting it first
+- Focus questions only on plugins that are actually available
 
-**SELECT TYPE** - For limited, predictable options:
-{
-  "question": "How often should this run?",
-  "type": "select", 
-  "options": ["One-time only", "Daily at 9 AM", "Weekly on Monday", "When new emails arrive"],
-  "placeholder": "Choose frequency"
-}
+QUESTION GENERATION RULES:
 
-**MULTISELECT** - For multiple choices:
-{
-  "question": "Which email labels should be included?",
-  "type": "multiselect",
-  "options": ["Important", "Urgent", "Client", "Internal", "Unread"],
-  "placeholder": "Select all that apply"
-}
+Ask questions that are:
+- Specific and actionable
+- Focused on missing information that affects implementation
+- Grouped logically when related
+- Limited to what's truly necessary (ideally 3-5 questions maximum)
 
-**TEXT** - For short, specific answers:
-{
-  "question": "What keywords should trigger this automation?", 
-  "type": "text",
-  "placeholder": "e.g. 'urgent', 'deadline', 'meeting request'"
-}
+Avoid questions about:
+- Information already provided in the prompt
+- Implementation details the system can infer
+- Overly granular configuration options
+- Generic preferences without automation impact
 
-**TEXTAREA** - For detailed descriptions:
-{
-  "question": "What should be included in the summary?",
-  "type": "textarea", 
-  "placeholder": "e.g. key points, action items, sender names, deadlines"
-}
+OUTPUT FORMAT:
 
----
+Return a JSON array of questions directly. Each question should have this structure:
 
-⚡ SMART QUESTION GENERATION:
-
-**FOR EMAIL AUTOMATIONS:**
-- Which folders/labels? (Gmail, Outlook specific)
-- Time periods? ("last 24 hours", "this week")
-- Sender filtering? ("from clients", "external only")
-- Content filtering? ("contains keywords", "has attachments")
-
-**FOR DOCUMENT PROCESSING:**
-- File types/locations?
-- Processing scope? ("new files only", "all files")
-- Output format? ("summary", "extract data", "categorize")
-
-**FOR NOTIFICATIONS/REPORTS:**
-- Recipients? ("email to me", "post in Slack #channel")
-- Format? ("bullet points", "detailed report", "just totals")
-- Delivery timing? ("immediately", "daily digest", "weekly")
-
-**FOR SOCIAL/CONTENT:**
-- Platforms/sources?
-- Content criteria? ("mentions", "hashtags", "engagement levels")
-- Response actions? ("reply", "save", "forward")
-
----
-
-🎯 OUTPUT FORMAT:
-Return ONLY a JSON array of 2-5 objects. Each must have:
-- "question": Clear, specific question in plain English
-- "type": One of: "text", "textarea", "select", "multiselect", "enum", "date"
-- "options": Required for select/multiselect/enum (2+ options)
-- "placeholder": Helpful example/guidance for user input
-
-CRITICAL: 
-- Use concrete, actionable options in select lists
-- Include specific examples in placeholders
-- Ask questions that directly impact how the agent will work
-- Focus on information needed to BUILD the automation, not configure accounts
-
-Example response:
 [
   {
-    "question": "Which Gmail labels should be monitored?",
-    "type": "multiselect",
-    "options": ["Inbox", "Important", "Starred", "Client Communications", "Urgent"],
-    "placeholder": "Select all labels to include"
-  },
-  {
-    "question": "What should the summary focus on?",
-    "type": "textarea", 
-    "placeholder": "e.g. key decisions made, action items assigned, deadlines mentioned"
-  },
-  {
-    "question": "How should results be delivered?",
-    "type": "select",
-    "options": ["Email me daily", "Post to Slack #general", "Save to Google Drive", "Send via Teams"],
-    "placeholder": "Choose delivery method"
+    "id": "unique_id",
+    "dimension": "data_input | processing_logic | output_actions | execution_context | integration_requirements",
+    "question": "Clear, specific question text",
+    "type": "text | textarea | select | multiselect | date",
+    "options": ["option1", "option2"], // only for select/multiselect
+    "placeholder": "Helpful example or guidance text",
+    "allowCustom": true, // for select/multiselect if custom options allowed
+    "required": true
   }
 ]
-`
+
+If no clarification is needed, return an empty array: []
+
+EXAMPLES OF GOOD QUESTIONS:
+
+Instead of "What should be included in the summary?" ask:
+"What key information should the summary highlight? (e.g., action items, deadlines, decisions made)"
+
+Instead of "Where should results be stored?" ask:
+"Should the analysis be sent as an email, saved to a specific folder, or posted in a channel?"
+
+Instead of "How often should this run?" ask:
+"What should trigger this automation? (e.g., daily at 9 AM, when new emails arrive, weekly on Fridays)"
+
+Remember: Your goal is to gather the minimum information needed to build a functional automation, not to collect every possible configuration detail.
+
+Return ONLY the JSON array, no markdown formatting, code blocks, or explanatory text.
+`.trim()
+}
+
+// Validate mentioned plugins are connected
+function validateConnectedPlugins(prompt: string, connectedPlugins: string[]): string[] {
+  const promptLower = prompt.toLowerCase()
+  const mentionedButNotConnected: string[] = []
+  
+  for (const [service, aliases] of Object.entries(PLUGIN_REQUIREMENTS)) {
+    const isMentioned = aliases.some(alias => promptLower.includes(alias))
+    const isConnected = aliases.some(alias => 
+      connectedPlugins.some(connected => 
+        connected.toLowerCase().includes(alias.toLowerCase())
+      )
+    )
+    
+    if (isMentioned && !isConnected) {
+      mentionedButNotConnected.push(service)
+    }
+  }
+  
+  return mentionedButNotConnected
 }
 
 interface ClarificationQuestion {
@@ -178,12 +182,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
 
+    console.log('=== DEBUGGING PLUGIN VALIDATION ===')
+    console.log('1. Original prompt:', original_prompt)
+    console.log('2. Raw connected_plugins from request:', connected_plugins)
+    console.log('3. Initial pluginKeys from frontend:', Object.keys(connected_plugins || {}))
+    
     // Try to get connected plugins from multiple sources
     let pluginKeys: string[] = []
 
     // Method 1: From frontend (fallback to ensure we have plugins)
     if (connected_plugins && typeof connected_plugins === 'object') {
       pluginKeys = Object.keys(connected_plugins)
+      console.log('4. PluginKeys after frontend:', pluginKeys)
     }
 
     // Method 2: From database (if user_id provided and table exists)
@@ -197,10 +207,12 @@ export async function POST(request: NextRequest) {
 
         if (!pluginError && connections && connections.length > 0) {
           const dbPlugins = connections.map(c => c.plugin_key)
+          console.log('5. Database plugins found:', dbPlugins)
           // Merge database plugins with frontend plugins
           pluginKeys = [...new Set([...pluginKeys, ...dbPlugins])]
+          console.log('6. PluginKeys after database merge:', pluginKeys)
         } else {
-          console.log('No plugins found in database, using frontend plugins:', pluginKeys)
+          console.log('5. No plugins found in database, using frontend plugins:', pluginKeys)
         }
       } catch (dbError) {
         console.warn('Database plugin query failed, using frontend plugins:', dbError)
@@ -209,11 +221,54 @@ export async function POST(request: NextRequest) {
 
     // Method 3: Default plugins if nothing found
     if (pluginKeys.length === 0) {
-      pluginKeys = ['gmail', 'google_drive', 'slack', 'notion', 'calendar', 'sheets'] // Default common plugins for testing
-      console.log('No plugins found, using defaults:', pluginKeys)
+      pluginKeys = ['gmail', 'google-drive', 'slack', 'calendar', 'google-sheets']
+      console.log('7. No plugins found, using defaults:', pluginKeys)
     }
 
-    console.log('Final plugin list for clarification:', pluginKeys)
+    console.log('8. Final plugin list BEFORE validation:', pluginKeys)
+
+    // Validate mentioned plugins are connected
+    const missingPlugins = validateConnectedPlugins(original_prompt, pluginKeys)
+    console.log('9. Missing plugins detected:', missingPlugins)
+    let pluginWarning = null
+    
+    if (missingPlugins.length > 0) {
+      console.log('10. User mentioned unconnected plugins:', missingPlugins)
+      
+      // Create a warning about missing plugins
+      pluginWarning = {
+        missingServices: missingPlugins,
+        message: `Note: Your request mentions ${missingPlugins.join(', ')} but ${missingPlugins.length === 1 ? 'this service isn\'t' : 'these services aren\'t'} connected. Questions will focus on your available services instead.`
+      }
+      console.log('11. Plugin validation warning:', pluginWarning.message)
+      
+      // CRITICAL FIX: Remove mentioned but unconnected plugins from the list we send to AI
+      const unconnectedAliases = missingPlugins.flatMap(service => 
+        PLUGIN_REQUIREMENTS[service as keyof typeof PLUGIN_REQUIREMENTS] || [service]
+      )
+      
+      console.log('12. Unconnected aliases to filter out:', unconnectedAliases)
+      
+      const originalPluginKeys = [...pluginKeys]
+      pluginKeys = pluginKeys.filter(plugin => {
+        const pluginLower = plugin.toLowerCase()
+        const shouldRemove = unconnectedAliases.some(alias => 
+          pluginLower.includes(alias.toLowerCase())
+        )
+        if (shouldRemove) {
+          console.log(`13. Removing unconnected plugin from AI context: ${plugin}`)
+        }
+        return !shouldRemove
+      })
+      
+      console.log('14. Original plugins:', originalPluginKeys)
+      console.log('15. Filtered plugin list (unconnected removed):', pluginKeys)
+    } else {
+      console.log('10. No missing plugins detected')
+    }
+
+    console.log('16. FINAL plugin list sent to AI:', pluginKeys)
+    console.log('=== END DEBUGGING ===')
 
     const contextMessage = `
 user_prompt: "${original_prompt}"
@@ -221,8 +276,12 @@ connected_plugins: ${JSON.stringify(pluginKeys)}
 agent_name: "${agent_name || 'Not specified'}"
 description: "${description || 'Not provided'}"
 
-Please analyze this automation request and return clarifying questions.
+CRITICAL: Only ask questions about services in the connected_plugins list above. Do not reference any other services.
+
+Please analyze this automation request and return clarifying questions as a JSON array.
 `
+
+    console.log('17. Context message sent to AI:', contextMessage)
 
     const { response: llmResponse, usage } = await callOpenAI(buildClarifySystemPrompt(pluginKeys), contextMessage)
     const clarificationData = await parseAndValidateLLMResponse(llmResponse)
@@ -235,7 +294,7 @@ Please analyze this automation request and return clarifying questions.
         inputTokens: usage.prompt_tokens,
         outputTokens: usage.completion_tokens,
         requestType: 'chat',
-        category: LLMCategory.QUESTION_CLARIFICATION,  // Use the enum
+        category: LLMCategory.QUESTION_CLARIFICATION,
         metadata: {
           agent_name,
           original_prompt,
@@ -262,7 +321,16 @@ Please analyze this automation request and return clarifying questions.
       console.warn('Analytics logging failed:', analyticsError)
     }
 
-    return NextResponse.json(clarificationData)
+    console.log('🔍 SIMPLE DEBUG - Final data being returned:', { 
+      pluginKeys, 
+      hasNotionInPlugins: pluginKeys.includes('notion'),
+      clarificationQuestions: clarificationData.questions.map(q => q.question)
+    })
+
+    return NextResponse.json({
+      ...clarificationData,
+      ...(pluginWarning && { pluginWarning })
+    })
 
   } catch (error) {
     console.error('Clarification API error:', error)
@@ -271,7 +339,7 @@ Please analyze this automation request and return clarifying questions.
 }
 
 async function callOpenAI(systemPrompt: string, userPrompt: string): Promise<{
-  response: any[],
+  response: any,
   usage: {
     prompt_tokens: number,
     completion_tokens: number,
@@ -313,10 +381,58 @@ async function callOpenAI(systemPrompt: string, userPrompt: string): Promise<{
   }
 }
 
-async function parseAndValidateLLMResponse(llmResponse: any[]): Promise<ClarificationResponse> {
+async function parseAndValidateLLMResponse(llmResponse: any): Promise<ClarificationResponse> {
   try {
-    const questions: ClarificationQuestion[] = llmResponse
+    console.log('Raw LLM response type:', typeof llmResponse)
+    console.log('Raw LLM response:', JSON.stringify(llmResponse, null, 2))
+    
+    let questionsArray: any[] = []
+    
+    // The LLM should now return a direct array based on the updated system prompt
+    if (Array.isArray(llmResponse)) {
+      questionsArray = llmResponse
+      console.log('LLM returned direct array format')
+    }
+    // Fallback: handle legacy structured formats if they still occur
+    else if (llmResponse && typeof llmResponse === 'object') {
+      if (llmResponse.questionsSequence && Array.isArray(llmResponse.questionsSequence)) {
+        questionsArray = llmResponse.questionsSequence
+        console.log('Using legacy questionsSequence format')
+      }
+      else if (llmResponse.questions && Array.isArray(llmResponse.questions)) {
+        questionsArray = llmResponse.questions
+        console.log('Using legacy questions array format')
+      }
+      else if (llmResponse.needsClarification === false) {
+        console.log('LLM says no clarification needed')
+        return {
+          questions: [],
+          reasoning: llmResponse.reasoning || 'Prompt contains sufficient detail for implementation',
+          confidence: llmResponse.confidence || 90
+        }
+      }
+      else {
+        console.log('Unexpected object format, trying to find questions')
+        // Try to find any array property that might contain questions
+        for (const [key, value] of Object.entries(llmResponse)) {
+          if (Array.isArray(value) && value.length > 0) {
+            questionsArray = value
+            console.log(`Found questions in property: ${key}`)
+            break
+          }
+        }
+      }
+    }
+    
+    console.log('Questions array to process:', questionsArray.length, 'items')
+
+    const questions: ClarificationQuestion[] = questionsArray
       .map((q, i) => {
+        if (!q || typeof q !== 'object') {
+          console.log(`Skipping question ${i + 1}: Invalid question object`)
+          return null
+        }
+
         const type = (q.type || 'text').toLowerCase() as ClarificationQuestion['type']
         const structured = ['select', 'enum', 'multiselect'].includes(type)
 
@@ -358,7 +474,7 @@ async function parseAndValidateLLMResponse(llmResponse: any[]): Promise<Clarific
         }
 
         return {
-          id: `question_${i + 1}`,
+          id: q.id || `question_${i + 1}`,
           question: q.question.trim(),
           type,
           required: q.required !== false, // Default to true unless explicitly false
@@ -368,7 +484,7 @@ async function parseAndValidateLLMResponse(llmResponse: any[]): Promise<Clarific
       })
       .filter(Boolean) as ClarificationQuestion[]
 
-    console.log(`Parsed ${questions.length} valid questions from ${llmResponse.length} raw questions`)
+    console.log(`Parsed ${questions.length} valid questions from ${questionsArray.length} raw questions`)
 
     if (questions.length === 0) {
       console.log('No valid questions generated, using enhanced fallback')
@@ -411,6 +527,8 @@ async function parseAndValidateLLMResponse(llmResponse: any[]): Promise<Clarific
 
   } catch (e) {
     console.error('Parse validation error:', e)
+    console.error('LLM Response that caused error:', llmResponse)
+    
     return {
       questions: [
         {

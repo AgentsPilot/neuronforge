@@ -782,27 +782,28 @@ export default function SmartAgentBuilder({
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
-      {/* Enhanced Header */}
-      <div className="sticky top-0 z-50 backdrop-blur-xl bg-white/80 border-b border-white/20 shadow-lg">
-        <div className="max-w-7xl mx-auto px-6 py-4">
+
+{/* Enhanced Header */}
+      <div className="sticky top-0 z-50 backdrop-blur-xl bg-white/80 border-b border-white/20 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 py-2">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
               <div className="relative">
-                <div className="w-12 h-12 bg-gradient-to-br from-blue-500 via-purple-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
-                  <Brain className="h-7 w-7 text-white" />
+                <div className="w-8 h-8 bg-gradient-to-br from-blue-500 via-purple-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-md">
+                  <Brain className="h-4 w-4 text-white" />
                 </div>
-                <div className="absolute -top-1 -right-1 w-4 h-4 bg-green-400 rounded-full border-2 border-white animate-pulse"></div>
+                <div className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-green-400 rounded-full border border-white"></div>
               </div>
               <div>
-                <h1 className="text-2xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">
+                <h1 className="text-lg font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">
                   Smart Agent Builder
                 </h1>
-                <p className="text-sm text-gray-500 font-medium">
+                <p className="text-xs text-gray-500">
                   {isEditing ? 'Editing Agent Configuration' : 'Generated Agent Ready'}
                 </p>
               </div>
             </div>
-            
+
             <div className="flex items-center gap-3">
               {!isEditing && currentAgent && (
                 <div className="hidden md:flex items-center gap-2 px-4 py-2 bg-green-100 text-green-700 rounded-full text-sm font-medium">
@@ -874,7 +875,7 @@ export default function SmartAgentBuilder({
                         </>
                       ) : (
                         <>
-                          <Zap className="h-4 w-4" />
+                          <Zap className="h-2 w-2" />
                           Create Agent
                         </>
                       )}

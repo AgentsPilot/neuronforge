@@ -109,6 +109,105 @@ async function performWebResearch(topics: string[]): Promise<string> {
   return searchResults.length > 0 ? searchResults.join('\n\n=== === ===\n\n') : ''
 }
 
+// ADDED: Generate contextual system prompt based on task type
+function generateContextualSystemPrompt(userPrompt: string, dataToAnalyze: any, input_variables: any): string {
+  let prompt = "You are a professional AI assistant designed to help users accomplish specific tasks efficiently and accurately.\n\n"
+  
+  // Detect task type from user prompt and add specific instructions
+  const promptLower = userPrompt.toLowerCase()
+  
+  if (promptLower.includes('summariz') || promptLower.includes('summary')) {
+    prompt += "TASK: Create comprehensive summaries that capture key points, important details, and actionable insights.\n"
+    prompt += "FORMAT: Use clear headers, bullet points for key findings, and a conclusion with next steps.\n\n"
+  }
+  
+  else if (promptLower.includes('analyz') || promptLower.includes('research')) {
+    prompt += "TASK: Perform thorough analysis to identify patterns, insights, and recommendations.\n"
+    prompt += "FORMAT: Structure your analysis with: Key Findings, Detailed Analysis, and Actionable Recommendations.\n\n"
+  }
+  
+  else if (promptLower.includes('email') && Object.keys(dataToAnalyze).length > 0) {
+    prompt += "TASK: Process email data to extract meaningful insights and create useful outputs.\n"
+    prompt += "FORMAT: Organize by relevance and importance. Include sender details, key topics, and any action items.\n\n"
+  }
+  
+  else if (promptLower.includes('report') || promptLower.includes('document')) {
+    prompt += "TASK: Generate professional reports with clear structure and actionable insights.\n"
+    prompt += "FORMAT: Executive Summary, Detailed Findings, Recommendations, and Conclusion.\n\n"
+  }
+  
+  else {
+    prompt += "TASK: Follow the user's specific instructions while providing comprehensive and useful output.\n"
+    prompt += "FORMAT: Structure your response logically with clear sections and actionable information.\n\n"
+  }
+  
+  // Add data context if available
+  if (Object.keys(dataToAnalyze).length > 0) {
+    prompt += `DATA CONTEXT: You have access to ${Object.keys(dataToAnalyze).join(', ')} data. `
+    prompt += "Reference this data directly in your response and cite specific examples.\n\n"
+  }
+  
+  prompt += "INSTRUCTIONS:\n"
+  prompt += "- Provide specific, actionable information\n"
+  prompt += "- Use clear, professional language\n"
+  prompt += "- Include relevant details and examples\n"
+  prompt += "- Structure your response for easy scanning\n"
+  prompt += "- End with clear next steps or conclusions\n\n"
+  
+  return prompt
+}
+
+// ADDED: Build contextual prompt with intelligent context management
+function buildContextualPrompt(userPrompt: string, dataToAnalyze: any, webResearchData: string): string {
+  let finalPrompt = userPrompt
+  const maxTokens = 6000 // Leave room for system prompt and response
+  
+  // Start with base prompt tokens
+  let currentTokens = estimateTokens(finalPrompt)
+  
+  // Prioritize data inclusion
+  if (Object.keys(dataToAnalyze).length > 0) {
+    const dataEntries = Object.entries(dataToAnalyze)
+    
+    // Sort by importance (emails > files > other data)
+    dataEntries.sort(([keyA, valueA], [keyB, valueB]) => {
+      const priorityA = keyA.includes('email') ? 3 : keyA.includes('file') ? 2 : 1
+      const priorityB = keyB.includes('email') ? 3 : keyB.includes('file') ? 2 : 1
+      return priorityB - priorityA
+    })
+    
+    let dataSection = "\n\nAvailable data to analyze:\n"
+    
+    for (const [key, value] of dataEntries) {
+      const valueStr = safeStringify(value, 2000) // Smaller chunks
+      const sectionTokens = estimateTokens(`${key}: ${valueStr}\n`)
+      
+      if (currentTokens + sectionTokens < maxTokens - 1000) { // Reserve space for web data
+        dataSection += `${key}: ${valueStr}\n`
+        currentTokens += sectionTokens
+      } else {
+        // Add summary instead of full data
+        dataSection += `${key}: [Large dataset with ${Array.isArray(value) ? value.length : 'multiple'} items - analysis available]\n`
+        currentTokens += 50
+      }
+    }
+    
+    finalPrompt += dataSection
+  }
+  
+  // Add web research if space permits
+  if (webResearchData && currentTokens < maxTokens - 500) {
+    const webTokens = estimateTokens(webResearchData)
+    if (currentTokens + webTokens < maxTokens) {
+      finalPrompt += `\n\nCurrent research results:\n${webResearchData}`
+    } else {
+      finalPrompt += "\n\n[Web research completed - results available]"
+    }
+  }
+  
+  return finalPrompt
+}
+
 export const chatgptResearchStrategy: PluginStrategy = {
   pluginKey: 'chatgpt-research',
   name: 'ChatGPT Universal Processor',
@@ -160,7 +259,8 @@ export const chatgptResearchStrategy: PluginStrategy = {
     console.log('ChatGPT Universal Processor: Starting...', {
       userId,
       inputKeys: Object.keys(input_variables),
-      hasUserPrompt: !!(input_variables.userPrompt || input_variables.prompt || input_variables.task || input_variables.instruction)
+      hasUserPrompt: !!(input_variables.userPrompt || input_variables.prompt || input_variables.task || input_variables.instruction),
+      hasSystemPrompt: !!input_variables.systemPrompt
     })
 
     try {
@@ -179,7 +279,7 @@ export const chatgptResearchStrategy: PluginStrategy = {
       const dataToAnalyze = {}
       Object.entries(input_variables).forEach(([key, value]) => {
         // Skip prompt-related keys and internal workflow keys
-        if (!['userPrompt', 'prompt', 'task', 'instruction', 'request', 'query'].includes(key) &&
+        if (!['userPrompt', 'systemPrompt', 'prompt', 'task', 'instruction', 'request', 'query'].includes(key) &&
             !key.startsWith('_') && value !== undefined && value !== null) {
           dataToAnalyze[key] = value
         }
@@ -205,36 +305,15 @@ export const chatgptResearchStrategy: PluginStrategy = {
         webResearchData = await performWebResearch(researchTopics.length > 0 ? researchTopics : [userPrompt])
       }
 
-      // Step 5: Prepare data for ChatGPT with aggressive size management
-      const dataString = safeStringify(dataToAnalyze, 12000) // Much more conservative limit
-      const webDataString = webResearchData ? safeStringify(webResearchData, 8000) : ''
-      
-      // Step 6: Construct the prompt with token awareness
-      let finalUserPrompt = userPrompt
-
-      // Add available data if we have any, with size checks
-      if (Object.keys(dataToAnalyze).length > 0) {
-        const dataSection = `\n\nAvailable data to work with:\n${dataString}`
-        if (estimateTokens(finalUserPrompt + dataSection) < 5500) { // Leave room for system prompt and response
-          finalUserPrompt += dataSection
-        } else {
-          finalUserPrompt += '\n\n[Large dataset available - processing summary only due to size limits]'
-        }
-      }
-
-      // Add web research results if available and space permits
-      if (webDataString && estimateTokens(finalUserPrompt + webDataString) < 6000) {
-        finalUserPrompt += `\n\nCurrent web research results:\n${webDataString}`
-      } else if (webDataString) {
-        finalUserPrompt += '\n\n[Web research completed - results available but truncated due to size limits]'
-      }
+      // Step 5: IMPROVED - Build contextual prompt with intelligent management
+      const finalUserPrompt = buildContextualPrompt(userPrompt, dataToAnalyze, webResearchData)
 
       // If no specific instructions and no data, ask for clarification
       if (!userPrompt || (userPrompt.includes('Analyze the provided data') && Object.keys(dataToAnalyze).length === 0)) {
-        finalUserPrompt = 'I need more specific instructions on what you would like me to do. Could you provide more details about your request?'
+        const clarificationPrompt = 'I need more specific instructions on what you would like me to do. Could you provide more details about your request?'
       }
 
-      // Step 7: Select appropriate model and token limits BEFORE using them
+      // Step 6: Select appropriate model and token limits BEFORE using them
       const estimatedTokens = estimateTokens(finalUserPrompt) + 200 // Add buffer for system prompt
       const modelSelection = selectModel(estimatedTokens)
       const selectedModel = modelSelection.model
@@ -247,8 +326,12 @@ export const chatgptResearchStrategy: PluginStrategy = {
         finalPromptLength: finalUserPrompt.length
       })
 
-      // Step 8: Send to ChatGPT with selected model
-      const systemPrompt = 'You are a helpful AI assistant. Follow the user\'s instructions exactly and provide the response they are asking for.'
+      // Step 7: FIXED - Use agent's system prompt with fallback to contextual prompt
+      const systemPrompt = input_variables.systemPrompt || 
+                          generateContextualSystemPrompt(userPrompt, dataToAnalyze, input_variables) ||
+                          'You are a helpful AI assistant. Follow the user\'s instructions exactly and provide the response they are asking for.'
+
+      console.log('System prompt being used:', systemPrompt.substring(0, 200) + '...')
 
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
@@ -276,11 +359,12 @@ export const chatgptResearchStrategy: PluginStrategy = {
       const responseData = await response.json()
       const assistantResponse = responseData.choices[0]?.message?.content || 'No response generated'
 
-      // Step 9: Return the result in a generic format
+      // Step 8: Return the result in a generic format
       const result = {
         response: assistantResponse,
         summary: 'ChatGPT processing completed',
         userPrompt: userPrompt,
+        systemPromptUsed: input_variables.systemPrompt ? 'Agent custom system prompt' : 'Generated contextual prompt',
         dataProcessed: Object.keys(dataToAnalyze).length,
         webSearchPerformed: needsWebSearch,
         tokensUsed: responseData.usage?.total_tokens || 0,
@@ -291,7 +375,8 @@ export const chatgptResearchStrategy: PluginStrategy = {
         responseLength: assistantResponse.length,
         dataKeys: Object.keys(dataToAnalyze).length,
         webSearch: needsWebSearch,
-        tokensUsed: result.tokensUsed
+        tokensUsed: result.tokensUsed,
+        systemPromptSource: result.systemPromptUsed
       })
 
       return result

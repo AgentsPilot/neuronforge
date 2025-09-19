@@ -32,7 +32,18 @@ import {
   Download,
   Upload,
   RefreshCw,
-  AlertCircle
+  AlertCircle,
+  Calendar,
+  Folder,
+  Camera,
+  Music,
+  Video,
+  Image,
+  Link,
+  BookOpen,
+  Layers,
+  GitBranch,
+  Shuffle
 } from 'lucide-react';
 
 interface Agent {
@@ -84,219 +95,286 @@ const buildAgentWorkflow = (agent: Agent | null): { nodes: ProcessingNode[], flo
   const plugins = agent.plugins_required || [];
   const inputSchema = agent.input_schema || [];
 
-  console.log('Parsing prompt:', systemPrompt);
+  console.log('Parsing enhanced prompt:', systemPrompt);
 
-  // Parse the system prompt to extract workflow steps
-  const parseWorkflowSteps = (prompt: string) => {
+  // Enhanced parsing function that handles multiple formats
+  const parseEnhancedWorkflow = (prompt: string) => {
     const steps = [];
     
-    // First try the ** format (structured)
-    const sectionMatches = prompt.match(/\*\*([^*]+?)\*\*([^*]+?)(?=\*\*|$)/g);
-    
-    if (sectionMatches && sectionMatches.length > 0) {
-      for (const match of sectionMatches) {
-        const titleMatch = match.match(/\*\*([^*]+?)\*\*/);
-        if (!titleMatch) continue;
+    // Method 1: Look for numbered steps (1., 2., etc.)
+    const numberedSteps = prompt.match(/(\d+)\.\s*([^\d]+?)(?=\d+\.|$)/gs);
+    if (numberedSteps && numberedSteps.length >= 2) {
+      console.log('Found numbered steps:', numberedSteps.length);
+      
+      numberedSteps.forEach((step, index) => {
+        const cleanStep = step.replace(/^\d+\.\s*/, '').trim();
+        const sentences = cleanStep.split(/[.!?]+/).filter(s => s.trim().length > 10);
         
-        const title = titleMatch[1].trim().replace(':', '');
-        const content = match.replace(/\*\*[^*]+?\*\*/, '').trim();
+        steps.push({
+          title: `Step ${index + 1}`,
+          content: cleanStep,
+          bulletPoints: sentences.slice(0, 3).map(s => s.trim()),
+          type: categorizeStepByContent(cleanStep, index, numberedSteps.length)
+        });
+      });
+      
+      return steps;
+    }
+
+    // Method 2: Look for structured sections with **Headers**
+    const headerSections = prompt.match(/\*\*([^*]+?)\*\*([^*]+?)(?=\*\*|$)/gs);
+    if (headerSections && headerSections.length >= 2) {
+      console.log('Found header sections:', headerSections.length);
+      
+      headerSections.forEach((section, index) => {
+        const headerMatch = section.match(/\*\*([^*]+?)\*\*/);
+        if (!headerMatch) return;
         
-        if (!title || !content) continue;
+        const title = headerMatch[1].trim().replace(':', '');
+        const content = section.replace(/\*\*[^*]+?\*\*/, '').trim();
         
-        // Extract bullet points
-        const bulletPoints = [];
-        const bulletMatches = content.match(/•([^•]+?)(?=•|$)/g);
-        
+        // Extract bullet points or sub-steps
+        const bullets = [];
+        const bulletMatches = content.match(/[•\-\*]\s*([^\n•\-\*]+)/g);
         if (bulletMatches) {
-          for (const bullet of bulletMatches) {
-            const cleanBullet = bullet.replace('•', '').trim();
-            if (cleanBullet && !cleanBullet.match(/^\*\*/)) {
-              bulletPoints.push(cleanBullet);
-            }
-          }
+          bullets.push(...bulletMatches.map(b => b.replace(/^[•\-\*]\s*/, '').trim()));
         } else {
-          bulletPoints.push(content);
+          const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 5);
+          bullets.push(...sentences.slice(0, 2).map(s => s.trim()));
         }
         
         steps.push({
           title: title,
           content: content,
-          bulletPoints: bulletPoints
+          bulletPoints: bullets,
+          type: categorizeStepByContent(content + ' ' + title, index, headerSections.length)
         });
-      }
-    } else {
-      // Parse narrative-style prompts by identifying key workflow components
-      const text = prompt.toLowerCase();
-      const originalPrompt = prompt;
+      });
       
-      // Identify main workflow steps from narrative
-      const workflowSteps = [];
-      
-      // 1. Input/Source step
-      if (text.includes('reads') || text.includes('file') || text.includes('pdf') || text.includes('storage')) {
-        const sourceMatch = originalPrompt.match(/(reads?.*?(?:file|pdf|storage).*?)(?:\.|,|;)/i);
-        workflowSteps.push({
-          title: 'Data Source',
-          content: sourceMatch ? sourceMatch[1] : 'Read PDF file from storage',
-          bulletPoints: [sourceMatch ? sourceMatch[1] : 'Read PDF file from storage'],
-          type: 'input'
-        });
-      }
-      
-      // 2. Trigger/Schedule step  
-      if (text.includes('daily') || text.includes('time') || text.includes('schedule')) {
-        const scheduleMatch = originalPrompt.match(/(daily.*?(?:time|schedule).*?)(?:\.|,|;)/i);
-        workflowSteps.push({
-          title: 'Trigger Conditions',
-          content: scheduleMatch ? scheduleMatch[1] : 'Activate daily at specified time',
-          bulletPoints: [scheduleMatch ? scheduleMatch[1] : 'Activate daily at specified time'],
-          type: 'input'
-        });
-      }
-      
-      // 3. Processing step
-      if (text.includes('summariz') || text.includes('process') || text.includes('analyz') || text.includes('gpt') || text.includes('chatgpt')) {
-        const processMatch = originalPrompt.match(/(summariz.*?(?:content|using|chatgpt).*?)(?:\.|,|;)/i);
-        workflowSteps.push({
-          title: 'Processing Steps',
-          content: processMatch ? processMatch[1] : 'Summarize content using chatgpt-research',
-          bulletPoints: [
-            'Load the PDF file',
-            processMatch ? processMatch[1] : 'Summarize content using chatgpt-research'
-          ],
-          type: 'processing'
-        });
-      }
-      
-      // 4. Output/Delivery step
-      if (text.includes('email') || text.includes('send') || text.includes('deliver')) {
-        const emailMatch = originalPrompt.match(/(email.*?summary|send.*?summary|deliver.*?summary)/i);
-        workflowSteps.push({
-          title: 'Delivery Method',
-          content: emailMatch ? emailMatch[1] : 'Send summary via email',
-          bulletPoints: [emailMatch ? emailMatch[1] : 'Send summary via email'],
-          type: 'delivery'
-        });
-      }
-      
-      // 5. Error handling step
-      if (text.includes('error') || text.includes('fail') || text.includes('retry') || text.includes('alert')) {
-        const errorMatch = originalPrompt.match(/(if.*?(?:error|fail|cannot).*?)(?:\.|$)/i);
-        workflowSteps.push({
-          title: 'Error Handling',
-          content: errorMatch ? errorMatch[1] : 'Handle errors and retry logic',
-          bulletPoints: [
-            'Send error alert if PDF cannot be loaded',
-            'Retry after 10 minutes if email fails'
-          ],
-          type: 'delivery'
-        });
-      }
-      
-      steps.push(...workflowSteps);
+      return steps;
     }
-    
-    return steps;
+
+    // Method 3: Intelligent paragraph parsing for narrative prompts
+    const paragraphs = prompt.split(/\n\s*\n|\.\s+(?=[A-Z])/g)
+      .map(p => p.trim())
+      .filter(p => p.length > 20);
+
+    if (paragraphs.length >= 2) {
+      console.log('Found narrative paragraphs:', paragraphs.length);
+      
+      // Group related sentences and identify workflow stages
+      const workflowStages = identifyWorkflowStages(paragraphs);
+      
+      workflowStages.forEach((stage, index) => {
+        steps.push({
+          title: stage.title,
+          content: stage.content,
+          bulletPoints: stage.actions,
+          type: stage.type
+        });
+      });
+      
+      return steps;
+    }
+
+    // Method 4: Sentence-by-sentence analysis for complex prompts
+    const sentences = prompt.split(/[.!?]+/).filter(s => s.trim().length > 15);
+    if (sentences.length >= 3) {
+      const workflowSentences = groupSentencesIntoWorkflow(sentences);
+      
+      workflowSentences.forEach((group, index) => {
+        steps.push({
+          title: group.title,
+          content: group.sentences.join('. '),
+          bulletPoints: group.sentences,
+          type: group.type
+        });
+      });
+      
+      return steps;
+    }
+
+    return [];
   };
 
-  const workflowSteps = parseWorkflowSteps(systemPrompt);
-  console.log('Parsed workflow nodes:', workflowSteps);
-  
-  // Helper function to determine node category and properties from step content
-  const categorizeStep = (stepTitle: string, content: string, bulletPoints: string[], stepType?: string) => {
-    const title = stepTitle.toLowerCase();
-    const bullets = bulletPoints.join(' ').toLowerCase();
+  // Helper function to categorize step content into workflow types
+  const categorizeStepByContent = (content: string, index: number, total: number) => {
+    const lower = content.toLowerCase();
     
-    // Use stepType if provided (from narrative parsing)
-    if (stepType) {
-      switch (stepType) {
-        case 'input':
-          return {
-            category: 'input' as const,
-            icon: bullets.includes('pdf') || title.includes('source') ? FileText :
-                  title.includes('trigger') || title.includes('schedule') ? Clock : Database,
-            color: title.includes('trigger') ? 'green' : 'blue',
-            bgColor: title.includes('trigger') ? 'from-green-400 to-green-600' : 'from-blue-400 to-blue-600',
-            size: 60
-          };
-        case 'processing':
-          return {
-            category: 'processing' as const,
-            icon: Brain,
-            color: 'emerald',
-            bgColor: 'from-emerald-400 to-emerald-600',
-            size: 65
-          };
-        case 'delivery':
-          return {
-            category: 'delivery' as const,
-            icon: bullets.includes('email') || bullets.includes('mail') ? Mail :
-                  title.includes('error') ? AlertCircle : Send,
-            color: title.includes('error') ? 'red' : 'purple',
-            bgColor: title.includes('error') ? 'from-red-400 to-red-600' : 'from-purple-400 to-purple-600',
-            size: title.includes('error') ? 50 : 55
-          };
-      }
+    // Input/Trigger indicators
+    if (lower.match(/\b(input|receive|trigger|start|initialize|read|fetch|get|load|upload|import|schedule|time|daily|hourly)\b/) ||
+        index === 0) {
+      return 'input';
     }
     
-    // Original logic for structured prompts
-    if (title.includes('data source') || title.includes('source')) {
+    // Processing indicators  
+    if (lower.match(/\b(process|analyze|parse|extract|transform|compute|calculate|summarize|generate|create|build|execute|run|apply|use|gpt|ai|model|algorithm)\b/)) {
+      return 'processing';
+    }
+    
+    // Delivery/Output indicators
+    if (lower.match(/\b(send|email|deliver|output|export|save|write|publish|notify|alert|return|response)\b/) ||
+        index === total - 1) {
+      return 'delivery';
+    }
+    
+    // Default to processing for middle steps
+    return 'processing';
+  };
+
+  // Advanced function to identify workflow stages from narrative text
+  const identifyWorkflowStages = (paragraphs: string[]) => {
+    const stages = [];
+    
+    paragraphs.forEach((paragraph, index) => {
+      const lower = paragraph.toLowerCase();
+      let stageType = 'processing';
+      let stageTitle = `Process ${index + 1}`;
+      
+      // Identify stage type and create appropriate title
+      if (lower.includes('input') || lower.includes('receive') || lower.includes('start') || 
+          lower.includes('read') || lower.includes('load') || lower.includes('fetch') ||
+          lower.includes('trigger') || lower.includes('schedule')) {
+        stageType = 'input';
+        stageTitle = lower.includes('schedule') || lower.includes('trigger') ? 'Trigger Conditions' : 'Data Input';
+      } else if (lower.includes('send') || lower.includes('email') || lower.includes('deliver') ||
+                 lower.includes('output') || lower.includes('notify') || lower.includes('alert') ||
+                 lower.includes('return') || lower.includes('export')) {
+        stageType = 'delivery';
+        stageTitle = 'Output Delivery';
+      } else if (lower.includes('process') || lower.includes('analyze') || lower.includes('parse') ||
+                 lower.includes('transform') || lower.includes('summarize') || lower.includes('generate') ||
+                 lower.includes('gpt') || lower.includes('ai') || lower.includes('model')) {
+        stageType = 'processing';
+        stageTitle = lower.includes('gpt') || lower.includes('ai') ? 'AI Processing' : 'Data Processing';
+      }
+      
+      // Extract key actions from the paragraph
+      const actions = [];
+      const sentences = paragraph.split(/[.!?]+/).filter(s => s.trim().length > 10);
+      
+      // Look for action verbs and create bullet points
+      sentences.forEach(sentence => {
+        const trimmed = sentence.trim();
+        if (trimmed.length > 5) {
+          // Simplify long sentences for bullet points
+          if (trimmed.length > 80) {
+            const words = trimmed.split(' ');
+            actions.push(words.slice(0, 12).join(' ') + '...');
+          } else {
+            actions.push(trimmed);
+          }
+        }
+      });
+      
+      stages.push({
+        title: stageTitle,
+        content: paragraph,
+        actions: actions.slice(0, 3), // Limit to 3 actions per stage
+        type: stageType
+      });
+    });
+    
+    return stages;
+  };
+
+  // Group sentences into logical workflow steps
+  const groupSentencesIntoWorkflow = (sentences: string[]) => {
+    const groups = [];
+    const keywordGroups = {
+      input: ['input', 'receive', 'read', 'load', 'fetch', 'get', 'start', 'initialize', 'trigger', 'schedule'],
+      processing: ['process', 'analyze', 'parse', 'transform', 'compute', 'calculate', 'summarize', 'generate', 'create', 'execute', 'gpt', 'ai'],
+      delivery: ['send', 'email', 'deliver', 'output', 'export', 'save', 'notify', 'alert', 'return', 'publish']
+    };
+    
+    let currentGroup = null;
+    
+    sentences.forEach((sentence, index) => {
+      const lower = sentence.toLowerCase();
+      let bestMatch = 'processing';
+      let bestScore = 0;
+      
+      // Find best keyword match
+      Object.entries(keywordGroups).forEach(([type, keywords]) => {
+        const score = keywords.reduce((acc, keyword) => {
+          return acc + (lower.includes(keyword) ? 1 : 0);
+        }, 0);
+        
+        if (score > bestScore) {
+          bestScore = score;
+          bestMatch = type;
+        }
+      });
+      
+      // Start new group or add to existing
+      if (!currentGroup || currentGroup.type !== bestMatch || currentGroup.sentences.length >= 3) {
+        if (currentGroup) groups.push(currentGroup);
+        
+        currentGroup = {
+          type: bestMatch,
+          title: bestMatch === 'input' ? 'Input Processing' :
+                 bestMatch === 'processing' ? 'Core Processing' : 'Output Delivery',
+          sentences: [sentence.trim()]
+        };
+      } else {
+        currentGroup.sentences.push(sentence.trim());
+      }
+    });
+    
+    if (currentGroup) groups.push(currentGroup);
+    
+    return groups;
+  };
+
+  // Execute the enhanced parsing
+  const workflowSteps = parseEnhancedWorkflow(systemPrompt);
+  console.log('Enhanced parsed workflow steps:', workflowSteps);
+  
+  // Helper function to determine node visual properties
+  const getNodeProperties = (stepTitle: string, content: string, bulletPoints: string[], stepType?: string) => {
+    const title = stepTitle.toLowerCase();
+    const contentLower = content.toLowerCase();
+    const bullets = bulletPoints.join(' ').toLowerCase();
+    const allText = `${title} ${contentLower} ${bullets}`;
+    
+    // Determine category and visual properties
+    if (stepType === 'input' || title.includes('input') || title.includes('trigger') || 
+        contentLower.includes('schedule') || contentLower.includes('daily')) {
       return {
         category: 'input' as const,
-        icon: bullets.includes('pdf') ? FileText : 
-              bullets.includes('database') ? Database :
-              bullets.includes('api') ? Network : Upload,
-        color: 'blue',
-        bgColor: 'from-blue-400 to-blue-600',
-        size: 60
+        icon: allText.includes('schedule') || allText.includes('time') ? Clock :
+              allText.includes('pdf') || allText.includes('file') ? FileText :
+              allText.includes('database') || allText.includes('storage') ? Database : Upload,
+        color: allText.includes('schedule') ? 'green' : 'blue',
+        bgColor: allText.includes('schedule') ? 'from-green-400 to-green-600' : 'from-blue-400 to-blue-600',
+        size: 65
       };
-    } else if (title.includes('trigger') || title.includes('condition') || title.includes('schedule')) {
-      return {
-        category: 'input' as const,
-        icon: Clock,
-        color: 'green',
-        bgColor: 'from-green-400 to-green-600',
-        size: 55
-      };
-    } else if (title.includes('processing') || title.includes('step')) {
-      const isAI = bullets.includes('gpt') || bullets.includes('ai') || 
-                   bullets.includes('summarize') || bullets.includes('analyze') ||
-                   bullets.includes('chatgpt') || bullets.includes('openai');
+    } else if (stepType === 'processing' || title.includes('process') || title.includes('ai') ||
+               contentLower.includes('gpt') || contentLower.includes('analyze') || 
+               contentLower.includes('summarize')) {
+      const isAI = allText.includes('gpt') || allText.includes('ai') || 
+                   allText.includes('chatgpt') || allText.includes('model');
       return {
         category: 'processing' as const,
         icon: isAI ? Brain : Cpu,
         color: 'emerald',
         bgColor: 'from-emerald-400 to-emerald-600',
-        size: isAI ? 65 : 60
+        size: isAI ? 70 : 65
       };
-    } else if (title.includes('output') || title.includes('creation') || title.includes('generat')) {
-      return {
-        category: 'output' as const,
-        icon: bullets.includes('chart') || bullets.includes('visual') ? BarChart3 : 
-              bullets.includes('pdf') || bullets.includes('report') ? FileText : Download,
-        color: 'orange',
-        bgColor: 'from-orange-400 to-orange-600',
-        size: 60
-      };
-    } else if (title.includes('delivery') || title.includes('method') || title.includes('send')) {
+    } else if (stepType === 'delivery' || title.includes('delivery') || title.includes('output') ||
+               contentLower.includes('email') || contentLower.includes('send') || 
+               contentLower.includes('notify')) {
       return {
         category: 'delivery' as const,
-        icon: bullets.includes('email') || bullets.includes('mail') ? Mail :
-              bullets.includes('slack') || bullets.includes('teams') ? MessageSquare : Send,
-        color: 'purple',
-        bgColor: 'from-purple-400 to-purple-600',
-        size: 55
-      };
-    } else if (title.includes('error') || title.includes('handling') || title.includes('retry')) {
-      return {
-        category: 'delivery' as const,
-        icon: AlertCircle,
-        color: 'red',
-        bgColor: 'from-red-400 to-red-600',
-        size: 50
+        icon: allText.includes('email') || allText.includes('mail') ? Mail :
+              allText.includes('error') || allText.includes('alert') ? AlertCircle : Send,
+        color: allText.includes('error') ? 'red' : 'purple',
+        bgColor: allText.includes('error') ? 'from-red-400 to-red-600' : 'from-purple-400 to-purple-600',
+        size: allText.includes('error') ? 55 : 60
       };
     }
     
+    // Default
     return {
       category: 'processing' as const,
       icon: Settings,
@@ -306,149 +384,264 @@ const buildAgentWorkflow = (agent: Agent | null): { nodes: ProcessingNode[], flo
     };
   };
 
-  // Create nodes based on parsed workflow steps - horizontal layout
-  const getHorizontalPosition = (index: number, total: number, containerWidth: number) => {
-    const availableWidth = containerWidth - 260; // Leave 130px padding on each side
-    const nodeSpacing = total > 1 ? availableWidth / (total - 1) : 0;
-    const x = 130 + (index * nodeSpacing); // Start at 130px from left
-    const y = 80; // Position higher in the taller container
-    return { x, y };
-  };
-
+  // Create nodes from parsed workflow steps
   workflowSteps.forEach((step, index) => {
-    const stepProps = categorizeStep(step.title, step.content, step.bulletPoints, step.type);
+    const nodeProps = getNodeProperties(step.title, step.content, step.bulletPoints, step.type);
     
-    // Simple percentage-based positioning - evenly distribute across width
+    // Calculate horizontal positions (evenly distributed)
     const totalSteps = workflowSteps.length;
-    const xPercent = totalSteps === 1 ? 50 : (index / (totalSteps - 1)) * 80 + 10; // 10% to 90% width
-    const position = { x: xPercent, y: 20 }; // Use percentages, 20% from top
+    const xPercent = totalSteps === 1 ? 50 : (index / (totalSteps - 1)) * 70 + 15; // 15% to 85% width
+    const yPercent = 25; // 25% from top
     
-    const outputs = step.bulletPoints.length > 0 ? 
-      step.bulletPoints.map(bp => bp.length > 50 ? bp.substring(0, 47) + '...' : bp) : 
-      [`${step.title} Result`];
+    // Generate realistic outputs based on content
+    const generateOutputs = (content: string, bulletPoints: string[]) => {
+      const lower = content.toLowerCase();
+      
+      if (lower.includes('pdf') || lower.includes('file')) {
+        return ['Processed Document', 'Extracted Content'];
+      } else if (lower.includes('summarize') || lower.includes('gpt')) {
+        return ['Generated Summary', 'AI Analysis'];
+      } else if (lower.includes('email') || lower.includes('send')) {
+        return ['Sent Message', 'Delivery Confirmation'];
+      } else if (lower.includes('schedule') || lower.includes('trigger')) {
+        return ['Execution Signal', 'Workflow Initiated'];
+      }
+      
+      return bulletPoints.length > 0 ? 
+        bulletPoints.slice(0, 2).map(bp => bp.length > 40 ? bp.substring(0, 37) + '...' : bp) :
+        [`${step.title} Result`];
+    };
     
-    const inputs = index === 0 ? ['User Request'] : [`${workflowSteps[index - 1].title} Output`];
+    const outputs = generateOutputs(step.content, step.bulletPoints);
+    const inputs = index === 0 ? ['User Configuration'] : [`Output from ${workflowSteps[index - 1].title}`];
     
+    // Match plugins to steps more intelligently
     const stepPlugins = plugins.filter(plugin => {
-      const pluginName = plugin.toLowerCase().replace(/[_-]/g, ' ');
+      const pluginLower = plugin.toLowerCase().replace(/[_-]/g, ' ');
       const stepText = (step.content + ' ' + step.bulletPoints.join(' ')).toLowerCase();
       
-      return stepText.includes(pluginName) ||
+      return stepText.includes(pluginLower) ||
              stepText.includes(plugin.toLowerCase()) ||
              (plugin.includes('mail') && stepText.includes('email')) ||
-             (plugin.includes('gpt') && stepText.includes('chatgpt')) ||
+             (plugin.includes('gpt') && (stepText.includes('chatgpt') || stepText.includes('summarize'))) ||
              (plugin.includes('file') && stepText.includes('pdf')) ||
-             (plugin.includes('research') && stepText.includes('summarize'));
+             (plugin.includes('research') && stepText.includes('analyze'));
     });
 
     nodes.push({
-      id: `step-${index}`,
+      id: `enhanced-step-${index}`,
       title: step.title,
-      subtitle: `${step.bulletPoints.length} action${step.bulletPoints.length !== 1 ? 's' : ''}`,
+      subtitle: `${step.bulletPoints.length} operation${step.bulletPoints.length !== 1 ? 's' : ''}`,
       description: step.bulletPoints.length > 0 ? 
         step.bulletPoints.slice(0, 3).join(' • ') : 
-        step.content.slice(0, 100) + (step.content.length > 100 ? '...' : ''),
-      icon: stepProps.icon,
-      color: stepProps.color,
-      bgColor: stepProps.bgColor,
-      position: position,
-      size: stepProps.size,
+        step.content.slice(0, 120) + (step.content.length > 120 ? '...' : ''),
+      icon: nodeProps.icon,
+      color: nodeProps.color,
+      bgColor: nodeProps.bgColor,
+      position: { x: xPercent, y: yPercent },
+      size: nodeProps.size,
       inputs: inputs,
       outputs: outputs,
       plugins: stepPlugins,
-      processingTime: stepProps.category === 'processing' ? 3000 : 
-                     stepProps.category === 'input' ? 1000 :
-                     stepProps.category === 'delivery' ? 1500 : 2000,
-      category: stepProps.category
+      processingTime: nodeProps.category === 'processing' ? 3500 : 
+                     nodeProps.category === 'input' ? 1200 :
+                     nodeProps.category === 'delivery' ? 2000 : 2500,
+      category: nodeProps.category
     });
 
+    // Create flow connections
     if (index > 0) {
       flows.push({
-        id: `step-${index-1}-to-step-${index}`,
-        from: `step-${index-1}`,
-        to: `step-${index}`,
-        data: step.bulletPoints[0] || step.title,
-        color: stepProps.color,
-        delay: (index * 800) + 300
+        id: `enhanced-flow-${index-1}-to-${index}`,
+        from: `enhanced-step-${index-1}`,
+        to: `enhanced-step-${index}`,
+        data: outputs[0] || step.title,
+        color: nodeProps.color,
+        delay: (index * 1000) + 400
       });
     }
   });
 
-  // Fallback workflow if no steps found
+  // Enhanced fallback if no workflow found
   if (workflowSteps.length === 0) {
-    const inputFields = inputSchema.length > 0 ? inputSchema.map(f => f.name) : ['user_request'];
+    console.log('No workflow steps found, creating intelligent fallback');
     
-    const fallbackNodes = [
-      {
-        id: 'input',
-        title: 'User Input',
-        subtitle: `${inputFields.length} parameters`,
-        description: 'Receives and validates user input parameters',
-        icon: MessageSquare,
+    // Analyze the full prompt for key components
+    const promptLower = systemPrompt.toLowerCase();
+    const hasFileOperations = promptLower.includes('pdf') || promptLower.includes('file') || promptLower.includes('read');
+    const hasAIProcessing = promptLower.includes('gpt') || promptLower.includes('summarize') || promptLower.includes('analyze');
+    const hasEmailDelivery = promptLower.includes('email') || promptLower.includes('send') || promptLower.includes('mail');
+    const hasScheduling = promptLower.includes('daily') || promptLower.includes('schedule') || promptLower.includes('time');
+    
+    const intelligentNodes = [];
+    
+    // Input stage
+    if (hasScheduling) {
+      intelligentNodes.push({
+        id: 'trigger',
+        title: 'Scheduled Trigger',
+        subtitle: 'Time-based activation',
+        description: 'Activates the workflow based on configured schedule',
+        icon: Clock,
+        color: 'green',
+        bgColor: 'from-green-400 to-green-600',
+        position: { x: 15, y: 25 },
+        size: 60,
+        inputs: ['System Clock'],
+        outputs: ['Activation Signal'],
+        plugins: [],
+        processingTime: 800,
+        category: 'input' as const
+      });
+    }
+    
+    if (hasFileOperations) {
+      intelligentNodes.push({
+        id: 'file-input',
+        title: 'File Processing',
+        subtitle: 'Document handling',
+        description: 'Loads and processes files from storage',
+        icon: FileText,
         color: 'blue',
         bgColor: 'from-blue-400 to-blue-600',
-        position: { x: 20, y: 20 }, // 20% from left, 20% from top
-        size: 60,
-        inputs: ['Raw User Request'],
-        outputs: inputFields,
-        plugins: [],
-        processingTime: 500,
+        position: { x: hasScheduling ? 35 : 20, y: 25 },
+        size: 65,
+        inputs: hasScheduling ? ['Activation Signal'] : ['File Path'],
+        outputs: ['File Content'],
+        plugins: plugins.filter(p => p.includes('file') || p.includes('pdf')),
+        processingTime: 1500,
         category: 'input' as const
-      },
-      {
-        id: 'processing',
-        title: 'AI Processing',
-        subtitle: 'Language Model',
-        description: 'Processes information using advanced language understanding',
+      });
+    }
+    
+    // Processing stage
+    if (hasAIProcessing) {
+      intelligentNodes.push({
+        id: 'ai-processing',
+        title: 'AI Analysis',
+        subtitle: 'Language processing',
+        description: 'Processes content using advanced AI capabilities',
         icon: Brain,
         color: 'emerald',
         bgColor: 'from-emerald-400 to-emerald-600',
-        position: { x: 50, y: 20 }, // 50% from left (center), 20% from top
-        size: 65,
-        inputs: inputFields,
-        outputs: ['AI Results', 'Processed Data'],
-        plugins: [],
-        processingTime: 3000,
+        position: { x: 50, y: 25 },
+        size: 70,
+        inputs: hasFileOperations ? ['File Content'] : ['Input Data'],
+        outputs: ['Processed Results', 'Analysis Summary'],
+        plugins: plugins.filter(p => p.includes('gpt') || p.includes('research') || p.includes('chat')),
+        processingTime: 4000,
         category: 'processing' as const
-      },
-      {
-        id: 'output',
-        title: 'Output Generation',
-        subtitle: 'Result Formatting',
-        description: 'Formats and delivers the final results',
-        icon: Send,
+      });
+    }
+    
+    // Output stage
+    if (hasEmailDelivery) {
+      intelligentNodes.push({
+        id: 'email-delivery',
+        title: 'Email Delivery',
+        subtitle: 'Message sending',
+        description: 'Sends processed results via email',
+        icon: Mail,
         color: 'purple',
         bgColor: 'from-purple-400 to-purple-600',
-        position: { x: 80, y: 20 }, // 80% from left, 20% from top
+        position: { x: 80, y: 25 },
         size: 60,
-        inputs: ['AI Results'],
-        outputs: ['Final Output'],
-        plugins: plugins,
-        processingTime: 1500,
-        category: 'output' as const
-      }
-    ];
+        inputs: hasAIProcessing ? ['Analysis Summary'] : ['Processed Data'],
+        outputs: ['Sent Email', 'Delivery Status'],
+        plugins: plugins.filter(p => p.includes('mail') || p.includes('email')),
+        processingTime: 2000,
+        category: 'delivery' as const
+      });
+    }
+    
+    nodes.push(...intelligentNodes);
+    
+    // Create flows between intelligent nodes
+    for (let i = 1; i < intelligentNodes.length; i++) {
+      flows.push({
+        id: `intelligent-flow-${i-1}-to-${i}`,
+        from: intelligentNodes[i-1].id,
+        to: intelligentNodes[i].id,
+        data: intelligentNodes[i-1].outputs[0] || 'Data',
+        color: intelligentNodes[i].color,
+        delay: i * 1200 + 600
+      });
+    }
+    
+    // If still no nodes, create basic fallback
+    if (intelligentNodes.length === 0) {
+      const basicNodes = [
+        {
+          id: 'input',
+          title: 'Input Processing',
+          subtitle: `${inputSchema.length || 1} parameters`,
+          description: 'Receives and processes input parameters',
+          icon: MessageSquare,
+          color: 'blue',
+          bgColor: 'from-blue-400 to-blue-600',
+          position: { x: 20, y: 25 },
+          size: 60,
+          inputs: ['User Request'],
+          outputs: inputSchema.length > 0 ? inputSchema.map(f => f.name) : ['Processed Input'],
+          plugins: [],
+          processingTime: 1000,
+          category: 'input' as const
+        },
+        {
+          id: 'processing',
+          title: 'Core Processing',
+          subtitle: 'Main logic',
+          description: 'Executes the main agent functionality',
+          icon: Brain,
+          color: 'emerald',
+          bgColor: 'from-emerald-400 to-emerald-600',
+          position: { x: 50, y: 25 },
+          size: 70,
+          inputs: ['Processed Input'],
+          outputs: ['Analysis Results'],
+          plugins: plugins.slice(0, 2),
+          processingTime: 3000,
+          category: 'processing' as const
+        },
+        {
+          id: 'output',
+          title: 'Result Delivery',
+          subtitle: 'Output generation',
+          description: 'Formats and delivers the final results',
+          icon: Send,
+          color: 'purple',
+          bgColor: 'from-purple-400 to-purple-600',
+          position: { x: 80, y: 25 },
+          size: 60,
+          inputs: ['Analysis Results'],
+          outputs: ['Final Response'],
+          plugins: plugins.slice(2),
+          processingTime: 1500,
+          category: 'delivery' as const
+        }
+      ];
 
-    nodes.push(...fallbackNodes);
-
-    flows.push(
-      {
-        id: 'input-processing',
-        from: 'input',
-        to: 'processing', 
-        data: 'Input Data',
-        color: 'emerald',
-        delay: 600
-      },
-      {
-        id: 'processing-output',
-        from: 'processing',
-        to: 'output',
-        data: 'Processed Results',
-        color: 'purple', 
-        delay: 3800
-      }
-    );
+      nodes.push(...basicNodes);
+      
+      flows.push(
+        {
+          id: 'basic-input-processing',
+          from: 'input',
+          to: 'processing',
+          data: 'Input Data',
+          color: 'emerald',
+          delay: 1200
+        },
+        {
+          id: 'basic-processing-output',
+          from: 'processing',
+          to: 'output',
+          data: 'Processed Results',
+          color: 'purple',
+          delay: 4500
+        }
+      );
+    }
   }
 
   return { nodes, flows };
@@ -468,7 +661,6 @@ const ConnectionLine = ({
   containerWidth: number;
   containerHeight: number;
 }) => {
-  // Use percentage positioning
   const fromX = (fromNode.position.x / 100) * containerWidth;
   const fromY = (fromNode.position.y / 100) * containerHeight;
   const toX = (toNode.position.x / 100) * containerWidth;
@@ -481,7 +673,7 @@ const ConnectionLine = ({
 
   return (
     <div
-      className={`absolute z-10 transition-all duration-500 ${
+      className={`absolute z-10 transition-all duration-700 ${
         isActive ? 'opacity-100' : 'opacity-20'
       }`}
       style={{
@@ -495,13 +687,13 @@ const ConnectionLine = ({
         transform: `rotate(${angle}deg)`,
         transformOrigin: '0 50%',
         borderRadius: '2px',
-        boxShadow: isActive ? '0 0 20px rgba(59, 130, 246, 0.5)' : 'none'
+        boxShadow: isActive ? '0 0 25px rgba(59, 130, 246, 0.6)' : 'none'
       }}
     />
   );
 };
 
-export default function VisualAgentFlow({ 
+export default function EnhancedVisualAgentFlow({ 
   agent, 
   autoPlay = false 
 }: { 
@@ -518,20 +710,54 @@ export default function VisualAgentFlow({
   
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Demo agent with your actual prompt format
+  // Enhanced demo agent
   const demoAgent: Agent = {
-    agent_name: "Daily PDF Summary Agent", 
-    description: "This agent reads a specific PDF file from storage daily at a specified time, summarizes the content using chatgpt-research, and emails the summary",
-    system_prompt: "This agent reads a specific PDF file from storage daily at a specified time, summarizes the content using chatgpt-research, and emails the summary. If the PDF cannot be loaded, an error alert is sent. If the email fails, it retries after 10 minutes.",
+    agent_name: "Advanced Document Analyzer", 
+    description: "Multi-step document processing agent with scheduling, AI analysis, and automated delivery",
+    system_prompt: `**Data Source Configuration**
+    • Read PDF documents from designated storage location
+    • Validate file accessibility and format compatibility
+    • Load document content into processing pipeline
+
+    **Trigger Conditions & Scheduling**
+    • Activate daily at 9:00 AM EST
+    • Monitor for new files in watched directories
+    • Execute on-demand processing requests
+
+    **AI Processing Steps**
+    • Parse document structure and extract key information
+    • Summarize content using advanced language models (ChatGPT-4)
+    • Generate insights and identify important themes
+    • Create structured analysis reports
+
+    **Output Generation**
+    • Format results into professional summary documents
+    • Generate visual charts and data representations
+    • Prepare executive briefing materials
+
+    **Delivery Methods**
+    • Send comprehensive email reports to stakeholders
+    • Upload results to shared collaboration platforms
+    • Archive processed documents with metadata
+
+    **Error Handling & Recovery**
+    • Implement retry logic for failed operations
+    • Send error notifications to administrators
+    • Log all processing activities for audit trail`,
     input_schema: [
-      { name: "pdf_file_path", type: "string", description: "Path to the PDF file to analyze", required: true },
-      { name: "email_address", type: "string", description: "Email address for delivery", required: true },
-      { name: "schedule_time", type: "string", description: "Daily activation time", required: false }
+      { name: "document_path", type: "string", description: "Path to PDF document", required: true },
+      { name: "recipient_emails", type: "array", description: "Email addresses for delivery", required: true },
+      { name: "processing_options", type: "object", description: "Analysis configuration", required: false },
+      { name: "schedule_time", type: "string", description: "Daily execution time", required: false }
     ],
     plugins_required: [
-      "file_reader", 
-      "chatgpt_research", 
-      "google_mail"
+      "file_reader_advanced", 
+      "chatgpt_research_v4", 
+      "document_parser",
+      "gmail_enterprise",
+      "chart_generator",
+      "task_scheduler",
+      "error_handler"
     ]
   };
 
@@ -552,12 +778,7 @@ export default function VisualAgentFlow({
     return () => window.removeEventListener('resize', updateSize);
   }, []);
 
-  useEffect(() => {
-    if (autoPlay && nodes.length > 0) {
-      const timer = setTimeout(handlePlay, 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [autoPlay, nodes.length]);
+  // Removed autoPlay functionality
 
   const handlePlay = async () => {
     if (isPlaying) return;
@@ -566,13 +787,13 @@ export default function VisualAgentFlow({
     setActiveNodes([]);
     setCompletedNodes([]);
     setActiveFlows([]);
-    setCurrentPhase('Initializing workflow...');
+    setCurrentPhase('Initializing enhanced workflow...');
     setProcessingStats({ processed: 0, total: nodes.length });
 
     for (let i = 0; i < nodes.length; i++) {
       const node = nodes[i];
       
-      setCurrentPhase(`Processing ${node.title}`);
+      setCurrentPhase(`Executing: ${node.title}`);
       setActiveNodes([node.id]);
       
       const incomingFlows = flows.filter(f => f.to === node.id);
@@ -584,13 +805,22 @@ export default function VisualAgentFlow({
       setProcessingStats(prev => ({ ...prev, processed: prev.processed + 1 }));
       
       if (i < nodes.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise(resolve => setTimeout(resolve, 600));
       }
     }
 
-    setCurrentPhase('Workflow Complete!');
+    setCurrentPhase('Enhanced workflow completed successfully!');
     setIsPlaying(false);
     setActiveNodes([]);
+  };
+
+  const handleReset = () => {
+    setActiveNodes([]);
+    setCompletedNodes([]);
+    setActiveFlows([]);
+    setIsPlaying(false);
+    setCurrentPhase('');
+    setProcessingStats({ processed: 0, total: nodes.length });
   };
 
   const getNodeStatus = (nodeId: string) => {
@@ -601,72 +831,110 @@ export default function VisualAgentFlow({
 
   if (nodes.length === 0) {
     return (
-      <div className="text-center py-16">
-        <div className="w-20 h-20 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-6">
-          <Workflow className="h-10 w-10 text-gray-400" />
+      <div className="text-center py-20">
+        <div className="w-24 h-24 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-8">
+          <Workflow className="h-12 w-12 text-white" />
         </div>
-        <h3 className="text-xl font-semibold text-gray-600 mb-2">No Workflow Steps Found</h3>
-        <p className="text-gray-500 mb-4">
-          Configure your agent to see its workflow visualization
+        <h3 className="text-2xl font-bold text-gray-700 mb-3">Enhanced Parsing Ready</h3>
+        <p className="text-gray-500 mb-6 max-w-md mx-auto">
+          Provide your agent configuration with detailed workflow steps to see the enhanced visualization
         </p>
+        <div className="text-sm text-gray-400">
+          Supports: numbered steps, sectioned prompts, narrative workflows, and intelligent fallbacks
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-8">
-      {/* Header */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between mb-4">
+      {/* Enhanced Header */}
+      <div className="mb-8">
+        <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-blue-500 via-purple-600 to-cyan-500 rounded-2xl flex items-center justify-center shadow-lg">
-              <Brain className="h-6 w-6 text-white" />
+            <div className="w-14 h-14 bg-gradient-to-br from-blue-500 via-purple-600 to-cyan-500 rounded-2xl flex items-center justify-center shadow-xl">
+              <Brain className="h-7 w-7 text-white" />
             </div>
             <div className="text-left">
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-1">
+              <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-2">
                 {currentAgent.agent_name}
               </h1>
-              <p className="text-sm text-gray-600 max-w-xl">{currentAgent.description}</p>
+              <p className="text-sm text-gray-600 max-w-2xl leading-relaxed">{currentAgent.description}</p>
+              <div className="flex items-center gap-4 mt-3">
+                <div className="flex items-center gap-1 text-xs text-blue-600">
+                  <Layers className="h-3 w-3" />
+                  {nodes.length} Steps
+                </div>
+                <div className="flex items-center gap-1 text-xs text-purple-600">
+                  <Zap className="h-3 w-3" />
+                  {currentAgent.plugins_required.length} Tools
+                </div>
+                <div className="flex items-center gap-1 text-xs text-green-600">
+                  <Target className="h-3 w-3" />
+                  {currentAgent.input_schema.length} Inputs
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* Run Demo Button - Right Side */}
-          <button
-            onClick={handlePlay}
-            disabled={isPlaying}
-            className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-2 rounded-xl hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 transition-all duration-200 flex items-center gap-2 font-semibold text-sm shadow-lg transform hover:scale-105"
-          >
-            <Play className="h-4 w-4" />
-            {isPlaying ? 'Running...' : 'Run Demo'}
-          </button>
+          {/* Enhanced Control Panel */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleReset}
+              disabled={isPlaying}
+              className="bg-gray-100 text-gray-600 px-4 py-2 rounded-lg hover:bg-gray-200 disabled:opacity-50 transition-all duration-200 flex items-center gap-2 text-sm"
+            >
+              <RotateCcw className="h-4 w-4" />
+              Reset
+            </button>
+            <button
+              onClick={handlePlay}
+              disabled={isPlaying}
+              className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-2 rounded-xl hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 transition-all duration-200 flex items-center gap-2 font-semibold text-sm shadow-lg transform hover:scale-105"
+            >
+              <Play className="h-4 w-4" />
+              {isPlaying ? 'Processing...' : 'Start Demo'}
+            </button>
+          </div>
         </div>
 
-        {/* Status Bar */}
+        {/* Enhanced Status Display */}
         {isPlaying && (
-          <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl p-3 mb-4 border border-blue-200 max-w-lg">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-4 h-4 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full animate-pulse" />
-              <span className="text-sm font-bold text-gray-800">{currentPhase}</span>
+          <div className="bg-gradient-to-r from-blue-50 via-purple-50 to-cyan-50 rounded-2xl p-4 mb-6 border border-blue-200 shadow-lg">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-5 h-5 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full animate-pulse shadow-lg" />
+                <span className="font-bold text-gray-800 text-lg">{currentPhase}</span>
+              </div>
+              <div className="text-sm font-medium text-gray-600">
+                {processingStats.processed} / {processingStats.total} completed
+              </div>
             </div>
-            <div className="bg-white rounded-full h-2 overflow-hidden">
+            <div className="bg-white rounded-full h-3 overflow-hidden shadow-inner">
               <div 
-                className="h-full bg-gradient-to-r from-blue-500 to-purple-600 transition-all duration-1000 rounded-full"
+                className="h-full bg-gradient-to-r from-blue-500 via-purple-500 to-cyan-500 transition-all duration-1000 rounded-full shadow-sm"
                 style={{ width: `${(processingStats.processed / processingStats.total) * 100}%` }}
               />
-            </div>
-            <div className="text-xs text-gray-600 mt-1">
-              Processing: {processingStats.processed} / {processingStats.total} steps
             </div>
           </div>
         )}
       </div>
 
-      {/* Main Workflow Visualization */}
+      {/* Enhanced Workflow Visualization */}
       <div 
         ref={containerRef}
-        className="relative w-full h-[600px] bg-gray-50 rounded-2xl overflow-hidden border border-gray-300 shadow-lg"
+        className="relative w-full h-[700px] bg-gradient-to-br from-gray-50 to-blue-50 rounded-3xl overflow-hidden border border-gray-200 shadow-2xl"
       >
-        {/* Connection Lines */}
+        {/* Background Pattern */}
+        <div className="absolute inset-0 opacity-10">
+          <div className="absolute inset-0 bg-gradient-to-r from-blue-600/20 to-purple-600/20" />
+          <div className="absolute inset-0" style={{
+            backgroundImage: `radial-gradient(circle at 20px 20px, #3b82f6 1px, transparent 1px)`,
+            backgroundSize: '40px 40px'
+          }} />
+        </div>
+
+        {/* Enhanced Connection Lines */}
         {flows.map(flow => {
           const fromNode = nodes.find(n => n.id === flow.from);
           const toNode = nodes.find(n => n.id === flow.to);
@@ -684,39 +952,52 @@ export default function VisualAgentFlow({
           );
         })}
 
-        {/* Processing Nodes */}
+        {/* Enhanced Processing Nodes */}
         {nodes.map((node, index) => {
           const Icon = node.icon;
           const status = getNodeStatus(node.id);
           const isActive = status === 'active';
           const isCompleted = status === 'completed';
           
-          // Use percentage positioning
           const pixelX = (node.position.x / 100) * containerSize.width;
           const pixelY = (node.position.y / 100) * containerSize.height;
 
           return (
             <div key={node.id} className="absolute">
-              {/* Glow effect for active nodes */}
+              {/* Enhanced Glow Effect */}
               {isActive && (
-                <div 
-                  className="absolute animate-ping"
-                  style={{
-                    left: `${pixelX}px`,
-                    top: `${pixelY}px`,
-                    transform: 'translate(-50%, -50%)',
-                    width: `${node.size + 40}px`,
-                    height: `${node.size + 40}px`,
-                    background: `radial-gradient(circle, rgba(59, 130, 246, 0.4), transparent 70%)`,
-                    borderRadius: '50%'
-                  }}
-                />
+                <>
+                  <div 
+                    className="absolute animate-ping"
+                    style={{
+                      left: `${pixelX}px`,
+                      top: `${pixelY}px`,
+                      transform: 'translate(-50%, -50%)',
+                      width: `${node.size + 60}px`,
+                      height: `${node.size + 60}px`,
+                      background: `radial-gradient(circle, rgba(59, 130, 246, 0.6), transparent 70%)`,
+                      borderRadius: '50%'
+                    }}
+                  />
+                  <div 
+                    className="absolute animate-pulse"
+                    style={{
+                      left: `${pixelX}px`,
+                      top: `${pixelY}px`,
+                      transform: 'translate(-50%, -50%)',
+                      width: `${node.size + 30}px`,
+                      height: `${node.size + 30}px`,
+                      background: `radial-gradient(circle, rgba(139, 92, 246, 0.4), transparent 70%)`,
+                      borderRadius: '50%'
+                    }}
+                  />
+                </>
               )}
 
-              {/* Main Node */}
+              {/* Enhanced Node Circle */}
               <div
-                className={`absolute transition-all duration-500 cursor-pointer ${
-                  isActive ? 'scale-110 z-30' : isCompleted ? 'scale-105 z-20' : 'scale-100 z-10'
+                className={`absolute transition-all duration-700 cursor-pointer group ${
+                  isActive ? 'scale-125 z-40' : isCompleted ? 'scale-110 z-30' : 'scale-100 z-20'
                 }`}
                 style={{
                   left: `${pixelX}px`,
@@ -724,112 +1005,121 @@ export default function VisualAgentFlow({
                   transform: 'translate(-50%, -50%)'
                 }}
               >
-                {/* Node Circle */}
                 <div
-                  className={`relative rounded-full border-4 flex items-center justify-center transition-all duration-500 ${
+                  className={`relative rounded-full border-4 flex items-center justify-center transition-all duration-700 ${
                     isActive 
                       ? `bg-gradient-to-br ${node.bgColor || 'from-blue-400 to-blue-600'} border-white shadow-2xl animate-pulse` 
                       : isCompleted
-                        ? 'bg-gradient-to-br from-green-400 to-green-600 border-green-200'
-                        : `bg-gradient-to-br from-gray-600 to-gray-800 border-gray-500`
+                        ? 'bg-gradient-to-br from-green-400 to-green-600 border-green-200 shadow-xl'
+                        : `bg-gradient-to-br from-gray-600 to-gray-800 border-gray-400 shadow-lg`
                   }`}
                   style={{ 
                     width: `${node.size}px`, 
                     height: `${node.size}px`,
-                    boxShadow: isActive ? `0 0 30px rgba(59, 130, 246, 0.6)` : 
-                               isCompleted ? `0 0 20px rgba(34, 197, 94, 0.4)` : 'none'
+                    boxShadow: isActive ? `0 0 40px rgba(59, 130, 246, 0.8), 0 0 80px rgba(139, 92, 246, 0.4)` : 
+                               isCompleted ? `0 0 30px rgba(34, 197, 94, 0.5)` : 
+                               'none'
                   }}
                 >
                   {isCompleted ? (
                     <CheckCircle 
-                      className="text-white drop-shadow-lg" 
+                      className="text-white drop-shadow-xl" 
                       style={{ width: `${node.size * 0.5}px`, height: `${node.size * 0.5}px` }} 
                     />
                   ) : (
                     <Icon 
-                      className="text-white drop-shadow-lg" 
+                      className="text-white drop-shadow-xl" 
                       style={{ width: `${node.size * 0.5}px`, height: `${node.size * 0.5}px` }} 
                     />
                   )}
 
-                  {/* Processing indicator */}
+                  {/* Enhanced Processing Indicator */}
                   {isActive && (
-                    <div className="absolute -bottom-2 -right-2 w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center animate-spin">
-                      <RefreshCw className="h-3 w-3 text-white" />
+                    <div className="absolute -bottom-3 -right-3 w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center animate-spin shadow-lg">
+                      <RefreshCw className="h-4 w-4 text-white" />
                     </div>
                   )}
 
-                  {/* Plugin count badge */}
+                  {/* Enhanced Plugin Badge */}
                   {node.plugins.length > 0 && (
-                    <div className="absolute -top-2 -right-2 bg-purple-600 text-white text-xs rounded-full w-6 h-6 flex items-center justify-center font-bold border-2 border-white">
+                    <div className="absolute -top-3 -right-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white text-xs rounded-full w-8 h-8 flex items-center justify-center font-bold border-3 border-white shadow-lg">
                       {node.plugins.length}
                     </div>
                   )}
+
+                  {/* Category Badge */}
+                  <div className={`absolute -top-1 -left-8 px-2 py-1 rounded text-xs font-bold shadow-md ${
+                    node.category === 'input' ? 'bg-blue-100 text-blue-700 border border-blue-300' :
+                    node.category === 'processing' ? 'bg-emerald-100 text-emerald-700 border border-emerald-300' :
+                    node.category === 'delivery' ? 'bg-purple-100 text-purple-700 border border-purple-300' :
+                    'bg-gray-100 text-gray-700 border border-gray-300'
+                  }`}>
+                    {node.category.toUpperCase()}
+                  </div>
                 </div>
 
-                {/* Node Label with Full Information */}
+                {/* Enhanced Information Panel */}
                 <div 
                   className="absolute text-center pointer-events-none"
                   style={{
-                    top: `${node.size + 20}px`,
+                    top: `${node.size + 30}px`,
                     left: '50%',
                     transform: 'translateX(-50%)',
-                    width: '200px'
+                    width: '240px'
                   }}
                 >
-                  <div className={`px-3 py-3 rounded-lg text-xs shadow-lg border transition-all duration-300 ${
+                  <div className={`px-4 py-4 rounded-xl text-xs shadow-xl border transition-all duration-500 backdrop-blur-sm ${
                     isActive || isCompleted
-                      ? 'bg-white text-gray-800 border-white shadow-xl' 
-                      : 'bg-gray-800/90 text-gray-200 border-gray-600'
+                      ? 'bg-white/95 text-gray-800 border-white shadow-2xl transform scale-105' 
+                      : 'bg-gray-800/95 text-gray-200 border-gray-600'
                   }`}>
                     <div className="font-bold mb-2 text-sm">{node.title}</div>
+                    <div className="text-xs opacity-75 mb-3">{node.subtitle}</div>
                     
-                    {/* Category Badge */}
-                    <div className={`inline-block px-2 py-1 rounded text-xs mb-3 ${
-                      node.category === 'input' ? 'bg-blue-100 text-blue-700' :
-                      node.category === 'processing' ? 'bg-emerald-100 text-emerald-700' :
-                      node.category === 'delivery' ? 'bg-purple-100 text-purple-700' :
-                      'bg-gray-100 text-gray-700'
-                    }`}>
-                      {node.category.toUpperCase()}
-                    </div>
-                    
-                    {/* Full Description */}
-                    <div className="text-xs opacity-75 mb-3 text-left leading-relaxed">
+                    {/* Enhanced Description */}
+                    <div className="text-xs opacity-80 mb-4 text-left leading-relaxed">
                       {node.description}
                     </div>
                     
-                    {/* Inputs - No truncation */}
+                    {/* Enhanced Input/Output Display */}
                     {node.inputs.length > 0 && (
                       <div className="mb-3 text-left">
-                        <span className="font-semibold text-green-600">INPUTS:</span>
-                        <div className="text-xs opacity-70 mt-1 space-y-1">
+                        <span className="font-semibold text-green-600 text-xs">INPUTS:</span>
+                        <div className="text-xs opacity-75 mt-1 space-y-1">
                           {node.inputs.map((input, i) => (
-                            <div key={i} className="break-words">• {input}</div>
+                            <div key={i} className="break-words flex items-start">
+                              <ArrowRight className="h-3 w-3 mr-1 mt-0.5 flex-shrink-0 text-green-500" />
+                              {input}
+                            </div>
                           ))}
                         </div>
                       </div>
                     )}
                     
-                    {/* Outputs - No truncation */}
                     {node.outputs.length > 0 && (
                       <div className="mb-3 text-left">
-                        <span className="font-semibold text-blue-600">OUTPUTS:</span>
-                        <div className="text-xs opacity-70 mt-1 space-y-1">
+                        <span className="font-semibold text-blue-600 text-xs">OUTPUTS:</span>
+                        <div className="text-xs opacity-75 mt-1 space-y-1">
                           {node.outputs.map((output, i) => (
-                            <div key={i} className="break-words">• {output}</div>
+                            <div key={i} className="break-words flex items-start">
+                              <ArrowRight className="h-3 w-3 mr-1 mt-0.5 flex-shrink-0 text-blue-500" />
+                              {output}
+                            </div>
                           ))}
                         </div>
                       </div>
                     )}
                     
-                    {/* Tools - Complete list */}
+                    {/* Enhanced Tools Display */}
                     {node.plugins.length > 0 && (
                       <div className="text-left">
-                        <span className="font-semibold text-purple-600">TOOLS:</span>
-                        <div className="text-xs opacity-70 mt-1 space-y-1">
+                        <span className="font-semibold text-purple-600 text-xs">TOOLS:</span>
+                        <div className="text-xs opacity-75 mt-1 space-y-1">
                           {node.plugins.map((plugin, i) => (
-                            <div key={i}>• {plugin}</div>
+                            <div key={i} className="flex items-start">
+                              <Zap className="h-3 w-3 mr-1 mt-0.5 flex-shrink-0 text-purple-500" />
+                              {plugin}
+                            </div>
                           ))}
                         </div>
                       </div>
@@ -842,8 +1132,20 @@ export default function VisualAgentFlow({
         })}
       </div>
 
-      {/* Completion Message */}
-      {/* Removed completion message */}
+      {/* Enhanced Completion Status */}
+      {completedNodes.length === nodes.length && !isPlaying && (
+        <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-2xl p-6 border border-green-200 shadow-lg">
+          <div className="flex items-center justify-center gap-4">
+            <div className="w-12 h-12 bg-gradient-to-r from-green-500 to-emerald-600 rounded-full flex items-center justify-center shadow-lg">
+              <CheckCircle className="h-6 w-6 text-white" />
+            </div>
+            <div className="text-center">
+              <h3 className="text-xl font-bold text-green-800 mb-1">Demo Complete!</h3>
+              <p className="text-green-600">All {nodes.length} processing steps executed successfully</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
