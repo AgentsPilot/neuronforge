@@ -9,6 +9,14 @@ export interface GmailDataStrategy {
   handleOAuthCallback?(params: { code: string; state: string; supabase?: any }): Promise<any>
   run(params: { connection: any; userId: string; input_variables: Record<string, any> }): Promise<any>
   refreshToken?(connection: any): Promise<any>
+  processGenericInputs(input_variables: Record<string, any>): any
+  extractEmailBody(payload: any): string
+  processAllAttachments(payload: any, messageId: string, accessToken: string): Promise<any[]>
+  generateGenericSummary(emails: any[], processedInputs: any, totalAttachments: number): string
+  decodeBase64Url(data: string): string
+  identifyContentType(filename: string, mimeType: string): string
+  extractTextFromAttachment(base64Data: string, mimeType: string, filename: string): Promise<string>
+  cleanExtractedText(text: string): string
 }
 
 export const gmailDataStrategy: GmailDataStrategy = {
@@ -106,7 +114,17 @@ export const gmailDataStrategy: GmailDataStrategy = {
               headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase())?.value || ''
 
             // Extract basic email info
-            const emailInfo = {
+            const emailInfo: {
+              id: string;
+              threadId: string;
+              subject: string;
+              from: string;
+              date: string;
+              snippet: string;
+              labels: string[];
+              body: string;
+              attachments: any[];
+            } = {
               id: email.id,
               threadId: email.threadId,
               subject: getHeader('Subject'),
@@ -182,7 +200,13 @@ export const gmailDataStrategy: GmailDataStrategy = {
 
   // Generic input processor - adapts to any agent schema
   processGenericInputs(input_variables: Record<string, any>) {
-    const inputs = {
+    const inputs: {
+      maxResults: number,
+      query: string,
+      searchTerms: string[],
+      folders: string[],
+      originalInputs: Record<string, any>
+    } = {
       maxResults: 10,
       query: 'in:inbox',
       searchTerms: [],
@@ -295,7 +319,7 @@ export const gmailDataStrategy: GmailDataStrategy = {
       summary += `\n\nAttachments found: ${totalAttachments} files`
       const attachmentTypes = new Set()
       emails.forEach(email => {
-        email.attachments.forEach(att => {
+        email.attachments.forEach((att: any) => {
           if (att.mimeType) {
             const type = att.mimeType.split('/')[1] || att.mimeType
             attachmentTypes.add(type)
@@ -343,7 +367,7 @@ export const gmailDataStrategy: GmailDataStrategy = {
 
   // Generic attachment processing - extract ALL content
   async processAllAttachments(payload: any, messageId: string, accessToken: string): Promise<any[]> {
-    const attachments = []
+    const attachments: any[] = []
     
     const processPayload = async (part: any) => {
       if (part.parts) {
@@ -397,9 +421,9 @@ export const gmailDataStrategy: GmailDataStrategy = {
             mimeType: part.mimeType,
             size: part.body.size || 0,
             data: '',
-            extractedText: `Failed to download: ${attachmentError.message}`,
+            extractedText: `Failed to download: ${attachmentError instanceof Error ? attachmentError.message : String(attachmentError)}`,
             contentType: this.identifyContentType(part.filename, part.mimeType),
-            error: attachmentError.message
+            error: attachmentError instanceof Error ? attachmentError.message : String(attachmentError)
           })
         }
       }
@@ -431,7 +455,7 @@ export const gmailDataStrategy: GmailDataStrategy = {
           return extractedText
         } catch (pdfError) {
           console.warn(`PDF extraction failed for ${filename}:`, pdfError)
-          return `PDF text extraction failed: ${pdfError.message}`
+          return `PDF text extraction failed: ${pdfError instanceof Error ? pdfError.message : String(pdfError)}`
         }
       }
       
@@ -444,7 +468,7 @@ export const gmailDataStrategy: GmailDataStrategy = {
           return textContent
         } catch (textError) {
           console.warn(`Text extraction failed for ${filename}:`, textError)
-          return `Text extraction failed: ${textError.message}`
+          return `Text extraction failed: ${textError instanceof Error ? textError.message : String(textError)}`
         }
       }
       
@@ -457,7 +481,7 @@ export const gmailDataStrategy: GmailDataStrategy = {
           return csvContent
         } catch (csvError) {
           console.warn(`CSV extraction failed for ${filename}:`, csvError)
-          return `CSV extraction failed: ${csvError.message}`
+          return `CSV extraction failed: ${csvError instanceof Error ? csvError.message : String(csvError)}`
         }
       }
       
@@ -468,7 +492,7 @@ export const gmailDataStrategy: GmailDataStrategy = {
 
     } catch (error) {
       console.warn(`General extraction error for ${filename}:`, error)
-      return `Content extraction failed: ${error.message}`
+      return `Content extraction failed: ${error && typeof error === 'object' && 'message' in error ? (error as any).message : String(error)}`
     }
   },
 
@@ -493,7 +517,7 @@ export const gmailDataStrategy: GmailDataStrategy = {
 
   // Identify content type for better processing
   identifyContentType(filename: string, mimeType: string): string {
-    const extension = filename.toLowerCase().split('.').pop()
+    const extension = filename.toLowerCase().split('.').pop() || ''
     
     if (mimeType === 'application/pdf' || extension === 'pdf') return 'document'
     if (mimeType.startsWith('text/') || ['txt', 'md', 'csv'].includes(extension)) return 'text'

@@ -14,6 +14,9 @@ export const googleDriveDataStrategy: PluginStrategy = {
   handleOAuthCallback: async ({ code, state, supabase }) => {
     // Delegate to the OAuth strategy
     const { googleDriveStrategy } = await import('./googleDrivePluginStrategy')
+    if (!googleDriveStrategy?.handleOAuthCallback) {
+      throw new Error('googleDriveStrategy.handleOAuthCallback is not defined')
+    }
     return googleDriveStrategy.handleOAuthCallback({ code, state, supabase })
   },
 
