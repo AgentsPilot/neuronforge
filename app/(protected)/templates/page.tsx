@@ -25,6 +25,8 @@ import {
   TrendingUp,
   Heart,
   AlertCircle,
+  Settings,
+  Globe
 } from 'lucide-react'
 
 type SharedAgent = {
@@ -61,6 +63,7 @@ export default function AgentTemplates() {
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [categoryFilter, setCategoryFilter] = useState<FilterType>('all')
+  const [selectedCategory, setSelectedCategory] = useState<string>('all')
   const [viewType, setViewType] = useState<ViewType>('grid')
   const [sortBy, setSortBy] = useState<SortType>('shared_desc')
   const [availableCategories, setAvailableCategories] = useState<string[]>([])
@@ -126,11 +129,17 @@ export default function AgentTemplates() {
 
   const filteredAndSortedAgents = sortAgents(
     sharedAgents.filter(agent => {
-      const matchesSearch = agent.agent_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                           agent.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                           agent.ai_reasoning?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                           agent.detected_categories?.some(cat => cat.toLowerCase().includes(searchQuery.toLowerCase()))
+      // Search functionality - check multiple fields
+      const searchTerm = searchQuery.toLowerCase().trim()
+      const matchesSearch = !searchTerm || 
+                           agent.agent_name.toLowerCase().includes(searchTerm) ||
+                           (agent.description && agent.description.toLowerCase().includes(searchTerm)) ||
+                           (agent.ai_reasoning && agent.ai_reasoning.toLowerCase().includes(searchTerm)) ||
+                           (agent.detected_categories && agent.detected_categories.some(cat => 
+                             cat.toLowerCase().includes(searchTerm)
+                           ))
       
+      // Quality/type filters
       let matchesFilter = true
       switch (categoryFilter) {
         case 'high_confidence':
@@ -141,7 +150,6 @@ export default function AgentTemplates() {
           matchesFilter = new Date(agent.shared_at) > oneDayAgo
           break
         case 'popular':
-          // For now, we'll use confidence as a proxy for popularity
           matchesFilter = (agent.ai_confidence || 0) >= 0.7
           break
         case 'all':
@@ -149,7 +157,14 @@ export default function AgentTemplates() {
           matchesFilter = true
       }
       
-      return matchesSearch && matchesFilter
+      // Category filter
+      let matchesCategory = true
+      if (selectedCategory !== 'all') {
+        matchesCategory = agent.detected_categories && 
+                         agent.detected_categories.includes(selectedCategory)
+      }
+      
+      return matchesSearch && matchesFilter && matchesCategory
     }),
     sortBy
   )
@@ -165,16 +180,16 @@ export default function AgentTemplates() {
 
   const getConfidenceColor = (confidence?: number) => {
     if (!confidence) return 'text-gray-500'
-    if (confidence >= 0.8) return 'text-green-600'
-    if (confidence >= 0.6) return 'text-yellow-600'
-    return 'text-red-600'
+    if (confidence >= 0.8) return 'text-purple-600'
+    if (confidence >= 0.6) return 'text-indigo-600'
+    return 'text-violet-600'
   }
 
   const getConfidenceBg = (confidence?: number) => {
-    if (!confidence) return 'bg-gray-50'
-    if (confidence >= 0.8) return 'bg-green-50'
-    if (confidence >= 0.6) return 'bg-yellow-50'
-    return 'bg-red-50'
+    if (!confidence) return 'bg-gradient-to-r from-gray-100 to-slate-100 text-gray-700'
+    if (confidence >= 0.8) return 'bg-gradient-to-r from-purple-100 to-violet-100 text-purple-700'
+    if (confidence >= 0.6) return 'bg-gradient-to-r from-indigo-100 to-purple-100 text-indigo-700'
+    return 'bg-gradient-to-r from-violet-100 to-purple-100 text-violet-700'
   }
 
   const formatTimeAgo = (dateString: string) => {
@@ -187,18 +202,6 @@ export default function AgentTemplates() {
     if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`
     if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d ago`
     return date.toLocaleDateString()
-  }
-
-  const getSortLabel = (sortType: SortType) => {
-    switch (sortType) {
-      case 'shared_desc': return 'Newest First'
-      case 'shared_asc': return 'Oldest First'
-      case 'name_asc': return 'Name A-Z'
-      case 'name_desc': return 'Name Z-A'
-      case 'confidence_desc': return 'Highest Confidence'
-      case 'confidence_asc': return 'Lowest Confidence'
-      default: return 'Sort'
-    }
   }
 
   const handleImportAgent = async (agent: SharedAgent) => {
@@ -281,32 +284,31 @@ export default function AgentTemplates() {
     const confidenceBg = getConfidenceBg(agent.ai_confidence)
 
     return (
-      <div className="group bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-lg hover:border-gray-300 transition-all duration-300">
-        {/* Gradient top bar */}
-        <div className="h-1 rounded-t-2xl bg-gradient-to-r from-purple-400 via-blue-500 to-green-400"></div>
+      <div className="group relative bg-white rounded-2xl shadow-sm hover:shadow-lg transition-all duration-300">
+        {/* Animated gradient background */}
+        <div className="absolute inset-0 bg-gradient-to-br from-purple-50/30 via-indigo-50/20 to-pink-50/30 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
         
-        {/* Header */}
-        <div className="p-6 pb-4">
+        <div className="relative p-5">
           <div className="flex items-start justify-between mb-4">
-            <div className="flex items-center gap-4 flex-1">
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-50 to-blue-50 flex items-center justify-center group-hover:scale-105 transition-transform shadow-sm border border-purple-100">
-                <Share2 className="h-6 w-6 text-purple-600" />
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg group-hover:shadow-xl group-hover:scale-110 transition-all duration-300">
+                <Share2 className="h-6 w-6 text-white" />
               </div>
               <div className="flex-1 min-w-0">
-                <h3 className="font-bold text-lg text-gray-900 group-hover:text-purple-600 transition-colors mb-2 truncate">
+                <h3 className="font-bold text-gray-900 truncate text-base mb-2 group-hover:text-purple-600 transition-colors">
                   {agent.agent_name}
                 </h3>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-full border bg-purple-100 text-purple-800 border-purple-200">
-                    <Share2 className="h-3 w-3" />
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-full bg-gradient-to-r from-purple-100 to-indigo-100 text-purple-800">
+                    <Globe className="h-3 w-3" />
                     Template
                   </span>
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-gray-600 bg-gray-100 border border-gray-200 rounded-full">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-gray-600 bg-gradient-to-r from-gray-100 to-slate-100 rounded-full">
                     <ModeIcon className="h-3 w-3" />
                     {(agent.mode || 'on_demand').replace('_', ' ')}
                   </span>
                   {agent.ai_confidence && (
-                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-full border ${confidenceBg} ${confidenceColor}`}>
+                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-full ${confidenceBg}`}>
                       <Sparkles className="h-3 w-3" />
                       {Math.round((agent.ai_confidence || 0) * 100)}% AI
                     </span>
@@ -318,7 +320,7 @@ export default function AgentTemplates() {
             <button
               onClick={() => handleImportAgent(agent)}
               disabled={importingAgents.has(agent.id)}
-              className="opacity-0 group-hover:opacity-100 p-2 hover:bg-purple-50 text-purple-600 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              className="opacity-0 group-hover:opacity-100 p-2 hover:bg-purple-50 text-purple-600 rounded-xl transition-all duration-300 transform hover:scale-110 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {importingAgents.has(agent.id) ? (
                 <div className="animate-spin h-4 w-4 border-2 border-purple-600 border-t-transparent rounded-full" />
@@ -328,25 +330,23 @@ export default function AgentTemplates() {
             </button>
           </div>
 
-          <p className="text-sm text-gray-600 line-clamp-2 min-h-[2.5rem] leading-relaxed mb-3">
-            {agent.description || agent.ai_reasoning || (
-              <span className="italic text-gray-400">No description provided</span>
-            )}
+          <p className="text-sm text-gray-600 line-clamp-2 mb-4 leading-relaxed min-h-[2.5rem]">
+            {agent.description || agent.ai_reasoning || <span className="italic text-gray-400">Ready to help you automate tasks and workflows</span>}
           </p>
 
           {/* Categories */}
           {agent.detected_categories && agent.detected_categories.length > 0 && (
-            <div className="flex flex-wrap gap-1 mb-3">
+            <div className="flex flex-wrap gap-1 mb-4">
               {agent.detected_categories.slice(0, 3).map((category, index) => (
                 <span
                   key={index}
-                  className="inline-flex items-center px-2 py-1 text-xs font-medium text-blue-700 bg-blue-100 rounded-md"
+                  className="inline-flex items-center px-2 py-1 text-xs font-medium text-indigo-700 bg-gradient-to-r from-indigo-100 to-purple-100 rounded-full"
                 >
                   {category}
                 </span>
               ))}
               {agent.detected_categories.length > 3 && (
-                <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-gray-500 bg-gray-100 rounded-md">
+                <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-gray-500 bg-gradient-to-r from-gray-100 to-slate-100 rounded-full">
                   +{agent.detected_categories.length - 3} more
                 </span>
               )}
@@ -355,38 +355,40 @@ export default function AgentTemplates() {
 
           {/* Plugins Required */}
           {agent.plugins_required && agent.plugins_required.length > 0 && (
-            <div className="flex items-center gap-2 mb-3">
-              <Zap className="h-3 w-3 text-amber-500" />
-              <span className="text-xs text-gray-600">
+            <div className="flex items-center gap-2 mb-4">
+              <div className="p-1 bg-gradient-to-r from-purple-100 to-indigo-100 rounded-lg">
+                <Zap className="h-3 w-3 text-purple-600" />
+              </div>
+              <span className="text-xs text-gray-600 font-medium">
                 Requires: {agent.plugins_required.slice(0, 2).join(', ')}
                 {agent.plugins_required.length > 2 && ` +${agent.plugins_required.length - 2} more`}
               </span>
             </div>
           )}
-        </div>
 
-        {/* Footer */}
-        <div className="px-6 py-4 border-t border-gray-100 bg-gradient-to-r from-gray-50 to-purple-50">
           <div className="flex items-center justify-between">
-            <span className="flex items-center gap-1.5 text-xs font-medium text-gray-600">
-              <Clock className="h-3 w-3" />
-              Shared {formatTimeAgo(agent.shared_at)}
-            </span>
+            <div className="flex items-center gap-2">
+              <Clock className="h-4 w-4 text-gray-400" />
+              <span className="text-xs text-gray-500 font-medium">
+                Shared {formatTimeAgo(agent.shared_at)}
+              </span>
+            </div>
             
             <button
               onClick={() => handleImportAgent(agent)}
               disabled={importingAgents.has(agent.id)}
-              className="inline-flex items-center gap-1 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-blue-600 text-white text-xs font-semibold rounded-lg group-hover:from-purple-700 group-hover:to-blue-700 transition-all shadow-sm hover:shadow-md cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="group/btn inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-sm font-semibold rounded-xl shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {importingAgents.has(agent.id) ? (
                 <>
                   <div className="animate-spin h-3 w-3 border-2 border-white border-t-transparent rounded-full" />
-                  Importing...
+                  <span>Importing...</span>
                 </>
               ) : (
                 <>
-                  <Download className="h-3 w-3" />
-                  Import
+                  <Download className="h-4 w-4" />
+                  <span>Import</span>
+                  <div className="w-1 h-1 bg-white/40 rounded-full group-hover/btn:bg-white/60 transition-colors"></div>
                 </>
               )}
             </button>
@@ -399,47 +401,50 @@ export default function AgentTemplates() {
   const AgentTemplateRow = ({ agent }: { agent: SharedAgent }) => {
     const ModeIcon = getModeIcon(agent.mode || 'on_demand')
     const confidenceColor = getConfidenceColor(agent.ai_confidence)
+    const confidenceBg = getConfidenceBg(agent.ai_confidence)
 
     return (
-      <div className="group bg-white rounded-xl border border-gray-200 hover:border-gray-300 hover:shadow-md transition-all overflow-hidden">
-        {/* Gradient indicator */}
-        <div className="h-0.5 bg-gradient-to-r from-purple-400 via-blue-500 to-green-400"></div>
+      <div className="group relative bg-white rounded-2xl shadow-sm hover:shadow-lg transition-all duration-300">
+        {/* Subtle gradient background */}
+        <div className="absolute inset-0 bg-gradient-to-r from-purple-50/20 via-indigo-50/15 to-pink-50/20 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
         
-        <div className="p-5">
+        <div className="relative p-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4 flex-1 min-w-0">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-50 to-blue-50 flex items-center justify-center flex-shrink-0 shadow-sm border border-purple-100">
-                <Share2 className="h-5 w-5 text-purple-600" />
+              <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg group-hover:shadow-xl group-hover:scale-105 transition-all duration-300">
+                <Share2 className="h-6 w-6 text-white" />
               </div>
               
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-3 mb-1">
-                  <h3 className="font-semibold text-gray-900 truncate">{agent.agent_name}</h3>
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-semibold rounded-full border bg-purple-100 text-purple-800 border-purple-200">
-                    <Share2 className="h-3 w-3" />
+                <div className="flex items-center gap-3 mb-2">
+                  <h3 className="font-bold text-gray-900 truncate text-base group-hover:text-purple-600 transition-colors">
+                    {agent.agent_name}
+                  </h3>
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-full bg-gradient-to-r from-purple-100 to-indigo-100 text-purple-800">
+                    <Globe className="h-3 w-3" />
                     Template
                   </span>
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-medium text-gray-600 bg-gray-100 border border-gray-200 rounded-full">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-gray-600 bg-gradient-to-r from-gray-100 to-slate-100 rounded-full">
                     <ModeIcon className="h-3 w-3" />
                     {(agent.mode || 'on_demand').replace('_', ' ')}
                   </span>
                   {agent.ai_confidence && (
-                    <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-semibold rounded-full ${confidenceColor}`}>
+                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-full ${confidenceBg}`}>
                       <Sparkles className="h-3 w-3" />
                       {Math.round((agent.ai_confidence || 0) * 100)}%
                     </span>
                   )}
                 </div>
                 <div className="flex items-start gap-4">
-                  <p className="text-sm text-gray-600 flex-1 max-w-md line-clamp-2">
-                    {agent.description || agent.ai_reasoning || <span className="italic">No description</span>}
+                  <p className="text-sm text-gray-600 flex-1 max-w-md line-clamp-2 leading-relaxed">
+                    {agent.description || agent.ai_reasoning || <span className="italic text-gray-400">Ready to help automate tasks</span>}
                   </p>
                   {agent.detected_categories && agent.detected_categories.length > 0 && (
                     <div className="flex gap-1 flex-shrink-0">
                       {agent.detected_categories.slice(0, 2).map((category, index) => (
                         <span
                           key={index}
-                          className="inline-flex items-center px-2 py-0.5 text-xs font-medium text-blue-700 bg-blue-100 rounded whitespace-nowrap"
+                          className="inline-flex items-center px-2 py-0.5 text-xs font-medium text-indigo-700 bg-gradient-to-r from-indigo-100 to-purple-100 rounded-full whitespace-nowrap"
                         >
                           {category}
                         </span>
@@ -450,25 +455,28 @@ export default function AgentTemplates() {
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
-              <span className="text-xs font-medium text-gray-600">
-                {formatTimeAgo(agent.shared_at)}
-              </span>
+            <div className="flex items-center gap-4">
+              <div className="text-right hidden md:block">
+                <p className="text-xs text-gray-500 font-medium">Shared</p>
+                <p className="text-sm text-gray-700 font-semibold">
+                  {formatTimeAgo(agent.shared_at)}
+                </p>
+              </div>
               
               <button
                 onClick={() => handleImportAgent(agent)}
                 disabled={importingAgents.has(agent.id)}
-                className="inline-flex items-center gap-1 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-blue-600 text-white text-xs font-semibold rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-sm font-semibold rounded-xl shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {importingAgents.has(agent.id) ? (
                   <>
-                    <div className="animate-spin h-3 w-3 border-2 border-white border-t-transparent rounded-full" />
-                    Importing...
+                    <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
+                    <span>Importing...</span>
                   </>
                 ) : (
                   <>
-                    <Download className="h-3 w-3" />
-                    Import
+                    <Download className="h-4 w-4" />
+                    <span>Import</span>
                   </>
                 )}
               </button>
@@ -481,10 +489,12 @@ export default function AgentTemplates() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
+      <div className="flex items-center justify-center py-16">
         <div className="text-center">
-          <div className="animate-spin h-8 w-8 border-2 border-purple-600 border-t-transparent rounded-full mx-auto mb-4"></div>
-          <p className="text-gray-500">Loading agent templates...</p>
+          <div className="w-16 h-16 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-2xl flex items-center justify-center mx-auto shadow-xl mb-6">
+            <Share2 className="h-8 w-8 text-white" />
+          </div>
+          <p className="text-gray-600 font-medium">Loading community templates...</p>
         </div>
       </div>
     )
@@ -492,44 +502,38 @@ export default function AgentTemplates() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-r from-purple-600 to-blue-600 rounded-xl flex items-center justify-center shadow-lg">
-              <Share2 className="h-6 w-6 text-white" />
-            </div>
-            Agent Templates
-          </h1>
-          <p className="text-gray-600 mt-2 font-medium">Discover and import AI agents shared by the community</p>
+      {/* Modern Header */}
+      <div className="text-center space-y-3">
+        <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-purple-500 via-indigo-500 to-pink-500 rounded-3xl shadow-xl mb-4">
+          <Share2 className="h-8 w-8 text-white" />
         </div>
-        
-        <Link
-          href="/agents"
-          className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-gray-600 to-gray-700 text-white font-semibold rounded-xl hover:from-gray-700 hover:to-gray-800 transition-all transform hover:scale-105 shadow-lg"
-        >
-          <Bot className="h-5 w-5" />
-          My Agents
-        </Link>
+        <h1 className="text-3xl font-bold bg-gradient-to-r from-gray-900 via-purple-800 to-indigo-800 bg-clip-text text-transparent">
+          Community Templates
+        </h1>
+        <p className="text-gray-600 font-medium">Discover and import AI assistants shared by the community</p>
       </div>
 
       {/* Status Messages */}
       {importStatus && (
-        <div className={`p-4 rounded-xl border-l-4 ${
+        <div className={`relative overflow-hidden p-4 rounded-2xl border-l-4 shadow-lg ${
           importStatus.type === 'success' 
-            ? 'bg-green-50 border-green-400 text-green-800' 
-            : 'bg-red-50 border-red-400 text-red-800'
+            ? 'bg-gradient-to-r from-purple-50 to-indigo-50 border-purple-400 text-purple-800' 
+            : 'bg-gradient-to-r from-red-50 to-rose-50 border-red-400 text-red-800'
         }`}>
           <div className="flex items-center gap-3">
             {importStatus.type === 'success' ? (
-              <CheckCircle className="h-5 w-5 text-green-600" />
+              <div className="p-1 bg-purple-500 rounded-full">
+                <CheckCircle className="h-4 w-4 text-white" />
+              </div>
             ) : (
-              <AlertCircle className="h-5 w-5 text-red-600" />
+              <div className="p-1 bg-red-500 rounded-full">
+                <AlertCircle className="h-4 w-4 text-white" />
+              </div>
             )}
-            <p className="font-medium">{importStatus.message}</p>
+            <p className="font-semibold">{importStatus.message}</p>
             <button
               onClick={() => setImportStatus(null)}
-              className="ml-auto text-gray-400 hover:text-gray-600"
+              className="ml-auto p-1 hover:bg-white/50 rounded-full transition-colors"
             >
               ×
             </button>
@@ -537,98 +541,96 @@ export default function AgentTemplates() {
         </div>
       )}
 
-      {/* Enhanced Controls */}
-      <div className="flex flex-col gap-4 bg-white p-6 rounded-2xl border border-gray-200 shadow-sm">
+      {/* Modern Controls */}
+      <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl p-6">
         <div className="flex flex-col lg:flex-row gap-4 items-center justify-between">
           <div className="flex items-center gap-4 flex-1 w-full lg:w-auto">
-            {/* Search */}
+            {/* Modern Search */}
             <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search templates..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-              />
+              <div className="absolute inset-0 bg-gradient-to-r from-purple-500/10 to-indigo-500/10 rounded-xl blur-sm"></div>
+              <div className="relative bg-white border border-gray-300 rounded-xl shadow-sm hover:shadow-md focus-within:shadow-lg transition-all duration-300">
+                <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search templates..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-12 pr-4 py-3 border-none rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 bg-transparent"
+                />
+              </div>
             </div>
 
-            {/* Filters */}
+            {/* Modern Filters */}
             <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2">
-                <Filter className="h-4 w-4 text-gray-500" />
-                <select
-                  value={categoryFilter}
-                  onChange={(e) => setCategoryFilter(e.target.value as FilterType)}
-                  className="border border-gray-300 rounded-xl px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
-                >
-                  <option value="all">All Templates</option>
-                  <option value="high_confidence">High Quality (80%+)</option>
-                  <option value="recent">Recently Shared</option>
-                  <option value="popular">Popular</option>
-                </select>
-              </div>
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value as FilterType)}
+                className="bg-white border border-gray-300 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 shadow-sm hover:shadow-md transition-all"
+              >
+                <option value="all">All Templates</option>
+                <option value="high_confidence">High Quality (80%+)</option>
+                <option value="recent">Recently Shared</option>
+                <option value="popular">Popular</option>
+              </select>
               
-              {/* Sort */}
-              <div className="flex items-center gap-2">
-                <ArrowUpDown className="h-4 w-4 text-gray-500" />
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as SortType)}
-                  className="border border-gray-300 rounded-xl px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
-                >
-                  <option value="shared_desc">Newest First</option>
-                  <option value="shared_asc">Oldest First</option>
-                  <option value="name_asc">Name A-Z</option>
-                  <option value="name_desc">Name Z-A</option>
-                  <option value="confidence_desc">Highest Quality</option>
-                  <option value="confidence_asc">Lowest Quality</option>
-                </select>
-              </div>
+              <select
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                className="bg-white border border-gray-300 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 shadow-sm hover:shadow-md transition-all"
+              >
+                <option value="all">All Categories</option>
+                {availableCategories.map(category => (
+                  <option key={category} value={category}>{category}</option>
+                ))}
+              </select>
+              
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as SortType)}
+                className="bg-white border border-gray-300 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 shadow-sm hover:shadow-md transition-all"
+              >
+                <option value="shared_desc">Newest First</option>
+                <option value="shared_asc">Oldest First</option>
+                <option value="name_asc">A to Z</option>
+                <option value="name_desc">Z to A</option>
+                <option value="confidence_desc">Highest Quality</option>
+                <option value="confidence_asc">Lowest Quality</option>
+              </select>
             </div>
           </div>
 
-          {/* View Toggle */}
-          <div className="flex bg-gray-100 rounded-xl p-1">
+          {/* Modern View Toggle */}
+          <div className="bg-gradient-to-r from-gray-100 to-slate-100 rounded-xl p-1.5 shadow-inner">
             <button
               onClick={() => setViewType('grid')}
-              className={`px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${
+              className={`px-4 py-2.5 text-sm font-semibold rounded-lg transition-all duration-300 ${
                 viewType === 'grid' 
-                  ? 'bg-white text-gray-900 shadow-sm' 
-                  : 'text-gray-600 hover:text-gray-900'
+                  ? 'bg-white text-gray-900 shadow-lg transform scale-105' 
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
               }`}
             >
-              Grid
+              Cards
             </button>
             <button
               onClick={() => setViewType('list')}
-              className={`px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${
+              className={`px-4 py-2.5 text-sm font-semibold rounded-lg transition-all duration-300 ${
                 viewType === 'list' 
-                  ? 'bg-white text-gray-900 shadow-sm' 
-                  : 'text-gray-600 hover:text-gray-900'
+                  ? 'bg-white text-gray-900 shadow-lg transform scale-105' 
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
               }`}
             >
               List
             </button>
           </div>
         </div>
-        
-        {/* Results summary */}
-        <div className="flex items-center justify-between text-sm text-gray-600 pt-2 border-t border-gray-100">
-          <span>
-            Showing {filteredAndSortedAgents.length} of {sharedAgents.length} templates
-            {searchQuery && ` for "${searchQuery}"`}
-            {categoryFilter !== 'all' && ` in "${categoryFilter}" category`}
-          </span>
-          <span>Sorted by {getSortLabel(sortBy)}</span>
-        </div>
       </div>
 
-      {/* Enhanced Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-6 rounded-2xl border-2 border-purple-200 shadow-sm">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-purple-500 rounded-2xl flex items-center justify-center shadow-lg">
+      {/* Modern Stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="group relative overflow-hidden bg-gradient-to-br from-purple-50 to-purple-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
+          <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-indigo-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          <div className="relative flex items-center gap-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-indigo-500 rounded-2xl flex items-center justify-center shadow-lg">
               <Share2 className="h-6 w-6 text-white" />
             </div>
             <div>
@@ -638,28 +640,30 @@ export default function AgentTemplates() {
           </div>
         </div>
         
-        <div className="bg-gradient-to-br from-green-50 to-green-100 p-6 rounded-2xl border-2 border-green-200 shadow-sm">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-green-500 rounded-2xl flex items-center justify-center shadow-lg">
+        <div className="group relative overflow-hidden bg-gradient-to-br from-indigo-50 to-purple-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
+          <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-purple-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          <div className="relative flex items-center gap-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-2xl flex items-center justify-center shadow-lg">
               <Sparkles className="h-6 w-6 text-white" />
             </div>
             <div>
-              <p className="text-sm text-green-700 font-semibold">High Quality</p>
-              <p className="text-2xl font-bold text-green-900">
+              <p className="text-sm text-indigo-700 font-semibold">High Quality</p>
+              <p className="text-2xl font-bold text-indigo-900">
                 {sharedAgents.filter(a => (a.ai_confidence || 0) >= 0.8).length}
               </p>
             </div>
           </div>
         </div>
         
-        <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-2xl border-2 border-blue-200 shadow-sm">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-blue-500 rounded-2xl flex items-center justify-center shadow-lg">
+        <div className="group relative overflow-hidden bg-gradient-to-br from-purple-50 to-pink-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
+          <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-pink-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          <div className="relative flex items-center gap-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-pink-500 rounded-2xl flex items-center justify-center shadow-lg">
               <Clock className="h-6 w-6 text-white" />
             </div>
             <div>
-              <p className="text-sm text-blue-700 font-semibold">Recent (24h)</p>
-              <p className="text-2xl font-bold text-blue-900">
+              <p className="text-sm text-purple-700 font-semibold">Recent (24h)</p>
+              <p className="text-2xl font-bold text-purple-900">
                 {sharedAgents.filter(a => {
                   const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000)
                   return new Date(a.shared_at) > oneDayAgo
@@ -669,45 +673,53 @@ export default function AgentTemplates() {
           </div>
         </div>
         
-        <div className="bg-gradient-to-br from-amber-50 to-amber-100 p-6 rounded-2xl border-2 border-amber-200 shadow-sm">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-amber-500 rounded-2xl flex items-center justify-center shadow-lg">
+        <div className="group relative overflow-hidden bg-gradient-to-br from-indigo-50 to-violet-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
+          <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-violet-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          <div className="relative flex items-center gap-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-violet-500 rounded-2xl flex items-center justify-center shadow-lg">
               <TrendingUp className="h-6 w-6 text-white" />
             </div>
             <div>
-              <p className="text-sm text-amber-700 font-semibold">Categories</p>
-              <p className="text-2xl font-bold text-amber-900">{availableCategories.length}</p>
+              <p className="text-sm text-indigo-700 font-semibold">Categories</p>
+              <p className="text-2xl font-bold text-indigo-900">{availableCategories.length}</p>
             </div>
           </div>
         </div>
       </div>
 
+      {/* Results Info */}
+      <div className="text-center">
+        <p className="text-sm text-gray-600 font-medium">
+          Showing {filteredAndSortedAgents.length} of {sharedAgents.length} templates
+        </p>
+      </div>
+
       {/* Template List */}
       {filteredAndSortedAgents.length === 0 ? (
-        <div className="text-center py-16 bg-white rounded-2xl border border-gray-200">
-          <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-6">
-            <Share2 className="h-8 w-8 text-purple-600" />
+        <div className="text-center py-16 bg-gradient-to-br from-white/80 to-purple-50/80 backdrop-blur-sm rounded-3xl border border-gray-200/50 shadow-xl">
+          <div className="w-20 h-20 bg-gradient-to-br from-gray-400 to-gray-500 rounded-3xl flex items-center justify-center mx-auto shadow-xl mb-6">
+            <Share2 className="h-10 w-10 text-white" />
           </div>
-          <h3 className="text-xl font-semibold text-gray-900 mb-2">
-            {searchQuery || categoryFilter !== 'all' ? 'No templates found' : 'No templates available'}
+          <h3 className="text-2xl font-bold text-gray-900 mb-3">
+            {searchQuery || categoryFilter !== 'all' || selectedCategory !== 'all' ? 'No templates found' : 'No templates available'}
           </h3>
-          <p className="text-gray-600 mb-8 max-w-md mx-auto">
-            {searchQuery || categoryFilter !== 'all' 
+          <p className="text-gray-600 mb-8 font-medium max-w-md mx-auto leading-relaxed">
+            {searchQuery || categoryFilter !== 'all' || selectedCategory !== 'all'
               ? 'Try adjusting your search or filter criteria to find what you\'re looking for.' 
               : 'Check back later for community-shared agent templates.'}
           </p>
           <Link
             href="/agents"
-            className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white font-semibold rounded-xl hover:from-purple-700 hover:to-blue-700 transition-all transform hover:scale-105 shadow-lg"
+            className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-semibold rounded-xl hover:from-purple-700 hover:to-indigo-700 transition-all transform hover:scale-105 shadow-lg"
           >
             <Bot className="h-5 w-5" />
-            View My Agents
+            View My Assistants
           </Link>
         </div>
       ) : (
         <div className={
           viewType === 'grid' 
-            ? 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6'
+            ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6'
             : 'space-y-4'
         }>
           {filteredAndSortedAgents.map((agent) => (

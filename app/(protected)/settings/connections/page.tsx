@@ -6,6 +6,19 @@ import { pluginList as availablePlugins, categoryMetadata } from '@/lib/plugins/
 import PluginCard from '@/components/settings/PluginCard'
 import { supabase } from '@/lib/supabaseClient'
 import { useAuth } from '@/components/UserProvider'
+import { 
+  Link, 
+  Search, 
+  X, 
+  Filter, 
+  Sparkles,
+  Globe,
+  Zap,
+  CheckCircle,
+  Plus,
+  ArrowRight,
+  RefreshCw
+} from 'lucide-react'
 
 export default function ConnectionsPage() {
   const [search, setSearch] = useState('')
@@ -71,305 +84,391 @@ export default function ConnectionsPage() {
   // Get popular plugins count
   const popularCount = availablePlugins.filter(plugin => plugin.isPopular).length
 
+  const refreshConnections = async () => {
+    if (!user?.id) return
+
+    const { data, error } = await supabase
+      .from('plugin_connections')
+      .select('plugin_key')
+      .eq('user_id', user.id)
+      .eq('status', 'active')
+
+    if (!error && data) {
+      setConnectedPlugins(data.map(connection => connection.plugin_key))
+    }
+  }
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
-      <div className="max-w-7xl mx-auto px-4 py-12">
-        {/* Header Section */}
-        <div className="text-center mb-12">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-2xl mb-6 shadow-xl">
-            <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-            </svg>
+    <div className="space-y-6">
+      {/* Modern Header */}
+      <div className="text-center space-y-3">
+        <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 rounded-3xl shadow-xl mb-4">
+          <Link className="h-8 w-8 text-white" />
+        </div>
+        <h1 className="text-3xl font-bold bg-gradient-to-r from-gray-900 via-indigo-800 to-purple-800 bg-clip-text text-transparent">
+          Connect Your Services
+        </h1>
+        <p className="text-gray-600 font-medium">Integrate your favorite tools and services to streamline your workflow and boost productivity</p>
+      </div>
+
+      {/* Connection Stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="group relative overflow-hidden bg-gradient-to-br from-purple-50 to-indigo-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
+          <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-indigo-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          <div className="relative flex items-center gap-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-indigo-500 rounded-2xl flex items-center justify-center shadow-lg">
+              <CheckCircle className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <p className="text-sm text-purple-700 font-semibold">Connected</p>
+              <p className="text-2xl font-bold text-purple-900">{connectedPlugins.length}</p>
+            </div>
           </div>
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-slate-800 to-blue-800 bg-clip-text text-transparent mb-4">
-            Connect Your Services
-          </h1>
-          <p className="text-lg text-slate-600 max-w-2xl mx-auto">
-            Integrate your favorite tools and services to streamline your workflow and boost productivity
+          <p className="text-xs text-purple-600 font-medium mt-3">
+            Active integrations
           </p>
-          
-          {/* Connection Stats */}
-          <div className="mt-6 flex justify-center gap-6">
-            <div className="bg-green-50 px-4 py-2 rounded-full border border-green-200">
-              <span className="text-green-700 font-semibold">{connectedPlugins.length} Connected</span>
-            </div>
-            <div className="bg-blue-50 px-4 py-2 rounded-full border border-blue-200">
-              <span className="text-blue-700 font-semibold">{availablePlugins.length - connectedPlugins.length} Available</span>
-            </div>
-          </div>
         </div>
 
-        {/* Search Section */}
-        <div className="mb-12">
-          <div className="max-w-2xl mx-auto">
+        <div className="group relative overflow-hidden bg-gradient-to-br from-indigo-50 to-purple-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
+          <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-purple-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          <div className="relative flex items-center gap-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-2xl flex items-center justify-center shadow-lg">
+              <Globe className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <p className="text-sm text-indigo-700 font-semibold">Available</p>
+              <p className="text-2xl font-bold text-indigo-900">{availablePlugins.length - connectedPlugins.length}</p>
+            </div>
+          </div>
+          <p className="text-xs text-indigo-600 font-medium mt-3">
+            Ready to connect
+          </p>
+        </div>
+
+        <div className="group relative overflow-hidden bg-gradient-to-br from-purple-50 to-violet-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
+          <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-violet-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          <div className="relative flex items-center gap-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-violet-500 rounded-2xl flex items-center justify-center shadow-lg">
+              <Sparkles className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <p className="text-sm text-purple-700 font-semibold">Popular</p>
+              <p className="text-2xl font-bold text-purple-900">{popularCount}</p>
+            </div>
+          </div>
+          <p className="text-xs text-purple-600 font-medium mt-3">
+            Most requested
+          </p>
+        </div>
+
+        <div className="group relative overflow-hidden bg-gradient-to-br from-indigo-50 to-pink-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
+          <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-pink-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          <div className="relative flex items-center gap-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-pink-500 rounded-2xl flex items-center justify-center shadow-lg">
+              <Zap className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <p className="text-sm text-indigo-700 font-semibold">Total</p>
+              <p className="text-2xl font-bold text-indigo-900">{availablePlugins.length}</p>
+            </div>
+          </div>
+          <p className="text-xs text-indigo-600 font-medium mt-3">
+            Available services
+          </p>
+        </div>
+      </div>
+
+      {/* Modern Search and Controls */}
+      <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl p-6">
+        <div className="flex flex-col lg:flex-row gap-4 items-center justify-between">
+          <div className="flex-1 w-full lg:w-auto">
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                <svg className="h-5 w-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
+                <Search className="h-5 w-5 text-slate-400" />
               </div>
               <Input
                 placeholder="Search for an integration (e.g. Gmail, Notion, Slack...)"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-12 pr-4 py-4 bg-white/70 backdrop-blur-sm border-0 rounded-2xl shadow-lg focus:shadow-xl focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-200 text-lg placeholder-slate-500"
+                className="w-full pl-12 pr-12 py-4 bg-white/70 backdrop-blur-sm border-0 rounded-2xl shadow-lg focus:shadow-xl focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-all duration-200 text-lg placeholder-slate-500"
               />
               {search && (
                 <button
                   onClick={() => setSearch('')}
                   className="absolute inset-y-0 right-0 pr-4 flex items-center"
                 >
-                  <svg className="h-5 w-5 text-slate-400 hover:text-slate-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
+                  <X className="h-5 w-5 text-slate-400 hover:text-slate-600 transition-colors" />
                 </button>
               )}
             </div>
             
             {/* Search Stats */}
-            <div className="mt-4 text-center">
-              <p className="text-sm text-slate-500">
+            <div className="mt-3 text-center lg:text-left">
+              <p className="text-sm text-slate-500 font-medium">
                 {search || selectedCategory ? (
                   <>
-                    Showing <span className="font-semibold text-blue-600">{sortedPlugins.length}</span> of {availablePlugins.length} integrations
+                    Showing <span className="font-semibold text-indigo-600">{sortedPlugins.length}</span> of {availablePlugins.length} integrations
                   </>
                 ) : (
                   <>
-                    <span className="font-semibold text-blue-600">{availablePlugins.length}</span> integrations available
+                    <span className="font-semibold text-indigo-600">{availablePlugins.length}</span> integrations available
                   </>
                 )}
               </p>
             </div>
           </div>
-        </div>
 
-        {/* Quick Categories */}
-        {!search && (
-          <div className="mb-12">
-            <div className="flex flex-wrap justify-center gap-3">
-              {/* Connected */}
-              <button 
-                onClick={() => setSelectedCategory(selectedCategory === 'connected' ? null : 'connected')}
-                className={`px-6 py-2 border rounded-full font-medium transition-all duration-200 hover:shadow-md hover:scale-105 ${
-                  selectedCategory === 'connected'
-                    ? 'bg-green-200 border-green-300 text-green-800'
-                    : 'bg-green-100 hover:bg-green-200 border-green-300 text-green-800'
-                }`}
-              >
-                Connected ({connectedPlugins.length})
-              </button>
-              
-              {/* Popular */}
-              <button 
-                onClick={() => setSelectedCategory(selectedCategory === 'popular' ? null : 'popular')}
-                className={`px-6 py-2 border rounded-full font-medium transition-all duration-200 hover:shadow-md hover:scale-105 ${
-                  selectedCategory === 'popular'
-                    ? 'bg-yellow-200 border-yellow-300 text-yellow-800'
-                    : 'bg-white/70 backdrop-blur-sm hover:bg-yellow-50 border-yellow-200 text-yellow-700'
-                }`}
-              >
-                Popular ({popularCount})
-              </button>
-
-              {/* Category buttons */}
-              {Object.entries(categoryMetadata).map(([categoryKey, category]) => (
-                <button
-                  key={categoryKey}
-                  onClick={() => setSelectedCategory(selectedCategory === categoryKey ? null : categoryKey)}
-                  className={`px-6 py-2 border rounded-full font-medium transition-all duration-200 hover:shadow-md hover:scale-105 ${
-                    selectedCategory === categoryKey
-                      ? 'bg-blue-200 border-blue-300 text-blue-800'
-                      : 'bg-white/70 backdrop-blur-sm hover:bg-blue-50 border-blue-100 text-blue-700'
-                  }`}
-                >
-                  {category.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Clear filter button */}
-            {selectedCategory && (
-              <div className="text-center mt-4">
-                <button
-                  onClick={() => setSelectedCategory(null)}
-                  className="text-sm text-slate-500 hover:text-slate-700 underline"
-                >
-                  Clear filter
-                </button>
-              </div>
-            )}
+          {/* Action Button */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={refreshConnections}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 text-sm font-semibold"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Refresh
+            </button>
           </div>
-        )}
+        </div>
+      </div>
 
-        {/* Plugins Grid */}
-        <div className="relative">
-          {sortedPlugins.length > 0 ? (
-            <>
-              {/* Connected Apps Section */}
-              {connectedCount > 0 && !search && !selectedCategory && (
-                <div className="mb-12">
-                  <div className="flex items-center gap-3 mb-6">
-                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                    <h2 className="text-xl font-semibold text-slate-800">Connected Apps</h2>
-                    <div className="flex-1 h-px bg-gradient-to-r from-green-200 to-transparent"></div>
-                  </div>
-                  
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                    {sortedPlugins
-                      .filter(plugin => connectedPlugins.includes(plugin.pluginKey))
-                      .map((plugin, index) => (
-                      <div
-                        key={plugin.pluginKey}
-                        className="animate-in fade-in-0 slide-in-from-bottom-4 duration-300"
-                        style={{ animationDelay: `${index * 50}ms` }}
-                      >
-                        <PluginCard
-                          pluginKey={plugin.pluginKey}
-                          pluginName={plugin.name}
-                          description={plugin.description}
-                          detailedDescription={plugin.detailedDescription}
-                          icon={plugin.icon}
-                          category={plugin.category}
-                          isPopular={plugin.isPopular}
-                          onConnectionChange={handleConnectionChange}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+      {/* Quick Categories */}
+      {!search && (
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl p-6">
+          <div className="flex flex-wrap justify-center gap-3">
+            {/* Connected */}
+            <button 
+              onClick={() => setSelectedCategory(selectedCategory === 'connected' ? null : 'connected')}
+              className={`px-6 py-3 rounded-xl font-semibold transition-all duration-200 hover:shadow-md hover:scale-105 ${
+                selectedCategory === 'connected'
+                  ? 'bg-gradient-to-r from-purple-500 to-indigo-500 text-white shadow-lg'
+                  : 'bg-gradient-to-r from-purple-50 to-indigo-50 hover:from-purple-100 hover:to-indigo-100 text-purple-700'
+              }`}
+            >
+              Connected ({connectedPlugins.length})
+            </button>
+            
+            {/* Popular */}
+            <button 
+              onClick={() => setSelectedCategory(selectedCategory === 'popular' ? null : 'popular')}
+              className={`px-6 py-3 rounded-xl font-semibold transition-all duration-200 hover:shadow-md hover:scale-105 ${
+                selectedCategory === 'popular'
+                  ? 'bg-gradient-to-r from-purple-500 to-violet-500 text-white shadow-lg'
+                  : 'bg-gradient-to-r from-purple-50 to-violet-50 hover:from-purple-100 hover:to-violet-100 text-purple-700'
+              }`}
+            >
+              Popular ({popularCount})
+            </button>
 
-              {/* Available Apps Section */}
-              {availableCount > 0 && !selectedCategory && (
-                <div>
-                  {!search && connectedCount > 0 && (
-                    <div className="flex items-center gap-3 mb-6">
-                      <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                      <h2 className="text-xl font-semibold text-slate-800">Available Apps</h2>
-                      <div className="flex-1 h-px bg-gradient-to-r from-blue-200 to-transparent"></div>
-                    </div>
-                  )}
-                  
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                    {sortedPlugins
-                      .filter(plugin => !connectedPlugins.includes(plugin.pluginKey))
-                      .map((plugin, index) => (
-                      <div
-                        key={plugin.pluginKey}
-                        className="animate-in fade-in-0 slide-in-from-bottom-4 duration-300"
-                        style={{ animationDelay: `${(index + connectedCount) * 50}ms` }}
-                      >
-                        <PluginCard
-                          pluginKey={plugin.pluginKey}
-                          pluginName={plugin.name}
-                          description={plugin.description}
-                          detailedDescription={plugin.detailedDescription}
-                          icon={plugin.icon}
-                          category={plugin.category}
-                          isPopular={plugin.isPopular}
-                          onConnectionChange={handleConnectionChange}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+            {/* Category buttons */}
+            {Object.entries(categoryMetadata).map(([categoryKey, category]) => (
+              <button
+                key={categoryKey}
+                onClick={() => setSelectedCategory(selectedCategory === categoryKey ? null : categoryKey)}
+                className={`px-6 py-3 rounded-xl font-semibold transition-all duration-200 hover:shadow-md hover:scale-105 ${
+                  selectedCategory === categoryKey
+                    ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg'
+                    : 'bg-white/70 backdrop-blur-sm hover:bg-gradient-to-r hover:from-indigo-50 hover:to-purple-50 text-indigo-700'
+                }`}
+              >
+                {category.label}
+              </button>
+            ))}
+          </div>
 
-              {/* Search/Filter Results - All Apps */}
-              {(search || selectedCategory) && (
-                <div>
-                  {selectedCategory && !search && (
-                    <div className="flex items-center gap-3 mb-6">
-                      <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                      <h2 className="text-xl font-semibold text-slate-800">
-                        {selectedCategory === 'connected' ? 'Connected Apps' :
-                         selectedCategory === 'popular' ? 'Popular Apps' :
-                         categoryMetadata[selectedCategory]?.label || selectedCategory}
-                      </h2>
-                      <div className="flex-1 h-px bg-gradient-to-r from-purple-200 to-transparent"></div>
-                    </div>
-                  )}
-                  
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                    {sortedPlugins.map((plugin, index) => {
-                      const isConnected = connectedPlugins.includes(plugin.pluginKey)
-                      return (
-                        <div
-                          key={plugin.pluginKey}
-                          className="animate-in fade-in-0 slide-in-from-bottom-4 duration-300 h-full"
-                          style={{ animationDelay: `${index * 50}ms` }}
-                        >
-                          <div className="h-full">
-                            <PluginCard
-                              pluginKey={plugin.pluginKey}
-                              pluginName={plugin.name}
-                              description={plugin.description}
-                              detailedDescription={plugin.detailedDescription}
-                              icon={plugin.icon}
-                              category={plugin.category}
-                              isPopular={plugin.isPopular}
-                              onConnectionChange={handleConnectionChange}
-                            />
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-            </>
-          ) : (
-            /* Empty State */
-            <div className="text-center py-16">
-              <div className="inline-flex items-center justify-center w-20 h-20 bg-slate-100 rounded-full mb-6">
-                <svg className="w-10 h-10 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-              </div>
-              <h3 className="text-xl font-semibold text-slate-700 mb-2">No integrations found</h3>
-              <p className="text-slate-500 mb-6 max-w-md mx-auto">
-                {search ? `We couldn't find any integrations matching "${search}".` : 
-                 selectedCategory ? `No integrations found in the selected category.` :
-                 'No integrations found.'} Try adjusting your search terms or filters.
-              </p>
-              <div className="flex gap-3 justify-center">
-                {search && (
-                  <button
-                    onClick={() => setSearch('')}
-                    className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl transition-colors duration-200"
-                  >
-                    Clear Search
-                  </button>
-                )}
-                {selectedCategory && (
-                  <button
-                    onClick={() => setSelectedCategory(null)}
-                    className="px-6 py-2 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded-xl transition-colors duration-200"
-                  >
-                    Clear Filter
-                  </button>
-                )}
-              </div>
+          {/* Clear filter button */}
+          {selectedCategory && (
+            <div className="text-center mt-4">
+              <button
+                onClick={() => setSelectedCategory(null)}
+                className="text-sm text-slate-500 hover:text-slate-700 underline font-medium"
+              >
+                Clear filter
+              </button>
             </div>
           )}
         </div>
+      )}
 
-        {/* Bottom CTA Section */}
-        <div className="mt-20 text-center">
-          <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-3xl p-8 text-white">
-            <h3 className="text-2xl font-bold mb-4">Need a Custom Integration?</h3>
-            <p className="text-blue-100 mb-6 max-w-2xl mx-auto">
-              Don't see the service you need? We're constantly adding new integrations. 
-              Request a custom integration or build your own using our API.
-            </p>
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <button className="px-6 py-3 bg-white text-blue-600 font-semibold rounded-xl hover:bg-blue-50 transition-colors duration-200">
-                Request Integration
-              </button>
-              <button className="px-6 py-3 bg-blue-500 hover:bg-blue-400 text-white font-semibold rounded-xl transition-colors duration-200">
-                View API Docs
-              </button>
+      {/* Plugins Grid */}
+      <div className="relative">
+        {sortedPlugins.length > 0 ? (
+          <>
+            {/* Connected Apps Section */}
+            {connectedCount > 0 && !search && !selectedCategory && (
+              <div className="mb-12">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-3 h-3 bg-gradient-to-r from-purple-500 to-indigo-500 rounded-full shadow-sm"></div>
+                  <h2 className="text-xl font-bold text-slate-800">Connected Apps</h2>
+                  <div className="flex-1 h-px bg-gradient-to-r from-purple-200 to-transparent"></div>
+                  <div className="px-3 py-1 bg-purple-100 text-purple-700 text-sm font-semibold rounded-full">
+                    {connectedCount} active
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                  {sortedPlugins
+                    .filter(plugin => connectedPlugins.includes(plugin.pluginKey))
+                    .map((plugin, index) => (
+                    <div
+                      key={plugin.pluginKey}
+                      className="animate-in fade-in-0 slide-in-from-bottom-4 duration-300"
+                      style={{ animationDelay: `${index * 50}ms` }}
+                    >
+                      <PluginCard
+                        pluginKey={plugin.pluginKey}
+                        pluginName={plugin.name}
+                        description={plugin.description}
+                        detailedDescription={plugin.detailedDescription}
+                        icon={plugin.icon}
+                        category={plugin.category}
+                        isPopular={plugin.isPopular}
+                        onConnectionChange={handleConnectionChange}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Available Apps Section */}
+            {availableCount > 0 && !selectedCategory && (
+              <div>
+                {!search && connectedCount > 0 && (
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="w-3 h-3 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full shadow-sm"></div>
+                    <h2 className="text-xl font-bold text-slate-800">Available Apps</h2>
+                    <div className="flex-1 h-px bg-gradient-to-r from-indigo-200 to-transparent"></div>
+                    <div className="px-3 py-1 bg-indigo-100 text-indigo-700 text-sm font-semibold rounded-full">
+                      {availableCount} ready to connect
+                    </div>
+                  </div>
+                )}
+                
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                  {sortedPlugins
+                    .filter(plugin => !connectedPlugins.includes(plugin.pluginKey))
+                    .map((plugin, index) => (
+                    <div
+                      key={plugin.pluginKey}
+                      className="animate-in fade-in-0 slide-in-from-bottom-4 duration-300"
+                      style={{ animationDelay: `${(index + connectedCount) * 50}ms` }}
+                    >
+                      <PluginCard
+                        pluginKey={plugin.pluginKey}
+                        pluginName={plugin.name}
+                        description={plugin.description}
+                        detailedDescription={plugin.detailedDescription}
+                        icon={plugin.icon}
+                        category={plugin.category}
+                        isPopular={plugin.isPopular}
+                        onConnectionChange={handleConnectionChange}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Search/Filter Results - All Apps */}
+            {(search || selectedCategory) && (
+              <div>
+                {selectedCategory && !search && (
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="w-3 h-3 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full shadow-sm"></div>
+                    <h2 className="text-xl font-bold text-slate-800">
+                      {selectedCategory === 'connected' ? 'Connected Apps' :
+                       selectedCategory === 'popular' ? 'Popular Apps' :
+                       categoryMetadata[selectedCategory]?.label || selectedCategory}
+                    </h2>
+                    <div className="flex-1 h-px bg-gradient-to-r from-purple-200 to-transparent"></div>
+                    <div className="px-3 py-1 bg-purple-100 text-purple-700 text-sm font-semibold rounded-full">
+                      {sortedPlugins.length} found
+                    </div>
+                  </div>
+                )}
+                
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                  {sortedPlugins.map((plugin, index) => {
+                    const isConnected = connectedPlugins.includes(plugin.pluginKey)
+                    return (
+                      <div
+                        key={plugin.pluginKey}
+                        className="animate-in fade-in-0 slide-in-from-bottom-4 duration-300 h-full"
+                        style={{ animationDelay: `${index * 50}ms` }}
+                      >
+                        <div className="h-full">
+                          <PluginCard
+                            pluginKey={plugin.pluginKey}
+                            pluginName={plugin.name}
+                            description={plugin.description}
+                            detailedDescription={plugin.detailedDescription}
+                            icon={plugin.icon}
+                            category={plugin.category}
+                            isPopular={plugin.isPopular}
+                            onConnectionChange={handleConnectionChange}
+                          />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          /* Empty State */
+          <div className="text-center py-16 bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl">
+            <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-slate-400 to-slate-500 rounded-3xl mb-6 shadow-xl">
+              <Search className="w-10 w-10 text-white" />
             </div>
+            <h3 className="text-2xl font-bold text-slate-700 mb-3">No integrations found</h3>
+            <p className="text-slate-500 font-medium mb-8 max-w-md mx-auto leading-relaxed">
+              {search ? `We couldn't find any integrations matching "${search}".` : 
+               selectedCategory ? `No integrations found in the selected category.` :
+               'No integrations found.'} Try adjusting your search terms or filters.
+            </p>
+            <div className="flex gap-3 justify-center">
+              {search && (
+                <button
+                  onClick={() => setSearch('')}
+                  className="px-6 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-semibold rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105"
+                >
+                  Clear Search
+                </button>
+              )}
+              {selectedCategory && (
+                <button
+                  onClick={() => setSelectedCategory(null)}
+                  className="px-6 py-3 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-semibold rounded-xl transition-all duration-300 shadow-sm hover:shadow-md hover:scale-105"
+                >
+                  Clear Filter
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Bottom CTA Section */}
+      <div className="bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-600 rounded-3xl p-8 text-white shadow-2xl">
+        <div className="text-center space-y-6">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-white/20 backdrop-blur-sm rounded-2xl shadow-xl mb-2">
+            <Plus className="h-8 w-8 text-white" />
+          </div>
+          <h3 className="text-2xl font-bold">Need a Custom Integration?</h3>
+          <p className="text-indigo-100 font-medium max-w-2xl mx-auto leading-relaxed">
+            Don't see the service you need? We're constantly adding new integrations. 
+            Request a custom integration or build your own using our API.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-4 justify-center pt-4">
+            <button className="inline-flex items-center gap-2 px-6 py-3 bg-white text-indigo-600 font-semibold rounded-xl hover:bg-indigo-50 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105">
+              <Sparkles className="w-4 h-4" />
+              Request Integration
+            </button>
+            <button className="inline-flex items-center gap-2 px-6 py-3 bg-indigo-500 hover:bg-indigo-400 text-white font-semibold rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105">
+              View API Docs
+              <ArrowRight className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </div>
