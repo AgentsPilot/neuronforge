@@ -86,62 +86,52 @@ export default function MarketingLayout({
         {children}
       </main>
 
-      {/* Footer */}
-      <footer className="bg-black/30 border-t border-white/10 mt-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
-            {/* Company */}
-            <div>
-              <div className="flex items-center space-x-2 mb-4">
-                <div className="w-6 h-6 bg-gradient-to-br from-blue-400 to-purple-600 rounded-md"></div>
-                <span className="text-lg font-bold text-white">AgentPilot</span>
+        {/* Footer */}
+        <footer className="py-12 bg-black/80 text-gray-300 border-t border-purple-500/30">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+              <div>
+                <div className="flex items-center space-x-2 mb-4">
+                  <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-purple-600 rounded-lg flex items-center justify-center">
+                    <div className="w-4 h-4 bg-white rounded-sm"></div>
+                  </div>
+                  <span className="font-bold text-xl text-white">AgentPilot</span>
+                </div>
+                <p className="text-gray-400">The professional AI automation platform.</p>
               </div>
-              <p className="text-gray-400 text-sm">
-                Create, manage, and execute AI workflows seamlessly with the most advanced open-source platform.
-              </p>
+              <div>
+                <h4 className="font-semibold text-white mb-4">Product</h4>
+                <ul className="space-y-2 text-sm">
+                  <li><a href="#" className="hover:text-white transition-colors">Features</a></li>
+                  <li><a href="#" className="hover:text-white transition-colors">Templates</a></li>
+                  <li><a href="#" className="hover:text-white transition-colors">Integrations</a></li>
+                  <li><a href="#" className="hover:text-white transition-colors">Security</a></li>
+                </ul>
+              </div>
+              <div>
+                <h4 className="font-semibold text-white mb-4">Resources</h4>
+                <ul className="space-y-2 text-sm">
+                  <li><a href="#" className="hover:text-white transition-colors">Documentation</a></li>
+                  <li><a href="#" className="hover:text-white transition-colors">API Reference</a></li>
+                  <li><a href="#" className="hover:text-white transition-colors">Help Center</a></li>
+                  <li><a href="#" className="hover:text-white transition-colors">Community</a></li>
+                </ul>
+              </div>
+              <div>
+                <h4 className="font-semibold text-white mb-4">Company</h4>
+                <ul className="space-y-2 text-sm">
+                  <li><a href="#" className="hover:text-white transition-colors">About</a></li>
+                  <li><a href="#" className="hover:text-white transition-colors">Blog</a></li>
+                  <li><a href="#" className="hover:text-white transition-colors">Careers</a></li>
+                  <li><a href="#" className="hover:text-white transition-colors">Contact</a></li>
+                </ul>
+              </div>
             </div>
-
-            {/* Product */}
-            <div>
-              <h3 className="text-white font-semibold mb-4">Product</h3>
-              <ul className="space-y-2 text-sm">
-                <li><Link href="/features" className="text-gray-400 hover:text-white transition-colors">Features</Link></li>
-                <li><Link href="/download" className="text-gray-400 hover:text-white transition-colors">Download</Link></li>
-                <li><Link href="/pricing" className="text-gray-400 hover:text-white transition-colors">Pricing</Link></li>
-                <li><Link href="/docs" className="text-gray-400 hover:text-white transition-colors">Documentation</Link></li>
-              </ul>
-            </div>
-
-            {/* Resources */}
-            <div>
-              <h3 className="text-white font-semibold mb-4">Resources</h3>
-              <ul className="space-y-2 text-sm">
-                <li><Link href="/blog" className="text-gray-400 hover:text-white transition-colors">Blog</Link></li>
-                <li><Link href="/community" className="text-gray-400 hover:text-white transition-colors">Community</Link></li>
-                <li><a href="https://github.com/jbexta/AgentPilot" className="text-gray-400 hover:text-white transition-colors">GitHub</a></li>
-                <li><Link href="/docs/tutorials" className="text-gray-400 hover:text-white transition-colors">Tutorials</Link></li>
-              </ul>
-            </div>
-
-            {/* Company */}
-            <div>
-              <h3 className="text-white font-semibold mb-4">Company</h3>
-              <ul className="space-y-2 text-sm">
-                <li><Link href="/about" className="text-gray-400 hover:text-white transition-colors">About</Link></li>
-                <li><Link href="/contact" className="text-gray-400 hover:text-white transition-colors">Contact</Link></li>
-                <li><Link href="/privacy" className="text-gray-400 hover:text-white transition-colors">Privacy</Link></li>
-                <li><Link href="/terms" className="text-gray-400 hover:text-white transition-colors">Terms</Link></li>
-              </ul>
+            <div className="border-t border-gray-800 mt-8 pt-8 text-center text-sm text-gray-400">
+              <p>&copy; 2024 AgentPilot. All rights reserved. • Privacy Policy • Terms of Service</p>
             </div>
           </div>
-
-          <div className="border-t border-white/10 mt-8 pt-8 text-center">
-            <p className="text-gray-400 text-sm">
-              © 2025 AgentsPilot. All rights reserved. 
-            </p>
-          </div>
-        </div>
-      </footer>
-    </div>
+        </footer>
+      </div>
   )
 }

@@ -12,7 +12,11 @@ import {
   Zap,
   RefreshCw,
   Download,
-  Filter
+  Filter,
+  Brain,
+  Activity,
+  Target,
+  Globe
 } from 'lucide-react'
 
 interface TokenUsage {
@@ -199,10 +203,13 @@ export default function UsageTab() {
 
   if (loading) {
     return (
-      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6">
-        <div className="flex items-center justify-center py-12">
-          <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full"></div>
-          <span className="ml-3 text-gray-600 dark:text-gray-300">Loading usage data...</span>
+      <div className="space-y-6">
+        <div className="text-center py-16 bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-3xl shadow-xl mb-6">
+            <div className="animate-spin w-8 h-8 border-2 border-white border-t-transparent rounded-full"></div>
+          </div>
+          <h3 className="text-xl font-bold text-slate-700 mb-2">Loading Usage Data</h3>
+          <p className="text-slate-500 font-medium">Analyzing your AI consumption patterns...</p>
         </div>
       </div>
     )
@@ -210,28 +217,85 @@ export default function UsageTab() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-              <BarChart3 className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-              Usage & Analytics
-            </h3>
-            <p className="text-sm text-gray-600 dark:text-gray-400">Monitor your LLM token usage and costs</p>
+      {/* Usage Stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="group relative overflow-hidden bg-gradient-to-br from-purple-50 to-indigo-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
+          <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-indigo-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          <div className="relative flex items-center gap-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-indigo-500 rounded-2xl flex items-center justify-center shadow-lg">
+              <Zap className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <p className="text-sm text-purple-700 font-semibold">Total Tokens</p>
+              <p className="text-2xl font-bold text-purple-900">{stats ? formatNumber(stats.totalTokens) : '0'}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="group relative overflow-hidden bg-gradient-to-br from-indigo-50 to-purple-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
+          <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-purple-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          <div className="relative flex items-center gap-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-2xl flex items-center justify-center shadow-lg">
+              <DollarSign className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <p className="text-sm text-indigo-700 font-semibold">Total Cost</p>
+              <p className="text-2xl font-bold text-indigo-900">{stats ? formatCost(stats.totalCost) : '$0.0000'}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="group relative overflow-hidden bg-gradient-to-br from-purple-50 to-violet-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
+          <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-violet-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          <div className="relative flex items-center gap-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-violet-500 rounded-2xl flex items-center justify-center shadow-lg">
+              <TrendingUp className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <p className="text-sm text-purple-700 font-semibold">Requests</p>
+              <p className="text-2xl font-bold text-purple-900">{stats ? formatNumber(stats.totalRequests) : '0'}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="group relative overflow-hidden bg-gradient-to-br from-indigo-50 to-pink-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
+          <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-pink-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          <div className="relative flex items-center gap-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-pink-500 rounded-2xl flex items-center justify-center shadow-lg">
+              <Target className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <p className="text-sm text-indigo-700 font-semibold">Avg/Request</p>
+              <p className="text-2xl font-bold text-indigo-900">{stats ? formatNumber(Math.round(stats.avgTokensPerRequest)) : '0'}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Header and Controls */}
+      <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl p-6">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-2xl flex items-center justify-center shadow-lg">
+              <BarChart3 className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-slate-800">Usage & Analytics</h3>
+              <p className="text-sm text-slate-600 font-medium">Monitor your LLM token usage and costs</p>
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <button 
               onClick={exportUsageData}
               disabled={!usageData.length}
-              className="inline-flex items-center gap-2 px-3 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border-2 border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 hover:border-gray-400 transition-all duration-300 shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed font-semibold text-sm"
             >
               <Download className="w-4 h-4" />
               Export
             </button>
             <button 
               onClick={loadUsageData}
-              className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 font-semibold text-sm"
             >
               <RefreshCw className="w-4 h-4" />
               Refresh
@@ -240,16 +304,16 @@ export default function UsageTab() {
         </div>
 
         {/* Filters */}
-        <div className="flex items-center gap-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+        <div className="flex items-center gap-4 pt-4 border-t border-gray-200">
           <div className="flex items-center gap-2">
-            <Filter className="w-4 h-4 text-gray-500" />
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Filters:</span>
+            <Filter className="w-4 h-4 text-slate-500" />
+            <span className="text-sm font-semibold text-slate-700">Filters:</span>
           </div>
           
           <select
             value={timeFilter}
             onChange={(e) => setTimeFilter(e.target.value as any)}
-            className="px-3 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-sm"
+            className="px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white text-slate-900 font-medium text-sm"
           >
             <option value="7d">Last 7 days</option>
             <option value="30d">Last 30 days</option>
@@ -260,7 +324,7 @@ export default function UsageTab() {
           <select
             value={modelFilter}
             onChange={(e) => setModelFilter(e.target.value)}
-            className="px-3 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-sm"
+            className="px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white text-slate-900 font-medium text-sm"
           >
             <option value="all">All models</option>
             {Array.from(new Set(usageData.map(item => item.model_name))).map(model => (
@@ -270,136 +334,109 @@ export default function UsageTab() {
         </div>
       </div>
 
-      {/* Stats Cards */}
-      {stats && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600 dark:text-gray-400">Total Tokens</p>
-                <p className="text-xl font-bold text-gray-900 dark:text-gray-100">
-                  {formatNumber(stats.totalTokens)}
-                </p>
-              </div>
-              <Zap className="w-6 h-6 text-blue-600 dark:text-blue-400" />
-            </div>
-          </div>
-
-          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600 dark:text-gray-400">Total Cost</p>
-                <p className="text-xl font-bold text-gray-900 dark:text-gray-100">
-                  {formatCost(stats.totalCost)}
-                </p>
-              </div>
-              <DollarSign className="w-6 h-6 text-green-600 dark:text-green-400" />
-            </div>
-          </div>
-
-          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600 dark:text-gray-400">Total Requests</p>
-                <p className="text-xl font-bold text-gray-900 dark:text-gray-100">
-                  {formatNumber(stats.totalRequests)}
-                </p>
-              </div>
-              <TrendingUp className="w-6 h-6 text-purple-600 dark:text-purple-400" />
-            </div>
-          </div>
-
-          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600 dark:text-gray-400">Avg/Request</p>
-                <p className="text-xl font-bold text-gray-900 dark:text-gray-100">
-                  {formatNumber(Math.round(stats.avgTokensPerRequest))}
-                </p>
-              </div>
-              <BarChart3 className="w-6 h-6 text-orange-600 dark:text-orange-400" />
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Current Month Summary */}
       {stats && (
-        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6">
-          <h4 className="text-md font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2">
-            <Calendar className="w-4 h-4" />
-            Current Month Summary
-          </h4>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <p className="text-sm text-gray-600 dark:text-gray-400">Tokens Used</p>
-              <p className="text-lg font-bold text-gray-900 dark:text-gray-100">
-                {formatNumber(stats.currentMonthTokens)}
-              </p>
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl p-6">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-indigo-500 rounded-xl flex items-center justify-center shadow-lg">
+              <Calendar className="w-5 h-5 text-white" />
             </div>
-            <div>
-              <p className="text-sm text-gray-600 dark:text-gray-400">Cost</p>
-              <p className="text-lg font-bold text-gray-900 dark:text-gray-100">
-                {formatCost(stats.currentMonthCost)}
-              </p>
+            <h4 className="text-lg font-bold text-slate-800">Current Month Summary</h4>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-50 to-indigo-50 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-indigo-500 rounded-lg flex items-center justify-center shadow-sm">
+                  <Zap className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <p className="text-sm text-purple-700 font-semibold">Tokens Used</p>
+                  <p className="text-xl font-bold text-purple-900">{formatNumber(stats.currentMonthTokens)}</p>
+                </div>
+              </div>
             </div>
-            <div>
-              <p className="text-sm text-gray-600 dark:text-gray-400">Most Used Model</p>
-              <p className="text-lg font-bold text-gray-900 dark:text-gray-100">
-                {stats.topModel}
-              </p>
+            
+            <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-50 to-purple-50 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-lg flex items-center justify-center shadow-sm">
+                  <DollarSign className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <p className="text-sm text-indigo-700 font-semibold">Cost</p>
+                  <p className="text-xl font-bold text-indigo-900">{formatCost(stats.currentMonthCost)}</p>
+                </div>
+              </div>
+            </div>
+            
+            <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-50 to-violet-50 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-violet-500 rounded-lg flex items-center justify-center shadow-sm">
+                  <Brain className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <p className="text-sm text-purple-700 font-semibold">Most Used Model</p>
+                  <p className="text-xl font-bold text-purple-900">{stats.topModel}</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       )}
 
       {/* Recent Usage Table */}
-      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-          <h4 className="text-md font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-            <Clock className="w-4 h-4" />
-            Recent Usage
-          </h4>
+      <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-200/50 bg-gradient-to-r from-slate-50 to-gray-50">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 bg-gradient-to-br from-slate-500 to-gray-500 rounded-lg flex items-center justify-center shadow-sm">
+              <Clock className="w-4 h-4 text-white" />
+            </div>
+            <h4 className="text-lg font-bold text-slate-800">Recent Usage</h4>
+          </div>
         </div>
         
         {usageData.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-gray-50 dark:bg-gray-700">
+              <thead className="bg-gradient-to-r from-gray-50 to-slate-50">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                  <th className="px-6 py-4 text-left text-xs font-bold text-slate-700 uppercase tracking-wider">
                     Date & Time
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                  <th className="px-6 py-4 text-left text-xs font-bold text-slate-700 uppercase tracking-wider">
                     Model
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                  <th className="px-6 py-4 text-left text-xs font-bold text-slate-700 uppercase tracking-wider">
                     Provider
                   </th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                  <th className="px-6 py-4 text-right text-xs font-bold text-slate-700 uppercase tracking-wider">
                     Tokens
                   </th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                  <th className="px-6 py-4 text-right text-xs font-bold text-slate-700 uppercase tracking-wider">
                     Cost
                   </th>
                 </tr>
               </thead>
-              <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                {usageData.slice(0, 20).map((item) => (
-                  <tr key={item.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
-                    <td className="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">
+              <tbody className="bg-white divide-y divide-gray-100">
+                {usageData.slice(0, 20).map((item, index) => (
+                  <tr 
+                    key={item.id} 
+                    className="hover:bg-slate-50 transition-colors duration-200"
+                    style={{ animationDelay: `${index * 50}ms` }}
+                  >
+                    <td className="px-6 py-4 text-sm text-slate-900 font-medium">
                       {new Date(item.created_at).toLocaleString()}
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">
+                    <td className="px-6 py-4 text-sm text-slate-900 font-semibold">
                       {item.model_name}
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">
-                      <span className="capitalize">{item.provider}</span>
+                    <td className="px-6 py-4 text-sm text-slate-700 font-medium capitalize">
+                      {item.provider}
                     </td>
-                    <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 text-right">
+                    <td className="px-6 py-4 text-sm font-bold text-slate-900 text-right">
                       {formatNumber(item.total_tokens)}
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-900 dark:text-gray-100 text-right">
+                    <td className="px-6 py-4 text-sm font-bold text-slate-900 text-right">
                       {formatCost(item.cost_usd)}
                     </td>
                   </tr>
@@ -408,9 +445,19 @@ export default function UsageTab() {
             </table>
           </div>
         ) : (
-          <div className="px-6 py-12 text-center">
-            <BarChart3 className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-500 dark:text-gray-400">No usage data found for the selected period.</p>
+          <div className="px-6 py-16 text-center">
+            <div className="w-20 h-20 bg-gradient-to-br from-slate-400 to-slate-500 rounded-3xl flex items-center justify-center mx-auto shadow-xl mb-6">
+              <Activity className="w-10 h-10 text-white" />
+            </div>
+            <h3 className="text-xl font-bold text-slate-700 mb-2">No usage data found</h3>
+            <p className="text-slate-500 font-medium mb-6">No usage data found for the selected period. Start using AI models to see analytics here.</p>
+            <button 
+              onClick={loadUsageData}
+              className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 font-semibold"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Refresh Data
+            </button>
           </div>
         )}
       </div>
