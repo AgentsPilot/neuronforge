@@ -1,6 +1,7 @@
 // app/api/oauth/token/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { gmailStrategy } from '@/lib/plugins/strategies/gmailPluginStrategy'
+import { slackStrategy } from '@/lib/plugins/strategies/slackPluginStrategy'
 import { googleDriveStrategy } from '@/lib/plugins/strategies/googleDrivePluginStrategy'
 import { createServerClient } from '@supabase/ssr'
 
@@ -58,6 +59,19 @@ export async function GET(request: NextRequest) {
         state,
         supabase
       })
+
+
+      return NextResponse.json({ success: true, data: result })
+    }
+
+    // Handle Slack plugin
+    if (plugin === 'slack') {
+      const result = await slackStrategy.handleOAuthCallback({
+        code,
+        state,
+        supabase
+      })
+
 
       return NextResponse.json({ success: true, data: result })
     }

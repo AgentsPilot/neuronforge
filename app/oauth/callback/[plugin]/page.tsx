@@ -1,14 +1,21 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useSearchParams, useParams } from 'next/navigation'
 
 export default function OAuthCallbackPage() {
   const searchParams = useSearchParams()
   const params = useParams()
   const [status, setStatus] = useState('Waiting for authorization...')
+  const hasExecuted = useRef(false) // Add this to prevent double execution
 
   useEffect(() => {
+    // Prevent double execution in React Strict Mode
+    if (hasExecuted.current) {
+      console.log('🛑 Already processed, skipping duplicate execution')
+      return
+    }
+
     const code = searchParams.get('code')
     const state = searchParams.get('state')
     const error = searchParams.get('error')
@@ -25,6 +32,7 @@ export default function OAuthCallbackPage() {
 
     // Handle OAuth errors
     if (error) {
+      hasExecuted.current = true // Mark as executed
       console.error('❌ OAuth error:', error, errorDescription)
       const errorMessage = errorDescription || error || 'Authorization failed'
       setStatus(`❌ ${errorMessage}`)
@@ -47,6 +55,7 @@ export default function OAuthCallbackPage() {
     }
 
     if (!code || !state) {
+      hasExecuted.current = true // Mark as executed
       console.error('❌ Missing code or state from URL')
       const errorMessage = 'Missing authorization code or state'
       setStatus(`❌ ${errorMessage}`)
@@ -66,6 +75,10 @@ export default function OAuthCallbackPage() {
       return
     }
 
+    // Mark as executed before starting the exchange
+    hasExecuted.current = true
+    console.log('✅ Starting token exchange (execution prevented for duplicates)')
+    
     // Exchange code for token via API
     exchangeCodeViaAPI(code, state, plugin)
 

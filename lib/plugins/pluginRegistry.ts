@@ -3,6 +3,8 @@ import { gmailDataStrategy } from './strategies/gmailDataStrategy'
 import { chatgptResearchStrategy } from './strategies/chatgptResearchStrategy'
 import { googleDriveDataStrategy } from './strategies/googleDriveDataStrategy'
 import { googleDriveStrategy } from './strategies/googleDrivePluginStrategy'
+import { slackStrategy } from './strategies/slackPluginStrategy'
+import { slackDataStrategy } from './strategies/slackDataStrategy'
 import { universalPlugins } from './v2/registry'
 
 export interface PluginStrategy {
@@ -21,10 +23,12 @@ export const pluginRegistry: Record<string, PluginStrategy> = {
   'gmail': gmailDataStrategy,
   'chatgpt-research': chatgptResearchStrategy,
   'google-drive': googleDriveDataStrategy,
+  'slack': slackDataStrategy,
   
   // V1 - OAuth strategies
   'google-mail-connect': gmailStrategy,
   'google-drive-connect': googleDriveStrategy,
+  'slack-connect': slackStrategy,
   
   // V2 - Universal plugins
   ...universalPlugins,
@@ -43,6 +47,7 @@ export const PLUGIN_VERSION_MAP: Record<string, 'v1' | 'v2'> = {
   'google-mail': 'v1',
   'google-drive': 'v1', // Can change to 'v2' when ready to test
   'google-drive-v2': 'v2',
+  'slack': 'v1'
 }
 
 console.log('Plugin Registry Loaded:', {
