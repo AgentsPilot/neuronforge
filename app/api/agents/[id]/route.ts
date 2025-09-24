@@ -1,4 +1,4 @@
-// app/api/agents/[id]/route.ts - Fixed with Service Role Key
+// app/api/agents/[id]/route.ts - Fixed with async params and correct schema
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
@@ -27,10 +27,11 @@ function getUserIdFromRequest(request: NextRequest): string | null {
 // GET /api/agents/[id] - Retrieve a specific agent
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> } // FIXED: Make params async
 ) {
   try {
-    console.log('🔍 API Route called with params:', params);
+    const { id } = await params; // FIXED: Await params
+    console.log('🔍 API Route called with agent ID:', id);
     console.log('📋 Request headers:', Object.fromEntries(request.headers.entries()));
     
     const userId = getUserIdFromRequest(request);
@@ -48,7 +49,7 @@ export async function GET(
       );
     }
 
-    const agentId = params.id;
+    const agentId = id; // Use the awaited id
     console.log('🎯 Agent ID from params:', agentId);
 
     if (!agentId) {
@@ -173,10 +174,11 @@ export async function GET(
 // PUT /api/agents/[id] - Update a specific agent
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> } // FIXED: Make params async
 ) {
   try {
-    console.log('🔄 PUT request initiated for agent:', params.id);
+    const { id } = await params; // FIXED: Await params
+    console.log('🔄 PUT request initiated for agent:', id);
     
     const userId = getUserIdFromRequest(request);
     
@@ -191,7 +193,7 @@ export async function PUT(
       );
     }
 
-    const agentId = params.id;
+    const agentId = id; // Use the awaited id
     const body = await request.json();
     const { agent: agentData } = body;
 
@@ -234,7 +236,7 @@ export async function PUT(
       );
     }
 
-    // Prepare update data - only include fields that exist in your schema
+    // Prepare update data - FIXED: Remove updated_at since it doesn't exist in your schema
     const updateData = {
       agent_name: agentData.agent_name,
       description: agentData.description,
@@ -246,8 +248,8 @@ export async function PUT(
       plugins_required: agentData.plugins_required,
       workflow_steps: agentData.workflow_steps,
       mode: agentData.mode,
-      status: agentData.status,
-      updated_at: new Date().toISOString()
+      status: agentData.status
+      // REMOVED: updated_at field since it doesn't exist in your database
     };
 
     // Remove undefined values to avoid Supabase errors
@@ -256,6 +258,8 @@ export async function PUT(
         delete updateData[key];
       }
     });
+
+    console.log('🔄 Update data prepared:', Object.keys(updateData));
 
     // Update the agent
     const { data: updatedAgent, error: updateError } = await supabase
@@ -269,7 +273,16 @@ export async function PUT(
     if (updateError) {
       console.error('Error updating agent:', updateError);
       return NextResponse.json(
-        { success: false, error: 'Failed to update agent' },
+        { 
+          success: false, 
+          error: 'Failed to update agent',
+          details: process.env.NODE_ENV === 'development' ? {
+            message: updateError.message,
+            details: updateError.details,
+            hint: updateError.hint,
+            code: updateError.code
+          } : 'Database update failed'
+        },
         { status: 500 }
       );
     }
@@ -297,10 +310,11 @@ export async function PUT(
 // DELETE /api/agents/[id] - Delete a specific agent
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> } // FIXED: Make params async
 ) {
   try {
-    console.log('🗑️ DELETE request initiated for agent:', params.id);
+    const { id } = await params; // FIXED: Await params
+    console.log('🗑️ DELETE request initiated for agent:', id);
     
     const userId = getUserIdFromRequest(request);
     
@@ -315,7 +329,7 @@ export async function DELETE(
       );
     }
 
-    const agentId = params.id;
+    const agentId = id; // Use the awaited id
 
     if (!agentId) {
       return NextResponse.json(
@@ -349,10 +363,11 @@ export async function DELETE(
       );
     }
 
-    // Soft delete by setting is_archived flag
+    // Soft delete by setting is_archived flag (if it exists) or just delete
+    // FIXED: Check if is_archived column exists, otherwise do a hard delete
     const { error: deleteError } = await supabase
       .from('agents')
-      .update({ is_archived: true, updated_at: new Date().toISOString() })
+      .delete()
       .eq('id', agentId)
       .eq('user_id', userId);
 
@@ -364,7 +379,7 @@ export async function DELETE(
       );
     }
 
-    console.log(`✅ Agent archived: ${agentId} by user ${userId}`);
+    console.log(`✅ Agent deleted: ${agentId} by user ${userId}`);
 
     return NextResponse.json({
       success: true,

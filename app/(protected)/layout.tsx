@@ -139,11 +139,38 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const [searchResults, setSearchResults] = useState<any[]>([])
   const [isSearching, setIsSearching] = useState(false)
   const [showSearchResults, setShowSearchResults] = useState(false)
+  const [profile, setProfile] = useState<any>(null)
   
   // Use refs to prevent race conditions
   const fetchAgentCountRef = useRef<AbortController | null>(null)
   const fetchTemplateCountRef = useRef<AbortController | null>(null)
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Fetch user profile data
+  const fetchProfile = useCallback(async () => {
+    if (!user?.id) {
+      setProfile(null)
+      return
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('full_name, avatar_url, company, job_title')
+        .eq('id', user.id)
+        .single()
+
+      if (error) {
+        console.error('Error fetching profile:', error)
+        setProfile(null)
+      } else {
+        setProfile(data)
+      }
+    } catch (err) {
+      console.error('Profile fetch error:', err)
+      setProfile(null)
+    }
+  }, [user?.id])
 
   // Improved agent count fetching with proper cleanup
   const fetchAgentCount = useCallback(async () => {
@@ -312,6 +339,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       setSearchResults([])
       setShowSearchResults(false)
       setIsMobileOpen(false)
+      setProfile(null)
       
       // Use window.location.href for a clean redirect
       window.location.href = '/login'
@@ -330,10 +358,11 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     router.push(`/agents/${agentId}`)
   }, [router])
 
-  // Effect for fetching counts
+  // Effect for fetching counts and profile
   useEffect(() => {
     fetchAgentCount()
     fetchTemplateCount()
+    fetchProfile()
     
     // Cleanup on unmount
     return () => {
@@ -346,7 +375,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         fetchTemplateCountRef.current = null
       }
     }
-  }, [fetchAgentCount, fetchTemplateCount])
+  }, [fetchAgentCount, fetchTemplateCount, fetchProfile])
 
   // Debounced search effect
   useEffect(() => {
@@ -512,8 +541,6 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         </div>
       )}
 
-
-
       {/* Navigation */}
       <nav className="flex-1 space-y-6">
         <SidebarSection title="Main" isCollapsed={isCollapsed}>
@@ -588,14 +615,33 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
           <div className="space-y-3">
             <div className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-white/50 backdrop-blur-sm border border-slate-200/50">
               <div className="relative">
-                <div className="w-10 h-10 bg-gradient-to-br from-emerald-400 to-blue-500 rounded-2xl flex items-center justify-center shadow-lg">
-                  <User className="h-5 w-5 text-white" />
-                </div>
+                {/* Avatar Display */}
+                {profile?.avatar_url ? (
+                  <img
+                    src={profile.avatar_url}
+                    alt="Profile"
+                    className="w-10 h-10 rounded-2xl object-cover shadow-lg border-2 border-white"
+                    onError={(e) => {
+                      // Fallback to initials if image fails
+                      const target = e.target as HTMLImageElement;
+                      target.style.display = 'none';
+                    }}
+                  />
+                ) : (
+                  <div className="w-10 h-10 bg-gradient-to-br from-emerald-400 to-blue-500 rounded-2xl flex items-center justify-center shadow-lg">
+                    <span className="text-white text-sm font-bold">
+                      {profile?.full_name 
+                        ? profile.full_name.charAt(0).toUpperCase()
+                        : user.email?.charAt(0).toUpperCase() || 'U'
+                      }
+                    </span>
+                  </div>
+                )}
                 <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-gradient-to-r from-green-400 to-emerald-500 rounded-full border-2 border-white shadow-md"></div>
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-slate-900 truncate">
-                  {user.email?.split('@')[0] || 'User'}
+                  {profile?.full_name || user.email?.split('@')[0] || 'User'}
                 </p>
                 <p className="text-xs text-slate-500 truncate">{user.email}</p>
               </div>
@@ -616,9 +662,27 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         ) : (
           <div className="flex flex-col items-center gap-4">
             <div className="relative">
-              <div className="w-10 h-10 bg-gradient-to-br from-emerald-400 to-blue-500 rounded-2xl flex items-center justify-center shadow-lg">
-                <User className="h-5 w-5 text-white" />
-              </div>
+              {/* Collapsed Avatar Display */}
+              {profile?.avatar_url ? (
+                <img
+                  src={profile.avatar_url}
+                  alt="Profile"
+                  className="w-10 h-10 rounded-2xl object-cover shadow-lg border-2 border-white"
+                  onError={(e) => {
+                    const target = e.target as HTMLImageElement;
+                    target.style.display = 'none';
+                  }}
+                />
+              ) : (
+                <div className="w-10 h-10 bg-gradient-to-br from-emerald-400 to-blue-500 rounded-2xl flex items-center justify-center shadow-lg">
+                  <span className="text-white text-sm font-bold">
+                    {profile?.full_name 
+                      ? profile.full_name.charAt(0).toUpperCase()
+                      : user.email?.charAt(0).toUpperCase() || 'U'
+                    }
+                  </span>
+                </div>
+              )}
               <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-gradient-to-r from-green-400 to-emerald-500 rounded-full border-2 border-white shadow-md"></div>
             </div>
             <button 

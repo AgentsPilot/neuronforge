@@ -26,7 +26,7 @@ import { UserProfile, UserPreferences, NotificationSettings, PluginConnection } 
 
 export default function SettingsPage() {
   const { user } = useAuth()
-  const [activeTab, setActiveTab] = useState('plugins')
+  const [activeTab, setActiveTab] = useState('profile')
   const [loading, setLoading] = useState(true)
   
   // Data states
@@ -42,15 +42,6 @@ export default function SettingsPage() {
 
   const tabs = [
     { 
-      id: 'plugins', 
-      label: 'Plugins', 
-      icon: <PlugZap className="w-4 h-4" />,
-      description: 'Manage integrations and connections',
-      gradient: 'from-purple-500 to-indigo-500',
-      bgGradient: 'from-purple-50 to-indigo-50',
-      textColor: 'text-purple-700'
-    },
-    { 
       id: 'profile', 
       label: 'Profile', 
       icon: <User className="w-4 h-4" />,
@@ -58,6 +49,15 @@ export default function SettingsPage() {
       gradient: 'from-indigo-500 to-purple-500',
       bgGradient: 'from-indigo-50 to-purple-50',
       textColor: 'text-indigo-700'
+    },
+    { 
+      id: 'plugins', 
+      label: 'Plugins', 
+      icon: <PlugZap className="w-4 h-4" />,
+      description: 'Manage integrations and connections',
+      gradient: 'from-purple-500 to-indigo-500',
+      bgGradient: 'from-purple-50 to-indigo-50',
+      textColor: 'text-purple-700'
     },
     { 
       id: 'notifications', 
@@ -331,18 +331,18 @@ export default function SettingsPage() {
 
         {/* Tab Content */}
         <div className="p-6">
-          {activeTab === 'plugins' && (
-            <PluginsTab 
-              connections={connections} 
-              setConnections={setConnections}
-            />
-          )}
           {activeTab === 'profile' && (
             <ProfileTab 
               profile={profile}
               profileForm={profileForm}
               setProfileForm={setProfileForm}
               onSave={() => {/* handle save */}}
+            />
+          )}
+          {activeTab === 'plugins' && (
+            <PluginsTab 
+              connections={connections} 
+              setConnections={setConnections}
             />
           )}
           {activeTab === 'notifications' && (

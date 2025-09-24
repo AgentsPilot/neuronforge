@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
@@ -46,6 +47,31 @@ import {
   Puzzle
 } from 'lucide-react'
 
+// Modal component using portal to render outside component tree
+const Modal = ({ isOpen, onClose, children }: { isOpen: boolean; onClose: () => void; children: React.ReactNode }) => {
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+    return () => setMounted(false)
+  }, [])
+
+  if (!mounted || !isOpen) return null
+
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}>
+      <div 
+        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      <div className="relative bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full mx-auto" style={{ zIndex: 10000 }}>
+        {children}
+      </div>
+    </div>,
+    document.body
+  )
+}
+
 type Agent = {
   id: string
   agent_name: string
@@ -61,6 +87,7 @@ type Agent = {
   created_at?: string
   updated_at?: string
   mode?: string
+  schedule_cron?: string  // Added this field
   // AI-generated agent fields
   generated_plan?: string
   ai_reasoning?: string
@@ -78,6 +105,77 @@ type Agent = {
 const isValidUUID = (str: string): boolean => {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
   return uuidRegex.test(str)
+}
+
+// Helper function to parse and format cron expressions
+const formatCronSchedule = (cronExpression: string): string => {
+  if (!cronExpression) return 'Not set'
+  
+  try {
+    // Basic cron parsing for common patterns
+    const parts = cronExpression.trim().split(' ')
+    if (parts.length !== 5) return cronExpression // Return raw if not standard 5-part cron
+    
+    const [minute, hour, dayOfMonth, month, dayOfWeek] = parts
+    
+    // Handle common patterns
+    if (dayOfMonth === '*' && month === '*' && dayOfWeek === '*') {
+      // Daily pattern
+      if (minute === '0' && hour !== '*') {
+        const hourNum = parseInt(hour)
+        const time = hourNum === 0 ? '12:00 AM' : 
+                    hourNum < 12 ? `${hourNum}:00 AM` :
+                    hourNum === 12 ? '12:00 PM' :
+                    `${hourNum - 12}:00 PM`
+        return `Daily at ${time}`
+      } else if (hour !== '*' && minute !== '*') {
+        const hourNum = parseInt(hour)
+        const minNum = parseInt(minute)
+        const time = hourNum === 0 ? `12:${minNum.toString().padStart(2, '0')} AM` :
+                    hourNum < 12 ? `${hourNum}:${minNum.toString().padStart(2, '0')} AM` :
+                    hourNum === 12 ? `12:${minNum.toString().padStart(2, '0')} PM` :
+                    `${hourNum - 12}:${minNum.toString().padStart(2, '0')} PM`
+        return `Daily at ${time}`
+      }
+    }
+    
+    if (dayOfWeek !== '*' && dayOfMonth === '*' && month === '*') {
+      // Weekly pattern
+      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+      const dayNames = dayOfWeek.split(',').map(d => {
+        const dayNum = parseInt(d.trim())
+        return days[dayNum] || d
+      })
+      
+      if (minute === '0' && hour !== '*') {
+        const hourNum = parseInt(hour)
+        const time = hourNum === 0 ? '12:00 AM' : 
+                    hourNum < 12 ? `${hourNum}:00 AM` :
+                    hourNum === 12 ? '12:00 PM' :
+                    `${hourNum - 12}:00 PM`
+        return `Weekly on ${dayNames.join(', ')} at ${time}`
+      }
+    }
+    
+    if (dayOfMonth !== '*' && month === '*' && dayOfWeek === '*') {
+      // Monthly pattern
+      if (minute === '0' && hour !== '*') {
+        const hourNum = parseInt(hour)
+        const time = hourNum === 0 ? '12:00 AM' : 
+                    hourNum < 12 ? `${hourNum}:00 AM` :
+                    hourNum === 12 ? '12:00 PM' :
+                    `${hourNum - 12}:00 PM`
+        return `Monthly on day ${dayOfMonth} at ${time}`
+      }
+    }
+    
+    // If we can't parse it nicely, return the raw expression
+    return cronExpression
+    
+  } catch (error) {
+    console.error('Error parsing cron expression:', error)
+    return cronExpression
+  }
 }
 
 export default function AgentPage() {
@@ -119,63 +217,63 @@ export default function AgentPage() {
   const [currentFormIsComplete, setCurrentFormIsComplete] = useState(false)
 
   // Check if agent has required configuration
-// Check if agent has required configuration
-const checkAgentConfiguration = async (agentData: Agent) => {
-  if (!user?.id || !agentData.input_schema) {
-    setIsConfigured(true) // If no input schema, consider it configured
-    return
-  }
-
-  const inputSchema = Array.isArray(agentData.input_schema) ? agentData.input_schema : []
-  const hasRequiredFields = inputSchema.some((field: any) => field.required)
-
-  if (!hasRequiredFields) {
-    setIsConfigured(true) // If no required fields, consider it configured
-    return
-  }
-
-  try {
-    // UPDATED: Look for the most recent configured record
-    const { data, error } = await supabase
-      .from('agent_executions') // Fixed: use correct table name
-      .select('input_values, status, created_at')
-      .eq('agent_id', agentData.id)
-      .eq('user_id', user.id)
-      .eq('status', 'configured') // Look specifically for configured status
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle() // Use maybeSingle to avoid errors when no records exist
-
-    if (error) {
-      console.error('Error checking configuration:', error)
-      setIsConfigured(false)
+  const checkAgentConfiguration = async (agentData: Agent) => {
+    if (!user?.id || !agentData.input_schema) {
+      setIsConfigured(true) // If no input schema, consider it configured
       return
     }
 
-    if (data && data.input_values) {
-      // Check if all required fields have values in the saved configuration
-      const requiredFields = inputSchema.filter((field: any) => field.required)
-      const hasAllRequiredValues = requiredFields.every((field: any) => {
-        const value = data.input_values[field.name]
-        return value !== undefined && value !== null && value !== ''
-      })
-      
-      console.log('Configuration check result:', {
-        hasConfigRecord: !!data,
-        requiredFields: requiredFields.map(f => f.name),
-        hasAllRequiredValues
-      })
-      
-      setIsConfigured(hasAllRequiredValues)
-    } else {
-      console.log('No configuration record found')
+    const inputSchema = Array.isArray(agentData.input_schema) ? agentData.input_schema : []
+    const hasRequiredFields = inputSchema.some((field: any) => field.required)
+
+    if (!hasRequiredFields) {
+      setIsConfigured(true) // If no required fields, consider it configured
+      return
+    }
+
+    try {
+      // UPDATED: Look for the most recent configured record
+      const { data, error } = await supabase
+        .from('agent_executions') // Fixed: use correct table name
+        .select('input_values, status, created_at')
+        .eq('agent_id', agentData.id)
+        .eq('user_id', user.id)
+        .eq('status', 'configured') // Look specifically for configured status
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle() // Use maybeSingle to avoid errors when no records exist
+
+      if (error) {
+        console.error('Error checking configuration:', error)
+        setIsConfigured(false)
+        return
+      }
+
+      if (data && data.input_values) {
+        // Check if all required fields have values in the saved configuration
+        const requiredFields = inputSchema.filter((field: any) => field.required)
+        const hasAllRequiredValues = requiredFields.every((field: any) => {
+          const value = data.input_values[field.name]
+          return value !== undefined && value !== null && value !== ''
+        })
+        
+        console.log('Configuration check result:', {
+          hasConfigRecord: !!data,
+          requiredFields: requiredFields.map(f => f.name),
+          hasAllRequiredValues
+        })
+        
+        setIsConfigured(hasAllRequiredValues)
+      } else {
+        console.log('No configuration record found')
+        setIsConfigured(false)
+      }
+    } catch (error) {
+      console.error('Unexpected error checking configuration:', error)
       setIsConfigured(false)
     }
-  } catch (error) {
-    console.error('Unexpected error checking configuration:', error)
-    setIsConfigured(false)
   }
-}
+
   const fetchAgent = async () => {
     // Enhanced validation for agentId
     console.log('fetchAgent called with agentId:', agentId)
@@ -202,7 +300,7 @@ const checkAgentConfiguration = async (agentData: Agent) => {
         console.log('Checking regular agents table for user:', user.id)
         const { data: regularAgent, error: regularError } = await supabase
           .from('agents')
-          .select('*, connected_plugins, plugins_required, workflow_steps')
+          .select('*, connected_plugins, plugins_required, workflow_steps, schedule_cron')  // Added schedule_cron
           .eq('id', agentId)
           .eq('user_id', user.id)
           .maybeSingle()
@@ -214,6 +312,10 @@ const checkAgentConfiguration = async (agentData: Agent) => {
 
         if (regularAgent) {
           console.log('Found regular agent:', regularAgent.agent_name)
+          console.log('Agent data:', regularAgent) // Debug log
+          console.log('Agent mode:', regularAgent.mode) // Debug log
+          console.log('Agent schedule_cron:', regularAgent.schedule_cron) // Debug log
+          
           setAgent(regularAgent)
           setIsSharedAgent(false)
           setIsOwner(true)
@@ -760,6 +862,7 @@ const checkAgentConfiguration = async (agentData: Agent) => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+
       {/* Success Notification */}
       {showSuccessNotification && (
         <div className="fixed top-6 right-6 z-50 animate-in slide-in-from-top-2 duration-300">
@@ -1108,13 +1211,43 @@ const checkAgentConfiguration = async (agentData: Agent) => {
                 </h3>
                 
                 <div className="space-y-4">
-                  {/* Mode Info */}
+                  {/* Mode Info - Enhanced with schedule details */}
                   <div className={`p-4 rounded-xl ${modeConfig.bg}`}>
                     <div className="flex items-center gap-3 mb-2">
                       <ModeIcon className={`h-5 w-5 ${modeConfig.color}`} />
                       <span className={`font-medium ${modeConfig.color}`}>{modeConfig.label}</span>
                     </div>
-                    <p className="text-sm text-slate-600">{modeConfig.desc}</p>
+                    <p className="text-sm text-slate-600 mb-2">{modeConfig.desc}</p>
+                    
+                    {/* Add schedule details for scheduled agents */}
+                    {agent.mode === 'scheduled' && agent.schedule_cron && (
+                      <div className="mt-3 pt-3 border-t border-slate-200">
+                        <div className="flex items-start gap-2">
+                          <Timer className="h-4 w-4 text-slate-500 mt-0.5 flex-shrink-0" />
+                          <div>
+                            <div className="text-sm font-medium text-slate-700 mb-1">Schedule</div>
+                            <div className="text-sm text-slate-600 bg-white/60 px-3 py-2 rounded-lg border border-slate-200">
+                              {formatCronSchedule(agent.schedule_cron)}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Show message if scheduled but no cron set */}
+                    {agent.mode === 'scheduled' && !agent.schedule_cron && (
+                      <div className="mt-3 pt-3 border-t border-slate-200">
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                          <div>
+                            <div className="text-sm font-medium text-amber-700 mb-1">Schedule Missing</div>
+                            <div className="text-xs text-amber-600">
+                              This agent is set to scheduled mode but no schedule has been configured.
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Plugins */}
@@ -1306,170 +1439,164 @@ const checkAgentConfiguration = async (agentData: Agent) => {
         </div>
       </div>
 
+      {/* Modals with Portal Rendering */}
+      
       {/* Activation Warning Modal */}
-      {showActivationWarning && (
-        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-slate-200">
-            <div className="flex items-start gap-4">
-              <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center flex-shrink-0">
-                <AlertTriangle className="h-6 w-6 text-amber-600" />
-              </div>
-              <div className="flex-1">
-                <h3 className="text-xl font-semibold text-slate-900 mb-2">Configuration Required</h3>
-                <p className="text-slate-600 mb-6">
-                  This agent has required fields that must be configured before activation. Please use the "Configure" mode in the sandbox to set up all required settings first.
-                </p>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setShowActivationWarning(false)}
-                    className="flex-1 px-4 py-3 text-sm font-medium text-slate-700 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
-                  >
-                    Got It
-                  </button>
-                </div>
+      <Modal isOpen={showActivationWarning} onClose={() => setShowActivationWarning(false)}>
+        <div className="p-6">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center flex-shrink-0">
+              <AlertTriangle className="h-6 w-6 text-amber-600" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-xl font-semibold text-slate-900 mb-2">Configuration Required</h3>
+              <p className="text-slate-600 mb-6">
+                This agent has required fields that must be configured before activation. Please use the "Configure" mode in the sandbox to set up all required settings first.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowActivationWarning(false)}
+                  className="flex-1 px-4 py-3 text-sm font-medium text-slate-700 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
+                >
+                  Got It
+                </button>
               </div>
             </div>
           </div>
         </div>
-      )}
+      </Modal>
 
-      {/* Share Agent Confirmation Modal - Only for owned agents */}
-      {showShareConfirm && !isSharedAgent && (
-        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-slate-200">
-            <div className="flex items-start gap-4">
-              <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center flex-shrink-0">
-                <Share2 className="h-6 w-6 text-blue-600" />
-              </div>
-              <div className="flex-1">
-                <h3 className="text-xl font-semibold text-slate-900 mb-2">Share with Community</h3>
-                <div className="text-slate-600 mb-6 space-y-3">
-                  <p>Share "{agent.agent_name}" with everyone and help others discover great agents.</p>
-                  <div className="bg-blue-50 p-4 rounded-xl">
-                    <div className="flex items-center gap-2 text-blue-800 font-medium mb-1">
-                      <Coins className="h-4 w-4" />
-                      You'll earn 500 credits!
-                    </div>
-                    <p className="text-blue-700 text-sm">
-                      Credits can be used for premium features and advanced capabilities.
-                    </p>
+      {/* Share Agent Confirmation Modal */}
+      <Modal isOpen={showShareConfirm && !isSharedAgent} onClose={() => setShowShareConfirm(false)}>
+        <div className="p-6">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center flex-shrink-0">
+              <Share2 className="h-6 w-6 text-blue-600" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-xl font-semibold text-slate-900 mb-2">Share with Community</h3>
+              <div className="text-slate-600 mb-6 space-y-3">
+                <p>Share "{agent?.agent_name}" with everyone and help others discover great agents.</p>
+                <div className="bg-blue-50 p-4 rounded-xl">
+                  <div className="flex items-center gap-2 text-blue-800 font-medium mb-1">
+                    <Coins className="h-4 w-4" />
+                    You'll earn 500 credits!
                   </div>
-                  <p className="text-sm text-slate-500">
-                    We'll share your agent's setup and instructions, but keep your personal data private.
+                  <p className="text-blue-700 text-sm">
+                    Credits can be used for premium features and advanced capabilities.
                   </p>
                 </div>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setShowShareConfirm(false)}
-                    className="flex-1 px-4 py-3 text-sm font-medium text-slate-700 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleShareAgent}
-                    disabled={actionLoading === 'share'}
-                    className="flex-1 px-4 py-3 text-sm font-medium text-white bg-blue-600 rounded-xl hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2 transition-colors"
-                  >
-                    {actionLoading === 'share' ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                        Sharing...
-                      </>
-                    ) : (
-                      <>
-                        <Share2 className="h-4 w-4" />
-                        Share & Earn
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Confirmation Modal - Only for owned agents */}
-      {showDeleteConfirm && !isSharedAgent && (
-        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-slate-200">
-            <div className="flex items-start gap-4">
-              <div className="w-12 h-12 bg-red-100 rounded-xl flex items-center justify-center flex-shrink-0">
-                <AlertTriangle className="h-6 w-6 text-red-600" />
-              </div>
-              <div className="flex-1">
-                <h3 className="text-xl font-semibold text-slate-900 mb-2">Delete Agent</h3>
-                <p className="text-slate-600 mb-6">
-                  Are you sure you want to delete "{agent.agent_name}"? This will permanently remove the agent and all its history. This can't be undone.
+                <p className="text-sm text-slate-500">
+                  We'll share your agent's setup and instructions, but keep your personal data private.
                 </p>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setShowDeleteConfirm(false)}
-                    className="flex-1 px-4 py-3 text-sm font-medium text-slate-700 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleDelete}
-                    disabled={actionLoading === 'delete'}
-                    className="flex-1 px-4 py-3 text-sm font-medium text-white bg-red-600 rounded-xl hover:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2 transition-colors"
-                  >
-                    {actionLoading === 'delete' ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                        Deleting...
-                      </>
-                    ) : (
-                      'Delete Forever'
-                    )}
-                  </button>
-                </div>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowShareConfirm(false)}
+                  className="flex-1 px-4 py-3 text-sm font-medium text-slate-700 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleShareAgent}
+                  disabled={actionLoading === 'share'}
+                  className="flex-1 px-4 py-3 text-sm font-medium text-white bg-blue-600 rounded-xl hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2 transition-colors"
+                >
+                  {actionLoading === 'share' ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      Sharing...
+                    </>
+                  ) : (
+                    <>
+                      <Share2 className="h-4 w-4" />
+                      Share & Earn
+                    </>
+                  )}
+                </button>
               </div>
             </div>
           </div>
         </div>
-      )}
+      </Modal>
 
-      {/* Deactivate Confirmation Modal - Only for owned agents */}
-      {showDeactivateConfirm && !isSharedAgent && (
-        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-slate-200">
-            <div className="flex items-start gap-4">
-              <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center flex-shrink-0">
-                <PowerOff className="h-6 w-6 text-amber-600" />
-              </div>
-              <div className="flex-1">
-                <h3 className="text-xl font-semibold text-slate-900 mb-2">Pause Agent</h3>
-                <p className="text-slate-600 mb-6">
-                  Pausing "{agent.agent_name}" will stop it from running. You can reactivate it anytime.
-                </p>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setShowDeactivateConfirm(false)}
-                    className="flex-1 px-4 py-3 text-sm font-medium text-slate-700 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleToggleStatus}
-                    disabled={actionLoading === 'toggle'}
-                    className="flex-1 px-4 py-3 text-sm font-medium text-white bg-amber-600 rounded-xl hover:bg-amber-700 disabled:opacity-50 flex items-center justify-center gap-2 transition-colors"
-                  >
-                    {actionLoading === 'toggle' ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                        Pausing...
-                      </>
-                    ) : (
-                      'Pause Agent'
-                    )}
-                  </button>
-                </div>
+      {/* Delete Confirmation Modal */}
+      <Modal isOpen={showDeleteConfirm && !isSharedAgent} onClose={() => setShowDeleteConfirm(false)}>
+        <div className="p-6">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 bg-red-100 rounded-xl flex items-center justify-center flex-shrink-0">
+              <AlertTriangle className="h-6 w-6 text-red-600" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-xl font-semibold text-slate-900 mb-2">Delete Agent</h3>
+              <p className="text-slate-600 mb-6">
+                Are you sure you want to delete "{agent?.agent_name}"? This will permanently remove the agent and all its history. This can't be undone.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowDeleteConfirm(false)}
+                  className="flex-1 px-4 py-3 text-sm font-medium text-slate-700 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDelete}
+                  disabled={actionLoading === 'delete'}
+                  className="flex-1 px-4 py-3 text-sm font-medium text-white bg-red-600 rounded-xl hover:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2 transition-colors"
+                >
+                  {actionLoading === 'delete' ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      Deleting...
+                    </>
+                  ) : (
+                    'Delete Forever'
+                  )}
+                </button>
               </div>
             </div>
           </div>
         </div>
-      )}
+      </Modal>
+
+      {/* Deactivate Confirmation Modal */}
+      <Modal isOpen={showDeactivateConfirm && !isSharedAgent} onClose={() => setShowDeactivateConfirm(false)}>
+        <div className="p-6">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center flex-shrink-0">
+              <PowerOff className="h-6 w-6 text-amber-600" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-xl font-semibold text-slate-900 mb-2">Pause Agent</h3>
+              <p className="text-slate-600 mb-6">
+                Pausing "{agent?.agent_name}" will stop it from running. You can reactivate it anytime.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowDeactivateConfirm(false)}
+                  className="flex-1 px-4 py-3 text-sm font-medium text-slate-700 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleToggleStatus}
+                  disabled={actionLoading === 'toggle'}
+                  className="flex-1 px-4 py-3 text-sm font-medium text-white bg-amber-600 rounded-xl hover:bg-amber-700 disabled:opacity-50 flex items-center justify-center gap-2 transition-colors"
+                >
+                  {actionLoading === 'toggle' ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      Pausing...
+                    </>
+                  ) : (
+                    'Pause Agent'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

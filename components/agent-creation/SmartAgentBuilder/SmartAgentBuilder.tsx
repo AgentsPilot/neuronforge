@@ -60,6 +60,7 @@ import { Agent, SmartAgentBuilderProps } from './types/agent';
 interface SmartAgentBuilderPropsWithPersistence extends SmartAgentBuilderProps {
   restoredAgent?: Agent;
   sessionId?: string;
+  editMode?: boolean; // NEW: Flag to indicate edit-only mode
   onStateChange?: (state: {
     agent: Agent | null;
     isEditing: boolean;
@@ -86,7 +87,7 @@ const validateAgent = (agent: Agent): string | null => {
 };
 
 // Debug Panel Component
-const DebugPanel = ({ agent, prompt, promptType, clarificationAnswers, isEditing, editedAgent, sessionId }) => {
+const DebugPanel = ({ agent, prompt, promptType, clarificationAnswers, isEditing, editedAgent, sessionId, editMode }) => {
   const [showDebug, setShowDebug] = useState(false);
   const [activeTab, setActiveTab] = useState('agent');
 
@@ -98,6 +99,7 @@ const DebugPanel = ({ agent, prompt, promptType, clarificationAnswers, isEditing
     clarificationAnswers: clarificationAnswers,
     sessionId: sessionId,
     isEditing: isEditing,
+    editMode: editMode, // NEW: Include edit mode in debug data
     currentAgent: isEditing ? editedAgent : agent
   };
 
@@ -119,7 +121,9 @@ const DebugPanel = ({ agent, prompt, promptType, clarificationAnswers, isEditing
             </div>
             <div>
               <h3 className="text-lg font-semibold text-white">Debug Panel</h3>
-              <p className="text-xs text-gray-400">Real-time data inspection</p>
+              <p className="text-xs text-gray-400">
+                Real-time data inspection {editMode && <span className="text-yellow-400">(Edit Mode)</span>}
+              </p>
             </div>
           </div>
           <button
@@ -300,7 +304,7 @@ const DebugPanel = ({ agent, prompt, promptType, clarificationAnswers, isEditing
               </div>
               <div className="bg-gray-800/30 rounded-lg p-3 text-center">
                 <div className={`font-medium ${agent?.id ? 'text-green-400' : 'text-yellow-400'}`}>
-                  {agent?.id ? 'SAVED' : 'DRAFT'}
+                  {agent?.id ? 'SAVED' : editMode ? 'EDITING' : 'DRAFT'}
                 </div>
                 <div className="text-gray-400">Status</div>
               </div>
@@ -416,6 +420,7 @@ export default function SmartAgentBuilder({
   onCancel,
   restoredAgent,
   sessionId: providedSessionId,
+  editMode = false, // NEW: Add editMode with default false
   onStateChange
 }: SmartAgentBuilderPropsWithPersistence) {
   const { user } = useAuth();
@@ -432,6 +437,7 @@ export default function SmartAgentBuilder({
     hasOnCancel: !!onCancel,
     userId: user?.id,
     hasRestoredAgent: !!restoredAgent,
+    editMode, // NEW: Log edit mode
     sessionId: sessionId.current
   });
   
@@ -444,9 +450,12 @@ export default function SmartAgentBuilder({
     return null;
   });
   
-  const [isEditing, setIsEditing] = useState(false);
-  const [editedAgent, setEditedAgent] = useState<Agent | null>(null);
-  const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
+  // NEW: Initialize edit state based on editMode
+  const [isEditing, setIsEditing] = useState(editMode);
+  const [editedAgent, setEditedAgent] = useState<Agent | null>(
+    editMode && restoredAgent ? { ...restoredAgent } : null
+  );
+  const [showTechnicalDetails, setShowTechnicalDetails] = useState(editMode); // Show technical details by default in edit mode
   const [isCreating, setIsCreating] = useState(false);
   const [creationError, setCreationError] = useState<string | null>(null);
   
@@ -476,15 +485,23 @@ export default function SmartAgentBuilder({
     }
   }, [isEditing]);
 
+  // MODIFIED: Skip generation in edit mode
   useEffect(() => {
     console.log('SmartAgentBuilder useEffect triggered:', {
       hasUser: !!user?.id,
       hasPrompt: !!prompt,
       promptLength: prompt?.length || 0,
+      editMode, // NEW: Log edit mode
       hasInitiated: hasInitiatedGeneration.current,
       hasAgent: !!agent,
       isGenerating
     });
+    
+    // NEW: Skip generation completely if in edit mode
+    if (editMode) {
+      console.log('Edit mode - skipping agent generation');
+      return;
+    }
     
     if (hasInitiatedGeneration.current || agent || isGenerating) {
       console.log('Skipping generation - already initiated or agent exists');
@@ -501,7 +518,7 @@ export default function SmartAgentBuilder({
         prompt: !!prompt
       });
     }
-  }, [user?.id, prompt, agent, isGenerating]);
+  }, [user?.id, prompt, agent, isGenerating, editMode]); // NEW: Add editMode to dependencies
 
   const handleGenerateAgent = async () => {
     if (isGenerating || agent) {
@@ -557,6 +574,9 @@ export default function SmartAgentBuilder({
     }
   };
 
+// Import the auth helper at the top
+// import { getAuthHeaders } from '@/utils/apiAuth'; // Add this import
+
   const handleCreateAgent = async () => {
     const finalAgent = isEditing ? editedAgent : agent;
     console.log('Creating agent:', finalAgent?.agent_name);
@@ -599,12 +619,45 @@ export default function SmartAgentBuilder({
 
       console.log('Saving agent via API:', agentData.agent_name);
 
-      // FIXED: Use the correct API endpoint that matches your file structure
-      const response = await fetch('/api/create-agent', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+      // Use appropriate API endpoint based on edit mode
+      const apiEndpoint = editMode && finalAgent.id ? `/api/agents/${finalAgent.id}` : '/api/create-agent';
+      const method = editMode && finalAgent.id ? 'PUT' : 'POST';
+
+      // Prepare headers with authentication
+      const headers = {
+        'Content-Type': 'application/json',
+        'x-user-id': user.id, // Your API requires this header
+      };
+
+      // Add authorization token if available
+      try {
+        const supabaseAuth = localStorage.getItem('supabase.auth.token');
+        if (supabaseAuth) {
+          const authData = JSON.parse(supabaseAuth);
+          if (authData.access_token) {
+            headers['authorization'] = `Bearer ${authData.access_token}`;
+          }
+        }
+      } catch (e) {
+        // Auth token not available, but x-user-id should be sufficient
+        console.log('No auth token found for save operation, using user ID header only');
+      }
+
+      // === DEBUG INFO ===
+      console.log('=== DEBUG INFO ===');
+      console.log('User from useAuth:', user);
+      console.log('User ID:', user?.id);
+      console.log('Edit Mode:', editMode);
+      console.log('Final Agent ID:', finalAgent.id);
+      console.log('API Endpoint:', apiEndpoint);
+      console.log('Method:', method);
+      console.log('Headers being sent:', JSON.stringify(headers, null, 2));
+      console.log('Agent data user_id:', agentData.user_id);
+      console.log('==================');
+
+      const response = await fetch(apiEndpoint, {
+        method: method,
+        headers: headers,
         body: JSON.stringify({ agent: agentData }),
       });
 
@@ -619,7 +672,7 @@ export default function SmartAgentBuilder({
       if (responseText.includes('<!DOCTYPE')) {
         console.error('ERROR: Received HTML instead of JSON!');
         console.error('This usually means the API endpoint is not working');
-        throw new Error('API endpoint returned HTML instead of JSON. Check if /api/create-agent exists and is working.');
+        throw new Error(`API endpoint ${apiEndpoint} returned HTML instead of JSON. Check if the endpoint exists and is working.`);
       }
 
       let result;
@@ -632,7 +685,17 @@ export default function SmartAgentBuilder({
       }
 
       if (!response.ok) {
-        throw new Error(result.error || `HTTP error! status: ${response.status}`);
+        // Enhanced error handling with auth-specific messages
+        let errorMessage = result.error || `HTTP error! status: ${response.status}`;
+        
+        if (response.status === 401) {
+          errorMessage += '\n\nThis appears to be an authentication issue. Please check:\n';
+          errorMessage += '- You are properly logged in\n';
+          errorMessage += '- Your session hasn\'t expired\n';
+          errorMessage += `- The API endpoint ${apiEndpoint} is receiving proper authentication headers`;
+        }
+        
+        throw new Error(errorMessage);
       }
 
       const savedAgent = result.agent;
@@ -669,8 +732,8 @@ export default function SmartAgentBuilder({
     }
   };
 
-  // Loading state with compact design
-  if (isGenerating && !agent) {
+  // Loading state with compact design (skip in edit mode)
+  if (isGenerating && !agent && !editMode) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 flex items-center justify-center p-6">
         <div className="max-w-md w-full bg-white/70 backdrop-blur-xl rounded-2xl p-6 shadow-xl border border-white/20 text-center">
@@ -706,8 +769,8 @@ export default function SmartAgentBuilder({
     );
   }
 
-  // Error state with enhanced design
-  if (error && !agent) {
+  // Error state with enhanced design (skip in edit mode)
+  if (error && !agent && !editMode) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-red-50 to-orange-50 flex items-center justify-center p-6">
         <div className="max-w-lg w-full bg-white/70 backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-white/20 text-center">
@@ -728,7 +791,7 @@ export default function SmartAgentBuilder({
               </div>
               Try Again
             </button>
-            {onBack && (
+            {onBack && !editMode && (
               <button
                 onClick={onBack}
                 className="w-full bg-white/90 text-gray-700 px-6 py-4 rounded-2xl hover:bg-white transition-all duration-200 flex items-center justify-center gap-3 font-medium shadow-sm border border-gray-200"
@@ -743,8 +806,8 @@ export default function SmartAgentBuilder({
     );
   }
 
-  // No agent state with enhanced design
-  if (!agent && !isGenerating) {
+  // No agent state with enhanced design (skip in edit mode)
+  if (!agent && !isGenerating && !editMode) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-blue-50 flex items-center justify-center p-6">
         <div className="max-w-lg w-full bg-white/70 backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-white/20 text-center">
@@ -799,13 +862,13 @@ export default function SmartAgentBuilder({
                   Smart Agent Builder
                 </h1>
                 <p className="text-xs text-gray-500">
-                  {isEditing ? 'Editing Agent Configuration' : 'Generated Agent Ready'}
+                  {editMode ? 'Agent Edit Mode' : isEditing ? 'Editing Agent Configuration' : 'Generated Agent Ready'}
                 </p>
               </div>
             </div>
 
             <div className="flex items-center gap-3">
-              {!isEditing && currentAgent && (
+              {!isEditing && currentAgent && !editMode && (
                 <div className="hidden md:flex items-center gap-2 px-4 py-2 bg-green-100 text-green-700 rounded-full text-sm font-medium">
                   <CheckCircle className="h-4 w-4" />
                   Agent Ready
@@ -813,7 +876,8 @@ export default function SmartAgentBuilder({
               )}
               
               <div className="flex items-center gap-2">
-                {onBack && (
+                {/* NEW: Conditionally show back button - hide in edit mode */}
+                {onBack && !editMode && (
                   <button
                     onClick={onBack}
                     className="text-gray-500 hover:text-gray-700 transition-colors px-4 py-2 rounded-xl hover:bg-white/50 flex items-center gap-2"
@@ -842,6 +906,17 @@ export default function SmartAgentBuilder({
                   </div>
                 ) : (
                   <div className="flex items-center gap-2">
+                    {/* NEW: Show "Back to Agent" button when in editMode but not actively editing */}
+                    {editMode && onCancel && (
+                      <button
+                        onClick={onCancel}
+                        className="bg-gray-600 text-white px-4 py-2 rounded-xl hover:bg-gray-700 transition-all duration-200 flex items-center gap-2 font-medium"
+                      >
+                        <ArrowLeft className="h-4 w-4" />
+                        Back to Agent
+                      </button>
+                    )}
+                    
                     <button
                       onClick={handleEdit}
                       className="bg-white/90 text-gray-700 px-4 py-2 rounded-xl hover:bg-white transition-all duration-200 flex items-center gap-2 font-medium shadow-sm border border-gray-200"
@@ -871,12 +946,12 @@ export default function SmartAgentBuilder({
                       {isCreating ? (
                         <>
                           <Loader2 className="h-4 w-4 animate-spin" />
-                          Creating...
+                          {editMode ? 'Updating...' : 'Creating...'}
                         </>
                       ) : (
                         <>
-                          <Zap className="h-2 w-2" />
-                          Create Agent
+                          <Zap className="h-4 w-4" />
+                          {editMode ? 'Update Agent' : 'Create Agent'}
                         </>
                       )}
                     </button>
@@ -894,7 +969,9 @@ export default function SmartAgentBuilder({
           <div className="bg-red-50/80 backdrop-blur-xl border border-red-200 rounded-xl p-4 flex items-start gap-3">
             <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5 flex-shrink-0" />
             <div className="flex-1">
-              <h4 className="font-medium text-red-800">Failed to Create Agent</h4>
+              <h4 className="font-medium text-red-800">
+                Failed to {editMode ? 'Update' : 'Create'} Agent
+              </h4>
               <p className="text-red-600 text-sm mt-1">{creationError}</p>
               <button
                 onClick={() => setCreationError(null)}
@@ -946,6 +1023,7 @@ export default function SmartAgentBuilder({
           clarificationAnswers={clarificationAnswers}
           isEditing={isEditing}
           editedAgent={editedAgent}
+          editMode={editMode}
           sessionId={sessionId.current}
         />
 

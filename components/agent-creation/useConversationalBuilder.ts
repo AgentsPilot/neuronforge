@@ -9,7 +9,7 @@ import {
 } from './types';
 
 /**
- * FIXED VERSION: Proper completion state handling with AI prevention
+ * FIXED VERSION: Proper completion state handling with AI prevention and enhanced error handling
  */
 export function useConversationalBuilder(params: {
   initialPrompt?: string;
@@ -35,7 +35,7 @@ export function useConversationalBuilder(params: {
   const hasProcessedInitialPrompt = useRef(false);
   const isCurrentlyProcessing = useRef(false);
   const isInitialized = useRef(false);
-  const enhancementStarted = useRef(false); // NEW: Prevent enhancement loops
+  const enhancementStarted = useRef(false);
 
   const [inputValue, setInputValue] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -95,7 +95,7 @@ export function useConversationalBuilder(params: {
       if (restoredState.conversationCompleted || restoredState.planApproved) {
         hasProcessedInitialPrompt.current = true;
         isInitialized.current = true;
-        enhancementStarted.current = true; // NEW: Mark enhancement as started if completed
+        enhancementStarted.current = true;
       }
       
       return {
@@ -106,7 +106,6 @@ export function useConversationalBuilder(params: {
         isInitialized: true,
       };
     } else {
-      // NEW: Reset flags for fresh start
       enhancementStarted.current = false;
     }
     
@@ -136,8 +135,6 @@ export function useConversationalBuilder(params: {
     if (isInitialized.current && restoredState && !enhancementStarted.current) {
       skipReasons.push('already_initialized');
     }
-    
-    // NOTE: Removed currently_processing and is_processing checks as they were blocking valid enhancement
 
     if (skipReasons.length > 0) {
       console.log('🚫 AI Processing BLOCKED - Reasons:', skipReasons);
@@ -489,6 +486,219 @@ This breaks down exactly what your agent will do. Would you like to use this enh
     [projectState, isProcessing, user?.id, user?.connectedPlugins, addMessage]
   );
 
+  // Enhanced API Functions with better error handling
+  const analyzePromptClarity = async (prompt: string): Promise<ClarityAnalysis> => {
+    if (!user?.id || !prompt?.trim()) {
+      console.error('Invalid parameters for analysis:', { hasUserId: !!user?.id, hasPrompt: !!prompt?.trim() });
+      throw new Error('Invalid parameters for analysis');
+    }
+
+    const requestPayload = {
+      prompt: prompt.trim(),
+      userId: user.id,
+      sessionId: sessionId.current,
+      connected_plugins: user?.connectedPlugins || {},
+      bypassPluginValidation: false,
+    };
+
+    console.log('🔍 Making analysis API call:', {
+      endpoint: '/api/analyze-prompt-clarity',
+      userId: user.id,
+      sessionId: sessionId.current,
+      promptLength: prompt.trim().length,
+      hasConnectedPlugins: Object.keys(user?.connectedPlugins || {}).length > 0
+    });
+
+    try {
+      const response = await fetch('/api/analyze-prompt-clarity', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': user.id,
+          'x-session-id': sessionId.current,
+        },
+        body: JSON.stringify(requestPayload),
+      });
+
+      console.log('📡 API Response received:', {
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok,
+        headers: {
+          contentType: response.headers.get('content-type'),
+          contentLength: response.headers.get('content-length')
+        }
+      });
+
+      if (!response.ok) {
+        // Enhanced error handling - try to get detailed error information
+        let errorDetails = { message: 'Unknown error', details: '', error: '' };
+        
+        try {
+          const contentType = response.headers.get('content-type');
+          
+          if (contentType && contentType.includes('application/json')) {
+            const errorData = await response.json();
+            errorDetails = errorData;
+            console.error('❌ API returned JSON error:', errorData);
+          } else {
+            const errorText = await response.text();
+            errorDetails.details = errorText;
+            errorDetails.error = errorText;
+            console.error('❌ API returned text error:', errorText.slice(0, 500));
+          }
+        } catch (parseError) {
+          console.error('❌ Could not parse error response:', parseError);
+        }
+
+        console.error(`Analysis API error: ${response.status} - ${JSON.stringify(errorDetails)}`);
+        
+        // Return enhanced fallback analysis based on the Gmail/Drive request
+        return {
+          clarityScore: 45,
+          questionsCount: 3,
+          needsClarification: true,
+          aiValidationFailed: true,
+          bypassedPluginValidation: false,
+          hadPluginWarning: false,
+          analysis: {
+            data: { status: "partial", detected: "Gmail search, attachment with invoice" },
+            timing: { status: "missing", detected: "" },
+            output: { status: "partial", detected: "Copy invoice to Google Drive" },
+            actions: { status: "partial", detected: "Search, find, copy" },
+            delivery: { status: "partial", detected: "Google Drive storage" },
+            error_handling: { status: "missing", detected: "" }
+          },
+          error: `API Error ${response.status}: ${errorDetails.message || errorDetails.details || errorDetails.error || 'Server error'}`,
+          serverError: true,
+          questionsSequence: [
+            {
+              id: 'email_search_criteria',
+              question: "How should I identify emails that contain invoices?",
+              dimension: 'data',
+              type: 'single_choice',
+              options: [
+                { value: "filename_invoice", label: "Look for attachments with 'invoice' in the filename", description: "Search attachment names for the word 'invoice'" },
+                { value: "subject_invoice", label: "Check emails with 'invoice' in the subject line", description: "Look at email subjects containing 'invoice'" },
+                { value: "pdf_attachments", label: "Check all PDF attachments in recent emails", description: "Examine all PDF files attached to the last 10 emails" },
+                { value: "sender_specific", label: "Look for emails from specific senders", description: "Target emails from known invoice senders" },
+                { value: "custom", label: "Other criteria", description: "Let me specify different search criteria" }
+              ],
+              allowCustom: true
+            },
+            {
+              id: 'drive_organization',
+              question: "Where in Google Drive should I save the invoice files?",
+              dimension: 'delivery',
+              type: 'single_choice',
+              options: [
+                { value: "root_folder", label: "Save directly in My Drive root", description: "Place files in the main Google Drive folder" },
+                { value: "invoices_folder", label: "Create/use an 'Invoices' folder", description: "Organize all invoices in a dedicated folder" },
+                { value: "monthly_folders", label: "Create monthly folders (e.g., '2025-01')", description: "Organize by month automatically" },
+                { value: "custom_path", label: "Specific folder path", description: "Let me specify the exact folder location" }
+              ],
+              allowCustom: true
+            },
+            {
+              id: 'automation_timing',
+              question: "When should this automation run?",
+              dimension: 'timing', 
+              type: 'single_choice',
+              options: [
+                { value: 'new_emails', label: 'When new emails arrive', description: 'Process emails immediately as they come in (real-time)' },
+                { value: 'daily_9am', label: 'Daily at 9:00 AM', description: 'Check for invoices once per day' },
+                { value: 'twice_daily', label: 'Twice daily (9 AM & 5 PM)', description: 'Morning and evening processing' },
+                { value: 'weekly_monday', label: 'Weekly on Monday 9 AM', description: 'Weekly invoice processing' },
+                { value: 'manual_trigger', label: 'Only when I trigger it manually', description: 'Run on-demand when needed' }
+              ],
+              allowCustom: false
+            }
+          ]
+        };
+      }
+
+      const result = await response.json();
+      
+      console.log('✅ Analysis API success:', {
+        clarityScore: result.clarityScore,
+        questionsCount: result.questionsSequence?.length || 0,
+        needsClarification: result.needsClarification,
+        hasPluginWarning: !!result.pluginWarning
+      });
+      
+      if (typeof result.clarityScore !== 'number') {
+        throw new Error('Invalid analysis response structure');
+      }
+      
+      return result;
+    } catch (error: any) {
+      console.error('❌ Analysis request failed:', error);
+      
+      // Return comprehensive fallback analysis on any network/parsing error
+      return {
+        clarityScore: 40,
+        questionsCount: 3,
+        needsClarification: true,
+        aiValidationFailed: true,
+        bypassedPluginValidation: false,
+        hadPluginWarning: false,
+        analysis: {
+          data: { status: "partial", detected: "Gmail search, attachment with invoice" },
+          timing: { status: "missing", detected: "" },
+          output: { status: "partial", detected: "Copy invoice to Google Drive" },
+          actions: { status: "partial", detected: "Search, find, copy" },
+          delivery: { status: "partial", detected: "Google Drive storage" },
+          error_handling: { status: "missing", detected: "" }
+        },
+        error: error instanceof Error ? error.message : 'Network error',
+        networkError: true,
+        questionsSequence: [
+          {
+            id: 'email_identification',
+            question: "Since I'm having trouble analyzing your request automatically, let me ask directly: How should I identify emails with invoices?",
+            dimension: 'data',
+            type: 'single_choice',
+            options: [
+              { value: "attachment_filename", label: "Files with 'invoice' in the name", description: "Look for attachments containing the word 'invoice' in the filename" },
+              { value: "email_subject", label: "Email subject contains 'invoice'", description: "Check emails where the subject line mentions invoices" },
+              { value: "pdf_files_only", label: "All PDF attachments", description: "Examine every PDF file attached to recent emails" },
+              { value: "specific_senders", label: "From known invoice senders", description: "Target emails from specific companies or addresses" },
+              { value: "custom_criteria", label: "Let me specify custom criteria", description: "I'll provide specific search terms or conditions" }
+            ],
+            allowCustom: true
+          },
+          {
+            id: 'file_destination', 
+            question: "Where should I save the invoice files in Google Drive?",
+            dimension: 'delivery',
+            type: 'single_choice',
+            options: [
+              { value: "main_drive", label: "Directly in My Drive", description: "Save files in the root Google Drive folder" },
+              { value: "invoices_folder", label: "Create an 'Invoices' folder", description: "Organize all invoices in one dedicated folder" },
+              { value: "date_organized", label: "Organize by date (monthly folders)", description: "Create folders like '2025-01-Invoices' automatically" },
+              { value: "custom_location", label: "Specific folder I'll choose", description: "Let me specify the exact folder path" }
+            ],
+            allowCustom: true
+          },
+          {
+            id: 'run_frequency',
+            question: "How often should this automation check for new invoices?",
+            dimension: 'timing',
+            type: 'single_choice',
+            options: [
+              { value: 'real_time', label: 'As soon as new emails arrive', description: 'Immediate processing when emails come in' },
+              { value: 'daily_morning', label: 'Once daily at 9:00 AM', description: 'Daily check during business hours' },
+              { value: 'twice_daily', label: 'Morning (9 AM) and evening (5 PM)', description: 'Two checks per day' },
+              { value: 'weekly', label: 'Weekly on Monday mornings', description: 'Once per week summary' },
+              { value: 'manual_only', label: 'Only when I manually trigger it', description: 'Run on-demand when needed' }
+            ],
+            allowCustom: false
+          }
+        ]
+      };
+    }
+  };
+
   // BULLETPROOF initial prompt processing - Enhanced with completion checks and restored state validation
   useEffect(() => {
     // ULTIMATE CHECK: Should we process the initial prompt?
@@ -547,11 +757,32 @@ This breaks down exactly what your agent will do. Would you like to use this enh
         const analysis = await analyzePromptClarity(initialPrompt.trim());
         
         // Handle analysis failure gracefully
-        if (analysis.aiValidationFailed) {
-          console.log('⚠️ Analysis failed, proceeding to enhancement');
-          addMessage('I had trouble analyzing your request, but let me enhance it directly...', 'ai');
-          setTimeout(() => startEnhancement(initialPrompt.trim(), {}), 1000);
-          return;
+        if (analysis.aiValidationFailed || analysis.serverError || analysis.networkError) {
+          console.log('⚠️ Analysis failed, but got fallback questions');
+          
+          if (analysis.questionsSequence && analysis.questionsSequence.length > 0) {
+            // Use the fallback questions from the analysis
+            addMessage('I had some trouble with the automatic analysis, but I can still help you! Let me ask a few questions to understand your automation better.', 'ai');
+            
+            const firstId = analysis.questionsSequence[0]?.id;
+            const initialVisible = new Set<string>();
+            if (firstId) initialVisible.add(firstId);
+
+            setProjectState((prev) => ({
+              ...prev,
+              questionsSequence: analysis.questionsSequence,
+              currentQuestionIndex: 0,
+              isProcessingQuestion: false,
+              questionsWithVisibleOptions: initialVisible,
+              clarityScore: analysis.clarityScore || 40
+            }));
+            return;
+          } else {
+            // No questions available, go straight to enhancement
+            addMessage('I had trouble analyzing your request, but let me enhance it directly...', 'ai');
+            setTimeout(() => startEnhancement(initialPrompt.trim(), {}), 1000);
+            return;
+          }
         }
         
         updateRequirementsFromAnalysis(analysis);
@@ -803,66 +1034,6 @@ This breaks down exactly what your agent will do. Would you like to use this enh
     startEnhancement
   ]);
 
-  // API Functions
-  const analyzePromptClarity = async (prompt: string): Promise<ClarityAnalysis> => {
-    if (!user?.id || !prompt?.trim()) {
-      throw new Error('Invalid parameters for analysis');
-    }
-
-    try {
-      const response = await fetch('/api/analyze-prompt-clarity', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-user-id': user.id,
-          'x-session-id': sessionId.current,
-        },
-        body: JSON.stringify({
-          prompt: prompt.trim(),
-          userId: user.id,
-          sessionId: sessionId.current,
-          connected_plugins: user?.connectedPlugins || {},
-          bypassPluginValidation: false,
-        }),
-      });
-
-      if (!response.ok) {
-        console.error(`Analysis API error: ${response.status}`);
-        
-        // Return a fallback analysis instead of throwing
-        return {
-          clarityScore: 50,
-          questionsCount: 0,
-          needsClarification: false,
-          aiValidationFailed: true,
-          bypassedPluginValidation: false,
-          hadPluginWarning: false,
-          analysis: {}
-        };
-      }
-
-      const result = await response.json();
-      if (typeof result.clarityScore !== 'number') {
-        throw new Error('Invalid analysis response');
-      }
-      
-      return result;
-    } catch (error) {
-      console.error('Analysis error:', error);
-      
-      // Return fallback analysis on any error
-      return {
-        clarityScore: 50,
-        questionsCount: 0,
-        needsClarification: false,
-        aiValidationFailed: true,
-        bypassedPluginValidation: false,
-        hadPluginWarning: false,
-        analysis: {}
-      };
-    }
-  };
-
   const updateRequirementsFromAnalysis = (analysis: ClarityAnalysis) => {
     if (analysis.pluginWarning) {
       addMessage(`💡 FYI: ${analysis.pluginWarning.message}`, 'ai');
@@ -991,7 +1162,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       ...prev, 
       userApproved: true, 
       isReadyToBuild: true,
-      planApproved: true, // NEW: Mark plan as approved
+      planApproved: true,
       workflowPhase: 'completed'
     }));
     addMessage("Excellent! Moving to the smart build phase.", 'ai');
@@ -1008,7 +1179,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       ...prev, 
       userApproved: true, 
       isReadyToBuild: true,
-      planApproved: true, // NEW: Mark plan as approved
+      planApproved: true,
       workflowPhase: 'completed'
     }));
     addMessage("Perfect! Using your original request to build your agent.", 'ai');

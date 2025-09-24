@@ -1,13 +1,50 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+// Enhanced error logging function
+function logError(stage: string, error: any, context?: any) {
+  console.error(`❌ [${stage}] Error:`, {
+    message: error.message,
+    stack: error.stack,
+    context
+  })
+}
 
-// Token tracking function
+// Validate environment variables at startup
+function validateEnvironment() {
+  const required = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY']
+  const missing = required.filter(key => !process.env[key])
+  
+  if (missing.length > 0) {
+    console.error('❌ Missing required environment variables:', missing)
+    return false
+  }
+  
+  console.log('✅ Environment variables validated')
+  return true
+}
+
+// Safe Supabase client creation
+let supabase: any = null
+try {
+  if (validateEnvironment()) {
+    supabase = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    )
+    console.log('✅ Supabase client created successfully')
+  }
+} catch (error) {
+  logError('SUPABASE_INIT', error)
+}
+
+// Enhanced token tracking with error handling
 async function trackTokenUsage(supabase: any, userId: string, tokenData: any) {
+  if (!supabase) {
+    console.warn('⚠️ Skipping token tracking - Supabase client not available')
+    return
+  }
+
   try {
     const { error } = await supabase
       .from('token_usage')
@@ -25,21 +62,56 @@ async function trackTokenUsage(supabase: any, userId: string, tokenData: any) {
       })
     
     if (error) {
-      console.error('Token tracking error:', error)
-      throw error
+      logError('TOKEN_TRACKING', error, { userId, tokenData })
+    } else {
+      console.log('✅ Token usage tracked successfully')
     }
   } catch (error) {
-    console.error('Failed to track token usage:', error)
+    logError('TOKEN_TRACKING_CATCH', error, { userId })
   }
 }
 
-// Extract JSON from markdown code blocks
-function extractJSON(content: string): string {
-  const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
-  if (jsonMatch) {
-    return jsonMatch[1].trim()
+// Enhanced plugin fetching with better error handling
+async function getConnectedPlugins(userId: string, connected_plugins?: any): Promise<string[]> {
+  let pluginKeys: string[] = []
+
+  // Method 1: From frontend
+  if (connected_plugins && typeof connected_plugins === 'object') {
+    try {
+      pluginKeys = Object.keys(connected_plugins)
+      console.log(`✅ Plugins from frontend: ${pluginKeys}`)
+    } catch (error) {
+      logError('FRONTEND_PLUGINS', error, { connected_plugins })
+    }
   }
-  return content.trim()
+
+  // Method 2: From database (with better error handling)
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('plugin_connections')
+        .select('plugin_key, status')
+        .eq('user_id', userId)
+        .eq('status', 'active')
+
+      if (error) {
+        logError('DB_PLUGINS_QUERY', error, { userId })
+      } else if (data && data.length > 0) {
+        const dbPlugins = data.map(connection => connection.plugin_key)
+        pluginKeys = [...new Set([...pluginKeys, ...dbPlugins])]
+        console.log(`✅ Plugins from database: ${dbPlugins}`)
+      } else {
+        console.log(`ℹ️ No plugins found in database for user ${userId}`)
+      }
+    } catch (dbError) {
+      logError('DB_PLUGINS_CATCH', dbError, { userId })
+    }
+  } else {
+    console.warn('⚠️ Skipping database plugin lookup - Supabase client not available')
+  }
+
+  console.log(`✅ Final connected plugins for user ${userId}:`, pluginKeys)
+  return pluginKeys
 }
 
 // Plugin requirements for validation
@@ -58,7 +130,35 @@ const PLUGIN_REQUIREMENTS = {
   'monday': ['monday', 'monday_com']
 }
 
-// Detect required plugins from user prompt
+// Enhanced JSON extraction that handles multiple response formats
+function extractJSON(content: string): string {
+  console.log('🔍 Extracting JSON from content:', content.slice(0, 100) + '...')
+  
+  // Method 1: Look for JSON in markdown code blocks
+  const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
+  if (jsonMatch) {
+    console.log('✅ Found JSON in markdown code block')
+    return jsonMatch[1].trim()
+  }
+  
+  // Method 2: Look for JSON object that starts with {
+  const objectMatch = content.match(/\{[\s\S]*\}/)
+  if (objectMatch) {
+    console.log('✅ Found JSON object in content')
+    return objectMatch[0].trim()
+  }
+  
+  // Method 3: Try to find JSON array that starts with [
+  const arrayMatch = content.match(/\[[\s\S]*\]/)
+  if (arrayMatch) {
+    console.log('✅ Found JSON array in content')
+    return arrayMatch[0].trim()
+  }
+  
+  console.log('⚠️ No JSON structure found, returning original content')
+  return content.trim()
+}
+
 function detectRequiredPlugins(prompt: string): string[] {
   const lowerPrompt = prompt.toLowerCase()
   const requiredPlugins: string[] = []
@@ -73,7 +173,6 @@ function detectRequiredPlugins(prompt: string): string[] {
   return requiredPlugins
 }
 
-// Validate plugin requirements (simplified)
 function validatePluginRequirements(prompt: string, connectedPlugins: string[]): { 
   isValid: boolean, 
   missingPlugins: string[],
@@ -102,62 +201,87 @@ function validatePluginRequirements(prompt: string, connectedPlugins: string[]):
   }
 }
 
-// Get connected plugins
-async function getConnectedPlugins(userId: string, connected_plugins?: any): Promise<string[]> {
-  let pluginKeys: string[] = []
-
-  // Method 1: From frontend
-  if (connected_plugins && typeof connected_plugins === 'object') {
-    pluginKeys = Object.keys(connected_plugins)
-    console.log(`Plugins from frontend: ${pluginKeys}`)
+// Smart scheduling question generator
+function generateSchedulingQuestions(userPrompt: string): any[] {
+  const promptLower = userPrompt.toLowerCase();
+  
+  // Check if user already specified timing in prompt
+  const hasTimingInPrompt = promptLower.includes('daily') || 
+                           promptLower.includes('weekly') || 
+                           promptLower.includes('monthly') ||
+                           promptLower.includes('every') ||
+                           promptLower.includes('schedule') ||
+                           /\d+\s*(am|pm|hour|minute)/.test(promptLower);
+                           
+  if (hasTimingInPrompt) {
+    console.log('Timing already specified in prompt, skipping scheduling questions');
+    return [];
   }
-
-  // Method 2: From database
-  try {
-    const { data, error } = await supabase
-      .from('plugin_connections')
-      .select('plugin_key, status')
-      .eq('user_id', userId)
-      .eq('status', 'active')
-
-    if (!error && data && data.length > 0) {
-      const dbPlugins = data.map(connection => connection.plugin_key)
-      pluginKeys = [...new Set([...pluginKeys, ...dbPlugins])]
-      console.log(`Plugins from database: ${dbPlugins}`)
-    } else {
-      console.log(`No plugins found in database for user ${userId}`)
+  
+  // Email automations
+  if (promptLower.includes('email') || promptLower.includes('inbox') || promptLower.includes('gmail')) {
+    return [
+      {
+        id: 'email_schedule',
+        dimension: 'timing',
+        question: "When should this email automation run?",
+        type: 'single_choice',
+        options: [
+          { value: 'new_emails', label: 'When new emails arrive', description: 'Process emails immediately as they come in (real-time)' },
+          { value: 'daily_9am', label: 'Daily at 9:00 AM', description: 'Process all unread emails once per day' },
+          { value: 'daily_8am', label: 'Daily at 8:00 AM', description: 'Start of day email processing' },
+          { value: 'every_2h_work', label: 'Every 2 hours (9 AM - 5 PM)', description: 'Regular processing during work hours' },
+          { value: 'twice_daily', label: 'Twice daily (9 AM & 5 PM)', description: 'Morning and evening processing' },
+          { value: 'weekly_monday', label: 'Weekly on Monday 9 AM', description: 'Weekly email summary' }
+        ],
+        allowCustom: false
+      }
+    ];
+  }
+  
+  // Default for general automations
+  return [
+    {
+      id: 'automation_schedule',
+      dimension: 'timing',
+      question: "When should this automation run?",
+      type: 'single_choice',
+      options: [
+        { value: 'daily_9am', label: 'Daily at 9:00 AM', description: 'Once per day at start of work' },
+        { value: 'weekly_monday', label: 'Weekly on Monday 9:00 AM', description: 'Once per week at start of work week' },
+        { value: 'monthly_1st', label: 'Monthly on 1st at 9:00 AM', description: 'Once per month on first day' },
+        { value: 'on_demand', label: 'On-demand only', description: 'Manual trigger when needed' },
+        { value: 'twice_daily', label: 'Twice daily (9 AM & 5 PM)', description: 'Start and end of work day' }
+      ],
+      allowCustom: true
     }
-  } catch (dbError) {
-    console.warn('Could not fetch plugins from database:', dbError)
-  }
-
-  console.log(`Final connected plugins for user ${userId}:`, pluginKeys)
-  return pluginKeys
+  ];
 }
 
-// AI system prompt for analyzing automation requests
+// Enhanced AI system prompt that FORCES JSON response
 function buildAISystemPrompt(connectedPlugins: string[], userPrompt: string) {
-  return `You are an expert automation analyst. Analyze the user's request and identify ALL missing critical details needed for implementation.
+  return `You are an expert automation analyst. You MUST respond with valid JSON only.
 
 USER REQUEST: "${userPrompt}"
 CONNECTED SERVICES: ${connectedPlugins.length > 0 ? connectedPlugins.join(', ') : 'None'}
 
-CRITICAL: Only ask questions about services in the CONNECTED SERVICES list above. Do not reference any other services.
+CRITICAL: You must respond with valid JSON. Do not include any text outside the JSON structure.
 
 REQUIRED AUTOMATION DETAILS - ASK ABOUT ANY THAT ARE MISSING:
 
-1. DATA/WHAT TO MONITOR: What specific thing to track (stock symbol, file type, email criteria, etc.)
-2. TRIGGER/THRESHOLD: What condition triggers the action (price level, file size, keyword, etc.)  
-3. TIMING/WHEN TO RUN: How often to check (every 5 minutes, hourly, daily, real-time, etc.)
-4. OUTPUT/WHAT TO CREATE: What gets generated (alert message, report, summary, notification, etc.)
-5. DELIVERY/HOW TO DELIVER: How to send results (email, SMS, push notification, save to file, etc.)
-6. ERROR HANDLING: What to do when things fail (retry X times, send error alert, log and continue, etc.)
+1. DATA/WHAT TO MONITOR: What specific thing to track (email criteria, file type, etc.)
+2. TRIGGER/THRESHOLD: What condition triggers the action (keyword found, file received, etc.)  
+3. OUTPUT/WHAT TO CREATE: What gets generated (alert message, report, summary, notification, etc.)
+4. DELIVERY/HOW TO DELIVER: How to send results (email, SMS, save to file, etc.)
+5. ERROR HANDLING: What to do when things fail (retry, send error alert, log and continue, etc.)
+
+CRITICAL TIMING REQUIREMENT:
+DO NOT include timing/frequency/scheduling questions in your response. The system will automatically add appropriate scheduling questions based on the automation context. Focus only on the other dimensions above.
 
 ANALYSIS RULES:
 - Check each dimension: is it clearly specified, partially mentioned, or completely missing?
-- Ask about EVERY dimension that is missing or unclear - don't limit questions
-- Generate 4-6 questions to cover all missing essential details
-- Don't assume timing - if not specified, ask about frequency/schedule
+- Ask about dimensions that are missing or unclear (except timing - that's handled automatically)
+- Generate 2-4 content questions, avoiding timing since it's added separately
 - Don't assume output format - if unclear, ask what should be created
 - Don't assume error handling - if not mentioned, ask how to handle failures
 - ONLY use connected services in your questions and suggestions
@@ -169,14 +293,14 @@ CLARITY SCORING:
 - 30-49: Most dimensions missing
 - 0-29: Unclear automation intent
 
-Return JSON:
+You MUST return ONLY this JSON structure:
 {
   "needsClarification": boolean,
   "clarityScore": number,
   "questionsSequence": [
     {
       "id": "question_id",
-      "dimension": "data|timing|delivery|output|error_handling",
+      "dimension": "data|output|delivery|error_handling",
       "question": "Specific question?",
       "type": "single_choice",
       "options": [
@@ -196,378 +320,409 @@ Return JSON:
 }`
 }
 
-// Validate AI response for quality
-function validateAIResponse(aiResult: any, prompt: string): { isValid: boolean, reason?: string } {
-  const promptLower = prompt.toLowerCase()
+// Apply consistency checks and add scheduling questions
+function validateConsistency(result: any, userPrompt: string): any {
+  const scheduleQuestions = generateSchedulingQuestions(userPrompt)
+  console.log(`Generated ${scheduleQuestions.length} scheduling questions for consistency check`)
   
-  if (!aiResult.clarityScore || !Array.isArray(aiResult.questionsSequence)) {
-    return { isValid: false, reason: 'Invalid response structure' }
+  if (scheduleQuestions.length > 0) {
+    result.questionsSequence = [...(result.questionsSequence || []), ...scheduleQuestions]
+    console.log(`Added ${scheduleQuestions.length} scheduling questions. Total questions: ${result.questionsSequence.length}`)
   }
   
-  // Check for irrelevant questions
-  if (aiResult.questionsSequence.length > 0) {
-    for (const question of aiResult.questionsSequence) {
-      const qLower = question.question.toLowerCase()
-      
-      // Check for mentions of unconnected services
-      if (qLower.includes('notion') || qLower.includes('airtable') || qLower.includes('trello')) {
-        return { isValid: false, reason: 'Questions about unconnected services detected' }
-      }
-      
-      // Stock monitoring shouldn't have file/email scope questions
-      if ((promptLower.includes('stock') || promptLower.includes('price')) && 
-          !promptLower.includes('email') && !promptLower.includes('file')) {
-        if (qLower.includes('file') || qLower.includes('document') || 
-            qLower.includes('email scope') || qLower.includes('which emails')) {
-          return { isValid: false, reason: 'Irrelevant questions for stock monitoring' }
-        }
-      }
-      
-      // File processing shouldn't have stock questions
-      if ((promptLower.includes('file') || promptLower.includes('document')) && 
-          !promptLower.includes('stock') && !promptLower.includes('price')) {
-        if (qLower.includes('stock') || qLower.includes('price') || qLower.includes('ticker')) {
-          return { isValid: false, reason: 'Stock questions for file processing' }
-        }
-      }
-      
-      // Check for generic questions
-      if (qLower.includes('provide more details') || qLower.includes('tell me more')) {
-        return { isValid: false, reason: 'Generic questions detected' }
-      }
-    }
-  }
-  
-  return { isValid: true }
-}
-
-// Apply consistency checks
-function validateConsistency(result: any): any {
-  const questionCount = result.questionsSequence?.length || 0
+  const finalQuestionCount = result.questionsSequence?.length || 0
   
   // Adjust clarity score if it doesn't match question count
-  if (result.clarityScore > 75 && questionCount > 2) {
+  if (result.clarityScore > 75 && finalQuestionCount > 2) {
     console.log('Adjusting clarity score due to high question count')
-    result.clarityScore = Math.max(55, result.clarityScore - (questionCount * 12))
+    result.clarityScore = Math.max(55, result.clarityScore - (finalQuestionCount * 10))
   }
   
-  // Force clarification if score is low but no questions
-  if (result.clarityScore < 65 && questionCount === 0) {
-    console.log('Low clarity but no questions - forcing clarification')
-    result.needsClarification = true
-  }
-  
-  result.needsClarification = questionCount > 0 || result.clarityScore < 65
+  // Always need clarification if we have any questions (including scheduling)
+  result.needsClarification = finalQuestionCount > 0 || result.clarityScore < 65
   
   return result
 }
 
-// Fallback response
-const createFallbackResponse = () => ({
-  needsClarification: true,
-  clarityScore: 30,
-  questionsSequence: [
-    {
-      id: "automation_type",
-      dimension: "data",
-      question: "What type of automation would you like to create?",
-      type: "single_choice",
-      options: [
-        { value: "stock_monitoring", label: "Stock price monitoring", description: "Monitor stock prices and get alerts" },
-        { value: "file_processing", label: "File processing", description: "Analyze or process files automatically" },
-        { value: "email_automation", label: "Email automation", description: "Automate email tasks" },
-        { value: "data_monitoring", label: "Data monitoring", description: "Monitor data changes" },
-        { value: "custom", label: "Something else", description: "Different type of automation" }
+// Smart fallback for Gmail/Drive automation
+const createFallbackResponse = (userPrompt: string = '') => {
+  const scheduleQuestions = generateSchedulingQuestions(userPrompt)
+  const promptLower = userPrompt.toLowerCase()
+  
+  // Specific fallback for Gmail/Drive automation
+  if (promptLower.includes('gmail') && promptLower.includes('google drive')) {
+    return {
+      needsClarification: true,
+      clarityScore: 40,
+      questionsSequence: [
+        {
+          id: "email_search_criteria",
+          dimension: "data",
+          question: "How should I identify which emails contain invoices?",
+          type: "single_choice",
+          options: [
+            { value: "attachment_name", label: "Look for files with 'invoice' in filename", description: "Search attachment names for keyword 'invoice'" },
+            { value: "email_subject", label: "Check email subject for 'invoice'", description: "Look at email subjects containing 'invoice'" },
+            { value: "email_content", label: "Scan email content for invoice keywords", description: "Search email body text for invoice-related terms" },
+            { value: "pdf_attachments", label: "Check all PDF attachments", description: "Examine all PDF files attached to emails" },
+            { value: "custom", label: "Other criteria", description: "Let me specify different search criteria" }
+          ],
+          allowCustom: true
+        },
+        {
+          id: "drive_location",
+          dimension: "delivery",
+          question: "Where in Google Drive should I save the invoice?",
+          type: "single_choice",
+          options: [
+            { value: "root", label: "Main Drive folder", description: "Save directly in the root of Google Drive" },
+            { value: "invoices_folder", label: "Create/use 'Invoices' folder", description: "Organize invoices in a dedicated folder" },
+            { value: "monthly_folder", label: "Create monthly folders (e.g., '2025-01')", description: "Organize by month automatically" },
+            { value: "custom", label: "Specific folder path", description: "Let me specify the exact folder location" }
+          ],
+          allowCustom: true
+        },
+        ...scheduleQuestions
       ],
-      allowCustom: true
+      analysis: {
+        data: { status: "partial", detected: "Gmail search, attachment with invoice" },
+        timing: { status: "missing", detected: "" },
+        output: { status: "partial", detected: "Copy invoice to Google Drive" },
+        actions: { status: "partial", detected: "Search, find, copy" },
+        delivery: { status: "partial", detected: "Google Drive storage" },
+        error_handling: { status: "missing", detected: "" }
+      }
     }
-  ],
-  analysis: {
-    data: { status: "missing", detected: "" },
-    timing: { status: "missing", detected: "" },
-    output: { status: "missing", detected: "" },
-    actions: { status: "missing", detected: "" },
-    delivery: { status: "missing", detected: "" },
-    error_handling: { status: "missing", detected: "" }
   }
-})
-
-// Request cache for deduplication
-const requestCache = new Map<string, { 
-  timestamp: number, 
-  promise: Promise<any>,
-  result?: any 
-}>()
-
-const CACHE_DURATION = 5 * 60 * 1000
-
-const cleanupCache = () => {
-  const now = Date.now()
-  for (const [key, value] of requestCache.entries()) {
-    if (now - value.timestamp > CACHE_DURATION) {
-      requestCache.delete(key)
+  
+  // General fallback
+  return {
+    needsClarification: true,
+    clarityScore: 30,
+    questionsSequence: [
+      {
+        id: "automation_type",
+        dimension: "data",
+        question: "What type of automation would you like to create?",
+        type: "single_choice",
+        options: [
+          { value: "stock_monitoring", label: "Stock price monitoring", description: "Monitor stock prices and get alerts" },
+          { value: "file_processing", label: "File processing", description: "Analyze or process files automatically" },
+          { value: "email_automation", label: "Email automation", description: "Automate email tasks" },
+          { value: "data_monitoring", label: "Data monitoring", description: "Monitor data changes" },
+          { value: "custom", label: "Something else", description: "Different type of automation" }
+        ],
+        allowCustom: true
+      },
+      ...scheduleQuestions
+    ],
+    analysis: {
+      data: { status: "missing", detected: "" },
+      timing: { status: "missing", detected: "" },
+      output: { status: "missing", detected: "" },
+      actions: { status: "missing", detected: "" },
+      delivery: { status: "missing", detected: "" },
+      error_handling: { status: "missing", detected: "" }
     }
   }
 }
-setInterval(cleanupCache, 60 * 1000)
+
+// Enhanced parsing function that handles OpenAI responses
+function parseAIResponse(rawContent: string): any {
+  console.log('🔍 Parsing AI response, length:', rawContent.length)
+  console.log('📝 Raw content preview:', rawContent.slice(0, 200) + '...')
+  
+  // Step 1: Try to extract JSON from the response
+  let jsonContent = extractJSON(rawContent)
+  
+  // Step 2: If no JSON found, try to force-parse as JSON anyway
+  if (!jsonContent.startsWith('{') && !jsonContent.startsWith('[')) {
+    console.log('❌ No valid JSON structure found in response')
+    throw new Error('AI_RETURNED_PROSE_NOT_JSON')
+  }
+  
+  // Step 3: Parse the JSON
+  try {
+    const parsed = JSON.parse(jsonContent)
+    console.log('✅ Successfully parsed AI JSON response')
+    return parsed
+  } catch (parseError) {
+    console.log('❌ JSON parsing failed, content was:', jsonContent.slice(0, 300))
+    throw new Error('INVALID_JSON_FROM_AI')
+  }
+}
 
 export async function POST(request: NextRequest) {
-  console.log('API Route called - Simplified Prompt Analysis')
+  console.log('🚀 API Route called - Enhanced Error Handling')
   
   try {
+    // Step 1: Parse request body with enhanced error handling
     let requestBody
     try {
       requestBody = await request.json()
+      console.log('✅ Request body parsed successfully')
     } catch (bodyError) {
-      console.error('Failed to parse request body:', bodyError)
+      logError('REQUEST_PARSING', bodyError)
       return NextResponse.json(
-        { error: 'Invalid request body', ...createFallbackResponse() },
+        { 
+          error: 'Invalid request body', 
+          details: 'Failed to parse JSON',
+          ...createFallbackResponse() 
+        },
         { status: 400 }
       )
     }
 
+    // Step 2: Extract and validate parameters
     const { prompt, userId, connected_plugins = {}, bypassPluginValidation = false } = requestBody
     const userIdToUse = userId || request.headers.get('x-user-id') || 'anonymous'
 
-    console.log('Received:', { 
-      prompt: prompt?.slice(0, 100), 
+    console.log('✅ Request parameters:', { 
+      hasPrompt: !!prompt,
+      promptLength: prompt?.length || 0,
       userId: userIdToUse,
-      bypassPluginValidation: bypassPluginValidation
+      bypassPluginValidation,
+      connectedPluginsCount: Object.keys(connected_plugins).length
     })
 
     if (!prompt?.trim()) {
-      console.log('Empty prompt provided')
+      console.log('⚠️ Empty prompt provided')
       return NextResponse.json(
-        { error: 'Prompt is required', ...createFallbackResponse() },
+        { error: 'Prompt is required', ...createFallbackResponse(prompt) },
         { status: 400 }
       )
     }
 
-    // Get connected plugins once, reuse throughout
-    let connectedPlugins = await getConnectedPlugins(userIdToUse, connected_plugins)
+    // Step 3: Get connected plugins with error handling
+    let connectedPlugins: string[] = []
+    try {
+      connectedPlugins = await getConnectedPlugins(userIdToUse, connected_plugins)
+      console.log('✅ Connected plugins retrieved:', connectedPlugins.length)
+    } catch (pluginError) {
+      logError('PLUGIN_RETRIEVAL', pluginError, { userIdToUse })
+      connectedPlugins = []
+    }
 
-    // Keep original prompt, only create warning if needed
+    // Step 4: Plugin validation
     const finalPrompt = prompt.trim()
     let pluginWarning = null
     let filteredConnectedPlugins = connectedPlugins
     
     if (!bypassPluginValidation) {
-      const pluginValidation = validatePluginRequirements(prompt, connectedPlugins)
-      
-      if (!pluginValidation.isValid) {
-        console.log('Missing required plugins:', pluginValidation.missingPlugins)
+      try {
+        const pluginValidation = validatePluginRequirements(prompt, connectedPlugins)
         
-        // Create warning message
-        pluginWarning = {
-          missingServices: pluginValidation.missingPlugins,
-          message: `Note: Your request mentions ${pluginValidation.missingPlugins.join(', ')} but ${pluginValidation.missingPlugins.length === 1 ? 'this service isn\'t' : 'these services aren\'t'} connected. I'll help you create the automation using your available services instead.`
-        }
-        
-        console.log('Plugin validation warning created:', pluginWarning.message)
-
-        // CRITICAL FIX: Filter out unconnected plugins from AI context
-        const unconnectedAliases = pluginValidation.missingPlugins.flatMap(service => 
-          PLUGIN_REQUIREMENTS[service as keyof typeof PLUGIN_REQUIREMENTS] || [service]
-        )
-        
-        console.log('Filtering out unconnected aliases:', unconnectedAliases)
-        
-        filteredConnectedPlugins = connectedPlugins.filter(plugin => {
-          const pluginLower = plugin.toLowerCase()
-          const shouldRemove = unconnectedAliases.some(alias => 
-            pluginLower.includes(alias.toLowerCase())
-          )
-          if (shouldRemove) {
-            console.log(`Removing unconnected plugin from AI context: ${plugin}`)
+        if (!pluginValidation.isValid) {
+          console.log('⚠️ Missing required plugins:', pluginValidation.missingPlugins)
+          
+          pluginWarning = {
+            missingServices: pluginValidation.missingPlugins,
+            message: `Note: Your request mentions ${pluginValidation.missingPlugins.join(', ')} but ${pluginValidation.missingPlugins.length === 1 ? 'this service isn\'t' : 'these services aren\'t'} connected.`
           }
-          return !shouldRemove
-        })
-        
-        console.log('Original connected plugins:', connectedPlugins)
-        console.log('Filtered connected plugins for AI:', filteredConnectedPlugins)
-      }
-    }
-
-    if (!process.env.OPENAI_API_KEY) {
-      console.error('Missing OpenAI API key, using fallback')
-      return NextResponse.json({ 
-        ...createFallbackResponse(),
-        connectedPlugins: connectedPlugins,
-        pluginWarning
-      })
-    }
-
-    const cacheKey = `${userIdToUse}-${finalPrompt}-${filteredConnectedPlugins.join(',')}-${bypassPluginValidation ? 'bypass' : 'normal'}-v7`
-    const now = Date.now()
-
-    const cached = requestCache.get(cacheKey)
-    if (cached && (now - cached.timestamp) < CACHE_DURATION) {
-      console.log('Returning cached result')
-      if (cached.result) {
-        return NextResponse.json(cached.result)
-      } else {
-        try {
-          const result = await cached.promise
-          return NextResponse.json(result)
-        } catch (error) {
-          requestCache.delete(cacheKey)
-        }
-      }
-    }
-
-    // Use filtered plugins for AI system prompt
-    const systemPrompt = buildAISystemPrompt(filteredConnectedPlugins, finalPrompt)
-    console.log('Calling OpenAI for analysis with filtered plugins...')
-
-    const processingPromise = async () => {
-      let response
-      try {
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 25000)
-
-        response = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'gpt-4o',
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: `Analyze this automation request: "${finalPrompt}"` }
-            ],
-            temperature: 0.1,
-            max_tokens: 1000
-          }),
-          signal: controller.signal
-        })
-
-        clearTimeout(timeoutId)
-      } catch (fetchError: any) {
-        console.error('OpenAI API fetch failed:', fetchError.message)
-        throw new Error(`Failed to connect to OpenAI API: ${fetchError.message}`)
-      }
-
-      if (!response.ok) {
-        console.error(`OpenAI API error: ${response.status}`)
-        const errorText = await response.text().catch(() => 'Unknown error')
-        throw new Error(`OpenAI API request failed: ${response.status} - ${errorText}`)
-      }
-
-      const data = await response.json()
-      const rawContent = data.choices?.[0]?.message?.content
-
-      if (!rawContent) {
-        throw new Error('Empty response from OpenAI')
-      }
-
-      const cleanedContent = extractJSON(rawContent)
-      let aiResult
-      
-      try {
-        aiResult = JSON.parse(cleanedContent)
-      } catch (parseError) {
-        console.error('Failed to parse AI response:', cleanedContent.slice(0, 200))
-        throw new Error('Invalid JSON response from AI')
-      }
-
-      const validation = validateAIResponse(aiResult, finalPrompt)
-      if (!validation.isValid) {
-        console.log(`AI response validation failed: ${validation.reason}`)
-        aiResult = createFallbackResponse()
-        aiResult.aiValidationFailed = true
-        aiResult.validationFailureReason = validation.reason
-      }
-
-      aiResult = validateConsistency(aiResult)
-
-      const finalResult = {
-        ...aiResult,
-        connectedPlugins: connectedPlugins, // Return original connected plugins list
-        filteredPlugins: filteredConnectedPlugins, // Also return filtered list for debugging
-        pluginValidationError: false,
-        ...(pluginWarning && { pluginWarning })
-      }
-
-      if (userIdToUse !== 'anonymous') {
-        try {
-          await trackTokenUsage(supabase, userIdToUse, {
-            modelName: 'gpt-4o',
-            provider: 'openai',
-            inputTokens: data.usage?.prompt_tokens || 0,
-            outputTokens: data.usage?.completion_tokens || 0,
-            requestType: 'analysis',
-            category: 'smart_prompt_analysis',
-            metadata: {
-              clarityScore: finalResult.clarityScore,
-              questionsCount: finalResult.questionsSequence?.length || 0,
-              originalConnectedPlugins: connectedPlugins,
-              filteredConnectedPlugins: filteredConnectedPlugins,
-              aiValidationFailed: finalResult.aiValidationFailed || false,
-              validationFailureReason: finalResult.validationFailureReason,
-              bypassPluginValidation: bypassPluginValidation || false,
-              hadPluginWarning: !!pluginWarning,
-              missingServices: pluginWarning?.missingServices || []
-            }
+          
+          const unconnectedAliases = pluginValidation.missingPlugins.flatMap(service => 
+            PLUGIN_REQUIREMENTS[service as keyof typeof PLUGIN_REQUIREMENTS] || [service]
+          )
+          
+          filteredConnectedPlugins = connectedPlugins.filter(plugin => {
+            const pluginLower = plugin.toLowerCase()
+            return !unconnectedAliases.some(alias => 
+              pluginLower.includes(alias.toLowerCase())
+            )
           })
-        } catch (trackingError) {
-          console.warn('Usage tracking failed:', trackingError)
+          
+          console.log('✅ Plugin filtering complete:', {
+            original: connectedPlugins.length,
+            filtered: filteredConnectedPlugins.length
+          })
         }
+      } catch (validationError) {
+        logError('PLUGIN_VALIDATION', validationError)
       }
-
-      return finalResult
     }
 
-    requestCache.set(cacheKey, {
-      timestamp: now,
-      promise: processingPromise()
-    })
+    // Step 5: Check OpenAI API key
+    if (!process.env.OPENAI_API_KEY) {
+      console.error('❌ Missing OpenAI API key, using fallback')
+      return NextResponse.json({ 
+        ...createFallbackResponse(finalPrompt),
+        connectedPlugins: connectedPlugins,
+        pluginWarning,
+        error: 'OpenAI API key not configured'
+      })
+    }
 
+    console.log('✅ All validations passed, calling OpenAI...')
+
+    // Step 6: Call OpenAI with enhanced error handling
+    let openAIResponse
     try {
-      const result = await requestCache.get(cacheKey)!.promise
-      
-      const cachedEntry = requestCache.get(cacheKey)
-      if (cachedEntry) {
-        cachedEntry.result = result
-      }
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => {
+        console.log('⏱️ OpenAI request timeout')
+        controller.abort()
+      }, 25000)
 
-      console.log('AI analysis complete:', {
-        clarityScore: result.clarityScore,
-        questionsCount: result.questionsSequence?.length || 0,
-        needsClarification: result.needsClarification,
-        aiValidationFailed: result.aiValidationFailed || false,
-        bypassedPluginValidation: bypassPluginValidation || false,
-        hadPluginWarning: !!result.pluginWarning,
-        originalPluginsCount: connectedPlugins.length,
-        filteredPluginsCount: filteredConnectedPlugins.length
+      openAIResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o',
+          messages: [
+            { 
+              role: 'system', 
+              content: buildAISystemPrompt(filteredConnectedPlugins, finalPrompt) 
+            },
+            { 
+              role: 'user', 
+              content: `Analyze this automation request and respond with JSON only: "${finalPrompt}"` 
+            }
+          ],
+          temperature: 0.1,
+          max_tokens: 1000,
+          response_format: { type: "json_object" }
+        }),
+        signal: controller.signal
       })
 
-      return NextResponse.json(result)
-
-    } catch (processingError: any) {
-      requestCache.delete(cacheKey)
-      console.error('Processing error:', processingError.message)
+      clearTimeout(timeoutId)
+      console.log('✅ OpenAI API call completed:', openAIResponse.status)
       
+    } catch (fetchError: any) {
+      logError('OPENAI_FETCH', fetchError)
       return NextResponse.json(
         { 
-          error: 'AI analysis failed',
-          details: processingError.message,
-          ...createFallbackResponse(),
-          connectedPlugins: connectedPlugins || [],
-          ...(pluginWarning && { pluginWarning })
+          error: 'OpenAI API connection failed',
+          details: fetchError.message,
+          ...createFallbackResponse(finalPrompt),
+          connectedPlugins,
+          pluginWarning
         },
         { status: 500 }
       )
     }
 
+    if (!openAIResponse.ok) {
+      const errorText = await openAIResponse.text().catch(() => 'Unknown error')
+      logError('OPENAI_API_ERROR', new Error(`Status ${openAIResponse.status}: ${errorText}`))
+      
+      return NextResponse.json(
+        { 
+          error: `OpenAI API error: ${openAIResponse.status}`,
+          details: errorText,
+          ...createFallbackResponse(finalPrompt),
+          connectedPlugins,
+          pluginWarning
+        },
+        { status: 500 }
+      )
+    }
+
+    // Step 7: Process OpenAI response
+    let aiData
+    try {
+      aiData = await openAIResponse.json()
+      console.log('✅ OpenAI response parsed successfully')
+    } catch (parseError) {
+      logError('OPENAI_RESPONSE_PARSING', parseError)
+      return NextResponse.json(
+        { 
+          error: 'Failed to parse OpenAI response',
+          ...createFallbackResponse(finalPrompt),
+          connectedPlugins,
+          pluginWarning
+        },
+        { status: 500 }
+      )
+    }
+
+    const rawContent = aiData.choices?.[0]?.message?.content
+    if (!rawContent) {
+      console.error('❌ Empty OpenAI response content')
+      return NextResponse.json(
+        { 
+          error: 'Empty AI response',
+          ...createFallbackResponse(finalPrompt),
+          connectedPlugins,
+          pluginWarning
+        },
+        { status: 500 }
+      )
+    }
+
+    // Step 8: Parse AI result with enhanced error handling
+    let aiResult
+    try {
+      aiResult = parseAIResponse(rawContent)
+      console.log('✅ AI result parsed successfully')
+    } catch (aiParseError: any) {
+      logError('AI_RESULT_PARSING', aiParseError, { 
+        responsePreview: rawContent.slice(0, 300) 
+      })
+      
+      console.log('🔄 Using smart fallback for automation request')
+      aiResult = createFallbackResponse(finalPrompt)
+      aiResult.aiParsingFailed = true
+      aiResult.originalError = aiParseError.message
+    }
+
+    // Step 9: Add scheduling questions and validate consistency
+    try {
+      aiResult = validateConsistency(aiResult, finalPrompt)
+    } catch (consistencyError) {
+      logError('CONSISTENCY_VALIDATION', consistencyError)
+    }
+
+    // Step 10: Build final response
+    const finalResult = {
+      ...aiResult,
+      connectedPlugins,
+      filteredPlugins: filteredConnectedPlugins,
+      pluginValidationError: false,
+      ...(pluginWarning && { pluginWarning })
+    }
+
+    // Step 11: Track usage (non-blocking)
+    if (userIdToUse !== 'anonymous' && aiData?.usage) {
+      try {
+        await trackTokenUsage(supabase, userIdToUse, {
+          modelName: 'gpt-4o',
+          provider: 'openai',
+          inputTokens: aiData.usage.prompt_tokens || 0,
+          outputTokens: aiData.usage.completion_tokens || 0,
+          requestType: 'analysis',
+          category: 'smart_prompt_analysis',
+          metadata: { 
+            clarityScore: finalResult.clarityScore,
+            questionsCount: finalResult.questionsSequence?.length || 0,
+            aiParsingFailed: finalResult.aiParsingFailed || false
+          }
+        })
+      } catch (trackingError) {
+        logError('USAGE_TRACKING', trackingError)
+      }
+    }
+
+    console.log('✅ Request completed successfully:', {
+      clarityScore: finalResult.clarityScore,
+      questionsCount: finalResult.questionsSequence?.length || 0,
+      needsClarification: finalResult.needsClarification,
+      aiParsingFailed: finalResult.aiParsingFailed || false
+    })
+
+    return NextResponse.json(finalResult)
+
   } catch (error: any) {
-    console.error('Unexpected error in AI analysis:', error.message)
+    logError('UNEXPECTED_ERROR', error)
     
     return NextResponse.json(
       { 
         error: 'Unexpected server error',
         details: error.message,
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
         ...createFallbackResponse()
       },
       { status: 500 }

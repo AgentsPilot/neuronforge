@@ -26,6 +26,83 @@ const PLUGIN_REQUIREMENTS = {
   'monday': ['monday', 'monday_com']
 }
 
+// Smart scheduling question generator based on context
+function generateDefaultSchedulingQuestions(userPrompt: string): ClarificationQuestion[] {
+  const promptLower = userPrompt.toLowerCase();
+  
+  // Check if user already specified timing in prompt
+  const hasTimingInPrompt = promptLower.includes('daily') || 
+                           promptLower.includes('weekly') || 
+                           promptLower.includes('monthly') ||
+                           promptLower.includes('every') ||
+                           promptLower.includes('schedule') ||
+                           promptLower.includes('when') ||
+                           /\d+\s*(am|pm|hour|minute)/.test(promptLower);
+                           
+  if (hasTimingInPrompt) {
+    console.log('Timing already specified in prompt, skipping default scheduling questions');
+    return [];
+  }
+  
+  // Determine context-appropriate frequency options
+  let frequencyOptions = [];
+  let timeOptions = [];
+  let frequencyQuestion = "How often should this automation run?";
+  let timeQuestion = "What time should it execute?";
+  
+  if (promptLower.includes('email') || promptLower.includes('inbox') || promptLower.includes('gmail')) {
+    frequencyOptions = ['Daily', 'Every 2 hours during work days', 'Weekly on Monday', 'When new emails arrive', 'Twice daily'];
+    timeOptions = ['8:00 AM', '9:00 AM', '1:00 PM', '5:00 PM', 'Every 2 hours 9AM-5PM'];
+    frequencyQuestion = "When should email processing occur?";
+    timeQuestion = "What time works best for email processing?";
+  } else if (promptLower.includes('report') || promptLower.includes('summary') || promptLower.includes('analyze')) {
+    frequencyOptions = ['Daily', 'Weekly', 'Monthly', 'End of each work day', 'Bi-weekly'];
+    timeOptions = ['8:00 AM', '6:00 PM', 'End of work day', 'Monday 9:00 AM', 'Friday 5:00 PM'];
+    frequencyQuestion = "When should the report be generated?";
+    timeQuestion = "What time should the report be created?";
+  } else if (promptLower.includes('monitor') || promptLower.includes('check') || promptLower.includes('track')) {
+    frequencyOptions = ['Every hour', 'Every 4 hours', 'Daily', 'When changes occur', 'Every 30 minutes'];
+    timeOptions = ['Every hour 9-5', 'Every 2 hours', 'Continuously during work hours', '9:00 AM daily'];
+    frequencyQuestion = "How frequently should we check for updates?";
+    timeQuestion = "During what hours should monitoring occur?";
+  } else if (promptLower.includes('backup') || promptLower.includes('sync') || promptLower.includes('copy')) {
+    frequencyOptions = ['Daily', 'Weekly', 'Monthly', 'After each change', 'Twice weekly'];
+    timeOptions = ['2:00 AM', '11:00 PM', 'Sunday 2:00 AM', 'Immediately after changes', '6:00 PM'];
+    frequencyQuestion = "When should synchronization occur?";
+    timeQuestion = "What time is best for data operations?";
+  } else if (promptLower.includes('social') || promptLower.includes('post') || promptLower.includes('publish')) {
+    frequencyOptions = ['Daily', 'Weekly', 'Multiple times per day', 'Every few hours', 'Custom schedule'];
+    timeOptions = ['9:00 AM', '12:00 PM', '3:00 PM', '6:00 PM', 'Optimal engagement times'];
+    frequencyQuestion = "When should content be published?";
+    timeQuestion = "What time maximizes engagement?";
+  } else {
+    // General automation
+    frequencyOptions = ['Daily', 'Weekly', 'Monthly', 'On-demand only', 'Custom frequency'];
+    timeOptions = ['9:00 AM', '12:00 PM', '6:00 PM', 'Monday 9:00 AM', 'End of work day'];
+  }
+  
+  return [
+    {
+      id: 'default_schedule_frequency',
+      question: frequencyQuestion,
+      type: 'select',
+      required: true,
+      dimension: 'scheduling_timing',
+      placeholder: 'Choose frequency',
+      options: frequencyOptions
+    },
+    {
+      id: 'default_schedule_time',
+      question: timeQuestion,
+      type: 'select',
+      required: true,
+      dimension: 'scheduling_timing',
+      placeholder: 'Choose timing',
+      options: timeOptions
+    }
+  ];
+}
+
 export function buildClarifySystemPrompt(connectedPlugins: string[]) {
   return `
 You are the Clarification Engine for AgentPilot, a no-code AI agent platform.
@@ -42,6 +119,9 @@ CORE PRINCIPLES:
 3. Consider workflows that span multiple steps and plugins
 4. Handle both simple tasks and complex multi-stage automations
 5. Support conditional logic and decision-making workflows
+
+CRITICAL SCHEDULING REQUIREMENT:
+DO NOT include scheduling/timing questions in your response. The system will automatically add appropriate scheduling questions based on the automation context. Focus only on:
 
 ANALYSIS DIMENSIONS:
 
@@ -65,9 +145,7 @@ Evaluate these aspects and ask clarifying questions only when information is mis
 - Where should results be delivered or stored?
 - Should multiple actions happen simultaneously or sequentially?
 
-**Execution Context**
-- When/how often should this run?
-- What triggers should initiate the agent?
+**Error Handling & Edge Cases**
 - How should errors or edge cases be handled?
 - Are there approval steps or human checkpoints needed?
 
@@ -94,12 +172,14 @@ Ask questions that are:
 - Focused on missing information that affects implementation
 - Grouped logically when related
 - Limited to what's truly necessary (ideally 3-5 questions maximum)
+- DO NOT include scheduling/timing questions (these are added automatically)
 
 Avoid questions about:
 - Information already provided in the prompt
 - Implementation details the system can infer
 - Overly granular configuration options
 - Generic preferences without automation impact
+- Scheduling or timing (handled by the system automatically)
 
 OUTPUT FORMAT:
 
@@ -108,7 +188,7 @@ Return a JSON array of questions directly. Each question should have this struct
 [
   {
     "id": "unique_id",
-    "dimension": "data_input | processing_logic | output_actions | execution_context | integration_requirements",
+    "dimension": "data_input | processing_logic | output_actions | integration_requirements",
     "question": "Clear, specific question text",
     "type": "text | textarea | select | multiselect | date",
     "options": ["option1", "option2"], // only for select/multiselect
@@ -128,10 +208,7 @@ Instead of "What should be included in the summary?" ask:
 Instead of "Where should results be stored?" ask:
 "Should the analysis be sent as an email, saved to a specific folder, or posted in a channel?"
 
-Instead of "How often should this run?" ask:
-"What should trigger this automation? (e.g., daily at 9 AM, when new emails arrive, weekly on Fridays)"
-
-Remember: Your goal is to gather the minimum information needed to build a functional automation, not to collect every possible configuration detail.
+Remember: Your goal is to gather the minimum information needed to build a functional automation, excluding scheduling details which are handled separately.
 
 Return ONLY the JSON array, no markdown formatting, code blocks, or explanatory text.
 `.trim()
@@ -165,12 +242,47 @@ interface ClarificationQuestion {
   required?: boolean
   type: 'text' | 'textarea' | 'select' | 'multiselect' | 'enum' | 'date'
   options?: string[]
+  dimension?: string
 }
 
 interface ClarificationResponse {
   questions: ClarificationQuestion[]
   reasoning: string
   confidence: number
+}
+
+// Updated scheduling question generator that avoids duplicates
+function generateSchedulingQuestions(userPrompt: string, existingQuestions: ClarificationQuestion[]): ClarificationQuestion[] {
+  const promptLower = userPrompt.toLowerCase();
+  
+  // Skip if scheduling already exists in existing questions
+  const hasScheduling = existingQuestions.some(q => 
+    q.question.toLowerCase().includes('when') || 
+    q.question.toLowerCase().includes('schedule') ||
+    q.question.toLowerCase().includes('frequency') ||
+    q.question.toLowerCase().includes('time') ||
+    q.dimension === 'scheduling_timing'
+  );
+  
+  if (hasScheduling) {
+    console.log('Scheduling questions already exist, skipping generation');
+    return [];
+  }
+  
+  // Check if user already specified timing in prompt
+  const hasTimingInPrompt = promptLower.includes('daily') || 
+                           promptLower.includes('weekly') || 
+                           promptLower.includes('monthly') ||
+                           promptLower.includes('every') ||
+                           promptLower.includes('schedule') ||
+                           /\d+\s*(am|pm|hour|minute)/.test(promptLower);
+                           
+  if (hasTimingInPrompt) {
+    console.log('Timing already specified in prompt, skipping scheduling questions');
+    return [];
+  }
+  
+  return generateDefaultSchedulingQuestions(userPrompt);
 }
 
 export async function POST(request: NextRequest) {
@@ -276,15 +388,15 @@ connected_plugins: ${JSON.stringify(pluginKeys)}
 agent_name: "${agent_name || 'Not specified'}"
 description: "${description || 'Not provided'}"
 
-CRITICAL: Only ask questions about services in the connected_plugins list above. Do not reference any other services.
+CRITICAL: Only ask questions about services in the connected_plugins list above. Do not reference any other services. Do not include scheduling/timing questions.
 
-Please analyze this automation request and return clarifying questions as a JSON array.
+Please analyze this automation request and return clarifying questions as a JSON array. The system will automatically add appropriate scheduling questions.
 `
 
     console.log('17. Context message sent to AI:', contextMessage)
 
     const { response: llmResponse, usage } = await callOpenAI(buildClarifySystemPrompt(pluginKeys), contextMessage)
-    const clarificationData = await parseAndValidateLLMResponse(llmResponse)
+    const clarificationData = await parseAndValidateLLMResponse(llmResponse, original_prompt)
 
     // Track token usage using your utility function
     if (user_id) {
@@ -381,7 +493,7 @@ async function callOpenAI(systemPrompt: string, userPrompt: string): Promise<{
   }
 }
 
-async function parseAndValidateLLMResponse(llmResponse: any): Promise<ClarificationResponse> {
+async function parseAndValidateLLMResponse(llmResponse: any, originalPrompt: string): Promise<ClarificationResponse> {
   try {
     console.log('Raw LLM response type:', typeof llmResponse)
     console.log('Raw LLM response:', JSON.stringify(llmResponse, null, 2))
@@ -404,12 +516,8 @@ async function parseAndValidateLLMResponse(llmResponse: any): Promise<Clarificat
         console.log('Using legacy questions array format')
       }
       else if (llmResponse.needsClarification === false) {
-        console.log('LLM says no clarification needed')
-        return {
-          questions: [],
-          reasoning: llmResponse.reasoning || 'Prompt contains sufficient detail for implementation',
-          confidence: llmResponse.confidence || 90
-        }
+        console.log('LLM says no clarification needed, but will add default scheduling questions')
+        questionsArray = []
       }
       else {
         console.log('Unexpected object format, trying to find questions')
@@ -479,6 +587,7 @@ async function parseAndValidateLLMResponse(llmResponse: any): Promise<Clarificat
           type,
           required: q.required !== false, // Default to true unless explicitly false
           placeholder,
+          dimension: q.dimension || 'general',
           options: structured ? q.options : undefined
         }
       })
@@ -486,48 +595,69 @@ async function parseAndValidateLLMResponse(llmResponse: any): Promise<Clarificat
 
     console.log(`Parsed ${questions.length} valid questions from ${questionsArray.length} raw questions`)
 
+    // CRITICAL FIX: Always add scheduling questions if none exist
+    const scheduleQuestions = generateSchedulingQuestions(originalPrompt, questions)
+    
+    // If no scheduling questions were added (because they already exist or timing is in prompt), 
+    // but we have no questions at all, add default scheduling questions anyway
+    if (scheduleQuestions.length === 0 && questions.length === 0) {
+      console.log('No questions at all, adding default scheduling questions anyway')
+      const defaultScheduleQuestions = generateDefaultSchedulingQuestions(originalPrompt)
+      questions.push(...defaultScheduleQuestions)
+      console.log(`Added ${defaultScheduleQuestions.length} default scheduling questions`)
+    } else {
+      questions.push(...scheduleQuestions)
+      console.log(`Added ${scheduleQuestions.length} scheduling questions. Total: ${questions.length}`)
+    }
+
     if (questions.length === 0) {
-      console.log('No valid questions generated, using enhanced fallback')
+      console.log('Still no questions generated, using enhanced fallback with scheduling')
       return {
         questions: [
           { 
-            id: 'fallback_1', 
+            id: 'fallback_task', 
             question: 'What specific task should this automation perform?', 
             type: 'textarea',
             required: true,
+            dimension: 'processing_logic',
             placeholder: 'e.g. "Summarize important emails", "Track project updates", "Monitor customer feedback"'
           },
           {
-            id: 'fallback_2',
+            id: 'fallback_frequency',
             question: 'How often should this automation run?',
             type: 'select',
             required: true,
-            placeholder: 'Choose timing',
-            options: ['One-time only', 'Daily at 9 AM', 'Weekly on Monday', 'When new items arrive', 'Every hour during work days']
+            dimension: 'scheduling_timing',
+            placeholder: 'Choose frequency',
+            options: ['Daily', 'Weekly', 'Monthly', 'On-demand only']
           },
           {
-            id: 'fallback_3',
-            question: 'How would you like to receive the results?',
+            id: 'fallback_time',
+            question: 'What time should it execute?',
             type: 'select',
             required: true,
-            placeholder: 'Choose delivery method',
-            options: ['Email me the results', 'Show on screen only', 'Save to Google Drive', 'Post in Slack channel', 'Send via Teams message']
+            dimension: 'scheduling_timing',
+            placeholder: 'Choose timing',
+            options: ['9:00 AM', '12:00 PM', '6:00 PM', 'End of work day']
           }
         ],
-        reasoning: 'Generated comprehensive fallback questions to capture essential automation requirements.',
+        reasoning: 'Generated comprehensive fallback questions including essential scheduling requirements.',
         confidence: 55
       }
     }
 
     return {
-      questions: questions.slice(0, 5),
-      reasoning: `Generated ${questions.length} targeted clarification question${questions.length === 1 ? '' : 's'} to refine your automation requirements.`,
+      questions: questions.slice(0, 7), // Increased limit to accommodate scheduling
+      reasoning: `Generated ${questions.length} targeted clarification question${questions.length === 1 ? '' : 's'} to refine your automation requirements, including scheduling details.`,
       confidence: Math.min(95, 70 + (questions.length * 5))
     }
 
   } catch (e) {
     console.error('Parse validation error:', e)
     console.error('LLM Response that caused error:', llmResponse)
+    
+    // Generate default scheduling questions even in error case
+    const defaultScheduleQuestions = generateDefaultSchedulingQuestions(originalPrompt)
     
     return {
       questions: [
@@ -536,10 +666,12 @@ async function parseAndValidateLLMResponse(llmResponse: any): Promise<Clarificat
           question: 'Could you describe what you want this automation to accomplish?',
           type: 'textarea',
           required: true,
+          dimension: 'processing_logic',
           placeholder: 'Please provide more details about your automation goals...'
-        }
+        },
+        ...defaultScheduleQuestions
       ],
-      reasoning: 'Unable to parse AI response, using basic fallback question.',
+      reasoning: 'Unable to parse AI response, using basic fallback questions with scheduling.',
       confidence: 30
     }
   }

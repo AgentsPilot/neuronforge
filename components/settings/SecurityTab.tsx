@@ -1,6 +1,6 @@
-'use client'
-
 import React, { useState } from 'react'
+import { useAuth } from '@/components/UserProvider'
+import { supabase } from '@/lib/supabaseClient'
 import { 
   Key, 
   Download, 
@@ -15,12 +15,16 @@ import {
   Database,
   UserX,
   Settings,
-  Zap
+  Zap,
+  Loader2,
+  Save
 } from 'lucide-react'
 
 export default function SecurityTab() {
+  const { user } = useAuth()
   const [successMessage, setSuccessMessage] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
+  const [saving, setSaving] = useState(false)
   const [showCurrentPassword, setShowCurrentPassword] = useState(false)
   const [showNewPassword, setShowNewPassword] = useState(false)
   const [passwordForm, setPasswordForm] = useState({
@@ -28,96 +32,177 @@ export default function SecurityTab() {
     newPassword: '',
     confirmPassword: ''
   })
+  const [securitySettings, setSecuritySettings] = useState({
+    sessionTimeout: 240,
+    twoFactorEnabled: false
+  })
+
+  const handleSecuritySettingsSave = async () => {
+    if (!user) {
+      setErrorMessage('User not authenticated. Please log in again.')
+      return
+    }
+    
+    try {
+      setSaving(true)
+      setSuccessMessage('')
+      setErrorMessage('')
+      
+      console.log('Attempting to save security settings for user:', user.id)
+      console.log('Settings to save:', securitySettings)
+      
+      // Save to the security_settings table with the correct column names
+      const { data, error } = await supabase
+        .from('security_settings')
+        .upsert({
+          user_id: user.id,
+          session_timeout_minutes: securitySettings.sessionTimeout,
+          two_factor_enabled: securitySettings.twoFactorEnabled,
+          updated_at: new Date().toISOString()
+        }, {
+          onConflict: 'user_id'
+        })
+        .select()
+
+      if (error) {
+        console.error('Error saving to security_settings:', error)
+        throw new Error(`Database error: ${error.message || 'Unknown error'}`)
+      }
+      
+      console.log('Security settings saved successfully:', data)
+      setSuccessMessage('Security settings updated successfully!')
+      
+    } catch (error) {
+      console.error('Error saving security settings:', error)
+      setErrorMessage(`Failed to save security settings: ${error.message || 'Database connection issue'}`)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const handlePasswordChange = async () => {
     if (!passwordForm.currentPassword || !passwordForm.newPassword) {
       setErrorMessage('Please fill in all password fields.')
-      setTimeout(() => setErrorMessage(''), 5000)
       return
     }
 
     if (passwordForm.newPassword !== passwordForm.confirmPassword) {
       setErrorMessage('New passwords do not match.')
-      setTimeout(() => setErrorMessage(''), 5000)
       return
     }
 
     if (passwordForm.newPassword.length < 8) {
       setErrorMessage('Password must be at least 8 characters long.')
-      setTimeout(() => setErrorMessage(''), 5000)
       return
     }
 
     try {
-      setSuccessMessage('Password change email sent! Check your inbox to confirm.')
+      setSuccessMessage('')
+      setErrorMessage('')
+      
+      // Use Supabase's updateUser method to change password
+      const { error } = await supabase.auth.updateUser({
+        password: passwordForm.newPassword
+      })
+
+      if (error) throw error
+      
+      setSuccessMessage('Password updated successfully!')
       setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' })
-      setTimeout(() => setSuccessMessage(''), 5000)
     } catch (error) {
+      console.error('Error changing password:', error)
       setErrorMessage('Failed to change password. Please try again.')
-      setTimeout(() => setErrorMessage(''), 5000)
     }
   }
 
   const handleEnable2FA = async () => {
     try {
-      setSuccessMessage('Two-factor authentication setup started! Check your email for instructions.')
-      setTimeout(() => setSuccessMessage(''), 5000)
+      setSuccessMessage('')
+      setErrorMessage('')
+      
+      // This would integrate with your 2FA provider (e.g., Auth0, custom implementation)
+      // For now, showing a placeholder message
+      setSuccessMessage('Two-factor authentication setup started! This feature will be available soon.')
     } catch (error) {
       setErrorMessage('Failed to enable 2FA. Please try again.')
-      setTimeout(() => setErrorMessage(''), 5000)
     }
   }
 
   const handleExportData = async () => {
+    if (!user) return
+    
     try {
-      setSuccessMessage('Data export started! You will receive an email when your download is ready.')
-      setTimeout(() => setSuccessMessage(''), 5000)
+      setSuccessMessage('')
+      setErrorMessage('')
+      
+      // Export user data from multiple tables
+      const [profileRes, preferencesRes, notificationsRes, connectionsRes] = await Promise.all([
+        supabase.from('profiles').select('*').eq('id', user.id),
+        supabase.from('user_preferences').select('*').eq('user_id', user.id),
+        supabase.from('notification_settings').select('*').eq('user_id', user.id),
+        supabase.from('plugin_connections').select('*').eq('user_id', user.id)
+      ])
+
+      const userData = {
+        user: {
+          id: user.id,
+          email: user.email,
+          created_at: user.created_at
+        },
+        profile: profileRes.data?.[0] || null,
+        preferences: preferencesRes.data?.[0] || null,
+        notifications: notificationsRes.data?.[0] || null,
+        connections: connectionsRes.data || []
+      }
+
+      // Create and download JSON file
+      const dataStr = JSON.stringify(userData, null, 2)
+      const dataBlob = new Blob([dataStr], { type: 'application/json' })
+      const url = URL.createObjectURL(dataBlob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `user-data-${user.id}-${new Date().toISOString().split('T')[0]}.json`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+      
+      setSuccessMessage('Data exported successfully! Check your downloads folder.')
     } catch (error) {
+      console.error('Error exporting data:', error)
       setErrorMessage('Failed to export data. Please try again.')
-      setTimeout(() => setErrorMessage(''), 5000)
     }
   }
 
-  const handleDeleteAccount = () => {
+  const handleDeleteAccount = async () => {
+    if (!user) return
+    
     if (confirm('This action cannot be undone. Are you absolutely sure you want to delete your account?')) {
       if (confirm('Final confirmation: This will permanently delete all your data, agents, and settings. Type DELETE to confirm.')) {
-        setErrorMessage('Account deletion initiated. Please check your email within 24 hours to complete the process.')
-        setTimeout(() => setErrorMessage(''), 10000)
+        try {
+          setSuccessMessage('')
+          setErrorMessage('')
+          
+          // Delete user data from all tables
+          await Promise.all([
+            supabase.from('profiles').delete().eq('id', user.id),
+            supabase.from('user_preferences').delete().eq('user_id', user.id),
+            supabase.from('notification_settings').delete().eq('user_id', user.id),
+            supabase.from('plugin_connections').delete().eq('user_id', user.id)
+          ])
+          
+          // Delete the user account (this requires admin privileges or RLS policies)
+          setErrorMessage('Account deletion initiated. Please check your email within 24 hours to complete the process.')
+        } catch (error) {
+          console.error('Error deleting account:', error)
+          setErrorMessage('Failed to delete account. Please contact support.')
+        }
       }
     }
   }
 
   return (
     <div className="space-y-6">
-      {/* Success/Error Messages */}
-      {successMessage && (
-        <div className="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-2xl p-4 shadow-lg">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-r from-purple-500 to-indigo-500 rounded-xl flex items-center justify-center shadow-lg">
-              <CheckCircle className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <p className="font-semibold text-purple-800">Success!</p>
-              <p className="text-sm text-purple-700">{successMessage}</p>
-            </div>
-          </div>
-        </div>
-      )}
-      
-      {errorMessage && (
-        <div className="bg-gradient-to-r from-red-50 to-pink-50 rounded-2xl p-4 shadow-lg">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-r from-red-500 to-pink-500 rounded-xl flex items-center justify-center shadow-lg">
-              <AlertCircle className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <p className="font-semibold text-red-800">Security Alert</p>
-              <p className="text-sm text-red-700">{errorMessage}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Security Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="group relative overflow-hidden bg-gradient-to-br from-purple-50 to-indigo-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
@@ -252,7 +337,7 @@ export default function SecurityTab() {
                 </div>
               </div>
               
-              <div className="flex gap-3">
+                  <div className="flex gap-3">
                 <button 
                   onClick={handlePasswordChange}
                   className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl hover:from-purple-700 hover:to-indigo-700 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 font-semibold"
@@ -324,7 +409,8 @@ export default function SecurityTab() {
               <p className="text-sm text-slate-600 font-medium">Automatically sign out after period of inactivity</p>
             </div>
             <select 
-              defaultValue="240"
+              value={securitySettings.sessionTimeout}
+              onChange={(e) => setSecuritySettings(prev => ({ ...prev, sessionTimeout: parseInt(e.target.value) }))}
               className="px-4 py-3 border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 bg-white text-slate-900 font-medium shadow-sm"
             >
               <option value="60">1 hour</option>
@@ -425,6 +511,53 @@ export default function SecurityTab() {
             </div>
           </div>
         </div>
+
+        {/* Save Changes Section */}
+        <div className="flex gap-3 pt-8 border-t border-gray-200 mt-8">
+          <button 
+            onClick={handleSecuritySettingsSave}
+            disabled={saving}
+            className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 font-semibold disabled:opacity-50 disabled:transform-none"
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Save Changes
+          </button>
+          <button 
+            onClick={() => setSecuritySettings({ sessionTimeout: 240, twoFactorEnabled: false })}
+            className="px-6 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 hover:border-gray-400 transition-all duration-300 shadow-sm hover:shadow-md font-semibold"
+          >
+            Cancel
+          </button>
+        </div>
+
+        {/* Success/Error Messages - Below Save Button */}
+        {successMessage && (
+          <div className="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-2xl p-4 shadow-lg mt-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gradient-to-r from-purple-500 to-indigo-500 rounded-xl flex items-center justify-center shadow-lg">
+                <CheckCircle className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <p className="font-semibold text-purple-800">Success!</p>
+                <p className="text-sm text-purple-700">{successMessage}</p>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {errorMessage && (
+          <div className="bg-gradient-to-r from-red-50 to-pink-50 rounded-2xl p-4 shadow-lg mt-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gradient-to-r from-red-500 to-pink-500 rounded-xl flex items-center justify-center shadow-lg">
+                <AlertCircle className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <p className="font-semibold text-red-800">Security Alert</p>
+                <p className="text-sm text-red-700">{errorMessage}</p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

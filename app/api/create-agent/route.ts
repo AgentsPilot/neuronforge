@@ -7,12 +7,45 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+// Helper function to extract user ID from request (consistent with your other API)
+function getUserIdFromRequest(request: NextRequest): string | null {
+  const userIdHeader = request.headers.get('x-user-id');
+  const authHeader = request.headers.get('authorization');
+  
+  if (userIdHeader) {
+    return userIdHeader;
+  }
+  
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    // JWT token handling would go here
+  }
+  
+  return null;
+}
+
 export async function POST(request: NextRequest) {
   try {
-    console.log('📝 POST /api/agents - Creating new agent');
+    console.log('📝 POST /api/create-agent - Creating new agent');
+    console.log('📋 Request headers:', Object.fromEntries(request.headers.entries()));
+    
+    // Extract user ID from headers (consistent with your other API)
+    const userId = getUserIdFromRequest(request);
+    console.log('👤 Extracted user ID:', userId);
+    
+    if (!userId) {
+      console.log('❌ No user ID found in request headers');
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: 'Unauthorized - Please provide user authentication',
+          details: 'Missing x-user-id header or authorization token'
+        },
+        { status: 401 }
+      );
+    }
     
     const body = await request.json();
-    console.log('Request body:', JSON.stringify(body, null, 2));
+    console.log('Request body keys:', Object.keys(body));
     
     // Extract agent data from the request body
     const { agent } = body;
@@ -20,22 +53,25 @@ export async function POST(request: NextRequest) {
     if (!agent) {
       console.error('❌ No agent data provided');
       return NextResponse.json(
-        { error: 'Agent data is required' },
+        { success: false, error: 'Agent data is required' },
         { status: 400 }
       );
     }
 
     // Validate required fields
-    if (!agent.user_id || !agent.agent_name) {
-      console.error('❌ Missing required fields:', { 
-        has_user_id: !!agent.user_id, 
-        has_agent_name: !!agent.agent_name 
-      });
+    if (!agent.agent_name) {
+      console.error('❌ Missing required field: agent_name');
       return NextResponse.json(
-        { error: 'user_id and agent_name are required' },
+        { success: false, error: 'agent_name is required' },
         { status: 400 }
       );
     }
+
+    // Use the authenticated user's ID instead of trusting the client
+    // This is more secure than accepting user_id from the request body
+    const agentUserIdToUse = userId;
+    
+    console.log('🔒 Using authenticated user ID for agent creation:', agentUserIdToUse);
 
     // Convert ai_reasoning array to string if it exists
     const aiReasoning = agent.ai_reasoning 
@@ -44,11 +80,11 @@ export async function POST(request: NextRequest) {
         : agent.ai_reasoning
       : null;
 
-    // Prepare data for insertion
+    // Prepare data for insertion - use authenticated user ID
     const agentData = {
       agent_name: agent.agent_name,
       user_prompt: agent.user_prompt,
-      user_id: agent.user_id,
+      user_id: agentUserIdToUse, // Use the authenticated user's ID
       system_prompt: agent.system_prompt,
       description: agent.description,
       input_schema: agent.input_schema || null,
@@ -67,7 +103,38 @@ export async function POST(request: NextRequest) {
       ai_generated_at: agent.ai_generated_at ? new Date(agent.ai_generated_at).toISOString() : null,
     };
 
-    console.log('💾 Inserting agent data:', JSON.stringify(agentData, null, 2));
+    console.log('💾 Inserting agent for user:', agentUserIdToUse);
+    console.log('💾 Agent name:', agentData.agent_name);
+
+    // Test Supabase connection first
+    try {
+      const { data: connectionTest, error: connectionError } = await supabase
+        .from('agents')
+        .select('count', { count: 'exact', head: true });
+      
+      if (connectionError) {
+        console.error('💥 Supabase connection error:', connectionError);
+        return NextResponse.json(
+          { 
+            success: false, 
+            error: 'Database connection failed',
+            details: process.env.NODE_ENV === 'development' ? connectionError.message : 'Unable to connect to database'
+          },
+          { status: 500 }
+        );
+      }
+      console.log('✅ Supabase connection successful');
+    } catch (connErr) {
+      console.error('💥 Supabase connection test failed:', connErr);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: 'Database connection failed',
+          details: process.env.NODE_ENV === 'development' ? String(connErr) : 'Unable to connect to database'
+        },
+        { status: 500 }
+      );
+    }
 
     // Insert into Supabase
     const { data, error } = await supabase
@@ -77,20 +144,29 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (error) {
-      console.error('❌ Supabase error:', error);
+      console.error('❌ Supabase insert error:', error);
       return NextResponse.json(
-        { error: 'Failed to create agent', details: error.message },
+        { 
+          success: false, 
+          error: 'Failed to create agent', 
+          details: process.env.NODE_ENV === 'development' ? {
+            message: error.message,
+            details: error.details,
+            hint: error.hint,
+            code: error.code
+          } : 'Database insert failed'
+        },
         { status: 500 }
       );
     }
 
-    console.log('✅ Agent created successfully:', data.id);
+    console.log('✅ Agent created successfully:', data.id, 'for user:', agentUserIdToUse);
 
-    // IMPORTANT: Return the structure your frontend expects
+    // Return the structure your frontend expects (consistent with your other API)
     return NextResponse.json(
       { 
         success: true, 
-        agent: data,  // This matches what your frontend expects: result.agent
+        agent: data,
         message: 'Agent created successfully' 
       },
       { status: 201 }
@@ -102,7 +178,7 @@ export async function POST(request: NextRequest) {
     if (error instanceof SyntaxError) {
       console.error('❌ JSON parsing error:', error.message);
       return NextResponse.json(
-        { error: 'Invalid JSON in request body' },
+        { success: false, error: 'Invalid JSON in request body' },
         { status: 400 }
       );
     }
@@ -110,9 +186,12 @@ export async function POST(request: NextRequest) {
     // Make sure we always return JSON, never HTML
     return NextResponse.json(
       { 
+        success: false, 
         error: 'Internal server error',
-        message: error.message,
-        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        details: process.env.NODE_ENV === 'development' ? {
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined
+        } : 'An unexpected error occurred'
       },
       { status: 500 }
     );
@@ -122,21 +201,21 @@ export async function POST(request: NextRequest) {
 // Handle other HTTP methods properly
 export async function GET() {
   return NextResponse.json(
-    { error: 'Method not allowed. Use POST to create an agent.' },
+    { success: false, error: 'Method not allowed. Use POST to create an agent.' },
     { status: 405 }
   );
 }
 
 export async function PUT() {
   return NextResponse.json(
-    { error: 'Method not allowed. Use POST to create an agent.' },
+    { success: false, error: 'Method not allowed. Use POST to create an agent.' },
     { status: 405 }
   );
 }
 
 export async function DELETE() {
   return NextResponse.json(
-    { error: 'Method not allowed. Use POST to create an agent.' },
+    { success: false, error: 'Method not allowed. Use POST to create an agent.' },
     { status: 405 }
   );
 }
