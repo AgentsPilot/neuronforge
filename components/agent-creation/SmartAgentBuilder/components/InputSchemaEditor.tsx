@@ -99,7 +99,7 @@ export default function InputSchemaEditor({
     const name = field.name.toLowerCase();
     
     if (name.includes('email')) {
-      if (name.includes('gmail')) return 'Enter your Gmail email address (must end with @gmail.com)';
+      if (name.includes('google-mail')) return 'Enter your Gmail email address (must end with @gmail.com)';
       if (name.includes('notification') || name.includes('alert')) return 'Email address where notifications will be sent';
       return 'Enter a valid email address';
     }

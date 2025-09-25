@@ -1,6 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
+// Import new plugin registry
+import { 
+  pluginRegistry,
+  getPluginDefinition,
+  getConnectedPluginsWithMetadata,
+  detectRequiredPlugins,
+  validatePluginRequirements,
+  getPluginCapabilitiesContext,
+  LEGACY_KEY_MAP
+} from '@/lib/plugins/pluginRegistry'
+
 const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -34,8 +45,11 @@ async function trackTokenUsage(supabase: any, userId: string, tokenData: any) {
   }
 }
 
-// Function to get connected plugins (same as analyze-prompt-clarity)
-async function getConnectedPlugins(userId: string, connected_plugins?: any): Promise<string[]> {
+// Enhanced function to get connected plugins with metadata
+async function getConnectedPlugins(userId: string, connected_plugins?: any): Promise<{
+  pluginKeys: string[],
+  pluginData: any[]
+}> {
   let pluginKeys: string[] = []
 
   // Method 1: From frontend (fallback to ensure we have plugins)
@@ -67,11 +81,23 @@ async function getConnectedPlugins(userId: string, connected_plugins?: any): Pro
   // Method 3: Default plugins if nothing found
   if (pluginKeys.length === 0) {
     console.log('⚠️ No connected plugins found for user. Using minimal defaults.');
-    pluginKeys = ['email', 'storage'] // Minimal generic defaults
+    pluginKeys = ['google-mail', 'google_drive'] // Use actual plugin keys instead of generic terms
+  }
+
+  // Get plugin metadata from registry
+  let pluginData: any[] = []
+  try {
+    pluginData = getConnectedPluginsWithMetadata(pluginKeys)
+    console.log('Plugin metadata retrieved:', {
+      pluginsWithMetadata: pluginData.length,
+      capabilities: pluginData.map(p => ({ key: p.key, capabilities: p.capabilities }))
+    })
+  } catch (metadataError) {
+    console.warn('Plugin metadata retrieval failed:', metadataError)
   }
 
   console.log('Final plugin list for enhancement:', pluginKeys)
-  return pluginKeys
+  return { pluginKeys, pluginData }
 }
 
 export async function POST(req: NextRequest) {
@@ -100,29 +126,57 @@ export async function POST(req: NextRequest) {
     console.log('📋 Clarification answers:', Object.keys(clarificationAnswers).length, 'items')
     console.log('🔌 Missing plugins:', finalMissingPlugins)
 
-    // Get connected plugins for context-aware enhancement
-    const connectedPlugins = await getConnectedPlugins(userIdToUse, connected_plugins)
+    // Get connected plugins with enhanced metadata
+    const { pluginKeys: connectedPlugins, pluginData: connectedPluginData } = await getConnectedPlugins(userIdToUse, connected_plugins)
 
-    // FIXED: Intelligent plugin context that handles missing services
-    const pluginContext = connectedPlugins.length > 0 
-      ? `
+    console.log('Enhanced plugin context:', {
+      connectedPlugins,
+      pluginDataCount: connectedPluginData.length,
+      pluginCapabilities: connectedPluginData.map(p => p.capabilities).flat()
+    })
 
-CONNECTED SERVICES: User has these services available: ${connectedPlugins.join(', ')}
+    // Build enhanced plugin context using capabilities
+    let pluginContext = ''
+    
+    if (connectedPluginData.length > 0) {
+      const pluginCapabilitiesContext = getPluginCapabilitiesContext(connectedPlugins)
+      
+      // Group plugins by category for better context
+      const pluginsByCategory = connectedPluginData.reduce((acc, plugin) => {
+        const category = plugin.category || 'other'
+        if (!acc[category]) acc[category] = []
+        acc[category].push(plugin)
+        return acc
+      }, {} as Record<string, any[]>)
+
+      pluginContext = `
+
+CONNECTED SERVICES WITH CAPABILITIES:
+${Object.entries(pluginsByCategory)
+  .map(([category, plugins]) => 
+    `${category.toUpperCase()}: ${plugins.map(p => `${p.label} (${p.capabilities.join(', ')})`).join('; ')}`
+  ).join('\n')}
+
 ${finalMissingPlugins.length > 0 ? `MISSING SERVICES: User mentioned these unavailable services: ${finalMissingPlugins.join(', ')}` : ''}
 
 CRITICAL INSTRUCTIONS FOR SERVICE HANDLING:
-- Use SPECIFIC service names ONLY when they're relevant AND available to the user
+- Use SPECIFIC service names and capabilities ONLY when they're relevant AND available to the user
+- Reference actual capabilities like "read_email", "upload_files", "send_message" when relevant
 - For unavailable services that the user mentioned, suggest appropriate alternatives from connected services
-- If user mentioned unavailable services, use phrases like "available storage service" or "alternative note-taking app"
+- If user mentioned unavailable services, use phrases like "available ${connectedPluginData.find(p => p.category === 'storage')?.label || 'storage service'}" 
 - DO NOT use the specific names of unavailable services in your enhanced prompt
-- Example: If user wants "Notion" but it's unavailable, suggest "note-taking service" or use available alternatives like "Google Drive"
+- Example: If user wants "Notion" but it's unavailable, suggest using "${connectedPluginData.find(p => p.category === 'documents')?.label || 'available note-taking service'}"
 - Only mention services that are actually needed for the task
-- Don't force all connected services into the workflow just because they're available`
-      : `
+- Don't force all connected services into the workflow just because they're available
+- Consider plugin usage types: ${connectedPluginData.map(p => `${p.label} (${p.usage.join('/')})`)}`
+    } else {
+      pluginContext = `
 
 NO CONNECTED SERVICES: User has no specific services connected
-- Use friendly generic terms like "email system", "storage folder", "messaging app"
-- Don't assume any specific service names`
+- Use friendly generic terms like "email system", "storage folder", "messaging app"  
+- Don't assume any specific service names
+- Keep instructions generic but actionable`
+    }
 
     // Build clarification context if answers are provided
     let clarificationContext = ''
@@ -148,18 +202,23 @@ Create a bullet-point execution plan with these sections:
 
 **Data Source:**
 • What specific information to monitor/read
+${connectedPluginData.some(p => p.capabilities.includes('read_email')) ? '• Use specific capabilities like "read_email" when relevant' : ''}
 
 **Trigger Conditions:**
 • When the automation should activate
+${connectedPluginData.some(p => p.capabilities.includes('search_email')) ? '• Consider capabilities like "search_email" for filtering' : ''}
 
 **Processing Steps:**
 • What actions to take with the data
+${connectedPluginData.length > 0 ? `• Leverage available capabilities: ${connectedPluginData.flatMap(p => p.capabilities).slice(0, 3).join(', ')}` : ''}
 
 **Output Creation:**
 • What gets generated/created
 
 **Delivery Method:**
 • How and where to send results
+${connectedPluginData.some(p => p.capabilities.includes('upload_files')) ? '• Consider "upload_files" capability for storage' : ''}
+${connectedPluginData.some(p => p.capabilities.includes('send_message')) ? '• Consider "send_message" capability for notifications' : ''}
 
 **Error Handling:**
 • What to do if something fails
@@ -171,8 +230,8 @@ ${Object.keys(clarificationAnswers).length > 0
 - NEVER add specific times like "8:00 AM" unless user provided it
 - Keep all user-provided details exactly as they specified`
   : `- Use simple, friendly language
-- Use available service names when connected and relevant
-- For unavailable services, use appropriate generic alternatives
+- Use available service names and capabilities when connected and relevant
+- For unavailable services, use appropriate alternatives from connected services
 - Avoid any technical jargon or system terminology`
 }
 
@@ -182,10 +241,14 @@ LANGUAGE STYLE REQUIREMENTS:
 - Use simple action words: "check", "read", "create", "send", "save"
 - Keep bullet points concise but complete
 - Each bullet point should be one clear action or condition
+${connectedPluginData.length > 0 ? `- When mentioning services, use their actual names: ${connectedPluginData.map(p => p.label).join(', ')}` : ''}
 
 EXAMPLE FORMAT:
 **Data Source:**
-• Monitor your Gmail inbox for new emails from clients
+${connectedPluginData.some(p => p.capabilities.includes('read_email')) 
+  ? '• Monitor your Gmail inbox for new emails from clients (using read_email capability)'
+  : '• Monitor your email inbox for new emails from clients'
+}
 
 **Trigger Conditions:**
 • When a new email arrives with "urgent" in the subject line
@@ -198,12 +261,21 @@ EXAMPLE FORMAT:
 • Generate a brief summary with sender, subject, and main points
 
 **Delivery Method:**
-• Send summary via Slack to your team channel
-• Save details to your project management tool
+${connectedPluginData.some(p => p.capabilities.includes('send_message')) 
+  ? '• Send summary via available messaging service to your team'
+  : '• Send summary to your preferred communication channel'
+}
+${connectedPluginData.some(p => p.capabilities.includes('upload_files'))
+  ? '• Save details using available storage service (upload_files capability)'
+  : '• Save details to your project management tool'
+}
 
 **Error Handling:**
 • If email can't be read, log the issue and try again in 5 minutes
-• If Slack is down, send summary via email instead
+${connectedPluginData.some(p => p.capabilities.includes('send_message'))
+  ? '• If primary notification fails, use alternative messaging capability'
+  : '• If primary channel is down, send summary via email instead'
+}
 
 IMPORTANT: Your response must be valid JSON. Do not include any markdown formatting or extra text outside the JSON.
 
@@ -224,10 +296,10 @@ Respond with only a JSON object:
         messages: [
           {
             role: 'system',
-            content: `You are an expert prompt engineer who specializes in creating structured, user-friendly automation execution plans. You write in simple, conversational language that anyone can understand, completely avoiding technical jargon. You excel at taking vague automation requests and making them specific and actionable while keeping the language friendly and approachable. You naturally incorporate available services to make instructions more specific, and when services aren't available, you suggest appropriate alternatives rather than using unavailable service names. You always respond with valid JSON only - no markdown, no extra text, just clean JSON. ${Object.keys(clarificationAnswers).length > 0 
+            content: `You are an expert prompt engineer who specializes in creating structured, user-friendly automation execution plans using specific plugin capabilities. You write in simple, conversational language that anyone can understand, completely avoiding technical jargon. You excel at taking vague automation requests and making them specific and actionable while keeping the language friendly and approachable. You naturally incorporate available service capabilities to make instructions more specific, and when services aren't available, you suggest appropriate alternatives using connected services rather than unavailable service names. You always respond with valid JSON only - no markdown, no extra text, just clean JSON. ${Object.keys(clarificationAnswers).length > 0 
               ? 'You are excellent at incorporating user-provided clarification answers to create specific, actionable prompts using only the details the user actually provided.'
               : 'You avoid making assumptions about specific parameters and use friendly placeholder language instead.'
-            }`
+            } You leverage plugin capabilities like read_email, upload_files, send_message to make instructions more precise and actionable.`
           },
           {
             role: 'user', 
@@ -393,37 +465,35 @@ Respond with only a JSON object:
       } catch (secondParseError) {
         console.error('❌ All parsing attempts failed:', secondParseError);
         
-        // Final fallback: create a basic structured prompt from the raw response
-        if (fullResponse.length > 20) {
-          enhancedPrompt = `**Data Source:**
-• ${prompt.split('.')[0] || 'Your specified data source'}
+        // Final fallback: create a basic structured prompt using available plugin capabilities
+        const availableCapabilities = connectedPluginData.flatMap(p => p.capabilities || []);
+        const hasEmailCaps = availableCapabilities.some(c => c.includes('email'));
+        const hasFileCaps = availableCapabilities.some(c => c.includes('file'));
+        const hasMessageCaps = availableCapabilities.some(c => c.includes('message'));
+        
+        enhancedPrompt = `**Data Source:**
+• ${prompt.split('.')[0] || 'Your specified data source'}${hasEmailCaps ? ' (using email capabilities)' : ''}
 
 **Trigger Conditions:**
-• Based on your requirements
+• Based on your requirements${hasEmailCaps ? ' with email filtering' : ''}
 
 **Processing Steps:**
 • Process the data according to your needs
-• Apply the necessary transformations
+• Apply the necessary transformations${hasFileCaps ? ' and file operations' : ''}
 
 **Output Creation:**
 • Generate the required output format
 
 **Delivery Method:**
-• Send results to your preferred destination
+• Send results to your preferred destination${hasMessageCaps ? ' using messaging capabilities' : ''}${hasFileCaps ? ' or save to storage' : ''}
 
 **Error Handling:**
 • Log any errors and retry as needed
-• Send notifications if critical failures occur`;
-          rationale = 'Created structured execution plan from your request.';
-          
-          console.log('⚠️ Using emergency fallback - created basic structured prompt');
-        } else {
-          console.error('❌ All fallback attempts failed - response too short');
-          return NextResponse.json({ 
-            error: 'Failed to generate a valid enhanced prompt',
-            details: 'All parsing and fallback attempts failed'
-          }, { status: 500 });
-        }
+• Send notifications if critical failures occur${hasMessageCaps ? ' via available messaging' : ''}`;
+        
+        rationale = `Created structured execution plan from your request using available plugin capabilities: ${availableCapabilities.slice(0, 3).join(', ')}.`;
+        
+        console.log('⚠️ Using enhanced fallback with plugin capabilities');
       }
     }
     
@@ -437,7 +507,7 @@ Respond with only a JSON object:
       total: inputTokens + outputTokens
     })
 
-    // Track usage in database using the simplified tracking system
+    // Enhanced tracking with plugin metadata
     if (userIdToUse !== 'anonymous') {
       console.log('💾 Tracking usage for user:', userIdToUse)
       
@@ -448,22 +518,31 @@ Respond with only a JSON object:
           inputTokens: inputTokens,
           outputTokens: outputTokens,
           requestType: 'chat',
-          category: 'context_aware_prompt_enhancement',
+          category: 'plugin_aware_prompt_enhancement',
           metadata: {
             originalPromptLength: prompt.length,
             enhancedPromptLength: enhancedPrompt.length,
             clarificationAnswersCount: Object.keys(clarificationAnswers).length,
             clarificationAnswers: clarificationAnswers,
             connectedPlugins: connectedPlugins,
+            connectedPluginData: connectedPluginData.map(p => ({
+              key: p.key,
+              label: p.label,
+              category: p.category,
+              capabilities: p.capabilities,
+              usage: p.usage
+            })),
             missingPlugins: finalMissingPlugins,
             enhancementType: Object.keys(clarificationAnswers).length > 0 ? 'with_clarification' : 'basic',
             hadMissingPlugins: finalMissingPlugins.length > 0,
             isUserFriendly: true,
             isContextAware: true,
+            isPluginAware: true,
+            pluginCapabilitiesUsed: connectedPluginData.flatMap(p => p.capabilities).slice(0, 10),
             timestamp: new Date().toISOString()
           }
         })
-        console.log('✅ Usage tracking successful')
+        console.log('✅ Enhanced usage tracking successful')
       } catch (trackingError) {
         console.warn('⚠️ Usage tracking failed, but continuing with response:', trackingError)
       }
@@ -471,11 +550,12 @@ Respond with only a JSON object:
       console.log('⚠️ Skipping usage tracking - anonymous user')
     }
 
-    // Return clean, parsed response
-    console.log('🎉 Returning context-aware enhanced prompt:', {
+    // Return enhanced response with plugin metadata
+    console.log('🎉 Returning plugin-aware enhanced prompt:', {
       enhancedPromptPreview: typeof enhancedPrompt === 'string' ? enhancedPrompt.substring(0, 100) + '...' : 'Object format converted to string',
       rationalePreview: typeof rationale === 'string' ? rationale.substring(0, 50) + '...' : 'N/A',
       connectedPlugins: connectedPlugins,
+      connectedPluginDataCount: connectedPluginData.length,
       missingPlugins: finalMissingPlugins
     })
 
@@ -484,14 +564,18 @@ Respond with only a JSON object:
       rationale,          // Available for backend storage/tracking (not shown in UI)
       originalPrompt: prompt,
       clarificationAnswersUsed: Object.keys(clarificationAnswers).length > 0,
+      connectedPluginData, // Include plugin metadata in response
       metadata: {
         enhancementType: Object.keys(clarificationAnswers).length > 0 ? 'with_clarification' : 'basic',
         clarificationAnswersCount: Object.keys(clarificationAnswers).length,
         connectedPlugins: connectedPlugins,
+        connectedPluginData: connectedPluginData.map(p => ({ key: p.key, label: p.label, category: p.category })),
+        pluginCapabilitiesUsed: connectedPluginData.flatMap(p => p.capabilities),
         missingPlugins: finalMissingPlugins,
         hadMissingPlugins: finalMissingPlugins.length > 0,
         isUserFriendly: true,
-        isContextAware: true
+        isContextAware: true,
+        isPluginAware: true
       }
     })
   } catch (error) {

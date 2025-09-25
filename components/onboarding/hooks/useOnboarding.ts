@@ -50,7 +50,7 @@ const initialState: OnboardingState = {
     },
     plugins: [
       { id: 'slack', name: 'Slack', description: 'Connect your Slack workspace', enabled: false },
-      { id: 'gmail', name: 'Gmail', description: 'Connect your Gmail account', enabled: false },
+      { id: 'google-mail', name: 'Gmail', description: 'Connect your Gmail account', enabled: false },
       { id: 'calendar', name: 'Google Calendar', description: 'Connect your calendar', enabled: false },
       { id: 'drive', name: 'Google Drive', description: 'Connect your Google Drive', enabled: false },
     ],

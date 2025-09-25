@@ -16,7 +16,7 @@ export const SMART_AGENT_TEMPLATES: AgentTemplates = {
         { name: 'found_emails', type: 'email_list', description: 'Emails matching criteria' },
         { name: 'attachments', type: 'file_list', description: 'Files attached to emails' }
       ],
-      requiredPlugins: ['gmail', 'outlook'],
+      requiredPlugins: ['google-mail', 'outlook'],
       businessValue: 'Never miss important emails again',
       configurable: true
     }

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   Bot,
   User,
@@ -32,8 +32,8 @@ interface EnhancedConversationalAgentBuilderProps extends ConversationalAgentBui
   onReturnToSmartBuilder?: () => void;
 }
 
-// Inline Guide Banner Component
-const InlineGuideBanner = ({ currentStep, onDismiss, isVisible }) => {
+// Memoized Inline Guide Banner Component
+const InlineGuideBanner = React.memo(({ currentStep, onDismiss, isVisible }) => {
   const stepGuides = {
     'start': {
       title: 'Welcome! Start by describing your automation',
@@ -105,10 +105,10 @@ const InlineGuideBanner = ({ currentStep, onDismiss, isVisible }) => {
       </div>
     </div>
   );
-};
+});
 
-// Progress Indicator Component
-const ProgressIndicator = ({ currentStep, steps }) => {
+// Memoized Progress Indicator Component
+const ProgressIndicator = React.memo(({ currentStep, steps }) => {
   return (
     <div className="bg-white/90 backdrop-blur-xl rounded-xl p-3 shadow-lg border border-white/20 mb-4">
       <div className="flex items-center justify-between mb-2">
@@ -129,7 +129,18 @@ const ProgressIndicator = ({ currentStep, steps }) => {
       </div>
     </div>
   );
-};
+});
+
+// Memoized QuestionRenderer
+const MemoizedQuestionRenderer = React.memo(QuestionRenderer, (prevProps, nextProps) => {
+  return (
+    prevProps.question.id === nextProps.question.id &&
+    prevProps.isCurrent === nextProps.isCurrent &&
+    prevProps.isProcessing === nextProps.isProcessing &&
+    prevProps.readOnly === nextProps.readOnly &&
+    JSON.stringify(prevProps.state.clarificationAnswers) === JSON.stringify(nextProps.state.clarificationAnswers)
+  );
+});
 
 // Helper function to safely format timestamps
 const formatMessageTimestamp = (timestamp: any) => {
@@ -158,13 +169,16 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
   // Simple ref for messages container
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
-  // Guide system state
+  // Guide system state - simplified
   const [showGuide, setShowGuide] = useState(true);
-  const [currentGuideStep, setCurrentGuideStep] = useState('start');
   const guideSteps = ['start', 'questions', 'processing', 'review', 'ready'];
   
   // Stable reference for initialPrompt to avoid useEffect dependency issues
   const hasInitialPrompt = useRef(!!initialPrompt);
+
+  // Edit textarea ref for controlled focus
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const lastFocusTime = useRef(0);
 
   const {
     user,
@@ -197,43 +211,250 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
     onCancel,
   });
 
-  // Update guide step based on conversation state
+  // SIMPLIFIED guide step calculation - only calculate on major state changes
+  const currentGuideStep = useMemo(() => {
+    if (!showGuide) return 'start';
+    
+    if (projectState.isReadyToBuild && projectState.allowNavigation) return 'ready';
+    if (projectState.enhancedPrompt && !projectState.planApproved) return 'review';
+    if (projectState.conversationCompleted && !projectState.enhancedPrompt) return 'processing';
+    if (projectState.currentQuestionIndex >= 0) return 'questions';
+    if (projectState.originalPrompt && !projectState.conversationCompleted) return 'questions';
+    if (!projectState.originalPrompt && !hasInitialPrompt.current) return 'start';
+    return 'questions';
+  }, [
+    showGuide, 
+    projectState.isReadyToBuild, 
+    projectState.allowNavigation, 
+    projectState.enhancedPrompt, 
+    projectState.planApproved,
+    projectState.conversationCompleted,
+    projectState.currentQuestionIndex,
+    projectState.originalPrompt
+  ]);
+
+  // SIMPLIFIED controlled auto-focus - less aggressive
   useEffect(() => {
-    if (!showGuide) return;
-
-    if (projectState.isReadyToBuild && projectState.allowNavigation) {
-      setCurrentGuideStep('ready');
-    } else if (projectState.enhancedPrompt && !projectState.planApproved) {
-      setCurrentGuideStep('review');
-    } else if (projectState.conversationCompleted && !projectState.enhancedPrompt) {
-      setCurrentGuideStep('processing');
-    } else if (projectState.currentQuestionIndex >= 0) {
-      setCurrentGuideStep('questions');
-    } else if (projectState.originalPrompt && !projectState.conversationCompleted) {
-      // User has already provided initial prompt, move to questions phase
-      setCurrentGuideStep('questions');
-    } else if (!projectState.originalPrompt && !hasInitialPrompt.current) {
-      setCurrentGuideStep('start');
-    } else {
-      // If we have initialPrompt, skip the start message
-      setCurrentGuideStep('questions');
+    if (projectState.isEditingEnhanced && editTextareaRef.current) {
+      const now = Date.now();
+      // Only focus if enough time has passed since last focus attempt
+      if (now - lastFocusTime.current > 1000) {
+        lastFocusTime.current = now;
+        setTimeout(() => {
+          if (editTextareaRef.current && projectState.isEditingEnhanced) {
+            editTextareaRef.current.focus();
+          }
+        }, 100);
+      }
     }
-  }, [projectState, showGuide]); // Removed initialPrompt from dependencies
+  }, [projectState.isEditingEnhanced]);
 
-  const handleDismissGuide = () => {
+  // SIMPLIFIED auto-scroll - only on new messages, no intersection observer
+  const lastMessageCount = useRef(messages.length);
+  useEffect(() => {
+    if (messages.length > lastMessageCount.current) {
+      lastMessageCount.current = messages.length;
+      // Simple, direct scroll without smooth behavior
+      setTimeout(() => {
+        if (messagesEndRef.current) {
+          messagesEndRef.current.scrollIntoView({ block: 'end' });
+        }
+      }, 100);
+    }
+  }, [messages.length]);
+
+  const handleDismissGuide = useCallback(() => {
     setShowGuide(false);
-  };
+  }, []);
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'clear':
-        return <CheckCircle className="h-3 w-3 text-green-500" />;
-      case 'partial':
-        return <AlertCircle className="h-3 w-3 text-yellow-500" />;
-      default:
-        return <div className="h-3 w-3 border border-gray-300 rounded-full" />;
+  // Memoized plugin warning detection
+  const isPluginWarningMessage = useCallback((content: string) => {
+    return content.includes('🚨 MISSING SERVICES:') || 
+           content.includes('🚨 MISSING PLUGINS:') || 
+           (content.includes('MISSING SERVICES:') || content.includes('MISSING PLUGINS:'));
+  }, []);
+
+  // SIMPLIFIED message rendering - stable keys, minimal complexity
+  const renderMessage = useCallback((message, index) => {
+    // System "question answered" chip
+    if (message.type === 'system' && message.content.startsWith('✅ Question')) {
+      return (
+        <div key={`${message.id}-system`} className="flex justify-center">
+          <div className="inline-flex items-center gap-2 bg-gradient-to-r from-emerald-500/20 to-green-500/20 text-emerald-700 px-3 py-1.5 rounded-lg text-xs font-medium border border-emerald-200/50 backdrop-blur-sm">
+            <div className="w-4 h-4 bg-emerald-500 rounded-full flex items-center justify-center">
+              <CheckCircle className="h-2 w-2 text-white" />
+            </div>
+            Question Completed
+          </div>
+        </div>
+      );
     }
-  };
+
+    // System question payload -> render interactive block
+    if (message.type === 'system' && message.content.startsWith('{')) {
+      try {
+        const question = JSON.parse(message.content) as ClarificationQuestion;
+        return (
+          <MemoizedQuestionRenderer
+            key={`${message.id}-question`}
+            question={question}
+            state={projectState}
+            isCurrent={projectState.questionsSequence[projectState.currentQuestionIndex]?.id === question.id}
+            isProcessing={projectState.isProcessingQuestion}
+            onSelect={handleOptionSelect}
+            onCustomSubmit={handleCustomAnswer}
+            onCustomChange={(val) => setProjectState((prev) => ({ ...prev, customInputValue: val, showingCustomInput: true }))}
+            onChangeAnswer={handleChangeAnswer}
+            readOnly={projectState.isInReviewMode}
+          />
+        );
+      } catch (e) {
+        return (
+          <div key={`${message.id}-error`} className="flex gap-3 justify-start">
+            <div className="w-8 h-8 bg-gradient-to-br from-red-500 to-red-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-md">
+              <AlertCircle className="h-4 w-4 text-white" />
+            </div>
+            <div className="flex-1 max-w-2xl">
+              <div className="bg-gradient-to-br from-red-50 to-red-50 border border-red-200 rounded-lg p-3 shadow-sm">
+                <p className="text-red-800 text-sm font-medium">Error loading question. Please try again.</p>
+              </div>
+            </div>
+          </div>
+        );
+      }
+    }
+
+    // Regular AI/User message bubble
+    return (
+      <div key={`${message.id}-msg`} className={`flex gap-3 ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
+        {message.type === 'ai' && (
+          <div className="flex-shrink-0">
+            <div className="w-8 h-8 bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-600 rounded-lg flex items-center justify-center shadow-md">
+              <Bot className="h-4 w-4 text-white" />
+            </div>
+          </div>
+        )}
+
+        <div className={`max-w-2xl relative ${message.type === 'user' ? 'ml-12' : 'mr-12'}`}>
+          <div
+            className={`rounded-xl px-3 py-2 shadow-md backdrop-blur-sm relative border text-sm ${
+              message.type === 'user'
+                ? `bg-gradient-to-br from-blue-600 to-indigo-700 text-white border-blue-600 ${
+                    message.isQuestionAnswer ? 'ring-1 ring-green-300 ring-offset-1' : ''
+                  }`
+                : isPluginWarningMessage(message.content)
+                ? 'bg-gradient-to-br from-red-50 to-orange-50 text-red-900 border border-red-300'
+                : 'bg-white/80 text-gray-800 border-white/30 hover:bg-white/90 transition-colors'
+            }`}
+          >
+            {message.isQuestionAnswer && (
+              <div className="absolute -top-1 -right-1 w-4 h-4 bg-gradient-to-br from-emerald-400 to-green-500 rounded-full flex items-center justify-center shadow-md">
+                <CheckCircle className="h-2 w-2 text-white" />
+              </div>
+            )}
+
+            {isPluginWarningMessage(message.content) && (
+              <div className="absolute -top-1 -right-1 w-4 h-4 bg-gradient-to-br from-red-500 to-red-600 rounded-full flex items-center justify-center shadow-md animate-pulse">
+                <AlertCircle className="h-2 w-2 text-white" />
+              </div>
+            )}
+
+            <div
+              className={`whitespace-pre-wrap leading-relaxed ${
+                isPluginWarningMessage(message.content) ? 'font-medium' : ''
+              }`}
+            >
+              {message.content}
+            </div>
+
+            <div className={`text-xs mt-2 flex items-center gap-1 ${message.type === 'user' ? 'text-blue-100' : 'text-gray-500'}`}>
+              <Clock className="h-2.5 w-2.5" />
+              {formatMessageTimestamp(message.timestamp)}
+            </div>
+
+            {/* Enhanced plan controls */}
+            {message.type === 'ai' &&
+              projectState.enhancementComplete &&
+              message.content.includes('Enhanced Plan:') &&
+              !projectState.planApproved &&
+              !projectState.isInReviewMode && (
+                <div className="mt-3 space-y-2">
+                  {projectState.isEditingEnhanced ? (
+                    <div className="bg-gray-50/90 backdrop-blur-sm rounded-lg p-3 space-y-2 border border-gray-200/50">
+                      <div className="flex items-center gap-1.5">
+                        <Edit className="h-3 w-3 text-gray-600" />
+                        <span className="text-xs font-medium text-gray-700">Edit enhanced plan:</span>
+                      </div>
+                      <textarea
+                        ref={editTextareaRef}
+                        value={projectState.editedEnhancedPrompt}
+                        onChange={(e) => setProjectState((prev) => ({ ...prev, editedEnhancedPrompt: e.target.value }))}
+                        className="w-full px-3 py-2 bg-white/90 text-gray-900 border border-gray-300 rounded-lg focus:ring-1 focus:ring-purple-500 focus:border-transparent min-h-[80px] resize-none text-xs leading-relaxed backdrop-blur-sm"
+                        placeholder="Edit your enhanced plan..."
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={handleSaveEnhancedEdit}
+                          disabled={!projectState.editedEnhancedPrompt.trim()}
+                          className="flex-1 bg-gradient-to-r from-purple-600 to-purple-700 text-white px-3 py-2 rounded-lg hover:from-purple-700 hover:to-purple-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center gap-1.5 text-xs font-medium shadow-md"
+                        >
+                          <Save className="h-3 w-3" />
+                          Save
+                        </button>
+                        <button
+                          onClick={handleCancelEnhancedEdit}
+                          className="px-3 py-2 bg-gray-100/90 text-gray-700 rounded-lg hover:bg-gray-200/90 transition-colors flex items-center justify-center border border-gray-200"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <button
+                        onClick={handleApproveEnhanced}
+                        className="w-full group bg-gradient-to-r from-emerald-500 to-green-600 text-white px-4 py-2.5 rounded-lg hover:from-emerald-600 hover:to-green-700 transition-all duration-200 flex items-center justify-center gap-2 font-medium shadow-md transform hover:scale-[1.01] text-sm"
+                      >
+                        <div className="w-5 h-5 bg-white/20 rounded-lg flex items-center justify-center">
+                          <CheckCircle className="h-3 w-3" />
+                        </div>
+                        Use Enhanced Plan
+                        <ChevronRight className="h-3 w-3 group-hover:translate-x-0.5 transition-transform" />
+                      </button>
+                      
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          onClick={handleEditEnhanced}
+                          className="bg-white/90 text-gray-700 px-3 py-2 rounded-lg hover:bg-white transition-all duration-200 flex items-center justify-center gap-1.5 font-medium shadow-sm border border-gray-200 text-xs"
+                        >
+                          <Edit className="h-3 w-3" />
+                          Edit
+                        </button>
+                        <button
+                          onClick={handleUseOriginal}
+                          className="bg-gray-600/90 text-white px-3 py-2 rounded-lg hover:bg-gray-700 transition-all duration-200 flex items-center justify-center gap-1.5 font-medium shadow-sm text-xs"
+                        >
+                          <MessageSquare className="h-3 w-3" />
+                          Original
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+          </div>
+        </div>
+
+        {message.type === 'user' && (
+          <div className="flex-shrink-0">
+            <div className="w-8 h-8 bg-gradient-to-br from-gray-400 to-gray-600 rounded-lg flex items-center justify-center shadow-md">
+              <User className="h-4 w-4 text-white" />
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }, [projectState.enhancementComplete, projectState.planApproved, projectState.isInReviewMode, projectState.isEditingEnhanced, projectState.editedEnhancedPrompt, projectState.questionsSequence, projectState.currentQuestionIndex, projectState.isProcessingQuestion, isPluginWarningMessage, handleOptionSelect, handleCustomAnswer, handleChangeAnswer, setProjectState, handleSaveEnhancedEdit, handleCancelEnhancedEdit, handleApproveEnhanced, handleEditEnhanced, handleUseOriginal]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
@@ -266,7 +487,7 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
                 <HelpCircle className="h-4 w-4" />
               </button>
 
-              {projectState.isReadyToBuild && (
+              {projectState.enhancementComplete && projectState.enhancedPrompt && (
                 <div className="hidden md:flex items-center gap-1.5 px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium animate-pulse">
                   <CheckCircle className="h-3 w-3" />
                   Ready
@@ -341,194 +562,7 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
                 ref={messagesContainerRef}
                 className="flex-1 overflow-y-auto p-3 space-y-4"
               >
-                {messages.map((message) => {
-                  // System "question answered" chip
-                  if (message.type === 'system' && message.content.startsWith('✅ Question')) {
-                    return (
-                      <div key={message.id} className="flex justify-center">
-                        <div className="inline-flex items-center gap-2 bg-gradient-to-r from-emerald-500/20 to-green-500/20 text-emerald-700 px-3 py-1.5 rounded-lg text-xs font-medium border border-emerald-200/50 backdrop-blur-sm">
-                          <div className="w-4 h-4 bg-emerald-500 rounded-full flex items-center justify-center">
-                            <CheckCircle className="h-2 w-2 text-white" />
-                          </div>
-                          Question Completed
-                        </div>
-                      </div>
-                    );
-                  }
-
-                  // System question payload -> render interactive block
-                  if (message.type === 'system' && message.content.startsWith('{')) {
-                    try {
-                      const question = JSON.parse(message.content) as ClarificationQuestion;
-                      return (
-                        <QuestionRenderer
-                          key={message.id}
-                          question={question}
-                          state={projectState}
-                          isCurrent={projectState.questionsSequence[projectState.currentQuestionIndex]?.id === question.id}
-                          isProcessing={projectState.isProcessingQuestion}
-                          onSelect={handleOptionSelect}
-                          onCustomSubmit={handleCustomAnswer}
-                          onCustomChange={(val) => setProjectState((prev) => ({ ...prev, customInputValue: val, showingCustomInput: true }))}
-                          onChangeAnswer={handleChangeAnswer}
-                          readOnly={projectState.isInReviewMode}
-                        />
-                      );
-                    } catch (e) {
-                      return (
-                        <div key={message.id} className="flex gap-3 justify-start">
-                          <div className="w-8 h-8 bg-gradient-to-br from-red-500 to-red-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-md">
-                            <AlertCircle className="h-4 w-4 text-white" />
-                          </div>
-                          <div className="flex-1 max-w-2xl">
-                            <div className="bg-gradient-to-br from-red-50 to-red-50 border border-red-200 rounded-lg p-3 shadow-sm">
-                              <p className="text-red-800 text-sm font-medium">Error loading question. Please try again.</p>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    }
-                  }
-
-                  // Regular AI/User message bubble
-                  return (
-                    <div key={message.id} className={`flex gap-3 ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
-                      {message.type === 'ai' && (
-                        <div className="flex-shrink-0">
-                          <div className="w-8 h-8 bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-600 rounded-lg flex items-center justify-center shadow-md">
-                            <Bot className="h-4 w-4 text-white" />
-                          </div>
-                        </div>
-                      )}
-
-                      <div className={`max-w-2xl relative ${message.type === 'user' ? 'ml-12' : 'mr-12'}`}>
-                        <div
-                          className={`rounded-xl px-3 py-2 shadow-md backdrop-blur-sm relative border text-sm ${
-                            message.type === 'user'
-                              ? `bg-gradient-to-br from-blue-600 to-indigo-700 text-white border-blue-600 ${
-                                  message.isQuestionAnswer ? 'ring-1 ring-green-300 ring-offset-1' : ''
-                                }`
-                              : message.content.includes('🚨 MISSING SERVICES:') ||
-                                (message.content.includes('FYI:') &&
-                                  (message.content.includes("service isn't connected") || message.content.includes("services aren't connected")))
-                              ? 'bg-gradient-to-br from-yellow-50 to-orange-50 text-orange-900 border border-orange-300'
-                              : 'bg-white/80 text-gray-800 border-white/30 hover:bg-white/90 transition-colors'
-                          }`}
-                        >
-                          {message.isQuestionAnswer && (
-                            <div className="absolute -top-1 -right-1 w-4 h-4 bg-gradient-to-br from-emerald-400 to-green-500 rounded-full flex items-center justify-center shadow-md">
-                              <CheckCircle className="h-2 w-2 text-white" />
-                            </div>
-                          )}
-
-                          {(message.content.includes('🚨 MISSING SERVICES:') ||
-                            (message.content.includes('FYI:') &&
-                              (message.content.includes("service isn't connected") || message.content.includes("services aren't connected")))) && (
-                            <div className="absolute -top-1 -right-1 w-4 h-4 bg-gradient-to-br from-orange-500 to-orange-600 rounded-full flex items-center justify-center shadow-md animate-pulse">
-                              <AlertCircle className="h-2 w-2 text-white" />
-                            </div>
-                          )}
-
-                          <div
-                            className={`whitespace-pre-wrap leading-relaxed ${
-                              message.content.includes('🚨 MISSING SERVICES:') ||
-                              (message.content.includes('FYI:') &&
-                                (message.content.includes("service isn't connected") || message.content.includes("services aren't connected")))
-                                ? 'font-medium'
-                                : ''
-                            }`}
-                          >
-                            {message.content}
-                          </div>
-
-                          <div className={`text-xs mt-2 flex items-center gap-1 ${message.type === 'user' ? 'text-blue-100' : 'text-gray-500'}`}>
-                            <Clock className="h-2.5 w-2.5" />
-                            {formatMessageTimestamp(message.timestamp)}
-                          </div>
-
-                          {/* Enhanced plan controls */}
-                          {message.type === 'ai' &&
-                            projectState.enhancementComplete &&
-                            message.content.includes('Enhanced Plan:') &&
-                            !projectState.planApproved &&
-                            !projectState.isInReviewMode && (
-                              <div className="mt-3 space-y-2">
-                                {projectState.isEditingEnhanced ? (
-                                  <div className="bg-gray-50/90 backdrop-blur-sm rounded-lg p-3 space-y-2 border border-gray-200/50">
-                                    <div className="flex items-center gap-1.5">
-                                      <Edit className="h-3 w-3 text-gray-600" />
-                                      <span className="text-xs font-medium text-gray-700">Edit enhanced plan:</span>
-                                    </div>
-                                    <textarea
-                                      value={projectState.editedEnhancedPrompt}
-                                      onChange={(e) => setProjectState((prev) => ({ ...prev, editedEnhancedPrompt: e.target.value }))}
-                                      className="w-full px-3 py-2 bg-white/90 text-gray-900 border border-gray-300 rounded-lg focus:ring-1 focus:ring-purple-500 focus:border-transparent min-h-[80px] resize-none text-xs leading-relaxed backdrop-blur-sm"
-                                      placeholder="Edit your enhanced plan..."
-                                      autoFocus
-                                    />
-                                    <div className="flex gap-2">
-                                      <button
-                                        onClick={handleSaveEnhancedEdit}
-                                        disabled={!projectState.editedEnhancedPrompt.trim()}
-                                        className="flex-1 bg-gradient-to-r from-purple-600 to-purple-700 text-white px-3 py-2 rounded-lg hover:from-purple-700 hover:to-purple-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center gap-1.5 text-xs font-medium shadow-md"
-                                      >
-                                        <Save className="h-3 w-3" />
-                                        Save
-                                      </button>
-                                      <button
-                                        onClick={handleCancelEnhancedEdit}
-                                        className="px-3 py-2 bg-gray-100/90 text-gray-700 rounded-lg hover:bg-gray-200/90 transition-colors flex items-center justify-center border border-gray-200"
-                                      >
-                                        <X className="h-3 w-3" />
-                                      </button>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <div className="space-y-2">
-                                    <button
-                                      onClick={handleApproveEnhanced}
-                                      className="w-full group bg-gradient-to-r from-emerald-500 to-green-600 text-white px-4 py-2.5 rounded-lg hover:from-emerald-600 hover:to-green-700 transition-all duration-200 flex items-center justify-center gap-2 font-medium shadow-md transform hover:scale-[1.01] text-sm"
-                                    >
-                                      <div className="w-5 h-5 bg-white/20 rounded-lg flex items-center justify-center">
-                                        <CheckCircle className="h-3 w-3" />
-                                      </div>
-                                      Use Enhanced Plan
-                                      <ChevronRight className="h-3 w-3 group-hover:translate-x-0.5 transition-transform" />
-                                    </button>
-                                    
-                                    <div className="grid grid-cols-2 gap-2">
-                                      <button
-                                        onClick={handleEditEnhanced}
-                                        className="bg-white/90 text-gray-700 px-3 py-2 rounded-lg hover:bg-white transition-all duration-200 flex items-center justify-center gap-1.5 font-medium shadow-sm border border-gray-200 text-xs"
-                                      >
-                                        <Edit className="h-3 w-3" />
-                                        Edit
-                                      </button>
-                                      <button
-                                        onClick={handleUseOriginal}
-                                        className="bg-gray-600/90 text-white px-3 py-2 rounded-lg hover:bg-gray-700 transition-all duration-200 flex items-center justify-center gap-1.5 font-medium shadow-sm text-xs"
-                                      >
-                                        <MessageSquare className="h-3 w-3" />
-                                        Original
-                                      </button>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                        </div>
-                      </div>
-
-                      {message.type === 'user' && (
-                        <div className="flex-shrink-0">
-                          <div className="w-8 h-8 bg-gradient-to-br from-gray-400 to-gray-600 rounded-lg flex items-center justify-center shadow-md">
-                            <User className="h-4 w-4 text-white" />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                {messages.map(renderMessage)}
 
                 {isProcessing && (
                   <div className="flex gap-3 justify-start">
@@ -553,7 +587,7 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
             </div>
           </div>
 
-          {/* Compact Sidebar */}
+          {/* Compact Sidebar - Simplified to reduce re-renders */}
           <div className="space-y-3">
             
             {/* Progress Card */}
@@ -590,7 +624,7 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
                   </div>
                 )}
 
-                {projectState.isReadyToBuild && (
+                {projectState.enhancementComplete && projectState.enhancedPrompt && (
                   <div className="flex items-center gap-2 p-2 bg-green-50 rounded-lg border border-green-200">
                     <div className="w-4 h-4 bg-green-500 rounded-full flex items-center justify-center">
                       <CheckCircle className="h-2 w-2 text-white" />
@@ -601,7 +635,7 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
               </div>
             </div>
 
-            {/* Requirements Card */}
+            {/* Requirements Card - Simplified */}
             <div className="bg-white/70 backdrop-blur-xl rounded-2xl p-4 shadow-lg border border-white/20">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
@@ -623,7 +657,7 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
               </div>
 
               <div className="space-y-2">
-                {projectState.requirements.map((req, index) => (
+                {projectState.requirements.map((req) => (
                   <div key={req.id} className="group relative">
                     <div
                       className={`rounded-lg border transition-all duration-300 ${
@@ -681,27 +715,6 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
                     </div>
                   </div>
                 ))}
-              </div>
-
-              <div className="mt-3 pt-3 border-t border-gray-100">
-                <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
-                  <span>Overall</span>
-                  <span>
-                    {Math.round(
-                      (projectState.requirements.filter((r) => r.status === 'clear').length / projectState.requirements.length) * 100
-                    )}%
-                  </span>
-                </div>
-                <div className="w-full bg-gray-200/50 rounded-full h-1.5">
-                  <div
-                    className="bg-gradient-to-r from-blue-500 to-green-500 h-1.5 rounded-full transition-all duration-500"
-                    style={{
-                      width: `${
-                        (projectState.requirements.filter((r) => r.status === 'clear').length / projectState.requirements.length) * 100
-                      }%`,
-                    }}
-                  />
-                </div>
               </div>
             </div>
 
@@ -786,7 +799,7 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
               </div>
             )}
 
-            {/* Next Steps */}
+            {/* Next Steps - Simplified */}
             <div className="bg-white/70 backdrop-blur-xl rounded-2xl p-4 shadow-lg border border-white/20">
               <div className="flex items-center gap-2 mb-4">
                 <div className="w-6 h-6 bg-gradient-to-br from-orange-500 to-red-500 rounded-lg flex items-center justify-center">

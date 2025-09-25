@@ -48,6 +48,7 @@ import PluginRequirements from './components/PluginRequirements';
 import SystemPromptEditor from './components/SystemPromptEditor';
 import TestRunner from './components/TestRunner';
 import AgentActions from './components/AgentActions';
+import SimpleDynamicWorkflow from './components/VisualAgentFlow';
 
 // Import hooks
 import { useAgentGeneration } from './hooks/useAgentGeneration';
@@ -996,24 +997,32 @@ export default function SmartAgentBuilder({
             onUpdate={updateEditedAgent}
           />
         </div>
-
-        {/* Visual Agent Flow Card - Always Visible */}
-        <div className="bg-white/70 backdrop-blur-xl rounded-3xl shadow-xl border border-white/20 p-8">
-          {VisualAgentFlow ? (
-            <VisualAgentFlow
-              agent={currentAgent}
-              autoPlay={!isEditing} // Only auto-play when not editing
-            />
-          ) : (
-            <div className="text-center py-8">
-              <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                <Play className="h-8 w-8 text-white" />
+ 
+        {/* Execution Preview Card - Full Width */}
+        <CollapsibleSection
+          title="Execution Preview"
+          description="Visual workflow and process flow"
+          icon={Play}
+          gradient="bg-gradient-to-br from-orange-500 to-red-500"
+          isEditing={isEditing}
+          defaultExpanded={false}
+        >
+          <div className="bg-gradient-to-br from-orange-50 to-red-50 rounded-xl p-6 border border-orange-200/50">
+            {currentAgent?.workflow_steps && currentAgent.workflow_steps.length > 0 ? (
+              <VisualAgentFlow agent={currentAgent} />
+            ) : (
+              <div className="text-center text-gray-600">
+                <Play className="h-12 w-12 mx-auto text-orange-500 mb-4" />
+                <p className="font-medium">No workflow steps available</p>
+                <p className="text-sm mt-2">
+                  Workflow visualization will appear when agent has defined workflow steps
+                </p>
               </div>
-              <h3 className="text-lg font-semibold text-gray-800 mb-2">Agent Workflow Visualization</h3>
-              <p className="text-gray-600">Visual flow component loading...</p>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        </CollapsibleSection>
+
+
 
         {/* Debug Panel - Always Visible for Development */}
         <DebugPanel
@@ -1072,6 +1081,7 @@ export default function SmartAgentBuilder({
                 />
               </CollapsibleSection>
             </div>
+            
 
             {/* System Prompt Card - Full Width */}
             <CollapsibleSection
@@ -1091,42 +1101,26 @@ export default function SmartAgentBuilder({
               />
             </CollapsibleSection>
 
-            {/* Execution Preview Card - Full Width */}
-            <CollapsibleSection
-              title="Execution Preview"
-              description="Visual workflow and process flow"
-              icon={Play}
-              gradient="bg-gradient-to-br from-orange-500 to-red-500"
-              isEditing={isEditing}
-              defaultExpanded={false}
-            >
-              <div className="bg-gradient-to-br from-orange-50 to-red-50 rounded-xl p-6 border border-orange-200/50">
-                <div className="text-center text-gray-600">
-                  <Play className="h-12 w-12 mx-auto text-orange-500 mb-4" />
-                  <p className="font-medium">Execution flow visualization would go here</p>
-                  <p className="text-sm mt-2">Shows the step-by-step process of how the agent executes</p>
-                </div>
-              </div>
-            </CollapsibleSection>
-          </div>
-        )}
+
 
         {/* Test Results */}
-        {testResults && (
-          <div className="bg-gradient-to-br from-green-50/50 to-emerald-50/50 backdrop-blur-xl rounded-3xl shadow-xl border border-emerald-200/30 p-8">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-500 rounded-xl flex items-center justify-center">
-                <TestTube className="h-5 w-5 text-white" />
+            {testResults && (
+              <div className="bg-gradient-to-br from-green-50/50 to-emerald-50/50 backdrop-blur-xl rounded-3xl shadow-xl border border-emerald-200/30 p-8">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-500 rounded-xl flex items-center justify-center">
+                    <TestTube className="h-5 w-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-800">Test Results</h3>
+                    <p className="text-sm text-gray-500">Agent performance validation</p>
+                  </div>
+                </div>
+                <TestRunner
+                  testResults={testResults}
+                  onClearResults={clearTestResults}
+                />
               </div>
-              <div>
-                <h3 className="text-lg font-semibold text-gray-800">Test Results</h3>
-                <p className="text-sm text-gray-500">Agent performance validation</p>
-              </div>
-            </div>
-            <TestRunner
-              testResults={testResults}
-              onClearResults={clearTestResults}
-            />
+            )}
           </div>
         )}
       </div>

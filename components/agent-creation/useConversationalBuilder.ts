@@ -9,7 +9,8 @@ import {
 } from './types';
 
 /**
- * FIXED VERSION: Proper completion state handling with AI prevention and enhanced error handling
+ * OPTIMAL VERSION: Uses proper data flow from UserProvider with fallback to API metadata
+ * Database → API → UserProvider → Frontend (with API response fallback)
  */
 export function useConversationalBuilder(params: {
   initialPrompt?: string;
@@ -23,7 +24,7 @@ export function useConversationalBuilder(params: {
   onCancel?: () => void;
 }) {
   const { initialPrompt, restoredState, onStateChange, onPromptApproved } = params;
-  const { user } = useAuth();
+  const { user, loading: userLoading } = useAuth();
 
   // Session tracking
   const sessionId = useRef(
@@ -74,7 +75,7 @@ export function useConversationalBuilder(params: {
       hasProcessedInitial: false,
       sessionId: sessionId.current,
       
-      // NEW: Completion tracking
+      // Completion tracking
       conversationCompleted: false,
       planApproved: false,
       workflowPhase: 'initial',
@@ -83,7 +84,7 @@ export function useConversationalBuilder(params: {
     };
 
     if (restoredState) {
-      console.log('🔄 Restoring project state:', {
+      console.log('Restoring project state:', {
         workflowPhase: restoredState.workflowPhase,
         conversationCompleted: restoredState.conversationCompleted,
         planApproved: restoredState.planApproved,
@@ -112,9 +113,56 @@ export function useConversationalBuilder(params: {
     return defaultState;
   });
 
-  // BULLETPROOF AI Prevention - Enhanced with completion checks
+  // OPTIMAL: Utility to get plugin display names with proper fallback hierarchy
+  const getServiceDisplayNames = useCallback((pluginKeys: string[], apiPluginData?: any[]): string[] => {
+    return pluginKeys.map(key => {
+      // Priority 1: API response plugin metadata (when available)
+      if (apiPluginData && apiPluginData.length > 0) {
+        const apiPlugin = apiPluginData.find(p => p.key === key);
+        if (apiPlugin && (apiPlugin.displayName || apiPlugin.label)) {
+          return apiPlugin.displayName || apiPlugin.label;
+        }
+      }
+      
+      // Priority 2: UserProvider plugin data (primary source)
+      if (user?.connectedPlugins && user.connectedPlugins[key]) {
+        const userPlugin = user.connectedPlugins[key];
+        if (userPlugin.displayName) return userPlugin.displayName;
+        if (userPlugin.name) return userPlugin.name;
+        if (userPlugin.label) return userPlugin.label;
+      }
+      
+      // Priority 3: Format the key nicely (last resort)
+      return key.replace(/[-_]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    });
+  }, [user?.connectedPlugins]);
+
+  // OPTIMAL: Get connected service keys with proper fallback
+  const getConnectedServiceKeys = useCallback((apiResponse?: any): string[] => {
+    // Priority 1: API response data (most up-to-date)
+    if (apiResponse?.connectedPluginData && Array.isArray(apiResponse.connectedPluginData)) {
+      return apiResponse.connectedPluginData.map(p => p.key);
+    }
+    
+    // Priority 2: UserProvider data (should be primary source after auth)
+    if (user?.connectedPlugins && Object.keys(user.connectedPlugins).length > 0) {
+      return Object.keys(user.connectedPlugins);
+    }
+    
+    // Priority 3: Empty array (no connections)
+    return [];
+  }, [user?.connectedPlugins]);
+
+  // Wait for user context to be loaded before processing
+  const shouldWaitForUserContext = !userLoading && !user?.connectedPlugins && user;
+
+  // AI Prevention - Enhanced with completion checks and user loading
   const shouldSkipAIProcessing = useCallback(() => {
     const skipReasons = [];
+    
+    // Check 0: Wait for user context to load
+    if (userLoading) skipReasons.push('user_loading');
+    if (shouldWaitForUserContext) skipReasons.push('waiting_for_plugins');
     
     // Check 1: Work is already completed
     if (projectState.conversationCompleted) skipReasons.push('conversation_completed');
@@ -137,13 +185,13 @@ export function useConversationalBuilder(params: {
     }
 
     if (skipReasons.length > 0) {
-      console.log('🚫 AI Processing BLOCKED - Reasons:', skipReasons);
+      console.log('AI Processing BLOCKED - Reasons:', skipReasons);
       return true;
     }
     
-    console.log('✅ AI Processing ALLOWED - No blocking conditions');
+    console.log('AI Processing ALLOWED - No blocking conditions');
     return false;
-  }, [projectState, restoredState, enhancementStarted.current]);
+  }, [projectState, restoredState, enhancementStarted.current, userLoading, shouldWaitForUserContext]);
 
   // Utility to ensure timestamps are Date objects
   const ensureDateTimestamp = useCallback((message: Message): Message => {
@@ -155,7 +203,7 @@ export function useConversationalBuilder(params: {
 
   // Messages with proper restoration
   const [messages, setMessages] = useState<Message[]>(() => {
-    console.log('💬 Initializing messages:', {
+    console.log('Initializing messages:', {
       hasRestoredState: !!restoredState,
       isInReviewMode: restoredState?.isInReviewMode,
       restoredMessages: restoredState?.messages?.length || 0,
@@ -164,13 +212,13 @@ export function useConversationalBuilder(params: {
 
     // PRIORITY 1: Restore from completed work with message history
     if (restoredState?.messages?.length > 0) {
-      console.log('✅ Restoring complete message history');
+      console.log('Restoring complete message history');
       return restoredState.messages.map(msg => ensureDateTimestamp(msg));
     }
 
     // PRIORITY 2: Build messages from restored state data (if no message history)
     if (restoredState && (restoredState.originalPrompt || restoredState.questionsSequence?.length > 0)) {
-      console.log('🔨 Rebuilding messages from state data');
+      console.log('Rebuilding messages from state data');
       
       const rebuiltMessages: Message[] = [
         {
@@ -228,7 +276,7 @@ export function useConversationalBuilder(params: {
             rebuiltMessages.push({
               id: `system-complete-${index}`,
               type: 'system',
-              content: '✅ Question answered',
+              content: 'Question answered',
               timestamp: new Date(),
               questionId: question.id,
             });
@@ -275,7 +323,7 @@ ${restoredState.isInReviewMode ?
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // CRITICAL: Always persist messages in state
+  // Always persist messages in state
   useEffect(() => {
     onStateChange?.({
       ...projectState,
@@ -291,7 +339,7 @@ ${restoredState.isInReviewMode ?
     (content: string, type: 'user' | 'ai' | 'system', status?: 'sending' | 'sent' | 'error', questionId?: string, isQuestionAnswer?: boolean) => {
       // Don't add messages in review mode unless it's a system message
       if (projectState.isInReviewMode && type !== 'system') {
-        console.log('🚫 Message blocked - in review mode');
+        console.log('Message blocked - in review mode');
         return;
       }
 
@@ -373,28 +421,29 @@ ${restoredState.isInReviewMode ?
     [recalculateClarityScore]
   );
 
-  // Enhanced enhancement logic with completion tracking
+  // OPTIMAL: Enhanced enhancement logic using proper plugin metadata hierarchy
   const startEnhancement = useCallback(
     async (prompt: string, finalAnswers: Record<string, string>) => {
-      console.log('🔍 startEnhancement called with state:', {
+      console.log('startEnhancement called with state:', {
         enhancementStarted: enhancementStarted.current,
         enhancementComplete: projectState.enhancementComplete,
         conversationCompleted: projectState.conversationCompleted,
         isProcessing,
         isCurrentlyProcessing: isCurrentlyProcessing.current,
         hasPrompt: !!prompt?.trim(),
-        hasUserId: !!user?.id
+        hasUserId: !!user?.id,
+        hasConnectedPlugins: !!(user?.connectedPlugins && Object.keys(user.connectedPlugins).length > 0)
       });
 
-      // CRITICAL FIX: Only check ref-based flag if NOT in active enhancement process
+      // Only check ref-based flag if NOT in active enhancement process
       if (enhancementStarted.current && projectState.enhancementComplete) {
-        console.log('🚫 Enhancement blocked - already completed');
+        console.log('Enhancement blocked - already completed');
         return;
       }
 
-      // CRITICAL FIX: Simplified checks during active enhancement
+      // Simplified checks during active enhancement
       if (projectState.conversationCompleted || projectState.planApproved) {
-        console.log('🚫 Enhancement blocked - work already completed');
+        console.log('Enhancement blocked - work already completed');
         return;
       }
 
@@ -414,7 +463,7 @@ ${restoredState.isInReviewMode ?
         return;
       }
 
-      console.log('✅ Starting enhancement API call');
+      console.log('Starting enhancement API call');
       setIsProcessing(true);
       isCurrentlyProcessing.current = true;
       addMessage('Let me enhance your plan with clear, simple details...', 'ai');
@@ -433,7 +482,6 @@ ${restoredState.isInReviewMode ?
             userId: user.id,
             sessionId: sessionId.current,
             connected_plugins: user?.connectedPlugins || {},
-            // FIXED: Pass missing plugins from plugin warning
             missingPlugins: projectState.missingPlugins || [],
             pluginWarning: projectState.pluginWarning ? {
               missingServices: projectState.missingPlugins || [],
@@ -448,13 +496,47 @@ ${restoredState.isInReviewMode ?
 
         const result = await response.json();
 
+        // OPTIMAL: Use proper plugin metadata hierarchy
+        const connectedServiceKeys = getConnectedServiceKeys(result);
+        const serviceDisplayNames = getServiceDisplayNames(connectedServiceKeys, result.connectedPluginData);
+        
+        console.log('Enhancement completed with plugin metadata:', {
+          connectedServiceKeys,
+          serviceDisplayNames,
+          hasApiPluginData: !!(result.connectedPluginData && result.connectedPluginData.length > 0),
+          hasUserPluginData: !!(user?.connectedPlugins && Object.keys(user.connectedPlugins).length > 0)
+        });
+
         setProjectState((prev) => ({
           ...prev,
           enhancedPrompt: result.enhancedPrompt,
           enhancementComplete: true,
-          conversationCompleted: true, // NEW: Mark conversation as completed
+          conversationCompleted: true,
           clarificationAnswers: finalAnswers,
-          workflowPhase: 'approval'
+          workflowPhase: 'approval',
+          // OPTIMAL: Update requirements with correct actions based on proper metadata
+          requirements: prev.requirements.map(req => {
+            if (req.id === 'actions') {
+              const rebuiltActions = connectedServiceKeys.length > 0
+                ? `Summarize and save to ${serviceDisplayNames.join(', ')}`
+                : 'Actions require service connections';
+              
+              console.log('Updating actions requirement using optimal metadata:', {
+                old: req.detected,
+                new: rebuiltActions,
+                connectedServiceKeys,
+                serviceDisplayNames,
+                hasConnectedServices: connectedServiceKeys.length > 0
+              });
+              
+              return {
+                ...req,
+                status: connectedServiceKeys.length > 0 ? 'clear' : 'missing',
+                detected: rebuiltActions
+              };
+            }
+            return req;
+          })
         }));
 
         let message = `Here's your enhanced automation plan:
@@ -465,13 +547,13 @@ ${result.enhancedPrompt}
 This breaks down exactly what your agent will do. Would you like to use this enhanced version, edit it, or stick with your original request?`;
 
         addMessage(message, 'ai');
-        console.log('✅ Enhancement completed');
+        console.log('Enhancement completed');
         
       } catch (err) {
-        console.error('❌ Enhancement error:', err);
+        console.error('Enhancement error:', err);
         addMessage('I encountered an error enhancing your plan. Please try again.', 'ai');
         
-        // CRITICAL FIX: Reset flags on error so user can try again
+        // Reset flags on error so user can try again
         setProjectState((prev) => ({
           ...prev,
           enhancementComplete: false,
@@ -483,10 +565,10 @@ This breaks down exactly what your agent will do. Would you like to use this enh
         isCurrentlyProcessing.current = false;
       }
     },
-    [projectState, isProcessing, user?.id, user?.connectedPlugins, addMessage]
+    [projectState, isProcessing, user?.id, user?.connectedPlugins, addMessage, getServiceDisplayNames, getConnectedServiceKeys]
   );
 
-  // Enhanced API Functions with better error handling
+  // OPTIMAL: Enhanced API Functions with proper plugin metadata support
   const analyzePromptClarity = async (prompt: string): Promise<ClarityAnalysis> => {
     if (!user?.id || !prompt?.trim()) {
       console.error('Invalid parameters for analysis:', { hasUserId: !!user?.id, hasPrompt: !!prompt?.trim() });
@@ -501,12 +583,13 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       bypassPluginValidation: false,
     };
 
-    console.log('🔍 Making analysis API call:', {
+    console.log('Making analysis API call:', {
       endpoint: '/api/analyze-prompt-clarity',
       userId: user.id,
       sessionId: sessionId.current,
       promptLength: prompt.trim().length,
-      hasConnectedPlugins: Object.keys(user?.connectedPlugins || {}).length > 0
+      hasConnectedPlugins: !!(user?.connectedPlugins && Object.keys(user?.connectedPlugins).length > 0),
+      connectedPluginsCount: Object.keys(user?.connectedPlugins || {}).length
     });
 
     try {
@@ -520,7 +603,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
         body: JSON.stringify(requestPayload),
       });
 
-      console.log('📡 API Response received:', {
+      console.log('API Response received:', {
         status: response.status,
         statusText: response.statusText,
         ok: response.ok,
@@ -540,76 +623,87 @@ This breaks down exactly what your agent will do. Would you like to use this enh
           if (contentType && contentType.includes('application/json')) {
             const errorData = await response.json();
             errorDetails = errorData;
-            console.error('❌ API returned JSON error:', errorData);
+            console.error('API returned JSON error:', errorData);
           } else {
             const errorText = await response.text();
             errorDetails.details = errorText;
             errorDetails.error = errorText;
-            console.error('❌ API returned text error:', errorText.slice(0, 500));
+            console.error('API returned text error:', errorText.slice(0, 500));
           }
         } catch (parseError) {
-          console.error('❌ Could not parse error response:', parseError);
+          console.error('Could not parse error response:', parseError);
         }
 
         console.error(`Analysis API error: ${response.status} - ${JSON.stringify(errorDetails)}`);
         
-        // Return enhanced fallback analysis based on the Gmail/Drive request
+        // OPTIMAL: Return smart fallback analysis using proper plugin metadata
+        const connectedServiceKeys = getConnectedServiceKeys(errorDetails);
+        const serviceNames = getServiceDisplayNames(connectedServiceKeys, errorDetails.connectedPluginData);
+        const hasServices = connectedServiceKeys.length > 0;
+        
+        let fallbackActions = 'No actions possible - connect services first';
+        if (hasServices) {
+          fallbackActions = `Summarize and save to ${serviceNames.join(', ')}`;
+        }
+        
+        console.log('Using fallback with optimal plugin metadata:', { connectedServiceKeys, serviceNames });
+        
         return {
-          clarityScore: 45,
+          clarityScore: hasServices ? 55 : 25,
           questionsCount: 3,
           needsClarification: true,
           aiValidationFailed: true,
           bypassedPluginValidation: false,
           hadPluginWarning: false,
           analysis: {
-            data: { status: "partial", detected: "Gmail search, attachment with invoice" },
+            data: { status: "partial", detected: "Gmail processing" },
             timing: { status: "missing", detected: "" },
-            output: { status: "partial", detected: "Copy invoice to Google Drive" },
-            actions: { status: "partial", detected: "Search, find, copy" },
-            delivery: { status: "partial", detected: "Google Drive storage" },
+            output: { status: "partial", detected: "Content processing" },
+            actions: { status: hasServices ? "partial" : "missing", detected: fallbackActions },
+            delivery: { status: "partial", detected: hasServices ? serviceNames.join(', ') : '' },
             error_handling: { status: "missing", detected: "" }
           },
           error: `API Error ${response.status}: ${errorDetails.message || errorDetails.details || errorDetails.error || 'Server error'}`,
           serverError: true,
           questionsSequence: [
             {
-              id: 'email_search_criteria',
-              question: "How should I identify emails that contain invoices?",
+              id: 'email_processing_criteria',
+              question: "Which emails should I process for you?",
               dimension: 'data',
               type: 'single_choice',
               options: [
-                { value: "filename_invoice", label: "Look for attachments with 'invoice' in the filename", description: "Search attachment names for the word 'invoice'" },
-                { value: "subject_invoice", label: "Check emails with 'invoice' in the subject line", description: "Look at email subjects containing 'invoice'" },
-                { value: "pdf_attachments", label: "Check all PDF attachments in recent emails", description: "Examine all PDF files attached to the last 10 emails" },
-                { value: "sender_specific", label: "Look for emails from specific senders", description: "Target emails from known invoice senders" },
+                { value: "recent_emails", label: "Recent emails from today", description: "Process emails received in the last 24 hours" },
+                { value: "unread_emails", label: "All unread emails", description: "Focus on emails you haven't read yet" },
+                { value: "specific_senders", label: "Emails from specific people/companies", description: "Target emails from particular senders" },
+                { value: "subject_keywords", label: "Emails with certain keywords", description: "Look for specific words in the subject line" },
                 { value: "custom", label: "Other criteria", description: "Let me specify different search criteria" }
               ],
               allowCustom: true
             },
             {
-              id: 'drive_organization',
-              question: "Where in Google Drive should I save the invoice files?",
+              id: 'content_organization',
+              question: "How should I organize the summarized content?",
               dimension: 'delivery',
               type: 'single_choice',
               options: [
-                { value: "root_folder", label: "Save directly in My Drive root", description: "Place files in the main Google Drive folder" },
-                { value: "invoices_folder", label: "Create/use an 'Invoices' folder", description: "Organize all invoices in a dedicated folder" },
-                { value: "monthly_folders", label: "Create monthly folders (e.g., '2025-01')", description: "Organize by month automatically" },
-                { value: "custom_path", label: "Specific folder path", description: "Let me specify the exact folder location" }
+                { value: "single_summary", label: "Create one combined summary", description: "Merge all email content into a single document" },
+                { value: "separate_summaries", label: "Keep separate summaries per email", description: "Create individual summaries for each email" },
+                { value: "categorized_summary", label: "Group by topic or sender", description: "Organize summaries by categories or themes" },
+                { value: "custom_format", label: "Specific format", description: "Let me specify how to organize the content" }
               ],
               allowCustom: true
             },
             {
-              id: 'automation_timing',
+              id: 'automation_schedule',
               question: "When should this automation run?",
-              dimension: 'timing', 
+              dimension: 'timing',
               type: 'single_choice',
               options: [
-                { value: 'new_emails', label: 'When new emails arrive', description: 'Process emails immediately as they come in (real-time)' },
-                { value: 'daily_9am', label: 'Daily at 9:00 AM', description: 'Check for invoices once per day' },
-                { value: 'twice_daily', label: 'Twice daily (9 AM & 5 PM)', description: 'Morning and evening processing' },
-                { value: 'weekly_monday', label: 'Weekly on Monday 9 AM', description: 'Weekly invoice processing' },
-                { value: 'manual_trigger', label: 'Only when I trigger it manually', description: 'Run on-demand when needed' }
+                { value: 'immediate', label: 'Run once right now', description: 'Process current emails immediately' },
+                { value: 'daily_morning', label: 'Daily at 9:00 AM', description: 'Regular daily processing' },
+                { value: 'twice_daily', label: 'Morning (9 AM) and evening (5 PM)', description: 'Two checks per day' },
+                { value: 'weekly', label: 'Weekly on Monday mornings', description: 'Once per week summary' },
+                { value: 'manual_trigger', label: 'Only when I manually trigger it', description: 'Run on-demand when needed' }
               ],
               allowCustom: false
             }
@@ -619,12 +713,20 @@ This breaks down exactly what your agent will do. Would you like to use this enh
 
       const result = await response.json();
       
-      console.log('✅ Analysis API success:', {
+      console.log('Analysis API success:', {
         clarityScore: result.clarityScore,
         questionsCount: result.questionsSequence?.length || 0,
         needsClarification: result.needsClarification,
-        hasPluginWarning: !!result.pluginWarning
+        hasPluginWarning: !!result.pluginWarning,
+        hasPluginMetadata: !!(result.connectedPluginData && result.connectedPluginData.length > 0)
       });
+      
+      if (result.pluginWarning) {
+        console.log('API Response contains plugin warning:', {
+          message: result.pluginWarning.message,
+          missingServices: result.pluginWarning.missingServices
+        });
+      }
       
       if (typeof result.clarityScore !== 'number') {
         throw new Error('Invalid analysis response structure');
@@ -632,65 +734,74 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       
       return result;
     } catch (error: any) {
-      console.error('❌ Analysis request failed:', error);
+      console.error('Analysis request failed:', error);
       
-      // Return comprehensive fallback analysis on any network/parsing error
+      // OPTIMAL: Return comprehensive fallback analysis using proper plugin metadata
+      const connectedServiceKeys = getConnectedServiceKeys();
+      const serviceNames = getServiceDisplayNames(connectedServiceKeys);
+      const hasServices = connectedServiceKeys.length > 0;
+      
+      let fallbackActions = 'No actions possible - connect services first';
+      if (hasServices) {
+        fallbackActions = `Summarize and save to ${serviceNames.join(', ')}`;
+      }
+      
       return {
-        clarityScore: 40,
+        clarityScore: hasServices ? 50 : 25,
         questionsCount: 3,
         needsClarification: true,
         aiValidationFailed: true,
         bypassedPluginValidation: false,
         hadPluginWarning: false,
         analysis: {
-          data: { status: "partial", detected: "Gmail search, attachment with invoice" },
+          data: { status: "partial", detected: "Gmail processing" },
           timing: { status: "missing", detected: "" },
-          output: { status: "partial", detected: "Copy invoice to Google Drive" },
-          actions: { status: "partial", detected: "Search, find, copy" },
-          delivery: { status: "partial", detected: "Google Drive storage" },
+          output: { status: "partial", detected: "Content processing" },
+          actions: { status: hasServices ? "partial" : "missing", detected: fallbackActions },
+          delivery: { status: "partial", detected: hasServices ? serviceNames.join(', ') : '' },
           error_handling: { status: "missing", detected: "" }
         },
         error: error instanceof Error ? error.message : 'Network error',
         networkError: true,
         questionsSequence: [
           {
-            id: 'email_identification',
-            question: "Since I'm having trouble analyzing your request automatically, let me ask directly: How should I identify emails with invoices?",
+            id: 'content_identification',
+            question: "What type of content should I focus on in your emails?",
             dimension: 'data',
             type: 'single_choice',
             options: [
-              { value: "attachment_filename", label: "Files with 'invoice' in the name", description: "Look for attachments containing the word 'invoice' in the filename" },
-              { value: "email_subject", label: "Email subject contains 'invoice'", description: "Check emails where the subject line mentions invoices" },
-              { value: "pdf_files_only", label: "All PDF attachments", description: "Examine every PDF file attached to recent emails" },
-              { value: "specific_senders", label: "From known invoice senders", description: "Target emails from specific companies or addresses" },
+              { value: "all_emails", label: "All recent emails", description: "Process all emails from the last few days" },
+              { value: "unread_only", label: "Only unread emails", description: "Focus on emails you haven't read yet" },
+              { value: "specific_topics", label: "Emails about specific topics", description: "Filter based on keywords or subjects" },
+              { value: "important_emails", label: "Important or priority emails", description: "Focus on high-priority communications" },
               { value: "custom_criteria", label: "Let me specify custom criteria", description: "I'll provide specific search terms or conditions" }
             ],
             allowCustom: true
           },
           {
-            id: 'file_destination', 
-            question: "Where should I save the invoice files in Google Drive?",
+            id: 'summary_destination', 
+            question: "How should I deliver the summarized content?",
             dimension: 'delivery',
             type: 'single_choice',
             options: [
-              { value: "main_drive", label: "Directly in My Drive", description: "Save files in the root Google Drive folder" },
-              { value: "invoices_folder", label: "Create an 'Invoices' folder", description: "Organize all invoices in one dedicated folder" },
-              { value: "date_organized", label: "Organize by date (monthly folders)", description: "Create folders like '2025-01-Invoices' automatically" },
-              { value: "custom_location", label: "Specific folder I'll choose", description: "Let me specify the exact folder path" }
+              { value: "drive_document", label: "Create a Google Drive document", description: "Save summary as a document in your Drive" },
+              { value: "multiple_platforms", label: "Share across multiple platforms", description: "Distribute to Drive and other connected services" },
+              { value: "email_summary", label: "Send summary via email", description: "Email the summary to you or others" },
+              { value: "custom_delivery", label: "Specific delivery method", description: "Let me specify how to deliver the results" }
             ],
             allowCustom: true
           },
           {
-            id: 'run_frequency',
-            question: "How often should this automation check for new invoices?",
+            id: 'processing_frequency',
+            question: "How often should this automation run?",
             dimension: 'timing',
             type: 'single_choice',
             options: [
-              { value: 'real_time', label: 'As soon as new emails arrive', description: 'Immediate processing when emails come in' },
-              { value: 'daily_morning', label: 'Once daily at 9:00 AM', description: 'Daily check during business hours' },
-              { value: 'twice_daily', label: 'Morning (9 AM) and evening (5 PM)', description: 'Two checks per day' },
-              { value: 'weekly', label: 'Weekly on Monday mornings', description: 'Once per week summary' },
-              { value: 'manual_only', label: 'Only when I manually trigger it', description: 'Run on-demand when needed' }
+              { value: 'one_time', label: 'Run once now', description: 'Process current emails immediately' },
+              { value: 'daily_check', label: 'Daily processing', description: 'Check for new emails daily' },
+              { value: 'regular_schedule', label: 'Regular schedule (morning/evening)', description: 'Multiple checks per day' },
+              { value: 'weekly_summary', label: 'Weekly summary', description: 'Once per week processing' },
+              { value: 'manual_only', label: 'Only when I trigger it', description: 'Run on-demand when needed' }
             ],
             allowCustom: false
           }
@@ -699,9 +810,9 @@ This breaks down exactly what your agent will do. Would you like to use this enh
     }
   };
 
-  // BULLETPROOF initial prompt processing - Enhanced with completion checks and restored state validation
+  // Initial prompt processing - Enhanced with user context waiting
   useEffect(() => {
-    // ULTIMATE CHECK: Should we process the initial prompt?
+    // Should we process the initial prompt?
     if (!initialPrompt) return;
     if (shouldSkipAIProcessing()) return;
     if (hasProcessedInitialPrompt.current) return;
@@ -710,7 +821,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
     if (projectState.conversationCompleted) return;
     if (projectState.isInReviewMode) return;
 
-    // NEW: Critical check - if we have restored state with existing work, don't process new prompt
+    // Critical check - if we have restored state with existing work, don't process new prompt
     if (restoredState && (
         restoredState.enhancementComplete || 
         restoredState.planApproved || 
@@ -718,7 +829,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
         restoredState.workflowPhase === 'completed' ||
         restoredState.workflowPhase === 'approval'
       )) {
-      console.log('🚫 Skipping initial prompt processing - restored state has completed work', {
+      console.log('Skipping initial prompt processing - restored state has completed work', {
         enhancementComplete: restoredState.enhancementComplete,
         planApproved: restoredState.planApproved,
         conversationCompleted: restoredState.conversationCompleted,
@@ -727,14 +838,14 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       return;
     }
 
-    // NEW: Check if prompt matches existing work in restored state - don't reprocess
+    // Check if prompt matches existing work in restored state - don't reprocess
     if (restoredState?.originalPrompt && 
         restoredState.originalPrompt.trim().toLowerCase() === initialPrompt.trim().toLowerCase()) {
-      console.log('🚫 Skipping initial prompt processing - same prompt as restored state');
+      console.log('Skipping initial prompt processing - same prompt as restored state');
       return;
     }
 
-    console.log('🚀 Processing initial prompt:', initialPrompt.slice(0, 50));
+    console.log('Processing initial prompt:', initialPrompt.slice(0, 50));
     
     // Mark as processed immediately to prevent duplicates
     hasProcessedInitialPrompt.current = true;
@@ -756,9 +867,20 @@ This breaks down exactly what your agent will do. Would you like to use this enh
 
         const analysis = await analyzePromptClarity(initialPrompt.trim());
         
+        console.log('=== ANALYSIS RESULT RECEIVED ===', {
+          analysis,
+          needsClarification: analysis.needsClarification,
+          hasQuestions: analysis.questionsSequence?.length > 0,
+          clarityScore: analysis.clarityScore,
+          hasPluginWarning: !!analysis.pluginWarning,
+          aiValidationFailed: analysis.aiValidationFailed,
+          serverError: analysis.serverError,
+          networkError: analysis.networkError
+        });
+        
         // Handle analysis failure gracefully
         if (analysis.aiValidationFailed || analysis.serverError || analysis.networkError) {
-          console.log('⚠️ Analysis failed, but got fallback questions');
+          console.log('Analysis failed, but got fallback questions');
           
           if (analysis.questionsSequence && analysis.questionsSequence.length > 0) {
             // Use the fallback questions from the analysis
@@ -768,14 +890,36 @@ This breaks down exactly what your agent will do. Would you like to use this enh
             const initialVisible = new Set<string>();
             if (firstId) initialVisible.add(firstId);
 
-            setProjectState((prev) => ({
-              ...prev,
-              questionsSequence: analysis.questionsSequence,
-              currentQuestionIndex: 0,
-              isProcessingQuestion: false,
-              questionsWithVisibleOptions: initialVisible,
-              clarityScore: analysis.clarityScore || 40
-            }));
+            // Use functional update to avoid race condition
+            setProjectState((prev) => {
+              // Validate the questions have proper structure
+              const validatedQuestions = analysis.questionsSequence.filter(q => 
+                q && typeof q === 'object' && q.id && q.question && q.options && Array.isArray(q.options)
+              );
+              
+              if (validatedQuestions.length === 0) {
+                console.error('No valid questions in fallback analysis');
+                return prev;
+              }
+
+              return {
+                ...prev,
+                questionsSequence: validatedQuestions,
+                currentQuestionIndex: 0,
+                isProcessingQuestion: false,
+                questionsWithVisibleOptions: initialVisible,
+                clarityScore: analysis.clarityScore || 40,
+                // OPTIMAL: Update requirements with fallback analysis data
+                requirements: prev.requirements.map(req => {
+                  const analysisData = (analysis.analysis as any)?.[req.id];
+                  return {
+                    ...req,
+                    status: analysisData?.status || 'missing',
+                    detected: analysisData?.detected || '',
+                  };
+                })
+              };
+            });
             return;
           } else {
             // No questions available, go straight to enhancement
@@ -785,9 +929,101 @@ This breaks down exactly what your agent will do. Would you like to use this enh
           }
         }
         
-        updateRequirementsFromAnalysis(analysis);
+        // OPTIMAL: Process successful analysis - handle plugin warnings and update requirements using proper metadata
+        console.log('DEBUG: User object structure:', {
+          user,
+          hasConnectedPlugins: !!(user?.connectedPlugins && Object.keys(user?.connectedPlugins).length > 0),
+          connectedPluginsType: typeof user?.connectedPlugins,
+          connectedPluginsKeys: user?.connectedPlugins ? Object.keys(user.connectedPlugins) : 'undefined',
+          connectedPluginsCount: user?.connectedPlugins ? Object.keys(user.connectedPlugins).length : 0
+        });
+        
+        if (analysis.pluginWarning) {
+          const warningMessage = analysis.pluginWarning.message;
+          console.log('Adding warning message:', warningMessage);
+          addMessage(warningMessage, 'ai');
+          
+          // Store plugin warning info in project state
+          setProjectState((prev) => ({
+            ...prev,
+            missingPlugins: analysis.pluginWarning?.missingServices || [],
+            pluginWarning: analysis.pluginWarning
+          }));
+        }
+        
+        // OPTIMAL: Update requirements with analysis data - use proper plugin metadata hierarchy
+        const connectedServiceKeys = getConnectedServiceKeys(analysis);
+        
+        console.log('Connected services check using optimal metadata:', {
+          connectedServiceKeys,
+          hasActionsData: !!(analysis.analysis as any)?.actions?.detected,
+          hasPluginWarning: !!analysis.pluginWarning?.missingServices,
+          hasApiPluginMetadata: !!(analysis.connectedPluginData && analysis.connectedPluginData.length > 0),
+          hasUserPluginData: !!(user?.connectedPlugins && Object.keys(user?.connectedPlugins).length > 0),
+          willFilterActions: !!((analysis.analysis as any)?.actions?.detected && analysis.pluginWarning?.missingServices)
+        });
+        
+        setProjectState((prev) => ({
+          ...prev,
+          requirements: prev.requirements.map(req => {
+            const analysisData = (analysis.analysis as any)?.[req.id];
+            
+            console.log(`Processing requirement: ${req.id}`, {
+              hasAnalysisData: !!analysisData,
+              detected: analysisData?.detected,
+              isActions: req.id === 'actions',
+              hasPluginWarning: !!analysis.pluginWarning?.missingServices
+            });
+            
+            // SPECIAL HANDLING FOR ACTIONS: Filter out unconnected services using optimal metadata
+            if (req.id === 'actions' && analysisData?.detected && analysis.pluginWarning?.missingServices) {
+              console.log('Filtering actions during analysis phase using optimal metadata:', {
+                originalActions: analysisData.detected,
+                missingServices: analysis.pluginWarning.missingServices,
+                connectedServiceKeys,
+                hasApiPluginMetadata: !!(analysis.connectedPluginData && analysis.connectedPluginData.length > 0)
+              });
+              
+              // OPTIMAL: Use proper plugin metadata hierarchy to get display names
+              const serviceDisplayNames = getServiceDisplayNames(connectedServiceKeys, analysis.connectedPluginData);
+              
+              const filteredActions = connectedServiceKeys.length > 0 
+                ? `Summarize and save to ${serviceDisplayNames.join(', ')}`
+                : 'Actions require service connections';
+              
+              console.log('Filtered actions during analysis using optimal metadata:', {
+                original: analysisData.detected,
+                filtered: filteredActions,
+                connectedServices: serviceDisplayNames,
+                usedApiMetadata: !!(analysis.connectedPluginData && analysis.connectedPluginData.length > 0),
+                usedUserMetadata: !!(user?.connectedPlugins && Object.keys(user?.connectedPlugins).length > 0)
+              });
+              
+              return {
+                ...req,
+                status: connectedServiceKeys.length > 0 ? 'clear' : 'missing',
+                detected: filteredActions,
+              };
+            }
+            
+            // For all other requirements, use original analysis data
+            return {
+              ...req,
+              status: analysisData?.status || 'missing',
+              detected: analysisData?.detected || '',
+            };
+          })
+        }));
 
         if (analysis.pluginValidationError) return;
+
+        console.log('=== DECISION POINT ===', {
+          needsClarification: analysis.needsClarification,
+          hasQuestions: analysis.questionsSequence?.length > 0,
+          clarityScore: analysis.clarityScore,
+          willShowQuestions: analysis.needsClarification && analysis.questionsSequence?.length > 0,
+          willEnhanceDirectly: analysis.clarityScore >= 90
+        });
 
         if (analysis.needsClarification && analysis.questionsSequence?.length > 0) {
           const validQuestions = analysis.questionsSequence.filter((q: any) => 
@@ -817,7 +1053,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
         }
         
       } catch (err) {
-        console.error('❌ Initial processing error:', err);
+        console.error('Initial processing error:', err);
         addMessage('I encountered an error analyzing your request. Let me try to enhance it directly...', 'ai');
         
         // Fallback to direct enhancement on any error
@@ -843,19 +1079,22 @@ This breaks down exactly what your agent will do. Would you like to use this enh
     restoredState?.originalPrompt,
     restoredState?.workflowPhase,
     addMessage, 
-    startEnhancement
+    startEnhancement,
+    getServiceDisplayNames,
+    getConnectedServiceKeys,
+    user?.connectedPlugins
   ]);
 
   // Question flow logic
   const proceedToNextQuestion = useCallback(() => {
     // Don't proceed in review mode
     if (projectState.isInReviewMode) {
-      console.log('🚫 Question progression blocked - in review mode');
+      console.log('Question progression blocked - in review mode');
       return;
     }
 
     setProjectState((current) => {
-      console.log('🔄 proceedToNextQuestion called:', {
+      console.log('proceedToNextQuestion called:', {
         currentIndex: current.currentQuestionIndex,
         totalQuestions: current.questionsSequence.length,
         answersCount: Object.keys(current.clarificationAnswers).length,
@@ -869,7 +1108,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       });
 
       if (nextUnansweredIndex >= 0) {
-        console.log(`✅ Moving to next question at index ${nextUnansweredIndex}`);
+        console.log(`Moving to next question at index ${nextUnansweredIndex}`);
         const nextId = current.questionsSequence[nextUnansweredIndex].id;
         const newVisible = new Set(current.questionsWithVisibleOptions);
         newVisible.add(nextId);
@@ -888,7 +1127,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       
       if (unanswered.length > 0) {
         const firstIdx = current.questionsSequence.findIndex((q) => q.id === unanswered[0].id);
-        console.log(`↩️ Returning to unanswered question at index ${firstIdx}`);
+        console.log(`Returning to unanswered question at index ${firstIdx}`);
         const newVisible = new Set(current.questionsWithVisibleOptions);
         newVisible.add(unanswered[0].id);
         return { 
@@ -900,7 +1139,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       }
 
       // All questions answered - ready for enhancement
-      console.log('🎉 All questions completed - setting currentQuestionIndex to -1');
+      console.log('All questions completed - setting currentQuestionIndex to -1');
       return { 
         ...current, 
         currentQuestionIndex: -1, 
@@ -937,7 +1176,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
 
   // Auto-enhancement when questions are complete - Enhanced with completion checks
   useEffect(() => {
-    console.log('🔍 Auto-enhancement useEffect triggered:', {
+    console.log('Auto-enhancement useEffect triggered:', {
       conversationCompleted: projectState.conversationCompleted,
       isInReviewMode: projectState.isInReviewMode,
       enhancementStarted: enhancementStarted.current,
@@ -952,13 +1191,13 @@ This breaks down exactly what your agent will do. Would you like to use this enh
 
     // Skip if already completed or in review mode
     if (projectState.conversationCompleted || projectState.isInReviewMode) {
-      console.log('🚫 Auto-enhancement blocked - already completed or in review mode');
+      console.log('Auto-enhancement blocked - already completed or in review mode');
       return;
     }
 
-    // MODIFIED: Only check enhancementStarted if enhancementComplete is also true
+    // Only check enhancementStarted if enhancementComplete is also true
     if (enhancementStarted.current && projectState.enhancementComplete) {
-      console.log('🚫 Auto-enhancement blocked - already started and completed');
+      console.log('Auto-enhancement blocked - already started and completed');
       return;
     }
 
@@ -966,7 +1205,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
     const allQuestionsAnswered = projectState.questionsSequence.length > 0 && 
       projectState.questionsSequence.every(q => projectState.clarificationAnswers[q.id]?.trim());
     
-    console.log('🔍 Questions analysis:', {
+    console.log('Questions analysis:', {
       allQuestionsAnswered,
       questionsSequence: projectState.questionsSequence.map(q => ({
         id: q.id,
@@ -983,13 +1222,13 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       !isCurrentlyProcessing.current &&
       projectState.originalPrompt
     ) {
-      console.log('✅ Starting auto-enhancement - all questions answered');
+      console.log('Starting auto-enhancement - all questions answered');
       
-      // CRITICAL FIX: Set refs immediately to prevent duplicate calls
+      // Set refs immediately to prevent duplicate calls
       enhancementStarted.current = true;
       isCurrentlyProcessing.current = true;
       
-      // CRITICAL FIX: Immediately set enhancementComplete to prevent duplicate calls
+      // Immediately set enhancementComplete to prevent duplicate calls
       setProjectState((prev) => ({
         ...prev,
         enhancementComplete: true,
@@ -1011,7 +1250,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
         startEnhancement(fullPrompt, projectState.clarificationAnswers);
       }, 1000);
     } else {
-      console.log('🚫 Auto-enhancement conditions not met:', {
+      console.log('Auto-enhancement conditions not met:', {
         currentQuestionIndex: projectState.currentQuestionIndex,
         allQuestionsAnswered,
         enhancementComplete: projectState.enhancementComplete,
@@ -1034,35 +1273,6 @@ This breaks down exactly what your agent will do. Would you like to use this enh
     startEnhancement
   ]);
 
-  const updateRequirementsFromAnalysis = (analysis: ClarityAnalysis) => {
-    if (analysis.pluginWarning) {
-      addMessage(`💡 FYI: ${analysis.pluginWarning.message}`, 'ai');
-      
-      // Store plugin warning info in project state
-      setProjectState((prev) => ({
-        ...prev,
-        missingPlugins: analysis.pluginWarning?.missingServices || [],
-        pluginWarning: analysis.pluginWarning
-      }));
-    }
-
-    const updatedRequirements = projectState.requirements.map((req) => {
-      const analysisData = (analysis.analysis as any)?.[req.id];
-      return {
-        ...req,
-        status: analysisData?.status || 'missing',
-        detected: analysisData?.detected || '',
-      };
-    });
-
-    const newClarityScore = recalculateClarityScore(updatedRequirements);
-    setProjectState((prev) => ({ 
-      ...prev, 
-      requirements: updatedRequirements, 
-      clarityScore: newClarityScore 
-    }));
-  };
-
   // User interaction handlers - Enhanced with review mode checks
   const handleOptionSelect = useCallback(
     (questionId: string, selectedValue: string, selectedLabel: string) => {
@@ -1082,7 +1292,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       addMessage(selectedLabel, 'user', 'sent', questionId, true);
 
       setTimeout(() => {
-        addMessage('✅ Question answered', 'system', 'sent', questionId);
+        addMessage('Question answered', 'system', 'sent', questionId);
         setProjectState((prev) => ({ ...prev, isProcessingQuestion: false }));
         setTimeout(proceedToNextQuestion, 200);
       }, 300);
@@ -1110,7 +1320,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
     addMessage(customAnswer, 'user', 'sent', questionId, true);
 
     setTimeout(() => {
-      addMessage('✅ Question answered', 'system', 'sent', questionId);
+      addMessage('Question answered', 'system', 'sent', questionId);
       setProjectState((prev) => ({ ...prev, isProcessingQuestion: false }));
       setTimeout(proceedToNextQuestion, 200);
     }, 300);

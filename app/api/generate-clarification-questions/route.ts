@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import OpenAI from 'openai'
 import { trackTokenUsage, LLMCategory } from '../../../components/orchestration/types/usage'
+import { 
+  getConnectedPluginsWithMetadata, 
+  getPluginDefinition, 
+  LEGACY_KEY_MAP,
+  pluginRegistry 
+} from '@/lib/plugins/pluginRegistry'
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
 
@@ -10,20 +16,84 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-// Plugin requirements mapping
-const PLUGIN_REQUIREMENTS = {
-  'google drive': ['googledrive', 'google_drive', 'drive', 'google-drive'],
-  'google sheets': ['googlesheets', 'google_sheets', 'sheets'],
-  'gmail': ['gmail', 'email', 'google_email', 'google-mail'],
-  'dropbox': ['dropbox'],
-  'slack': ['slack'],
-  'notion': ['notion'],
-  'airtable': ['airtable'],
-  'calendar': ['calendar', 'google_calendar', 'gcal'],
-  'onedrive': ['onedrive', 'microsoft_onedrive'],
-  'trello': ['trello'],
-  'asana': ['asana'],
-  'monday': ['monday', 'monday_com']
+// FIXED: Use plugin registry instead of hardcoded mapping
+function detectMentionedServices(prompt: string): string[] {
+  const promptLower = prompt.toLowerCase();
+  const mentionedServices: string[] = [];
+  
+  // Check against plugin registry first
+  for (const [pluginKey, pluginDef] of Object.entries(pluginRegistry)) {
+    const serviceName = pluginDef.label.toLowerCase();
+    const keyVariations = [
+      pluginKey,
+      serviceName,
+      serviceName.replace(/\s+/g, ''),
+      serviceName.replace(/\s+/g, '_'),
+      serviceName.replace(/\s+/g, '-')
+    ];
+    
+    // Check if prompt mentions this plugin by name
+    const isDetected = keyVariations.some(variation => 
+      promptLower.includes(variation)
+    );
+    
+    if (isDetected && !mentionedServices.includes(pluginKey)) {
+      mentionedServices.push(pluginKey);
+    }
+  }
+  
+  // Additional common service name mappings for services not in registry yet
+  const additionalServiceKeywords = {
+    'notion': ['notion'],
+    'slack': ['slack'],
+    'google_sheets': ['google sheets', 'sheets', 'spreadsheet'],
+    'google_calendar': ['calendar', 'google calendar', 'gcal'],
+    'dropbox': ['dropbox'],
+    'airtable': ['airtable'],
+    'trello': ['trello'],
+    'asana': ['asana'],
+    'monday': ['monday'],
+    'onedrive': ['onedrive']
+  };
+  
+  for (const [serviceKey, keywords] of Object.entries(additionalServiceKeywords)) {
+    const isDetected = keywords.some(keyword => promptLower.includes(keyword));
+    if (isDetected && !mentionedServices.includes(serviceKey)) {
+      mentionedServices.push(serviceKey);
+    }
+  }
+  
+  return mentionedServices;
+}
+
+// FIXED: Validate mentioned plugins using plugin registry and database data
+function validateConnectedPlugins(prompt: string, connectedPlugins: string[]): { 
+  missingServices: string[], 
+  availableServices: string[] 
+} {
+  const mentionedServices = detectMentionedServices(prompt);
+  
+  // Normalize connected plugins using legacy key mapping
+  const normalizedConnectedPlugins = connectedPlugins.map(key => LEGACY_KEY_MAP[key] || key);
+  
+  console.log('Plugin validation in clarification API:', {
+    mentionedServices,
+    connectedPlugins,
+    normalizedConnectedPlugins
+  });
+  
+  const missingServices: string[] = [];
+  const availableServices: string[] = [];
+  
+  mentionedServices.forEach(service => {
+    if (normalizedConnectedPlugins.includes(service)) {
+      availableServices.push(service);
+    } else {
+      missingServices.push(service);
+    }
+  });
+  
+  return { missingServices, availableServices };
 }
 
 // Smart scheduling question generator based on context
@@ -50,7 +120,7 @@ function generateDefaultSchedulingQuestions(userPrompt: string): ClarificationQu
   let frequencyQuestion = "How often should this automation run?";
   let timeQuestion = "What time should it execute?";
   
-  if (promptLower.includes('email') || promptLower.includes('inbox') || promptLower.includes('gmail')) {
+  if (promptLower.includes('email') || promptLower.includes('inbox') || promptLower.includes('google-mail')) {
     frequencyOptions = ['Daily', 'Every 2 hours during work days', 'Weekly on Monday', 'When new emails arrive', 'Twice daily'];
     timeOptions = ['8:00 AM', '9:00 AM', '1:00 PM', '5:00 PM', 'Every 2 hours 9AM-5PM'];
     frequencyQuestion = "When should email processing occur?";
@@ -103,7 +173,29 @@ function generateDefaultSchedulingQuestions(userPrompt: string): ClarificationQu
   ];
 }
 
-export function buildClarifySystemPrompt(connectedPlugins: string[]) {
+// FIXED: Enhanced system prompt with proper plugin handling using registry data
+export function buildClarifySystemPrompt(connectedPlugins: string[], missingServices: string[]) {
+  const connectedPluginData = getConnectedPluginsWithMetadata(connectedPlugins);
+  const pluginCapabilities = connectedPluginData.length > 0 
+    ? connectedPluginData.map(p => `${p.label}: ${p.capabilities.join(', ')}`).join(' | ')
+    : 'No plugins currently connected';
+  
+  let pluginInstructions = '';
+  if (missingServices.length > 0) {
+    const missingDisplayNames = missingServices.map(service => {
+      const definition = getPluginDefinition(service);
+      return definition?.displayName || definition?.label || service;
+    });
+    
+    pluginInstructions = `
+CRITICAL PLUGIN RESTRICTION: 
+The user mentioned these services but they are NOT connected: ${missingDisplayNames.join(', ')}
+DO NOT generate any questions that reference these missing services.
+DO NOT suggest workflows involving these missing services.
+Instead, focus ONLY on the connected plugins and their capabilities.
+`;
+  }
+
   return `
 You are the Clarification Engine for AgentPilot, a no-code AI agent platform.
 
@@ -111,7 +203,12 @@ Your role is to analyze user automation requests and identify what additional in
 
 INPUTS:
 - userPrompt: The user's description of their desired automation
-- connectedPlugins: List of currently authenticated integrations
+- connectedPlugins: List of currently authenticated integrations with their capabilities
+
+CONNECTED PLUGINS AND CAPABILITIES:
+${pluginCapabilities}
+
+${pluginInstructions}
 
 CORE PRINCIPLES:
 1. Ask only essential questions needed to build the automation
@@ -119,6 +216,7 @@ CORE PRINCIPLES:
 3. Consider workflows that span multiple steps and plugins
 4. Handle both simple tasks and complex multi-stage automations
 5. Support conditional logic and decision-making workflows
+6. ONLY reference connected plugins in your questions
 
 CRITICAL SCHEDULING REQUIREMENT:
 DO NOT include scheduling/timing questions in your response. The system will automatically add appropriate scheduling questions based on the automation context. Focus only on:
@@ -129,7 +227,7 @@ Evaluate these aspects and ask clarifying questions only when information is mis
 
 **Data & Input Sources**
 - What data does the agent need to access?
-- Which plugins/sources contain this data?
+- Which CONNECTED plugins/sources contain this data?
 - Are there specific filters, criteria, or timeframes?
 - How should the agent handle multiple data sources?
 
@@ -142,7 +240,7 @@ Evaluate these aspects and ask clarifying questions only when information is mis
 **Output & Actions**
 - What should the agent produce or do?
 - What format should outputs take?
-- Where should results be delivered or stored?
+- Where should results be delivered or stored (using CONNECTED plugins only)?
 - Should multiple actions happen simultaneously or sequentially?
 
 **Error Handling & Edge Cases**
@@ -150,20 +248,17 @@ Evaluate these aspects and ask clarifying questions only when information is mis
 - Are there approval steps or human checkpoints needed?
 
 **Integration Requirements**
-- Which plugins are needed for this automation?
-- How should data flow between different tools?
+- Which CONNECTED plugins are needed for this automation?
+- How should data flow between different connected tools?
 - Are there authentication or permission considerations?
 
-PLUGIN HANDLING:
+PLUGIN HANDLING RULES:
 
-Connected Plugins: ${JSON.stringify(connectedPlugins)}
-
-IMPORTANT: Only ask questions about connected plugins. If the user mentions a service that isn't connected, do NOT generate questions about it. Focus on alternatives using connected plugins or suggest they connect the required service first.
-
-For plugin references:
-- If a plugin is connected: Use it in your questions and automation planning
-- If a plugin is mentioned but not connected: Do NOT ask questions about it - instead suggest connecting it first
-- Focus questions only on plugins that are actually available
+1. ONLY ask questions about plugins in the connected list: ${JSON.stringify(connectedPlugins)}
+2. DO NOT reference any plugins not in the connected list
+3. If the user mentioned unconnected services, ignore them completely in your questions
+4. Focus questions on alternatives using ONLY connected plugins
+5. Use the specific capabilities of connected plugins in your question options
 
 QUESTION GENERATION RULES:
 
@@ -172,6 +267,7 @@ Ask questions that are:
 - Focused on missing information that affects implementation
 - Grouped logically when related
 - Limited to what's truly necessary (ideally 3-5 questions maximum)
+- Reference ONLY connected plugins and their actual capabilities
 - DO NOT include scheduling/timing questions (these are added automatically)
 
 Avoid questions about:
@@ -180,6 +276,7 @@ Avoid questions about:
 - Overly granular configuration options
 - Generic preferences without automation impact
 - Scheduling or timing (handled by the system automatically)
+- Any unconnected services or plugins
 
 OUTPUT FORMAT:
 
@@ -189,9 +286,9 @@ Return a JSON array of questions directly. Each question should have this struct
   {
     "id": "unique_id",
     "dimension": "data_input | processing_logic | output_actions | integration_requirements",
-    "question": "Clear, specific question text",
+    "question": "Clear, specific question text referencing ONLY connected plugins",
     "type": "text | textarea | select | multiselect | date",
-    "options": ["option1", "option2"], // only for select/multiselect
+    "options": ["option1", "option2"], // only for select/multiselect, use connected plugin capabilities
     "placeholder": "Helpful example or guidance text",
     "allowCustom": true, // for select/multiselect if custom options allowed
     "required": true
@@ -200,39 +297,18 @@ Return a JSON array of questions directly. Each question should have this struct
 
 If no clarification is needed, return an empty array: []
 
-EXAMPLES OF GOOD QUESTIONS:
+EXAMPLES OF GOOD QUESTIONS (using only connected plugins):
 
 Instead of "What should be included in the summary?" ask:
-"What key information should the summary highlight? (e.g., action items, deadlines, decisions made)"
+"What key information should the Gmail summary highlight? (e.g., action items, deadlines, decisions made)"
 
 Instead of "Where should results be stored?" ask:
-"Should the analysis be sent as an email, saved to a specific folder, or posted in a channel?"
+"Should the analysis be saved to Google Drive, sent via Gmail, or both?"
 
-Remember: Your goal is to gather the minimum information needed to build a functional automation, excluding scheduling details which are handled separately.
+Remember: Your goal is to gather the minimum information needed to build a functional automation using ONLY the connected plugins, excluding scheduling details which are handled separately.
 
 Return ONLY the JSON array, no markdown formatting, code blocks, or explanatory text.
 `.trim()
-}
-
-// Validate mentioned plugins are connected
-function validateConnectedPlugins(prompt: string, connectedPlugins: string[]): string[] {
-  const promptLower = prompt.toLowerCase()
-  const mentionedButNotConnected: string[] = []
-  
-  for (const [service, aliases] of Object.entries(PLUGIN_REQUIREMENTS)) {
-    const isMentioned = aliases.some(alias => promptLower.includes(alias))
-    const isConnected = aliases.some(alias => 
-      connectedPlugins.some(connected => 
-        connected.toLowerCase().includes(alias.toLowerCase())
-      )
-    )
-    
-    if (isMentioned && !isConnected) {
-      mentionedButNotConnected.push(service)
-    }
-  }
-  
-  return mentionedButNotConnected
 }
 
 interface ClarificationQuestion {
@@ -294,18 +370,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
 
-    console.log('=== DEBUGGING PLUGIN VALIDATION ===')
+    console.log('=== ENHANCED PLUGIN VALIDATION (Clarification API) ===')
     console.log('1. Original prompt:', original_prompt)
     console.log('2. Raw connected_plugins from request:', connected_plugins)
-    console.log('3. Initial pluginKeys from frontend:', Object.keys(connected_plugins || {}))
     
-    // Try to get connected plugins from multiple sources
+    // Get connected plugins from multiple sources (maintaining existing logic)
     let pluginKeys: string[] = []
 
     // Method 1: From frontend (fallback to ensure we have plugins)
     if (connected_plugins && typeof connected_plugins === 'object') {
       pluginKeys = Object.keys(connected_plugins)
-      console.log('4. PluginKeys after frontend:', pluginKeys)
+      console.log('3. PluginKeys after frontend:', pluginKeys)
     }
 
     // Method 2: From database (if user_id provided and table exists)
@@ -319,67 +394,58 @@ export async function POST(request: NextRequest) {
 
         if (!pluginError && connections && connections.length > 0) {
           const dbPlugins = connections.map(c => c.plugin_key)
-          console.log('5. Database plugins found:', dbPlugins)
+          console.log('4. Database plugins found:', dbPlugins)
           // Merge database plugins with frontend plugins
           pluginKeys = [...new Set([...pluginKeys, ...dbPlugins])]
-          console.log('6. PluginKeys after database merge:', pluginKeys)
+          console.log('5. PluginKeys after database merge:', pluginKeys)
         } else {
-          console.log('5. No plugins found in database, using frontend plugins:', pluginKeys)
+          console.log('4. No plugins found in database, using frontend plugins:', pluginKeys)
         }
       } catch (dbError) {
         console.warn('Database plugin query failed, using frontend plugins:', dbError)
       }
     }
 
-    // Method 3: Default plugins if nothing found
+    // Method 3: Default plugins if nothing found (maintaining existing fallback)
     if (pluginKeys.length === 0) {
-      pluginKeys = ['gmail', 'google-drive', 'slack', 'calendar', 'google-sheets']
-      console.log('7. No plugins found, using defaults:', pluginKeys)
+      pluginKeys = ['google-mail', 'google-drive', 'slack', 'calendar', 'google-sheets']
+      console.log('6. No plugins found, using defaults:', pluginKeys)
     }
 
-    console.log('8. Final plugin list BEFORE validation:', pluginKeys)
+    console.log('7. Final plugin list BEFORE validation:', pluginKeys)
 
-    // Validate mentioned plugins are connected
-    const missingPlugins = validateConnectedPlugins(original_prompt, pluginKeys)
-    console.log('9. Missing plugins detected:', missingPlugins)
+    // FIXED: Use new plugin validation system
+    const { missingServices, availableServices } = validateConnectedPlugins(original_prompt, pluginKeys)
+    console.log('8. Plugin validation results:', { missingServices, availableServices })
+    
     let pluginWarning = null
     
-    if (missingPlugins.length > 0) {
-      console.log('10. User mentioned unconnected plugins:', missingPlugins)
+    if (missingServices.length > 0) {
+      console.log('9. User mentioned unconnected plugins:', missingServices)
       
-      // Create a warning about missing plugins
+      // FIXED: Create warning with proper display names from registry
+      const missingDisplayNames = missingServices.map(service => {
+        const definition = getPluginDefinition(service);
+        return definition?.displayName || definition?.label || service;
+      });
+      
       pluginWarning = {
-        missingServices: missingPlugins,
-        message: `Note: Your request mentions ${missingPlugins.join(', ')} but ${missingPlugins.length === 1 ? 'this service isn\'t' : 'these services aren\'t'} connected. Questions will focus on your available services instead.`
+        missingServices,
+        message: `Note: Your request mentions ${missingDisplayNames.join(', ')} but ${missingServices.length === 1 ? 'this service isn\'t' : 'these services aren\'t'} connected. Questions will focus on your available services instead.`
       }
-      console.log('11. Plugin validation warning:', pluginWarning.message)
-      
-      // CRITICAL FIX: Remove mentioned but unconnected plugins from the list we send to AI
-      const unconnectedAliases = missingPlugins.flatMap(service => 
-        PLUGIN_REQUIREMENTS[service as keyof typeof PLUGIN_REQUIREMENTS] || [service]
-      )
-      
-      console.log('12. Unconnected aliases to filter out:', unconnectedAliases)
-      
-      const originalPluginKeys = [...pluginKeys]
-      pluginKeys = pluginKeys.filter(plugin => {
-        const pluginLower = plugin.toLowerCase()
-        const shouldRemove = unconnectedAliases.some(alias => 
-          pluginLower.includes(alias.toLowerCase())
-        )
-        if (shouldRemove) {
-          console.log(`13. Removing unconnected plugin from AI context: ${plugin}`)
-        }
-        return !shouldRemove
-      })
-      
-      console.log('14. Original plugins:', originalPluginKeys)
-      console.log('15. Filtered plugin list (unconnected removed):', pluginKeys)
+      console.log('10. Plugin validation warning:', pluginWarning.message)
     } else {
-      console.log('10. No missing plugins detected')
+      console.log('9. No missing plugins detected')
     }
 
-    console.log('16. FINAL plugin list sent to AI:', pluginKeys)
+    // FIXED: Get connected plugin metadata for AI context
+    const connectedPluginData = getConnectedPluginsWithMetadata(pluginKeys);
+    console.log('11. Connected plugin metadata retrieved:', {
+      count: connectedPluginData.length,
+      plugins: connectedPluginData.map(p => ({ key: p.key, label: p.label }))
+    });
+
+    console.log('12. FINAL plugin list sent to AI:', pluginKeys)
     console.log('=== END DEBUGGING ===')
 
     const contextMessage = `
@@ -393,12 +459,12 @@ CRITICAL: Only ask questions about services in the connected_plugins list above.
 Please analyze this automation request and return clarifying questions as a JSON array. The system will automatically add appropriate scheduling questions.
 `
 
-    console.log('17. Context message sent to AI:', contextMessage)
+    console.log('13. Context message sent to AI:', contextMessage)
 
-    const { response: llmResponse, usage } = await callOpenAI(buildClarifySystemPrompt(pluginKeys), contextMessage)
+    const { response: llmResponse, usage } = await callOpenAI(buildClarifySystemPrompt(pluginKeys, missingServices), contextMessage)
     const clarificationData = await parseAndValidateLLMResponse(llmResponse, original_prompt)
 
-    // Track token usage using your utility function
+    // Track token usage using existing utility function
     if (user_id) {
       await trackTokenUsage(supabase, user_id, {
         modelName: 'gpt-4o',
@@ -412,12 +478,13 @@ Please analyze this automation request and return clarifying questions as a JSON
           original_prompt,
           questions_generated: clarificationData.questions.length,
           connected_plugins: pluginKeys,
+          missing_services: missingServices,
           confidence: clarificationData.confidence
         }
       })
     }
 
-    // Log analytics (but don't fail if this errors)
+    // Log analytics (but don't fail if this errors) - maintaining existing functionality
     try {
       await supabase.from('clarification_analytics').insert([{
         user_id,
@@ -425,6 +492,7 @@ Please analyze this automation request and return clarifying questions as a JSON
         agent_name,
         description,
         connected_plugins: pluginKeys,
+        missing_services: missingServices, // Added missing services tracking
         generated_questions: clarificationData.questions,
         questions_count: clarificationData.questions.length,
         generated_at: new Date().toISOString()
@@ -433,14 +501,17 @@ Please analyze this automation request and return clarifying questions as a JSON
       console.warn('Analytics logging failed:', analyticsError)
     }
 
-    console.log('🔍 SIMPLE DEBUG - Final data being returned:', { 
-      pluginKeys, 
-      hasNotionInPlugins: pluginKeys.includes('notion'),
-      clarificationQuestions: clarificationData.questions.map(q => q.question)
+    console.log('14. Clarification API Response:', { 
+      questionsCount: clarificationData.questions.length,
+      hasPluginWarning: !!pluginWarning,
+      missingServicesCount: missingServices.length,
+      availableServicesCount: availableServices.length
     })
 
+    // FIXED: Include plugin metadata in response (like other APIs)
     return NextResponse.json({
       ...clarificationData,
+      connectedPluginData, // Include plugin metadata for consistency
       ...(pluginWarning && { pluginWarning })
     })
 
@@ -450,6 +521,7 @@ Please analyze this automation request and return clarifying questions as a JSON
   }
 }
 
+// Existing callOpenAI function - unchanged to preserve functionality
 async function callOpenAI(systemPrompt: string, userPrompt: string): Promise<{
   response: any,
   usage: {
@@ -493,6 +565,7 @@ async function callOpenAI(systemPrompt: string, userPrompt: string): Promise<{
   }
 }
 
+// Existing parseAndValidateLLMResponse function - preserved with enhancements
 async function parseAndValidateLLMResponse(llmResponse: any, originalPrompt: string): Promise<ClarificationResponse> {
   try {
     console.log('Raw LLM response type:', typeof llmResponse)
@@ -648,7 +721,7 @@ async function parseAndValidateLLMResponse(llmResponse: any, originalPrompt: str
 
     return {
       questions: questions.slice(0, 7), // Increased limit to accommodate scheduling
-      reasoning: `Generated ${questions.length} targeted clarification question${questions.length === 1 ? '' : 's'} to refine your automation requirements, including scheduling details.`,
+      reasoning: `Generated ${questions.length} targeted clarification question${questions.length === 1 ? '' : 's'} focused on your connected services, including scheduling details.`,
       confidence: Math.min(95, 70 + (questions.length * 5))
     }
 

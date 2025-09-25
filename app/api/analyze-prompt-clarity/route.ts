@@ -1,6 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
+// Import new plugin registry
+import { 
+  pluginRegistry,
+  getPluginDefinition,
+  getConnectedPluginsWithMetadata,
+  getPluginCapabilitiesContext,
+  getPluginDisplayNames,
+  LEGACY_KEY_MAP
+} from '@/lib/plugins/pluginRegistry'
+
 // Enhanced error logging function
 function logError(stage: string, error: any, context?: any) {
   console.error(`❌ [${stage}] Error:`, {
@@ -71,7 +81,7 @@ async function trackTokenUsage(supabase: any, userId: string, tokenData: any) {
   }
 }
 
-// Enhanced plugin fetching with better error handling
+// Enhanced plugin fetching with new registry integration
 async function getConnectedPlugins(userId: string, connected_plugins?: any): Promise<string[]> {
   let pluginKeys: string[] = []
 
@@ -114,22 +124,6 @@ async function getConnectedPlugins(userId: string, connected_plugins?: any): Pro
   return pluginKeys
 }
 
-// Plugin requirements for validation
-const PLUGIN_REQUIREMENTS = {
-  'google drive': ['googledrive', 'google_drive', 'drive', 'google-drive'],
-  'google sheets': ['googlesheets', 'google_sheets', 'sheets'],
-  'gmail': ['gmail', 'email', 'google_email', 'google-mail'],
-  'dropbox': ['dropbox'],
-  'slack': ['slack'],
-  'notion': ['notion'],
-  'airtable': ['airtable'],
-  'calendar': ['calendar', 'google_calendar', 'gcal'],
-  'onedrive': ['onedrive', 'microsoft_onedrive'],
-  'trello': ['trello'],
-  'asana': ['asana'],
-  'monday': ['monday', 'monday_com']
-}
-
 // Enhanced JSON extraction that handles multiple response formats
 function extractJSON(content: string): string {
   console.log('🔍 Extracting JSON from content:', content.slice(0, 100) + '...')
@@ -159,50 +153,8 @@ function extractJSON(content: string): string {
   return content.trim()
 }
 
-function detectRequiredPlugins(prompt: string): string[] {
-  const lowerPrompt = prompt.toLowerCase()
-  const requiredPlugins: string[] = []
-  
-  for (const [service, aliases] of Object.entries(PLUGIN_REQUIREMENTS)) {
-    if (aliases.some(alias => lowerPrompt.includes(alias))) {
-      requiredPlugins.push(service)
-    }
-  }
-  
-  console.log(`Detected required plugins: ${requiredPlugins}`)
-  return requiredPlugins
-}
-
-function validatePluginRequirements(prompt: string, connectedPlugins: string[]): { 
-  isValid: boolean, 
-  missingPlugins: string[],
-  requiredServices: string[]
-} {
-  const requiredPlugins = detectRequiredPlugins(prompt)
-  const missingPlugins: string[] = []
-  
-  for (const required of requiredPlugins) {
-    const aliases = PLUGIN_REQUIREMENTS[required as keyof typeof PLUGIN_REQUIREMENTS] || [required]
-    const isConnected = aliases.some(alias => 
-      connectedPlugins.some(connected => 
-        connected.toLowerCase().includes(alias.toLowerCase())
-      )
-    )
-    
-    if (!isConnected) {
-      missingPlugins.push(required)
-    }
-  }
-  
-  return {
-    isValid: missingPlugins.length === 0,
-    missingPlugins,
-    requiredServices: requiredPlugins
-  }
-}
-
-// Smart scheduling question generator
-function generateSchedulingQuestions(userPrompt: string): any[] {
+// Smart scheduling question generator based on plugin capabilities
+function generateSchedulingQuestions(userPrompt: string, connectedPluginData: any[]): any[] {
   const promptLower = userPrompt.toLowerCase();
   
   // Check if user already specified timing in prompt
@@ -217,9 +169,18 @@ function generateSchedulingQuestions(userPrompt: string): any[] {
     console.log('Timing already specified in prompt, skipping scheduling questions');
     return [];
   }
+
+  // Check connected plugin capabilities to generate context-aware scheduling
+  const hasEmailCapabilities = connectedPluginData.some(plugin => 
+    plugin.capabilities?.includes('read_email') || plugin.capabilities?.includes('send_email')
+  );
   
+  const hasFileCapabilities = connectedPluginData.some(plugin =>
+    plugin.capabilities?.includes('upload_files') || plugin.capabilities?.includes('read_files')
+  );
+
   // Email automations
-  if (promptLower.includes('email') || promptLower.includes('inbox') || promptLower.includes('gmail')) {
+  if (hasEmailCapabilities && (promptLower.includes('email') || promptLower.includes('inbox') || promptLower.includes('google-mail'))) {
     return [
       {
         id: 'email_schedule',
@@ -235,6 +196,25 @@ function generateSchedulingQuestions(userPrompt: string): any[] {
           { value: 'weekly_monday', label: 'Weekly on Monday 9 AM', description: 'Weekly email summary' }
         ],
         allowCustom: false
+      }
+    ];
+  }
+
+  // File processing automations
+  if (hasFileCapabilities && (promptLower.includes('file') || promptLower.includes('drive') || promptLower.includes('upload'))) {
+    return [
+      {
+        id: 'file_schedule',
+        dimension: 'timing',
+        question: "When should this file automation run?",
+        type: 'single_choice',
+        options: [
+          { value: 'on_change', label: 'When files change', description: 'Process files immediately when they are added or modified' },
+          { value: 'daily_2am', label: 'Daily at 2:00 AM', description: 'Process files during off-hours' },
+          { value: 'weekly_sunday', label: 'Weekly on Sunday', description: 'Weekly file processing' },
+          { value: 'manual_trigger', label: 'Manual trigger only', description: 'Run only when manually triggered' }
+        ],
+        allowCustom: true
       }
     ];
   }
@@ -258,36 +238,51 @@ function generateSchedulingQuestions(userPrompt: string): any[] {
   ];
 }
 
-// Enhanced AI system prompt that FORCES JSON response
-function buildAISystemPrompt(connectedPlugins: string[], userPrompt: string) {
+// FIXED: AI system prompt that ONLY works with connected services
+function buildAISystemPrompt(connectedPluginData: any[], userPrompt: string) {
+  const pluginCapabilitiesContext = getPluginCapabilitiesContext(connectedPluginData.map(p => p.key));
+  
+  // Create a clear list of connected services for the AI
+  const connectedServicesList = connectedPluginData.length > 0 
+    ? connectedPluginData.map(p => `- ${p.label} (${p.key}): ${p.capabilities.join(', ')}`).join('\n')
+    : '- No connected services available';
+  
   return `You are an expert automation analyst. You MUST respond with valid JSON only.
 
 USER REQUEST: "${userPrompt}"
-CONNECTED SERVICES: ${connectedPlugins.length > 0 ? connectedPlugins.join(', ') : 'None'}
 
-CRITICAL: You must respond with valid JSON. Do not include any text outside the JSON structure.
+CONNECTED SERVICES AVAILABLE:
+${connectedServicesList}
+
+CRITICAL INSTRUCTIONS:
+- Generate questions using ONLY the connected services listed above
+- Do NOT reference any services not in the connected services list
+- Do NOT ask about services mentioned in the user request if they are not connected
+- Focus on building workflows using only available connected services
+- If user mentioned unconnected services, ignore them completely
 
 REQUIRED AUTOMATION DETAILS - ASK ABOUT ANY THAT ARE MISSING:
 
-1. DATA/WHAT TO MONITOR: What specific thing to track (email criteria, file type, etc.)
-2. TRIGGER/THRESHOLD: What condition triggers the action (keyword found, file received, etc.)  
-3. OUTPUT/WHAT TO CREATE: What gets generated (alert message, report, summary, notification, etc.)
-4. DELIVERY/HOW TO DELIVER: How to send results (email, SMS, save to file, etc.)
-5. ERROR HANDLING: What to do when things fail (retry, send error alert, log and continue, etc.)
+1. DATA/WHAT TO MONITOR: What specific thing to track using connected services
+2. TRIGGER/THRESHOLD: What condition triggers the action
+3. OUTPUT/WHAT TO CREATE: What gets generated (summary, report, etc.)
+4. DELIVERY/HOW TO DELIVER: How to send results using ONLY connected services
+5. ERROR HANDLING: What to do when things fail
 
 CRITICAL TIMING REQUIREMENT:
-DO NOT include timing/frequency/scheduling questions in your response. The system will automatically add appropriate scheduling questions based on the automation context. Focus only on the other dimensions above.
+DO NOT include timing/frequency/scheduling questions in your response. The system will automatically add appropriate scheduling questions. Focus only on the other dimensions above.
 
 ANALYSIS RULES:
 - Check each dimension: is it clearly specified, partially mentioned, or completely missing?
-- Ask about dimensions that are missing or unclear (except timing - that's handled automatically)
+- Ask about dimensions that are missing or unclear (except timing)
 - Generate 2-4 content questions, avoiding timing since it's added separately
-- Don't assume output format - if unclear, ask what should be created
-- Don't assume error handling - if not mentioned, ask how to handle failures
-- ONLY use connected services in your questions and suggestions
+- Use ONLY the capabilities of connected services listed above
+- For delivery questions, only suggest connected services as options
+- Don't assume output format - ask what should be created using available services
+- Don't assume error handling - ask how to handle failures
 
 CLARITY SCORING:
-- 90-100: All 6 dimensions clearly specified
+- 90-100: All 6 dimensions clearly specified using available services
 - 70-89: 1-2 dimensions missing
 - 50-69: 3-4 dimensions missing
 - 30-49: Most dimensions missing
@@ -301,10 +296,10 @@ You MUST return ONLY this JSON structure:
     {
       "id": "question_id",
       "dimension": "data|output|delivery|error_handling",
-      "question": "Specific question?",
+      "question": "Specific question using ONLY connected service capabilities?",
       "type": "single_choice",
       "options": [
-        { "value": "value", "label": "Label", "description": "Description" }
+        { "value": "value", "label": "Label using ONLY connected services", "description": "Description" }
       ],
       "allowCustom": true
     }
@@ -313,16 +308,16 @@ You MUST return ONLY this JSON structure:
     "data": { "status": "clear|partial|missing", "detected": "what was found" },
     "timing": { "status": "clear|partial|missing", "detected": "timing found" },
     "output": { "status": "clear|partial|missing", "detected": "output found" },
-    "actions": { "status": "clear|partial|missing", "detected": "actions found" },
-    "delivery": { "status": "clear|partial|missing", "detected": "delivery found" },
+    "actions": { "status": "clear|partial|missing", "detected": "actions using connected services" },
+    "delivery": { "status": "clear|partial|missing", "detected": "delivery using connected services" },
     "error_handling": { "status": "clear|partial|missing", "detected": "error handling found" }
   }
 }`
 }
 
 // Apply consistency checks and add scheduling questions
-function validateConsistency(result: any, userPrompt: string): any {
-  const scheduleQuestions = generateSchedulingQuestions(userPrompt)
+function validateConsistency(result: any, userPrompt: string, connectedPluginData: any[]): any {
+  const scheduleQuestions = generateSchedulingQuestions(userPrompt, connectedPluginData)
   console.log(`Generated ${scheduleQuestions.length} scheduling questions for consistency check`)
   
   if (scheduleQuestions.length > 0) {
@@ -344,73 +339,159 @@ function validateConsistency(result: any, userPrompt: string): any {
   return result
 }
 
-// Smart fallback for Gmail/Drive automation
-const createFallbackResponse = (userPrompt: string = '') => {
-  const scheduleQuestions = generateSchedulingQuestions(userPrompt)
+// FIXED: Smart generic fallback that uses plugin metadata instead of hardcoded mappings
+const createFallbackResponse = (userPrompt: string = '', connectedPluginData: any[] = []) => {
+  const scheduleQuestions = generateSchedulingQuestions(userPrompt, connectedPluginData)
   const promptLower = userPrompt.toLowerCase()
+  const hasNoPlugins = connectedPluginData.length === 0
   
-  // Specific fallback for Gmail/Drive automation
-  if (promptLower.includes('gmail') && promptLower.includes('google drive')) {
+  // Use actual plugin metadata for service names
+  const serviceNames = getPluginDisplayNames(
+    connectedPluginData.map(p => p.key), 
+    connectedPluginData
+  );
+  
+  // Analyze prompt for intent clues without making service assumptions
+  const promptAnalysis = {
+    hasDataWords: /\b(data|analyze|analysis|report|insights|metrics|statistics)\b/.test(promptLower),
+    hasContentWords: /\b(content|text|document|write|generate|create|summary)\b/.test(promptLower),
+    hasCommWords: /\b(email|message|notify|alert|send|communicate)\b/.test(promptLower),
+    hasFileWords: /\b(file|document|pdf|spreadsheet|upload|download)\b/.test(promptLower),
+    hasAutoWords: /\b(automate|automation|workflow|process|trigger|schedule)\b/.test(promptLower)
+  }
+  
+  // Build generic automation categories based on intent, not services
+  const buildAutomationOptions = () => {
+    const options = []
+    
+    // Always include these fundamental automation types
+    if (promptAnalysis.hasDataWords) {
+      options.push({ value: "data_analysis", label: "Data analysis and insights", description: "Analyze information and generate reports or insights" })
+    }
+    if (promptAnalysis.hasContentWords) {
+      options.push({ value: "content_processing", label: "Content processing", description: "Process, transform, or generate text and documents" })
+    }
+    if (promptAnalysis.hasCommWords) {
+      options.push({ value: "communication_automation", label: "Communication automation", description: "Automate notifications, alerts, or messaging" })
+    }
+    if (promptAnalysis.hasFileWords) {
+      options.push({ value: "file_management", label: "File and document management", description: "Organize, process, or transform files and documents" })
+    }
+    
+    // Add generic automation types
+    options.push(
+      { value: "monitoring", label: "Monitoring and alerts", description: "Watch for changes or conditions and notify when they occur" },
+      { value: "data_transformation", label: "Data transformation", description: "Convert, format, or restructure information" },
+      { value: "workflow_automation", label: "Multi-step workflow", description: "Chain together multiple actions in sequence" },
+      { value: "custom_logic", label: "Custom logic and processing", description: "Apply specific rules or calculations to data" }
+    )
+    
+    // Always end with custom option
+    options.push({ value: "custom", label: "Something different", description: "Let me describe exactly what I need" })
+    
+    return options
+  }
+  
+  // FIXED: Build fallback actions using actual plugin metadata
+  let fallbackActions = 'No actions possible - connect services first';
+  if (connectedPluginData.length > 0) {
+    fallbackActions = `Summarize and save to ${serviceNames.join(', ')}`;
+  }
+  
+  // No plugins connected - focus on understanding intent first
+  if (hasNoPlugins) {
     return {
       needsClarification: true,
-      clarityScore: 40,
+      clarityScore: 25,
       questionsSequence: [
         {
-          id: "email_search_criteria",
+          id: "automation_intent",
           dimension: "data",
-          question: "How should I identify which emails contain invoices?",
+          question: "I'm having trouble understanding your automation request automatically. What type of task do you want to automate?",
+          type: "single_choice",
+          options: buildAutomationOptions(),
+          allowCustom: true
+        },
+        {
+          id: "input_source",
+          dimension: "data",
+          question: "What information or data should this automation work with?",
           type: "single_choice",
           options: [
-            { value: "attachment_name", label: "Look for files with 'invoice' in filename", description: "Search attachment names for keyword 'invoice'" },
-            { value: "email_subject", label: "Check email subject for 'invoice'", description: "Look at email subjects containing 'invoice'" },
-            { value: "email_content", label: "Scan email content for invoice keywords", description: "Search email body text for invoice-related terms" },
-            { value: "pdf_attachments", label: "Check all PDF attachments", description: "Examine all PDF files attached to emails" },
-            { value: "custom", label: "Other criteria", description: "Let me specify different search criteria" }
+            { value: "manual_input", label: "Information I provide manually", description: "I'll give the automation specific data to work with" },
+            { value: "external_data", label: "Data from external services", description: "Pull information from online services (requires connecting those services)" },
+            { value: "files_documents", label: "Files or documents", description: "Process existing files, documents, or datasets" },
+            { value: "web_content", label: "Web content or APIs", description: "Gather information from websites or online sources" },
+            { value: "custom", label: "Other data source", description: "Let me specify the data source" }
           ],
           allowCustom: true
         },
         {
-          id: "drive_location",
-          dimension: "delivery",
-          question: "Where in Google Drive should I save the invoice?",
+          id: "output_format",
+          dimension: "output",
+          question: "What should this automation produce or create?",
           type: "single_choice",
           options: [
-            { value: "root", label: "Main Drive folder", description: "Save directly in the root of Google Drive" },
-            { value: "invoices_folder", label: "Create/use 'Invoices' folder", description: "Organize invoices in a dedicated folder" },
-            { value: "monthly_folder", label: "Create monthly folders (e.g., '2025-01')", description: "Organize by month automatically" },
-            { value: "custom", label: "Specific folder path", description: "Let me specify the exact folder location" }
+            { value: "analysis_report", label: "Analysis or report", description: "Generate insights, summaries, or analytical reports" },
+            { value: "notifications", label: "Notifications or alerts", description: "Send messages when conditions are met" },
+            { value: "processed_data", label: "Processed or transformed data", description: "Convert, format, or restructure information" },
+            { value: "documents", label: "Documents or files", description: "Create or modify files and documents" },
+            { value: "actions", label: "Automated actions", description: "Perform specific tasks or operations" },
+            { value: "custom", label: "Different output", description: "Let me specify what should be created" }
           ],
           allowCustom: true
         },
         ...scheduleQuestions
       ],
       analysis: {
-        data: { status: "partial", detected: "Gmail search, attachment with invoice" },
+        data: { status: "missing", detected: "" },
         timing: { status: "missing", detected: "" },
-        output: { status: "partial", detected: "Copy invoice to Google Drive" },
-        actions: { status: "partial", detected: "Search, find, copy" },
-        delivery: { status: "partial", detected: "Google Drive storage" },
+        output: { status: "missing", detected: "" },
+        actions: { status: "missing", detected: fallbackActions },
+        delivery: { status: "missing", detected: serviceNames.join(', ') },
         error_handling: { status: "missing", detected: "" }
       }
     }
   }
   
-  // General fallback
+  // Has plugins but prompt analysis failed - ask generic clarifying questions
   return {
     needsClarification: true,
-    clarityScore: 30,
+    clarityScore: 35,
     questionsSequence: [
       {
-        id: "automation_type",
+        id: "automation_goal",
         dimension: "data",
-        question: "What type of automation would you like to create?",
+        question: "Since I'm having trouble analyzing your request automatically, could you clarify what you want this automation to accomplish?",
+        type: "single_choice", 
+        options: buildAutomationOptions(),
+        allowCustom: true
+      },
+      {
+        id: "trigger_condition",
+        dimension: "data",
+        question: "What should trigger this automation to run?",
         type: "single_choice",
         options: [
-          { value: "stock_monitoring", label: "Stock price monitoring", description: "Monitor stock prices and get alerts" },
-          { value: "file_processing", label: "File processing", description: "Analyze or process files automatically" },
-          { value: "email_automation", label: "Email automation", description: "Automate email tasks" },
-          { value: "data_monitoring", label: "Data monitoring", description: "Monitor data changes" },
-          { value: "custom", label: "Something else", description: "Different type of automation" }
+          { value: "data_change", label: "When specific data changes", description: "Run when information is updated or modified" },
+          { value: "new_content", label: "When new content arrives", description: "Trigger on new emails, files, messages, etc." },
+          { value: "condition_met", label: "When a condition is met", description: "Run when specific criteria or thresholds are reached" },
+          { value: "manual_trigger", label: "When I manually start it", description: "Run only when I choose to trigger it" },
+          { value: "custom", label: "Different trigger", description: "Let me specify the trigger condition" }
+        ],
+        allowCustom: true
+      },
+      {
+        id: "result_handling",
+        dimension: "delivery",
+        question: "How should the automation deliver or handle the results?",
+        type: "single_choice",
+        options: [
+          { value: "save_results", label: "Save results somewhere", description: "Store output in a file, database, or service" },
+          { value: "send_notifications", label: "Send me notifications", description: "Alert me when complete or when issues occur" },
+          { value: "display_results", label: "Show results directly", description: "Present information immediately when complete" },
+          { value: "chain_actions", label: "Trigger additional actions", description: "Use results to start other automated processes" },
+          { value: "custom", label: "Different handling", description: "Let me specify how to handle results" }
         ],
         allowCustom: true
       },
@@ -420,14 +501,14 @@ const createFallbackResponse = (userPrompt: string = '') => {
       data: { status: "missing", detected: "" },
       timing: { status: "missing", detected: "" },
       output: { status: "missing", detected: "" },
-      actions: { status: "missing", detected: "" },
-      delivery: { status: "missing", detected: "" },
+      actions: { status: "missing", detected: fallbackActions },
+      delivery: { status: "missing", detected: serviceNames.join(', ') },
       error_handling: { status: "missing", detected: "" }
     }
   }
 }
 
-// Enhanced parsing function that handles OpenAI responses
+// FIXED: Enhanced parsing function that handles OpenAI responses
 function parseAIResponse(rawContent: string): any {
   console.log('🔍 Parsing AI response, length:', rawContent.length)
   console.log('📝 Raw content preview:', rawContent.slice(0, 200) + '...')
@@ -435,25 +516,95 @@ function parseAIResponse(rawContent: string): any {
   // Step 1: Try to extract JSON from the response
   let jsonContent = extractJSON(rawContent)
   
-  // Step 2: If no JSON found, try to force-parse as JSON anyway
+  // Step 2: If no JSON found, log the full content for debugging
   if (!jsonContent.startsWith('{') && !jsonContent.startsWith('[')) {
-    console.log('❌ No valid JSON structure found in response')
+    console.error('❌ No valid JSON structure found in response')
+    console.error('🔍 Full raw content:', rawContent) // Log everything for debugging
     throw new Error('AI_RETURNED_PROSE_NOT_JSON')
   }
   
   // Step 3: Parse the JSON
   try {
     const parsed = JSON.parse(jsonContent)
+    
+    // CRITICAL: Check if parsed result is empty
+    if (!parsed || (typeof parsed === 'object' && Object.keys(parsed).length === 0)) {
+      console.error('❌ Parsed JSON is empty object')
+      console.error('🔍 JSON content was:', jsonContent)
+      throw new Error('AI_RETURNED_EMPTY_JSON_OBJECT')
+    }
+    
     console.log('✅ Successfully parsed AI JSON response')
+    console.log('🔍 Parsed keys:', Object.keys(parsed))
     return parsed
   } catch (parseError) {
-    console.log('❌ JSON parsing failed, content was:', jsonContent.slice(0, 300))
+    console.error('❌ JSON parsing failed')
+    console.error('🔍 JSON content was:', jsonContent.slice(0, 500))
+    console.error('🔍 Parse error:', parseError.message)
     throw new Error('INVALID_JSON_FROM_AI')
   }
 }
 
+// FIXED: Check if user mentioned unconnected services (for warning only)
+function checkMentionedUnconnectedServices(userPrompt: string, connectedPlugins: string[]): {
+  mentionedServices: string[];
+  missingServices: string[];
+} {
+  const promptLower = userPrompt.toLowerCase();
+  const mentionedServices: string[] = [];
+  const normalizedConnectedPlugins = connectedPlugins.map(key => LEGACY_KEY_MAP[key] || key);
+  
+  // Check against plugin registry
+  for (const [pluginKey, pluginDef] of Object.entries(pluginRegistry)) {
+    const serviceName = pluginDef.label.toLowerCase();
+    const keyVariations = [
+      pluginKey,
+      serviceName,
+      serviceName.replace(/\s+/g, ''),
+      serviceName.replace(/\s+/g, '_'),
+      serviceName.replace(/\s+/g, '-')
+    ];
+    
+    const isDetected = keyVariations.some(variation => 
+      promptLower.includes(variation)
+    );
+    
+    if (isDetected && !mentionedServices.includes(pluginKey)) {
+      mentionedServices.push(pluginKey);
+    }
+  }
+  
+  // Additional common service name mappings
+  const additionalServiceKeywords = {
+    'notion': ['notion'],
+    'slack': ['slack'],
+    'google_sheets': ['google sheets', 'sheets', 'spreadsheet'],
+    'google_calendar': ['calendar', 'google calendar', 'gcal'],
+    'dropbox': ['dropbox'],
+    'airtable': ['airtable'],
+    'trello': ['trello'],
+    'asana': ['asana'],
+    'monday': ['monday'],
+    'onedrive': ['onedrive']
+  };
+  
+  for (const [serviceKey, keywords] of Object.entries(additionalServiceKeywords)) {
+    const isDetected = keywords.some(keyword => promptLower.includes(keyword));
+    if (isDetected && !mentionedServices.includes(serviceKey)) {
+      mentionedServices.push(serviceKey);
+    }
+  }
+  
+  // Find missing services
+  const missingServices = mentionedServices.filter(service => 
+    !normalizedConnectedPlugins.includes(service)
+  );
+  
+  return { mentionedServices, missingServices };
+}
+
 export async function POST(request: NextRequest) {
-  console.log('🚀 API Route called - Enhanced Error Handling')
+  console.log('🚀 API Route called - Fixed to only use connected services')
   
   try {
     // Step 1: Parse request body with enhanced error handling
@@ -503,65 +654,64 @@ export async function POST(request: NextRequest) {
       connectedPlugins = []
     }
 
-    // Step 4: Plugin validation
+    // Step 4: Get plugin metadata for LLM context
     const finalPrompt = prompt.trim()
-    let pluginWarning = null
-    let filteredConnectedPlugins = connectedPlugins
-    
-    if (!bypassPluginValidation) {
-      try {
-        const pluginValidation = validatePluginRequirements(prompt, connectedPlugins)
-        
-        if (!pluginValidation.isValid) {
-          console.log('⚠️ Missing required plugins:', pluginValidation.missingPlugins)
-          
-          pluginWarning = {
-            missingServices: pluginValidation.missingPlugins,
-            message: `Note: Your request mentions ${pluginValidation.missingPlugins.join(', ')} but ${pluginValidation.missingPlugins.length === 1 ? 'this service isn\'t' : 'these services aren\'t'} connected.`
-          }
-          
-          const unconnectedAliases = pluginValidation.missingPlugins.flatMap(service => 
-            PLUGIN_REQUIREMENTS[service as keyof typeof PLUGIN_REQUIREMENTS] || [service]
-          )
-          
-          filteredConnectedPlugins = connectedPlugins.filter(plugin => {
-            const pluginLower = plugin.toLowerCase()
-            return !unconnectedAliases.some(alias => 
-              pluginLower.includes(alias.toLowerCase())
-            )
-          })
-          
-          console.log('✅ Plugin filtering complete:', {
-            original: connectedPlugins.length,
-            filtered: filteredConnectedPlugins.length
-          })
-        }
-      } catch (validationError) {
-        logError('PLUGIN_VALIDATION', validationError)
-      }
+    let connectedPluginData: any[] = []
+    try {
+      connectedPluginData = getConnectedPluginsWithMetadata(connectedPlugins)
+      console.log('✅ Plugin metadata retrieved:', {
+        pluginsWithMetadata: connectedPluginData.length,
+        capabilities: connectedPluginData.map(p => ({ key: p.key, capabilities: p.capabilities }))
+      })
+    } catch (metadataError) {
+      logError('PLUGIN_METADATA', metadataError)
     }
 
-    // Step 5: Check OpenAI API key
+    // Step 5: Check for mentioned unconnected services (for warning only)
+    let pluginWarning = null
+    try {
+      const { mentionedServices, missingServices } = checkMentionedUnconnectedServices(finalPrompt, connectedPlugins)
+      
+      if (missingServices.length > 0) {
+        console.log('⚠️ User mentioned unconnected services:', missingServices)
+        
+        const missingDisplayNames = missingServices.map(service => {
+          const definition = getPluginDefinition(service);
+          return definition?.displayName || definition?.label || service;
+        });
+        
+        pluginWarning = {
+          missingServices,
+          message: `🚨 MISSING SERVICES: Your request mentions ${missingDisplayNames.join(', ')} but ${missingServices.length === 1 ? 'this service isn\'t' : 'these services aren\'t'} connected. Questions will focus on your connected services only.`
+        }
+        console.log('✅ Plugin warning created:', pluginWarning.message)
+      }
+    } catch (warningError) {
+      logError('WARNING_CREATION', warningError)
+    }
+
+    // Step 6: Check OpenAI API key
     if (!process.env.OPENAI_API_KEY) {
       console.error('❌ Missing OpenAI API key, using fallback')
       return NextResponse.json({ 
-        ...createFallbackResponse(finalPrompt),
+        ...createFallbackResponse(finalPrompt, connectedPluginData),
         connectedPlugins: connectedPlugins,
-        pluginWarning,
+        connectedPluginData: connectedPluginData,
+        ...(pluginWarning && { pluginWarning }),
         error: 'OpenAI API key not configured'
       })
     }
 
-    console.log('✅ All validations passed, calling OpenAI...')
+    console.log('✅ All validations passed, calling OpenAI with connected services only...')
 
-    // Step 6: Call OpenAI with enhanced error handling
+    // Step 7: Call OpenAI with enhanced error handling and plugin context
     let openAIResponse
     try {
       const controller = new AbortController()
       const timeoutId = setTimeout(() => {
         console.log('⏱️ OpenAI request timeout')
         controller.abort()
-      }, 25000)
+      }, 45000)
 
       openAIResponse = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
@@ -574,7 +724,7 @@ export async function POST(request: NextRequest) {
           messages: [
             { 
               role: 'system', 
-              content: buildAISystemPrompt(filteredConnectedPlugins, finalPrompt) 
+              content: buildAISystemPrompt(connectedPluginData, finalPrompt) 
             },
             { 
               role: 'user', 
@@ -582,7 +732,7 @@ export async function POST(request: NextRequest) {
             }
           ],
           temperature: 0.1,
-          max_tokens: 1000,
+          max_tokens: 1200,
           response_format: { type: "json_object" }
         }),
         signal: controller.signal
@@ -597,43 +747,67 @@ export async function POST(request: NextRequest) {
         { 
           error: 'OpenAI API connection failed',
           details: fetchError.message,
-          ...createFallbackResponse(finalPrompt),
+          ...createFallbackResponse(finalPrompt, connectedPluginData),
           connectedPlugins,
-          pluginWarning
+          connectedPluginData,
+          ...(pluginWarning && { pluginWarning })
         },
         { status: 500 }
       )
     }
 
+    // ENHANCED: Better OpenAI error handling
     if (!openAIResponse.ok) {
-      const errorText = await openAIResponse.text().catch(() => 'Unknown error')
-      logError('OPENAI_API_ERROR', new Error(`Status ${openAIResponse.status}: ${errorText}`))
+      let errorText = 'Unknown error'
+      let errorDetails: any = {}
+      
+      try {
+        const contentType = openAIResponse.headers.get('content-type')
+        
+        if (contentType && contentType.includes('application/json')) {
+          const errorData = await openAIResponse.json()
+          errorDetails = errorData
+          errorText = JSON.stringify(errorData)
+        } else {
+          errorText = await openAIResponse.text()
+          errorDetails = { message: errorText }
+        }
+      } catch (parseError) {
+        console.error('❌ Could not parse OpenAI error response:', parseError)
+        errorDetails = {
+          message: `HTTP ${openAIResponse.status}: ${openAIResponse.statusText}`,
+          details: 'Could not parse error response'
+        }
+      }
       
       return NextResponse.json(
         { 
           error: `OpenAI API error: ${openAIResponse.status}`,
           details: errorText,
-          ...createFallbackResponse(finalPrompt),
+          ...createFallbackResponse(finalPrompt, connectedPluginData),
           connectedPlugins,
-          pluginWarning
+          connectedPluginData,
+          ...(pluginWarning && { pluginWarning })
         },
         { status: 500 }
       )
     }
 
-    // Step 7: Process OpenAI response
+    // Step 8: Process OpenAI response with enhanced debugging
     let aiData
     try {
       aiData = await openAIResponse.json()
       console.log('✅ OpenAI response parsed successfully')
+      
     } catch (parseError) {
       logError('OPENAI_RESPONSE_PARSING', parseError)
       return NextResponse.json(
         { 
           error: 'Failed to parse OpenAI response',
-          ...createFallbackResponse(finalPrompt),
+          ...createFallbackResponse(finalPrompt, connectedPluginData),
           connectedPlugins,
-          pluginWarning
+          connectedPluginData,
+          ...(pluginWarning && { pluginWarning })
         },
         { status: 500 }
       )
@@ -645,47 +819,78 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { 
           error: 'Empty AI response',
-          ...createFallbackResponse(finalPrompt),
+          ...createFallbackResponse(finalPrompt, connectedPluginData),
           connectedPlugins,
-          pluginWarning
+          connectedPluginData,
+          ...(pluginWarning && { pluginWarning })
         },
         { status: 500 }
       )
     }
 
-    // Step 8: Parse AI result with enhanced error handling
+    // Step 9: Parse AI result with enhanced error handling and validation
     let aiResult
     try {
       aiResult = parseAIResponse(rawContent)
-      console.log('✅ AI result parsed successfully')
+      
+      // CRITICAL: Validate the parsed result has required structure
+      if (!aiResult || Object.keys(aiResult).length === 0) {
+        console.error('❌ AI returned empty object, raw content:', rawContent.slice(0, 500))
+        throw new Error('AI_RETURNED_EMPTY_OBJECT')
+      }
+
+      // Ensure required fields exist
+      const requiredFields = ['clarityScore', 'needsClarification', 'analysis']
+      const missingFields = requiredFields.filter(field => !(field in aiResult))
+      if (missingFields.length > 0) {
+        console.error('❌ AI response missing required fields:', {
+          missing: missingFields,
+          received: Object.keys(aiResult),
+          rawContent: rawContent.slice(0, 300)
+        })
+        throw new Error(`AI_MISSING_FIELDS: ${missingFields.join(', ')}`)
+      }
+
+      // Add defaults for missing optional fields
+      if (!aiResult.hasOwnProperty('questionsSequence')) {
+        aiResult.questionsSequence = []
+      }
+
+      console.log('✅ AI result validated:', {
+        hasClarityScore: 'clarityScore' in aiResult,
+        hasQuestions: Array.isArray(aiResult.questionsSequence),
+        questionCount: aiResult.questionsSequence?.length || 0
+      })
+      
     } catch (aiParseError: any) {
       logError('AI_RESULT_PARSING', aiParseError, { 
-        responsePreview: rawContent.slice(0, 300) 
+        responsePreview: rawContent.slice(0, 500),
+        fullResponse: rawContent 
       })
       
       console.log('🔄 Using smart fallback for automation request')
-      aiResult = createFallbackResponse(finalPrompt)
+      aiResult = createFallbackResponse(finalPrompt, connectedPluginData)
       aiResult.aiParsingFailed = true
       aiResult.originalError = aiParseError.message
     }
 
-    // Step 9: Add scheduling questions and validate consistency
+    // Step 10: Add scheduling questions and validate consistency
     try {
-      aiResult = validateConsistency(aiResult, finalPrompt)
+      aiResult = validateConsistency(aiResult, finalPrompt, connectedPluginData)
     } catch (consistencyError) {
       logError('CONSISTENCY_VALIDATION', consistencyError)
     }
 
-    // Step 10: Build final response
+    // Step 11: Build final response with complete plugin metadata
     const finalResult = {
       ...aiResult,
       connectedPlugins,
-      filteredPlugins: filteredConnectedPlugins,
+      connectedPluginData,
       pluginValidationError: false,
       ...(pluginWarning && { pluginWarning })
     }
 
-    // Step 11: Track usage (non-blocking)
+    // Step 12: Track usage (non-blocking)
     if (userIdToUse !== 'anonymous' && aiData?.usage) {
       try {
         await trackTokenUsage(supabase, userIdToUse, {
@@ -698,7 +903,9 @@ export async function POST(request: NextRequest) {
           metadata: { 
             clarityScore: finalResult.clarityScore,
             questionsCount: finalResult.questionsSequence?.length || 0,
-            aiParsingFailed: finalResult.aiParsingFailed || false
+            aiParsingFailed: finalResult.aiParsingFailed || false,
+            connectedPluginsCount: connectedPluginData.length,
+            pluginCapabilities: connectedPluginData.map(p => p.capabilities).flat()
           }
         })
       } catch (trackingError) {
@@ -706,11 +913,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    console.log('✅ Request completed successfully:', {
+    console.log('✅ Request completed successfully - questions only about connected services:', {
       clarityScore: finalResult.clarityScore,
       questionsCount: finalResult.questionsSequence?.length || 0,
       needsClarification: finalResult.needsClarification,
-      aiParsingFailed: finalResult.aiParsingFailed || false
+      aiParsingFailed: finalResult.aiParsingFailed || false,
+      pluginDataIncluded: finalResult.connectedPluginData?.length || 0,
+      pluginWarningCreated: !!pluginWarning
     })
 
     return NextResponse.json(finalResult)
@@ -723,7 +932,8 @@ export async function POST(request: NextRequest) {
         error: 'Unexpected server error',
         details: error.message,
         stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
-        ...createFallbackResponse()
+        ...createFallbackResponse(),
+        connectedPluginData: []
       },
       { status: 500 }
     )

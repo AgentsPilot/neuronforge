@@ -1,20 +1,87 @@
-// app/api/generate-agent/route.ts
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
 import OpenAI from 'openai'
-import { detectPluginsFromPrompt } from '@/lib/plugins/detectPluginsFromPrompt'
+import { 
+  pluginRegistry,
+  getPluginDefinition,
+  getConnectedPluginsWithMetadata,
+  LEGACY_KEY_MAP
+} from '@/lib/plugins/pluginRegistry'
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
+
+function generateDynamicInputTemplateContext(
+  connectedPluginData: any[],
+  usedCapabilities: Record<string, string[]>
+): string {
+  return connectedPluginData.map(plugin => {
+    const capsUsed = usedCapabilities[plugin.key] || []
+    if (!plugin.inputTemplates || capsUsed.length === 0) return null
+
+    return capsUsed
+      .filter(cap => plugin.inputTemplates[cap])
+      .map(capability => {
+        return plugin.inputTemplates[capability].map(template => {
+          let fieldInfo = `${plugin.key} with ${capability} action → ${template.name} (type: ${template.type}`
+          if (template.required) fieldInfo += ', required'
+          if (template.enum) fieldInfo += `, options: [${template.enum.join(', ')}]`
+          if (template.runtime_populated) fieldInfo += ', runtime_populated via ' + template.sandboxFetch
+          if (template.placeholder) fieldInfo += `, placeholder: "${template.placeholder}"`
+          fieldInfo += `): ${template.description}`
+          return fieldInfo
+        }).join('\n')
+      }).join('\n')
+  }).filter(Boolean).join('\n')
+}
+
+function generateDynamicOutputTemplateContext(connectedPluginData: any[]): string {
+  return connectedPluginData.map(plugin => {
+    if (!plugin.outputTemplates) return null
+    return Object.entries(plugin.outputTemplates).map(([capability, template]: [string, any]) => {
+      return `${plugin.key} with ${capability} action → produces ${template.type}: ${template.description}`
+    }).join('\n')
+  }).filter(Boolean).join('\n')
+}
+
+function generateDynamicIntentMappingRules(connectedPluginData: any[]): string {
+  const mappingRules: string[] = []
+  connectedPluginData.forEach(plugin => {
+    plugin.capabilities.forEach((capability: string) => {
+      const capWords = capability.replace(/_/g, ' ')
+      mappingRules.push(`"${capWords}" operations → ${plugin.key} (${plugin.displayName || plugin.label}) with ${capability} action`)
+    })
+  })
+  return [...new Set(mappingRules)].join('\n')
+}
+
+function inferActionFromStep(step: any, pluginDef: any): string {
+  if (!pluginDef || !step.action) return 'unknown'
+  const action = step.action.toLowerCase()
+  const capabilities = pluginDef.capabilities || []
+  for (const capability of capabilities) {
+    const capWords = capability.replace(/_/g, ' ').toLowerCase()
+    if (action.includes(capWords) || capWords.split(' ').some(word => action.includes(word))) {
+      return capability
+    }
+  }
+  return capabilities[0] || 'unknown'
+}
+
+function getUsedCapabilities(steps: any[]): Record<string, string[]> {
+  const used: Record<string, string[]> = {}
+  steps.forEach(step => {
+    if (!used[step.plugin]) used[step.plugin] = []
+    if (!used[step.plugin].includes(step.plugin_action)) {
+      used[step.plugin].push(step.plugin_action)
+    }
+  })
+  return used
+}
 
 export async function POST(req: Request) {
   try {
     const { prompt, clarificationAnswers } = await req.json()
-    console.log('🚀 Agent generation API called with:', { 
-      prompt: prompt?.slice(0, 100) + '...',
-      answersCount: Object.keys(clarificationAnswers || {}).length 
-    })
-
     const cookieStore = await cookies()
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -24,335 +91,196 @@ export async function POST(req: Request) {
           get: (name) => cookieStore.get(name)?.value,
           set: async () => {},
           remove: async () => {},
-        },
+        }
       }
     )
-
     const { data: { user }, error: authError } = await supabase.auth.getUser()
-
     if (authError || !user) {
-      console.log('❌ Authentication error:', authError)
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Get connected plugins
     const { data: pluginRows } = await supabase
       .from('plugin_connections')
       .select('plugin_key')
       .eq('user_id', user.id)
 
-    const connectedPlugins = pluginRows?.map((p) => p.plugin_key) || []
-    console.log('🔌 Connected plugins:', connectedPlugins)
+    const connectedPluginKeys = pluginRows?.map(p => p.plugin_key) || []
+    const connectedPluginData = getConnectedPluginsWithMetadata(connectedPluginKeys)
+    const fullPrompt = prompt
 
-    // Build enhanced prompt with clarification answers
-    let fullPrompt = prompt
-    if (clarificationAnswers && Object.keys(clarificationAnswers).length > 0) {
-      fullPrompt += '\n\nAdditional details:\n' + 
-        Object.entries(clarificationAnswers)
-          .map(([key, value]) => `${key}: ${value}`)
-          .join('\n')
-    }
+    const pluginCapabilityContext = connectedPluginData.map(plugin =>
+      `${plugin.key} (${plugin.displayName || plugin.label}): ${plugin.capabilities.join(', ')}`
+    ).join('\n')
 
-    console.log('📝 Full prompt for agent generation:', fullPrompt)
+    const dynamicOutputTemplates = generateDynamicOutputTemplateContext(connectedPluginData)
+    const dynamicIntentMappingRules = generateDynamicIntentMappingRules(connectedPluginData)
 
-    // Enhanced system prompt for better agent generation
-    const enhancedSystemPrompt = `You are an AI assistant that creates comprehensive agent specifications from user prompts.
+    const enhancedSystemPrompt = `You are an AI assistant that creates executable agent specifications by analyzing structured user workflows.
 
 You MUST respond with valid JSON only. No markdown, no explanations, just pure JSON.
 
-COMPREHENSIVE ANALYSIS APPROACH:
+CONNECTED PLUGINS AND CAPABILITIES:
+${pluginCapabilityContext}
 
-1. IDENTIFY ALL USER INPUTS: Scan for any values that users would need to customize:
-   - Email addresses (senders, recipients, contacts)
-   - Times and schedules ("daily at X time", "every X hours", "at a time you choose")
-   - File paths, folder names, drive locations
-   - Database/workspace IDs (Notion pages, Slack channels, etc.)
-   - Search terms, keywords, filters
-   - Threshold values, limits, quantities
-   - URLs, API endpoints, service names
-   - Names of people, companies, projects
-   - Any "specific" or customizable references
+DYNAMIC OUTPUT TEMPLATES (auto-generated from plugin registry):
+${dynamicOutputTemplates}
 
-2. DETERMINE INPUT TYPES: For each identified input, determine the most appropriate type:
-   - "email" for email addresses
-   - "time" for time selections
-   - "date" for date selections  
-   - "string" for text inputs (names, IDs, paths)
-   - "number" for quantities, limits, thresholds
-   - "select" with enum for predefined choices
-   - "boolean" for yes/no options
-   - "file" for file uploads
+CAPABILITY TO OPERATION MAPPING:
+${dynamicIntentMappingRules}
 
-3. EXTRACT SCHEDULING REQUIREMENTS: Look for any temporal patterns and ALWAYS consider timing boundaries:
-   - Frequency indicators (daily, hourly, weekly, monthly)
-   - Time specifications (morning, evening, specific times)
-   - Conditional timing (when X happens, after Y occurs) 
-   - User choice indicators ("at a time you choose", "when convenient")
-   - CRITICAL: For recurring schedules like "every hour/daily", ALWAYS include time boundary inputs:
-     * "every hour" = needs start_time and end_time inputs (business hours vs 24/7)
-     * "daily" = needs specific time input
-     * "weekly" = needs day and time inputs
-     * Consider user's likely intent (most users want business hours, not 3AM notifications)
+ENHANCED PROMPT STRUCTURE ANALYSIS:
+The user provides a structured workflow with sections like:
+- **Data Source:** What data to process → extract specific criteria/values
+- **Trigger Conditions:** When to run → extract scheduling information  
+- **Processing Steps:** What operations to perform → map to plugin capabilities above
+- **Output Creation:** What to generate → determine output types from templates above
+- **Delivery Method:** How to deliver results → map to delivery/storage capabilities
+- **Error Handling:** How to handle failures → configure error notifications
 
-4. IDENTIFY INTEGRATION POINTS: Find all external services mentioned:
-   - Email services (Gmail, Outlook)
-   - Storage services (Google Drive, Dropbox, OneDrive)
-   - Communication tools (Slack, Teams, Discord)
-   - Productivity tools (Notion, Trello, Asana)
-   - Any API or service integrations
+ANALYSIS INSTRUCTIONS:
+1. Parse the structured sections in the enhanced prompt
+2. Extract specific values mentioned (keywords, folders, email addresses, etc.)  
+3. Match processing operations to plugin capabilities using the mapping above
+4. Use input templates to generate required input fields
+5. Use output templates to determine expected outputs
+6. Create workflow steps with correct plugin and plugin_action assignments
 
-5. WORKFLOW DECOMPOSITION: Break down the task into logical steps:
-   - Data collection/input steps
-   - Processing/transformation steps
-   - Output/delivery steps
-   - Error handling steps
+INPUT SCHEMA GENERATION:
+- Extract user-configurable values from the enhanced prompt sections
+- Use plugin input templates to determine required fields (provided below AFTER workflow steps)
+- Set extracted values as placeholders/defaults
+- Focus only on parameters the executing agent will need
 
-Available plugins: ${connectedPlugins.join(', ') || 'None'}
+OUTPUT SCHEMA GENERATION:
+- Use plugin output templates for the capabilities being used
+- Generate outputs that match what the workflow will actually produce
+- Include execution status and summary outputs
 
 Required JSON structure:
 {
-  "agent_name": "string - descriptive name reflecting the agent's purpose",
-  "user_prompt": "string - cleaned and enhanced version of user request", 
-  "system_prompt": "string - detailed instructions for the agent including workflow steps, error handling, and output requirements",
-  "description": "string - clear summary of what the agent does and its value",
-  "schedule": "string - cron expression or schedule description if applicable",
-  "input_schema": [
-    {
-      "name": "string - descriptive field name",
-      "type": "string|number|boolean|date|time|email|file|select",
-      "required": true|false,
-      "placeholder": "string - helpful example or instruction",
-      "description": "string - what this input is for and how it's used",
-      "enum": ["option1", "option2"] // for select type only
-    }
-  ],
-  "workflow_steps": [
-    {
-      "step": "number",
-      "action": "string - what happens in this step",
-      "plugin": "string - plugin needed for this step (if applicable)",
-      "error_handling": "string - what to do if this step fails"
-    }
-  ],
-  "error_notifications": {
-    "enabled": true|false,
-    "method": "email|slack|both",
-    "description": "string - how errors are reported"
-  },
-  "output_format": "string - description of expected outputs"
+  "agent_name": "string - descriptive name reflecting workflow purpose",
+  "user_prompt": "string - clean summary of what the agent does", 
+  "system_prompt": "string - detailed execution instructions for the agent executor",
+  "description": "string - user-friendly description of value provided",
+  "schedule": "string - cron expression if timing specified",
+  "input_schema": [...],
+  "workflow_steps": [...],
+  "error_notifications": { ... },
+  "output_format": "string"
 }
 
-CRITICAL: Extract EVERY customizable parameter mentioned in the prompt. If the user says "specific sender", create an input for sender email. If they say "at a time you choose", create a time input. If they mention Google Drive, create folder path inputs. 
+CRITICAL: Use only the connected plugins, capabilities, and templates provided above. Match enhanced prompt sections to plugin capabilities using the registry metadata.`
 
-SCHEDULING INTELLIGENCE: For any recurring schedule (hourly, daily, weekly):
-- "every hour" REQUIRES start_time and end_time inputs (default: business hours 9-17)
-- "daily" REQUIRES execution_time input 
-- "weekly" REQUIRES day_of_week and execution_time inputs
-- Always consider practical boundaries - users rarely want 24/7 notifications
-
-EXAMPLES:
-- "Every hour" → needs start_time (09:00), end_time (17:00), days_active (weekdays)
-- "Daily at 9am" → needs execution_time (09:00), days_active (optional)
-- "Check emails hourly" → needs active_hours_start, active_hours_end
-
-Miss nothing - be comprehensive and practical.
-
-Respond with valid JSON only.`
-
-    // Generate agent using OpenAI with enhanced prompting
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [
-        {
-          role: 'system',
-          content: enhancedSystemPrompt
-        },
-        {
-          role: 'user',
-          content: `Analyze this user request and create a comprehensive agent specification:
+        { role: 'system', content: enhancedSystemPrompt },
+        { role: 'user', content: `Analyze this structured workflow and create an executable agent specification:
 
 "${fullPrompt}"
 
-Pay special attention to:
-- Any time-based triggers or scheduling requirements (if "every hour", include start/end time inputs)
-- Multi-step workflows and data transformations
-- Integration points with external services
-- Error handling and notification requirements
-- Input parameters the user might want to customize
-- Practical scheduling boundaries (business hours vs 24/7)
+ANALYSIS REQUIREMENTS:
+1. Parse each section of the structured prompt (Data Source, Processing Steps, etc.)
+2. Extract specific values mentioned by the user (keywords, folders, email addresses, etc.)
+3. Use plugin input templates to create required input fields
+4. Use plugin output templates to generate expected outputs
+5. Map processing steps to precise plugin capabilities from the registry
+6. Design for successful execution by an agent executor
 
-SCHEDULING RULES:
-- "every hour" = add start_time, end_time, and optionally days_active inputs
-- "daily" = add execution_time input
-- "weekly" = add day_of_week and execution_time inputs
-- Always consider user's practical needs (avoid 3AM notifications unless specified)
-
-Return only valid JSON with no additional text or formatting.`
-        },
+Return only valid JSON with no additional text or formatting.` }
       ],
       temperature: 0.1,
-      max_tokens: 2000,
+      max_tokens: 2000
     })
 
     const raw = completion.choices[0]?.message?.content || ''
-    console.log('🤖 Raw OpenAI response:', raw)
+    const jsonMatch = raw.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/)
+    const jsonString = jsonMatch ? jsonMatch[1] : raw.trim()
 
     let extracted
     try {
-      // Try to extract JSON from markdown code blocks if present
-      const jsonMatch = raw.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/)
-      const jsonString = jsonMatch ? jsonMatch[1] : raw.trim()
-      
-      console.log('📝 Attempting to parse JSON:', jsonString)
       extracted = JSON.parse(jsonString)
-      console.log('✅ Successfully parsed:', extracted)
-      
     } catch (e) {
-      console.error('❌ JSON parsing failed:', e)
-      console.error('❌ Raw content that failed to parse:', raw)
-      
-      // Attempt to clean and retry parsing
       try {
         const cleaned = raw
           .replace(/```json\n?/g, '')
           .replace(/```\n?/g, '')
           .replace(/^\s*[\r\n]/gm, '')
           .trim()
-        
         extracted = JSON.parse(cleaned)
-        console.log('✅ Parsing succeeded after cleaning')
       } catch (e2) {
         return NextResponse.json({ 
           error: 'Failed to parse AI response',
-          details: e instanceof Error ? e.message : 'Unknown parsing error',
           raw_response: raw.slice(0, 500)
         }, { status: 500 })
       }
     }
 
-    // Validate extracted data has required fields
-    if (!extracted.agent_name || !extracted.user_prompt) {
-      console.error('❌ Missing required fields in extracted data:', extracted)
-      return NextResponse.json({ 
-        error: 'AI response missing required fields',
-        extracted
-      }, { status: 500 })
-    }
+    const enhancedWorkflowSteps = extracted.workflow_steps?.map((step: any) => {
+      const pluginDef = getPluginDefinition(step.plugin)
+      const pluginAction = step.plugin_action || inferActionFromStep(step, pluginDef)
+      return {
+        ...step,
+        plugin_action: pluginAction,
+        validated: pluginDef && pluginDef.capabilities.includes(pluginAction)
+      }
+    }) || []
 
-    // Enhanced plugin detection - combine prompt analysis with workflow steps
-    let detectedPlugins = detectPluginsFromPrompt(fullPrompt)
-    
-    // Also detect plugins from workflow steps if present
-    if (extracted.workflow_steps && Array.isArray(extracted.workflow_steps)) {
-      const workflowPlugins = extracted.workflow_steps
-        .map(step => step.plugin)
-        .filter(plugin => plugin && connectedPlugins.includes(plugin))
-      
-      detectedPlugins = [...new Set([...detectedPlugins, ...workflowPlugins])]
-    }
-    
-    // Filter to only connected plugins
-    detectedPlugins = detectedPlugins.filter((p) => connectedPlugins.includes(p))
+    const usedCapabilities = getUsedCapabilities(enhancedWorkflowSteps)
+    const dynamicInputTemplates = generateDynamicInputTemplateContext(connectedPluginData, usedCapabilities)
 
-    console.log('🔍 Detected plugins:', detectedPlugins)
-
-    // ENHANCED: Generate intelligent output schema
     const { enhanceOutputInference } = await import('@/lib/outputInference')
     const outputInference = enhanceOutputInference(
       fullPrompt,
       clarificationAnswers || {},
-      connectedPlugins
+      connectedPluginKeys,
+      enhancedWorkflowSteps
     )
-    
-    console.log('🎯 Output inference results:', {
-      outputCount: outputInference.outputs.length,
-      confidence: outputInference.confidence,
-      reasoning: outputInference.reasoning
-    })
 
-    // 🔧 UPDATED: Create agent data structure mapped to database schema
-    // Using enhanced prompt for execution, simple prompt for reference
+const validDetectedPlugins = Object.keys(usedCapabilities)
+  .filter(key => pluginRegistry[key]);
+
+console.log('🔍 Valid detected plugins AFTER:', validDetectedPlugins);
+
+    console.log('🔍 Used capabilities:', usedCapabilities);
+    console.log('🔍 Plugin registry keys:', Object.keys(pluginRegistry));
+    console.log('🔍 Valid detected plugins:', validDetectedPlugins);
+
     const agentData = {
       user_id: user.id,
       agent_name: extracted.agent_name || 'Untitled Agent',
-      
-      // Use the enhanced structured prompt for AI execution
-      user_prompt: fullPrompt, // This contains the structured version with sections
-      
+      user_prompt: fullPrompt,
       system_prompt: extracted.system_prompt || 'You are a helpful assistant.',
-      
-      // Use the simple version for description/display
       description: extracted.description || '',
-      
-      // Map to database schema fields
-      plugins_required: detectedPlugins,
-      connected_plugins: detectedPlugins, // Track connected plugins separately if needed
+      plugins_required: validDetectedPlugins,
+      connected_plugins: validDetectedPlugins,
       input_schema: extracted.input_schema || [],
       output_schema: outputInference.outputs,
-      
-      // Additional database fields
       status: 'draft',
       mode: extracted.schedule ? 'scheduled' : 'on_demand',
       schedule_cron: extracted.schedule || null,
-      
-      // Store the AI-generated simple prompt for reference
       created_from_prompt: extracted.user_prompt,
-      
-      // Store AI generation metadata
       ai_reasoning: outputInference.reasoning,
       ai_confidence: Math.round((outputInference.confidence || 0) * 100),
       ai_generated_at: new Date().toISOString(),
-      
-      // Store workflow and error handling
-      workflow_steps: extracted.workflow_steps || null,
+      workflow_steps: enhancedWorkflowSteps,
       trigger_conditions: extracted.error_notifications ? {
         error_handling: extracted.error_notifications
       } : null,
-      
-      // Store additional metadata
-      detected_categories: detectedPlugins.map(plugin => ({ plugin, detected: true }))
+      detected_categories: validDetectedPlugins.map(plugin => ({ plugin, detected: true }))
     }
 
-    console.log('✅ Agent data prepared (NOT saved to DB):', agentData.agent_name)
-    
-    // Log the enhanced extraction for debugging
-    console.log('📊 Enhanced extraction captured:', {
-      hasSchedule: !!extracted.schedule,
-      schedule: extracted.schedule,
-      workflowSteps: extracted.workflow_steps?.length || 0,
-      errorHandling: extracted.error_notifications?.enabled || false,
-      outputFormat: extracted.output_format || null
-    })
-    
-    // 🔧 FIXED: Return agent data WITHOUT database ID 
-    // The agent will only get saved when user clicks "Create Agent"
     return NextResponse.json({ 
-      agent: agentData, // Return the structure, but no DB save
-      // Return the enhanced data for frontend processing (not stored in DB)
+      agent: agentData,
       extraction_details: {
-        detected_plugins: detectedPlugins,
-        has_schedule: !!extracted.schedule,
-        schedule: extracted.schedule,
-        workflow_step_count: extracted.workflow_steps?.length || 0,
-        workflow_steps: extracted.workflow_steps || [],
-        error_handling_enabled: extracted.error_notifications?.enabled || false,
-        error_notifications: extracted.error_notifications || null,
-        output_format: extracted.output_format || null,
-        // ENHANCED: Include output inference results
-        output_inference: {
-          outputs: outputInference.outputs,
-          reasoning: outputInference.reasoning,
-          confidence: outputInference.confidence,
-          human_facing_count: outputInference.outputs.filter(o => o.category === 'human-facing').length,
-          machine_facing_count: outputInference.outputs.filter(o => o.category === 'machine-facing').length
-        }
+        usedCapabilities,
+        output_inference: outputInference,
+        workflow_steps: enhancedWorkflowSteps
       }
     })
 
   } catch (error) {
-    console.error('❌ Unexpected error in agent generation:', error)
-    return NextResponse.json({ 
-      error: error instanceof Error ? error.message : 'Unknown error' 
-    }, { status: 500 })
+    console.error('❌ Error in agent generation:', error)
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Unknown error' }, { status: 500 })
   }
 }

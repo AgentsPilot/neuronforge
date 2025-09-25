@@ -28,24 +28,29 @@ export default function PluginRequirements({
   pluginsRequired,
   isEditing,
   onUpdate
+  
+
 }: PluginRequirementsProps) {
+console.log('🎯🎯🎯 PluginRequirements MOUNTED', { pluginsRequired, isEditing, userId: useAuth().user?.id });
   const { user } = useAuth(); // Add this to get user
   const [connectedPlugins, setConnectedPlugins] = useState<ConnectedPlugin[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Fetch connected plugins
+  
+// Fetch connected plugins
   useEffect(() => {
     const fetchConnectedPlugins = async () => {
       if (!user?.id) {
         console.log('❌ No user found, skipping plugin fetch');
-        setError('User not authenticated');
         setLoading(false);
         return;
       }
 
       try {
         setLoading(true);
+        setError(null);
         console.log('🔍 Fetching connected plugins for user:', user.id);
         
         const response = await fetch('/api/plugin-connections', {
@@ -53,11 +58,12 @@ export default function PluginRequirements({
           credentials: 'include',
           headers: {
             'Content-Type': 'application/json',
-            'x-user-id': user.id, // Send user ID in header like ConversationalAgentBuilder
+            'x-user-id': user.id,
           },
         });
         
         console.log('📡 Response status:', response.status);
+        console.log('📡 Response headers:', Object.fromEntries(response.headers.entries()));
         
         if (!response.ok) {
           const errorData = await response.json().catch(() => null);
@@ -71,19 +77,28 @@ export default function PluginRequirements({
         }
         
         const data = await response.json();
-        console.log('✅ Connected plugins data:', data);
+        console.log('✅ Raw response data:', data);
+        console.log('✅ Plugins in response:', data.plugins);
+        console.log('✅ Debug info:', data.debug);
         
-        setConnectedPlugins(data.plugins || []);
+        // The API returns { plugins: [...], count: N }
+        const plugins = data.plugins || [];
+        console.log('✅ Setting', plugins.length, 'connected plugins');
+        
+        setConnectedPlugins(plugins);
+        setError(null);
       } catch (err) {
         console.error('❌ Error fetching connected plugins:', err);
         setError(err instanceof Error ? err.message : 'Failed to load plugins');
+        setConnectedPlugins([]);
       } finally {
         setLoading(false);
       }
     };
 
     fetchConnectedPlugins();
-  }, [user?.id]); // Add user.id as dependency
+  }, [user?.id]);
+
 
   const getPluginIcon = (pluginName: string) => {
     const name = pluginName.toLowerCase();
