@@ -7,10 +7,11 @@ interface QuestionRendererProps {
   state: ProjectState;
   onSelect: (questionId: string, value: string, label: string) => void;
   onCustomSubmit: () => void;
-  onCustomChange: (value: string) => void;
+  onCustomChange: (questionId: string, value: string) => void; // FIXED: Added questionId parameter
   onChangeAnswer: (questionId: string) => void;
   isCurrent: boolean;
   isProcessing: boolean;
+  readOnly?: boolean;
 }
 
 export default function QuestionRenderer({
@@ -22,6 +23,7 @@ export default function QuestionRenderer({
   onChangeAnswer,
   isCurrent,
   isProcessing,
+  readOnly = false,
 }: QuestionRendererProps) {
   const isAnswered = !!state.clarificationAnswers[question.id];
   const shouldShowOptions = state.questionsWithVisibleOptions.has(question.id);
@@ -55,9 +57,11 @@ export default function QuestionRenderer({
               <p className="text-gray-700 mb-4 leading-relaxed">{question.question}</p>
               <div className="bg-white/60 backdrop-blur-sm px-4 py-3 rounded-xl border border-green-200 flex items-center justify-between">
                 <p className="text-sm font-medium text-green-900">Your answer: {state.clarificationAnswers[question.id]}</p>
-                <button onClick={() => onChangeAnswer(question.id)} className="text-xs text-green-600 hover:text-green-800 underline ml-4">
-                  Change
-                </button>
+                {!readOnly && (
+                  <button onClick={() => onChangeAnswer(question.id)} className="text-xs text-green-600 hover:text-green-800 underline ml-4">
+                    Change
+                  </button>
+                )}
               </div>
             </div>
           ) : (
@@ -82,7 +86,7 @@ export default function QuestionRenderer({
                     <button
                       key={option.value}
                       onClick={() => onSelect(question.id, option.value, option.label)}
-                      disabled={disabled}
+                      disabled={disabled || readOnly}
                       className={`w-full text-left p-4 border rounded-lg transition-all duration-200 group disabled:opacity-50 disabled:cursor-not-allowed ${
                         isSelected ? 'bg-green-50 border-green-300 hover:border-green-400' : 'bg-white border-gray-200 hover:border-blue-300 hover:bg-blue-50'
                       }`}
@@ -113,10 +117,14 @@ export default function QuestionRenderer({
               </div>
 
               {/* Custom answer */}
-              {question.allowCustom && isCurrent && (
+              {question.allowCustom && isCurrent && !readOnly && (
                 <>
                   <button
-                    onClick={() => onCustomChange('')}
+                    onClick={() => {
+                      // FIXED: Pass questionId to onCustomChange
+                      console.log('Custom Answer button clicked for question:', question.id);
+                      onCustomChange(question.id, ''); // Empty string triggers custom input mode
+                    }}
                     disabled={isProcessing}
                     className="w-full text-left p-4 bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-300 hover:bg-blue-50 transition-all duration-200 group disabled:opacity-50 disabled:cursor-not-allowed mt-3"
                   >
@@ -131,14 +139,18 @@ export default function QuestionRenderer({
                     </div>
                   </button>
 
-                  {state.showingCustomInput && (
+                  {/* FIXED: Only show input for THIS specific question */}
+                  {state.showingCustomInput && state.customInputQuestionId === question.id && (
                     <div className="mt-4 p-4 bg-gray-50 rounded-lg border-2 border-blue-200">
                       <p className="text-sm text-gray-700 mb-3">Please type your custom answer:</p>
                       <div className="flex gap-2">
                         <input
                           type="text"
                           value={state.customInputValue}
-                          onChange={(e) => onCustomChange(e.target.value)}
+                          onChange={(e) => {
+                            console.log('Custom input onChange:', e.target.value, 'for question:', question.id);
+                            onCustomChange(question.id, e.target.value);
+                          }}
                           onKeyDown={(e) => e.key === 'Enter' && onCustomSubmit()}
                           placeholder="Type your answer..."
                           className="flex-1 px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"

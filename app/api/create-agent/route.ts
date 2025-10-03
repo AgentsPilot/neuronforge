@@ -58,6 +58,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // ENHANCED DEBUG LOGGING for agent_config
+    console.log('=== AGENT CONFIG DEBUG ===');
+    console.log('Agent config present in request:', !!agent.agent_config);
+    if (agent.agent_config) {
+      console.log('Agent config keys:', Object.keys(agent.agent_config));
+      console.log('Agent config size:', JSON.stringify(agent.agent_config).length, 'characters');
+      console.log('Agent config preview:', JSON.stringify(agent.agent_config).substring(0, 200) + '...');
+    }
+    console.log('========================');
+
     // Validate required fields
     if (!agent.agent_name) {
       console.error('❌ Missing required field: agent_name');
@@ -80,7 +90,7 @@ export async function POST(request: NextRequest) {
         : agent.ai_reasoning
       : null;
 
-    // Prepare data for insertion - use authenticated user ID
+    // ENHANCED: Prepare data for insertion with agent_config support
     const agentData = {
       agent_name: agent.agent_name,
       user_prompt: agent.user_prompt,
@@ -96,15 +106,20 @@ export async function POST(request: NextRequest) {
       trigger_conditions: agent.trigger_conditions || null,
       plugins_required: agent.plugins_required || null,
       workflow_steps: agent.workflow_steps || null,
+      generated_plan: agent.generated_plan || null, // Added missing field
+      detected_categories: agent.detected_categories || null,
       ai_reasoning: aiReasoning,
       ai_confidence: agent.ai_confidence || null,
-      detected_categories: agent.detected_categories || null,
       created_from_prompt: agent.created_from_prompt || null,
       ai_generated_at: agent.ai_generated_at ? new Date(agent.ai_generated_at).toISOString() : null,
+      
+      // CRITICAL FIX: Add the agent_config JSONB field
+      agent_config: agent.agent_config || null
     };
 
     console.log('💾 Inserting agent for user:', agentUserIdToUse);
     console.log('💾 Agent name:', agentData.agent_name);
+    console.log('💾 Agent config being saved:', !!agentData.agent_config);
 
     // Test Supabase connection first
     try {
@@ -161,6 +176,8 @@ export async function POST(request: NextRequest) {
     }
 
     console.log('✅ Agent created successfully:', data.id, 'for user:', agentUserIdToUse);
+    console.log('✅ Saved agent_config present:', !!data.agent_config);
+    console.log('✅ Saved agent_config size:', data.agent_config ? JSON.stringify(data.agent_config).length : 0);
 
     // Return the structure your frontend expects (consistent with your other API)
     return NextResponse.json(

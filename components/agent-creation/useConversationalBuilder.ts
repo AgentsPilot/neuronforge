@@ -63,6 +63,7 @@ export function useConversationalBuilder(params: {
       clarificationAnswers: {},
       showingCustomInput: false,
       customInputValue: '',
+      customInputQuestionId: null,
       isInitialized: false,
       isProcessingQuestion: false,
       isEditingEnhanced: false,
@@ -1279,7 +1280,12 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       if (projectState.isProcessingQuestion || projectState.isInReviewMode) return;
 
       if (selectedValue === 'custom') {
-        setProjectState((prev) => ({ ...prev, showingCustomInput: true }));
+        setProjectState((prev) => ({ 
+          ...prev, 
+          showingCustomInput: true,
+          customInputQuestionId: questionId,
+          customInputValue: ''
+        }));
         return;
       }
 
@@ -1301,18 +1307,19 @@ This breaks down exactly what your agent will do. Would you like to use this enh
   );
 
   const handleCustomAnswer = useCallback(() => {
-    const currentQuestion = projectState.questionsSequence[projectState.currentQuestionIndex];
-    if (!currentQuestion || projectState.isProcessingQuestion || !projectState.customInputValue.trim() || projectState.isInReviewMode) {
+    // FIXED: Use customInputQuestionId instead of currentQuestionIndex
+    const questionId = projectState.customInputQuestionId;
+    if (!questionId || projectState.isProcessingQuestion || !projectState.customInputValue.trim() || projectState.isInReviewMode) {
       return;
     }
 
     const customAnswer = projectState.customInputValue.trim();
-    const questionId = currentQuestion.id;
 
     setProjectState((current) => ({
       ...current,
       clarificationAnswers: { ...current.clarificationAnswers, [questionId]: customAnswer },
       showingCustomInput: false,
+      customInputQuestionId: null,
       customInputValue: '',
       isProcessingQuestion: true,
     }));
@@ -1325,8 +1332,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       setTimeout(proceedToNextQuestion, 200);
     }, 300);
   }, [
-    projectState.questionsSequence,
-    projectState.currentQuestionIndex,
+    projectState.customInputQuestionId,
     projectState.customInputValue,
     projectState.isProcessingQuestion,
     projectState.isInReviewMode,
@@ -1345,9 +1351,42 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       const newVisible = new Set(prev.questionsWithVisibleOptions);
       newVisible.add(questionId);
 
-      return { ...prev, clarificationAnswers: newAnswers, questionsWithVisibleOptions: newVisible };
+      return { 
+        ...prev, 
+        clarificationAnswers: newAnswers, 
+        questionsWithVisibleOptions: newVisible,
+        showingCustomInput: false,
+        customInputQuestionId: null,
+        customInputValue: ''
+      };
     });
   }, [projectState.isInReviewMode]);
+
+  // FIXED: Simplified custom input handler
+  const handleCustomInputChange = useCallback((questionId: string, value: string) => {
+    console.log('handleCustomInputChange called:', { questionId, value, isEmpty: value === '' });
+    
+    if (value === '') {
+      // User clicked "Custom Answer" button - open the input
+      console.log('Opening custom input for question:', questionId);
+      setProjectState((prev) => ({ 
+        ...prev, 
+        showingCustomInput: true,
+        customInputQuestionId: questionId,
+        customInputValue: ''
+      }));
+    } else {
+      // User is typing - update the value
+      console.log('Updating custom input value:', value);
+      setProjectState((prev) => {
+        // Only update if this is the currently active custom input
+        if (prev.customInputQuestionId === questionId) {
+          return { ...prev, customInputValue: value };
+        }
+        return prev;
+      });
+    }
+  }, []);
 
   const handleSendMessage = async () => {
     if (!inputValue.trim() || isProcessing || projectState.isInReviewMode) return;
@@ -1456,6 +1495,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
     handleOptionSelect,
     handleCustomAnswer,
     handleChangeAnswer,
+    handleCustomInputChange, // FIXED: New handler
 
     handleApproveEnhanced,
     handleUseOriginal,

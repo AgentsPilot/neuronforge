@@ -59,6 +59,7 @@ export interface ProjectState {
   clarificationAnswers: Record<string, string>;
   showingCustomInput: boolean;
   customInputValue: string;
+  customInputQuestionId: string | null; // ✅ ADD THIS LINE
   isInitialized: boolean;
   isProcessingQuestion: boolean;
   isEditingEnhanced: boolean;

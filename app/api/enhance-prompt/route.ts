@@ -9,7 +9,7 @@ import {
   detectRequiredPlugins,
   validatePluginRequirements,
   getPluginCapabilitiesContext,
-  LEGACY_KEY_MAP
+  
 } from '@/lib/plugins/pluginRegistry'
 
 const supabase = createClient(
@@ -161,14 +161,14 @@ ${finalMissingPlugins.length > 0 ? `MISSING SERVICES: User mentioned these unava
 
 CRITICAL INSTRUCTIONS FOR SERVICE HANDLING:
 - Use SPECIFIC service names and capabilities ONLY when they're relevant AND available to the user
-- Reference actual capabilities like "read_email", "upload_files", "send_message" when relevant
+- Reference actual capabilities like "read_email", "send_email", "send_message" when relevant
 - For unavailable services that the user mentioned, suggest appropriate alternatives from connected services
 - If user mentioned unavailable services, use phrases like "available ${connectedPluginData.find(p => p.category === 'storage')?.label || 'storage service'}" 
 - DO NOT use the specific names of unavailable services in your enhanced prompt
 - Example: If user wants "Notion" but it's unavailable, suggest using "${connectedPluginData.find(p => p.category === 'documents')?.label || 'available note-taking service'}"
 - Only mention services that are actually needed for the task
 - Don't force all connected services into the workflow just because they're available
-- Consider plugin usage types: ${connectedPluginData.map(p => `${p.label} (${p.usage.join('/')})`)}`
+- Consider plugin usage types: ${connectedPluginData.map(p => `${p.label} (${p.usage ? p.usage.join('/') : 'general'})`)}`
     } else {
       pluginContext = `
 
@@ -202,86 +202,57 @@ Create a bullet-point execution plan with these sections:
 
 **Data Source:**
 • What specific information to monitor/read
-${connectedPluginData.some(p => p.capabilities.includes('read_email')) ? '• Use specific capabilities like "read_email" when relevant' : ''}
+${connectedPluginData.some(p => p.capabilities && p.capabilities.includes('read_email')) ? '• Use email reading capabilities when the user wants to read emails' : ''}
 
 **Trigger Conditions:**
 • When the automation should activate
-${connectedPluginData.some(p => p.capabilities.includes('search_email')) ? '• Consider capabilities like "search_email" for filtering' : ''}
+${connectedPluginData.some(p => p.capabilities && p.capabilities.includes('search_email')) ? '• Use email filtering only if user wants to filter emails' : ''}
 
 **Processing Steps:**
 • What actions to take with the data
-${connectedPluginData.length > 0 ? `• Leverage available capabilities: ${connectedPluginData.flatMap(p => p.capabilities).slice(0, 3).join(', ')}` : ''}
+• Focus ONLY on the user's stated requirements
 
 **Output Creation:**
-• What gets generated/created
+• What gets generated/created (ONLY what the user asked for)
 
 **Delivery Method:**
-• How and where to send results
-${connectedPluginData.some(p => p.capabilities.includes('upload_files')) ? '• Consider "upload_files" capability for storage' : ''}
-${connectedPluginData.some(p => p.capabilities.includes('send_message')) ? '• Consider "send_message" capability for notifications' : ''}
+• How and where to send results (ONLY what the user specified)
+${connectedPluginData.some(p => p.capabilities && (p.capabilities.includes('send_email') || p.capabilities.includes('send_message'))) ? '• Use available messaging/email capabilities for sending results' : ''}
 
 **Error Handling:**
 • What to do if something fails
 
-CRITICAL WRITING RULES:
-${Object.keys(clarificationAnswers).length > 0 
-  ? `- Use ONLY the specific details provided by the user
-- If user said "daily" but no time specified, write "daily at a time you choose"
-- NEVER add specific times like "8:00 AM" unless user provided it
-- Keep all user-provided details exactly as they specified`
-  : `- Use simple, friendly language
-- Use available service names and capabilities when connected and relevant
-- For unavailable services, use appropriate alternatives from connected services
-- Avoid any technical jargon or system terminology`
-}
+CRITICAL CONSTRAINT - DO NOT ADD FEATURES THE USER DIDN'T REQUEST:
+- If user says "send to my manager", ONLY mention sending to manager - don't suggest additional storage
+- If user says "summarize emails", focus ONLY on summarization and sending - don't add file saving
+- If user wants data sent somewhere, don't suggest also saving it elsewhere
+- Only mention storage/file capabilities if the user explicitly wants to save/store something
+- Don't suggest "backup" storage or "also save to" unless user requested it
+
+EXAMPLE FOR EMAIL SUMMARY REQUEST:
+User says: "Summarize my emails and send to my manager"
+CORRECT approach:
+- Data Source: Read emails
+- Processing: Summarize content  
+- Delivery: Send summary to manager email
+- DO NOT mention: Google Drive, file storage, "also save to", backup copies
+
+WRONG approach (don't do this):
+- Delivery: Send to manager AND save to Google Drive (user didn't ask for storage)
 
 LANGUAGE STYLE REQUIREMENTS:
 - Write like you're explaining to a friend, not a computer
 - Use "you" and "your" throughout 
-- Use simple action words: "check", "read", "create", "send", "save"
+- Use simple action words: "check", "read", "create", "send"
 - Keep bullet points concise but complete
 - Each bullet point should be one clear action or condition
-${connectedPluginData.length > 0 ? `- When mentioning services, use their actual names: ${connectedPluginData.map(p => p.label).join(', ')}` : ''}
-
-EXAMPLE FORMAT:
-**Data Source:**
-${connectedPluginData.some(p => p.capabilities.includes('read_email')) 
-  ? '• Monitor your Gmail inbox for new emails from clients (using read_email capability)'
-  : '• Monitor your email inbox for new emails from clients'
-}
-
-**Trigger Conditions:**
-• When a new email arrives with "urgent" in the subject line
-
-**Processing Steps:**
-• Read the email content and extract key information
-• Create a summary of the urgent request
-
-**Output Creation:**
-• Generate a brief summary with sender, subject, and main points
-
-**Delivery Method:**
-${connectedPluginData.some(p => p.capabilities.includes('send_message')) 
-  ? '• Send summary via available messaging service to your team'
-  : '• Send summary to your preferred communication channel'
-}
-${connectedPluginData.some(p => p.capabilities.includes('upload_files'))
-  ? '• Save details using available storage service (upload_files capability)'
-  : '• Save details to your project management tool'
-}
-
-**Error Handling:**
-• If email can't be read, log the issue and try again in 5 minutes
-${connectedPluginData.some(p => p.capabilities.includes('send_message'))
-  ? '• If primary notification fails, use alternative messaging capability'
-  : '• If primary channel is down, send summary via email instead'
-}
+- ONLY mention capabilities that are directly relevant to what the user asked for
 
 IMPORTANT: Your response must be valid JSON. Do not include any markdown formatting or extra text outside the JSON.
 
 Respond with only a JSON object:
 {
-  "enhanced_prompt": "Your structured execution plan in bullet-point format using the exact format shown above",
+  "enhanced_prompt": "Your structured execution plan focusing ONLY on what the user requested",
   "rationale": "Brief explanation of what you made clearer and more specific"
 }`
 
@@ -296,10 +267,10 @@ Respond with only a JSON object:
         messages: [
           {
             role: 'system',
-            content: `You are an expert prompt engineer who specializes in creating structured, user-friendly automation execution plans using specific plugin capabilities. You write in simple, conversational language that anyone can understand, completely avoiding technical jargon. You excel at taking vague automation requests and making them specific and actionable while keeping the language friendly and approachable. You naturally incorporate available service capabilities to make instructions more specific, and when services aren't available, you suggest appropriate alternatives using connected services rather than unavailable service names. You always respond with valid JSON only - no markdown, no extra text, just clean JSON. ${Object.keys(clarificationAnswers).length > 0 
+            content: `You are an expert prompt engineer who specializes in creating structured, user-friendly automation execution plans. You write in simple, conversational language that anyone can understand, completely avoiding technical jargon. You excel at taking vague automation requests and making them specific and actionable while keeping the language friendly and approachable. You ONLY suggest capabilities and services that are directly relevant to what the user asked for - you never add extra features or suggest additional storage/backup unless explicitly requested. You always respond with valid JSON only - no markdown, no extra text, just clean JSON. ${Object.keys(clarificationAnswers).length > 0 
               ? 'You are excellent at incorporating user-provided clarification answers to create specific, actionable prompts using only the details the user actually provided.'
               : 'You avoid making assumptions about specific parameters and use friendly placeholder language instead.'
-            } You leverage plugin capabilities like read_email, upload_files, send_message to make instructions more precise and actionable.`
+            } You focus strictly on the user's stated requirements and avoid suggesting additional features they didn't ask for.`
           },
           {
             role: 'user', 
@@ -468,7 +439,6 @@ Respond with only a JSON object:
         // Final fallback: create a basic structured prompt using available plugin capabilities
         const availableCapabilities = connectedPluginData.flatMap(p => p.capabilities || []);
         const hasEmailCaps = availableCapabilities.some(c => c.includes('email'));
-        const hasFileCaps = availableCapabilities.some(c => c.includes('file'));
         const hasMessageCaps = availableCapabilities.some(c => c.includes('message'));
         
         enhancedPrompt = `**Data Source:**
@@ -479,13 +449,13 @@ Respond with only a JSON object:
 
 **Processing Steps:**
 • Process the data according to your needs
-• Apply the necessary transformations${hasFileCaps ? ' and file operations' : ''}
+• Apply the necessary transformations
 
 **Output Creation:**
 • Generate the required output format
 
 **Delivery Method:**
-• Send results to your preferred destination${hasMessageCaps ? ' using messaging capabilities' : ''}${hasFileCaps ? ' or save to storage' : ''}
+• Send results to your preferred destination${hasMessageCaps ? ' using messaging capabilities' : ''}
 
 **Error Handling:**
 • Log any errors and retry as needed
@@ -538,7 +508,7 @@ Respond with only a JSON object:
             isUserFriendly: true,
             isContextAware: true,
             isPluginAware: true,
-            pluginCapabilitiesUsed: connectedPluginData.flatMap(p => p.capabilities).slice(0, 10),
+            pluginCapabilitiesUsed: connectedPluginData.flatMap(p => p.capabilities || []).slice(0, 10),
             timestamp: new Date().toISOString()
           }
         })
@@ -570,7 +540,7 @@ Respond with only a JSON object:
         clarificationAnswersCount: Object.keys(clarificationAnswers).length,
         connectedPlugins: connectedPlugins,
         connectedPluginData: connectedPluginData.map(p => ({ key: p.key, label: p.label, category: p.category })),
-        pluginCapabilitiesUsed: connectedPluginData.flatMap(p => p.capabilities),
+        pluginCapabilitiesUsed: connectedPluginData.flatMap(p => p.capabilities || []),
         missingPlugins: finalMissingPlugins,
         hadMissingPlugins: finalMissingPlugins.length > 0,
         isUserFriendly: true,

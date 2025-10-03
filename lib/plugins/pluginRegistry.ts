@@ -428,21 +428,19 @@ export const pluginRegistry: Record<string, PluginDefinition> = {
   },
 };
 
-// Legacy key mapping for backward compatibility
-
-// NEW: Utility to get input templates for a specific capability
+// Utility to get input templates for a specific capability
 export const getInputTemplatesForCapability = (pluginKey: string, capability: string): InputTemplate[] => {
   const plugin = getPluginDefinition(pluginKey);
   return plugin?.inputTemplates?.[capability] || [];
 };
 
-// NEW: Utility to get output template for a specific capability
+// Utility to get output template for a specific capability
 export const getOutputTemplateForCapability = (pluginKey: string, capability: string): OutputTemplate | null => {
   const plugin = getPluginDefinition(pluginKey);
   return plugin?.outputTemplates?.[capability] || null;
 };
 
-// NEW: Generate input schema for agent based on capabilities used
+// Generate input schema for agent based on capabilities used
 export const generateInputSchemaForCapabilities = (pluginCapabilities: { plugin: string; capability: string }[]): InputTemplate[] => {
   const inputSchema: InputTemplate[] = [];
   
@@ -459,10 +457,9 @@ export const generateInputSchemaForCapabilities = (pluginCapabilities: { plugin:
   return inputSchema;
 };
 
-// Existing utility functions
+// Utility functions
 export const isPluginAvailable = (pluginKey: string): boolean => {
-  const normalizedKey = LEGACY_KEY_MAP[pluginKey] || pluginKey;
-  return normalizedKey in pluginRegistry && !!pluginRegistry[normalizedKey].run;
+  return pluginKey in pluginRegistry && !!pluginRegistry[pluginKey].run;
 }
 
 export const getAvailablePlugins = (): string[] => {
@@ -470,8 +467,7 @@ export const getAvailablePlugins = (): string[] => {
 }
 
 export const getPluginDefinition = (pluginKey: string): PluginDefinition | undefined => {
-  const normalizedKey = LEGACY_KEY_MAP[pluginKey] || pluginKey;
-  return pluginRegistry[normalizedKey];
+  return pluginRegistry[pluginKey];
 }
 
 export const getConnectedPluginsWithMetadata = (connectedPluginKeys: string[]) => {
@@ -503,12 +499,12 @@ export const getPluginDisplayNames = (pluginKeys: string[], pluginData?: PluginD
   });
 }
 
-// Dynamic service detection using plugin registry + intelligent pattern matching
+// Dynamic service detection using plugin registry
 export function detectRequiredPlugins(prompt: string): string[] {
   const lowerPrompt = prompt.toLowerCase();
   const detectedServices: string[] = [];
   
-  // 1. First check against registered plugins (both supported and their aliases)
+  // Check against registered plugins
   for (const [pluginKey, pluginDef] of Object.entries(pluginRegistry)) {
     const serviceName = pluginDef.label.toLowerCase();
     const keyVariations = [
@@ -536,108 +532,7 @@ export function detectRequiredPlugins(prompt: string): string[] {
     }
   }
   
-  // 2. Check legacy key mappings in reverse for database-stored keys
-  for (const [legacyKey, normalizedKey] of Object.entries(LEGACY_KEY_MAP)) {
-    if (lowerPrompt.includes(legacyKey.replace(/-/g, ' ')) || 
-        lowerPrompt.includes(legacyKey.replace(/-/g, ''))) {
-      if (!detectedServices.includes(normalizedKey)) {
-        detectedServices.push(normalizedKey);
-      }
-    }
-  }
-  
-  // 3. Intelligent pattern extraction for unknown services
-  const extractServiceNames = (text: string): string[] => {
-    const services: string[] = [];
-    
-    const commonWords = new Set([
-      'read', 'send', 'push', 'save', 'upload', 'store', 'move', 'copy', 'sync', 'get', 'pull', 'fetch',
-      'create', 'make', 'build', 'generate', 'analyze', 'process', 'parse', 'convert', 'transform',
-      'delete', 'remove', 'update', 'edit', 'modify', 'change', 'schedule', 'trigger', 'run', 'execute',
-      'email', 'file', 'data', 'content', 'message', 'document', 'folder', 'text', 'image', 'video',
-      'report', 'summary', 'alert', 'notification', 'list', 'item', 'task', 'project', 'event',
-      'the', 'and', 'for', 'with', 'from', 'then', 'when', 'where', 'what', 'how', 'why',
-      'this', 'that', 'these', 'those', 'all', 'some', 'any', 'each', 'every', 'my', 'your',
-      'daily', 'weekly', 'monthly', 'hourly', 'once', 'twice', 'always', 'never', 'often', 'sometimes',
-      'api', 'webhook', 'database', 'server', 'cloud', 'app', 'tool', 'service', 'platform', 'system'
-    ]);
-    
-    const patterns = [
-      /(send|push|save|upload|store|move|copy|sync)\s+(?:to|in|on)\s+([A-Z][a-zA-Z0-9]{2,15})/gi,
-      /(using|via|through)\s+([A-Z][a-zA-Z0-9]{2,15})/gi,
-      /([A-Z][a-zA-Z0-9]{2,15})\s+(integration|connection|api)/gi,
-      /(?<!^|\. )([A-Z][a-z]{2,15}(?:\.[a-z]{2,4})?)/g
-    ];
-    
-    patterns.forEach(pattern => {
-      let match;
-      while ((match = pattern.exec(text)) !== null) {
-        const serviceName = match[match.length - 1]?.trim();
-        if (serviceName && serviceName.length >= 3 && serviceName.length <= 20) {
-          const lowerName = serviceName.toLowerCase();
-          if (!commonWords.has(lowerName) && 
-              /[A-Z]/.test(serviceName) &&
-              !['Gmail', 'Email', 'Drive', 'File'].includes(serviceName)) {
-            services.push(lowerName);
-          }
-        }
-      }
-    });
-    
-    const knownServices = [
-      'notion', 'slack', 'discord', 'airtable', 'zapier', 'trello', 'asana', 'monday',
-      'dropbox', 'onedrive', 'outlook', 'twitter', 'linkedin', 'facebook', 'instagram',
-      'whatsapp', 'telegram', 'calendly', 'zoom', 'teams', 'salesforce', 'hubspot',
-      'shopify', 'stripe', 'paypal', 'mailchimp', 'convertkit', 'typeform', 'jotform'
-    ];
-    
-    knownServices.forEach(service => {
-      const regex = new RegExp(`\\b${service}\\b`, 'gi');
-      if (regex.test(text)) {
-        if (!services.includes(service)) {
-          services.push(service);
-        }
-      }
-    });
-    
-    return services;
-  };
-  
-  const extractedServices = extractServiceNames(prompt);
-  
-  extractedServices.forEach(extracted => {
-    if (pluginRegistry[extracted]) {
-      if (!detectedServices.includes(extracted)) {
-        detectedServices.push(extracted);
-      }
-      return;
-    }
-    
-    let found = false;
-    for (const [pluginKey, pluginDef] of Object.entries(pluginRegistry)) {
-      const pluginLabel = pluginDef.label.toLowerCase();
-      
-      if (pluginLabel.includes(extracted) || 
-          extracted.includes(pluginLabel.replace(/\s+/g, '')) ||
-          pluginKey.includes(extracted) ||
-          extracted.includes(pluginKey.replace(/_/g, ''))) {
-        if (!detectedServices.includes(pluginKey)) {
-          detectedServices.push(pluginKey);
-        }
-        found = true;
-        break;
-      }
-    }
-    
-    if (!found) {
-      detectedServices.push(extracted);
-    }
-  });
-  
-  const uniqueServices = [...new Set(detectedServices)].filter(service => 
-    service.length >= 3 && !['the', 'and', 'for', 'with', 'data', 'file'].includes(service)
-  );
-  
+  const uniqueServices = [...new Set(detectedServices)];
   console.log(`Detected required plugins: ${uniqueServices.join(',')}`);
   return uniqueServices;
 }
@@ -649,14 +544,13 @@ export function validatePluginRequirements(prompt: string, connectedPlugins: str
   unsupportedServices: string[];
 } {
   const requiredServices = detectRequiredPlugins(prompt);
-  const normalizedConnectedPlugins = connectedPlugins.map(key => LEGACY_KEY_MAP[key] || key);
   
   const missingPlugins: string[] = [];
   const unsupportedServices: string[] = [];
   
   for (const required of requiredServices) {
     if (required in pluginRegistry) {
-      if (!normalizedConnectedPlugins.includes(required)) {
+      if (!connectedPlugins.includes(required)) {
         missingPlugins.push(required);
       }
     } else {
@@ -668,7 +562,7 @@ export function validatePluginRequirements(prompt: string, connectedPlugins: str
   
   console.log('Plugin validation result:', {
     requiredServices,
-    connectedPlugins: normalizedConnectedPlugins,
+    connectedPlugins,
     missingPlugins,
     unsupportedServices,
     isValid: allMissingServices.length === 0
@@ -690,10 +584,9 @@ export function getPluginCapabilitiesContext(connectedPluginKeys: string[]): str
     .join(' | ');
 }
 
-console.log('Enhanced Plugin Registry Loaded:', {
+console.log('Plugin Registry Loaded:', {
   totalPlugins: Object.keys(pluginRegistry).length,
   categories: [...new Set(Object.values(pluginRegistry).map(p => p.category))],
-  legacyKeyMappings: Object.keys(LEGACY_KEY_MAP).length,
   pluginsWithInputTemplates: Object.values(pluginRegistry).filter(p => p.inputTemplates).length,
   pluginsWithOutputTemplates: Object.values(pluginRegistry).filter(p => p.outputTemplates).length
 });

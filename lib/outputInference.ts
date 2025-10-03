@@ -91,6 +91,10 @@ function generateOutputsFromRegistry(
     outputs.push(...pluginOutputs)
   }
   
+  // NEW: Detect and add document generation outputs
+  const documentOutputs = detectDocumentOutputs(prompt, workflowSteps)
+  outputs.push(...documentOutputs)
+  
   // Always add execution status
   outputs.push({
     name: 'Execution Summary',
@@ -115,6 +119,126 @@ function generateOutputsFromRegistry(
   }
   
   return outputs
+}
+
+// NEW: Function to detect document creation from prompt
+function detectDocumentOutputs(fullPrompt: string, workflowSteps: any[]): OutputSchema[] {
+  const documentOutputs: OutputSchema[] = []
+  const promptLower = fullPrompt.toLowerCase()
+  
+  // Document creation patterns with their corresponding formats
+  const documentPatterns = [
+    { 
+      pattern: /create.*pdf|generate.*pdf|pdf.*document|save.*pdf/i, 
+      format: 'PDF',
+      type: 'PDFDocument',
+      mimeType: 'application/pdf'
+    },
+    { 
+      pattern: /create.*csv|generate.*csv|csv.*file|export.*csv/i, 
+      format: 'CSV', 
+      type: 'CSVFile',
+      mimeType: 'text/csv'
+    },
+    { 
+      pattern: /create.*word|generate.*docx|word.*document|create.*doc\b/i, 
+      format: 'Word Document', 
+      type: 'WordDocument',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    },
+    { 
+      pattern: /create.*excel|generate.*xlsx|excel.*file|spreadsheet/i, 
+      format: 'Excel Spreadsheet', 
+      type: 'ExcelFile',
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    },
+    { 
+      pattern: /create.*text|generate.*txt|text.*file|\.txt/i, 
+      format: 'Text File', 
+      type: 'TextFile',
+      mimeType: 'text/plain'
+    },
+    { 
+      pattern: /create.*json|generate.*json|json.*file/i, 
+      format: 'JSON File', 
+      type: 'JSONFile',
+      mimeType: 'application/json'
+    },
+    { 
+      pattern: /create.*html|generate.*html|html.*file|web.*page/i, 
+      format: 'HTML File', 
+      type: 'HTMLFile',
+      mimeType: 'text/html'
+    },
+    { 
+      pattern: /create.*document|generate.*document|create.*file(?!\s+system)/i, 
+      format: 'Document', 
+      type: 'GeneratedDocument',
+      mimeType: 'application/octet-stream'
+    }
+  ]
+  
+  // Check for document creation patterns
+  for (const { pattern, format, type, mimeType } of documentPatterns) {
+    if (pattern.test(fullPrompt)) {
+      // Determine what content will be in the document based on workflow
+      const contentDescription = inferDocumentContent(fullPrompt, workflowSteps)
+      
+      documentOutputs.push({
+        name: `Generated ${format}`,
+        type: type,
+        description: `AI-generated ${format.toLowerCase()} containing ${contentDescription}`,
+        category: 'human-facing',
+        examples: [
+          `${format} file with formatted content`,
+          'Download link for the generated file',
+          'File metadata (size, creation date, etc.)',
+          `Formatted ${contentDescription} in ${format} format`
+        ]
+      })
+      
+      // Only add the first matching pattern to avoid duplicates
+      break
+    }
+  }
+  
+  return documentOutputs
+}
+
+// NEW: Function to infer what content will be in the document
+function inferDocumentContent(prompt: string, workflowSteps: any[]): string {
+  const promptLower = prompt.toLowerCase()
+  
+  // Look for content clues in the prompt
+  if (promptLower.includes('email') && promptLower.includes('summar')) {
+    return 'email summaries and analysis'
+  } else if (promptLower.includes('report')) {
+    return 'comprehensive report data'
+  } else if (promptLower.includes('analysis') || promptLower.includes('insights')) {
+    return 'analysis results and insights'
+  } else if (promptLower.includes('data') || promptLower.includes('information')) {
+    return 'processed data and information'
+  } else if (promptLower.includes('list') || promptLower.includes('extract')) {
+    return 'extracted information and lists'
+  } else {
+    // Infer from workflow steps
+    const hasEmailStep = workflowSteps?.some(step => 
+      step.plugin === 'google-mail' || step.operation?.toLowerCase().includes('email')
+    )
+    const hasSummarizeStep = workflowSteps?.some(step => 
+      step.plugin_action === 'summarize' || step.operation?.toLowerCase().includes('summar')
+    )
+    
+    if (hasEmailStep && hasSummarizeStep) {
+      return 'summarized email content'
+    } else if (hasEmailStep) {
+      return 'email data and information'
+    } else if (hasSummarizeStep) {
+      return 'summarized content'
+    } else {
+      return 'processed workflow results'
+    }
+  }
 }
 
 function groupStepsByPlugin(workflowSteps: any[]): Record<string, any[]> {
@@ -258,8 +382,6 @@ function generateExamplesFromSchema(schema?: Record<string, any>): string[] {
   
   return examples.slice(0, 3) // Limit to 3 examples
 }
-
-// Remove this function as it's no longer needed
 
 function inferTypeFromCapability(capability: string): string {
   if (capability.includes('list') || capability.includes('search') || capability.includes('filter')) {

@@ -138,7 +138,10 @@ const MemoizedQuestionRenderer = React.memo(QuestionRenderer, (prevProps, nextPr
     prevProps.isCurrent === nextProps.isCurrent &&
     prevProps.isProcessing === nextProps.isProcessing &&
     prevProps.readOnly === nextProps.readOnly &&
-    JSON.stringify(prevProps.state.clarificationAnswers) === JSON.stringify(nextProps.state.clarificationAnswers)
+    JSON.stringify(prevProps.state.clarificationAnswers) === JSON.stringify(nextProps.state.clarificationAnswers) &&
+    prevProps.state.showingCustomInput === nextProps.state.showingCustomInput &&
+    prevProps.state.customInputQuestionId === nextProps.state.customInputQuestionId &&
+    prevProps.state.customInputValue === nextProps.state.customInputValue
   );
 });
 
@@ -195,6 +198,7 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
     handleOptionSelect,
     handleCustomAnswer,
     handleChangeAnswer,
+    handleCustomInputChange, // FIXED: New handler
 
     handleApproveEnhanced,
     handleUseOriginal,
@@ -303,7 +307,7 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
             isProcessing={projectState.isProcessingQuestion}
             onSelect={handleOptionSelect}
             onCustomSubmit={handleCustomAnswer}
-            onCustomChange={(val) => setProjectState((prev) => ({ ...prev, customInputValue: val, showingCustomInput: true }))}
+            onCustomChange={handleCustomInputChange} // FIXED: Use new handler
             onChangeAnswer={handleChangeAnswer}
             readOnly={projectState.isInReviewMode}
           />
@@ -454,8 +458,27 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
         )}
       </div>
     );
-  }, [projectState.enhancementComplete, projectState.planApproved, projectState.isInReviewMode, projectState.isEditingEnhanced, projectState.editedEnhancedPrompt, projectState.questionsSequence, projectState.currentQuestionIndex, projectState.isProcessingQuestion, isPluginWarningMessage, handleOptionSelect, handleCustomAnswer, handleChangeAnswer, setProjectState, handleSaveEnhancedEdit, handleCancelEnhancedEdit, handleApproveEnhanced, handleEditEnhanced, handleUseOriginal]);
-
+}, [
+    projectState.enhancementComplete, 
+    projectState.planApproved, 
+    projectState.isInReviewMode, 
+    projectState.isEditingEnhanced, 
+    projectState.editedEnhancedPrompt, 
+    projectState.questionsSequence, 
+    projectState.currentQuestionIndex, 
+    projectState.isProcessingQuestion, 
+    isPluginWarningMessage, 
+    handleOptionSelect, 
+    handleCustomAnswer, 
+    handleChangeAnswer,
+    handleCustomInputChange, // FIXED: Add to dependencies
+    setProjectState, 
+    handleSaveEnhancedEdit, 
+    handleCancelEnhancedEdit, 
+    handleApproveEnhanced, 
+    handleEditEnhanced, 
+    handleUseOriginal
+  ]);
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
       {/* Compact Header */}

@@ -4,7 +4,7 @@ import SmartAgentBuilder from './SmartAgentBuilder/SmartAgentBuilder';
 import { Agent } from './SmartAgentBuilder/types/agent';
 import { useAuth } from '@/components/UserProvider';
 import { useRouter } from 'next/navigation';
-import { Loader2, AlertTriangle, Brain, RefreshCw } from 'lucide-react';
+import { Loader2, AlertTriangle, Brain, RefreshCw, Lock, Shield } from 'lucide-react';
 
 interface EditAgentWrapperProps {
   agentId: string;
@@ -148,6 +148,23 @@ export default function EditAgentWrapper({ agentId }: EditAgentWrapperProps) {
           throw new Error(`No agent data found in response from ${endpoint}`);
         }
         
+        // ENHANCED: Mark plugin requirements as locked for editing
+        if (agentData.plugins_required) {
+          agentData._pluginsLocked = true;
+          agentData._originalPlugins = [...(agentData.plugins_required || [])];
+          console.log('🔒 Plugin requirements locked for editing:', agentData.plugins_required);
+        }
+        
+        // ENHANCED: Mark prompts as locked for editing
+        if (agentData.system_prompt || agentData.user_prompt) {
+          agentData._promptsLocked = true;
+          agentData._originalPrompts = {
+            system_prompt: agentData.system_prompt,
+            user_prompt: agentData.user_prompt
+          };
+          console.log('🔒 System and user prompts locked for editing');
+        }
+        
         console.log('Successfully loaded agent:', agentData.agent_name || 'Unnamed Agent');
         setAgent(agentData);
         
@@ -289,17 +306,81 @@ export default function EditAgentWrapper({ agentId }: EditAgentWrapperProps) {
     );
   }
 
-  // Success - render SmartAgentBuilder in edit mode
+  // Success - show protection notice and render SmartAgentBuilder in edit mode
   return (
-    <SmartAgentBuilder
-      prompt={agent.user_prompt || ''}
-      promptType="edit"
-      clarificationAnswers={{}}
-      restoredAgent={agent}
-      editMode={true}
-      sessionId={`edit-${agentId}-${Date.now()}`}
-      onAgentCreated={handleAgentUpdated}
-      onCancel={handleCancel}
-    />
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
+      {/* Protection Notice - Only shown in edit mode */}
+      <div className="bg-gradient-to-r from-amber-50 to-orange-50 border-l-4 border-amber-400 p-4 mb-6 mx-6 rounded-r-xl shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="flex-shrink-0">
+            <Shield className="h-5 w-5 text-amber-600" />
+          </div>
+          <div className="flex-1">
+            <h4 className="font-medium text-amber-800 flex items-center gap-2">
+              <Lock className="h-4 w-4" />
+              Agent Core Components Protected
+            </h4>
+            <p className="text-amber-700 text-sm mt-1">
+              The required plugins and prompts for this agent cannot be modified during editing to ensure the agent continues to function correctly. 
+              These were determined by AI analysis during creation. You can still edit other agent settings freely.
+            </p>
+            
+            {/* Protected Elements Summary */}
+            <div className="mt-3 space-y-2">
+              {/* Plugins */}
+              {agent?.plugins_required && agent.plugins_required.length > 0 && (
+                <div>
+                  <span className="text-amber-800 text-xs font-medium">Protected Plugins:</span>
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    {agent.plugins_required.map((plugin, index) => (
+                      <span 
+                        key={index}
+                        className="inline-flex items-center gap-1 px-2 py-1 bg-amber-100 text-amber-800 text-xs rounded-full border border-amber-200"
+                      >
+                        <Lock className="h-3 w-3" />
+                        {typeof plugin === 'string' ? plugin : plugin.name || plugin.key || 'Unknown Plugin'}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
+              {/* Prompts */}
+              <div>
+                <span className="text-amber-800 text-xs font-medium">Protected Prompts:</span>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  <span className="inline-flex items-center gap-1 px-2 py-1 bg-orange-100 text-orange-800 text-xs rounded-full border border-orange-200">
+                    <Lock className="h-3 w-3" />
+                    System Prompt
+                  </span>
+                  <span className="inline-flex items-center gap-1 px-2 py-1 bg-orange-100 text-orange-800 text-xs rounded-full border border-orange-200">
+                    <Lock className="h-3 w-3" />
+                    User Prompt
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* SmartAgentBuilder in edit mode */}
+      <SmartAgentBuilder
+        prompt={agent.user_prompt || ''}
+        promptType="edit"
+        clarificationAnswers={{}}
+        restoredAgent={agent}
+        editMode={true}
+        sessionId={`edit-${agentId}-${Date.now()}`}
+        onAgentCreated={handleAgentUpdated}
+        onCancel={handleCancel}
+        // Plugin lock properties
+        pluginsLocked={agent._pluginsLocked || false}
+        originalPlugins={agent._originalPlugins || []}
+        // NEW: Prompt lock properties
+        promptsLocked={agent._promptsLocked || false}
+        originalPrompts={agent._originalPrompts || {}}
+      />
+    </div>
   );
 }

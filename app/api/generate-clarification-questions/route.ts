@@ -5,7 +5,6 @@ import { trackTokenUsage, LLMCategory } from '../../../components/orchestration/
 import { 
   getConnectedPluginsWithMetadata, 
   getPluginDefinition, 
-  LEGACY_KEY_MAP,
   pluginRegistry 
 } from '@/lib/plugins/pluginRegistry'
 
@@ -16,12 +15,12 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-// FIXED: Use plugin registry instead of hardcoded mapping
+// Detect mentioned services using plugin registry
 function detectMentionedServices(prompt: string): string[] {
   const promptLower = prompt.toLowerCase();
   const mentionedServices: string[] = [];
   
-  // Check against plugin registry first
+  // Check against plugin registry
   for (const [pluginKey, pluginDef] of Object.entries(pluginRegistry)) {
     const serviceName = pluginDef.label.toLowerCase();
     const keyVariations = [
@@ -32,7 +31,6 @@ function detectMentionedServices(prompt: string): string[] {
       serviceName.replace(/\s+/g, '-')
     ];
     
-    // Check if prompt mentions this plugin by name
     const isDetected = keyVariations.some(variation => 
       promptLower.includes(variation)
     );
@@ -42,51 +40,26 @@ function detectMentionedServices(prompt: string): string[] {
     }
   }
   
-  // Additional common service name mappings for services not in registry yet
-  const additionalServiceKeywords = {
-    'notion': ['notion'],
-    'slack': ['slack'],
-    'google_sheets': ['google sheets', 'sheets', 'spreadsheet'],
-    'google_calendar': ['calendar', 'google calendar', 'gcal'],
-    'dropbox': ['dropbox'],
-    'airtable': ['airtable'],
-    'trello': ['trello'],
-    'asana': ['asana'],
-    'monday': ['monday'],
-    'onedrive': ['onedrive']
-  };
-  
-  for (const [serviceKey, keywords] of Object.entries(additionalServiceKeywords)) {
-    const isDetected = keywords.some(keyword => promptLower.includes(keyword));
-    if (isDetected && !mentionedServices.includes(serviceKey)) {
-      mentionedServices.push(serviceKey);
-    }
-  }
-  
   return mentionedServices;
 }
 
-// FIXED: Validate mentioned plugins using plugin registry and database data
+// Validate mentioned plugins using plugin registry and database data
 function validateConnectedPlugins(prompt: string, connectedPlugins: string[]): { 
   missingServices: string[], 
   availableServices: string[] 
 } {
   const mentionedServices = detectMentionedServices(prompt);
   
-  // Normalize connected plugins using legacy key mapping
-  const normalizedConnectedPlugins = connectedPlugins.map(key => LEGACY_KEY_MAP[key] || key);
-  
   console.log('Plugin validation in clarification API:', {
     mentionedServices,
-    connectedPlugins,
-    normalizedConnectedPlugins
+    connectedPlugins
   });
   
   const missingServices: string[] = [];
   const availableServices: string[] = [];
   
   mentionedServices.forEach(service => {
-    if (normalizedConnectedPlugins.includes(service)) {
+    if (connectedPlugins.includes(service)) {
       availableServices.push(service);
     } else {
       missingServices.push(service);
@@ -173,7 +146,7 @@ function generateDefaultSchedulingQuestions(userPrompt: string): ClarificationQu
   ];
 }
 
-// FIXED: Enhanced system prompt with proper plugin handling using registry data
+// Enhanced system prompt with proper plugin handling using registry data
 export function buildClarifySystemPrompt(connectedPlugins: string[], missingServices: string[]) {
   const connectedPluginData = getConnectedPluginsWithMetadata(connectedPlugins);
   const pluginCapabilities = connectedPluginData.length > 0 
@@ -374,16 +347,16 @@ export async function POST(request: NextRequest) {
     console.log('1. Original prompt:', original_prompt)
     console.log('2. Raw connected_plugins from request:', connected_plugins)
     
-    // Get connected plugins from multiple sources (maintaining existing logic)
+    // Get connected plugins from multiple sources
     let pluginKeys: string[] = []
 
-    // Method 1: From frontend (fallback to ensure we have plugins)
+    // Method 1: From frontend
     if (connected_plugins && typeof connected_plugins === 'object') {
       pluginKeys = Object.keys(connected_plugins)
-      console.log('3. PluginKeys after frontend:', pluginKeys)
+      console.log('3. PluginKeys from frontend:', pluginKeys)
     }
 
-    // Method 2: From database (if user_id provided and table exists)
+    // Method 2: From database (if user_id provided)
     if (user_id) {
       try {
         const { data: connections, error: pluginError } = await supabase
@@ -395,26 +368,25 @@ export async function POST(request: NextRequest) {
         if (!pluginError && connections && connections.length > 0) {
           const dbPlugins = connections.map(c => c.plugin_key)
           console.log('4. Database plugins found:', dbPlugins)
-          // Merge database plugins with frontend plugins
           pluginKeys = [...new Set([...pluginKeys, ...dbPlugins])]
           console.log('5. PluginKeys after database merge:', pluginKeys)
         } else {
-          console.log('4. No plugins found in database, using frontend plugins:', pluginKeys)
+          console.log('4. No plugins found in database, using frontend plugins')
         }
       } catch (dbError) {
         console.warn('Database plugin query failed, using frontend plugins:', dbError)
       }
     }
 
-    // Method 3: Default plugins if nothing found (maintaining existing fallback)
+    // Method 3: Default plugins if nothing found
     if (pluginKeys.length === 0) {
-      pluginKeys = ['google-mail', 'google-drive', 'slack', 'calendar', 'google-sheets']
+      pluginKeys = ['google-mail', 'google-drive', 'chatgpt-research']
       console.log('6. No plugins found, using defaults:', pluginKeys)
     }
 
     console.log('7. Final plugin list BEFORE validation:', pluginKeys)
 
-    // FIXED: Use new plugin validation system
+    // Use plugin validation system
     const { missingServices, availableServices } = validateConnectedPlugins(original_prompt, pluginKeys)
     console.log('8. Plugin validation results:', { missingServices, availableServices })
     
@@ -423,7 +395,6 @@ export async function POST(request: NextRequest) {
     if (missingServices.length > 0) {
       console.log('9. User mentioned unconnected plugins:', missingServices)
       
-      // FIXED: Create warning with proper display names from registry
       const missingDisplayNames = missingServices.map(service => {
         const definition = getPluginDefinition(service);
         return definition?.displayName || definition?.label || service;
@@ -438,7 +409,7 @@ export async function POST(request: NextRequest) {
       console.log('9. No missing plugins detected')
     }
 
-    // FIXED: Get connected plugin metadata for AI context
+    // Get connected plugin metadata for AI context
     const connectedPluginData = getConnectedPluginsWithMetadata(pluginKeys);
     console.log('11. Connected plugin metadata retrieved:', {
       count: connectedPluginData.length,
@@ -464,7 +435,7 @@ Please analyze this automation request and return clarifying questions as a JSON
     const { response: llmResponse, usage } = await callOpenAI(buildClarifySystemPrompt(pluginKeys, missingServices), contextMessage)
     const clarificationData = await parseAndValidateLLMResponse(llmResponse, original_prompt)
 
-    // Track token usage using existing utility function
+    // Track token usage
     if (user_id) {
       await trackTokenUsage(supabase, user_id, {
         modelName: 'gpt-4o',
@@ -484,7 +455,7 @@ Please analyze this automation request and return clarifying questions as a JSON
       })
     }
 
-    // Log analytics (but don't fail if this errors) - maintaining existing functionality
+    // Log analytics (don't fail if this errors)
     try {
       await supabase.from('clarification_analytics').insert([{
         user_id,
@@ -492,7 +463,7 @@ Please analyze this automation request and return clarifying questions as a JSON
         agent_name,
         description,
         connected_plugins: pluginKeys,
-        missing_services: missingServices, // Added missing services tracking
+        missing_services: missingServices,
         generated_questions: clarificationData.questions,
         questions_count: clarificationData.questions.length,
         generated_at: new Date().toISOString()
@@ -508,10 +479,10 @@ Please analyze this automation request and return clarifying questions as a JSON
       availableServicesCount: availableServices.length
     })
 
-    // FIXED: Include plugin metadata in response (like other APIs)
+    // Include plugin metadata in response
     return NextResponse.json({
       ...clarificationData,
-      connectedPluginData, // Include plugin metadata for consistency
+      connectedPluginData,
       ...(pluginWarning && { pluginWarning })
     })
 
@@ -521,7 +492,6 @@ Please analyze this automation request and return clarifying questions as a JSON
   }
 }
 
-// Existing callOpenAI function - unchanged to preserve functionality
 async function callOpenAI(systemPrompt: string, userPrompt: string): Promise<{
   response: any,
   usage: {
@@ -543,7 +513,7 @@ async function callOpenAI(systemPrompt: string, userPrompt: string): Promise<{
 
     let content = completion.choices[0]?.message?.content || '[]'
 
-    // Remove markdown wrapper (```json ... ```)
+    // Remove markdown wrapper
     content = content.trim()
     if (content.startsWith('```')) {
       content = content.replace(/```json|```/g, '').trim()
@@ -565,7 +535,6 @@ async function callOpenAI(systemPrompt: string, userPrompt: string): Promise<{
   }
 }
 
-// Existing parseAndValidateLLMResponse function - preserved with enhancements
 async function parseAndValidateLLMResponse(llmResponse: any, originalPrompt: string): Promise<ClarificationResponse> {
   try {
     console.log('Raw LLM response type:', typeof llmResponse)
@@ -573,12 +542,10 @@ async function parseAndValidateLLMResponse(llmResponse: any, originalPrompt: str
     
     let questionsArray: any[] = []
     
-    // The LLM should now return a direct array based on the updated system prompt
     if (Array.isArray(llmResponse)) {
       questionsArray = llmResponse
       console.log('LLM returned direct array format')
     }
-    // Fallback: handle legacy structured formats if they still occur
     else if (llmResponse && typeof llmResponse === 'object') {
       if (llmResponse.questionsSequence && Array.isArray(llmResponse.questionsSequence)) {
         questionsArray = llmResponse.questionsSequence
@@ -594,7 +561,6 @@ async function parseAndValidateLLMResponse(llmResponse: any, originalPrompt: str
       }
       else {
         console.log('Unexpected object format, trying to find questions')
-        // Try to find any array property that might contain questions
         for (const [key, value] of Object.entries(llmResponse)) {
           if (Array.isArray(value) && value.length > 0) {
             questionsArray = value
@@ -632,7 +598,6 @@ async function parseAndValidateLLMResponse(llmResponse: any, originalPrompt: str
           return null
         }
 
-        // Generate better placeholder if not provided
         let placeholder = q.placeholder || 'Enter your answer...'
         
         if (!q.placeholder) {
@@ -658,7 +623,7 @@ async function parseAndValidateLLMResponse(llmResponse: any, originalPrompt: str
           id: q.id || `question_${i + 1}`,
           question: q.question.trim(),
           type,
-          required: q.required !== false, // Default to true unless explicitly false
+          required: q.required !== false,
           placeholder,
           dimension: q.dimension || 'general',
           options: structured ? q.options : undefined
@@ -668,11 +633,9 @@ async function parseAndValidateLLMResponse(llmResponse: any, originalPrompt: str
 
     console.log(`Parsed ${questions.length} valid questions from ${questionsArray.length} raw questions`)
 
-    // CRITICAL FIX: Always add scheduling questions if none exist
+    // Always add scheduling questions if none exist
     const scheduleQuestions = generateSchedulingQuestions(originalPrompt, questions)
     
-    // If no scheduling questions were added (because they already exist or timing is in prompt), 
-    // but we have no questions at all, add default scheduling questions anyway
     if (scheduleQuestions.length === 0 && questions.length === 0) {
       console.log('No questions at all, adding default scheduling questions anyway')
       const defaultScheduleQuestions = generateDefaultSchedulingQuestions(originalPrompt)
@@ -720,7 +683,7 @@ async function parseAndValidateLLMResponse(llmResponse: any, originalPrompt: str
     }
 
     return {
-      questions: questions.slice(0, 7), // Increased limit to accommodate scheduling
+      questions: questions.slice(0, 7),
       reasoning: `Generated ${questions.length} targeted clarification question${questions.length === 1 ? '' : 's'} focused on your connected services, including scheduling details.`,
       confidence: Math.min(95, 70 + (questions.length * 5))
     }
@@ -729,7 +692,6 @@ async function parseAndValidateLLMResponse(llmResponse: any, originalPrompt: str
     console.error('Parse validation error:', e)
     console.error('LLM Response that caused error:', llmResponse)
     
-    // Generate default scheduling questions even in error case
     const defaultScheduleQuestions = generateDefaultSchedulingQuestions(originalPrompt)
     
     return {

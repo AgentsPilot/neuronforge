@@ -8,7 +8,6 @@ import {
   getConnectedPluginsWithMetadata,
   getPluginCapabilitiesContext,
   getPluginDisplayNames,
-  LEGACY_KEY_MAP
 } from '@/lib/plugins/pluginRegistry'
 
 // Enhanced error logging function
@@ -238,7 +237,7 @@ function generateSchedulingQuestions(userPrompt: string, connectedPluginData: an
   ];
 }
 
-// FIXED: AI system prompt that ONLY works with connected services
+// AI system prompt that ONLY works with connected services
 function buildAISystemPrompt(connectedPluginData: any[], userPrompt: string) {
   const pluginCapabilitiesContext = getPluginCapabilitiesContext(connectedPluginData.map(p => p.key));
   
@@ -339,7 +338,7 @@ function validateConsistency(result: any, userPrompt: string, connectedPluginDat
   return result
 }
 
-// FIXED: Smart generic fallback that uses plugin metadata instead of hardcoded mappings
+// Smart generic fallback that uses plugin metadata
 const createFallbackResponse = (userPrompt: string = '', connectedPluginData: any[] = []) => {
   const scheduleQuestions = generateSchedulingQuestions(userPrompt, connectedPluginData)
   const promptLower = userPrompt.toLowerCase()
@@ -392,7 +391,7 @@ const createFallbackResponse = (userPrompt: string = '', connectedPluginData: an
     return options
   }
   
-  // FIXED: Build fallback actions using actual plugin metadata
+  // Build fallback actions using actual plugin metadata
   let fallbackActions = 'No actions possible - connect services first';
   if (connectedPluginData.length > 0) {
     fallbackActions = `Summarize and save to ${serviceNames.join(', ')}`;
@@ -508,7 +507,7 @@ const createFallbackResponse = (userPrompt: string = '', connectedPluginData: an
   }
 }
 
-// FIXED: Enhanced parsing function that handles OpenAI responses
+// Enhanced parsing function that handles OpenAI responses
 function parseAIResponse(rawContent: string): any {
   console.log('🔍 Parsing AI response, length:', rawContent.length)
   console.log('📝 Raw content preview:', rawContent.slice(0, 200) + '...')
@@ -519,7 +518,7 @@ function parseAIResponse(rawContent: string): any {
   // Step 2: If no JSON found, log the full content for debugging
   if (!jsonContent.startsWith('{') && !jsonContent.startsWith('[')) {
     console.error('❌ No valid JSON structure found in response')
-    console.error('🔍 Full raw content:', rawContent) // Log everything for debugging
+    console.error('🔍 Full raw content:', rawContent)
     throw new Error('AI_RETURNED_PROSE_NOT_JSON')
   }
   
@@ -537,7 +536,7 @@ function parseAIResponse(rawContent: string): any {
     console.log('✅ Successfully parsed AI JSON response')
     console.log('🔍 Parsed keys:', Object.keys(parsed))
     return parsed
-  } catch (parseError) {
+  } catch (parseError: any) {
     console.error('❌ JSON parsing failed')
     console.error('🔍 JSON content was:', jsonContent.slice(0, 500))
     console.error('🔍 Parse error:', parseError.message)
@@ -545,16 +544,17 @@ function parseAIResponse(rawContent: string): any {
   }
 }
 
-// FIXED: Check if user mentioned unconnected services (for warning only)
+// Check if user mentioned unconnected services (for warning only)
 function checkMentionedUnconnectedServices(userPrompt: string, connectedPlugins: string[]): {
   mentionedServices: string[];
   missingServices: string[];
 } {
   const promptLower = userPrompt.toLowerCase();
   const mentionedServices: string[] = [];
-  const normalizedConnectedPlugins = connectedPlugins.map(key => LEGACY_KEY_MAP[key] || key);
   
-  // Check against plugin registry
+  console.log('🔍 Connected plugins:', connectedPlugins);
+  
+  // Check against plugin registry (supported services)
   for (const [pluginKey, pluginDef] of Object.entries(pluginRegistry)) {
     const serviceName = pluginDef.label.toLowerCase();
     const keyVariations = [
@@ -574,37 +574,39 @@ function checkMentionedUnconnectedServices(userPrompt: string, connectedPlugins:
     }
   }
   
-  // Additional common service name mappings
-  const additionalServiceKeywords = {
+  // Also check for commonly mentioned services NOT in registry yet
+  const commonServices: Record<string, string[]> = {
     'notion': ['notion'],
     'slack': ['slack'],
-    'google_sheets': ['google sheets', 'sheets', 'spreadsheet'],
-    'google_calendar': ['calendar', 'google calendar', 'gcal'],
-    'dropbox': ['dropbox'],
     'airtable': ['airtable'],
     'trello': ['trello'],
     'asana': ['asana'],
-    'monday': ['monday'],
-    'onedrive': ['onedrive']
+    'monday': ['monday.com', 'monday'],
+    'dropbox': ['dropbox'],
+    'onedrive': ['onedrive'],
   };
   
-  for (const [serviceKey, keywords] of Object.entries(additionalServiceKeywords)) {
+  for (const [serviceKey, keywords] of Object.entries(commonServices)) {
     const isDetected = keywords.some(keyword => promptLower.includes(keyword));
     if (isDetected && !mentionedServices.includes(serviceKey)) {
       mentionedServices.push(serviceKey);
     }
   }
   
-  // Find missing services
+  console.log('🔍 Detected mentioned services:', mentionedServices);
+  
+  // Find missing services - services mentioned but not connected
   const missingServices = mentionedServices.filter(service => 
-    !normalizedConnectedPlugins.includes(service)
+    !connectedPlugins.includes(service)
   );
+  
+  console.log('🔍 Missing services:', missingServices);
   
   return { mentionedServices, missingServices };
 }
 
 export async function POST(request: NextRequest) {
-  console.log('🚀 API Route called - Fixed to only use connected services')
+  console.log('🚀 API Route called - Using only connected services')
   
   try {
     // Step 1: Parse request body with enhanced error handling

@@ -6,34 +6,10 @@ import {
   pluginRegistry,
   getPluginDefinition,
   getConnectedPluginsWithMetadata,
-  LEGACY_KEY_MAP
-} from '@/lib/plugins/pluginRegistry'
+  getInputTemplatesForCapability
+  } from '@/lib/plugins/pluginRegistry'
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
-
-function generateDynamicInputTemplateContext(
-  connectedPluginData: any[],
-  usedCapabilities: Record<string, string[]>
-): string {
-  return connectedPluginData.map(plugin => {
-    const capsUsed = usedCapabilities[plugin.key] || []
-    if (!plugin.inputTemplates || capsUsed.length === 0) return null
-
-    return capsUsed
-      .filter(cap => plugin.inputTemplates[cap])
-      .map(capability => {
-        return plugin.inputTemplates[capability].map(template => {
-          let fieldInfo = `${plugin.key} with ${capability} action → ${template.name} (type: ${template.type}`
-          if (template.required) fieldInfo += ', required'
-          if (template.enum) fieldInfo += `, options: [${template.enum.join(', ')}]`
-          if (template.runtime_populated) fieldInfo += ', runtime_populated via ' + template.sandboxFetch
-          if (template.placeholder) fieldInfo += `, placeholder: "${template.placeholder}"`
-          fieldInfo += `): ${template.description}`
-          return fieldInfo
-        }).join('\n')
-      }).join('\n')
-  }).filter(Boolean).join('\n')
-}
 
 function generateDynamicOutputTemplateContext(connectedPluginData: any[]): string {
   return connectedPluginData.map(plugin => {
@@ -79,6 +55,50 @@ function getUsedCapabilities(steps: any[]): Record<string, string[]> {
   return used
 }
 
+function generateInputTemplateAnalysis(
+  connectedPluginData: any[],
+  usedCapabilities: Record<string, string[]>
+): string {
+  const analyses = []
+  
+  for (const plugin of connectedPluginData) {
+    const capsUsed = usedCapabilities[plugin.key] || []
+    
+    for (const capability of capsUsed) {
+      const templates = getInputTemplatesForCapability(plugin.key, capability)
+      
+      if (templates.length > 0) {
+        analyses.push(`
+${plugin.key.toUpperCase()} | ${capability.toUpperCase()}:
+Available input templates:
+${templates.map(template => {
+  let analysis = `- ${template.name} (${template.type})`
+  if (template.required) analysis += ' [REQUIRED]'
+  if (template.runtime_populated) analysis += ' [AUTO-POPULATED]'
+  analysis += `: ${template.description}`
+  if (template.placeholder) analysis += ` (placeholder: "${template.placeholder}")`
+  return analysis
+}).join('\n')}`)
+      }
+    }
+  }
+  
+  return analyses.join('\n')
+}
+
+function generatePromptSectionAnalysis(fullPrompt: string): string {
+  return `Enhanced Prompt Sections:
+${fullPrompt}
+
+Extract what is explicitly specified in each section:
+- Data Source section defines what data to process
+- Trigger Conditions section defines when to run
+- Processing Steps section defines how to process
+- Output Creation section defines what to generate
+- Delivery Method section defines where/how to deliver
+- Error Handling section defines notification preferences`
+}
+
 export async function POST(req: Request) {
   try {
     const { prompt, clarificationAnswers } = await req.json()
@@ -115,79 +135,187 @@ export async function POST(req: Request) {
     const dynamicOutputTemplates = generateDynamicOutputTemplateContext(connectedPluginData)
     const dynamicIntentMappingRules = generateDynamicIntentMappingRules(connectedPluginData)
 
-    const enhancedSystemPrompt = `You are an AI assistant that creates executable agent specifications by analyzing structured user workflows.
+    // PHASE 1: Initial workflow analysis to determine used capabilities
+    const initialSystemPrompt = `Analyze this workflow and determine which plugin capabilities will be used.
 
-You MUST respond with valid JSON only. No markdown, no explanations, just pure JSON.
+CONNECTED PLUGINS: ${pluginCapabilityContext}
+CAPABILITY MAPPING: ${dynamicIntentMappingRules}
 
-CONNECTED PLUGINS AND CAPABILITIES:
-${pluginCapabilityContext}
+CRITICAL DOCUMENT GENERATION RULE:
+When users request document creation (PDF, Word, CSV, etc.), this is handled by AI naturally within existing plugins, NOT as separate workflow steps.
 
-DYNAMIC OUTPUT TEMPLATES (auto-generated from plugin registry):
-${dynamicOutputTemplates}
-
-CAPABILITY TO OPERATION MAPPING:
-${dynamicIntentMappingRules}
-
-ENHANCED PROMPT STRUCTURE ANALYSIS:
-The user provides a structured workflow with sections like:
-- **Data Source:** What data to process → extract specific criteria/values
-- **Trigger Conditions:** When to run → extract scheduling information  
-- **Processing Steps:** What operations to perform → map to plugin capabilities above
-- **Output Creation:** What to generate → determine output types from templates above
-- **Delivery Method:** How to deliver results → map to delivery/storage capabilities
-- **Error Handling:** How to handle failures → configure error notifications
-
-ANALYSIS INSTRUCTIONS:
-1. Parse the structured sections in the enhanced prompt
-2. Extract specific values mentioned (keywords, folders, email addresses, etc.)  
-3. Match processing operations to plugin capabilities using the mapping above
-4. Use input templates to generate required input fields
-5. Use output templates to determine expected outputs
-6. Create workflow steps with correct plugin and plugin_action assignments
-
-INPUT SCHEMA GENERATION:
-- Extract user-configurable values from the enhanced prompt sections
-- Use plugin input templates to determine required fields (provided below AFTER workflow steps)
-- Set extracted values as placeholders/defaults
-- Focus only on parameters the executing agent will need
-
-OUTPUT SCHEMA GENERATION:
-- Use plugin output templates for the capabilities being used
-- Generate outputs that match what the workflow will actually produce
-- Include execution status and summary outputs
-
-Required JSON structure:
+EXAMPLES:
+❌ WRONG - Don't create separate document generation steps:
 {
-  "agent_name": "string - descriptive name reflecting workflow purpose",
-  "user_prompt": "string - clean summary of what the agent does", 
-  "system_prompt": "string - detailed execution instructions for the agent executor",
-  "description": "string - user-friendly description of value provided",
-  "schedule": "string - cron expression if timing specified",
-  "input_schema": [...],
-  "workflow_steps": [...],
-  "error_notifications": { ... },
-  "output_format": "string"
+  "operation": "Create PDF document",
+  "plugin": "pdf-creator",
+  "plugin_action": "generate_pdf"
 }
 
-CRITICAL: Use only the connected plugins, capabilities, and templates provided above. Match enhanced prompt sections to plugin capabilities using the registry metadata.`
+✅ CORRECT - Include document format in the processing step:
+{
+  "operation": "Summarize emails and format as PDF document",
+  "plugin": "chatgpt-research",
+  "plugin_action": "summarize"
+}
+
+Map operations to correct capabilities:
+- "read gmail" → google-mail with read_email
+- "summarize and create PDF/Word/CSV" → chatgpt-research with summarize (AI handles format)
+- "upload to drive" → google-drive with upload_files
+- "send alert" → google-mail with send_email
+
+Return JSON: {"workflow_steps": [{"operation": "description", "plugin": "plugin_key", "plugin_action": "capability"}]}`
+
+    const initialCompletion = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: initialSystemPrompt },
+        { role: 'user', content: `Map this workflow to plugin capabilities:\n\n"${fullPrompt}"` }
+      ],
+      temperature: 0.1,
+      max_tokens: 1000
+    })
+
+    const initialRaw = initialCompletion.choices[0]?.message?.content || ''
+    let preliminarySteps = []
+    
+    try {
+      const initialData = JSON.parse(initialRaw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim())
+      preliminarySteps = initialData.workflow_steps || []
+    } catch (e) {
+      console.log('Could not parse initial analysis, proceeding with empty steps')
+    }
+
+    const preliminaryCapabilities = getUsedCapabilities(preliminarySteps)
+    
+    // PHASE 2: Generate input template analysis and prompt section analysis
+    const inputTemplateAnalysis = generateInputTemplateAnalysis(connectedPluginData, preliminaryCapabilities)
+    const promptSectionAnalysis = generatePromptSectionAnalysis(fullPrompt)
+    
+    // PHASE 3: Strict gap analysis with proper JSON structure
+    const enhancedSystemPrompt = `You are an AI agent-generation assistant. Your job is to turn a structured user workflow into an executable AI agent specification.
+
+CRITICAL: You must perform STRICT GAP ANALYSIS between what's specified in the prompt vs what's needed.
+
+CRITICAL DOCUMENT GENERATION RULE:
+When users request document creation (PDF, Word, CSV, etc.), this is handled by AI naturally within existing plugins, NOT as separate workflow steps.
+
+WORKFLOW MAPPING RULES:
+- "read emails" → google-mail with read_email
+- "summarize and create PDF/Word/CSV" → chatgpt-research with summarize (AI handles document format)
+- "upload file to drive" → google-drive with upload_files  
+- "send email with attachment" → google-mail with send_email
+
+EXAMPLES:
+When prompt says "Create a PDF containing email summaries":
+✅ CORRECT workflow:
+{
+  "operation": "Summarize emails and format as PDF document",
+  "plugin": "chatgpt-research",
+  "plugin_action": "summarize"
+}
+
+❌ WRONG - Don't create separate PDF generation steps:
+{
+  "operation": "Generate PDF",
+  "plugin": "pdf-creator",
+  "plugin_action": "create_pdf"
+}
+
+---
+📋 ENHANCED PROMPT ANALYSIS:
+${promptSectionAnalysis}
+
+---
+🔍 AVAILABLE INPUT TEMPLATES:
+${inputTemplateAnalysis}
+
+---
+🧠 STRICT GAP ANALYSIS RULES:
+
+STEP 1: For each plugin capability being used, check what input fields are available.
+STEP 2: For each available input field, ask: "Is this value EXPLICITLY specified in the enhanced prompt sections above?"
+STEP 3: If YES → SKIP the field completely (don't create input for it)
+STEP 4: If NO and field is essential for execution → CREATE input field with proper structure
+
+EXPLICIT SPECIFICATIONS IN THIS PROMPT:
+- Data Source section specifies: specific data to read → SKIP any query/filter fields
+- Trigger section specifies: timing → SKIP any time/schedule fields  
+- Processing section specifies: how to process → SKIP any processing style fields
+- Output Creation section specifies: document format → AI handles this naturally
+- The prompt mentions "send to manager" but NO specific email → CREATE manager email field
+
+MAXIMUM TARGET: 2-3 input fields for non-technical users.
+
+---
+🧾 REQUIRED JSON STRUCTURE:
+
+Each input field MUST have this exact structure:
+{
+  "name": "field_name",
+  "type": "string|email|select|number",
+  "required": true|false,
+  "description": "User-friendly description",
+  "placeholder": "Example value"
+}
+
+COMPLETE JSON RESPONSE:
+{
+  "agent_name": "Daily Email Summary to Manager",
+  "user_prompt": "Reads emails daily, creates summary document, and sends to manager",
+  "system_prompt": "You are an email processing agent that reads Gmail, summarizes content, creates documents, and sends them via email.",
+  "description": "Automates daily email processing and reporting",
+  "schedule": "0 8 * * *",
+  "input_schema": [
+    {
+      "name": "manager_email",
+      "type": "email",
+      "required": true,
+      "description": "Email address of the manager to send the summary",
+      "placeholder": "manager@example.com"
+    }
+  ],
+  "workflow_steps": [
+    {
+      "operation": "Read last 10 emails from Gmail",
+      "plugin": "google-mail",
+      "plugin_action": "read_email"
+    },
+    {
+      "operation": "Summarize emails and format as PDF document",
+      "plugin": "chatgpt-research",
+      "plugin_action": "summarize"
+    },
+    {
+      "operation": "Send PDF summary to manager",
+      "plugin": "google-mail",
+      "plugin_action": "send_email"
+    }
+  ],
+  "error_notifications": {
+    "on_failure": "email",
+    "retry_on_fail": true
+  },
+  "output_format": "pdf"
+}
+
+---
+🚨 CRITICAL REQUIREMENTS:
+1. Use ONLY the input field structure shown above
+2. Perform strict gap analysis - only create fields for MISSING values
+3. Target maximum 2-3 input fields total
+4. Never create fields for values already specified in prompt sections
+5. Document generation happens within existing plugins (chatgpt-research)
+6. Return valid JSON only, no markdown or explanations
+
+Analyze the enhanced prompt and create agent specification with minimal essential inputs only.`
 
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [
         { role: 'system', content: enhancedSystemPrompt },
-        { role: 'user', content: `Analyze this structured workflow and create an executable agent specification:
-
-"${fullPrompt}"
-
-ANALYSIS REQUIREMENTS:
-1. Parse each section of the structured prompt (Data Source, Processing Steps, etc.)
-2. Extract specific values mentioned by the user (keywords, folders, email addresses, etc.)
-3. Use plugin input templates to create required input fields
-4. Use plugin output templates to generate expected outputs
-5. Map processing steps to precise plugin capabilities from the registry
-6. Design for successful execution by an agent executor
-
-Return only valid JSON with no additional text or formatting.` }
+        { role: 'user', content: fullPrompt }
       ],
       temperature: 0.1,
       max_tokens: 2000
@@ -227,7 +355,6 @@ Return only valid JSON with no additional text or formatting.` }
     }) || []
 
     const usedCapabilities = getUsedCapabilities(enhancedWorkflowSteps)
-    const dynamicInputTemplates = generateDynamicInputTemplateContext(connectedPluginData, usedCapabilities)
 
     const { enhanceOutputInference } = await import('@/lib/outputInference')
     const outputInference = enhanceOutputInference(
@@ -237,14 +364,12 @@ Return only valid JSON with no additional text or formatting.` }
       enhancedWorkflowSteps
     )
 
-const validDetectedPlugins = Object.keys(usedCapabilities)
-  .filter(key => pluginRegistry[key]);
+    const validDetectedPlugins = Object.keys(usedCapabilities)
+      .filter(key => pluginRegistry[key]);
 
-console.log('🔍 Valid detected plugins AFTER:', validDetectedPlugins);
-
-    console.log('🔍 Used capabilities:', usedCapabilities);
-    console.log('🔍 Plugin registry keys:', Object.keys(pluginRegistry));
     console.log('🔍 Valid detected plugins:', validDetectedPlugins);
+    console.log('🔍 Used capabilities:', usedCapabilities);
+    console.log('🔍 Final input schema:', extracted.input_schema);
 
     const agentData = {
       user_id: user.id,
@@ -275,7 +400,8 @@ console.log('🔍 Valid detected plugins AFTER:', validDetectedPlugins);
       extraction_details: {
         usedCapabilities,
         output_inference: outputInference,
-        workflow_steps: enhancedWorkflowSteps
+        workflow_steps: enhancedWorkflowSteps,
+        input_template_analysis: inputTemplateAnalysis
       }
     })
 
