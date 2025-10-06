@@ -39,21 +39,32 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
         }
       })
 
+      console.log('UserProvider: Response status:', response.status, response.ok)
+
       if (!response.ok) {
         throw new Error(`Plugin fetch failed: ${response.status}`)
       }
 
       const data = await response.json()
+      console.log('UserProvider: Full response data:', data) // NEW: See the actual data structure
+      console.log('UserProvider: Response keys:', Object.keys(data)) // NEW: See what keys exist
+      console.log('UserProvider: Has _meta?', !!data._meta) // NEW: Check if _meta exists
+      if (data._meta) {
+        console.log('UserProvider: _meta keys:', Object.keys(data._meta)) // NEW: See _meta structure
+        console.log('UserProvider: _meta.connectedPlugins:', data._meta.connectedPlugins) // NEW: See the actual connectedPlugins data
+      }
       
       console.log('UserProvider: Plugin API response received')
 
       // Extract enhanced plugin data from API response
       if (data._meta && data._meta.connectedPlugins) {
+        console.log('UserProvider: Setting connectedPlugins to:', data._meta.connectedPlugins)
         setConnectedPlugins(data._meta.connectedPlugins)
         
         console.log('UserProvider: Set connectedPlugins with', Object.keys(data._meta.connectedPlugins).length, 'plugins')
       } else {
         console.warn('UserProvider: No enhanced plugin metadata in API response, setting empty object')
+        console.warn('UserProvider: Available keys in response:', Object.keys(data))
         setConnectedPlugins({})
       }
 

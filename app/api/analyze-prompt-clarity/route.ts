@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { v4 as uuidv4 } from 'uuid'
 
 // Import new plugin registry
 import { 
@@ -9,6 +10,16 @@ import {
   getPluginCapabilitiesContext,
   getPluginDisplayNames,
 } from '@/lib/plugins/pluginRegistry'
+
+// Import AI Analytics System
+import { AIAnalyticsService, AICallData } from '@/lib/analytics/aiAnalytics'
+import { OpenAIProvider } from '@/lib/ai/providers/openaiProvider'
+
+// Helper function to validate UUID format
+function isValidUUID(str: string): boolean {
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  return uuidPattern.test(str)
+}
 
 // Enhanced error logging function
 function logError(stage: string, error: any, context?: any) {
@@ -35,6 +46,8 @@ function validateEnvironment() {
 
 // Safe Supabase client creation
 let supabase: any = null
+let aiAnalytics: AIAnalyticsService | null = null
+
 try {
   if (validateEnvironment()) {
     supabase = createClient(
@@ -42,42 +55,17 @@ try {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
     console.log('✅ Supabase client created successfully')
+    
+    // Initialize AI Analytics Service
+    aiAnalytics = new AIAnalyticsService(supabase, {
+      enableRealtime: true,
+      enableCostTracking: true,
+      enablePerformanceMetrics: true
+    })
+    console.log('✅ AI Analytics service initialized')
   }
 } catch (error) {
   logError('SUPABASE_INIT', error)
-}
-
-// Enhanced token tracking with error handling
-async function trackTokenUsage(supabase: any, userId: string, tokenData: any) {
-  if (!supabase) {
-    console.warn('⚠️ Skipping token tracking - Supabase client not available')
-    return
-  }
-
-  try {
-    const { error } = await supabase
-      .from('token_usage')
-      .insert({
-        user_id: userId,
-        model_name: tokenData.modelName,
-        provider: tokenData.provider,
-        input_tokens: tokenData.inputTokens,
-        output_tokens: tokenData.outputTokens,
-        cost_usd: 0.0,
-        request_type: tokenData.requestType || 'chat',
-        session_id: null,
-        category: tokenData.category || 'prompt_analysis',
-        metadata: tokenData.metadata || {}
-      })
-    
-    if (error) {
-      logError('TOKEN_TRACKING', error, { userId, tokenData })
-    } else {
-      console.log('✅ Token usage tracked successfully')
-    }
-  } catch (error) {
-    logError('TOKEN_TRACKING_CATCH', error, { userId })
-  }
 }
 
 // Enhanced plugin fetching with new registry integration
@@ -606,7 +594,7 @@ function checkMentionedUnconnectedServices(userPrompt: string, connectedPlugins:
 }
 
 export async function POST(request: NextRequest) {
-  console.log('🚀 API Route called - Using only connected services')
+  console.log('🚀 API Route called - Using AI Analytics System with Activity Tracking')
   
   try {
     // Step 1: Parse request body with enhanced error handling
@@ -626,14 +614,26 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Step 2: Extract and validate parameters
-    const { prompt, userId, connected_plugins = {}, bypassPluginValidation = false } = requestBody
+    // Step 2: Extract and validate parameters with UUID handling
+    const { prompt, userId, connected_plugins = {}, sessionId: providedSessionId, bypassPluginValidation = false } = requestBody
     const userIdToUse = userId || request.headers.get('x-user-id') || 'anonymous'
+
+    // Generate proper UUID for session if not provided or if invalid
+    const sessionId = providedSessionId && isValidUUID(providedSessionId) 
+      ? providedSessionId 
+      : uuidv4()
+
+    // Generate agent ID (always a proper UUID)
+    const agentId = uuidv4()
 
     console.log('✅ Request parameters:', { 
       hasPrompt: !!prompt,
       promptLength: prompt?.length || 0,
       userId: userIdToUse,
+      originalSessionId: providedSessionId,
+      sessionId: sessionId,
+      agentId: agentId,
+      sessionIdGenerated: providedSessionId !== sessionId,
       bypassPluginValidation,
       connectedPluginsCount: Object.keys(connected_plugins).length
     })
@@ -704,24 +704,31 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    console.log('✅ All validations passed, calling OpenAI with connected services only...')
+    console.log('✅ All validations passed, calling OpenAI with AI Analytics tracking...')
 
-    // Step 7: Call OpenAI with enhanced error handling and plugin context
-    let openAIResponse
+    // Step 7: Call OpenAI with AI Analytics tracking INCLUDING ACTIVITY DATA
+    let aiResult: any
+    let openAIResponse: any
+    
     try {
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => {
-        console.log('⏱️ OpenAI request timeout')
-        controller.abort()
-      }, 45000)
+      if (!aiAnalytics) {
+        throw new Error('AI Analytics service not initialized')
+      }
 
-      openAIResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+      // Initialize OpenAI provider with analytics
+      const openaiProvider = new OpenAIProvider(process.env.OPENAI_API_KEY!, aiAnalytics)
+      
+      console.log('📊 Making tracked AI call with proper UUIDs:', {
+        userId: userIdToUse,
+        sessionId: sessionId,
+        agentId: agentId,
+        sessionIdValid: isValidUUID(sessionId),
+        agentIdValid: isValidUUID(agentId)
+      })
+      
+      // Make tracked AI call with ACTIVITY TRACKING and proper UUIDs
+      openAIResponse = await openaiProvider.chatCompletion(
+        {
           model: 'gpt-4o',
           messages: [
             { 
@@ -736,12 +743,23 @@ export async function POST(request: NextRequest) {
           temperature: 0.1,
           max_tokens: 1200,
           response_format: { type: "json_object" }
-        }),
-        signal: controller.signal
-      })
-
-      clearTimeout(timeoutId)
-      console.log('✅ OpenAI API call completed:', openAIResponse.status)
+        },
+        {
+          userId: userIdToUse,
+          sessionId: sessionId, // Now a proper UUID
+          feature: 'prompt_analysis',
+          component: 'smart-prompt-analyze',
+          workflow_step: 'ai_analysis',
+          category: 'agent_creation',
+          // Activity tracking fields with proper UUIDs
+          activity_type: 'agent_creation',
+          activity_name: 'Analyzing prompt clarity for workflow automation',
+          activity_step: 'prompt_analysis',
+          agent_id: agentId // Now a proper UUID
+        }
+      )
+      
+      console.log('✅ OpenAI API call completed with analytics and activity tracking')
       
     } catch (fetchError: any) {
       logError('OPENAI_FETCH', fetchError)
@@ -758,64 +776,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // ENHANCED: Better OpenAI error handling
-    if (!openAIResponse.ok) {
-      let errorText = 'Unknown error'
-      let errorDetails: any = {}
-      
-      try {
-        const contentType = openAIResponse.headers.get('content-type')
-        
-        if (contentType && contentType.includes('application/json')) {
-          const errorData = await openAIResponse.json()
-          errorDetails = errorData
-          errorText = JSON.stringify(errorData)
-        } else {
-          errorText = await openAIResponse.text()
-          errorDetails = { message: errorText }
-        }
-      } catch (parseError) {
-        console.error('❌ Could not parse OpenAI error response:', parseError)
-        errorDetails = {
-          message: `HTTP ${openAIResponse.status}: ${openAIResponse.statusText}`,
-          details: 'Could not parse error response'
-        }
-      }
-      
-      return NextResponse.json(
-        { 
-          error: `OpenAI API error: ${openAIResponse.status}`,
-          details: errorText,
-          ...createFallbackResponse(finalPrompt, connectedPluginData),
-          connectedPlugins,
-          connectedPluginData,
-          ...(pluginWarning && { pluginWarning })
-        },
-        { status: 500 }
-      )
-    }
-
-    // Step 8: Process OpenAI response with enhanced debugging
-    let aiData
-    try {
-      aiData = await openAIResponse.json()
-      console.log('✅ OpenAI response parsed successfully')
-      
-    } catch (parseError) {
-      logError('OPENAI_RESPONSE_PARSING', parseError)
-      return NextResponse.json(
-        { 
-          error: 'Failed to parse OpenAI response',
-          ...createFallbackResponse(finalPrompt, connectedPluginData),
-          connectedPlugins,
-          connectedPluginData,
-          ...(pluginWarning && { pluginWarning })
-        },
-        { status: 500 }
-      )
-    }
-
-    const rawContent = aiData.choices?.[0]?.message?.content
+    const rawContent = openAIResponse.choices?.[0]?.message?.content
     if (!rawContent) {
       console.error('❌ Empty OpenAI response content')
       return NextResponse.json(
@@ -830,8 +791,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Step 9: Parse AI result with enhanced error handling and validation
-    let aiResult
+    // Step 8: Parse AI result with enhanced error handling and validation
     try {
       aiResult = parseAIResponse(rawContent)
       
@@ -876,52 +836,35 @@ export async function POST(request: NextRequest) {
       aiResult.originalError = aiParseError.message
     }
 
-    // Step 10: Add scheduling questions and validate consistency
+    // Step 9: Add scheduling questions and validate consistency
     try {
       aiResult = validateConsistency(aiResult, finalPrompt, connectedPluginData)
     } catch (consistencyError) {
       logError('CONSISTENCY_VALIDATION', consistencyError)
     }
 
-    // Step 11: Build final response with complete plugin metadata
+    // Step 10: Build final response with complete plugin metadata
     const finalResult = {
       ...aiResult,
       connectedPlugins,
       connectedPluginData,
       pluginValidationError: false,
+      sessionId: sessionId, // Return the proper UUID
+      agentId: agentId, // Return the agent UUID
       ...(pluginWarning && { pluginWarning })
     }
 
-    // Step 12: Track usage (non-blocking)
-    if (userIdToUse !== 'anonymous' && aiData?.usage) {
-      try {
-        await trackTokenUsage(supabase, userIdToUse, {
-          modelName: 'gpt-4o',
-          provider: 'openai',
-          inputTokens: aiData.usage.prompt_tokens || 0,
-          outputTokens: aiData.usage.completion_tokens || 0,
-          requestType: 'analysis',
-          category: 'smart_prompt_analysis',
-          metadata: { 
-            clarityScore: finalResult.clarityScore,
-            questionsCount: finalResult.questionsSequence?.length || 0,
-            aiParsingFailed: finalResult.aiParsingFailed || false,
-            connectedPluginsCount: connectedPluginData.length,
-            pluginCapabilities: connectedPluginData.map(p => p.capabilities).flat()
-          }
-        })
-      } catch (trackingError) {
-        logError('USAGE_TRACKING', trackingError)
-      }
-    }
-
-    console.log('✅ Request completed successfully - questions only about connected services:', {
+    console.log('✅ Request completed successfully with AI Analytics and Activity Tracking:', {
       clarityScore: finalResult.clarityScore,
       questionsCount: finalResult.questionsSequence?.length || 0,
       needsClarification: finalResult.needsClarification,
       aiParsingFailed: finalResult.aiParsingFailed || false,
       pluginDataIncluded: finalResult.connectedPluginData?.length || 0,
-      pluginWarningCreated: !!pluginWarning
+      pluginWarningCreated: !!pluginWarning,
+      analyticsTracked: true,
+      activityTracked: true,
+      sessionId: finalResult.sessionId,
+      agentId: finalResult.agentId
     })
 
     return NextResponse.json(finalResult)

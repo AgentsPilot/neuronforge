@@ -1,19 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import OpenAI from 'openai'
-import { trackTokenUsage, LLMCategory } from '../../../components/orchestration/types/usage'
+import { v4 as uuidv4 } from 'uuid'
+import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics'
+import { OpenAIProvider } from '@/lib/ai/providers/openaiProvider'
 import { 
   getConnectedPluginsWithMetadata, 
   getPluginDefinition, 
   pluginRegistry 
 } from '@/lib/plugins/pluginRegistry'
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
-
 const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
+
+// Initialize AI Analytics
+const aiAnalytics = new AIAnalyticsService(supabase)
 
 // Detect mentioned services using plugin registry
 function detectMentionedServices(prompt: string): string[] {
@@ -432,28 +434,59 @@ Please analyze this automation request and return clarifying questions as a JSON
 
     console.log('13. Context message sent to AI:', contextMessage)
 
-    const { response: llmResponse, usage } = await callOpenAI(buildClarifySystemPrompt(pluginKeys, missingServices), contextMessage)
-    const clarificationData = await parseAndValidateLLMResponse(llmResponse, original_prompt)
+    // NEW: Use AI Analytics OpenAI Provider
+    const openaiProvider = new OpenAIProvider(process.env.OPENAI_API_KEY!, aiAnalytics)
+    
+    console.log('📊 Making tracked clarification AI call')
+    
+    const sessionId = uuidv4()
+    const agentId = agent_name ? `clarify_${Date.now()}` : uuidv4()
+    
+    const openAIResponse = await openaiProvider.chatCompletion(
+      {
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: buildClarifySystemPrompt(pluginKeys, missingServices) },
+          { role: 'user', content: contextMessage }
+        ],
+        temperature: 0.3,
+        max_tokens: 1500
+      },
+      {
+        userId: user_id,
+        sessionId: sessionId,
+        feature: 'clarification_questions',
+        component: 'clarification-api',
+        workflow_step: 'question_generation',
+        category: 'agent_creation',
+        activity_type: 'agent_creation',
+        activity_name: 'Generating clarification questions for workflow automation',
+        activity_step: 'question_generation',
+        agent_id: agentId
+      }
+    )
 
-    // Track token usage
-    if (user_id) {
-      await trackTokenUsage(supabase, user_id, {
-        modelName: 'gpt-4o',
-        provider: 'openai',
-        inputTokens: usage.prompt_tokens,
-        outputTokens: usage.completion_tokens,
-        requestType: 'chat',
-        category: LLMCategory.QUESTION_CLARIFICATION,
-        metadata: {
-          agent_name,
-          original_prompt,
-          questions_generated: clarificationData.questions.length,
-          connected_plugins: pluginKeys,
-          missing_services: missingServices,
-          confidence: clarificationData.confidence
-        }
-      })
+    console.log('✅ Clarification AI call completed with analytics tracking')
+
+    let content = openAIResponse.choices[0]?.message?.content || '[]'
+
+    // Remove markdown wrapper
+    content = content.trim()
+    if (content.startsWith('```')) {
+      content = content.replace(/```json|```/g, '').trim()
     }
+
+    console.log('Raw GPT response:', content)
+    
+    let llmResponse
+    try {
+      llmResponse = JSON.parse(content)
+    } catch (e) {
+      console.error('GPT parse failure:', e)
+      llmResponse = []
+    }
+
+    const clarificationData = await parseAndValidateLLMResponse(llmResponse, original_prompt)
 
     // Log analytics (don't fail if this errors)
     try {
@@ -489,49 +522,6 @@ Please analyze this automation request and return clarifying questions as a JSON
   } catch (error) {
     console.error('Clarification API error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
-}
-
-async function callOpenAI(systemPrompt: string, userPrompt: string): Promise<{
-  response: any,
-  usage: {
-    prompt_tokens: number,
-    completion_tokens: number,
-    total_tokens: number
-  }
-}> {
-  try {
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      temperature: 0.3,
-      max_tokens: 1500
-    })
-
-    let content = completion.choices[0]?.message?.content || '[]'
-
-    // Remove markdown wrapper
-    content = content.trim()
-    if (content.startsWith('```')) {
-      content = content.replace(/```json|```/g, '').trim()
-    }
-
-    console.log('Raw GPT response:', content)
-    
-    return {
-      response: JSON.parse(content),
-      usage: completion.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
-    }
-
-  } catch (e) {
-    console.error('GPT parse failure:', e)
-    return {
-      response: [],
-      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
-    }
   }
 }
 

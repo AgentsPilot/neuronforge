@@ -17,7 +17,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-// Simple token tracking function - matches your actual schema
+// Enhanced token tracking function with activity tracking
 async function trackTokenUsage(supabase: any, userId: string, tokenData: any) {
   try {
     const { error } = await supabase
@@ -32,6 +32,14 @@ async function trackTokenUsage(supabase: any, userId: string, tokenData: any) {
         request_type: tokenData.requestType || 'chat',
         session_id: null, // Add session tracking if needed
         category: tokenData.category || 'prompt_enhancement',
+        feature: 'prompt_enhancement',
+        component: 'prompt-enhancer',
+        workflow_step: 'enhancement',
+        // Add activity tracking fields
+        activity_type: tokenData.metadata?.activity_type || 'agent_creation',
+        activity_name: tokenData.metadata?.activity_name || 'Enhancing prompt structure',
+        activity_step: tokenData.metadata?.activity_step || 'prompt_enhancement',
+        agent_id: tokenData.metadata?.agent_id,
         metadata: tokenData.metadata || {}
       })
     
@@ -477,7 +485,7 @@ Respond with only a JSON object:
       total: inputTokens + outputTokens
     })
 
-    // Enhanced tracking with plugin metadata
+    // Enhanced tracking with plugin metadata and ACTIVITY TRACKING
     if (userIdToUse !== 'anonymous') {
       console.log('💾 Tracking usage for user:', userIdToUse)
       
@@ -509,10 +517,15 @@ Respond with only a JSON object:
             isContextAware: true,
             isPluginAware: true,
             pluginCapabilitiesUsed: connectedPluginData.flatMap(p => p.capabilities || []).slice(0, 10),
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            // ADD ACTIVITY TRACKING
+            activity_type: 'agent_creation',
+            activity_name: 'Enhancing prompt structure',
+            activity_step: 'prompt_enhancement',
+            agent_id: clarificationAnswers?.session_id || `enhance_${Date.now()}`
           }
         })
-        console.log('✅ Enhanced usage tracking successful')
+        console.log('✅ Enhanced usage tracking with activity data successful')
       } catch (trackingError) {
         console.warn('⚠️ Usage tracking failed, but continuing with response:', trackingError)
       }
@@ -545,7 +558,8 @@ Respond with only a JSON object:
         hadMissingPlugins: finalMissingPlugins.length > 0,
         isUserFriendly: true,
         isContextAware: true,
-        isPluginAware: true
+        isPluginAware: true,
+        activityTracked: true
       }
     })
   } catch (error) {

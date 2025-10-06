@@ -6,6 +6,8 @@ import { pluginList } from '@/lib/plugins/pluginList'
 import { getConnectedPluginsWithMetadata } from '@/lib/plugins/pluginRegistry'
 
 export async function GET() {
+  console.log('API: /api/user/plugins called')
+  
   const cookieStore = await cookies()
 
   const supabase = createServerClient(

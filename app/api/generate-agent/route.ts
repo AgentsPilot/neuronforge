@@ -395,13 +395,49 @@ Analyze the enhanced prompt and create agent specification with minimal essentia
       detected_categories: validDetectedPlugins.map(plugin => ({ plugin, detected: true }))
     }
 
+    // ADD ACTIVITY TRACKING for agent generation
+    try {
+      await supabase.from('token_usage').insert({
+        user_id: user.id,
+        model_name: 'gpt-4o',
+        provider: 'openai',
+        input_tokens: completion.usage?.prompt_tokens || 0,
+        output_tokens: completion.usage?.completion_tokens || 0,
+        cost_usd: 0.0, // Calculate based on your pricing
+        request_type: 'chat',
+        category: 'agent_generation',
+        feature: 'agent_creation',
+        component: 'agent-generator',
+        workflow_step: 'final_generation',
+        // ADD ACTIVITY TRACKING FIELDS
+        activity_type: 'agent_creation',
+        activity_name: `Creating agent: ${agentData.agent_name}`,
+        activity_step: 'agent_generation',
+        agent_id: clarificationAnswers?.session_id || `agent_${Date.now()}`,
+        session_id: clarificationAnswers?.session_id,
+        metadata: {
+          agent_name: agentData.agent_name,
+          plugins_used: validDetectedPlugins,
+          workflow_steps_count: enhancedWorkflowSteps.length,
+          input_schema_count: extracted.input_schema?.length || 0,
+          has_schedule: !!extracted.schedule,
+          output_inference: outputInference
+        }
+      })
+      console.log('✅ Activity tracking completed for agent generation')
+    } catch (trackingError) {
+      console.warn('⚠️ Token tracking failed:', trackingError)
+      // Don't fail the request if tracking fails
+    }
+
     return NextResponse.json({ 
       agent: agentData,
       extraction_details: {
         usedCapabilities,
         output_inference: outputInference,
         workflow_steps: enhancedWorkflowSteps,
-        input_template_analysis: inputTemplateAnalysis
+        input_template_analysis: inputTemplateAnalysis,
+        activity_tracked: true
       }
     })
 

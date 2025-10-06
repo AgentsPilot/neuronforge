@@ -2,124 +2,93 @@
 
 import React, { useState, useEffect } from 'react';
 import { 
-  BarChart3, 
-  TrendingUp, 
-  TrendingDown, 
+  Bot, 
+  Play, 
   DollarSign, 
-  Zap, 
-  Clock, 
   Calendar,
-  Download,
-  Filter,
   RefreshCw,
-  PieChart,
-  Activity,
-  Target,
-  AlertTriangle,
+  Download,
+  TrendingUp,
+  Clock,
   CheckCircle,
-  ArrowUp,
-  ArrowDown,
-  Minus,
-  Sparkles,
-  Brain,
-  Globe
+  XCircle,
+  Activity,
+  BarChart3
 } from 'lucide-react';
 import { useAuth } from '@/components/UserProvider';
-import { supabase } from '@/lib/supabaseClient';
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
-interface TokenUsage {
-  id: string;
-  user_id: string;
-  model_name: string;
-  provider: string;
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
-  cost_usd: number;
-  request_type: string;
-  session_id?: string;
-  metadata?: any;
-  created_at: string;
-  updated_at: string;
+interface AgentActivity {
+  agent_name: string;
+  agent_id: string;
+  total_cost: number;
+  creation_cost: number;
+  execution_cost: number;
+  total_runs: number;
+  successful_runs: number;
+  failed_runs: number;
+  last_used: string;
+  avg_response_time: number;
 }
 
-interface Analytics {
-  totalTokens: number;
-  totalCost: number;
-  totalRequests: number;
-  avgCostPerRequest: number;
-  avgTokensPerRequest: number;
-  avgCostPerToken: number;
-  dailyData: Array<{
-    date: string;
-    tokens: number;
-    cost: number;
-    requests: number;
-  }>;
-  modelBreakdown: Array<{
-    model: string;
-    provider: string;
-    tokens: number;
-    cost: number;
-    requests: number;
-    percentage: number;
-  }>;
-  hourlyPattern: Array<{
-    hour: number;
-    tokens: number;
-    cost: number;
-    requests: number;
-  }>;
-  efficiency: Array<{
-    model: string;
-    costPerToken: number;
-    tokensPerRequest: number;
-    costPerRequest: number;
-  }>;
-  trend: 'up' | 'down' | 'stable';
-  trendPercentage: number;
+interface DailyStats {
+  date: string;
+  agents_created: number;
+  agents_executed: number;
+  total_cost: number;
+  total_activities: number;
 }
 
-const TokenAnalyticsDashboard = () => {
+const SimpleAgentDashboard = () => {
   const { user } = useAuth();
-  const [tokenData, setTokenData] = useState<TokenUsage[]>([]);
-  const [timeFilter, setTimeFilter] = useState('30d');
-  const [modelFilter, setModelFilter] = useState('all');
+  const supabase = createClientComponentClient();
+  
+  const [timeFilter, setTimeFilter] = useState('last_30d');
   const [loading, setLoading] = useState(true);
-  const [analytics, setAnalytics] = useState<Analytics | null>(null);
+  const [rawData, setRawData] = useState<any[]>([]);
+  
+  // Simple aggregated metrics
+  const [totalCost, setTotalCost] = useState(0);
+  const [totalAgentsCreated, setTotalAgentsCreated] = useState(0);
+  const [totalAgentRuns, setTotalAgentRuns] = useState(0);
+  const [successRate, setSuccessRate] = useState(100);
+  
+  // Agent-focused data
+  const [agentActivities, setAgentActivities] = useState<AgentActivity[]>([]);
+  const [dailyStats, setDailyStats] = useState<DailyStats[]>([]);
 
   useEffect(() => {
     if (user) {
       loadData();
     }
-  }, [user, timeFilter, modelFilter]);
+  }, [user, timeFilter]);
 
   const loadData = async () => {
     if (!user?.id) return;
 
     setLoading(true);
     try {
-      // Calculate date filter
       const now = new Date();
-      const filterDate = new Date();
+      let filterDate = new Date();
       
       switch (timeFilter) {
-        case '7d':
+        case 'last_24h':
+          filterDate.setHours(now.getHours() - 24);
+          break;
+        case 'last_7d':
           filterDate.setDate(now.getDate() - 7);
           break;
-        case '30d':
+        case 'last_30d':
           filterDate.setDate(now.getDate() - 30);
           break;
-        case '90d':
+        case 'last_90d':
           filterDate.setDate(now.getDate() - 90);
           break;
-        case 'all':
         default:
           filterDate.setFullYear(2020);
           break;
       }
 
-      // Build query
       let query = supabase
         .from('token_usage')
         .select('*')
@@ -137,187 +106,184 @@ const TokenAnalyticsDashboard = () => {
         return;
       }
 
-      // Filter by model if selected
-      let filteredData = data || [];
-      if (modelFilter !== 'all') {
-        filteredData = filteredData.filter(item => item.model_name === modelFilter);
+      const filteredData = data || [];
+      setRawData(filteredData);
+
+      if (filteredData.length > 0) {
+        processSimpleAnalytics(filteredData);
+      } else {
+        resetAnalytics();
       }
 
-      setTokenData(filteredData);
-      calculateAnalytics(filteredData);
-
     } catch (error) {
-      console.error('Error in loadData:', error);
+      console.error('Error loading analytics data:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const calculateAnalytics = (data: TokenUsage[]) => {
-    if (!data.length) {
-      setAnalytics(null);
-      return;
-    }
+  const processSimpleAnalytics = (data: any[]) => {
+    // Calculate simple totals
+    const cost = data.reduce((sum, row) => sum + parseFloat(row.cost_usd?.toString() || '0'), 0);
+    setTotalCost(cost);
 
-    // Basic metrics
-    const totalTokens = data.reduce((sum, item) => sum + item.total_tokens, 0);
-    const totalCost = data.reduce((sum, item) => sum + item.cost_usd, 0);
-    const totalRequests = data.length;
-
-    // Daily breakdown
-    const dailyMap = new Map<string, { tokens: number; cost: number; requests: number }>();
-    data.forEach(item => {
-      const date = new Date(item.created_at).toISOString().split('T')[0];
-      const existing = dailyMap.get(date) || { tokens: 0, cost: 0, requests: 0 };
-      dailyMap.set(date, {
-        tokens: existing.tokens + item.total_tokens,
-        cost: existing.cost + item.cost_usd,
-        requests: existing.requests + 1
-      });
-    });
-
-    const dailyData = Array.from(dailyMap.entries())
-      .map(([date, data]) => ({ date, ...data }))
-      .sort((a, b) => a.date.localeCompare(b.date));
-
-    // Model breakdown
-    const modelMap = new Map<string, { tokens: number; cost: number; requests: number; provider: string }>();
-    data.forEach(item => {
-      const existing = modelMap.get(item.model_name) || { 
-        tokens: 0, 
-        cost: 0, 
-        requests: 0, 
-        provider: item.provider 
-      };
-      modelMap.set(item.model_name, {
-        tokens: existing.tokens + item.total_tokens,
-        cost: existing.cost + item.cost_usd,
-        requests: existing.requests + 1,
-        provider: item.provider
-      });
-    });
-
-    const modelBreakdown = Array.from(modelMap.entries())
-      .map(([model, data]) => ({ 
-        model, 
-        provider: data.provider,
-        tokens: data.tokens,
-        cost: data.cost,
-        requests: data.requests,
-        percentage: totalCost > 0 ? (data.cost / totalCost) * 100 : 0
-      }))
-      .sort((a, b) => b.cost - a.cost);
-
-    // Hourly pattern
-    const hourlyMap = new Map<number, { tokens: number; cost: number; requests: number }>();
-    for (let i = 0; i < 24; i++) {
-      hourlyMap.set(i, { tokens: 0, cost: 0, requests: 0 });
-    }
+    // Count agent creations and executions
+    const agentCreations = data.filter(row => 
+      row.metadata?.feature === 'agent_creation' || 
+      row.category === 'agent_creation'
+    );
     
-    data.forEach(item => {
-      const hour = new Date(item.created_at).getHours();
-      const existing = hourlyMap.get(hour)!;
-      hourlyMap.set(hour, {
-        tokens: existing.tokens + item.total_tokens,
-        cost: existing.cost + item.cost_usd,
-        requests: existing.requests + 1
-      });
+    const agentExecutions = data.filter(row => 
+      row.metadata?.execution_type === 'production' || 
+      row.metadata?.execution_type === 'test' ||
+      row.metadata?.feature === 'agent_execution'
+    );
+
+    setTotalAgentsCreated(agentCreations.length);
+    setTotalAgentRuns(agentExecutions.length);
+
+    // Calculate success rate for executions only
+    const successfulExecutions = agentExecutions.filter(row => 
+      row.metadata?.success !== false && !row.metadata?.error_code
+    );
+    const execSuccessRate = agentExecutions.length > 0 
+      ? (successfulExecutions.length / agentExecutions.length) * 100 
+      : 100;
+    setSuccessRate(execSuccessRate);
+
+    // Group by agent
+    const agentMap = new Map<string, any>();
+    
+    data.forEach(row => {
+      const agentName = row.metadata?.agent_name || 'Unknown Agent';
+      const agentId = row.metadata?.agent_id || 'unknown';
+      const key = `${agentId}-${agentName}`;
+      
+      if (!agentMap.has(key)) {
+        agentMap.set(key, {
+          agent_name: agentName,
+          agent_id: agentId,
+          total_cost: 0,
+          creation_cost: 0,
+          execution_cost: 0,
+          total_runs: 0,
+          successful_runs: 0,
+          failed_runs: 0,
+          last_used: row.created_at,
+          latencies: []
+        });
+      }
+
+      const agent = agentMap.get(key);
+      agent.total_cost += parseFloat(row.cost_usd?.toString() || '0');
+      
+      // Categorize costs
+      if (row.metadata?.feature === 'agent_creation' || row.category === 'agent_creation') {
+        agent.creation_cost += parseFloat(row.cost_usd?.toString() || '0');
+      } else if (row.metadata?.execution_type === 'production' || row.metadata?.execution_type === 'test') {
+        agent.execution_cost += parseFloat(row.cost_usd?.toString() || '0');
+        agent.total_runs += 1;
+        
+        if (row.metadata?.success !== false && !row.metadata?.error_code) {
+          agent.successful_runs += 1;
+        } else {
+          agent.failed_runs += 1;
+        }
+      }
+
+      // Track latency
+      if (row.metadata?.latency_ms) {
+        agent.latencies.push(row.metadata.latency_ms);
+      }
+
+      // Update last used
+      if (new Date(row.created_at) > new Date(agent.last_used)) {
+        agent.last_used = row.created_at;
+      }
     });
 
-    const hourlyPattern = Array.from(hourlyMap.entries()).map(([hour, data]) => ({ hour, ...data }));
+    // Convert to array and calculate averages
+    const activities = Array.from(agentMap.values()).map(agent => ({
+      ...agent,
+      avg_response_time: agent.latencies.length > 0 
+        ? agent.latencies.reduce((sum: number, lat: number) => sum + lat, 0) / agent.latencies.length 
+        : 0
+    })).sort((a, b) => b.total_cost - a.total_cost);
 
-    // Cost efficiency by model
-    const efficiency = modelBreakdown.map(model => ({
-      model: model.model,
-      costPerToken: model.tokens > 0 ? model.cost / model.tokens : 0,
-      tokensPerRequest: model.requests > 0 ? model.tokens / model.requests : 0,
-      costPerRequest: model.requests > 0 ? model.cost / model.requests : 0
-    }));
+    setAgentActivities(activities);
 
-    // Trend calculation
-    const recentDays = dailyData.slice(-7);
-    const previousDays = dailyData.slice(-14, -7);
+    // Daily stats
+    const dailyMap = new Map<string, DailyStats>();
     
-    const recentAvg = recentDays.length > 0 ? 
-      recentDays.reduce((sum, day) => sum + day.cost, 0) / recentDays.length : 0;
-    const previousAvg = previousDays.length > 0 ? 
-      previousDays.reduce((sum, day) => sum + day.cost, 0) / previousDays.length : 0;
-    
-    const trendPercentage = previousAvg > 0 ? ((recentAvg - previousAvg) / previousAvg) * 100 : 0;
-    const trend: 'up' | 'down' | 'stable' = Math.abs(trendPercentage) < 5 ? 'stable' : trendPercentage > 0 ? 'up' : 'down';
+    data.forEach(row => {
+      const date = new Date(row.created_at).toISOString().split('T')[0];
+      
+      if (!dailyMap.has(date)) {
+        dailyMap.set(date, {
+          date,
+          agents_created: 0,
+          agents_executed: 0,
+          total_cost: 0,
+          total_activities: 0
+        });
+      }
 
-    setAnalytics({
-      totalTokens,
-      totalCost,
-      totalRequests,
-      avgCostPerRequest: totalRequests > 0 ? totalCost / totalRequests : 0,
-      avgTokensPerRequest: totalRequests > 0 ? totalTokens / totalRequests : 0,
-      avgCostPerToken: totalTokens > 0 ? totalCost / totalTokens : 0,
-      dailyData,
-      modelBreakdown,
-      hourlyPattern,
-      efficiency,
-      trend,
-      trendPercentage: Math.abs(trendPercentage)
+      const day = dailyMap.get(date)!;
+      day.total_cost += parseFloat(row.cost_usd?.toString() || '0');
+      day.total_activities += 1;
+
+      if (row.metadata?.feature === 'agent_creation' || row.category === 'agent_creation') {
+        day.agents_created += 1;
+      } else if (row.metadata?.execution_type === 'production' || row.metadata?.execution_type === 'test') {
+        day.agents_executed += 1;
+      }
     });
+
+    const daily = Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+    setDailyStats(daily);
   };
 
-  const formatCost = (cost: number) => `$${cost.toFixed(4)}`;
-  const formatNumber = (num: number) => num.toLocaleString();
+  const resetAnalytics = () => {
+    setTotalCost(0);
+    setTotalAgentsCreated(0);
+    setTotalAgentRuns(0);
+    setSuccessRate(100);
+    setAgentActivities([]);
+    setDailyStats([]);
+  };
+
+  const formatCost = (cost: number) => `$${cost.toFixed(3)}`;
+  const formatTime = (ms: number) => ms < 1000 ? `${ms.toFixed(0)}ms` : `${(ms/1000).toFixed(1)}s`;
+
+  const getTimeFilterLabel = () => {
+    switch (timeFilter) {
+      case 'last_24h': return 'last 24 hours';
+      case 'last_7d': return 'last 7 days';
+      case 'last_30d': return 'last 30 days';
+      case 'last_90d': return 'last 90 days';
+      default: return 'all time';
+    }
+  };
 
   const exportData = () => {
-    if (!analytics) return;
+    const csvContent = [
+      ['Agent Name', 'Total Cost', 'Creation Cost', 'Execution Cost', 'Total Runs', 'Success Rate', 'Last Used'],
+      ...agentActivities.map(agent => [
+        agent.agent_name,
+        agent.total_cost.toFixed(4),
+        agent.creation_cost.toFixed(4),
+        agent.execution_cost.toFixed(4),
+        agent.total_runs,
+        agent.total_runs > 0 ? `${((agent.successful_runs / agent.total_runs) * 100).toFixed(1)}%` : 'N/A',
+        new Date(agent.last_used).toLocaleDateString()
+      ])
+    ].map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
     
-    // Create CSV content
-    const csvHeaders = [
-      'Date/Time',
-      'Model',
-      'Provider', 
-      'Request Type',
-      'Input Tokens',
-      'Output Tokens',
-      'Total Tokens',
-      'Cost (USD)',
-      'Session ID'
-    ];
-    
-    const csvRows = tokenData.map(item => [
-      new Date(item.created_at).toLocaleString(),
-      item.model_name,
-      item.provider,
-      item.request_type,
-      item.input_tokens,
-      item.output_tokens,
-      item.total_tokens,
-      item.cost_usd,
-      item.session_id || ''
-    ]);
-    
-    // Add summary row
-    csvRows.unshift(['=== SUMMARY ===', '', '', '', '', '', '', '', '']);
-    csvRows.push(['', '', '', '', '', '', '', '', '']);
-    csvRows.push(['Summary', '', '', '', '', '', '', '', '']);
-    csvRows.push(['Total Tokens', analytics.totalTokens, '', '', '', '', '', '', '']);
-    csvRows.push(['Total Cost', `${analytics.totalCost.toFixed(4)}`, '', '', '', '', '', '', '']);
-    csvRows.push(['Total Requests', analytics.totalRequests, '', '', '', '', '', '', '']);
-    csvRows.push(['Avg Cost/Request', `${analytics.avgCostPerRequest.toFixed(4)}`, '', '', '', '', '', '', '']);
-    csvRows.push(['Avg Tokens/Request', Math.round(analytics.avgTokensPerRequest), '', '', '', '', '', '', '']);
-    csvRows.push(['Time Filter', timeFilter, '', '', '', '', '', '', '']);
-    csvRows.push(['Generated At', new Date().toLocaleString(), '', '', '', '', '', '', '']);
-    csvRows.push(['', '', '', '', '', '', '', '', '']);
-    csvRows.push(['=== DETAILED DATA ===', '', '', '', '', '', '', '', '']);
-    
-    // Convert to CSV format
-    const csvContent = [csvHeaders, ...csvRows]
-      .map(row => row.map(cell => `"${cell}"`).join(','))
-      .join('\n');
-    
-    // Create and download file
     const dataBlob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(dataBlob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `token-analytics-${timeFilter}-${Date.now()}.csv`;
+    link.download = `agent-usage-report-${timeFilter}-${Date.now()}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -326,44 +292,57 @@ const TokenAnalyticsDashboard = () => {
     return (
       <div className="flex items-center justify-center py-16">
         <div className="text-center">
-          <div className="relative mb-6">
-            <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto shadow-xl">
-              <BarChart3 className="h-8 w-8 text-white" />
-            </div>
+          <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto shadow-xl mb-4">
+            <Bot className="h-8 w-8 text-white animate-pulse" />
           </div>
-          <p className="text-gray-600 font-medium">Loading analytics...</p>
+          <p className="text-gray-600 font-medium">Loading your agent analytics...</p>
         </div>
       </div>
     );
   }
 
-  if (!analytics) {
+  if (rawData.length === 0) {
     return (
       <div className="space-y-6">
-        {/* Header for empty state */}
         <div className="text-center space-y-3">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 rounded-3xl shadow-xl mb-4">
-            <BarChart3 className="h-8 w-8 text-white" />
+          <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-3xl flex items-center justify-center mx-auto shadow-xl mb-4">
+            <Bot className="h-8 w-8 text-white" />
           </div>
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-gray-900 via-indigo-800 to-purple-800 bg-clip-text text-transparent">
-            AI Token Analytics
+          <h1 className="text-3xl font-bold text-gray-900">
+            Agent Usage Dashboard
           </h1>
-          <p className="text-gray-600 font-medium">Comprehensive analysis of your AI consumption and performance</p>
+          <p className="text-gray-600 font-medium">Track your workflow agents and AI spending</p>
         </div>
 
-        <div className="text-center py-16 bg-gradient-to-br from-white/80 to-indigo-50/80 backdrop-blur-sm rounded-3xl border border-gray-200/50 shadow-xl">
-          <div className="w-20 h-20 bg-gradient-to-br from-gray-400 to-gray-500 rounded-3xl flex items-center justify-center mx-auto shadow-xl mb-6">
-            <Brain className="h-10 w-10 text-white" />
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-lg p-6">
+          <div className="flex items-center justify-between">
+            <select
+              value={timeFilter}
+              onChange={(e) => setTimeFilter(e.target.value)}
+              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="last_24h">Last 24 hours</option>
+              <option value="last_7d">Last 7 days</option>
+              <option value="last_30d">Last 30 days</option>
+              <option value="last_90d">Last 90 days</option>
+            </select>
+            
+            <button
+              onClick={loadData}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Refresh
+            </button>
           </div>
-          <h3 className="text-2xl font-bold text-gray-900 mb-3">No AI Usage Data Found</h3>
-          <p className="text-gray-600 mb-8 font-medium max-w-md mx-auto leading-relaxed">Start using AI models to see comprehensive analytics and insights here</p>
-          <button
-            onClick={loadData}
-            className="inline-flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 font-semibold"
-          >
-            <RefreshCw className="w-5 h-5" />
-            Refresh Data
-          </button>
+        </div>
+
+        <div className="text-center py-16 bg-gray-50 rounded-2xl border border-gray-200">
+          <Bot className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+          <h3 className="text-xl font-bold text-gray-900 mb-2">No Agent Activity Yet</h3>
+          <p className="text-gray-600 max-w-md mx-auto">
+            Start creating and running workflow agents to see your usage analytics here
+          </p>
         </div>
       </div>
     );
@@ -371,55 +350,35 @@ const TokenAnalyticsDashboard = () => {
 
   return (
     <div className="space-y-6">
-      {/* Modern Header */}
+      {/* Header */}
       <div className="text-center space-y-3">
-        <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 rounded-3xl shadow-xl mb-4">
-          <BarChart3 className="h-8 w-8 text-white" />
+        <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-3xl flex items-center justify-center mx-auto shadow-xl mb-4">
+          <Bot className="h-8 w-8 text-white" />
         </div>
-        <h1 className="text-3xl font-bold bg-gradient-to-r from-gray-900 via-indigo-800 to-purple-800 bg-clip-text text-transparent">
-          AI Token Analytics
+        <h1 className="text-3xl font-bold text-gray-900">
+          Agent Usage Dashboard
         </h1>
-        <p className="text-gray-600 font-medium">Comprehensive analysis of your AI consumption and performance</p>
+        <p className="text-gray-600 font-medium">Your workflow agents for the {getTimeFilterLabel()}</p>
       </div>
 
-      {/* Modern Controls */}
-      <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl p-6">
-        <div className="flex flex-col lg:flex-row gap-4 items-center justify-between">
-          <div className="flex items-center gap-4 flex-1 w-full lg:w-auto">
-            {/* Modern Search */}
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 px-4 py-3 bg-white border border-gray-300 rounded-xl shadow-sm hover:shadow-md transition-all">
-                <Filter className="w-4 h-4 text-gray-500" />
-                <select
-                  value={timeFilter}
-                  onChange={(e) => setTimeFilter(e.target.value)}
-                  className="bg-transparent border-none outline-none text-gray-700 text-sm font-medium cursor-pointer"
-                >
-                  <option value="7d">Last 7 days</option>
-                  <option value="30d">Last 30 days</option>
-                  <option value="90d">Last 90 days</option>
-                  <option value="all">All time</option>
-                </select>
-              </div>
-              
-              <select
-                value={modelFilter}
-                onChange={(e) => setModelFilter(e.target.value)}
-                className="px-4 py-3 bg-white border border-gray-300 rounded-xl text-gray-700 text-sm font-medium focus:ring-2 focus:ring-indigo-500 shadow-sm hover:shadow-md transition-all"
-              >
-                <option value="all">All models</option>
-                {analytics.modelBreakdown.map(model => (
-                  <option key={model.model} value={model.model}>{model.model}</option>
-                ))}
-              </select>
-            </div>
-          </div>
+      {/* Controls */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-lg p-6">
+        <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
+          <select
+            value={timeFilter}
+            onChange={(e) => setTimeFilter(e.target.value)}
+            className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="last_24h">Last 24 hours</option>
+            <option value="last_7d">Last 7 days</option>
+            <option value="last_30d">Last 30 days</option>
+            <option value="last_90d">Last 90 days</option>
+          </select>
 
-          {/* Modern Action Buttons */}
           <div className="flex items-center gap-3">
             <button
               onClick={loadData}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 text-sm font-semibold"
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
             >
               <RefreshCw className="w-4 h-4" />
               Refresh
@@ -427,314 +386,180 @@ const TokenAnalyticsDashboard = () => {
             
             <button
               onClick={exportData}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-all duration-300 shadow-sm hover:shadow-md hover:scale-105 text-sm font-semibold"
+              className="flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
             >
               <Download className="w-4 h-4" />
-              Export CSV
+              Export
             </button>
           </div>
         </div>
       </div>
 
-      {/* Modern Stats Cards */}
+      {/* Key Metrics */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="group relative overflow-hidden bg-gradient-to-br from-purple-50 to-indigo-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
-          <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-indigo-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-          <div className="relative flex items-center gap-3">
-            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-indigo-500 rounded-2xl flex items-center justify-center shadow-lg">
-              <Zap className="h-6 w-6 text-white" />
+        <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-lg">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-blue-100 rounded-2xl flex items-center justify-center">
+              <DollarSign className="h-6 w-6 text-blue-600" />
             </div>
             <div>
-              <p className="text-sm text-purple-700 font-semibold">Total Tokens</p>
-              <p className="text-2xl font-bold text-purple-900">{formatNumber(analytics.totalTokens)}</p>
+              <p className="text-sm text-gray-600 font-medium">Total Spent</p>
+              <p className="text-2xl font-bold text-gray-900">{formatCost(totalCost)}</p>
             </div>
-          </div>
-          <div className="mt-3 flex items-center gap-2">
-            {analytics.trend === 'up' ? <ArrowUp className="w-4 h-4 text-red-500" /> :
-             analytics.trend === 'down' ? <ArrowDown className="w-4 h-4 text-purple-500" /> :
-             <Minus className="w-4 h-4 text-slate-400" />}
-            <span className={`text-xs font-medium ${
-              analytics.trend === 'up' ? 'text-red-500' : 
-              analytics.trend === 'down' ? 'text-purple-500' : 'text-slate-400'
-            }`}>
-              {analytics.trend === 'stable' ? 'Stable usage' : `${analytics.trendPercentage.toFixed(1)}% ${analytics.trend}`}
-            </span>
           </div>
         </div>
 
-        <div className="group relative overflow-hidden bg-gradient-to-br from-indigo-50 to-purple-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
-          <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-purple-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-          <div className="relative flex items-center gap-3">
-            <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-2xl flex items-center justify-center shadow-lg">
-              <DollarSign className="h-6 w-6 text-white" />
+        <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-lg">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-green-100 rounded-2xl flex items-center justify-center">
+              <Bot className="h-6 w-6 text-green-600" />
             </div>
             <div>
-              <p className="text-sm text-indigo-700 font-semibold">Total Cost</p>
-              <p className="text-2xl font-bold text-indigo-900">{formatCost(analytics.totalCost)}</p>
+              <p className="text-sm text-gray-600 font-medium">Agents Created</p>
+              <p className="text-2xl font-bold text-gray-900">{totalAgentsCreated}</p>
             </div>
           </div>
-          <p className="text-xs text-indigo-600 font-medium mt-3">
-            {formatCost(analytics.avgCostPerRequest)} avg per request
-          </p>
         </div>
 
-        <div className="group relative overflow-hidden bg-gradient-to-br from-purple-50 to-pink-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
-          <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-pink-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-          <div className="relative flex items-center gap-3">
-            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-pink-500 rounded-2xl flex items-center justify-center shadow-lg">
-              <BarChart3 className="h-6 w-6 text-white" />
+        <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-lg">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-purple-100 rounded-2xl flex items-center justify-center">
+              <Play className="h-6 w-6 text-purple-600" />
             </div>
             <div>
-              <p className="text-sm text-purple-700 font-semibold">Total Requests</p>
-              <p className="text-2xl font-bold text-purple-900">{formatNumber(analytics.totalRequests)}</p>
+              <p className="text-sm text-gray-600 font-medium">Agent Runs</p>
+              <p className="text-2xl font-bold text-gray-900">{totalAgentRuns}</p>
             </div>
           </div>
-          <p className="text-xs text-purple-600 font-medium mt-3">
-            {formatNumber(Math.round(analytics.avgTokensPerRequest))} avg tokens/request
-          </p>
         </div>
 
-        <div className="group relative overflow-hidden bg-gradient-to-br from-indigo-50 to-violet-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
-          <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-violet-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-          <div className="relative flex items-center gap-3">
-            <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-violet-500 rounded-2xl flex items-center justify-center shadow-lg">
-              <Target className="h-6 w-6 text-white" />
+        <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-lg">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-emerald-100 rounded-2xl flex items-center justify-center">
+              <CheckCircle className="h-6 w-6 text-emerald-600" />
             </div>
             <div>
-              <p className="text-sm text-indigo-700 font-semibold">Cost per 1K Tokens</p>
-              <p className="text-2xl font-bold text-indigo-900">{formatCost(analytics.avgCostPerToken * 1000)}</p>
+              <p className="text-sm text-gray-600 font-medium">Success Rate</p>
+              <p className="text-2xl font-bold text-gray-900">{successRate.toFixed(1)}%</p>
             </div>
           </div>
-          <p className="text-xs text-indigo-600 font-medium mt-3">
-            Industry standard metric
-          </p>
         </div>
       </div>
 
-      {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Daily Usage Chart */}
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-slate-200/50 p-6 shadow-sm hover:shadow-md transition-all duration-300">
-          <h3 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-purple-500/20 to-indigo-500/20 rounded-lg">
-              <TrendingUp className="w-5 h-5 text-purple-600" />
-            </div>
-            Daily Usage Trends
-          </h3>
+      {/* Agent List */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-lg p-6">
+        <h3 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-3">
+          <BarChart3 className="w-6 h-6 text-blue-600" />
+          Your Workflow Agents
+        </h3>
+        
+        {agentActivities.length === 0 ? (
+          <div className="text-center py-8">
+            <Bot className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+            <p className="text-gray-600">No agent data available for this time period</p>
+          </div>
+        ) : (
           <div className="space-y-4">
-            {analytics.dailyData.slice(-14).map((day, index) => {
-              const maxTokens = Math.max(...analytics.dailyData.map(d => d.tokens));
-              const tokenWidth = maxTokens > 0 ? (day.tokens / maxTokens) * 100 : 0;
+            {agentActivities.map((agent, index) => (
+              <div key={`${agent.agent_id}-${index}`} className="border border-gray-200 rounded-xl p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
+                      <Bot className="w-5 h-5 text-blue-600" />
+                    </div>
+                    <div>
+                      <h4 className="font-semibold text-gray-900">{agent.agent_name}</h4>
+                      <p className="text-sm text-gray-500">ID: {agent.agent_id}</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-lg font-bold text-gray-900">{formatCost(agent.total_cost)}</p>
+                    <p className="text-sm text-gray-500">Total Cost</p>
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 text-sm">
+                  <div>
+                    <p className="text-gray-500">Creation Cost</p>
+                    <p className="font-semibold">{formatCost(agent.creation_cost)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500">Execution Cost</p>
+                    <p className="font-semibold">{formatCost(agent.execution_cost)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500">Total Runs</p>
+                    <p className="font-semibold">{agent.total_runs}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500">Success Rate</p>
+                    <p className="font-semibold flex items-center gap-1">
+                      {agent.total_runs > 0 ? (
+                        <>
+                          {agent.failed_runs > 0 ? (
+                            <XCircle className="w-4 h-4 text-red-500" />
+                          ) : (
+                            <CheckCircle className="w-4 h-4 text-green-500" />
+                          )}
+                          {((agent.successful_runs / agent.total_runs) * 100).toFixed(1)}%
+                        </>
+                      ) : (
+                        'N/A'
+                      )}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500">Last Used</p>
+                    <p className="font-semibold">{new Date(agent.last_used).toLocaleDateString()}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Daily Activity Chart */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-lg p-6">
+        <h3 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-3">
+          <TrendingUp className="w-6 h-6 text-green-600" />
+          Daily Activity
+        </h3>
+        
+        {dailyStats.length === 0 ? (
+          <div className="text-center py-8">
+            <Activity className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+            <p className="text-gray-600">No daily activity data available</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {dailyStats.slice(-14).map((day, index) => {
+              const maxCost = Math.max(...dailyStats.map(d => d.total_cost));
+              const costWidth = maxCost > 0 ? (day.total_cost / maxCost) * 100 : 0;
               
               return (
                 <div key={day.date} className="space-y-2">
                   <div className="flex justify-between items-center">
-                    <span className="text-sm font-semibold text-slate-700">
+                    <span className="text-sm font-semibold text-gray-700">
                       {new Date(day.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                     </span>
                     <div className="text-right">
-                      <div className="text-sm font-bold text-slate-900">{formatNumber(day.tokens)}</div>
-                      <div className="text-xs text-slate-500 font-medium">{formatCost(day.cost)}</div>
+                      <div className="text-sm font-bold text-gray-900">{formatCost(day.total_cost)}</div>
                     </div>
                   </div>
-                  <div className="bg-slate-100 rounded-full h-3 overflow-hidden">
+                  <div className="bg-gray-100 rounded-full h-2 overflow-hidden">
                     <div 
-                      className="bg-gradient-to-r from-purple-500 to-indigo-600 h-3 rounded-full transition-all duration-500 shadow-sm"
-                      style={{ width: `${Math.max(tokenWidth, 3)}%` }}
+                      className="bg-gradient-to-r from-blue-500 to-purple-600 h-2 rounded-full transition-all duration-500"
+                      style={{ width: `${Math.max(costWidth, 2)}%` }}
                     ></div>
                   </div>
-                  <div className="text-xs text-slate-500 font-medium">{day.requests} requests</div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Model Distribution */}
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-slate-200/50 p-6 shadow-sm hover:shadow-md transition-all duration-300">
-          <h3 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-indigo-500/20 to-purple-500/20 rounded-lg">
-              <PieChart className="w-5 h-5 text-indigo-600" />
-            </div>
-            Model Distribution
-          </h3>
-          <div className="space-y-4">
-            {analytics.modelBreakdown.map((model, index) => {
-              const gradients = [
-                'from-purple-500 to-indigo-600',
-                'from-indigo-500 to-purple-600',
-                'from-purple-500 to-pink-600',
-                'from-indigo-500 to-violet-600',
-                'from-violet-500 to-purple-600',
-                'from-pink-500 to-purple-600'
-              ];
-              const bgGradients = [
-                'from-purple-500/20 to-indigo-600/20',
-                'from-indigo-500/20 to-purple-600/20',
-                'from-purple-500/20 to-pink-600/20',
-                'from-indigo-500/20 to-violet-600/20',
-                'from-violet-500/20 to-purple-600/20',
-                'from-pink-500/20 to-purple-600/20'
-              ];
-              const gradient = gradients[index % gradients.length];
-              const bgGradient = bgGradients[index % bgGradients.length];
-              
-              return (
-                <div key={model.model} className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-3 h-3 rounded-full bg-gradient-to-r ${gradient} shadow-sm`}></div>
-                      <div>
-                        <span className="font-semibold text-slate-900 text-sm">{model.model}</span>
-                        <span className="text-xs text-slate-500 ml-2 font-medium">({model.provider})</span>
-                      </div>
-                    </div>
-                    <span className="text-sm font-semibold text-slate-600">{model.percentage.toFixed(1)}%</span>
-                  </div>
-                  <div className={`bg-gradient-to-r ${bgGradient} rounded-full h-2 overflow-hidden border border-slate-200/50`}>
-                    <div 
-                      className={`bg-gradient-to-r ${gradient} h-2 rounded-full transition-all duration-500 shadow-sm`}
-                      style={{ width: `${model.percentage}%` }}
-                    ></div>
-                  </div>
-                  <div className="flex justify-between text-xs text-slate-500 font-medium">
-                    <span>{formatNumber(model.tokens)} tokens</span>
-                    <span>{formatCost(model.cost)}</span>
+                  <div className="flex justify-between text-xs text-gray-500">
+                    <span>{day.agents_created} created</span>
+                    <span>{day.agents_executed} executed</span>
                   </div>
                 </div>
               );
             })}
-          </div>
-        </div>
-      </div>
-
-      {/* Hourly Pattern */}
-      <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-slate-200/50 p-6 shadow-sm hover:shadow-md transition-all duration-300">
-        <h3 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-3">
-          <div className="p-2 bg-gradient-to-br from-indigo-500/20 to-purple-500/20 rounded-lg">
-            <Clock className="w-5 h-5 text-indigo-600" />
-          </div>
-          24-Hour Usage Pattern
-        </h3>
-        <div className="grid grid-cols-24 gap-1">
-          {analytics.hourlyPattern.map((hour) => {
-            const maxTokens = Math.max(...analytics.hourlyPattern.map(h => h.tokens));
-            const height = maxTokens > 0 ? (hour.tokens / maxTokens) * 100 : 0;
-            
-            return (
-              <div key={hour.hour} className="flex flex-col items-center group">
-                <div className="h-24 flex items-end justify-center w-full">
-                  <div 
-                    className="w-full bg-gradient-to-t from-indigo-500 to-purple-500 rounded-t-md hover:from-indigo-600 hover:to-purple-600 transition-all duration-300 cursor-pointer shadow-sm group-hover:shadow-md"
-                    style={{ height: `${Math.max(height, 3)}%` }}
-                    title={`${hour.hour}:00 - ${formatNumber(hour.tokens)} tokens, ${formatCost(hour.cost)}`}
-                  ></div>
-                </div>
-                <div className="text-xs text-slate-600 font-medium mt-1">{hour.hour}</div>
-              </div>
-            );
-          })}
-        </div>
-        <div className="text-center text-xs text-slate-500 font-medium mt-4">Hour of day (24h format)</div>
-      </div>
-
-      {/* Efficiency Analysis */}
-      <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-slate-200/50 p-6 shadow-sm hover:shadow-md transition-all duration-300">
-        <h3 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-3">
-          <div className="p-2 bg-gradient-to-br from-purple-500/20 to-pink-500/20 rounded-lg">
-            <Activity className="w-5 h-5 text-purple-600" />
-          </div>
-          Model Efficiency Analysis
-        </h3>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-slate-200">
-                <th className="text-left py-3 px-4 font-bold text-slate-700 text-sm">Model</th>
-                <th className="text-right py-3 px-4 font-bold text-slate-700 text-sm">Cost/Token</th>
-                <th className="text-right py-3 px-4 font-bold text-slate-700 text-sm">Tokens/Request</th>
-                <th className="text-right py-3 px-4 font-bold text-slate-700 text-sm">Cost/Request</th>
-                <th className="text-center py-3 px-4 font-bold text-slate-700 text-sm">Efficiency</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {analytics.efficiency.map((model, index) => {
-                const avgCostPerToken = analytics.efficiency.length > 0 ? 
-                  analytics.efficiency.reduce((sum, m) => sum + m.costPerToken, 0) / analytics.efficiency.length : 0;
-                const isEfficient = model.costPerToken < avgCostPerToken;
-                
-                return (
-                  <tr key={model.model} className="hover:bg-slate-50/80 transition-colors duration-200">
-                    <td className="py-3 px-4 font-semibold text-slate-900 text-sm">{model.model}</td>
-                    <td className="py-3 px-4 text-right font-medium text-slate-700 text-sm">{formatCost(model.costPerToken)}</td>
-                    <td className="py-3 px-4 text-right font-medium text-slate-700 text-sm">{formatNumber(Math.round(model.tokensPerRequest))}</td>
-                    <td className="py-3 px-4 text-right font-medium text-slate-700 text-sm">{formatCost(model.costPerRequest)}</td>
-                    <td className="py-3 px-4 text-center">
-                      {isEfficient ? (
-                        <div className="inline-flex items-center justify-center w-6 h-6 bg-purple-100 rounded-full">
-                          <CheckCircle className="w-4 h-4 text-purple-600" />
-                        </div>
-                      ) : (
-                        <div className="inline-flex items-center justify-center w-6 h-6 bg-indigo-100 rounded-full">
-                          <AlertTriangle className="w-4 h-4 text-indigo-600" />
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Recent High-Cost Requests */}
-      <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-slate-200/50 p-6 shadow-sm hover:shadow-md transition-all duration-300">
-        <h3 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-3">
-          <div className="p-2 bg-gradient-to-br from-purple-500/20 to-pink-500/20 rounded-lg">
-            <Sparkles className="w-5 h-5 text-purple-600" />
-          </div>
-          Recent High-Cost Requests
-        </h3>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-slate-200">
-                <th className="text-left py-3 px-4 font-bold text-slate-700 text-sm">Time</th>
-                <th className="text-left py-3 px-4 font-bold text-slate-700 text-sm">Model</th>
-                <th className="text-left py-3 px-4 font-bold text-slate-700 text-sm">Provider</th>
-                <th className="text-left py-3 px-4 font-bold text-slate-700 text-sm">Type</th>
-                <th className="text-right py-3 px-4 font-bold text-slate-700 text-sm">Input</th>
-                <th className="text-right py-3 px-4 font-bold text-slate-700 text-sm">Output</th>
-                <th className="text-right py-3 px-4 font-bold text-slate-700 text-sm">Total</th>
-                <th className="text-right py-3 px-4 font-bold text-slate-700 text-sm">Cost</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {tokenData
-                .sort((a, b) => b.cost_usd - a.cost_usd)
-                .slice(0, 10)
-                .map((item, index) => (
-                <tr key={item.id} className="hover:bg-slate-50/80 transition-colors duration-200">
-                  <td className="py-3 px-4 text-slate-700 font-medium text-sm">
-                    {new Date(item.created_at).toLocaleString()}
-                  </td>
-                  <td className="py-3 px-4 text-slate-900 font-semibold text-sm">{item.model_name}</td>
-                  <td className="py-3 px-4 text-slate-700 capitalize font-medium text-sm">{item.provider}</td>
-                  <td className="py-3 px-4 text-slate-700 capitalize font-medium text-sm">{item.request_type}</td>
-                  <td className="py-3 px-4 text-right font-medium text-slate-700 text-sm">{formatNumber(item.input_tokens)}</td>
-                  <td className="py-3 px-4 text-right font-medium text-slate-700 text-sm">{formatNumber(item.output_tokens)}</td>
-                  <td className="py-3 px-4 text-right font-semibold text-slate-900 text-sm">{formatNumber(item.total_tokens)}</td>
-                  <td className="py-3 px-4 text-right font-bold text-slate-900 text-sm">{formatCost(item.cost_usd)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {tokenData.length === 0 && (
-          <div className="text-center py-8">
-            <Globe className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-            <p className="text-slate-500 font-medium text-sm">No token usage data available</p>
           </div>
         )}
       </div>
@@ -742,4 +567,4 @@ const TokenAnalyticsDashboard = () => {
   );
 };
 
-export default TokenAnalyticsDashboard;
+export default SimpleAgentDashboard;
