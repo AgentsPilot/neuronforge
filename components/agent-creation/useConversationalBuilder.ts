@@ -7,9 +7,14 @@ import {
   ClarityAnalysis,
   RequirementItem,
 } from './types';
+import { useProjectState } from './useProjectState';
+import { useMessageHandlers } from './useMessageHandlers';
 
 /**
- * FIXED VERSION: Proper completion state handling with AI prevention
+ * Main conversational builder hook - orchestrates the 3-API sequence
+ * 1. /api/analyze-prompt-clarity - Analyzes initial prompt
+ * 2. /api/generate-clarification-questions - Generates questions based on analysis  
+ * 3. /api/enhance-prompt - Enhances prompt with answers
  */
 export function useConversationalBuilder(params: {
   initialPrompt?: string;
@@ -23,393 +28,160 @@ export function useConversationalBuilder(params: {
   onCancel?: () => void;
 }) {
   const { initialPrompt, restoredState, onStateChange, onPromptApproved } = params;
-  const { user } = useAuth();
+  const { user, loading: userLoading } = useAuth();
 
-  // Session tracking
-  const sessionId = useRef(
-    restoredState?.sessionId || `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-  );
-  const initialMessageId = useRef(`initial-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
+  // Generate proper UUID format for database compatibility
+  const generateUUID = () => {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  };
   
+  // Session and agent tracking
+  const sessionId = useRef(restoredState?.sessionId || generateUUID());
+  const agentId = useRef(restoredState?.agentId || generateUUID());
+  
+  console.log('🆔 Agent ID initialized for ENTIRE WORKFLOW:', {
+    agentId: agentId.current,
+    sessionId: sessionId.current,
+    isRestored: !!restoredState?.agentId,
+  });
+
   // AI Prevention flags
   const hasProcessedInitialPrompt = useRef(false);
   const isCurrentlyProcessing = useRef(false);
   const isInitialized = useRef(false);
-  const enhancementStarted = useRef(false); // NEW: Prevent enhancement loops
+  const enhancementStarted = useRef(false);
 
   const [inputValue, setInputValue] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Enhanced project state with completion tracking
-  const [projectState, setProjectState] = useState<ProjectState>(() => {
-    const defaultState: ProjectState = {
-      originalPrompt: '',
-      enhancedPrompt: '',
-      requirements: [
-        { id: 'data', label: 'Data & Tools', status: 'missing' },
-        { id: 'timing', label: 'When to Run', status: 'missing' },
-        { id: 'output', label: 'What to Create', status: 'missing' },
-        { id: 'actions', label: 'Specific Actions', status: 'missing' },
-        { id: 'delivery', label: 'How to Deliver', status: 'missing' },
-        { id: 'error_handling', label: 'Error Handling', status: 'missing' },
-      ],
-      clarityScore: 0,
-      isReadyToBuild: false,
-      enhancementComplete: false,
-      userApproved: false,
-      questionsSequence: [],
-      currentQuestionIndex: -1,
-      clarificationAnswers: {},
-      showingCustomInput: false,
-      customInputValue: '',
-      isInitialized: false,
-      isProcessingQuestion: false,
-      isEditingEnhanced: false,
-      editedEnhancedPrompt: '',
-      pluginValidationError: false,
-      missingPlugins: [],
-      requiredServices: [],
-      suggestions: [],
-      questionsWithVisibleOptions: new Set(),
-      hasProcessedInitial: false,
+  // Use project state hook
+  const {
+    projectState,
+    setProjectState,
+    updateRequirementsFromAnalysis,
+    updateRequirementsFromAnswers,
+    shouldSkipAIProcessing,
+    getServiceDisplayNames,
+    getConnectedServiceKeys,
+  } = useProjectState({
+    restoredState,
+    sessionId: sessionId.current,
+    agentId: agentId.current,
+    user,
+    userLoading,
+    hasProcessedInitialPrompt,
+    isInitialized,
+    enhancementStarted,
+  });
+
+  // Use message handlers hook
+  const {
+    messages,
+    setMessages,
+    messagesEndRef,
+    addMessage,
+    clearPluginValidationError,
+  } = useMessageHandlers({
+    projectState,
+    restoredState,
+    initialPrompt,
+    agentId: agentId.current,
+    generateUUID,
+  });
+
+  // STEP 1: Analyze prompt clarity
+  const analyzePromptClarity = async (prompt: string): Promise<ClarityAnalysis> => {
+    if (!user?.id || !prompt?.trim()) {
+      throw new Error('Invalid parameters for analysis');
+    }
+
+    const requestPayload = {
+      prompt: prompt.trim(),
+      userId: user.id,
       sessionId: sessionId.current,
-      
-      // NEW: Completion tracking
-      conversationCompleted: false,
-      planApproved: false,
-      workflowPhase: 'initial',
-      isInReviewMode: false,
-      allowNavigation: false,
+      agentId: agentId.current,
+      connected_plugins: user?.connectedPlugins || {},
+      bypassPluginValidation: false,
     };
 
-    if (restoredState) {
-      console.log('🔄 Restoring project state:', {
-        workflowPhase: restoredState.workflowPhase,
-        conversationCompleted: restoredState.conversationCompleted,
-        planApproved: restoredState.planApproved,
-        isInReviewMode: restoredState.isInReviewMode,
-        hasMessages: (restoredState.messages?.length || 0)
-      });
-      
-      // Mark as processed if restoring completed work
-      if (restoredState.conversationCompleted || restoredState.planApproved) {
-        hasProcessedInitialPrompt.current = true;
-        isInitialized.current = true;
-        enhancementStarted.current = true; // NEW: Mark enhancement as started if completed
-      }
-      
-      return {
-        ...defaultState,
-        ...restoredState,
-        sessionId: sessionId.current,
-        questionsWithVisibleOptions: new Set(restoredState.questionsSequence?.map((q) => q.id) || []),
-        isInitialized: true,
-      };
-    } else {
-      // NEW: Reset flags for fresh start
-      enhancementStarted.current = false;
-    }
-    
-    return defaultState;
-  });
-
-  // BULLETPROOF AI Prevention - Enhanced with completion checks
-  const shouldSkipAIProcessing = useCallback(() => {
-    const skipReasons = [];
-    
-    // Check 1: Work is already completed
-    if (projectState.conversationCompleted) skipReasons.push('conversation_completed');
-    if (projectState.planApproved) skipReasons.push('plan_approved');
-    if (projectState.workflowPhase === 'completed') skipReasons.push('workflow_completed');
-    if (projectState.agentCreated) skipReasons.push('agent_created');
-    
-    // Check 2: In review mode
-    if (projectState.isInReviewMode) skipReasons.push('review_mode');
-    if (restoredState?.isInReviewMode) skipReasons.push('restored_review_mode');
-    
-    // Check 3: Enhancement already done (but NOT during active enhancement process)
-    if (projectState.enhancementComplete && projectState.enhancedPrompt && !enhancementStarted.current) {
-      skipReasons.push('enhancement_done');
-    }
-    
-    // Check 4: Already initialized with restored state (but NOT for new enhancement)
-    if (isInitialized.current && restoredState && !enhancementStarted.current) {
-      skipReasons.push('already_initialized');
-    }
-    
-    // NOTE: Removed currently_processing and is_processing checks as they were blocking valid enhancement
-
-    if (skipReasons.length > 0) {
-      console.log('🚫 AI Processing BLOCKED - Reasons:', skipReasons);
-      return true;
-    }
-    
-    console.log('✅ AI Processing ALLOWED - No blocking conditions');
-    return false;
-  }, [projectState, restoredState, enhancementStarted.current]);
-
-  // Utility to ensure timestamps are Date objects
-  const ensureDateTimestamp = useCallback((message: Message): Message => {
-    return {
-      ...message,
-      timestamp: message.timestamp instanceof Date ? message.timestamp : new Date(message.timestamp)
-    };
-  }, []);
-
-  // Messages with proper restoration
-  const [messages, setMessages] = useState<Message[]>(() => {
-    console.log('💬 Initializing messages:', {
-      hasRestoredState: !!restoredState,
-      isInReviewMode: restoredState?.isInReviewMode,
-      restoredMessages: restoredState?.messages?.length || 0,
-      hasInitialPrompt: !!initialPrompt,
+    console.log('🚀 STEP 1: Making analysis API call with CONSISTENT agentId:', {
+      endpoint: '/api/analyze-prompt-clarity',
+      userId: user.id,
+      sessionId: sessionId.current,
+      agentId: agentId.current,
     });
 
-    // PRIORITY 1: Restore from completed work with message history
-    if (restoredState?.messages?.length > 0) {
-      console.log('✅ Restoring complete message history');
-      return restoredState.messages.map(msg => ensureDateTimestamp(msg));
-    }
-
-    // PRIORITY 2: Build messages from restored state data (if no message history)
-    if (restoredState && (restoredState.originalPrompt || restoredState.questionsSequence?.length > 0)) {
-      console.log('🔨 Rebuilding messages from state data');
-      
-      const rebuiltMessages: Message[] = [
-        {
-          id: initialMessageId.current,
-          type: 'ai',
-          content: restoredState.originalPrompt
-            ? `Hello, I see you want to: "${restoredState.originalPrompt}". Let me help you build an agent for this!`
-            : "Hello! I'm here to help you build a custom AI agent.",
-          timestamp: new Date(),
-        },
-      ];
-
-      // Add original user message if exists
-      if (restoredState.originalPrompt) {
-        rebuiltMessages.push({
-          id: `user-original-${Date.now()}`,
-          type: 'user',
-          content: restoredState.originalPrompt,
-          timestamp: new Date(),
-        });
-      }
-
-      // Rebuild question/answer flow
-      if (restoredState.questionsSequence && restoredState.clarificationAnswers) {
-        restoredState.questionsSequence.forEach((question, index) => {
-          // AI asks question
-          rebuiltMessages.push({
-            id: `ai-question-${index}`,
-            type: 'ai',
-            content: question.question,
-            timestamp: new Date(),
-          });
-
-          // System question component
-          rebuiltMessages.push({
-            id: `question-${index}`,
-            type: 'system',
-            content: JSON.stringify(question),
-            timestamp: new Date(),
-            questionId: question.id,
-          });
-
-          // User answer if provided
-          const answer = restoredState.clarificationAnswers![question.id];
-          if (answer) {
-            rebuiltMessages.push({
-              id: `user-answer-${index}`,
-              type: 'user',
-              content: answer,
-              timestamp: new Date(),
-              questionId: question.id,
-              isQuestionAnswer: true,
-            });
-
-            rebuiltMessages.push({
-              id: `system-complete-${index}`,
-              type: 'system',
-              content: '✅ Question answered',
-              timestamp: new Date(),
-              questionId: question.id,
-            });
-          }
-        });
-      }
-
-      // Add enhancement if exists
-      if (restoredState.enhancedPrompt) {
-        rebuiltMessages.push({
-          id: `enhancement-${Date.now()}`,
-          type: 'ai',
-          content: `Here's your enhanced automation plan:
-
-**Enhanced Plan:**
-${restoredState.enhancedPrompt}
-
-${restoredState.isInReviewMode ? 
-  'This is your completed plan. You can navigate back to Smart Builder or create a new agent.' :
-  'Would you like to use this enhanced version, edit it, or stick with your original request?'}`,
-          timestamp: new Date(),
-        });
-      }
-
-      return rebuiltMessages;
-    }
-
-    // PRIORITY 3: Fresh start
-    return [
-      {
-        id: initialMessageId.current,
-        type: 'ai',
-        content: initialPrompt
-          ? `Hello, I see you want to: "${initialPrompt}". Let me help you build an agent for this!`
-          : "Hello! I'm here to help you build a custom AI agent. What would you like it to do?",
-        timestamp: new Date(),
+    const response = await fetch('/api/analyze-prompt-clarity', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': user.id,
+        'x-session-id': sessionId.current,
+        'x-agent-id': agentId.current,
       },
-    ];
-  });
-
-  // Auto-scroll
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  // CRITICAL: Always persist messages in state
-  useEffect(() => {
-    onStateChange?.({
-      ...projectState,
-      messages,
-      lastUpdated: Date.now(),
-      sessionId: sessionId.current
+      body: JSON.stringify(requestPayload),
     });
-  }, [projectState, messages, onStateChange]);
 
-  // Message utilities
-  const messageCounter = useRef(0);
-  const addMessage = useCallback(
-    (content: string, type: 'user' | 'ai' | 'system', status?: 'sending' | 'sent' | 'error', questionId?: string, isQuestionAnswer?: boolean) => {
-      // Don't add messages in review mode unless it's a system message
-      if (projectState.isInReviewMode && type !== 'system') {
-        console.log('🚫 Message blocked - in review mode');
-        return;
-      }
+    if (!response.ok) {
+      throw new Error(`Analysis API failed: ${response.status}`);
+    }
 
-      messageCounter.current += 1;
-      const newMessage: Message = {
-        id: `msg-${messageCounter.current}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        type,
-        content,
-        timestamp: new Date(),
-        status,
-        questionId,
-        isQuestionAnswer,
-      };
-      setMessages((prev) => [...prev, newMessage]);
-      return newMessage.id;
-    },
-    [projectState.isInReviewMode]
-  );
+    const result = await response.json();
+    console.log('✅ STEP 1: Analysis API success');
+    return result;
+  };
 
-  const clearPluginValidationError = useCallback(() => {
-    setProjectState((prev) => ({
-      ...prev,
-      pluginValidationError: false,
-      missingPlugins: [],
-      requiredServices: [],
-      suggestions: [],
-    }));
-  }, []);
+  // STEP 2: Generate clarification questions
+  const generateClarificationQuestions = async (originalPrompt: string, analysisResult: ClarityAnalysis): Promise<any> => {
+    console.log('🚀 STEP 2: Making clarification questions API call');
 
-  // Requirements calculation
-  const recalculateClarityScore = useCallback((requirements: RequirementItem[]) => {
-    const totalRequirements = requirements.length;
-    let score = 0;
-    requirements.forEach((req) => {
-      if (req.status === 'clear') score += 100;
-      else if (req.status === 'partial') score += 60;
+    const response = await fetch('/api/generate-clarification-questions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': user?.id || 'anonymous',
+        'x-session-id': sessionId.current,
+        'x-agent-id': agentId.current,
+      },
+      body: JSON.stringify({
+        original_prompt: originalPrompt,
+        agent_name: `Agent for: ${originalPrompt.slice(0, 50)}...`,
+        description: `Automated agent based on: ${originalPrompt}`,
+        connected_plugins: user?.connectedPlugins || {},
+        user_id: user?.id,
+        agentId: agentId.current,
+        sessionId: sessionId.current,
+        clarity_analysis: analysisResult,
+      }),
     });
-    return Math.round(score / totalRequirements);
-  }, []);
 
-  const updateRequirementsFromAnswers = useCallback(
-    (answers: Record<string, string>, questionsSequence: ClarificationQuestion[]) => {
-      setProjectState((prev) => {
-        const updatedRequirements = prev.requirements.map((req) => {
-          const directAnswers = Object.entries(answers).filter(([questionId, answer]) => {
-            const question = questionsSequence.find((q) => q.id === questionId);
-            return question?.dimension === req.id;
-          });
+    if (!response.ok) {
+      throw new Error(`Clarification questions API failed: ${response.status}`);
+    }
 
-          if (directAnswers.length > 0) {
-            const answerText = directAnswers.map(([_, answer]) => answer).join(', ');
-            return { ...req, status: 'clear' as const, detected: answerText };
-          }
+    const result = await response.json();
+    console.log('✅ STEP 2: Clarification Questions API success');
+    return result;
+  };
 
-          // Special handling for timing
-          if (req.id === 'timing') {
-            const timingKeywords = ['daily', 'weekly', 'monthly', 'hourly', 'every', 'once', 'regularly', 'schedule'];
-            const timingAnswers = Object.entries(answers).filter(([_, answer]) => {
-              return timingKeywords.some((kw) => answer.toLowerCase().includes(kw));
-            });
-            if (timingAnswers.length > 0) {
-              const timingText = timingAnswers.map(([_, a]) => a).join(', ');
-              return { ...req, status: 'clear' as const, detected: timingText };
-            }
-          }
-
-          return req;
-        });
-
-        const newClarityScore = recalculateClarityScore(updatedRequirements);
-        return { 
-          ...prev, 
-          requirements: updatedRequirements, 
-          clarityScore: newClarityScore, 
-          isReadyToBuild: newClarityScore >= 80 
-        };
-      });
-    },
-    [recalculateClarityScore]
-  );
-
-  // Enhanced enhancement logic with completion tracking
+  // STEP 3: Enhancement logic
   const startEnhancement = useCallback(
     async (prompt: string, finalAnswers: Record<string, string>) => {
-      console.log('🔍 startEnhancement called with state:', {
-        enhancementStarted: enhancementStarted.current,
-        enhancementComplete: projectState.enhancementComplete,
-        conversationCompleted: projectState.conversationCompleted,
-        isProcessing,
-        isCurrentlyProcessing: isCurrentlyProcessing.current,
-        hasPrompt: !!prompt?.trim(),
-        hasUserId: !!user?.id
-      });
+      console.log('🚀 STEP 3: Starting enhancement with CONSISTENT agent ID:', agentId.current);
 
-      // CRITICAL FIX: Only check ref-based flag if NOT in active enhancement process
+      // Validation checks
       if (enhancementStarted.current && projectState.enhancementComplete) {
-        console.log('🚫 Enhancement blocked - already completed');
+        console.log('Enhancement blocked - already completed');
         return;
       }
 
-      // CRITICAL FIX: Simplified checks during active enhancement
       if (projectState.conversationCompleted || projectState.planApproved) {
-        console.log('🚫 Enhancement blocked - work already completed');
+        console.log('Enhancement blocked - work already completed');
         return;
-      }
-
-      // Validate prerequisites
-      if (projectState.questionsSequence.length > 0) {
-        const unanswered = projectState.questionsSequence.filter(
-          (q) => !finalAnswers.hasOwnProperty(q.id) || !finalAnswers[q.id]?.trim()
-        );
-        if (unanswered.length > 0) {
-          addMessage("I need all questions answered before I can enhance your plan.", 'ai');
-          return;
-        }
       }
 
       if (!prompt?.trim() || !user?.id) {
@@ -417,7 +189,6 @@ ${restoredState.isInReviewMode ?
         return;
       }
 
-      console.log('✅ Starting enhancement API call');
       setIsProcessing(true);
       isCurrentlyProcessing.current = true;
       addMessage('Let me enhance your plan with clear, simple details...', 'ai');
@@ -429,19 +200,17 @@ ${restoredState.isInReviewMode ?
             'Content-Type': 'application/json',
             'x-user-id': user.id,
             'x-session-id': sessionId.current,
+            'x-agent-id': agentId.current,
           },
           body: JSON.stringify({
             prompt: prompt.trim(),
             clarificationAnswers: finalAnswers,
             userId: user.id,
             sessionId: sessionId.current,
+            agentId: agentId.current,
             connected_plugins: user?.connectedPlugins || {},
-            // FIXED: Pass missing plugins from plugin warning
             missingPlugins: projectState.missingPlugins || [],
-            pluginWarning: projectState.pluginWarning ? {
-              missingServices: projectState.missingPlugins || [],
-              message: `Note: Your request mentions services that aren't connected.`
-            } : undefined
+            pluginWarning: projectState.pluginWarning,
           }),
         });
 
@@ -450,17 +219,34 @@ ${restoredState.isInReviewMode ?
         }
 
         const result = await response.json();
-
+        
+        // Update project state with enhancement results
+        const connectedServiceKeys = getConnectedServiceKeys(result);
+        const serviceDisplayNames = getServiceDisplayNames(connectedServiceKeys, result.connectedPluginData);
+        
         setProjectState((prev) => ({
           ...prev,
           enhancedPrompt: result.enhancedPrompt,
           enhancementComplete: true,
-          conversationCompleted: true, // NEW: Mark conversation as completed
+          conversationCompleted: true,
           clarificationAnswers: finalAnswers,
-          workflowPhase: 'approval'
+          workflowPhase: 'approval',
+          requirements: prev.requirements.map(req => {
+            if (req.id === 'actions') {
+              const rebuiltActions = connectedServiceKeys.length > 0
+                ? `Summarize and save to ${serviceDisplayNames.join(', ')}`
+                : 'Actions require service connections';
+              return {
+                ...req,
+                status: connectedServiceKeys.length > 0 ? 'clear' : 'missing',
+                detected: rebuiltActions
+              };
+            }
+            return req;
+          })
         }));
 
-        let message = `Here's your enhanced automation plan:
+        const message = `Here's your enhanced automation plan:
 
 **Enhanced Plan:**
 ${result.enhancedPrompt}
@@ -468,13 +254,12 @@ ${result.enhancedPrompt}
 This breaks down exactly what your agent will do. Would you like to use this enhanced version, edit it, or stick with your original request?`;
 
         addMessage(message, 'ai');
-        console.log('✅ Enhancement completed');
+        console.log('✅ STEP 3: Enhancement completed');
         
       } catch (err) {
-        console.error('❌ Enhancement error:', err);
+        console.error('Enhancement error:', err);
         addMessage('I encountered an error enhancing your plan. Please try again.', 'ai');
         
-        // CRITICAL FIX: Reset flags on error so user can try again
         setProjectState((prev) => ({
           ...prev,
           enhancementComplete: false,
@@ -486,145 +271,19 @@ This breaks down exactly what your agent will do. Would you like to use this enh
         isCurrentlyProcessing.current = false;
       }
     },
-    [projectState, isProcessing, user?.id, user?.connectedPlugins, addMessage]
+    [projectState, user, addMessage, getServiceDisplayNames, getConnectedServiceKeys, setProjectState]
   );
-
-  // BULLETPROOF initial prompt processing - Enhanced with completion checks and restored state validation
-  useEffect(() => {
-    // ULTIMATE CHECK: Should we process the initial prompt?
-    if (!initialPrompt) return;
-    if (shouldSkipAIProcessing()) return;
-    if (hasProcessedInitialPrompt.current) return;
-    if (isCurrentlyProcessing.current) return;
-    if (projectState.originalPrompt) return;
-    if (projectState.conversationCompleted) return;
-    if (projectState.isInReviewMode) return;
-
-    // NEW: Critical check - if we have restored state with existing work, don't process new prompt
-    if (restoredState && (
-        restoredState.enhancementComplete || 
-        restoredState.planApproved || 
-        restoredState.conversationCompleted ||
-        restoredState.workflowPhase === 'completed' ||
-        restoredState.workflowPhase === 'approval'
-      )) {
-      console.log('🚫 Skipping initial prompt processing - restored state has completed work', {
-        enhancementComplete: restoredState.enhancementComplete,
-        planApproved: restoredState.planApproved,
-        conversationCompleted: restoredState.conversationCompleted,
-        workflowPhase: restoredState.workflowPhase
-      });
-      return;
-    }
-
-    // NEW: Check if prompt matches existing work in restored state - don't reprocess
-    if (restoredState?.originalPrompt && 
-        restoredState.originalPrompt.trim().toLowerCase() === initialPrompt.trim().toLowerCase()) {
-      console.log('🚫 Skipping initial prompt processing - same prompt as restored state');
-      return;
-    }
-
-    console.log('🚀 Processing initial prompt:', initialPrompt.slice(0, 50));
-    
-    // Mark as processed immediately to prevent duplicates
-    hasProcessedInitialPrompt.current = true;
-    isCurrentlyProcessing.current = true;
-    isInitialized.current = true;
-    
-    const processPrompt = async () => {
-      try {
-        setIsProcessing(true);
-        addMessage(initialPrompt, 'user');
-        
-        setProjectState((prev) => ({ 
-          ...prev, 
-          originalPrompt: initialPrompt.trim(),
-          hasProcessedInitial: true,
-          isInitialized: true,
-          workflowPhase: 'questions'
-        }));
-
-        const analysis = await analyzePromptClarity(initialPrompt.trim());
-        
-        // Handle analysis failure gracefully
-        if (analysis.aiValidationFailed) {
-          console.log('⚠️ Analysis failed, proceeding to enhancement');
-          addMessage('I had trouble analyzing your request, but let me enhance it directly...', 'ai');
-          setTimeout(() => startEnhancement(initialPrompt.trim(), {}), 1000);
-          return;
-        }
-        
-        updateRequirementsFromAnalysis(analysis);
-
-        if (analysis.pluginValidationError) return;
-
-        if (analysis.needsClarification && analysis.questionsSequence?.length > 0) {
-          const validQuestions = analysis.questionsSequence.filter((q: any) => 
-            q?.id && q?.question && q?.options && Array.isArray(q.options)
-          );
-          
-          if (validQuestions.length > 0) {
-            const firstId = validQuestions[0]?.id;
-            const initialVisible = new Set<string>();
-            if (firstId) initialVisible.add(firstId);
-
-            setProjectState((prev) => ({
-              ...prev,
-              questionsSequence: validQuestions,
-              currentQuestionIndex: 0,
-              isProcessingQuestion: false,
-              questionsWithVisibleOptions: initialVisible,
-            }));
-          } else {
-            addMessage("I need more details. Could you describe what you'd like your agent to do?", 'ai');
-          }
-        } else if (analysis.clarityScore >= 90) {
-          addMessage('Your request is very clear. Let me enhance it...', 'ai');
-          setTimeout(() => startEnhancement(initialPrompt.trim(), {}), 1000);
-        } else {
-          addMessage("I need more information. Could you provide additional details?", 'ai');
-        }
-        
-      } catch (err) {
-        console.error('❌ Initial processing error:', err);
-        addMessage('I encountered an error analyzing your request. Let me try to enhance it directly...', 'ai');
-        
-        // Fallback to direct enhancement on any error
-        setTimeout(() => startEnhancement(initialPrompt.trim(), {}), 1000);
-      } finally {
-        setIsProcessing(false);
-        isCurrentlyProcessing.current = false;
-      }
-    };
-
-    // Small delay to ensure state is ready
-    setTimeout(processPrompt, 500);
-    
-  }, [
-    initialPrompt, 
-    shouldSkipAIProcessing, 
-    projectState.originalPrompt, 
-    projectState.conversationCompleted, 
-    projectState.isInReviewMode, 
-    restoredState?.enhancementComplete, 
-    restoredState?.planApproved, 
-    restoredState?.conversationCompleted, 
-    restoredState?.originalPrompt,
-    restoredState?.workflowPhase,
-    addMessage, 
-    startEnhancement
-  ]);
 
   // Question flow logic
   const proceedToNextQuestion = useCallback(() => {
     // Don't proceed in review mode
     if (projectState.isInReviewMode) {
-      console.log('🚫 Question progression blocked - in review mode');
+      console.log('Question progression blocked - in review mode');
       return;
     }
 
     setProjectState((current) => {
-      console.log('🔄 proceedToNextQuestion called:', {
+      console.log('proceedToNextQuestion called:', {
         currentIndex: current.currentQuestionIndex,
         totalQuestions: current.questionsSequence.length,
         answersCount: Object.keys(current.clarificationAnswers).length,
@@ -638,7 +297,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       });
 
       if (nextUnansweredIndex >= 0) {
-        console.log(`✅ Moving to next question at index ${nextUnansweredIndex}`);
+        console.log(`Moving to next question at index ${nextUnansweredIndex}`);
         const nextId = current.questionsSequence[nextUnansweredIndex].id;
         const newVisible = new Set(current.questionsWithVisibleOptions);
         newVisible.add(nextId);
@@ -657,7 +316,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       
       if (unanswered.length > 0) {
         const firstIdx = current.questionsSequence.findIndex((q) => q.id === unanswered[0].id);
-        console.log(`↩️ Returning to unanswered question at index ${firstIdx}`);
+        console.log(`Returning to unanswered question at index ${firstIdx}`);
         const newVisible = new Set(current.questionsWithVisibleOptions);
         newVisible.add(unanswered[0].id);
         return { 
@@ -669,7 +328,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       }
 
       // All questions answered - ready for enhancement
-      console.log('🎉 All questions completed - setting currentQuestionIndex to -1');
+      console.log('🎯 All questions completed - ready for STEP 3: Enhancement');
       return { 
         ...current, 
         currentQuestionIndex: -1, 
@@ -702,11 +361,11 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       
       return () => clearTimeout(timer);
     }
-  }, [projectState.currentQuestionIndex, projectState.questionsSequence, projectState.isInReviewMode, addMessage]);
+  }, [projectState.currentQuestionIndex, projectState.questionsSequence, projectState.isInReviewMode, addMessage, setMessages]);
 
-  // Auto-enhancement when questions are complete - Enhanced with completion checks
+  // Auto-enhancement when questions are complete
   useEffect(() => {
-    console.log('🔍 Auto-enhancement useEffect triggered:', {
+    console.log('Auto-enhancement useEffect triggered:', {
       conversationCompleted: projectState.conversationCompleted,
       isInReviewMode: projectState.isInReviewMode,
       enhancementStarted: enhancementStarted.current,
@@ -716,18 +375,19 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       enhancementComplete: projectState.enhancementComplete,
       isProcessing,
       isCurrentlyProcessing: isCurrentlyProcessing.current,
-      originalPrompt: !!projectState.originalPrompt
+      originalPrompt: !!projectState.originalPrompt,
+      agentId: agentId.current
     });
 
     // Skip if already completed or in review mode
     if (projectState.conversationCompleted || projectState.isInReviewMode) {
-      console.log('🚫 Auto-enhancement blocked - already completed or in review mode');
+      console.log('Auto-enhancement blocked - already completed or in review mode');
       return;
     }
 
-    // MODIFIED: Only check enhancementStarted if enhancementComplete is also true
+    // Only check enhancementStarted if enhancementComplete is also true
     if (enhancementStarted.current && projectState.enhancementComplete) {
-      console.log('🚫 Auto-enhancement blocked - already started and completed');
+      console.log('Auto-enhancement blocked - already started and completed');
       return;
     }
 
@@ -735,7 +395,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
     const allQuestionsAnswered = projectState.questionsSequence.length > 0 && 
       projectState.questionsSequence.every(q => projectState.clarificationAnswers[q.id]?.trim());
     
-    console.log('🔍 Questions analysis:', {
+    console.log('Questions analysis:', {
       allQuestionsAnswered,
       questionsSequence: projectState.questionsSequence.map(q => ({
         id: q.id,
@@ -752,13 +412,13 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       !isCurrentlyProcessing.current &&
       projectState.originalPrompt
     ) {
-      console.log('✅ Starting auto-enhancement - all questions answered');
+      console.log('🚀 Starting auto-enhancement - STEP 3: Enhancement with answers and CONSISTENT agentId:', agentId.current);
       
-      // CRITICAL FIX: Set refs immediately to prevent duplicate calls
+      // Set refs immediately to prevent duplicate calls
       enhancementStarted.current = true;
       isCurrentlyProcessing.current = true;
       
-      // CRITICAL FIX: Immediately set enhancementComplete to prevent duplicate calls
+      // Immediately set enhancementComplete to prevent duplicate calls
       setProjectState((prev) => ({
         ...prev,
         enhancementComplete: true,
@@ -780,7 +440,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
         startEnhancement(fullPrompt, projectState.clarificationAnswers);
       }, 1000);
     } else {
-      console.log('🚫 Auto-enhancement conditions not met:', {
+      console.log('Auto-enhancement conditions not met:', {
         currentQuestionIndex: projectState.currentQuestionIndex,
         allQuestionsAnswered,
         enhancementComplete: projectState.enhancementComplete,
@@ -800,97 +460,150 @@ This breaks down exactly what your agent will do. Would you like to use this enh
     projectState.questionsSequence,
     updateRequirementsFromAnswers, 
     addMessage, 
-    startEnhancement
+    startEnhancement,
+    setProjectState
   ]);
 
-  // API Functions
-  const analyzePromptClarity = async (prompt: string): Promise<ClarityAnalysis> => {
-    if (!user?.id || !prompt?.trim()) {
-      throw new Error('Invalid parameters for analysis');
+  // Initial prompt processing with 3-API sequence
+  useEffect(() => {
+    if (!initialPrompt) return;
+    if (shouldSkipAIProcessing()) return;
+    if (hasProcessedInitialPrompt.current) return;
+    if (isCurrentlyProcessing.current) return;
+    if (projectState.originalPrompt) return;
+    if (projectState.conversationCompleted) return;
+    if (projectState.isInReviewMode) return;
+
+    // Skip if restored state has completed work
+    if (restoredState && (
+        restoredState.enhancementComplete || 
+        restoredState.planApproved || 
+        restoredState.conversationCompleted ||
+        restoredState.workflowPhase === 'completed' ||
+        restoredState.workflowPhase === 'approval'
+      )) {
+      console.log('Skipping initial prompt processing - restored state has completed work');
+      return;
     }
 
-    try {
-      const response = await fetch('/api/analyze-prompt-clarity', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-user-id': user.id,
-          'x-session-id': sessionId.current,
-        },
-        body: JSON.stringify({
-          prompt: prompt.trim(),
-          userId: user.id,
-          sessionId: sessionId.current,
-          connected_plugins: user?.connectedPlugins || {},
-          bypassPluginValidation: false,
-        }),
-      });
-
-      if (!response.ok) {
-        console.error(`Analysis API error: ${response.status}`);
+    console.log('🎯 Processing initial prompt with 3-API sequence');
+    
+    hasProcessedInitialPrompt.current = true;
+    isCurrentlyProcessing.current = true;
+    isInitialized.current = true;
+    
+    const processPrompt = async () => {
+      try {
+        setIsProcessing(true);
+        addMessage(initialPrompt, 'user');
         
-        // Return a fallback analysis instead of throwing
-        return {
-          clarityScore: 50,
-          questionsCount: 0,
-          needsClarification: false,
-          aiValidationFailed: true,
-          bypassedPluginValidation: false,
-          hadPluginWarning: false,
-          analysis: {}
-        };
+        setProjectState((prev) => ({ 
+          ...prev, 
+          originalPrompt: initialPrompt.trim(),
+          hasProcessedInitial: true,
+          isInitialized: true,
+          workflowPhase: 'questions'
+        }));
+
+        // Step 1: Analyze prompt clarity
+        const analysis = await analyzePromptClarity(initialPrompt.trim());
+        
+        // FIXED: Handle plugin warnings from analysis
+        if (analysis.pluginWarning) {
+          console.log('Adding plugin warning message from analysis:', analysis.pluginWarning.message);
+          addMessage(analysis.pluginWarning.message, 'ai');
+          setProjectState((prev) => ({
+            ...prev,
+            missingPlugins: analysis.pluginWarning?.missingServices || [],
+            pluginWarning: analysis.pluginWarning
+          }));
+        }
+        
+        updateRequirementsFromAnalysis(analysis);
+
+        // Step 2 & 3: Questions or direct enhancement
+        if (analysis.needsClarification && analysis.clarityScore < 90) {
+          const clarificationResult = await generateClarificationQuestions(initialPrompt.trim(), analysis);
+          
+          // Handle plugin warnings from clarification API (if different from analysis)
+          if (clarificationResult.pluginWarning && !analysis.pluginWarning) {
+            console.log('Adding plugin warning message from clarification:', clarificationResult.pluginWarning.message);
+            addMessage(clarificationResult.pluginWarning.message, 'ai');
+            setProjectState((prev) => ({
+              ...prev,
+              missingPlugins: clarificationResult.pluginWarning?.missingServices || [],
+              pluginWarning: clarificationResult.pluginWarning
+            }));
+          }
+          
+          if (clarificationResult.questions && clarificationResult.questions.length > 0) {
+            const validQuestions = clarificationResult.questions.filter((q: any) => 
+              q?.id && q?.question && q?.type
+            );
+            
+            if (validQuestions.length > 0) {
+              const firstId = validQuestions[0]?.id;
+              const initialVisible = new Set<string>();
+              if (firstId) initialVisible.add(firstId);
+
+              setProjectState((prev) => ({
+                ...prev,
+                questionsSequence: validQuestions,
+                currentQuestionIndex: 0,
+                isProcessingQuestion: false,
+                questionsWithVisibleOptions: initialVisible,
+                clarityScore: analysis.clarityScore || 50
+              }));
+
+              console.log('🎯 3-API sequence: Questions setup complete. User can now answer questions.');
+            } else {
+              addMessage('I need more details, but let me enhance your request directly...', 'ai');
+              setTimeout(() => startEnhancement(initialPrompt.trim(), {}), 1000);
+            }
+          } else {
+            addMessage('Let me enhance your request directly...', 'ai');
+            setTimeout(() => startEnhancement(initialPrompt.trim(), {}), 1000);
+          }
+        } else {
+          addMessage('Your request is very clear. Let me enhance it...', 'ai');
+          setTimeout(() => startEnhancement(initialPrompt.trim(), {}), 1000);
+        }
+        
+      } catch (err) {
+        console.error('❌ 3-API sequence error:', err);
+        addMessage('I encountered an error analyzing your request. Let me try to enhance it directly...', 'ai');
+        setTimeout(() => startEnhancement(initialPrompt.trim(), {}), 1000);
+      } finally {
+        setIsProcessing(false);
+        isCurrentlyProcessing.current = false;
       }
+    };
 
-      const result = await response.json();
-      if (typeof result.clarityScore !== 'number') {
-        throw new Error('Invalid analysis response');
-      }
-      
-      return result;
-    } catch (error) {
-      console.error('Analysis error:', error);
-      
-      // Return fallback analysis on any error
-      return {
-        clarityScore: 50,
-        questionsCount: 0,
-        needsClarification: false,
-        aiValidationFailed: true,
-        bypassedPluginValidation: false,
-        hadPluginWarning: false,
-        analysis: {}
-      };
-    }
-  };
+    setTimeout(processPrompt, 500);
+    
+  }, [
+    initialPrompt, 
+    shouldSkipAIProcessing, 
+    projectState.originalPrompt, 
+    projectState.conversationCompleted, 
+    projectState.isInReviewMode, 
+    restoredState,
+    addMessage, 
+    startEnhancement,
+    updateRequirementsFromAnalysis,
+    setProjectState
+  ]);
 
-  const updateRequirementsFromAnalysis = (analysis: ClarityAnalysis) => {
-    if (analysis.pluginWarning) {
-      addMessage(`💡 FYI: ${analysis.pluginWarning.message}`, 'ai');
-      
-      // Store plugin warning info in project state
-      setProjectState((prev) => ({
-        ...prev,
-        missingPlugins: analysis.pluginWarning?.missingServices || [],
-        pluginWarning: analysis.pluginWarning
-      }));
-    }
-
-    const updatedRequirements = projectState.requirements.map((req) => {
-      const analysisData = (analysis.analysis as any)?.[req.id];
-      return {
-        ...req,
-        status: analysisData?.status || 'missing',
-        detected: analysisData?.detected || '',
-      };
+  // Persist state changes
+  useEffect(() => {
+    onStateChange?.({
+      ...projectState,
+      messages,
+      lastUpdated: Date.now(),
+      sessionId: sessionId.current,
+      agentId: agentId.current
     });
-
-    const newClarityScore = recalculateClarityScore(updatedRequirements);
-    setProjectState((prev) => ({ 
-      ...prev, 
-      requirements: updatedRequirements, 
-      clarityScore: newClarityScore 
-    }));
-  };
+  }, [projectState, messages, onStateChange]);
 
   // User interaction handlers - Enhanced with review mode checks
   const handleOptionSelect = useCallback(
@@ -898,7 +611,12 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       if (projectState.isProcessingQuestion || projectState.isInReviewMode) return;
 
       if (selectedValue === 'custom') {
-        setProjectState((prev) => ({ ...prev, showingCustomInput: true }));
+        setProjectState((prev) => ({ 
+          ...prev, 
+          showingCustomInput: true,
+          customInputQuestionId: questionId,
+          customInputValue: ''
+        }));
         return;
       }
 
@@ -911,27 +629,27 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       addMessage(selectedLabel, 'user', 'sent', questionId, true);
 
       setTimeout(() => {
-        addMessage('✅ Question answered', 'system', 'sent', questionId);
+        addMessage('Question answered', 'system', 'sent', questionId);
         setProjectState((prev) => ({ ...prev, isProcessingQuestion: false }));
         setTimeout(proceedToNextQuestion, 200);
       }, 300);
     },
-    [projectState.isProcessingQuestion, projectState.isInReviewMode, proceedToNextQuestion, addMessage]
+    [projectState.isProcessingQuestion, projectState.isInReviewMode, proceedToNextQuestion, addMessage, setProjectState]
   );
 
   const handleCustomAnswer = useCallback(() => {
-    const currentQuestion = projectState.questionsSequence[projectState.currentQuestionIndex];
-    if (!currentQuestion || projectState.isProcessingQuestion || !projectState.customInputValue.trim() || projectState.isInReviewMode) {
+    const questionId = projectState.customInputQuestionId;
+    if (!questionId || projectState.isProcessingQuestion || !projectState.customInputValue.trim() || projectState.isInReviewMode) {
       return;
     }
 
     const customAnswer = projectState.customInputValue.trim();
-    const questionId = currentQuestion.id;
 
     setProjectState((current) => ({
       ...current,
       clarificationAnswers: { ...current.clarificationAnswers, [questionId]: customAnswer },
       showingCustomInput: false,
+      customInputQuestionId: null,
       customInputValue: '',
       isProcessingQuestion: true,
     }));
@@ -939,22 +657,21 @@ This breaks down exactly what your agent will do. Would you like to use this enh
     addMessage(customAnswer, 'user', 'sent', questionId, true);
 
     setTimeout(() => {
-      addMessage('✅ Question answered', 'system', 'sent', questionId);
+      addMessage('Question answered', 'system', 'sent', questionId);
       setProjectState((prev) => ({ ...prev, isProcessingQuestion: false }));
       setTimeout(proceedToNextQuestion, 200);
     }, 300);
   }, [
-    projectState.questionsSequence,
-    projectState.currentQuestionIndex,
+    projectState.customInputQuestionId,
     projectState.customInputValue,
     projectState.isProcessingQuestion,
     projectState.isInReviewMode,
     proceedToNextQuestion,
     addMessage,
+    setProjectState,
   ]);
 
   const handleChangeAnswer = useCallback((questionId: string) => {
-    // Don't allow changes in review mode
     if (projectState.isInReviewMode) return;
 
     setProjectState((prev) => {
@@ -964,9 +681,41 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       const newVisible = new Set(prev.questionsWithVisibleOptions);
       newVisible.add(questionId);
 
-      return { ...prev, clarificationAnswers: newAnswers, questionsWithVisibleOptions: newVisible };
+      return { 
+        ...prev, 
+        clarificationAnswers: newAnswers, 
+        questionsWithVisibleOptions: newVisible,
+        showingCustomInput: false,
+        customInputQuestionId: null,
+        customInputValue: ''
+      };
     });
-  }, [projectState.isInReviewMode]);
+  }, [projectState.isInReviewMode, setProjectState]);
+
+  const handleCustomInputChange = useCallback((questionId: string, value: string) => {
+    console.log('handleCustomInputChange called:', { questionId, value, isEmpty: value === '' });
+    
+    if (value === '') {
+      console.log('Opening custom input for question:', questionId);
+      setProjectState((prev) => ({ 
+        ...prev, 
+        showingCustomInput: true,
+        customInputQuestionId: questionId,
+        customInputValue: ''
+      }));
+    } else {
+      console.log('Updating input value:', value);
+      setProjectState((prev) => {
+        if (prev.customInputQuestionId === questionId) {
+          return { ...prev, customInputValue: value };
+        }
+        return { 
+          ...prev, 
+          clarificationAnswers: { ...prev.clarificationAnswers, [questionId]: value }
+        };
+      });
+    }
+  }, [setProjectState]);
 
   const handleSendMessage = async () => {
     if (!inputValue.trim() || isProcessing || projectState.isInReviewMode) return;
@@ -991,15 +740,25 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       ...prev, 
       userApproved: true, 
       isReadyToBuild: true,
-      planApproved: true, // NEW: Mark plan as approved
+      planApproved: true,
       workflowPhase: 'completed'
     }));
     addMessage("Excellent! Moving to the smart build phase.", 'ai');
 
+    console.log('🔍 handleApproveEnhanced - Passing agent ID and session ID:', {
+      agentId: agentId.current,
+      sessionId: sessionId.current,
+      clarificationAnswersCount: Object.keys(projectState.clarificationAnswers).length
+    });
+
     onPromptApproved?.({
       prompt: projectState.enhancedPrompt,
       promptType: 'enhanced',
-      clarificationAnswers: projectState.clarificationAnswers,
+      clarificationAnswers: {
+        ...projectState.clarificationAnswers,
+        agentId: agentId.current,
+        sessionId: sessionId.current
+      }
     });
   };
 
@@ -1008,15 +767,25 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       ...prev, 
       userApproved: true, 
       isReadyToBuild: true,
-      planApproved: true, // NEW: Mark plan as approved
+      planApproved: true,
       workflowPhase: 'completed'
     }));
     addMessage("Perfect! Using your original request to build your agent.", 'ai');
 
+    console.log('🔍 handleUseOriginal - Passing agent ID and session ID:', {
+      agentId: agentId.current,
+      sessionId: sessionId.current,
+      clarificationAnswersCount: Object.keys(projectState.clarificationAnswers).length
+    });
+
     onPromptApproved?.({
       prompt: projectState.originalPrompt,
       promptType: 'original',
-      clarificationAnswers: projectState.clarificationAnswers,
+      clarificationAnswers: {
+        ...projectState.clarificationAnswers,
+        agentId: agentId.current,
+        sessionId: sessionId.current
+      }
     });
   };
 
@@ -1075,11 +844,16 @@ This breaks down exactly what your agent will do. Would you like to use this enh
     handleOptionSelect,
     handleCustomAnswer,
     handleChangeAnswer,
+    handleCustomInputChange,
 
     handleApproveEnhanced,
     handleUseOriginal,
     handleEditEnhanced,
     handleSaveEnhancedEdit,
     handleCancelEnhancedEdit,
+
+    // IDs for tracking
+    agentId: agentId.current,
+    sessionId: sessionId.current,
   };
 }

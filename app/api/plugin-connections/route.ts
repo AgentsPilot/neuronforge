@@ -184,7 +184,6 @@ function formatPluginDisplayName(pluginKey: string): string {
   // Map of plugin keys to display names
   const displayNames: Record<string, string> = {
     'google-mail': 'Google Mail',
-    'gmail': 'Gmail', 
     'google-drive': 'Google Drive',
     'google-calendar': 'Google Calendar',
     'notion': 'Notion',

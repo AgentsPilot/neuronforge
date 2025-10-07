@@ -43,12 +43,10 @@ export default function NotificationsTab({
       if (error) throw error
       
       setSuccessMessage('Notification settings updated successfully!')
-      setTimeout(() => setSuccessMessage(''), 3000)
       
     } catch (error) {
       console.error('Error saving notification settings:', error)
       setErrorMessage('Failed to save notification settings. Please try again.')
-      setTimeout(() => setErrorMessage(''), 5000)
     } finally {
       setSaving(false)
     }
@@ -95,35 +93,6 @@ export default function NotificationsTab({
 
   return (
     <div className="space-y-6">
-      {/* Success/Error Messages */}
-      {successMessage && (
-        <div className="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-2xl p-4 shadow-lg">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-r from-purple-500 to-indigo-500 rounded-xl flex items-center justify-center shadow-lg">
-              <CheckCircle className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <p className="font-semibold text-purple-800">Success!</p>
-              <p className="text-sm text-purple-700">{successMessage}</p>
-            </div>
-          </div>
-        </div>
-      )}
-      
-      {errorMessage && (
-        <div className="bg-gradient-to-r from-red-50 to-pink-50 rounded-2xl p-4 shadow-lg">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-r from-red-500 to-pink-500 rounded-xl flex items-center justify-center shadow-lg">
-              <AlertCircle className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <p className="font-semibold text-red-800">Error</p>
-              <p className="text-sm text-red-700">{errorMessage}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Notification Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="group relative overflow-hidden bg-gradient-to-br from-purple-50 to-indigo-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
@@ -264,6 +233,35 @@ export default function NotificationsTab({
             Cancel
           </button>
         </div>
+
+        {/* Success/Error Messages - Below Save Button */}
+        {successMessage && (
+          <div className="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-2xl p-4 shadow-lg mt-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gradient-to-r from-purple-500 to-indigo-500 rounded-xl flex items-center justify-center shadow-lg">
+                <CheckCircle className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <p className="font-semibold text-purple-800">Success!</p>
+                <p className="text-sm text-purple-700">{successMessage}</p>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {errorMessage && (
+          <div className="bg-gradient-to-r from-red-50 to-pink-50 rounded-2xl p-4 shadow-lg mt-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gradient-to-r from-red-500 to-pink-500 rounded-xl flex items-center justify-center shadow-lg">
+                <AlertCircle className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <p className="font-semibold text-red-800">Error</p>
+                <p className="text-sm text-red-700">{errorMessage}</p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

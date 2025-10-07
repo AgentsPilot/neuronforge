@@ -324,7 +324,8 @@ export default function AgentBuilderParent({
         workflowPhase: 'completed' as const,
         approvedAt: Date.now(),
         allowNavigation: true,
-        enhancedPrompt: data.prompt
+        enhancedPrompt: data.prompt,
+        clarificationAnswers: data.clarificationAnswers
       };
 
       handleConversationalStateChange(updatedConversationalState);

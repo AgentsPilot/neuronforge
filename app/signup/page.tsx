@@ -7,7 +7,6 @@ import { supabase } from '@/lib/supabaseClient';
 export default function SignupPage() {
   const router = useRouter();
   const [fullName, setFullName] = useState('');
-  const [company, setCompany] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -50,12 +49,12 @@ export default function SignupPage() {
         return;
       }
 
-      // 2. Insert profile only if we have a session OR RLS allows it
+      // 2. Insert profile (removed company field)
       const { error: profileError } = await supabase.from('profiles').insert([
         {
           id: user.id,
           full_name: fullName,
-          company,
+          onboarding_completed: false, // Add this to track onboarding status
         },
       ]);
 
@@ -73,9 +72,9 @@ export default function SignupPage() {
           'Signup successful! Please check your email to confirm your account.'
         );
       } else {
-        // Email confirmation is OFF → session is active
-        setSuccessMessage('Account created successfully! Redirecting...');
-        setTimeout(() => router.push('/dashboard'), 1500);
+        // Email confirmation is OFF → redirect to onboarding
+        setSuccessMessage('Account created successfully! Setting up your profile...');
+        setTimeout(() => router.push('/onboarding'), 1500);
       }
     } catch (error) {
       console.error(error);
@@ -136,22 +135,6 @@ export default function SignupPage() {
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 required
-                disabled={isLoading}
-              />
-            </div>
-
-            {/* Company */}
-            <div className="space-y-2">
-              <label htmlFor="company" className="text-sm font-medium text-slate-200 block">
-                Company Name
-              </label>
-              <input
-                id="company"
-                type="text"
-                placeholder="Enter your company"
-                className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-200"
-                value={company}
-                onChange={(e) => setCompany(e.target.value)}
                 disabled={isLoading}
               />
             </div>

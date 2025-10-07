@@ -1,41 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { v4 as uuidv4 } from 'uuid'
+
+// Import AI Analytics System
+import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics'
+import { OpenAIProvider } from '@/lib/ai/providers/openaiProvider'
+
+// Import new plugin registry
+import { 
+  pluginRegistry,
+  getPluginDefinition,
+  getConnectedPluginsWithMetadata,
+  detectRequiredPlugins,
+  validatePluginRequirements,
+  getPluginCapabilitiesContext,
+} from '@/lib/plugins/pluginRegistry'
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-// Simple token tracking function - matches your actual schema
-async function trackTokenUsage(supabase: any, userId: string, tokenData: any) {
-  try {
-    const { error } = await supabase
-      .from('token_usage')
-      .insert({
-        user_id: userId,
-        model_name: tokenData.modelName,
-        provider: tokenData.provider,
-        input_tokens: tokenData.inputTokens,
-        output_tokens: tokenData.outputTokens,
-        cost_usd: 0.0, // You can calculate cost based on model pricing
-        request_type: tokenData.requestType || 'chat',
-        session_id: null, // Add session tracking if needed
-        category: tokenData.category || 'prompt_enhancement',
-        metadata: tokenData.metadata || {}
-      })
-    
-    if (error) {
-      console.error('Token tracking error:', error)
-      throw error
-    }
-  } catch (error) {
-    console.error('Failed to track token usage:', error)
-    // Don't throw - let the main request continue
-  }
+// Initialize AI Analytics
+const aiAnalytics = new AIAnalyticsService(supabase, {
+  enableRealtime: true,
+  enableCostTracking: true,
+  enablePerformanceMetrics: true
+})
+
+// Helper function to validate UUID format
+function isValidUUID(str: string): boolean {
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  return uuidPattern.test(str)
 }
 
-// Function to get connected plugins (same as analyze-prompt-clarity)
-async function getConnectedPlugins(userId: string, connected_plugins?: any): Promise<string[]> {
+// Enhanced function to get connected plugins with metadata
+async function getConnectedPlugins(userId: string, connected_plugins?: any): Promise<{
+  pluginKeys: string[],
+  pluginData: any[]
+}> {
   let pluginKeys: string[] = []
 
   // Method 1: From frontend (fallback to ensure we have plugins)
@@ -67,16 +70,37 @@ async function getConnectedPlugins(userId: string, connected_plugins?: any): Pro
   // Method 3: Default plugins if nothing found
   if (pluginKeys.length === 0) {
     console.log('⚠️ No connected plugins found for user. Using minimal defaults.');
-    pluginKeys = ['email', 'storage'] // Minimal generic defaults
+    pluginKeys = ['google-mail', 'google_drive'] // Use actual plugin keys instead of generic terms
+  }
+
+  // Get plugin metadata from registry
+  let pluginData: any[] = []
+  try {
+    pluginData = getConnectedPluginsWithMetadata(pluginKeys)
+    console.log('Plugin metadata retrieved:', {
+      pluginsWithMetadata: pluginData.length,
+      capabilities: pluginData.map(p => ({ key: p.key, capabilities: p.capabilities }))
+    })
+  } catch (metadataError) {
+    console.warn('Plugin metadata retrieval failed:', metadataError)
   }
 
   console.log('Final plugin list for enhancement:', pluginKeys)
-  return pluginKeys
+  return { pluginKeys, pluginData }
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const { prompt, userId, clarificationAnswers = {}, connected_plugins, missingPlugins = [], pluginWarning } = await req.json()
+    const { 
+      prompt, 
+      userId, 
+      clarificationAnswers = {}, 
+      connected_plugins, 
+      missingPlugins = [], 
+      pluginWarning,
+      sessionId: providedSessionId, // FIXED: Extract session ID from request
+      agentId: providedAgentId // FIXED: Extract agent ID from request
+    } = await req.json()
     
     // Extract missing plugins from pluginWarning if not provided directly (backward compatibility)
     const finalMissingPlugins = missingPlugins.length > 0 ? missingPlugins : (pluginWarning?.missingServices || [])
@@ -88,41 +112,81 @@ export async function POST(req: NextRequest) {
     // Get user ID from request headers if not in body (fallback method)
     const userIdToUse = userId || req.headers.get('x-user-id') || 'anonymous'
 
-    const OPENAI_API_KEY = process.env.OPENAI_API_KEY
+    // FIXED: Use provided IDs instead of generating new ones - with proper UUID format
+    const sessionId = providedSessionId || 
+                      req.headers.get('x-session-id') || 
+                      uuidv4()
 
-    if (!OPENAI_API_KEY) {
-      console.error('OPENAI_API_KEY not found in environment variables')
-      return NextResponse.json({ error: 'OpenAI API key not configured' }, { status: 500 })
-    }
+    const agentId = providedAgentId || 
+                    req.headers.get('x-agent-id') || 
+                    uuidv4()
 
-    console.log('🚀 Processing enhancement request for user:', userIdToUse)
-    console.log('📝 Original prompt length:', prompt.length)
-    console.log('📋 Clarification answers:', Object.keys(clarificationAnswers).length, 'items')
-    console.log('🔌 Missing plugins:', finalMissingPlugins)
+    console.log('🚀 Processing enhancement request with CONSISTENT agent ID:', {
+      userId: userIdToUse,
+      providedSessionId,
+      providedAgentId, // FIXED: Log provided agent ID
+      finalSessionId: sessionId,
+      finalAgentId: agentId, // FIXED: Log final agent ID
+      agentIdSource: providedAgentId ? 'request_body' : 
+                     req.headers.get('x-agent-id') ? 'header' : 'generated',
+      sessionIdSource: providedSessionId ? 'request_body' : 
+                       req.headers.get('x-session-id') ? 'header' : 'generated',
+      promptLength: prompt.length,
+      clarificationAnswersCount: Object.keys(clarificationAnswers).length,
+      missingPlugins: finalMissingPlugins
+    })
 
-    // Get connected plugins for context-aware enhancement
-    const connectedPlugins = await getConnectedPlugins(userIdToUse, connected_plugins)
+    // Get connected plugins with enhanced metadata
+    const { pluginKeys: connectedPlugins, pluginData: connectedPluginData } = await getConnectedPlugins(userIdToUse, connected_plugins)
 
-    // FIXED: Intelligent plugin context that handles missing services
-    const pluginContext = connectedPlugins.length > 0 
-      ? `
+    console.log('Enhanced plugin context:', {
+      connectedPlugins,
+      pluginDataCount: connectedPluginData.length,
+      pluginCapabilities: connectedPluginData.map(p => p.capabilities).flat()
+    })
 
-CONNECTED SERVICES: User has these services available: ${connectedPlugins.join(', ')}
+    // Build enhanced plugin context using capabilities
+    let pluginContext = ''
+    
+    if (connectedPluginData.length > 0) {
+      const pluginCapabilitiesContext = getPluginCapabilitiesContext(connectedPlugins)
+      
+      // Group plugins by category for better context
+      const pluginsByCategory = connectedPluginData.reduce((acc, plugin) => {
+        const category = plugin.category || 'other'
+        if (!acc[category]) acc[category] = []
+        acc[category].push(plugin)
+        return acc
+      }, {} as Record<string, any[]>)
+
+      pluginContext = `
+
+CONNECTED SERVICES WITH CAPABILITIES:
+${Object.entries(pluginsByCategory)
+  .map(([category, plugins]) => 
+    `${category.toUpperCase()}: ${plugins.map(p => `${p.label} (${p.capabilities.join(', ')})`).join('; ')}`
+  ).join('\n')}
+
 ${finalMissingPlugins.length > 0 ? `MISSING SERVICES: User mentioned these unavailable services: ${finalMissingPlugins.join(', ')}` : ''}
 
 CRITICAL INSTRUCTIONS FOR SERVICE HANDLING:
-- Use SPECIFIC service names ONLY when they're relevant AND available to the user
+- Use SPECIFIC service names and capabilities ONLY when they're relevant AND available to the user
+- Reference actual capabilities like "read_email", "send_email", "send_message" when relevant
 - For unavailable services that the user mentioned, suggest appropriate alternatives from connected services
-- If user mentioned unavailable services, use phrases like "available storage service" or "alternative note-taking app"
+- If user mentioned unavailable services, use phrases like "available ${connectedPluginData.find(p => p.category === 'storage')?.label || 'storage service'}" 
 - DO NOT use the specific names of unavailable services in your enhanced prompt
-- Example: If user wants "Notion" but it's unavailable, suggest "note-taking service" or use available alternatives like "Google Drive"
+- Example: If user wants "Notion" but it's unavailable, suggest using "${connectedPluginData.find(p => p.category === 'documents')?.label || 'available note-taking service'}"
 - Only mention services that are actually needed for the task
-- Don't force all connected services into the workflow just because they're available`
-      : `
+- Don't force all connected services into the workflow just because they're available
+- Consider plugin usage types: ${connectedPluginData.map(p => `${p.label} (${p.usage ? p.usage.join('/') : 'general'})`)}`
+    } else {
+      pluginContext = `
 
 NO CONNECTED SERVICES: User has no specific services connected
-- Use friendly generic terms like "email system", "storage folder", "messaging app"
-- Don't assume any specific service names`
+- Use friendly generic terms like "email system", "storage folder", "messaging app"  
+- Don't assume any specific service names
+- Keep instructions generic but actionable`
+    }
 
     // Build clarification context if answers are provided
     let clarificationContext = ''
@@ -148,86 +212,64 @@ Create a bullet-point execution plan with these sections:
 
 **Data Source:**
 • What specific information to monitor/read
+${connectedPluginData.some(p => p.capabilities && p.capabilities.includes('read_email')) ? '• Use email reading capabilities when the user wants to read emails' : ''}
 
 **Trigger Conditions:**
 • When the automation should activate
+${connectedPluginData.some(p => p.capabilities && p.capabilities.includes('search_email')) ? '• Use email filtering only if user wants to filter emails' : ''}
 
 **Processing Steps:**
 • What actions to take with the data
+• Focus ONLY on the user's stated requirements
 
 **Output Creation:**
-• What gets generated/created
+• What gets generated/created (ONLY what the user asked for)
 
 **Delivery Method:**
-• How and where to send results
+• How and where to send results (ONLY what the user specified)
+${connectedPluginData.some(p => p.capabilities && (p.capabilities.includes('send_email') || p.capabilities.includes('send_message'))) ? '• Use available messaging/email capabilities for sending results' : ''}
 
 **Error Handling:**
 • What to do if something fails
 
-CRITICAL WRITING RULES:
-${Object.keys(clarificationAnswers).length > 0 
-  ? `- Use ONLY the specific details provided by the user
-- If user said "daily" but no time specified, write "daily at a time you choose"
-- NEVER add specific times like "8:00 AM" unless user provided it
-- Keep all user-provided details exactly as they specified`
-  : `- Use simple, friendly language
-- Use available service names when connected and relevant
-- For unavailable services, use appropriate generic alternatives
-- Avoid any technical jargon or system terminology`
-}
+CRITICAL CONSTRAINT - DO NOT ADD FEATURES THE USER DIDN'T REQUEST:
+- If user says "send to my manager", ONLY mention sending to manager - don't suggest additional storage
+- If user says "summarize emails", focus ONLY on summarization and sending - don't add file saving
+- If user wants data sent somewhere, don't suggest also saving it elsewhere
+- Only mention storage/file capabilities if the user explicitly wants to save/store something
+- Don't suggest "backup" storage or "also save to" unless user requested it
 
 LANGUAGE STYLE REQUIREMENTS:
 - Write like you're explaining to a friend, not a computer
 - Use "you" and "your" throughout 
-- Use simple action words: "check", "read", "create", "send", "save"
+- Use simple action words: "check", "read", "create", "send"
 - Keep bullet points concise but complete
 - Each bullet point should be one clear action or condition
-
-EXAMPLE FORMAT:
-**Data Source:**
-• Monitor your Gmail inbox for new emails from clients
-
-**Trigger Conditions:**
-• When a new email arrives with "urgent" in the subject line
-
-**Processing Steps:**
-• Read the email content and extract key information
-• Create a summary of the urgent request
-
-**Output Creation:**
-• Generate a brief summary with sender, subject, and main points
-
-**Delivery Method:**
-• Send summary via Slack to your team channel
-• Save details to your project management tool
-
-**Error Handling:**
-• If email can't be read, log the issue and try again in 5 minutes
-• If Slack is down, send summary via email instead
+- ONLY mention capabilities that are directly relevant to what the user asked for
 
 IMPORTANT: Your response must be valid JSON. Do not include any markdown formatting or extra text outside the JSON.
 
 Respond with only a JSON object:
 {
-  "enhanced_prompt": "Your structured execution plan in bullet-point format using the exact format shown above",
+  "enhanced_prompt": "Your structured execution plan focusing ONLY on what the user requested",
   "rationale": "Brief explanation of what you made clearer and more specific"
 }`
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
+    // REPLACED: Manual fetch call with AI Analytics OpenAI Provider
+    const openaiProvider = new OpenAIProvider(process.env.OPENAI_API_KEY!, aiAnalytics)
+    
+    console.log('📊 Making tracked enhancement AI call with CONSISTENT agent ID')
+    
+    const openAIResponse = await openaiProvider.chatCompletion(
+      {
         model: 'gpt-4o',
         messages: [
           {
             role: 'system',
-            content: `You are an expert prompt engineer who specializes in creating structured, user-friendly automation execution plans. You write in simple, conversational language that anyone can understand, completely avoiding technical jargon. You excel at taking vague automation requests and making them specific and actionable while keeping the language friendly and approachable. You naturally incorporate available services to make instructions more specific, and when services aren't available, you suggest appropriate alternatives rather than using unavailable service names. You always respond with valid JSON only - no markdown, no extra text, just clean JSON. ${Object.keys(clarificationAnswers).length > 0 
+            content: `You are an expert prompt engineer who specializes in creating structured, user-friendly automation execution plans. You write in simple, conversational language that anyone can understand, completely avoiding technical jargon. You excel at taking vague automation requests and making them specific and actionable while keeping the language friendly and approachable. You ONLY suggest capabilities and services that are directly relevant to what the user asked for - you never add extra features or suggest additional storage/backup unless explicitly requested. You always respond with valid JSON only - no markdown, no extra text, just clean JSON. ${Object.keys(clarificationAnswers).length > 0 
               ? 'You are excellent at incorporating user-provided clarification answers to create specific, actionable prompts using only the details the user actually provided.'
               : 'You avoid making assumptions about specific parameters and use friendly placeholder language instead.'
-            }`
+            } You focus strictly on the user's stated requirements and avoid suggesting additional features they didn't ask for.`
           },
           {
             role: 'user', 
@@ -237,33 +279,32 @@ Respond with only a JSON object:
         max_tokens: 800,
         temperature: 0.1,
         presence_penalty: 0.1
-      })
+      },
+      {
+        userId: userIdToUse,
+        sessionId: sessionId, // FIXED: Use consistent session ID
+        feature: 'prompt_enhancement',
+        component: 'enhance-prompt-api',
+        workflow_step: 'prompt_enhancement',
+        category: 'agent_creation',
+        activity_type: 'agent_creation',
+        activity_name: 'Enhancing prompt with clarification details',
+        activity_step: 'prompt_enhancement',
+        agent_id: agentId // FIXED: Use consistent agent ID
+      }
+    )
+
+    console.log('✅ Enhancement AI call completed with CONSISTENT agent ID analytics tracking:', {
+      agentId,
+      sessionId
     })
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'Unknown error');
-      console.error('OpenAI API Error:', {
-        status: response.status,
-        statusText: response.statusText,
-        body: errorText
-      });
-      return NextResponse.json({ 
-        error: `OpenAI API call failed: ${response.status} - ${response.statusText}`,
-        details: errorText
-      }, { status: response.status })
+    // Parse the response (existing logic)
+    let fullResponse = openAIResponse.choices[0]?.message?.content?.trim()
+    if (!fullResponse) {
+      throw new Error('Empty response from OpenAI')
     }
 
-    const data = await response.json()
-    
-    if (!data.choices || !data.choices[0] || !data.choices[0].message) {
-      console.error('Invalid OpenAI response structure:', data);
-      return NextResponse.json({ 
-        error: 'Invalid response from OpenAI',
-        details: 'Missing choices or message in response'
-      }, { status: 500 })
-    }
-
-    let fullResponse = data.choices[0].message.content.trim()
     console.log('🤖 Raw OpenAI response:', fullResponse.slice(0, 200) + '...')
     
     // Parse the JSON response with better error handling
@@ -393,13 +434,16 @@ Respond with only a JSON object:
       } catch (secondParseError) {
         console.error('❌ All parsing attempts failed:', secondParseError);
         
-        // Final fallback: create a basic structured prompt from the raw response
-        if (fullResponse.length > 20) {
-          enhancedPrompt = `**Data Source:**
-• ${prompt.split('.')[0] || 'Your specified data source'}
+        // Final fallback: create a basic structured prompt using available plugin capabilities
+        const availableCapabilities = connectedPluginData.flatMap(p => p.capabilities || []);
+        const hasEmailCaps = availableCapabilities.some(c => c.includes('email'));
+        const hasMessageCaps = availableCapabilities.some(c => c.includes('message'));
+        
+        enhancedPrompt = `**Data Source:**
+• ${prompt.split('.')[0] || 'Your specified data source'}${hasEmailCaps ? ' (using email capabilities)' : ''}
 
 **Trigger Conditions:**
-• Based on your requirements
+• Based on your requirements${hasEmailCaps ? ' with email filtering' : ''}
 
 **Processing Steps:**
 • Process the data according to your needs
@@ -409,74 +453,30 @@ Respond with only a JSON object:
 • Generate the required output format
 
 **Delivery Method:**
-• Send results to your preferred destination
+• Send results to your preferred destination${hasMessageCaps ? ' using messaging capabilities' : ''}
 
 **Error Handling:**
 • Log any errors and retry as needed
-• Send notifications if critical failures occur`;
-          rationale = 'Created structured execution plan from your request.';
-          
-          console.log('⚠️ Using emergency fallback - created basic structured prompt');
-        } else {
-          console.error('❌ All fallback attempts failed - response too short');
-          return NextResponse.json({ 
-            error: 'Failed to generate a valid enhanced prompt',
-            details: 'All parsing and fallback attempts failed'
-          }, { status: 500 });
-        }
+• Send notifications if critical failures occur${hasMessageCaps ? ' via available messaging' : ''}`;
+        
+        rationale = `Created structured execution plan from your request using available plugin capabilities: ${availableCapabilities.slice(0, 3).join(', ')}.`;
+        
+        console.log('⚠️ Using enhanced fallback with plugin capabilities');
       }
     }
-    
-    // Extract usage data from OpenAI response
-    const inputTokens = data.usage?.prompt_tokens || 0
-    const outputTokens = data.usage?.completion_tokens || 0
 
-    console.log('📊 Token usage:', {
-      input: inputTokens,
-      output: outputTokens,
-      total: inputTokens + outputTokens
-    })
+    // REMOVED: Manual token tracking - now handled automatically by AI Analytics
 
-    // Track usage in database using the simplified tracking system
-    if (userIdToUse !== 'anonymous') {
-      console.log('💾 Tracking usage for user:', userIdToUse)
-      
-      try {
-        await trackTokenUsage(supabase, userIdToUse, {
-          modelName: 'gpt-4o',
-          provider: 'openai',
-          inputTokens: inputTokens,
-          outputTokens: outputTokens,
-          requestType: 'chat',
-          category: 'context_aware_prompt_enhancement',
-          metadata: {
-            originalPromptLength: prompt.length,
-            enhancedPromptLength: enhancedPrompt.length,
-            clarificationAnswersCount: Object.keys(clarificationAnswers).length,
-            clarificationAnswers: clarificationAnswers,
-            connectedPlugins: connectedPlugins,
-            missingPlugins: finalMissingPlugins,
-            enhancementType: Object.keys(clarificationAnswers).length > 0 ? 'with_clarification' : 'basic',
-            hadMissingPlugins: finalMissingPlugins.length > 0,
-            isUserFriendly: true,
-            isContextAware: true,
-            timestamp: new Date().toISOString()
-          }
-        })
-        console.log('✅ Usage tracking successful')
-      } catch (trackingError) {
-        console.warn('⚠️ Usage tracking failed, but continuing with response:', trackingError)
-      }
-    } else {
-      console.log('⚠️ Skipping usage tracking - anonymous user')
-    }
-
-    // Return clean, parsed response
-    console.log('🎉 Returning context-aware enhanced prompt:', {
+    // Return enhanced response with plugin metadata
+    console.log('🎉 Returning plugin-aware enhanced prompt with CONSISTENT agent ID tracking:', {
       enhancedPromptPreview: typeof enhancedPrompt === 'string' ? enhancedPrompt.substring(0, 100) + '...' : 'Object format converted to string',
       rationalePreview: typeof rationale === 'string' ? rationale.substring(0, 50) + '...' : 'N/A',
       connectedPlugins: connectedPlugins,
-      missingPlugins: finalMissingPlugins
+      connectedPluginDataCount: connectedPluginData.length,
+      missingPlugins: finalMissingPlugins,
+      sessionId: sessionId,
+      agentId: agentId, // FIXED: Log consistent agent ID
+      agentIdConsistent: providedAgentId === agentId // FIXED: Verify consistency
     })
 
     return NextResponse.json({ 
@@ -484,14 +484,23 @@ Respond with only a JSON object:
       rationale,          // Available for backend storage/tracking (not shown in UI)
       originalPrompt: prompt,
       clarificationAnswersUsed: Object.keys(clarificationAnswers).length > 0,
+      connectedPluginData, // Include plugin metadata in response
+      sessionId: sessionId, // FIXED: Return consistent session ID
+      agentId: agentId,     // FIXED: Return consistent agent ID
       metadata: {
         enhancementType: Object.keys(clarificationAnswers).length > 0 ? 'with_clarification' : 'basic',
         clarificationAnswersCount: Object.keys(clarificationAnswers).length,
         connectedPlugins: connectedPlugins,
+        connectedPluginData: connectedPluginData.map(p => ({ key: p.key, label: p.label, category: p.category })),
+        pluginCapabilitiesUsed: connectedPluginData.flatMap(p => p.capabilities || []),
         missingPlugins: finalMissingPlugins,
         hadMissingPlugins: finalMissingPlugins.length > 0,
         isUserFriendly: true,
-        isContextAware: true
+        isContextAware: true,
+        isPluginAware: true,
+        analyticsTracked: true,
+        activityTracked: true,
+        agentIdConsistent: providedAgentId === agentId // FIXED: Track consistency
       }
     })
   } catch (error) {

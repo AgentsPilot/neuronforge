@@ -8,12 +8,16 @@ type AuthContextType = {
   user: User | null
   session: Session | null
   loading: boolean
+  connectedPlugins: Record<string, any> | null
+  refreshPlugins: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
   session: null,
   loading: true,
+  connectedPlugins: null,
+  refreshPlugins: async () => {},
 })
 
 export const useAuth = () => useContext(AuthContext)
@@ -21,7 +25,62 @@ export const useAuth = () => useContext(AuthContext)
 export const UserProvider = ({ children }: { children: React.ReactNode }) => {
   const [session, setSession] = useState<Session | null>(null)
   const [user, setUser] = useState<User | null>(null)
-  const [loading, setLoading] = useState(true) // Add loading state
+  const [loading, setLoading] = useState(true)
+  const [connectedPlugins, setConnectedPlugins] = useState<Record<string, any> | null>(null)
+
+  // Fetch user plugins from the enhanced API
+  const fetchUserPlugins = async (currentUser: User) => {
+    try {
+      console.log('UserProvider: Fetching plugins for user:', currentUser.id)
+      
+      const response = await fetch('/api/user/plugins', {
+        headers: {
+          'x-user-id': currentUser.id
+        }
+      })
+
+      console.log('UserProvider: Response status:', response.status, response.ok)
+
+      if (!response.ok) {
+        throw new Error(`Plugin fetch failed: ${response.status}`)
+      }
+
+      const data = await response.json()
+      console.log('UserProvider: Full response data:', data) // NEW: See the actual data structure
+      console.log('UserProvider: Response keys:', Object.keys(data)) // NEW: See what keys exist
+      console.log('UserProvider: Has _meta?', !!data._meta) // NEW: Check if _meta exists
+      if (data._meta) {
+        console.log('UserProvider: _meta keys:', Object.keys(data._meta)) // NEW: See _meta structure
+        console.log('UserProvider: _meta.connectedPlugins:', data._meta.connectedPlugins) // NEW: See the actual connectedPlugins data
+      }
+      
+      console.log('UserProvider: Plugin API response received')
+
+      // Extract enhanced plugin data from API response
+      if (data._meta && data._meta.connectedPlugins) {
+        console.log('UserProvider: Setting connectedPlugins to:', data._meta.connectedPlugins)
+        setConnectedPlugins(data._meta.connectedPlugins)
+        
+        console.log('UserProvider: Set connectedPlugins with', Object.keys(data._meta.connectedPlugins).length, 'plugins')
+      } else {
+        console.warn('UserProvider: No enhanced plugin metadata in API response, setting empty object')
+        console.warn('UserProvider: Available keys in response:', Object.keys(data))
+        setConnectedPlugins({})
+      }
+
+    } catch (error) {
+      console.error('UserProvider: Failed to fetch user plugins:', error)
+      // Set empty object on error rather than leaving as null
+      setConnectedPlugins({})
+    }
+  }
+
+  // Refresh plugins function for external use
+  const refreshPlugins = async () => {
+    if (user) {
+      await fetchUserPlugins(user)
+    }
+  }
 
   useEffect(() => {
     const getSession = async () => {
@@ -30,23 +89,44 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
         
         if (error) {
           console.error('Error getting session:', error)
+          setSession(null)
+          setUser(null)
+          setConnectedPlugins({})
         } else {
           setSession(data.session)
           setUser(data.session?.user ?? null)
+          
+          // Fetch plugins if user is authenticated
+          if (data.session?.user) {
+            await fetchUserPlugins(data.session.user)
+          } else {
+            setConnectedPlugins({})
+          }
         }
       } catch (error) {
         console.error('Session error:', error)
+        setConnectedPlugins({})
       } finally {
-        setLoading(false) // Set loading to false after session check
+        setLoading(false)
       }
     }
 
     getSession()
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      console.log('UserProvider: Auth state change:', _event)
+      
       setSession(session)
       setUser(session?.user ?? null)
-      setLoading(false) // Also set loading to false on auth state changes
+      
+      // Fetch plugins when user signs in
+      if (session?.user) {
+        await fetchUserPlugins(session.user)
+      } else {
+        setConnectedPlugins({})
+      }
+      
+      setLoading(false)
     })
 
     return () => {
@@ -54,8 +134,20 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
     }
   }, [])
 
+  // Create enhanced user object with connectedPlugins
+  const enhancedUser = user ? {
+    ...user,
+    connectedPlugins
+  } : null
+
   return (
-    <AuthContext.Provider value={{ session, user, loading }}>
+    <AuthContext.Provider value={{ 
+      session, 
+      user: enhancedUser, 
+      loading, 
+      connectedPlugins,
+      refreshPlugins 
+    }}>
       {children}
     </AuthContext.Provider>
   )

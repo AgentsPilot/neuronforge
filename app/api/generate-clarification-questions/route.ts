@@ -1,161 +1,804 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import OpenAI from 'openai'
-import { trackTokenUsage, LLMCategory } from '../../../components/orchestration/types/usage'
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
+import { v4 as uuidv4 } from 'uuid'
+import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics'
+import { OpenAIProvider } from '@/lib/ai/providers/openaiProvider'
+import { 
+  getConnectedPluginsWithMetadata, 
+  getPluginDefinition, 
+  pluginRegistry 
+} from '@/lib/plugins/pluginRegistry'
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-// Plugin requirements mapping
-const PLUGIN_REQUIREMENTS = {
-  'google drive': ['googledrive', 'google_drive', 'drive', 'google-drive'],
-  'google sheets': ['googlesheets', 'google_sheets', 'sheets'],
-  'gmail': ['gmail', 'email', 'google_email', 'google-mail'],
-  'dropbox': ['dropbox'],
-  'slack': ['slack'],
-  'notion': ['notion'],
-  'airtable': ['airtable'],
-  'calendar': ['calendar', 'google_calendar', 'gcal'],
-  'onedrive': ['onedrive', 'microsoft_onedrive'],
-  'trello': ['trello'],
-  'asana': ['asana'],
-  'monday': ['monday', 'monday_com']
+// Initialize AI Analytics
+const aiAnalytics = new AIAnalyticsService(supabase)
+
+// Helper function to validate UUID format
+function isValidUUID(str: string): boolean {
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  return uuidPattern.test(str)
 }
 
-export function buildClarifySystemPrompt(connectedPlugins: string[]) {
-  return `
-You are the Clarification Engine for AgentPilot, a no-code AI agent platform.
+// Detect mentioned services using plugin registry
+function detectMentionedServices(prompt: string): string[] {
+  const promptLower = prompt.toLowerCase();
+  const mentionedServices: string[] = [];
+  
+  // Check against plugin registry
+  for (const [pluginKey, pluginDef] of Object.entries(pluginRegistry)) {
+    const serviceName = pluginDef.label.toLowerCase();
+    const keyVariations = [
+      pluginKey,
+      serviceName,
+      serviceName.replace(/\s+/g, ''),
+      serviceName.replace(/\s+/g, '_'),
+      serviceName.replace(/\s+/g, '-')
+    ];
+    
+    const isDetected = keyVariations.some(variation => 
+      promptLower.includes(variation)
+    );
+    
+    if (isDetected && !mentionedServices.includes(pluginKey)) {
+      mentionedServices.push(pluginKey);
+    }
+  }
+  
+  return mentionedServices;
+}
 
-Your role is to analyze user automation requests and identify what additional information is needed to build a complete, actionable agent configuration.
+// Validate mentioned plugins using plugin registry and database data
+function validateConnectedPlugins(prompt: string, connectedPlugins: string[]): { 
+  missingServices: string[], 
+  availableServices: string[] 
+} {
+  const mentionedServices = detectMentionedServices(prompt);
+  
+  console.log('Plugin validation in clarification API:', {
+    mentionedServices,
+    connectedPlugins
+  });
+  
+  const missingServices: string[] = [];
+  const availableServices: string[] = [];
+  
+  mentionedServices.forEach(service => {
+    if (connectedPlugins.includes(service)) {
+      availableServices.push(service);
+    } else {
+      missingServices.push(service);
+    }
+  });
+  
+  return { missingServices, availableServices };
+}
+
+// FIXED: Only add these two standardized questions if AI doesn't generate them
+function addStandardQuestionsIfMissing(questions: ClarificationQuestion[], userPrompt: string): ClarificationQuestion[] {
+  const hasErrorHandling = questions.some(q => 
+    q.dimension === 'error_handling' ||
+    q.question.toLowerCase().includes('error') ||
+    q.question.toLowerCase().includes('problem') ||
+    q.question.toLowerCase().includes('fail')
+  );
+
+  const hasScheduling = questions.some(q => 
+    q.dimension === 'scheduling_timing' ||
+    q.question.toLowerCase().includes('when') ||
+    q.question.toLowerCase().includes('schedule') ||
+    q.question.toLowerCase().includes('frequency') ||
+    q.question.toLowerCase().includes('time')
+  );
+
+  // Only add if missing and not already specified in user prompt
+  const promptLower = userPrompt.toLowerCase();
+  const userSpecifiedTiming = promptLower.includes('daily') || 
+                              promptLower.includes('weekly') || 
+                              promptLower.includes('monthly') ||
+                              promptLower.includes('every') ||
+                              /\d+\s*(am|pm|hour|minute)/.test(promptLower);
+
+  const userSpecifiedErrorHandling = promptLower.includes('error') ||
+                                     promptLower.includes('fail') ||
+                                     promptLower.includes('retry') ||
+                                     promptLower.includes('notify');
+
+  // Add simple error handling if missing
+// Find this section in your file and replace the error handling question:
+if (!hasErrorHandling && !userSpecifiedErrorHandling) {
+  questions.push({
+    id: 'error_handling_standard',
+    question: 'If something goes wrong, how should I be notified?',
+    type: 'select',
+    required: true,
+    dimension: 'error_handling',
+    placeholder: 'Choose notification method',
+    options: [
+      {
+        value: 'email_me',
+        label: 'Email me',
+        description: 'Send an email notification when there\'s an issue'
+      },
+      {
+        value: 'alert_me', 
+        label: 'Alert me',
+        description: 'Show a dashboard alert when there\'s a problem'
+      },
+      {
+        value: 'retry_once',
+        label: 'Retry (one time)',
+        description: 'Try the automation once more before stopping'
+      }
+    ],
+    allowCustom: false
+  });
+}
+  // Add dynamic scheduling if missing
+  if (!hasScheduling && !userSpecifiedTiming) {
+    questions.push({
+      id: 'schedule_frequency',
+      question: 'How often should this automation run?',
+      type: 'select',
+      required: true,
+      dimension: 'scheduling_timing',
+      placeholder: 'Choose frequency',
+      options: [
+        { value: 'every_15_minutes', label: 'Every 15 minutes', description: 'Very frequent monitoring' },
+        { value: 'hourly', label: 'Every hour', description: 'Regular hourly checks' },
+        { value: 'every_4_hours', label: 'Every 4 hours', description: 'Several times per day' },
+        { value: 'daily', label: 'Daily', description: 'Once per day' },
+        { value: 'weekly', label: 'Weekly', description: 'Once per week' },
+        { value: 'monthly', label: 'Monthly', description: 'Once per month' },
+        { value: 'on_demand', label: 'Only when I trigger it', description: 'Manual execution only' }
+      ],
+      allowCustom: true,
+      followUpQuestions: {
+        'every_15_minutes': [
+          {
+            id: 'time_range_15min',
+            question: 'During what hours should it run every 15 minutes?',
+            type: 'select',
+            required: true,
+            options: [
+              { value: 'business_hours', label: '9 AM to 5 PM', description: 'Only during work hours' },
+              { value: 'extended_hours', label: '8 AM to 8 PM', description: 'Extended monitoring hours' },
+              { value: 'all_day', label: '24/7', description: 'Around the clock monitoring' }
+            ],
+            allowCustom: true
+          }
+        ],
+        'hourly': [
+          {
+            id: 'time_range_hourly',
+            question: 'During what hours should it run every hour?',
+            type: 'select',
+            required: true,
+            options: [
+              { value: 'business_hours', label: '9 AM to 5 PM', description: 'Only during work hours' },
+              { value: 'extended_hours', label: '8 AM to 8 PM', description: 'Extended hours' },
+              { value: 'all_day', label: '24/7', description: 'All day monitoring' }
+            ],
+            allowCustom: true
+          }
+        ],
+        'every_4_hours': [
+          {
+            id: 'start_time_4hour',
+            question: 'What time should the 4-hour cycle start?',
+            type: 'select',
+            required: true,
+            options: [
+              { value: '8am', label: '8:00 AM', description: 'Start early morning (8 AM, 12 PM, 4 PM, 8 PM)' },
+              { value: '9am', label: '9:00 AM', description: 'Start work day (9 AM, 1 PM, 5 PM, 9 PM)' },
+              { value: '10am', label: '10:00 AM', description: 'Start mid-morning (10 AM, 2 PM, 6 PM, 10 PM)' }
+            ],
+            allowCustom: true
+          }
+        ],
+        'daily': [
+          {
+            id: 'daily_time',
+            question: 'What time each day should this run?',
+            type: 'select',
+            required: true,
+            options: [
+              { value: '6am', label: '6:00 AM', description: 'Very early morning' },
+              { value: '8am', label: '8:00 AM', description: 'Early morning' },
+              { value: '9am', label: '9:00 AM', description: 'Start of work day' },
+              { value: '12pm', label: '12:00 PM', description: 'Midday' },
+              { value: '3pm', label: '3:00 PM', description: 'Mid afternoon' },
+              { value: '5pm', label: '5:00 PM', description: 'End of work day' },
+              { value: '6pm', label: '6:00 PM', description: 'Early evening' },
+              { value: '9pm', label: '9:00 PM', description: 'Evening' }
+            ],
+            allowCustom: true
+          }
+        ],
+        'weekly': [
+          {
+            id: 'weekly_day',
+            question: 'Which day of the week?',
+            type: 'select',
+            required: true,
+            options: [
+              { value: 'monday', label: 'Monday', description: 'Start of work week' },
+              { value: 'tuesday', label: 'Tuesday', description: 'Early week' },
+              { value: 'wednesday', label: 'Wednesday', description: 'Mid-week' },
+              { value: 'thursday', label: 'Thursday', description: 'Late week' },
+              { value: 'friday', label: 'Friday', description: 'End of work week' },
+              { value: 'saturday', label: 'Saturday', description: 'Weekend' },
+              { value: 'sunday', label: 'Sunday', description: 'Weekend/week preparation' }
+            ],
+            allowCustom: false,
+            followUpQuestions: {
+              'monday': [
+                {
+                  id: 'monday_time',
+                  question: 'What time on Monday?',
+                  type: 'select',
+                  required: true,
+                  options: [
+                    { value: '8am', label: '8:00 AM', description: 'Early morning start' },
+                    { value: '9am', label: '9:00 AM', description: 'Work day start' },
+                    { value: '10am', label: '10:00 AM', description: 'Mid-morning' },
+                    { value: '12pm', label: '12:00 PM', description: 'Midday' },
+                    { value: '5pm', label: '5:00 PM', description: 'End of day' }
+                  ],
+                  allowCustom: true
+                }
+              ],
+              'tuesday': [
+                {
+                  id: 'tuesday_time',
+                  question: 'What time on Tuesday?',
+                  type: 'select',
+                  required: true,
+                  options: [
+                    { value: '8am', label: '8:00 AM', description: 'Early morning start' },
+                    { value: '9am', label: '9:00 AM', description: 'Work day start' },
+                    { value: '10am', label: '10:00 AM', description: 'Mid-morning' },
+                    { value: '12pm', label: '12:00 PM', description: 'Midday' },
+                    { value: '5pm', label: '5:00 PM', description: 'End of day' }
+                  ],
+                  allowCustom: true
+                }
+              ],
+              'wednesday': [
+                {
+                  id: 'wednesday_time',
+                  question: 'What time on Wednesday?',
+                  type: 'select',
+                  required: true,
+                  options: [
+                    { value: '8am', label: '8:00 AM', description: 'Early morning start' },
+                    { value: '9am', label: '9:00 AM', description: 'Work day start' },
+                    { value: '10am', label: '10:00 AM', description: 'Mid-morning' },
+                    { value: '12pm', label: '12:00 PM', description: 'Midday' },
+                    { value: '5pm', label: '5:00 PM', description: 'End of day' }
+                  ],
+                  allowCustom: true
+                }
+              ],
+              'thursday': [
+                {
+                  id: 'thursday_time',
+                  question: 'What time on Thursday?',
+                  type: 'select',
+                  required: true,
+                  options: [
+                    { value: '8am', label: '8:00 AM', description: 'Early morning start' },
+                    { value: '9am', label: '9:00 AM', description: 'Work day start' },
+                    { value: '10am', label: '10:00 AM', description: 'Mid-morning' },
+                    { value: '12pm', label: '12:00 PM', description: 'Midday' },
+                    { value: '5pm', label: '5:00 PM', description: 'End of day' }
+                  ],
+                  allowCustom: true
+                }
+              ],
+              'friday': [
+                {
+                  id: 'friday_time',
+                  question: 'What time on Friday?',
+                  type: 'select',
+                  required: true,
+                  options: [
+                    { value: '8am', label: '8:00 AM', description: 'Early morning start' },
+                    { value: '9am', label: '9:00 AM', description: 'Work day start' },
+                    { value: '10am', label: '10:00 AM', description: 'Mid-morning' },
+                    { value: '12pm', label: '12:00 PM', description: 'Midday' },
+                    { value: '3pm', label: '3:00 PM', description: 'Afternoon' },
+                    { value: '5pm', label: '5:00 PM', description: 'End of work week' }
+                  ],
+                  allowCustom: true
+                }
+              ],
+              'saturday': [
+                {
+                  id: 'saturday_time',
+                  question: 'What time on Saturday?',
+                  type: 'select',
+                  required: true,
+                  options: [
+                    { value: '9am', label: '9:00 AM', description: 'Weekend morning' },
+                    { value: '10am', label: '10:00 AM', description: 'Late morning' },
+                    { value: '12pm', label: '12:00 PM', description: 'Midday' },
+                    { value: '2pm', label: '2:00 PM', description: 'Afternoon' },
+                    { value: '6pm', label: '6:00 PM', description: 'Evening' }
+                  ],
+                  allowCustom: true
+                }
+              ],
+              'sunday': [
+                {
+                  id: 'sunday_time',
+                  question: 'What time on Sunday?',
+                  type: 'select',
+                  required: true,
+                  options: [
+                    { value: '9am', label: '9:00 AM', description: 'Weekend morning' },
+                    { value: '10am', label: '10:00 AM', description: 'Late morning' },
+                    { value: '12pm', label: '12:00 PM', description: 'Midday' },
+                    { value: '6pm', label: '6:00 PM', description: 'Sunday evening prep' },
+                    { value: '8pm', label: '8:00 PM', description: 'Week preparation time' }
+                  ],
+                  allowCustom: true
+                }
+              ]
+            }
+          }
+        ],
+        'monthly': [
+          {
+            id: 'monthly_day_type',
+            question: 'Which day of the month?',
+            type: 'select',
+            required: true,
+            options: [
+              { value: 'first_day', label: 'First day of the month', description: '1st of each month' },
+              { value: 'specific_date', label: 'Specific date each month', description: 'Same date every month (e.g., 15th)' },
+              { value: 'first_weekday', label: 'First weekday of the month', description: 'First Monday, Tuesday, etc.' },
+              { value: 'last_day', label: 'Last day of the month', description: 'Final day of each month' },
+              { value: 'last_weekday', label: 'Last weekday of the month', description: 'Last Friday, etc.' }
+            ],
+            allowCustom: false,
+            followUpQuestions: {
+              'first_day': [
+                {
+                  id: 'first_day_time',
+                  question: 'What time on the 1st of each month?',
+                  type: 'select',
+                  required: true,
+                  options: [
+                    { value: '9am', label: '9:00 AM', description: 'Start of business day' },
+                    { value: '12pm', label: '12:00 PM', description: 'Midday' },
+                    { value: '5pm', label: '5:00 PM', description: 'End of business day' },
+                    { value: '8pm', label: '8:00 PM', description: 'Evening' }
+                  ],
+                  allowCustom: true
+                }
+              ],
+              'specific_date': [
+                {
+                  id: 'specific_date_day',
+                  question: 'Which date each month?',
+                  type: 'select',
+                  required: true,
+                  options: [
+                    { value: '5th', label: '5th of each month', description: 'Early in the month' },
+                    { value: '10th', label: '10th of each month', description: 'Early-mid month' },
+                    { value: '15th', label: '15th of each month', description: 'Middle of month' },
+                    { value: '20th', label: '20th of each month', description: 'Late in month' },
+                    { value: '25th', label: '25th of each month', description: 'Near month end' }
+                  ],
+                  allowCustom: true,
+                  followUpQuestions: {
+                    '5th': [
+                      {
+                        id: 'fifth_time',
+                        question: 'What time on the 5th?',
+                        type: 'select',
+                        required: true,
+                        options: [
+                          { value: '9am', label: '9:00 AM', description: 'Morning' },
+                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
+                          { value: '5pm', label: '5:00 PM', description: 'Evening' }
+                        ],
+                        allowCustom: true
+                      }
+                    ],
+                    '10th': [
+                      {
+                        id: 'tenth_time',
+                        question: 'What time on the 10th?',
+                        type: 'select',
+                        required: true,
+                        options: [
+                          { value: '9am', label: '9:00 AM', description: 'Morning' },
+                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
+                          { value: '5pm', label: '5:00 PM', description: 'Evening' }
+                        ],
+                        allowCustom: true
+                      }
+                    ],
+                    '15th': [
+                      {
+                        id: 'fifteenth_time',
+                        question: 'What time on the 15th?',
+                        type: 'select',
+                        required: true,
+                        options: [
+                          { value: '9am', label: '9:00 AM', description: 'Morning' },
+                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
+                          { value: '5pm', label: '5:00 PM', description: 'Evening' }
+                        ],
+                        allowCustom: true
+                      }
+                    ],
+                    '20th': [
+                      {
+                        id: 'twentieth_time',
+                        question: 'What time on the 20th?',
+                        type: 'select',
+                        required: true,
+                        options: [
+                          { value: '9am', label: '9:00 AM', description: 'Morning' },
+                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
+                          { value: '5pm', label: '5:00 PM', description: 'Evening' }
+                        ],
+                        allowCustom: true
+                      }
+                    ],
+                    '25th': [
+                      {
+                        id: 'twentyfifth_time',
+                        question: 'What time on the 25th?',
+                        type: 'select',
+                        required: true,
+                        options: [
+                          { value: '9am', label: '9:00 AM', description: 'Morning' },
+                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
+                          { value: '5pm', label: '5:00 PM', description: 'Evening' }
+                        ],
+                        allowCustom: true
+                      }
+                    ]
+                  }
+                }
+              ],
+              'first_weekday': [
+                {
+                  id: 'first_weekday_type',
+                  question: 'Which weekday?',
+                  type: 'select',
+                  required: true,
+                  options: [
+                    { value: 'first_monday', label: 'First Monday of each month', description: 'Start of work month' },
+                    { value: 'first_tuesday', label: 'First Tuesday of each month', description: 'Early week start' },
+                    { value: 'first_wednesday', label: 'First Wednesday of each month', description: 'Mid-week start' },
+                    { value: 'first_friday', label: 'First Friday of each month', description: 'Week-end timing' }
+                  ],
+                  allowCustom: false,
+                  followUpQuestions: {
+                    'first_monday': [
+                      {
+                        id: 'first_monday_time',
+                        question: 'What time on the first Monday?',
+                        type: 'select',
+                        required: true,
+                        options: [
+                          { value: '9am', label: '9:00 AM', description: 'Start of work day' },
+                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
+                          { value: '5pm', label: '5:00 PM', description: 'End of work day' }
+                        ],
+                        allowCustom: true
+                      }
+                    ],
+                    'first_tuesday': [
+                      {
+                        id: 'first_tuesday_time',
+                        question: 'What time on the first Tuesday?',
+                        type: 'select',
+                        required: true,
+                        options: [
+                          { value: '9am', label: '9:00 AM', description: 'Start of work day' },
+                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
+                          { value: '5pm', label: '5:00 PM', description: 'End of work day' }
+                        ],
+                        allowCustom: true
+                      }
+                    ],
+                    'first_wednesday': [
+                      {
+                        id: 'first_wednesday_time',
+                        question: 'What time on the first Wednesday?',
+                        type: 'select',
+                        required: true,
+                        options: [
+                          { value: '9am', label: '9:00 AM', description: 'Start of work day' },
+                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
+                          { value: '5pm', label: '5:00 PM', description: 'End of work day' }
+                        ],
+                        allowCustom: true
+                      }
+                    ],
+                    'first_friday': [
+                      {
+                        id: 'first_friday_time',
+                        question: 'What time on the first Friday?',
+                        type: 'select',
+                        required: true,
+                        options: [
+                          { value: '9am', label: '9:00 AM', description: 'Start of work day' },
+                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
+                          { value: '5pm', label: '5:00 PM', description: 'End of work day' }
+                        ],
+                        allowCustom: true
+                      }
+                    ]
+                  }
+                }
+              ],
+              'last_day': [
+                {
+                  id: 'last_day_time',
+                  question: 'What time on the last day of each month?',
+                  type: 'select',
+                  required: true,
+                  options: [
+                    { value: '9am', label: '9:00 AM', description: 'Morning' },
+                    { value: '12pm', label: '12:00 PM', description: 'Midday' },
+                    { value: '5pm', label: '5:00 PM', description: 'End of business day' },
+                    { value: '11pm', label: '11:00 PM', description: 'End of day processing' }
+                  ],
+                  allowCustom: true
+                }
+              ],
+              'last_weekday': [
+                {
+                  id: 'last_weekday_type',
+                  question: 'Which weekday?',
+                  type: 'select',
+                  required: true,
+                  options: [
+                    { value: 'last_monday', label: 'Last Monday of each month', description: 'End-month Monday' },
+                    { value: 'last_wednesday', label: 'Last Wednesday of each month', description: 'End-month mid-week' },
+                    { value: 'last_friday', label: 'Last Friday of each month', description: 'End-month Friday' }
+                  ],
+                  allowCustom: false,
+                  followUpQuestions: {
+                    'last_monday': [
+                      {
+                        id: 'last_monday_time',
+                        question: 'What time on the last Monday?',
+                        type: 'select',
+                        required: true,
+                        options: [
+                          { value: '9am', label: '9:00 AM', description: 'Start of work day' },
+                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
+                          { value: '5pm', label: '5:00 PM', description: 'End of work day' }
+                        ],
+                        allowCustom: true
+                      }
+                    ],
+                    'last_wednesday': [
+                      {
+                        id: 'last_wednesday_time',
+                        question: 'What time on the last Wednesday?',
+                        type: 'select',
+                        required: true,
+                        options: [
+                          { value: '9am', label: '9:00 AM', description: 'Start of work day' },
+                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
+                          { value: '5pm', label: '5:00 PM', description: 'End of work day' }
+                        ],
+                        allowCustom: true
+                      }
+                    ],
+                    'last_friday': [
+                      {
+                        id: 'last_friday_time',
+                        question: 'What time on the last Friday?',
+                        type: 'select',
+                        required: true,
+                        options: [
+                          { value: '9am', label: '9:00 AM', description: 'Start of work day' },
+                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
+                          { value: '5pm', label: '5:00 PM', description: 'End of work day' }
+                        ],
+                        allowCustom: true
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    });
+  }
+
+  return questions;
+}
+
+// COMPLETELY AI-DRIVEN SYSTEM PROMPT - NO HARDCODED QUESTIONS
+export function buildClarifySystemPrompt(connectedPlugins: string[], missingServices: string[]) {
+  const connectedPluginData = getConnectedPluginsWithMetadata(connectedPlugins);
+  const pluginCapabilities = connectedPluginData.length > 0 
+    ? connectedPluginData.map(p => `${p.label}: ${p.capabilities.join(', ')}`).join(' | ')
+    : 'No plugins currently connected';
+  
+  let pluginInstructions = '';
+  if (missingServices.length > 0) {
+    const missingDisplayNames = missingServices.map(service => {
+      const definition = getPluginDefinition(service);
+      return definition?.displayName || definition?.label || service;
+    });
+    
+    pluginInstructions = `
+CRITICAL PLUGIN RESTRICTION: 
+The user mentioned these services but they are NOT connected: ${missingDisplayNames.join(', ')}
+DO NOT generate any questions that reference these missing services.
+Instead, focus ONLY on the connected plugins and their capabilities.
+`;
+  }
+
+  return `
+You are the Clarification Engine for AgentPilot, a no-code AI agent platform for non-technical users.
+
+Your role is to analyze ANY user automation request and generate the minimal essential questions needed to build a complete, actionable agent configuration.
 
 INPUTS:
-- userPrompt: The user's description of their desired automation
-- connectedPlugins: List of currently authenticated integrations
+- userPrompt: The user's description of their desired automation (could be ANYTHING)
+- connectedPlugins: List of currently authenticated integrations with their capabilities
+
+CONNECTED PLUGINS AND CAPABILITIES:
+${pluginCapabilities}
+
+${pluginInstructions}
 
 CORE PRINCIPLES:
-1. Ask only essential questions needed to build the automation
-2. Prioritize clarity over completeness - better to ask fewer, more targeted questions
-3. Consider workflows that span multiple steps and plugins
-4. Handle both simple tasks and complex multi-stage automations
-5. Support conditional logic and decision-making workflows
+1. SUPPORT ANY USER PROMPT - Don't assume specific automation types
+2. Ask only the most essential questions needed to build the automation
+3. Prioritize clarity over completeness - better fewer, targeted questions
+4. ONLY reference services in the connected plugins list
+5. Generate questions dynamically based on what the user actually wants to do
 
-ANALYSIS DIMENSIONS:
+CRITICAL REQUIREMENTS:
+- DO NOT include scheduling/timing questions (system handles this automatically)
+- DO NOT include error handling questions (system adds standardized options)
+- Focus on the core automation logic and data flow
 
-Evaluate these aspects and ask clarifying questions only when information is missing or ambiguous:
+ANALYSIS DIMENSIONS TO EVALUATE:
 
-**Data & Input Sources**
-- What data does the agent need to access?
-- Which plugins/sources contain this data?
-- Are there specific filters, criteria, or timeframes?
-- How should the agent handle multiple data sources?
+**Data & Input Sources (data_input)**
+- What specific data does the automation need?
+- Which connected plugins contain this data?
+- Any filters, criteria, or timeframes needed?
 
-**Processing & Logic**
-- What operations should be performed on the data?
-- Are there conditional rules or decision points?
-- Should different actions happen based on data content?
-- Are there multi-step processing requirements?
-
-**Output & Actions**
-- What should the agent produce or do?
+**Processing & Logic (processing_logic)** 
+- What operations should be performed?
 - What format should outputs take?
-- Where should results be delivered or stored?
-- Should multiple actions happen simultaneously or sequentially?
+- Any conditional rules or decision points?
 
-**Execution Context**
-- When/how often should this run?
-- What triggers should initiate the agent?
-- How should errors or edge cases be handled?
-- Are there approval steps or human checkpoints needed?
+**Output & Actions (output_actions)** 
+- How should results be delivered?
+- Where should results go using connected plugins?
+- What delivery method should be used?
 
-**Integration Requirements**
-- Which plugins are needed for this automation?
-- How should data flow between different tools?
-- Are there authentication or permission considerations?
-
-PLUGIN HANDLING:
-
-Connected Plugins: ${JSON.stringify(connectedPlugins)}
-
-IMPORTANT: Only ask questions about connected plugins. If the user mentions a service that isn't connected, do NOT generate questions about it. Focus on alternatives using connected plugins or suggest they connect the required service first.
-
-For plugin references:
-- If a plugin is connected: Use it in your questions and automation planning
-- If a plugin is mentioned but not connected: Do NOT ask questions about it - instead suggest connecting it first
-- Focus questions only on plugins that are actually available
+**Integration Requirements (integration_requirements)**
+- How should data flow between connected tools?
+- Any specific plugin configurations needed?
 
 QUESTION GENERATION RULES:
 
-Ask questions that are:
-- Specific and actionable
-- Focused on missing information that affects implementation
-- Grouped logically when related
-- Limited to what's truly necessary (ideally 3-5 questions maximum)
+1. ALWAYS use "select" type with 3-5 relevant options
+2. NEVER use "text" or "textarea" types
+3. Each question MUST have this exact structure:
 
-Avoid questions about:
-- Information already provided in the prompt
-- Implementation details the system can infer
-- Overly granular configuration options
-- Generic preferences without automation impact
+{
+  "id": "unique_id",
+  "dimension": "data_input | processing_logic | output_actions | integration_requirements",
+  "question": "Clear, specific question text",
+  "type": "select",
+  "options": [
+    {
+      "value": "option_value",
+      "label": "User-friendly option label", 
+      "description": "Brief explanation of what this option does"
+    }
+  ],
+  "allowCustom": true,
+  "required": true
+}
 
-OUTPUT FORMAT:
+EXAMPLES:
 
-Return a JSON array of questions directly. Each question should have this structure:
-
+For "analyze customer feedback from emails and create reports":
 [
   {
-    "id": "unique_id",
-    "dimension": "data_input | processing_logic | output_actions | execution_context | integration_requirements",
-    "question": "Clear, specific question text",
-    "type": "text | textarea | select | multiselect | date",
-    "options": ["option1", "option2"], // only for select/multiselect
-    "placeholder": "Helpful example or guidance text",
-    "allowCustom": true, // for select/multiselect if custom options allowed
+    "id": "email_source",
+    "dimension": "data_input",
+    "question": "Which emails should be analyzed for customer feedback?",
+    "type": "select",
+    "options": [
+      {"value": "all_recent", "label": "All emails from last 30 days", "description": "Analyze recent email communications"},
+      {"value": "specific_folders", "label": "Only emails in specific folders", "description": "Focus on organized customer feedback"},
+      {"value": "keyword_filter", "label": "Emails containing feedback keywords", "description": "Search for emails with words like 'feedback', 'complaint', 'suggestion'"}
+    ],
+    "allowCustom": true,
+    "required": true
+  },
+  {
+    "id": "report_format",
+    "dimension": "processing_logic",
+    "question": "What type of customer feedback report should be created?",
+    "type": "select",
+    "options": [
+      {"value": "summary_highlights", "label": "Summary with key highlights", "description": "Brief overview of main feedback themes"},
+      {"value": "detailed_breakdown", "label": "Detailed breakdown by category", "description": "Organize feedback into complaints, suggestions, praise"},
+      {"value": "action_items", "label": "Focus on actionable items", "description": "Highlight feedback requiring follow-up or action"}
+    ],
+    "allowCustom": true,
+    "required": true
+  },
+  {
+    "id": "report_delivery",
+    "dimension": "output_actions",
+    "question": "How should the feedback report be delivered?",
+    "type": "select",
+    "options": [
+      {"value": "email_report", "label": "Send via email", "description": "Email the report to specified recipients"},
+      {"value": "save_drive", "label": "Save to Google Drive", "description": "Store report in a shared Drive folder"},
+      {"value": "both_email_drive", "label": "Email and save to Drive", "description": "Send via email and keep a copy in Drive"}
+    ],
+    "allowCustom": false,
     "required": true
   }
 ]
 
-If no clarification is needed, return an empty array: []
-
-EXAMPLES OF GOOD QUESTIONS:
-
-Instead of "What should be included in the summary?" ask:
-"What key information should the summary highlight? (e.g., action items, deadlines, decisions made)"
-
-Instead of "Where should results be stored?" ask:
-"Should the analysis be sent as an email, saved to a specific folder, or posted in a channel?"
-
-Instead of "How often should this run?" ask:
-"What should trigger this automation? (e.g., daily at 9 AM, when new emails arrive, weekly on Fridays)"
-
-Remember: Your goal is to gather the minimum information needed to build a functional automation, not to collect every possible configuration detail.
-
-Return ONLY the JSON array, no markdown formatting, code blocks, or explanatory text.
-`.trim()
-}
-
-// Validate mentioned plugins are connected
-function validateConnectedPlugins(prompt: string, connectedPlugins: string[]): string[] {
-  const promptLower = prompt.toLowerCase()
-  const mentionedButNotConnected: string[] = []
-  
-  for (const [service, aliases] of Object.entries(PLUGIN_REQUIREMENTS)) {
-    const isMentioned = aliases.some(alias => promptLower.includes(alias))
-    const isConnected = aliases.some(alias => 
-      connectedPlugins.some(connected => 
-        connected.toLowerCase().includes(alias.toLowerCase())
-      )
-    )
-    
-    if (isMentioned && !isConnected) {
-      mentionedButNotConnected.push(service)
-    }
+For "backup important files to cloud storage":
+[
+  {
+    "id": "file_selection",
+    "dimension": "data_input", 
+    "question": "Which files should be backed up?",
+    "type": "select",
+    "options": [
+      {"value": "recent_modified", "label": "Recently modified files", "description": "Files changed in the last week"},
+      {"value": "specific_folders", "label": "Files from specific folders", "description": "Choose particular directories to backup"},
+      {"value": "file_types", "label": "Specific file types", "description": "Focus on documents, images, or other file types"}
+    ],
+    "allowCustom": true,
+    "required": true
+  },
+  {
+    "id": "backup_organization",
+    "dimension": "processing_logic",
+    "question": "How should backed up files be organized?",
+    "type": "select", 
+    "options": [
+      {"value": "maintain_structure", "label": "Keep original folder structure", "description": "Preserve the existing organization"},
+      {"value": "date_folders", "label": "Organize by backup date", "description": "Create folders based on when backup was performed"},
+      {"value": "file_type_folders", "label": "Group by file type", "description": "Separate documents, images, etc. into different folders"}
+    ],
+    "allowCustom": true,
+    "required": true
   }
-  
-  return mentionedButNotConnected
+]
+
+CRITICAL: 
+- Adapt questions to the ACTUAL user prompt - don't force pre-defined patterns
+- Ask what you genuinely need to know to build their specific automation
+- Keep questions relevant to their connected services only
+- Return ONLY the JSON array, no markdown formatting or explanatory text
+
+Analyze the user's specific request and generate the minimal essential clarification questions needed.
+`.trim()
 }
 
 interface ClarificationQuestion {
@@ -164,7 +807,14 @@ interface ClarificationQuestion {
   placeholder?: string
   required?: boolean
   type: 'text' | 'textarea' | 'select' | 'multiselect' | 'enum' | 'date'
-  options?: string[]
+  options?: Array<{
+    value: string
+    label: string
+    description: string
+  }> | string[]
+  dimension?: string
+  allowCustom?: boolean
+  followUpQuestions?: Record<string, ClarificationQuestion[]>
 }
 
 interface ClarificationResponse {
@@ -176,27 +826,42 @@ interface ClarificationResponse {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { original_prompt, agent_name, description, connected_plugins, user_id } = body
+    const { 
+      original_prompt, 
+      agent_name, 
+      description, 
+      connected_plugins, 
+      user_id,
+      sessionId: providedSessionId,
+      agentId: providedAgentId
+    } = body
 
     if (!original_prompt?.trim()) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
 
-    console.log('=== DEBUGGING PLUGIN VALIDATION ===')
-    console.log('1. Original prompt:', original_prompt)
-    console.log('2. Raw connected_plugins from request:', connected_plugins)
-    console.log('3. Initial pluginKeys from frontend:', Object.keys(connected_plugins || {}))
-    
-    // Try to get connected plugins from multiple sources
+    const sessionId = providedSessionId || 
+                      request.headers.get('x-session-id') || 
+                      uuidv4()
+
+    const agentId = providedAgentId || 
+                    request.headers.get('x-agent-id') || 
+                    uuidv4()
+
+    console.log('🆔 CLARIFICATION API - Using CONSISTENT agent ID:', {
+      providedAgentId,
+      providedSessionId,
+      finalAgentId: agentId,
+      finalSessionId: sessionId
+    })
+
+    // Get connected plugins from multiple sources
     let pluginKeys: string[] = []
 
-    // Method 1: From frontend (fallback to ensure we have plugins)
     if (connected_plugins && typeof connected_plugins === 'object') {
       pluginKeys = Object.keys(connected_plugins)
-      console.log('4. PluginKeys after frontend:', pluginKeys)
     }
 
-    // Method 2: From database (if user_id provided and table exists)
     if (user_id) {
       try {
         const { data: connections, error: pluginError } = await supabase
@@ -207,68 +872,33 @@ export async function POST(request: NextRequest) {
 
         if (!pluginError && connections && connections.length > 0) {
           const dbPlugins = connections.map(c => c.plugin_key)
-          console.log('5. Database plugins found:', dbPlugins)
-          // Merge database plugins with frontend plugins
           pluginKeys = [...new Set([...pluginKeys, ...dbPlugins])]
-          console.log('6. PluginKeys after database merge:', pluginKeys)
-        } else {
-          console.log('5. No plugins found in database, using frontend plugins:', pluginKeys)
         }
       } catch (dbError) {
         console.warn('Database plugin query failed, using frontend plugins:', dbError)
       }
     }
 
-    // Method 3: Default plugins if nothing found
     if (pluginKeys.length === 0) {
-      pluginKeys = ['gmail', 'google-drive', 'slack', 'calendar', 'google-sheets']
-      console.log('7. No plugins found, using defaults:', pluginKeys)
+      pluginKeys = ['google-mail', 'google-drive', 'chatgpt-research']
     }
 
-    console.log('8. Final plugin list BEFORE validation:', pluginKeys)
-
-    // Validate mentioned plugins are connected
-    const missingPlugins = validateConnectedPlugins(original_prompt, pluginKeys)
-    console.log('9. Missing plugins detected:', missingPlugins)
-    let pluginWarning = null
+    const { missingServices, availableServices } = validateConnectedPlugins(original_prompt, pluginKeys)
     
-    if (missingPlugins.length > 0) {
-      console.log('10. User mentioned unconnected plugins:', missingPlugins)
+    let pluginWarning = null
+    if (missingServices.length > 0) {
+      const missingDisplayNames = missingServices.map(service => {
+        const definition = getPluginDefinition(service);
+        return definition?.displayName || definition?.label || service;
+      });
       
-      // Create a warning about missing plugins
       pluginWarning = {
-        missingServices: missingPlugins,
-        message: `Note: Your request mentions ${missingPlugins.join(', ')} but ${missingPlugins.length === 1 ? 'this service isn\'t' : 'these services aren\'t'} connected. Questions will focus on your available services instead.`
+        missingServices,
+        message: `Note: Your request mentions ${missingDisplayNames.join(', ')} but ${missingServices.length === 1 ? 'this service isn\'t' : 'these services aren\'t'} connected. Questions will focus on your available services instead.`
       }
-      console.log('11. Plugin validation warning:', pluginWarning.message)
-      
-      // CRITICAL FIX: Remove mentioned but unconnected plugins from the list we send to AI
-      const unconnectedAliases = missingPlugins.flatMap(service => 
-        PLUGIN_REQUIREMENTS[service as keyof typeof PLUGIN_REQUIREMENTS] || [service]
-      )
-      
-      console.log('12. Unconnected aliases to filter out:', unconnectedAliases)
-      
-      const originalPluginKeys = [...pluginKeys]
-      pluginKeys = pluginKeys.filter(plugin => {
-        const pluginLower = plugin.toLowerCase()
-        const shouldRemove = unconnectedAliases.some(alias => 
-          pluginLower.includes(alias.toLowerCase())
-        )
-        if (shouldRemove) {
-          console.log(`13. Removing unconnected plugin from AI context: ${plugin}`)
-        }
-        return !shouldRemove
-      })
-      
-      console.log('14. Original plugins:', originalPluginKeys)
-      console.log('15. Filtered plugin list (unconnected removed):', pluginKeys)
-    } else {
-      console.log('10. No missing plugins detected')
     }
 
-    console.log('16. FINAL plugin list sent to AI:', pluginKeys)
-    console.log('=== END DEBUGGING ===')
+    const connectedPluginData = getConnectedPluginsWithMetadata(pluginKeys);
 
     const contextMessage = `
 user_prompt: "${original_prompt}"
@@ -276,36 +906,58 @@ connected_plugins: ${JSON.stringify(pluginKeys)}
 agent_name: "${agent_name || 'Not specified'}"
 description: "${description || 'Not provided'}"
 
-CRITICAL: Only ask questions about services in the connected_plugins list above. Do not reference any other services.
+IMPORTANT: Only ask questions about services in the connected_plugins list above. Do not reference any other services. Do not include scheduling/timing or error handling questions - the system handles these automatically.
 
-Please analyze this automation request and return clarifying questions as a JSON array.
+Analyze this automation request and return the essential clarifying questions as a JSON array that will help build this specific automation.
 `
 
-    console.log('17. Context message sent to AI:', contextMessage)
+    const openaiProvider = new OpenAIProvider(process.env.OPENAI_API_KEY!, aiAnalytics)
+    
+    const openAIResponse = await openaiProvider.chatCompletion(
+      {
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: buildClarifySystemPrompt(pluginKeys, missingServices) },
+          { role: 'user', content: contextMessage }
+        ],
+        temperature: 0.3,
+        max_tokens: 1500
+      },
+      {
+        userId: user_id,
+        sessionId: sessionId,
+        feature: 'clarification_questions',
+        component: 'clarification-api',
+        workflow_step: 'question_generation',
+        category: 'agent_creation',
+        activity_type: 'agent_creation',
+        activity_name: 'Generating clarification questions for workflow automation',
+        activity_step: 'question_generation',
+        agent_id: agentId
+      }
+    )
 
-    const { response: llmResponse, usage } = await callOpenAI(buildClarifySystemPrompt(pluginKeys), contextMessage)
-    const clarificationData = await parseAndValidateLLMResponse(llmResponse)
+    let content = openAIResponse.choices[0]?.message?.content || '[]'
 
-    // Track token usage using your utility function
-    if (user_id) {
-      await trackTokenUsage(supabase, user_id, {
-        modelName: 'gpt-4o',
-        provider: 'openai',
-        inputTokens: usage.prompt_tokens,
-        outputTokens: usage.completion_tokens,
-        requestType: 'chat',
-        category: LLMCategory.QUESTION_CLARIFICATION,
-        metadata: {
-          agent_name,
-          original_prompt,
-          questions_generated: clarificationData.questions.length,
-          connected_plugins: pluginKeys,
-          confidence: clarificationData.confidence
-        }
-      })
+    // Remove markdown wrapper
+    content = content.trim()
+    if (content.startsWith('```')) {
+      content = content.replace(/```json|```/g, '').trim()
     }
 
-    // Log analytics (but don't fail if this errors)
+    console.log('Raw GPT response:', content)
+    
+    let llmResponse
+    try {
+      llmResponse = JSON.parse(content)
+    } catch (e) {
+      console.error('GPT parse failure:', e)
+      llmResponse = []
+    }
+
+    const clarificationData = await parseAndValidateLLMResponse(llmResponse, original_prompt)
+
+    // Log analytics
     try {
       await supabase.from('clarification_analytics').insert([{
         user_id,
@@ -313,22 +965,22 @@ Please analyze this automation request and return clarifying questions as a JSON
         agent_name,
         description,
         connected_plugins: pluginKeys,
+        missing_services: missingServices,
         generated_questions: clarificationData.questions,
         questions_count: clarificationData.questions.length,
+        agent_id: agentId,
+        session_id: sessionId,
         generated_at: new Date().toISOString()
       }])
     } catch (analyticsError) {
       console.warn('Analytics logging failed:', analyticsError)
     }
 
-    console.log('🔍 SIMPLE DEBUG - Final data being returned:', { 
-      pluginKeys, 
-      hasNotionInPlugins: pluginKeys.includes('notion'),
-      clarificationQuestions: clarificationData.questions.map(q => q.question)
-    })
-
     return NextResponse.json({
       ...clarificationData,
+      connectedPluginData,
+      agentId: agentId,
+      sessionId: sessionId,
       ...(pluginWarning && { pluginWarning })
     })
 
@@ -338,208 +990,151 @@ Please analyze this automation request and return clarifying questions as a JSON
   }
 }
 
-async function callOpenAI(systemPrompt: string, userPrompt: string): Promise<{
-  response: any,
-  usage: {
-    prompt_tokens: number,
-    completion_tokens: number,
-    total_tokens: number
-  }
-}> {
+async function parseAndValidateLLMResponse(llmResponse: any, originalPrompt: string): Promise<ClarificationResponse> {
   try {
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      temperature: 0.3,
-      max_tokens: 1500
-    })
-
-    let content = completion.choices[0]?.message?.content || '[]'
-
-    // Remove markdown wrapper (```json ... ```)
-    content = content.trim()
-    if (content.startsWith('```')) {
-      content = content.replace(/```json|```/g, '').trim()
-    }
-
-    console.log('Raw GPT response:', content)
-    
-    return {
-      response: JSON.parse(content),
-      usage: completion.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
-    }
-
-  } catch (e) {
-    console.error('GPT parse failure:', e)
-    return {
-      response: [],
-      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
-    }
-  }
-}
-
-async function parseAndValidateLLMResponse(llmResponse: any): Promise<ClarificationResponse> {
-  try {
-    console.log('Raw LLM response type:', typeof llmResponse)
-    console.log('Raw LLM response:', JSON.stringify(llmResponse, null, 2))
-    
     let questionsArray: any[] = []
     
-    // The LLM should now return a direct array based on the updated system prompt
     if (Array.isArray(llmResponse)) {
       questionsArray = llmResponse
-      console.log('LLM returned direct array format')
-    }
-    // Fallback: handle legacy structured formats if they still occur
-    else if (llmResponse && typeof llmResponse === 'object') {
+    } else if (llmResponse && typeof llmResponse === 'object') {
       if (llmResponse.questionsSequence && Array.isArray(llmResponse.questionsSequence)) {
         questionsArray = llmResponse.questionsSequence
-        console.log('Using legacy questionsSequence format')
-      }
-      else if (llmResponse.questions && Array.isArray(llmResponse.questions)) {
+      } else if (llmResponse.questions && Array.isArray(llmResponse.questions)) {
         questionsArray = llmResponse.questions
-        console.log('Using legacy questions array format')
-      }
-      else if (llmResponse.needsClarification === false) {
-        console.log('LLM says no clarification needed')
-        return {
-          questions: [],
-          reasoning: llmResponse.reasoning || 'Prompt contains sufficient detail for implementation',
-          confidence: llmResponse.confidence || 90
-        }
-      }
-      else {
-        console.log('Unexpected object format, trying to find questions')
-        // Try to find any array property that might contain questions
+      } else {
         for (const [key, value] of Object.entries(llmResponse)) {
           if (Array.isArray(value) && value.length > 0) {
             questionsArray = value
-            console.log(`Found questions in property: ${key}`)
             break
           }
         }
       }
     }
-    
-    console.log('Questions array to process:', questionsArray.length, 'items')
 
     const questions: ClarificationQuestion[] = questionsArray
       .map((q, i) => {
         if (!q || typeof q !== 'object') {
-          console.log(`Skipping question ${i + 1}: Invalid question object`)
           return null
         }
 
         const type = (q.type || 'text').toLowerCase() as ClarificationQuestion['type']
         const structured = ['select', 'enum', 'multiselect'].includes(type)
 
-        if (!q.question?.trim()) {
-          console.log(`Skipping question ${i + 1}: No question text`)
-          return null
-        }
-        
-        if (!q.type) {
-          console.log(`Skipping question ${i + 1}: No type specified`)
+        if (!q.question?.trim() || !q.type) {
           return null
         }
         
         if (structured && (!Array.isArray(q.options) || q.options.length < 2)) {
-          console.log(`Skipping question ${i + 1}: Structured type but invalid options:`, q.options)
           return null
-        }
-
-        // Generate better placeholder if not provided
-        let placeholder = q.placeholder || 'Enter your answer...'
-        
-        if (!q.placeholder) {
-          switch (type) {
-            case 'text':
-              placeholder = 'Enter a short answer...'
-              break
-            case 'textarea':
-              placeholder = 'Provide detailed information...'
-              break
-            case 'date':
-              placeholder = 'Select a date'
-              break
-            case 'select':
-            case 'multiselect':
-            case 'enum':
-              placeholder = structured ? 'Choose from the options above' : 'Select an option...'
-              break
-          }
         }
 
         return {
           id: q.id || `question_${i + 1}`,
           question: q.question.trim(),
           type,
-          required: q.required !== false, // Default to true unless explicitly false
-          placeholder,
-          options: structured ? q.options : undefined
+          required: q.required !== false,
+          placeholder: q.placeholder || 'Choose from the options above',
+          dimension: q.dimension || 'general',
+          options: structured ? q.options : undefined,
+          allowCustom: q.allowCustom,
+          followUpQuestions: q.followUpQuestions
         }
       })
       .filter(Boolean) as ClarificationQuestion[]
 
-    console.log(`Parsed ${questions.length} valid questions from ${questionsArray.length} raw questions`)
+    // Add standard questions only if missing
+    const finalQuestions = addStandardQuestionsIfMissing(questions, originalPrompt);
 
-    if (questions.length === 0) {
-      console.log('No valid questions generated, using enhanced fallback')
+    if (finalQuestions.length === 0) {
       return {
         questions: [
-          { 
-            id: 'fallback_1', 
-            question: 'What specific task should this automation perform?', 
-            type: 'textarea',
-            required: true,
-            placeholder: 'e.g. "Summarize important emails", "Track project updates", "Monitor customer feedback"'
-          },
+// In the fallback questions section, replace the error handling question:
+        {
+          id: 'error_handling_standard',
+          question: 'If something goes wrong, how should I be notified?',
+          type: 'select',
+          required: true,
+          dimension: 'error_handling',
+          placeholder: 'Choose notification method',
+          options: [
+            {
+              value: 'email_me',
+              label: 'Email me',
+              description: 'Send an email notification when there\'s an issue'
+            },
+            {
+              value: 'alert_me',
+              label: 'Alert me', 
+              description: 'Show a dashboard alert when there\'s a problem'
+            },
+            {
+              value: 'retry_once',
+              label: 'Retry (one time)',
+              description: 'Try the automation once more before stopping'
+            }
+          ],
+          allowCustom: false
+        },
           {
-            id: 'fallback_2',
+            id: 'schedule_frequency',
             question: 'How often should this automation run?',
             type: 'select',
             required: true,
-            placeholder: 'Choose timing',
-            options: ['One-time only', 'Daily at 9 AM', 'Weekly on Monday', 'When new items arrive', 'Every hour during work days']
-          },
-          {
-            id: 'fallback_3',
-            question: 'How would you like to receive the results?',
-            type: 'select',
-            required: true,
-            placeholder: 'Choose delivery method',
-            options: ['Email me the results', 'Show on screen only', 'Save to Google Drive', 'Post in Slack channel', 'Send via Teams message']
+            dimension: 'scheduling_timing',
+            placeholder: 'Choose frequency',
+            options: [
+              { value: 'daily', label: 'Daily', description: 'Once per day' },
+              { value: 'weekly', label: 'Weekly', description: 'Once per week' },
+              { value: 'on_demand', label: 'Only when I trigger it', description: 'Manual execution only' }
+            ],
+            allowCustom: true,
+            followUpQuestions: {
+              'daily': [
+                {
+                  id: 'daily_time',
+                  question: 'What time each day?',
+                  type: 'select',
+                  options: [
+                    { value: '9am', label: '9:00 AM', description: 'Start of work day' },
+                    { value: '5pm', label: '5:00 PM', description: 'End of work day' }
+                  ]
+                }
+              ]
+            }
           }
         ],
-        reasoning: 'Generated comprehensive fallback questions to capture essential automation requirements.',
-        confidence: 55
+        reasoning: 'Using fallback questions with smart scheduling follow-ups.',
+        confidence: 30
       }
     }
 
     return {
-      questions: questions.slice(0, 5),
-      reasoning: `Generated ${questions.length} targeted clarification question${questions.length === 1 ? '' : 's'} to refine your automation requirements.`,
-      confidence: Math.min(95, 70 + (questions.length * 5))
+      questions: finalQuestions.slice(0, 8),
+      reasoning: `Generated ${finalQuestions.length} targeted clarification questions with dynamic scheduling follow-ups.`,
+      confidence: Math.min(95, 70 + (finalQuestions.length * 5))
     }
 
   } catch (e) {
     console.error('Parse validation error:', e)
-    console.error('LLM Response that caused error:', llmResponse)
     
     return {
       questions: [
         {
           id: 'error_fallback',
           question: 'Could you describe what you want this automation to accomplish?',
-          type: 'textarea',
+          type: 'select',
           required: true,
-          placeholder: 'Please provide more details about your automation goals...'
+          dimension: 'processing_logic',
+          options: [
+            { value: 'process_emails', label: 'Process emails', description: 'Work with email data' },
+            { value: 'create_reports', label: 'Create reports', description: 'Generate summaries or analysis' },
+            { value: 'monitor_changes', label: 'Monitor for changes', description: 'Watch for updates or alerts' },
+            { value: 'organize_files', label: 'Organize files', description: 'Manage documents or data' }
+          ],
+          allowCustom: true
         }
       ],
-      reasoning: 'Unable to parse AI response, using basic fallback question.',
+      reasoning: 'Unable to parse AI response, using basic fallback questions.',
       confidence: 30
     }
   }

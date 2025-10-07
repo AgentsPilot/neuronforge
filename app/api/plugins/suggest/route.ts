@@ -47,7 +47,7 @@ Example: ["google-mail", "notion"]`
   const lowerPrompt = prompt.toLowerCase()
   const fallbackPlugins: string[] = []
 
-  if (lowerPrompt.includes('email') || lowerPrompt.includes('inbox') || lowerPrompt.includes('gmail') || lowerPrompt.includes('outlook')) {
+  if (lowerPrompt.includes('email') || lowerPrompt.includes('inbox') || lowerPrompt.includes('google-mail') || lowerPrompt.includes('outlook')) {
     fallbackPlugins.push('google-mail', 'outlook')
   }
 
