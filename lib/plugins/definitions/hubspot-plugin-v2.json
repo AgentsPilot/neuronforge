@@ -1,0 +1,261 @@
+{
+  "plugin": {
+    "name": "hubspot",
+    "version": "1.0.0",
+    "description": "Access HubSpot CRM data including contacts, deals, companies, and activity timelines",
+    "context": "Use for retrieving contact information, viewing deal pipelines, accessing customer activity history, searching CRM records, and integrating HubSpot customer data with agent workflows",
+    "auth_config": {
+      "auth_type": "oauth2_hubspot",
+      "client_id": "${HUBSPOT_CLIENT_ID}",
+      "client_secret": "${HUBSPOT_CLIENT_SECRET}",
+      "redirect_uri": "${NEXT_PUBLIC_APP_URL}/oauth/callback/hubspot",
+      "auth_url": "https://app.hubspot.com/oauth/authorize",
+      "token_url": "https://api.hubapi.com/oauth/v1/token",
+      "refresh_url": "https://api.hubapi.com/oauth/v1/token",
+      "required_scopes": [
+        "oauth",
+        "crm.objects.contacts.read",
+        "crm.objects.contacts.write",
+        "crm.objects.deals.read",
+        "crm.objects.companies.read",
+        "crm.objects.owners.read"
+      ]
+    }
+  },
+  "actions": {
+    "get_contact": {
+      "description": "Retrieve detailed contact information by ID or email address",
+      "usage_context": "Use when you need to look up a specific contact's details, properties, or recent activity summary. Can search by contact ID or email address.",
+      "parameters": {
+        "contact_identifier": {
+          "type": "string",
+          "description": "The contact ID or email address to look up",
+          "required": true
+        },
+        "identifier_type": {
+          "type": "string",
+          "description": "Type of identifier: 'id' or 'email' (default: 'email')",
+          "required": false,
+          "default": "email"
+        },
+        "properties": {
+          "type": "array",
+          "description": "Optional: List of specific contact properties to retrieve (e.g., ['firstname', 'lastname', 'phone', 'company']). If not specified, returns all properties.",
+          "required": false
+        },
+        "include_associations": {
+          "type": "boolean",
+          "description": "Include associated records like companies and deals (default: false)",
+          "required": false,
+          "default": false
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_guidance": {
+        "success_message": "Present contact information in a clear, organized format. Include name, email, phone, company, lifecycle stage, and any other relevant properties. If associations are included, summarize the number of associated deals and companies.",
+        "common_errors": {
+          "contact_not_found": "Contact not found. Verify the contact ID or email address is correct.",
+          "invalid_property": "One or more requested properties do not exist. Check property names.",
+          "api_rate_limit": "HubSpot API rate limit exceeded. Please wait a moment and try again.",
+          "insufficient_permissions": "Missing required permissions to access contact data. Contact may require additional scopes."
+        }
+      }
+    },
+    "get_contact_deals": {
+      "description": "Get all deals associated with a specific contact",
+      "usage_context": "Use to view a contact's deal pipeline, including deal amounts, stages, close dates, and deal ownership. Useful for understanding a contact's revenue opportunities.",
+      "parameters": {
+        "contact_id": {
+          "type": "string",
+          "description": "The ID of the contact",
+          "required": true
+        },
+        "limit": {
+          "type": "number",
+          "description": "Maximum number of deals to retrieve (default: 50, max: 100)",
+          "required": false,
+          "default": 50
+        },
+        "include_deal_details": {
+          "type": "boolean",
+          "description": "Include full deal properties like amount, stage, close date, and owner (default: true)",
+          "required": false,
+          "default": true
+        },
+        "deal_properties": {
+          "type": "array",
+          "description": "Optional: Specific deal properties to retrieve (e.g., ['dealname', 'amount', 'dealstage', 'closedate'])",
+          "required": false
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_limit": {
+            "condition": "limit > 100",
+            "action": "block",
+            "message": "Limit cannot exceed 100 deals per request. Please use a smaller limit or make multiple requests."
+          }
+        },
+        "confirmations": {}
+      },
+      "output_guidance": {
+        "success_message": "Present deals in a structured format showing deal name, amount, stage, close date, and owner. Group by deal stage if multiple deals exist. Include total deal value if applicable.",
+        "common_errors": {
+          "contact_not_found": "Contact ID not found. Verify the contact exists in HubSpot.",
+          "no_deals_found": "No deals are associated with this contact.",
+          "api_rate_limit": "HubSpot API rate limit exceeded. Please wait a moment and try again.",
+          "insufficient_permissions": "Missing required permissions to access deal data."
+        }
+      }
+    },
+    "get_contact_activities": {
+      "description": "Retrieve recent activities and engagement history for a contact",
+      "usage_context": "Use to view interaction timeline including calls, emails, notes, meetings, and tasks. Essential for understanding contact engagement and communication history.",
+      "parameters": {
+        "contact_id": {
+          "type": "string",
+          "description": "The ID of the contact",
+          "required": true
+        },
+        "activity_types": {
+          "type": "array",
+          "description": "Types of activities to retrieve (options: 'calls', 'emails', 'notes', 'meetings', 'tasks'). Default: all types",
+          "required": false,
+          "default": ["calls", "emails", "notes", "meetings", "tasks"]
+        },
+        "limit": {
+          "type": "number",
+          "description": "Maximum number of activities to retrieve per type (default: 25, max: 100)",
+          "required": false,
+          "default": 25
+        },
+        "since_date": {
+          "type": "string",
+          "description": "Optional: Only retrieve activities after this date (ISO 8601 format: YYYY-MM-DD)",
+          "required": false
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_limit": {
+            "condition": "limit > 100",
+            "action": "block",
+            "message": "Limit cannot exceed 100 activities per type. Please use a smaller limit."
+          }
+        },
+        "confirmations": {}
+      },
+      "output_guidance": {
+        "success_message": "Present activities chronologically (newest first), organized by type. Include activity date, type, subject/title, and brief description. For large result sets, summarize activity counts by type.",
+        "common_errors": {
+          "contact_not_found": "Contact ID not found. Verify the contact exists in HubSpot.",
+          "no_activities_found": "No activities found for this contact matching the specified criteria.",
+          "invalid_date_format": "Invalid date format. Use ISO 8601 format (YYYY-MM-DD).",
+          "api_rate_limit": "HubSpot API rate limit exceeded. Please wait a moment and try again.",
+          "insufficient_permissions": "Missing required permissions to access engagement data."
+        }
+      }
+    },
+    "search_contacts": {
+      "description": "Search for contacts using filters and query terms",
+      "usage_context": "Use to find contacts matching specific criteria such as name, email, company, job title, or custom properties. Supports flexible filtering for LLM-driven queries.",
+      "parameters": {
+        "query": {
+          "type": "string",
+          "description": "Search query term (searches across name, email, and company fields)",
+          "required": false
+        },
+        "filters": {
+          "type": "object",
+          "description": "Property filters as key-value pairs (e.g., {'company': 'Acme Corp', 'lifecyclestage': 'customer'})",
+          "required": false
+        },
+        "limit": {
+          "type": "number",
+          "description": "Maximum number of contacts to return (default: 25, max: 100)",
+          "required": false,
+          "default": 25
+        },
+        "properties": {
+          "type": "array",
+          "description": "Specific properties to retrieve for each contact (e.g., ['firstname', 'lastname', 'email', 'company'])",
+          "required": false
+        },
+        "sort_by": {
+          "type": "string",
+          "description": "Property to sort results by (e.g., 'createdate', 'lastmodifieddate', 'lastname')",
+          "required": false
+        },
+        "sort_direction": {
+          "type": "string",
+          "description": "Sort direction: 'ASCENDING' or 'DESCENDING' (default: 'DESCENDING')",
+          "required": false,
+          "default": "DESCENDING"
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_limit": {
+            "condition": "limit > 100",
+            "action": "block",
+            "message": "Limit cannot exceed 100 contacts per search. Please use a smaller limit or refine your search."
+          },
+          "requires_criteria": {
+            "condition": "query == '' && filters == {}",
+            "action": "block",
+            "message": "Search requires either a query term or at least one filter. Please provide search criteria."
+          }
+        },
+        "confirmations": {}
+      },
+      "output_guidance": {
+        "success_message": "Present search results in a clear list format with key contact details. Show total results count and indicate if more results are available. Highlight which search criteria matched.",
+        "common_errors": {
+          "no_results_found": "No contacts found matching the search criteria. Try broadening your search terms or filters.",
+          "invalid_filter_property": "One or more filter properties do not exist in HubSpot. Check property names.",
+          "invalid_sort_property": "The specified sort property does not exist or cannot be used for sorting.",
+          "api_rate_limit": "HubSpot API rate limit exceeded. Please wait a moment and try again.",
+          "insufficient_permissions": "Missing required permissions to search contacts."
+        }
+      }
+    },
+    "get_deal": {
+      "description": "Get detailed information about a specific deal",
+      "usage_context": "Use to retrieve comprehensive deal information including amount, stage, close date, associated contacts, companies, and deal properties. Useful for deep-diving into specific opportunities.",
+      "parameters": {
+        "deal_id": {
+          "type": "string",
+          "description": "The ID of the deal to retrieve",
+          "required": true
+        },
+        "properties": {
+          "type": "array",
+          "description": "Optional: Specific deal properties to retrieve (e.g., ['dealname', 'amount', 'dealstage', 'closedate', 'pipeline'])",
+          "required": false
+        },
+        "include_associations": {
+          "type": "boolean",
+          "description": "Include associated contacts and companies (default: true)",
+          "required": false,
+          "default": true
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_guidance": {
+        "success_message": "Present deal information in a structured format including deal name, amount, stage, close date, owner, and pipeline. If associations are included, list associated contacts and companies with their roles.",
+        "common_errors": {
+          "deal_not_found": "Deal ID not found. Verify the deal exists in HubSpot.",
+          "invalid_property": "One or more requested properties do not exist. Check property names.",
+          "api_rate_limit": "HubSpot API rate limit exceeded. Please wait a moment and try again.",
+          "insufficient_permissions": "Missing required permissions to access deal data."
+        }
+      }
+    }
+  }
+}

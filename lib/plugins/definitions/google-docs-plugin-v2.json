@@ -1,0 +1,258 @@
+{
+  "plugin": {
+    "name": "google-docs",
+    "version": "1.0.0",
+    "description": "Read, write, and manage content in Google Docs documents",
+    "context": "Use for reading document text, inserting content, appending text, creating new documents, and managing document content as structured input/output for agents",
+    "auth_config": {
+      "auth_type": "oauth2_google",
+      "client_id": "${GOOGLE_CLIENT_ID}",
+      "client_secret": "${GOOGLE_CLIENT_SECRET}",
+      "redirect_uri": "${NEXT_PUBLIC_APP_URL}/oauth/callback/google-docs",
+      "auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
+      "token_url": "https://oauth2.googleapis.com/token",
+      "refresh_url": "https://oauth2.googleapis.com/token",
+      "profile_url": "https://www.googleapis.com/oauth2/v2/userinfo",
+      "required_scopes": [
+        "openid",
+        "email",
+        "profile",
+        "https://www.googleapis.com/auth/documents",
+        "https://www.googleapis.com/auth/drive"
+      ]
+    }
+  },
+  "actions": {
+    "read_document": {
+      "description": "Read the full content and structure of a Google Docs document",
+      "usage_context": "When user wants to read document text, extract content for processing, or retrieve structured document data",
+      "parameters": {
+        "type": "object",
+        "required": ["document_id"],
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "description": "The ID of the document to read (from the URL or file ID)"
+          },
+          "include_formatting": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include text formatting information (bold, italic, etc.)"
+          },
+          "plain_text_only": {
+            "type": "boolean",
+            "default": true,
+            "description": "Return only plain text content without structural elements"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "large_document": {
+            "condition": "estimated_chars > 100000",
+            "action": "block",
+            "message": "Cannot read documents larger than 100,000 characters at once. Please use a smaller document."
+          }
+        },
+        "confirmations": {
+          "medium_document": {
+            "condition": "estimated_chars > 10000",
+            "action": "confirm",
+            "message": "Read document with approximately {estimated_chars} characters? This may take a moment to process."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Read document '{title}' with {char_count} characters",
+        "common_errors": {
+          "auth_failed": "Your Google Docs connection has expired. Please go to Settings → Connected Apps to reconnect Google Docs.",
+          "document_not_found": "The document was not found. Please check the document ID and ensure you have access.",
+          "permission_denied": "You don't have permission to access this document. Please request access from the owner.",
+          "api_rate_limit": "Too many requests in a short time. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Docs permissions are insufficient. Please reconnect with full document access."
+        }
+      }
+    },
+    "insert_text": {
+      "description": "Insert text at a specific position in the document",
+      "usage_context": "When user wants to insert text at a specific location, add content to existing sections, or update document content precisely",
+      "parameters": {
+        "type": "object",
+        "required": ["document_id", "text", "index"],
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "description": "The ID of the document to insert text into"
+          },
+          "text": {
+            "type": "string",
+            "description": "The text content to insert"
+          },
+          "index": {
+            "type": "number",
+            "description": "The character position where text should be inserted (1 = start of document, use -1 for end)"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_text_length": {
+            "condition": "text_length > 50000",
+            "action": "block",
+            "message": "Cannot insert more than 50,000 characters at once. Please reduce the text size."
+          }
+        },
+        "confirmations": {
+          "large_insert": {
+            "condition": "text_length > 5000",
+            "action": "confirm",
+            "message": "Insert {text_length} characters into the document?"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Inserted {char_count} characters at position {index}",
+        "common_errors": {
+          "auth_failed": "Your Google Docs connection has expired. Please reconnect in Settings → Connected Apps.",
+          "document_not_found": "The document was not found. Please check the document ID.",
+          "invalid_index": "The insertion index is invalid. Index must be within document bounds.",
+          "permission_denied": "You don't have permission to edit this document. Please request edit access.",
+          "api_rate_limit": "Too many write requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Docs write permissions are insufficient. Please reconnect with full access."
+        }
+      }
+    },
+    "append_text": {
+      "description": "Append text to the end of the document",
+      "usage_context": "When user wants to add content to the end of document, continuously append information, or log data without specifying positions",
+      "parameters": {
+        "type": "object",
+        "required": ["document_id", "text"],
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "description": "The ID of the document to append text to"
+          },
+          "text": {
+            "type": "string",
+            "description": "The text content to append"
+          },
+          "add_line_break": {
+            "type": "boolean",
+            "default": true,
+            "description": "Add a line break before appending the text"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_text_length": {
+            "condition": "text_length > 50000",
+            "action": "block",
+            "message": "Cannot append more than 50,000 characters at once. Please reduce the text size."
+          }
+        },
+        "confirmations": {
+          "large_append": {
+            "condition": "text_length > 5000",
+            "action": "confirm",
+            "message": "Append {text_length} characters to the document?"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Appended {char_count} characters to document '{title}'",
+        "common_errors": {
+          "auth_failed": "Your Google Docs connection has expired. Please reconnect in Settings → Connected Apps.",
+          "document_not_found": "The document was not found. Please check the document ID.",
+          "permission_denied": "You don't have permission to edit this document. Please request edit access.",
+          "api_rate_limit": "Too many append requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Docs write permissions are insufficient. Please reconnect with full access."
+        }
+      }
+    },
+    "create_document": {
+      "description": "Create a new Google Docs document",
+      "usage_context": "When user wants to create a new document for writing content, starting a new project, or generating reports",
+      "parameters": {
+        "type": "object",
+        "required": ["title"],
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 255,
+            "description": "The title/name of the new document"
+          },
+          "initial_content": {
+            "type": "string",
+            "description": "Optional initial text content to add to the document"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "title_length": {
+            "condition": "title_length > 255",
+            "action": "block",
+            "message": "Document title cannot exceed 255 characters."
+          },
+          "initial_content_length": {
+            "condition": "initial_content_length > 50000",
+            "action": "block",
+            "message": "Initial content cannot exceed 50,000 characters."
+          }
+        },
+        "confirmations": {
+          "large_initial_content": {
+            "condition": "initial_content_length > 5000",
+            "action": "confirm",
+            "message": "Create document with {initial_content_length} characters of initial content?"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Created document '{title}' with ID {document_id}",
+        "common_errors": {
+          "auth_failed": "Your Google Docs connection has expired. Please reconnect in Settings → Connected Apps.",
+          "quota_exceeded": "You've reached your document creation limit. Please try again later.",
+          "invalid_title": "The document title is invalid or too long. Please use a shorter title.",
+          "api_rate_limit": "Too many creation requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Docs creation permissions are insufficient. Please reconnect with full access."
+        }
+      }
+    },
+    "get_document_info": {
+      "description": "Get metadata and information about a document",
+      "usage_context": "When user wants to explore document properties, get title and ID, or check document metadata before reading/writing",
+      "parameters": {
+        "type": "object",
+        "required": ["document_id"],
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "description": "The ID of the document to get information about"
+          },
+          "include_content_summary": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include summary of document content (character count, paragraph count, etc.)"
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_guidance": {
+        "success_message": "Retrieved information for document '{title}'",
+        "common_errors": {
+          "auth_failed": "Your Google Docs connection has expired. Please reconnect in Settings → Connected Apps.",
+          "document_not_found": "The document was not found. Please check the document ID and ensure you have access.",
+          "permission_denied": "You don't have permission to access this document. Please request access from the owner.",
+          "api_rate_limit": "Too many requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Docs read permissions are insufficient. Please reconnect with full access."
+        }
+      }
+    }
+  }
+}

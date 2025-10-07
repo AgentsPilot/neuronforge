@@ -1,0 +1,306 @@
+{
+  "plugin": {
+    "name": "google-drive",
+    "version": "1.0.0",
+    "description": "Access, search, and read files and folders in Google Drive",
+    "context": "Use for accessing Google Drive files, searching documents, reading file contents, and browsing folder structures",
+    "auth_config": {
+      "auth_type": "oauth2_google",
+      "client_id": "${GOOGLE_CLIENT_ID}",
+      "client_secret": "${GOOGLE_CLIENT_SECRET}",
+      "redirect_uri": "${NEXT_PUBLIC_APP_URL}/oauth/callback/google-drive",
+      "auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
+      "token_url": "https://oauth2.googleapis.com/token",
+      "refresh_url": "https://oauth2.googleapis.com/token",
+      "profile_url": "https://www.googleapis.com/oauth2/v2/userinfo",
+      "required_scopes": [
+        "openid",
+        "email",
+        "profile",
+        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/drive.metadata.readonly",
+        "https://www.googleapis.com/auth/drive.file"
+      ]
+    }
+  },
+  "actions": {
+    "list_files": {
+      "description": "List files and folders in Google Drive with optional filtering",
+      "usage_context": "When user wants to browse their Drive contents, see files in a folder, or list files matching criteria",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "folder_id": {
+            "type": "string",
+            "description": "ID of the folder to list files from. If not provided, lists from root or recent files"
+          },
+          "max_results": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 20,
+            "description": "Maximum number of files to return"
+          },
+          "order_by": {
+            "type": "string",
+            "enum": ["modifiedTime", "name", "createdTime", "folder", "starred"],
+            "default": "modifiedTime",
+            "description": "How to order the file results"
+          },
+          "file_types": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["document", "spreadsheet", "presentation", "pdf", "image", "video", "folder", "all"]
+            },
+            "description": "Filter by specific file types"
+          },
+          "include_trashed": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include files in trash"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_results": {
+            "condition": "max_results > 100",
+            "action": "block",
+            "message": "Cannot retrieve more than 100 files at once. Please reduce max_results."
+          }
+        },
+        "confirmations": {
+          "large_list": {
+            "condition": "max_results > 50",
+            "action": "confirm",
+            "message": "List {max_results} files? This may take longer to process."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Found {file_count} files in Google Drive",
+        "common_errors": {
+          "auth_failed": "Your Google Drive connection has expired. Please go to Settings → Connected Apps to reconnect Google Drive.",
+          "folder_not_found": "The specified folder was not found. Please check the folder ID and try again.",
+          "permission_denied": "You don't have permission to access this folder. Please request access from the owner.",
+          "api_rate_limit": "Too many requests in a short time. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Drive permissions are insufficient. Please reconnect with full read access."
+        }
+      }
+    },
+    "search_files": {
+      "description": "Search for files and folders using Google Drive's query syntax",
+      "usage_context": "When user wants to find specific files by name, content, type, or other criteria",
+      "parameters": {
+        "type": "object",
+        "required": ["query"],
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query (supports Drive operators like 'name contains', 'mimeType =', 'fullText contains', etc.)"
+          },
+          "max_results": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 20,
+            "description": "Maximum number of files to return"
+          },
+          "search_scope": {
+            "type": "string",
+            "enum": ["all", "owned_by_me", "shared_with_me", "starred"],
+            "default": "all",
+            "description": "Scope of the search"
+          },
+          "file_types": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["document", "spreadsheet", "presentation", "pdf", "image", "video", "folder"]
+            },
+            "description": "Filter search by specific file types"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_results": {
+            "condition": "max_results > 100",
+            "action": "block",
+            "message": "Cannot search for more than 100 files at once."
+          }
+        },
+        "confirmations": {
+          "large_search": {
+            "condition": "max_results > 50",
+            "action": "confirm",
+            "message": "Search for {max_results} files? This may take longer to process."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Found {file_count} files matching your search",
+        "common_errors": {
+          "auth_failed": "Your Google Drive connection has expired. Please reconnect in Settings → Connected Apps.",
+          "invalid_query": "The search query format is invalid. Please check your search terms and try again.",
+          "no_results": "No files found matching your search criteria. Try different keywords or broader search terms.",
+          "api_rate_limit": "Too many search requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Drive read permissions are insufficient. Please reconnect with full access."
+        }
+      }
+    },
+    "get_file_metadata": {
+      "description": "Get detailed information about a specific file or folder",
+      "usage_context": "When user wants to see properties, permissions, or details about a specific file",
+      "parameters": {
+        "type": "object",
+        "required": ["file_id"],
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "description": "The ID of the file or folder"
+          },
+          "include_permissions": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include sharing permissions information"
+          },
+          "include_export_links": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include export links for Google Workspace files"
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_guidance": {
+        "success_message": "Retrieved metadata for file: {file_name}",
+        "common_errors": {
+          "auth_failed": "Your Google Drive connection has expired. Please reconnect in Settings → Connected Apps.",
+          "file_not_found": "The specified file was not found. It may have been deleted or you don't have access.",
+          "permission_denied": "You don't have permission to access this file. Please request access from the owner.",
+          "api_rate_limit": "Too many requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Drive permissions are insufficient. Please reconnect with metadata read access."
+        }
+      }
+    },
+    "read_file_content": {
+      "description": "Read and extract text content from a file",
+      "usage_context": "When user wants to read the contents of a document, view text from files, or extract information",
+      "parameters": {
+        "type": "object",
+        "required": ["file_id"],
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "description": "The ID of the file to read"
+          },
+          "export_format": {
+            "type": "string",
+            "enum": ["text/plain", "text/html", "application/pdf"],
+            "default": "text/plain",
+            "description": "Format to export Google Workspace files (Docs, Sheets, Slides)"
+          },
+          "max_size_mb": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 10,
+            "default": 5,
+            "description": "Maximum file size to read in megabytes"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "file_size": {
+            "condition": "max_size_mb > 10",
+            "action": "block",
+            "message": "Cannot read files larger than 10MB. Please reduce the file size or download separately."
+          }
+        },
+        "confirmations": {
+          "large_file": {
+            "condition": "max_size_mb > 5",
+            "action": "confirm",
+            "message": "Read file up to {max_size_mb}MB? Large files may take time to process."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Successfully read content from {file_name} ({file_size})",
+        "common_errors": {
+          "auth_failed": "Your Google Drive connection has expired. Please reconnect in Settings → Connected Apps.",
+          "file_not_found": "The specified file was not found or you don't have access.",
+          "file_too_large": "The file is too large to read. Maximum size is 10MB. Please try a smaller file.",
+          "unsupported_format": "This file format cannot be read as text. Supported formats: Google Docs, plain text, PDFs, and more.",
+          "export_failed": "Failed to export Google Workspace file. The file may be corrupted or in an unsupported format.",
+          "api_rate_limit": "Too many requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Drive read permissions are insufficient. Please reconnect with full read access."
+        }
+      }
+    },
+    "get_folder_contents": {
+      "description": "Get all files and subfolders within a specific folder",
+      "usage_context": "When user wants to explore a folder's contents, browse folder hierarchy, or organize files",
+      "parameters": {
+        "type": "object",
+        "required": ["folder_id"],
+        "properties": {
+          "folder_id": {
+            "type": "string",
+            "description": "The ID of the folder to explore. Use 'root' for the root folder"
+          },
+          "max_results": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 50,
+            "description": "Maximum number of items to return"
+          },
+          "recursive": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include files from subfolders recursively"
+          },
+          "order_by": {
+            "type": "string",
+            "enum": ["name", "modifiedTime", "createdTime", "folder"],
+            "default": "name",
+            "description": "How to order the results"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_results": {
+            "condition": "max_results > 100",
+            "action": "block",
+            "message": "Cannot retrieve more than 100 items at once."
+          }
+        },
+        "confirmations": {
+          "recursive_search": {
+            "condition": "recursive == true",
+            "action": "confirm",
+            "message": "Recursively search all subfolders? This may take significant time for large folder structures."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Found {item_count} items in folder: {folder_name}",
+        "common_errors": {
+          "auth_failed": "Your Google Drive connection has expired. Please reconnect in Settings → Connected Apps.",
+          "folder_not_found": "The specified folder was not found. Please check the folder ID and try again.",
+          "permission_denied": "You don't have permission to access this folder. Please request access from the owner.",
+          "not_a_folder": "The specified ID is not a folder. Please provide a valid folder ID.",
+          "api_rate_limit": "Too many requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Drive permissions are insufficient. Please reconnect with folder read access."
+        }
+      }
+    }
+  }
+}

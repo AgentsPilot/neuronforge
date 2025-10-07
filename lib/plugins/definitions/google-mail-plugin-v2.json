@@ -1,0 +1,291 @@
+{
+  "plugin": {
+    "name": "google-mail",
+    "version": "1.0.0",
+    "description": "Send, read, and manage Gmail emails",
+    "context": "Use for all email-related tasks including sending messages, searching conversations, and managing drafts",
+    "auth_config": {
+      "auth_type": "oauth2_google",
+      "client_id": "${GOOGLE_CLIENT_ID}",
+      "client_secret": "${GOOGLE_CLIENT_SECRET}",      
+      "redirect_uri": "${NEXT_PUBLIC_APP_URL}/oauth/callback/google-mail",
+      "auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
+      "token_url": "https://oauth2.googleapis.com/token",
+      "refresh_url": "https://oauth2.googleapis.com/token",
+      "profile_url": "https://www.googleapis.com/oauth2/v2/userinfo",
+      "required_scopes": [
+        "openid",
+        "email",
+        "profile",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/gmail.modify"
+      ]
+    }
+  },
+  "actions": {
+    "send_email": {
+      "description": "Compose and send an email message",
+      "usage_context": "When user wants to send a new message to specific recipients",
+      "parameters": {
+        "type": "object",
+        "required": ["recipients", "content"],
+        "properties": {
+          "recipients": {
+            "type": "object",
+            "required": ["to"],
+            "properties": {
+              "to": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "email"
+                },
+                "description": "Primary recipients of the email"
+              },
+              "cc": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "email"
+                },
+                "description": "Carbon copy recipients"
+              },
+              "bcc": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "email"
+                },
+                "description": "Blind carbon copy recipients"
+              }
+            }
+          },
+          "content": {
+            "type": "object",
+            "required": ["subject"],
+            "properties": {
+              "subject": {
+                "type": "string",
+                "maxLength": 200,
+                "description": "Email subject line"
+              },
+              "body": {
+                "type": "string",
+                "description": "Plain text email body"
+              },
+              "html_body": {
+                "type": "string",
+                "description": "HTML formatted email body"
+              }
+            }
+          },
+          "options": {
+            "type": "object",
+            "properties": {
+              "send_immediately": {
+                "type": "boolean",
+                "default": true,
+                "description": "Send email immediately or save as draft"
+              },
+              "request_read_receipt": {
+                "type": "boolean",
+                "default": false,
+                "description": "Request read receipt from recipients"
+              }
+            }
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_recipients": {
+            "condition": "total_recipients > 50",
+            "action": "block",
+            "message": "Cannot send to more than 50 recipients at once. Please reduce the recipient list."
+          },
+          "subject_length": {
+            "condition": "subject_length > 200",
+            "action": "block",
+            "message": "Email subject cannot exceed 200 characters."
+          }
+        },
+        "confirmations": {
+          "large_group": {
+            "condition": "total_recipients > 10",
+            "action": "confirm",
+            "message": "Send email to {total_recipients} recipients?"
+          },
+          "external_domains": {
+            "condition": "has_external_recipients == true",
+            "action": "confirm",
+            "message": "This email includes recipients outside your organization. Continue?"
+          },
+          "no_subject": {
+            "condition": "subject_length == 0",
+            "action": "confirm",
+            "message": "Send email without a subject line?"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Email sent successfully to {recipient_count} recipients",
+        "common_errors": {
+          "auth_failed": "Your Gmail connection has expired. Please go to Settings → Connected Apps to reconnect Gmail.",
+          "quota_exceeded": "You've reached your daily email sending limit. Please try again tomorrow or contact support to increase your limit.",
+          "invalid_recipient": "Some email addresses are invalid. Please verify the email addresses and try again.",
+          "attachment_too_large": "One or more attachments exceed the 25MB limit. Please reduce file sizes or use cloud sharing links.",
+          "api_rate_limit": "Too many requests in a short time. Please wait a moment and try again.",
+          "insufficient_permissions": "Gmail permissions are insufficient. Please reconnect with full email sending permissions."
+        }
+      }
+    },
+    "search_emails": {
+      "description": "Search for emails in the user's Gmail account",
+      "usage_context": "When user wants to find specific emails or conversations",
+      "parameters": {
+        "type": "object",
+        "required": ["query"],
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query (supports Gmail search operators like 'from:', 'subject:', 'in:', etc.)"
+          },
+          "max_results": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 10,
+            "description": "Maximum number of emails to return"
+          },
+          "include_attachments": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include and process email attachments in results"
+          },
+          "folder": {
+            "type": "string",
+            "enum": ["inbox", "sent", "drafts", "spam", "trash", "all"],
+            "default": "inbox",
+            "description": "Gmail folder/label to search in"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_results": {
+            "condition": "max_results > 100",
+            "action": "block",
+            "message": "Cannot search for more than 100 emails at once."
+          }
+        },
+        "confirmations": {
+          "large_search": {
+            "condition": "max_results > 50",
+            "action": "confirm",
+            "message": "Search for {max_results} emails? This may take longer to process."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Found {email_count} emails matching your search",
+        "common_errors": {
+          "auth_failed": "Your Gmail connection has expired. Please reconnect in Settings → Connected Apps.",
+          "invalid_query": "The search query format is invalid. Please check your search terms and try again.",
+          "no_results": "No emails found matching your search criteria. Try different keywords or broader search terms.",
+          "api_rate_limit": "Too many search requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Gmail read permissions are insufficient. Please reconnect with full email access."
+        }
+      }
+    },
+    "create_draft": {
+      "description": "Create a draft email without sending",
+      "usage_context": "When user wants to prepare an email for later sending or review",
+      "parameters": {
+        "type": "object",
+        "required": ["content"],
+        "properties": {
+          "recipients": {
+            "type": "object",
+            "properties": {
+              "to": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "email"
+                },
+                "description": "Primary recipients of the email"
+              },
+              "cc": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "email"
+                },
+                "description": "Carbon copy recipients"
+              },
+              "bcc": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "email"
+                },
+                "description": "Blind carbon copy recipients"
+              }
+            }
+          },
+          "content": {
+            "type": "object",
+            "properties": {
+              "subject": {
+                "type": "string",
+                "maxLength": 200,
+                "description": "Email subject line"
+              },
+              "body": {
+                "type": "string",
+                "description": "Plain text email body"
+              },
+              "html_body": {
+                "type": "string",
+                "description": "HTML formatted email body"
+              }
+            }
+          },
+          "save_location": {
+            "type": "string",
+            "enum": ["drafts", "templates"],
+            "default": "drafts",
+            "description": "Where to save the draft"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "subject_length": {
+            "condition": "subject_length > 200",
+            "action": "block",
+            "message": "Email subject cannot exceed 200 characters."
+          }
+        },
+        "confirmations": {
+          "large_draft": {
+            "condition": "total_recipients > 20",
+            "action": "confirm",
+            "message": "Create draft for {total_recipients} recipients?"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Draft saved successfully with {recipient_count} recipients",
+        "common_errors": {
+          "auth_failed": "Your Gmail connection has expired. Please reconnect in Settings → Connected Apps.",
+          "draft_limit_exceeded": "You've reached the maximum number of drafts. Please delete some drafts and try again.",
+          "invalid_recipient": "Some email addresses are invalid. The draft was saved but please verify recipients before sending.",
+          "api_rate_limit": "Too many draft operations. Please wait a moment and try again.",
+          "insufficient_permissions": "Gmail draft permissions are insufficient. Please reconnect with full email access."
+        }
+      }
+    }
+  }
+}

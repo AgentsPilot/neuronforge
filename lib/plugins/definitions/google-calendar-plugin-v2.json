@@ -1,0 +1,362 @@
+{
+  "plugin": {
+    "name": "google-calendar",
+    "version": "1.0.0",
+    "description": "Manage events, meetings, and schedules in Google Calendar",
+    "context": "Use for fetching calendar events, creating meetings, scheduling appointments, setting reminders, managing attendees, and organizing time-based activities for agents",
+    "auth_config": {
+      "auth_type": "oauth2_google",
+      "client_id": "${GOOGLE_CLIENT_ID}",
+      "client_secret": "${GOOGLE_CLIENT_SECRET}",
+      "redirect_uri": "${NEXT_PUBLIC_APP_URL}/oauth/callback/google-calendar",
+      "auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
+      "token_url": "https://oauth2.googleapis.com/token",
+      "refresh_url": "https://oauth2.googleapis.com/token",
+      "profile_url": "https://www.googleapis.com/oauth2/v2/userinfo",
+      "required_scopes": [
+        "openid",
+        "email",
+        "profile",
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/calendar.events"
+      ]
+    }
+  },
+  "actions": {
+    "list_events": {
+      "description": "List calendar events within a specified time range",
+      "usage_context": "When user wants to fetch upcoming events, check availability, see scheduled meetings, or retrieve calendar data for a time period",
+      "parameters": {
+        "type": "object",
+        "required": ["time_min"],
+        "properties": {
+          "calendar_id": {
+            "type": "string",
+            "default": "primary",
+            "description": "Calendar identifier (use 'primary' for user's primary calendar or specific calendar email)"
+          },
+          "time_min": {
+            "type": "string",
+            "description": "Start of time range (ISO 8601 format, e.g., '2024-01-01T00:00:00Z')"
+          },
+          "time_max": {
+            "type": "string",
+            "description": "End of time range (ISO 8601 format, optional - defaults to unbounded)"
+          },
+          "max_results": {
+            "type": "number",
+            "default": 50,
+            "description": "Maximum number of events to return (max 2500)"
+          },
+          "single_events": {
+            "type": "boolean",
+            "default": true,
+            "description": "Whether to expand recurring events into individual instances"
+          },
+          "order_by": {
+            "type": "string",
+            "enum": ["startTime", "updated"],
+            "default": "startTime",
+            "description": "Order results by start time or last updated time"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_results_limit": {
+            "condition": "max_results > 2500",
+            "action": "block",
+            "message": "Cannot retrieve more than 2,500 events at once. Please reduce max_results."
+          }
+        },
+        "confirmations": {
+          "large_fetch": {
+            "condition": "max_results > 500",
+            "action": "confirm",
+            "message": "Fetch {max_results} events? This may take a moment to process."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Retrieved {event_count} events from {calendar_id}",
+        "common_errors": {
+          "auth_failed": "Your Google Calendar connection has expired. Please go to Settings → Connected Apps to reconnect Google Calendar.",
+          "calendar_not_found": "The calendar was not found. Please check the calendar ID and ensure you have access.",
+          "invalid_time_format": "The time format is invalid. Use ISO 8601 format like '2024-01-01T00:00:00Z'.",
+          "permission_denied": "You don't have permission to access this calendar. Please request access from the owner.",
+          "api_rate_limit": "Too many requests in a short time. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Calendar permissions are insufficient. Please reconnect with full calendar access."
+        }
+      }
+    },
+    "create_event": {
+      "description": "Create a new calendar event or meeting",
+      "usage_context": "When user wants to schedule a meeting, create an appointment, add calendar events, or set up recurring events with attendees and reminders",
+      "parameters": {
+        "type": "object",
+        "required": ["summary", "start_time", "end_time"],
+        "properties": {
+          "calendar_id": {
+            "type": "string",
+            "default": "primary",
+            "description": "Calendar identifier to create event in"
+          },
+          "summary": {
+            "type": "string",
+            "description": "Event title/summary"
+          },
+          "description": {
+            "type": "string",
+            "description": "Event description or notes"
+          },
+          "location": {
+            "type": "string",
+            "description": "Event location (address, room name, etc.)"
+          },
+          "start_time": {
+            "type": "string",
+            "description": "Event start time (ISO 8601 format, e.g., '2024-01-15T10:00:00Z')"
+          },
+          "end_time": {
+            "type": "string",
+            "description": "Event end time (ISO 8601 format)"
+          },
+          "attendees": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of attendee email addresses"
+          },
+          "reminders": {
+            "type": "object",
+            "properties": {
+              "use_default": {
+                "type": "boolean",
+                "default": true,
+                "description": "Use calendar's default reminders"
+              },
+              "overrides": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "method": {
+                      "type": "string",
+                      "enum": ["email", "popup"]
+                    },
+                    "minutes": {
+                      "type": "number"
+                    }
+                  }
+                },
+                "description": "Custom reminder settings (e.g., [{method: 'email', minutes: 60}])"
+              }
+            }
+          },
+          "send_notifications": {
+            "type": "boolean",
+            "default": true,
+            "description": "Send email notifications to attendees"
+          },
+          "conference_solution": {
+            "type": "string",
+            "enum": ["hangoutsMeet", "none"],
+            "default": "none",
+            "description": "Generate Google Meet link for the event"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_attendees": {
+            "condition": "attendee_count > 100",
+            "action": "block",
+            "message": "Cannot add more than 100 attendees to a single event."
+          }
+        },
+        "confirmations": {
+          "many_attendees": {
+            "condition": "attendee_count > 20",
+            "action": "confirm",
+            "message": "Create event with {attendee_count} attendees? Email notifications will be sent."
+          },
+          "send_notifications_confirm": {
+            "condition": "send_notifications == true && attendee_count > 0",
+            "action": "confirm",
+            "message": "Send calendar invitations to {attendee_count} attendees?"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Created event '{summary}' on {start_time}",
+        "common_errors": {
+          "auth_failed": "Your Google Calendar connection has expired. Please reconnect in Settings → Connected Apps.",
+          "calendar_not_found": "The calendar was not found. Please check the calendar ID.",
+          "invalid_time_format": "The time format is invalid. Use ISO 8601 format like '2024-01-15T10:00:00Z'.",
+          "invalid_attendees": "One or more attendee email addresses are invalid.",
+          "permission_denied": "You don't have permission to create events on this calendar.",
+          "api_rate_limit": "Too many event creation requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Calendar write permissions are insufficient. Please reconnect with full access."
+        }
+      }
+    },
+    "update_event": {
+      "description": "Update an existing calendar event",
+      "usage_context": "When user wants to modify event details, reschedule meetings, change attendees, or update event information",
+      "parameters": {
+        "type": "object",
+        "required": ["event_id"],
+        "properties": {
+          "calendar_id": {
+            "type": "string",
+            "default": "primary",
+            "description": "Calendar identifier containing the event"
+          },
+          "event_id": {
+            "type": "string",
+            "description": "ID of the event to update"
+          },
+          "summary": {
+            "type": "string",
+            "description": "New event title/summary"
+          },
+          "description": {
+            "type": "string",
+            "description": "New event description"
+          },
+          "location": {
+            "type": "string",
+            "description": "New event location"
+          },
+          "start_time": {
+            "type": "string",
+            "description": "New start time (ISO 8601 format)"
+          },
+          "end_time": {
+            "type": "string",
+            "description": "New end time (ISO 8601 format)"
+          },
+          "attendees": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Updated list of attendee email addresses"
+          },
+          "send_notifications": {
+            "type": "boolean",
+            "default": false,
+            "description": "Send email notifications about the update to attendees"
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {
+          "send_update_notifications": {
+            "condition": "send_notifications == true",
+            "action": "confirm",
+            "message": "Send update notifications to all attendees?"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Updated event '{summary}' successfully",
+        "common_errors": {
+          "auth_failed": "Your Google Calendar connection has expired. Please reconnect in Settings → Connected Apps.",
+          "event_not_found": "The event was not found. Please check the event ID.",
+          "calendar_not_found": "The calendar was not found. Please check the calendar ID.",
+          "invalid_time_format": "The time format is invalid. Use ISO 8601 format.",
+          "permission_denied": "You don't have permission to edit this event.",
+          "api_rate_limit": "Too many update requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Calendar write permissions are insufficient. Please reconnect with full access."
+        }
+      }
+    },
+    "delete_event": {
+      "description": "Delete a calendar event",
+      "usage_context": "When user wants to cancel meetings, remove events, or delete calendar entries",
+      "parameters": {
+        "type": "object",
+        "required": ["event_id"],
+        "properties": {
+          "calendar_id": {
+            "type": "string",
+            "default": "primary",
+            "description": "Calendar identifier containing the event"
+          },
+          "event_id": {
+            "type": "string",
+            "description": "ID of the event to delete"
+          },
+          "send_notifications": {
+            "type": "boolean",
+            "default": false,
+            "description": "Send cancellation notifications to attendees"
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {
+          "delete_confirmation": {
+            "condition": "event_id != null",
+            "action": "confirm",
+            "message": "Delete this calendar event? This action cannot be undone."
+          },
+          "send_cancellation": {
+            "condition": "send_notifications == true",
+            "action": "confirm",
+            "message": "Send cancellation notifications to all attendees?"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Deleted event successfully",
+        "common_errors": {
+          "auth_failed": "Your Google Calendar connection has expired. Please reconnect in Settings → Connected Apps.",
+          "event_not_found": "The event was not found. It may have already been deleted.",
+          "calendar_not_found": "The calendar was not found. Please check the calendar ID.",
+          "permission_denied": "You don't have permission to delete this event.",
+          "api_rate_limit": "Too many deletion requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Calendar write permissions are insufficient. Please reconnect with full access."
+        }
+      }
+    },
+    "get_event_details": {
+      "description": "Get detailed information about a specific calendar event",
+      "usage_context": "When user wants to view event details, check meeting information, or retrieve specific event data",
+      "parameters": {
+        "type": "object",
+        "required": ["event_id"],
+        "properties": {
+          "calendar_id": {
+            "type": "string",
+            "default": "primary",
+            "description": "Calendar identifier containing the event"
+          },
+          "event_id": {
+            "type": "string",
+            "description": "ID of the event to retrieve"
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_guidance": {
+        "success_message": "Retrieved event details for '{summary}'",
+        "common_errors": {
+          "auth_failed": "Your Google Calendar connection has expired. Please reconnect in Settings → Connected Apps.",
+          "event_not_found": "The event was not found. Please check the event ID and ensure you have access.",
+          "calendar_not_found": "The calendar was not found. Please check the calendar ID.",
+          "permission_denied": "You don't have permission to access this event.",
+          "api_rate_limit": "Too many requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Calendar read permissions are insufficient. Please reconnect with full access."
+        }
+      }
+    }
+  }
+}

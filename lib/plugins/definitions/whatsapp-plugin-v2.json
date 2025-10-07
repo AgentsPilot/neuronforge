@@ -1,0 +1,341 @@
+{
+  "plugin": {
+    "name": "whatsapp",
+    "version": "1.0.0",
+    "description": "Send templated messages, manage customer conversations, and automate WhatsApp Business messaging",
+    "context": "Use for customer communication, sending notifications, managing WhatsApp Business conversations, responding to customer messages, and integrating WhatsApp messaging workflows with agent actions. Supports template messages, interactive buttons, and real-time text messaging.",
+    "auth_config": {
+      "auth_type": "oauth2",
+      "client_id": "${WHATSAPP_CLIENT_ID}",
+      "client_secret": "${WHATSAPP_CLIENT_SECRET}",
+      "redirect_uri": "${NEXT_PUBLIC_APP_URL}/oauth/callback/whatsapp",
+      "auth_url": "https://www.facebook.com/v18.0/dialog/oauth",
+      "token_url": "https://graph.facebook.com/v18.0/oauth/access_token",
+      "refresh_url": "https://graph.facebook.com/v18.0/oauth/access_token",
+      "profile_url": "https://graph.facebook.com/me",
+      "required_scopes": [
+        "whatsapp_business_messaging",
+        "whatsapp_business_management"
+      ],
+      "additional_params": {
+        "config_id": "${WHATSAPP_CONFIG_ID}",
+        "response_type": "code"
+      }
+    },
+    "webhook_config": {
+      "required": true,
+      "endpoint_path": "/api/plugins/webhooks/whatsapp",
+      "events": ["messages", "message_status"],
+      "setup_instructions": "After OAuth, configure webhook in Meta App Dashboard > WhatsApp > Configuration. Subscribe to 'messages' field. Webhook URL will be provided after connection.",
+      "verify_token_required": true,
+      "profile_data_required": ["phone_number_id", "waba_id"]
+    }
+  },
+  "actions": {
+    "send_template_message": {
+      "description": "Send a pre-approved template message to initiate or continue a conversation with a customer",
+      "usage_context": "Use this to send notifications, reminders, confirmations, or marketing messages using approved templates. Required for business-initiated conversations outside the 24-hour customer service window. Templates must be pre-approved by WhatsApp.",
+      "parameters": {
+        "recipient_phone": {
+          "type": "string",
+          "description": "Customer's phone number in international format (e.g., +15551234567)",
+          "required": true
+        },
+        "template_name": {
+          "type": "string",
+          "description": "Name of the approved message template to use",
+          "required": true
+        },
+        "language_code": {
+          "type": "string",
+          "description": "Language and locale code for the template (e.g., en_US, es_MX, pt_BR)",
+          "required": true
+        },
+        "template_parameters": {
+          "type": "object",
+          "description": "Dynamic values to fill template placeholders. Structure: {\"body\": [\"value1\", \"value2\"], \"header\": [\"header_value\"]}",
+          "required": false,
+          "properties": {
+            "body": {
+              "type": "array",
+              "description": "Array of values to replace body placeholders in order"
+            },
+            "header": {
+              "type": "array",
+              "description": "Array of values to replace header placeholders (if template has header)"
+            }
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "phone_format": {
+            "condition": "recipient_phone matches ^\\+[1-9]\\d{1,14}$",
+            "action": "block",
+            "message": "Phone number must be in international format with + and country code (e.g., +15551234567)"
+          }
+        },
+        "confirmations": {
+          "template_send": {
+            "condition": "template_name != ''",
+            "action": "confirm",
+            "message": "You are about to send template '{template_name}' to {recipient_phone}. This may incur messaging charges. Proceed?"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Template message '{template_name}' sent successfully to {recipient_phone}. Message ID: {message_id}",
+        "common_errors": {
+          "template_not_found": "Template '{template_name}' not found or not approved. Use list_message_templates to see available templates.",
+          "invalid_phone": "Invalid phone number format. Use international format with country code (e.g., +15551234567).",
+          "template_paused": "Template messaging is currently paused for this number. This may be due to quality issues or policy violations.",
+          "parameter_mismatch": "Template parameter count or format doesn't match the template definition. Check template requirements.",
+          "no_opt_in": "Customer has not opted in to receive messages. Obtain explicit opt-in before sending messages.",
+          "api_rate_limit": "WhatsApp API rate limit exceeded. Maximum 80 messages per second per phone number.",
+          "insufficient_credit": "Insufficient credit balance to send message. Add payment method to WhatsApp Business Account."
+        }
+      }
+    },
+    "send_text_message": {
+      "description": "Send a free-form text message to a customer within the 24-hour customer service window",
+      "usage_context": "Use this for real-time conversational responses to customer inquiries. Can only be sent within 24 hours after the customer's last message. Supports URLs, formatting, and emojis for natural conversations.",
+      "parameters": {
+        "recipient_phone": {
+          "type": "string",
+          "description": "Customer's phone number in international format (e.g., +15551234567)",
+          "required": true
+        },
+        "message_text": {
+          "type": "string",
+          "description": "The text content to send. Supports URLs, bold (*text*), italic (_text_), strikethrough (~text~), and monospace (```text```)",
+          "required": true
+        },
+        "preview_url": {
+          "type": "boolean",
+          "description": "Whether to show URL preview for links in the message (default: false)",
+          "required": false,
+          "default": false
+        },
+        "reply_to_message_id": {
+          "type": "string",
+          "description": "Optional: WhatsApp message ID to reply to (creates a contextual reply bubble)",
+          "required": false
+        }
+      },
+      "rules": {
+        "limits": {
+          "message_length": {
+            "condition": "message_text.length <= 4096",
+            "action": "block",
+            "message": "Message text cannot exceed 4,096 characters"
+          },
+          "phone_format": {
+            "condition": "recipient_phone matches ^\\+[1-9]\\d{1,14}$",
+            "action": "block",
+            "message": "Phone number must be in international format with + and country code"
+          }
+        },
+        "confirmations": {}
+      },
+      "output_guidance": {
+        "success_message": "Text message sent successfully to {recipient_phone}. Message ID: {message_id}. Status updates will be sent via webhook.",
+        "common_errors": {
+          "outside_service_window": "Cannot send free-form message outside 24-hour customer service window. Use send_template_message instead.",
+          "invalid_phone": "Invalid phone number. Ensure customer has WhatsApp and phone is in correct format.",
+          "message_too_long": "Message exceeds 4,096 character limit. Split into multiple messages.",
+          "customer_blocked": "Customer has blocked your business number. Cannot send messages.",
+          "api_rate_limit": "Rate limit exceeded. Maximum 80 messages per second per phone number.",
+          "invalid_reply_id": "The message ID you're replying to doesn't exist or is too old."
+        }
+      }
+    },
+    "send_interactive_message": {
+      "description": "Send a message with interactive buttons or selection lists to guide customer through workflows",
+      "usage_context": "Use this to provide structured options, menus, or quick replies to customers. Improves user experience by reducing typing. Can only be sent within 24-hour customer service window. Supports up to 3 buttons or 10 list items.",
+      "parameters": {
+        "recipient_phone": {
+          "type": "string",
+          "description": "Customer's phone number in international format (e.g., +15551234567)",
+          "required": true
+        },
+        "body_text": {
+          "type": "string",
+          "description": "Main message text explaining the options (max 1,024 characters)",
+          "required": true
+        },
+        "interaction_type": {
+          "type": "string",
+          "description": "Type of interaction: 'button' for quick reply buttons or 'list' for selection menu",
+          "required": true,
+          "enum": ["button", "list"]
+        },
+        "header_text": {
+          "type": "string",
+          "description": "Optional header text above the message (max 60 characters, only for lists)",
+          "required": false
+        },
+        "footer_text": {
+          "type": "string",
+          "description": "Optional footer text below the message (max 60 characters)",
+          "required": false
+        },
+        "buttons": {
+          "type": "array",
+          "description": "Array of button objects for type='button'. Each: {\"id\": \"unique_id\", \"title\": \"Button Text\"}. Max 3 buttons, max 20 chars per title.",
+          "required": false,
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Unique identifier for the button (returned in webhook when clicked)"
+              },
+              "title": {
+                "type": "string",
+                "description": "Button text (max 20 characters)"
+              }
+            }
+          }
+        },
+        "list_button_text": {
+          "type": "string",
+          "description": "Text on the button that opens the list (required for type='list', max 20 characters)",
+          "required": false
+        },
+        "list_sections": {
+          "type": "array",
+          "description": "Array of sections for type='list'. Each section has title and rows. Max 10 rows total across all sections.",
+          "required": false,
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "description": "Section title (max 24 characters)"
+              },
+              "rows": {
+                "type": "array",
+                "description": "Array of row objects",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "Unique row ID (max 200 characters)"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "Row title (max 24 characters)"
+                    },
+                    "description": {
+                      "type": "string",
+                      "description": "Optional row description (max 72 characters)"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "button_count": {
+            "condition": "buttons.length <= 3",
+            "action": "block",
+            "message": "Maximum 3 buttons allowed for interactive button messages"
+          },
+          "list_rows": {
+            "condition": "total_list_rows <= 10",
+            "action": "block",
+            "message": "Maximum 10 rows allowed across all list sections"
+          },
+          "body_length": {
+            "condition": "body_text.length <= 1024",
+            "action": "block",
+            "message": "Body text cannot exceed 1,024 characters"
+          }
+        },
+        "confirmations": {}
+      },
+      "output_guidance": {
+        "success_message": "Interactive message sent successfully to {recipient_phone}. Customer responses will be received via webhook with the selected button/list item ID.",
+        "common_errors": {
+          "outside_service_window": "Cannot send interactive message outside 24-hour customer service window.",
+          "invalid_interaction_type": "Interaction type must be 'button' or 'list'.",
+          "missing_buttons": "Buttons array required when interaction_type is 'button'.",
+          "missing_list_config": "list_button_text and list_sections required when interaction_type is 'list'.",
+          "button_title_too_long": "Button titles cannot exceed 20 characters.",
+          "too_many_rows": "Total list rows across all sections cannot exceed 10.",
+          "api_rate_limit": "Rate limit exceeded. Wait before sending more messages."
+        }
+      }
+    },
+    "list_message_templates": {
+      "description": "Retrieve all approved message templates available for your WhatsApp Business Account",
+      "usage_context": "Use this to discover which templates are available and approved for sending. Essential for template-based automation and knowing which templates can be used with send_template_message. Returns template names, languages, statuses, and parameter requirements.",
+      "parameters": {
+        "limit": {
+          "type": "number",
+          "description": "Maximum number of templates to retrieve (default: 50, max: 250)",
+          "required": false,
+          "default": 50
+        },
+        "status_filter": {
+          "type": "string",
+          "description": "Filter templates by status: 'APPROVED', 'PENDING', 'REJECTED', or leave empty for all",
+          "required": false,
+          "enum": ["APPROVED", "PENDING", "REJECTED", ""]
+        },
+        "name_filter": {
+          "type": "string",
+          "description": "Optional: Filter templates by name (partial match supported)",
+          "required": false
+        }
+      },
+      "rules": {
+        "limits": {
+          "limit_range": {
+            "condition": "limit >= 1 && limit <= 250",
+            "action": "block",
+            "message": "Limit must be between 1 and 250"
+          }
+        },
+        "confirmations": {}
+      },
+      "output_guidance": {
+        "success_message": "Retrieved {count} message templates. Use template names and language codes with send_template_message action.",
+        "common_errors": {
+          "no_templates": "No message templates found. Create templates in WhatsApp Manager at business.facebook.com.",
+          "api_rate_limit": "API rate limit exceeded. WhatsApp Business Management API allows 5000 calls per hour per WABA.",
+          "invalid_waba": "WhatsApp Business Account ID not found. Reconnect the plugin.",
+          "insufficient_permissions": "Access token lacks whatsapp_business_management permission. Reconnect with proper permissions."
+        }
+      }
+    },
+    "mark_message_read": {
+      "description": "Mark an incoming customer message as read to improve customer experience and conversation management",
+      "usage_context": "Use this to acknowledge receipt of customer messages and show responsiveness. Helps manage conversation state and provides better customer experience by showing read status. Message ID is obtained from webhook notifications.",
+      "parameters": {
+        "message_id": {
+          "type": "string",
+          "description": "WhatsApp message ID (WAMID) from the incoming message webhook notification",
+          "required": true
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_guidance": {
+        "success_message": "Message {message_id} marked as read successfully. Customer will see read receipt.",
+        "common_errors": {
+          "message_not_found": "Message ID not found. The message may be too old or the ID is incorrect.",
+          "already_read": "Message has already been marked as read.",
+          "invalid_message_id": "Invalid message ID format. Use the WAMID from the webhook notification.",
+          "api_rate_limit": "Rate limit exceeded. This operation counts toward the 80 messages per second limit."
+        }
+      }
+    }
+  }
+}

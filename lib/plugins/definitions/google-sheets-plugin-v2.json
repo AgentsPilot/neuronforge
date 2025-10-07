@@ -1,0 +1,323 @@
+{
+  "plugin": {
+    "name": "google-sheets",
+    "version": "1.0.0",
+    "description": "Read, write, and manage data in Google Sheets spreadsheets",
+    "context": "Use for reading data from spreadsheets, writing structured output, appending rows, creating new spreadsheets, and managing spreadsheet data as structured input/output for agents",
+    "auth_config": {
+      "auth_type": "oauth2_google",
+      "client_id": "${GOOGLE_CLIENT_ID}",
+      "client_secret": "${GOOGLE_CLIENT_SECRET}",
+      "redirect_uri": "${NEXT_PUBLIC_APP_URL}/oauth/callback/google-sheets",
+      "auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
+      "token_url": "https://oauth2.googleapis.com/token",
+      "refresh_url": "https://oauth2.googleapis.com/token",
+      "profile_url": "https://www.googleapis.com/oauth2/v2/userinfo",
+      "required_scopes": [
+        "openid",
+        "email",
+        "profile",
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+      ]
+    }
+  },
+  "actions": {
+    "read_range": {
+      "description": "Read data from a specific range of cells in a spreadsheet",
+      "usage_context": "When user wants to read data from cells, get table contents, or retrieve structured data for processing",
+      "parameters": {
+        "type": "object",
+        "required": ["spreadsheet_id", "range"],
+        "properties": {
+          "spreadsheet_id": {
+            "type": "string",
+            "description": "The ID of the spreadsheet to read from (from the URL or file ID)"
+          },
+          "range": {
+            "type": "string",
+            "description": "The A1 notation range to read (e.g., 'Sheet1!A1:D10', 'Data!A:C', or 'B2:E5')"
+          },
+          "include_formula_values": {
+            "type": "boolean",
+            "default": false,
+            "description": "Return formula values instead of calculated results"
+          },
+          "major_dimension": {
+            "type": "string",
+            "enum": ["ROWS", "COLUMNS"],
+            "default": "ROWS",
+            "description": "Whether to read data as rows or columns"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "large_range": {
+            "condition": "estimated_cells > 10000",
+            "action": "block",
+            "message": "Cannot read more than 10,000 cells at once. Please reduce the range size."
+          }
+        },
+        "confirmations": {
+          "medium_range": {
+            "condition": "estimated_cells > 1000",
+            "action": "confirm",
+            "message": "Read {estimated_cells} cells? This may take a moment to process."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Read {row_count} rows and {column_count} columns from {range}",
+        "common_errors": {
+          "auth_failed": "Your Google Sheets connection has expired. Please go to Settings → Connected Apps to reconnect Google Sheets.",
+          "spreadsheet_not_found": "The spreadsheet was not found. Please check the spreadsheet ID and ensure you have access.",
+          "invalid_range": "The range format is invalid. Use A1 notation like 'Sheet1!A1:D10' or 'A:C'.",
+          "permission_denied": "You don't have permission to access this spreadsheet. Please request access from the owner.",
+          "api_rate_limit": "Too many requests in a short time. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Sheets permissions are insufficient. Please reconnect with full spreadsheet access."
+        }
+      }
+    },
+    "write_range": {
+      "description": "Write or update data in a specific range of cells",
+      "usage_context": "When user wants to write data to cells, update existing values, or save structured output from processing",
+      "parameters": {
+        "type": "object",
+        "required": ["spreadsheet_id", "range", "values"],
+        "properties": {
+          "spreadsheet_id": {
+            "type": "string",
+            "description": "The ID of the spreadsheet to write to"
+          },
+          "range": {
+            "type": "string",
+            "description": "The A1 notation range to write (e.g., 'Sheet1!A1:D10' or 'Data!B2')"
+          },
+          "values": {
+            "type": "array",
+            "description": "2D array of values to write (array of rows, each row is an array of cell values)",
+            "items": {
+              "type": "array"
+            }
+          },
+          "input_option": {
+            "type": "string",
+            "enum": ["RAW", "USER_ENTERED"],
+            "default": "USER_ENTERED",
+            "description": "How to interpret input: RAW (as-is) or USER_ENTERED (parse formulas, dates, etc.)"
+          },
+          "overwrite_existing": {
+            "type": "boolean",
+            "default": true,
+            "description": "Whether to overwrite existing data in the range"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_cells": {
+            "condition": "total_cells > 10000",
+            "action": "block",
+            "message": "Cannot write more than 10,000 cells at once. Please reduce the data size."
+          }
+        },
+        "confirmations": {
+          "large_write": {
+            "condition": "total_cells > 1000",
+            "action": "confirm",
+            "message": "Write {total_cells} cells? This will overwrite existing data in the range."
+          },
+          "overwrite_data": {
+            "condition": "overwrite_existing == true && has_existing_data == true",
+            "action": "confirm",
+            "message": "Overwrite existing data in {range}?"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Updated {updated_cells} cells in {updated_range}",
+        "common_errors": {
+          "auth_failed": "Your Google Sheets connection has expired. Please reconnect in Settings → Connected Apps.",
+          "spreadsheet_not_found": "The spreadsheet was not found. Please check the spreadsheet ID.",
+          "invalid_range": "The range format is invalid. Use A1 notation like 'Sheet1!A1:D10'.",
+          "permission_denied": "You don't have permission to edit this spreadsheet. Please request edit access.",
+          "invalid_values": "The values array format is invalid. Provide a 2D array of cell values.",
+          "api_rate_limit": "Too many write requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Sheets write permissions are insufficient. Please reconnect with full access."
+        }
+      }
+    },
+    "append_rows": {
+      "description": "Append new rows of data to the end of a sheet",
+      "usage_context": "When user wants to add new records, log data, or continuously append information without specifying exact cell positions",
+      "parameters": {
+        "type": "object",
+        "required": ["spreadsheet_id", "range", "values"],
+        "properties": {
+          "spreadsheet_id": {
+            "type": "string",
+            "description": "The ID of the spreadsheet to append to"
+          },
+          "range": {
+            "type": "string",
+            "description": "The sheet name or range where data should be appended (e.g., 'Sheet1' or 'Sheet1!A:D')"
+          },
+          "values": {
+            "type": "array",
+            "description": "Array of rows to append (each row is an array of cell values)",
+            "items": {
+              "type": "array"
+            }
+          },
+          "input_option": {
+            "type": "string",
+            "enum": ["RAW", "USER_ENTERED"],
+            "default": "USER_ENTERED",
+            "description": "How to interpret input: RAW (as-is) or USER_ENTERED (parse formulas, dates, etc.)"
+          },
+          "insert_data_option": {
+            "type": "string",
+            "enum": ["OVERWRITE", "INSERT_ROWS"],
+            "default": "INSERT_ROWS",
+            "description": "Whether to insert new rows or overwrite existing empty rows"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_rows": {
+            "condition": "row_count > 1000",
+            "action": "block",
+            "message": "Cannot append more than 1,000 rows at once. Please reduce the batch size."
+          }
+        },
+        "confirmations": {
+          "large_append": {
+            "condition": "row_count > 100",
+            "action": "confirm",
+            "message": "Append {row_count} rows to the spreadsheet?"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Appended {appended_rows} rows to {sheet_name}",
+        "common_errors": {
+          "auth_failed": "Your Google Sheets connection has expired. Please reconnect in Settings → Connected Apps.",
+          "spreadsheet_not_found": "The spreadsheet was not found. Please check the spreadsheet ID.",
+          "invalid_range": "The range or sheet name is invalid. Use sheet names like 'Sheet1' or ranges like 'Sheet1!A:D'.",
+          "permission_denied": "You don't have permission to edit this spreadsheet. Please request edit access.",
+          "invalid_values": "The values array format is invalid. Provide an array of rows.",
+          "api_rate_limit": "Too many append requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Sheets write permissions are insufficient. Please reconnect with full access."
+        }
+      }
+    },
+    "create_spreadsheet": {
+      "description": "Create a new Google Sheets spreadsheet",
+      "usage_context": "When user wants to create a new spreadsheet for organizing data, starting a new project, or generating reports",
+      "parameters": {
+        "type": "object",
+        "required": ["title"],
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 255,
+            "description": "The title/name of the new spreadsheet"
+          },
+          "sheet_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Names of sheets to create (default is a single sheet named 'Sheet1')"
+          },
+          "initial_data": {
+            "type": "object",
+            "description": "Optional initial data to populate the first sheet",
+            "properties": {
+              "range": {
+                "type": "string",
+                "description": "Starting range for initial data (e.g., 'A1')"
+              },
+              "values": {
+                "type": "array",
+                "description": "2D array of initial values"
+              }
+            }
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "title_length": {
+            "condition": "title_length > 255",
+            "action": "block",
+            "message": "Spreadsheet title cannot exceed 255 characters."
+          },
+          "max_sheets": {
+            "condition": "sheet_count > 20",
+            "action": "block",
+            "message": "Cannot create more than 20 sheets at once. Please reduce the number of sheets."
+          }
+        },
+        "confirmations": {
+          "many_sheets": {
+            "condition": "sheet_count > 5",
+            "action": "confirm",
+            "message": "Create spreadsheet with {sheet_count} sheets?"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Created spreadsheet '{title}' with ID {spreadsheet_id}",
+        "common_errors": {
+          "auth_failed": "Your Google Sheets connection has expired. Please reconnect in Settings → Connected Apps.",
+          "quota_exceeded": "You've reached your spreadsheet creation limit. Please try again later.",
+          "invalid_title": "The spreadsheet title is invalid or too long. Please use a shorter title.",
+          "invalid_sheet_names": "One or more sheet names are invalid. Sheet names cannot be empty or contain special characters.",
+          "api_rate_limit": "Too many creation requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Sheets creation permissions are insufficient. Please reconnect with full access."
+        }
+      }
+    },
+    "get_spreadsheet_info": {
+      "description": "Get metadata and information about a spreadsheet",
+      "usage_context": "When user wants to explore spreadsheet structure, list available sheets, or get properties before reading/writing",
+      "parameters": {
+        "type": "object",
+        "required": ["spreadsheet_id"],
+        "properties": {
+          "spreadsheet_id": {
+            "type": "string",
+            "description": "The ID of the spreadsheet to get information about"
+          },
+          "include_sheet_data": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include detailed information about each sheet (rows, columns, etc.)"
+          },
+          "include_data_ranges": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include information about data ranges in each sheet"
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_guidance": {
+        "success_message": "Retrieved information for spreadsheet '{title}' with {sheet_count} sheets",
+        "common_errors": {
+          "auth_failed": "Your Google Sheets connection has expired. Please reconnect in Settings → Connected Apps.",
+          "spreadsheet_not_found": "The spreadsheet was not found. Please check the spreadsheet ID and ensure you have access.",
+          "permission_denied": "You don't have permission to access this spreadsheet. Please request access from the owner.",
+          "api_rate_limit": "Too many requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Sheets read permissions are insufficient. Please reconnect with full access."
+        }
+      }
+    }
+  }
+}
