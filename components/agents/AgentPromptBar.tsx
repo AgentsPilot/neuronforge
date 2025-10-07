@@ -101,7 +101,8 @@ export default function AgentPromptBar() {
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 placeholder="Describe your automation idea and I'll help you build it..."
-                className="flex-1 border-none focus:ring-0 bg-transparent placeholder-gray-400 text-gray-900 text-base font-medium resize-none min-h-[60px] max-h-32"
+                className="flex-1 border-none focus:ring-0 focus:outline-none bg-transparent placeholder-gray-400 text-gray-900 text-base font-medium resize-none min-h-[60px] max-h-32"
+                style={{ outline: 'none', boxShadow: 'none' }}
                 disabled={loading}
                 rows={3}
                 onInput={(e) => {
@@ -172,12 +173,7 @@ export default function AgentPromptBar() {
               : 'bg-white/80 backdrop-blur-sm border border-gray-200/50 text-gray-700 hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50 hover:border-blue-200 shadow-lg hover:shadow-xl'
           }`}
         >
-          <div className="relative">
-            <Lightbulb className={`w-4 h-4 transition-all duration-300 ${showExamples ? 'text-white' : 'text-blue-500 group-hover:scale-110'}`} />
-            {!showExamples && (
-              <div className="absolute -top-1 -right-1 w-2 h-2 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full animate-pulse"></div>
-            )}
-          </div>
+          <Lightbulb className={`w-4 h-4 transition-all duration-300 ${showExamples ? 'text-white' : 'text-blue-500 group-hover:scale-110'}`} />
           <span className="text-sm">{showExamples ? 'Hide Examples' : 'Examples'}</span>
         </button>
       </div>
@@ -231,35 +227,35 @@ export default function AgentPromptBar() {
       )}
 
       {/* Modern Features */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-3 gap-6">
         <div className="text-center group">
           <div className="flex justify-center mb-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-green-400 to-emerald-500 rounded-2xl flex items-center justify-center shadow-lg group-hover:shadow-xl group-hover:scale-110 transition-all duration-300">
+            <div className="w-10 h-10 bg-gradient-to-br from-green-400 to-emerald-500 rounded-xl flex items-center justify-center shadow-lg group-hover:shadow-xl group-hover:scale-110 transition-all duration-300">
               <MessageSquare className="w-5 h-5 text-white" />
             </div>
           </div>
-          <h4 className="font-semibold text-gray-900 text-sm mb-1">Chat Setup</h4>
-          <p className="text-xs text-gray-600 leading-relaxed">Natural conversation with AI</p>
+          <h4 className="font-bold text-gray-900 text-base mb-1">Conversational</h4>
+          <p className="text-sm text-gray-600 leading-relaxed">Just describe what you need</p>
         </div>
         
         <div className="text-center group">
           <div className="flex justify-center mb-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-purple-400 to-violet-500 rounded-2xl flex items-center justify-center shadow-lg group-hover:shadow-xl group-hover:scale-110 transition-all duration-300">
+            <div className="w-10 h-10 bg-gradient-to-br from-purple-400 to-violet-500 rounded-xl flex items-center justify-center shadow-lg group-hover:shadow-xl group-hover:scale-110 transition-all duration-300">
               <Bot className="w-5 h-5 text-white" />
             </div>
           </div>
-          <h4 className="font-semibold text-gray-900 text-sm mb-1">Smart Questions</h4>
-          <p className="text-xs text-gray-600 leading-relaxed">AI guides the process</p>
+          <h4 className="font-bold text-gray-900 text-base mb-1">Intelligent</h4>
+          <p className="text-sm text-gray-600 leading-relaxed">AI asks clarifying questions</p>
         </div>
         
         <div className="text-center group">
           <div className="flex justify-center mb-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-cyan-500 rounded-2xl flex items-center justify-center shadow-lg group-hover:shadow-xl group-hover:scale-110 transition-all duration-300">
+            <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-cyan-500 rounded-xl flex items-center justify-center shadow-lg group-hover:shadow-xl group-hover:scale-110 transition-all duration-300">
               <Sparkles className="w-5 h-5 text-white" />
             </div>
           </div>
-          <h4 className="font-semibold text-gray-900 text-sm mb-1">Auto-Enhanced</h4>
-          <p className="text-xs text-gray-600 leading-relaxed">Technical details added automatically</p>
+          <h4 className="font-bold text-gray-900 text-base mb-1">Automated</h4>
+          <p className="text-sm text-gray-600 leading-relaxed">Built and deployed instantly</p>
         </div>
       </div>
     </div>

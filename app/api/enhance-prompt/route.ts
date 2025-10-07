@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { v4 as uuidv4 } from 'uuid'
+
+// Import AI Analytics System
+import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics'
+import { OpenAIProvider } from '@/lib/ai/providers/openaiProvider'
 
 // Import new plugin registry
 import { 
@@ -9,7 +14,6 @@ import {
   detectRequiredPlugins,
   validatePluginRequirements,
   getPluginCapabilitiesContext,
-  
 } from '@/lib/plugins/pluginRegistry'
 
 const supabase = createClient(
@@ -17,40 +21,17 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-// Enhanced token tracking function with activity tracking
-async function trackTokenUsage(supabase: any, userId: string, tokenData: any) {
-  try {
-    const { error } = await supabase
-      .from('token_usage')
-      .insert({
-        user_id: userId,
-        model_name: tokenData.modelName,
-        provider: tokenData.provider,
-        input_tokens: tokenData.inputTokens,
-        output_tokens: tokenData.outputTokens,
-        cost_usd: 0.0, // You can calculate cost based on model pricing
-        request_type: tokenData.requestType || 'chat',
-        session_id: null, // Add session tracking if needed
-        category: tokenData.category || 'prompt_enhancement',
-        feature: 'prompt_enhancement',
-        component: 'prompt-enhancer',
-        workflow_step: 'enhancement',
-        // Add activity tracking fields
-        activity_type: tokenData.metadata?.activity_type || 'agent_creation',
-        activity_name: tokenData.metadata?.activity_name || 'Enhancing prompt structure',
-        activity_step: tokenData.metadata?.activity_step || 'prompt_enhancement',
-        agent_id: tokenData.metadata?.agent_id,
-        metadata: tokenData.metadata || {}
-      })
-    
-    if (error) {
-      console.error('Token tracking error:', error)
-      throw error
-    }
-  } catch (error) {
-    console.error('Failed to track token usage:', error)
-    // Don't throw - let the main request continue
-  }
+// Initialize AI Analytics
+const aiAnalytics = new AIAnalyticsService(supabase, {
+  enableRealtime: true,
+  enableCostTracking: true,
+  enablePerformanceMetrics: true
+})
+
+// Helper function to validate UUID format
+function isValidUUID(str: string): boolean {
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  return uuidPattern.test(str)
 }
 
 // Enhanced function to get connected plugins with metadata
@@ -110,7 +91,16 @@ async function getConnectedPlugins(userId: string, connected_plugins?: any): Pro
 
 export async function POST(req: NextRequest) {
   try {
-    const { prompt, userId, clarificationAnswers = {}, connected_plugins, missingPlugins = [], pluginWarning } = await req.json()
+    const { 
+      prompt, 
+      userId, 
+      clarificationAnswers = {}, 
+      connected_plugins, 
+      missingPlugins = [], 
+      pluginWarning,
+      sessionId: providedSessionId, // FIXED: Extract session ID from request
+      agentId: providedAgentId // FIXED: Extract agent ID from request
+    } = await req.json()
     
     // Extract missing plugins from pluginWarning if not provided directly (backward compatibility)
     const finalMissingPlugins = missingPlugins.length > 0 ? missingPlugins : (pluginWarning?.missingServices || [])
@@ -122,17 +112,29 @@ export async function POST(req: NextRequest) {
     // Get user ID from request headers if not in body (fallback method)
     const userIdToUse = userId || req.headers.get('x-user-id') || 'anonymous'
 
-    const OPENAI_API_KEY = process.env.OPENAI_API_KEY
+    // FIXED: Use provided IDs instead of generating new ones - with proper UUID format
+    const sessionId = providedSessionId || 
+                      req.headers.get('x-session-id') || 
+                      uuidv4()
 
-    if (!OPENAI_API_KEY) {
-      console.error('OPENAI_API_KEY not found in environment variables')
-      return NextResponse.json({ error: 'OpenAI API key not configured' }, { status: 500 })
-    }
+    const agentId = providedAgentId || 
+                    req.headers.get('x-agent-id') || 
+                    uuidv4()
 
-    console.log('🚀 Processing enhancement request for user:', userIdToUse)
-    console.log('📝 Original prompt length:', prompt.length)
-    console.log('📋 Clarification answers:', Object.keys(clarificationAnswers).length, 'items')
-    console.log('🔌 Missing plugins:', finalMissingPlugins)
+    console.log('🚀 Processing enhancement request with CONSISTENT agent ID:', {
+      userId: userIdToUse,
+      providedSessionId,
+      providedAgentId, // FIXED: Log provided agent ID
+      finalSessionId: sessionId,
+      finalAgentId: agentId, // FIXED: Log final agent ID
+      agentIdSource: providedAgentId ? 'request_body' : 
+                     req.headers.get('x-agent-id') ? 'header' : 'generated',
+      sessionIdSource: providedSessionId ? 'request_body' : 
+                       req.headers.get('x-session-id') ? 'header' : 'generated',
+      promptLength: prompt.length,
+      clarificationAnswersCount: Object.keys(clarificationAnswers).length,
+      missingPlugins: finalMissingPlugins
+    })
 
     // Get connected plugins with enhanced metadata
     const { pluginKeys: connectedPlugins, pluginData: connectedPluginData } = await getConnectedPlugins(userIdToUse, connected_plugins)
@@ -237,17 +239,6 @@ CRITICAL CONSTRAINT - DO NOT ADD FEATURES THE USER DIDN'T REQUEST:
 - Only mention storage/file capabilities if the user explicitly wants to save/store something
 - Don't suggest "backup" storage or "also save to" unless user requested it
 
-EXAMPLE FOR EMAIL SUMMARY REQUEST:
-User says: "Summarize my emails and send to my manager"
-CORRECT approach:
-- Data Source: Read emails
-- Processing: Summarize content  
-- Delivery: Send summary to manager email
-- DO NOT mention: Google Drive, file storage, "also save to", backup copies
-
-WRONG approach (don't do this):
-- Delivery: Send to manager AND save to Google Drive (user didn't ask for storage)
-
 LANGUAGE STYLE REQUIREMENTS:
 - Write like you're explaining to a friend, not a computer
 - Use "you" and "your" throughout 
@@ -264,13 +255,13 @@ Respond with only a JSON object:
   "rationale": "Brief explanation of what you made clearer and more specific"
 }`
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
+    // REPLACED: Manual fetch call with AI Analytics OpenAI Provider
+    const openaiProvider = new OpenAIProvider(process.env.OPENAI_API_KEY!, aiAnalytics)
+    
+    console.log('📊 Making tracked enhancement AI call with CONSISTENT agent ID')
+    
+    const openAIResponse = await openaiProvider.chatCompletion(
+      {
         model: 'gpt-4o',
         messages: [
           {
@@ -288,33 +279,32 @@ Respond with only a JSON object:
         max_tokens: 800,
         temperature: 0.1,
         presence_penalty: 0.1
-      })
+      },
+      {
+        userId: userIdToUse,
+        sessionId: sessionId, // FIXED: Use consistent session ID
+        feature: 'prompt_enhancement',
+        component: 'enhance-prompt-api',
+        workflow_step: 'prompt_enhancement',
+        category: 'agent_creation',
+        activity_type: 'agent_creation',
+        activity_name: 'Enhancing prompt with clarification details',
+        activity_step: 'prompt_enhancement',
+        agent_id: agentId // FIXED: Use consistent agent ID
+      }
+    )
+
+    console.log('✅ Enhancement AI call completed with CONSISTENT agent ID analytics tracking:', {
+      agentId,
+      sessionId
     })
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'Unknown error');
-      console.error('OpenAI API Error:', {
-        status: response.status,
-        statusText: response.statusText,
-        body: errorText
-      });
-      return NextResponse.json({ 
-        error: `OpenAI API call failed: ${response.status} - ${response.statusText}`,
-        details: errorText
-      }, { status: response.status })
+    // Parse the response (existing logic)
+    let fullResponse = openAIResponse.choices[0]?.message?.content?.trim()
+    if (!fullResponse) {
+      throw new Error('Empty response from OpenAI')
     }
 
-    const data = await response.json()
-    
-    if (!data.choices || !data.choices[0] || !data.choices[0].message) {
-      console.error('Invalid OpenAI response structure:', data);
-      return NextResponse.json({ 
-        error: 'Invalid response from OpenAI',
-        details: 'Missing choices or message in response'
-      }, { status: 500 })
-    }
-
-    let fullResponse = data.choices[0].message.content.trim()
     console.log('🤖 Raw OpenAI response:', fullResponse.slice(0, 200) + '...')
     
     // Parse the JSON response with better error handling
@@ -474,72 +464,19 @@ Respond with only a JSON object:
         console.log('⚠️ Using enhanced fallback with plugin capabilities');
       }
     }
-    
-    // Extract usage data from OpenAI response
-    const inputTokens = data.usage?.prompt_tokens || 0
-    const outputTokens = data.usage?.completion_tokens || 0
 
-    console.log('📊 Token usage:', {
-      input: inputTokens,
-      output: outputTokens,
-      total: inputTokens + outputTokens
-    })
-
-    // Enhanced tracking with plugin metadata and ACTIVITY TRACKING
-    if (userIdToUse !== 'anonymous') {
-      console.log('💾 Tracking usage for user:', userIdToUse)
-      
-      try {
-        await trackTokenUsage(supabase, userIdToUse, {
-          modelName: 'gpt-4o',
-          provider: 'openai',
-          inputTokens: inputTokens,
-          outputTokens: outputTokens,
-          requestType: 'chat',
-          category: 'plugin_aware_prompt_enhancement',
-          metadata: {
-            originalPromptLength: prompt.length,
-            enhancedPromptLength: enhancedPrompt.length,
-            clarificationAnswersCount: Object.keys(clarificationAnswers).length,
-            clarificationAnswers: clarificationAnswers,
-            connectedPlugins: connectedPlugins,
-            connectedPluginData: connectedPluginData.map(p => ({
-              key: p.key,
-              label: p.label,
-              category: p.category,
-              capabilities: p.capabilities,
-              usage: p.usage
-            })),
-            missingPlugins: finalMissingPlugins,
-            enhancementType: Object.keys(clarificationAnswers).length > 0 ? 'with_clarification' : 'basic',
-            hadMissingPlugins: finalMissingPlugins.length > 0,
-            isUserFriendly: true,
-            isContextAware: true,
-            isPluginAware: true,
-            pluginCapabilitiesUsed: connectedPluginData.flatMap(p => p.capabilities || []).slice(0, 10),
-            timestamp: new Date().toISOString(),
-            // ADD ACTIVITY TRACKING
-            activity_type: 'agent_creation',
-            activity_name: 'Enhancing prompt structure',
-            activity_step: 'prompt_enhancement',
-            agent_id: clarificationAnswers?.session_id || `enhance_${Date.now()}`
-          }
-        })
-        console.log('✅ Enhanced usage tracking with activity data successful')
-      } catch (trackingError) {
-        console.warn('⚠️ Usage tracking failed, but continuing with response:', trackingError)
-      }
-    } else {
-      console.log('⚠️ Skipping usage tracking - anonymous user')
-    }
+    // REMOVED: Manual token tracking - now handled automatically by AI Analytics
 
     // Return enhanced response with plugin metadata
-    console.log('🎉 Returning plugin-aware enhanced prompt:', {
+    console.log('🎉 Returning plugin-aware enhanced prompt with CONSISTENT agent ID tracking:', {
       enhancedPromptPreview: typeof enhancedPrompt === 'string' ? enhancedPrompt.substring(0, 100) + '...' : 'Object format converted to string',
       rationalePreview: typeof rationale === 'string' ? rationale.substring(0, 50) + '...' : 'N/A',
       connectedPlugins: connectedPlugins,
       connectedPluginDataCount: connectedPluginData.length,
-      missingPlugins: finalMissingPlugins
+      missingPlugins: finalMissingPlugins,
+      sessionId: sessionId,
+      agentId: agentId, // FIXED: Log consistent agent ID
+      agentIdConsistent: providedAgentId === agentId // FIXED: Verify consistency
     })
 
     return NextResponse.json({ 
@@ -548,6 +485,8 @@ Respond with only a JSON object:
       originalPrompt: prompt,
       clarificationAnswersUsed: Object.keys(clarificationAnswers).length > 0,
       connectedPluginData, // Include plugin metadata in response
+      sessionId: sessionId, // FIXED: Return consistent session ID
+      agentId: agentId,     // FIXED: Return consistent agent ID
       metadata: {
         enhancementType: Object.keys(clarificationAnswers).length > 0 ? 'with_clarification' : 'basic',
         clarificationAnswersCount: Object.keys(clarificationAnswers).length,
@@ -559,7 +498,9 @@ Respond with only a JSON object:
         isUserFriendly: true,
         isContextAware: true,
         isPluginAware: true,
-        activityTracked: true
+        analyticsTracked: true,
+        activityTracked: true,
+        agentIdConsistent: providedAgentId === agentId // FIXED: Track consistency
       }
     })
   } catch (error) {

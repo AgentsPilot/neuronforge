@@ -198,7 +198,7 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
     handleOptionSelect,
     handleCustomAnswer,
     handleChangeAnswer,
-    handleCustomInputChange, // FIXED: New handler
+    handleCustomInputChange,
 
     handleApproveEnhanced,
     handleUseOriginal,
@@ -214,6 +214,40 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
     onPromptApproved,
     onCancel,
   });
+
+  // NEW: Add follow-up question handler
+  const handleFollowUpQuestion = useCallback((parentQuestionId: string, selectedValue: string, followUpQuestion: ClarificationQuestion) => {
+    console.log('Follow-up question triggered:', {
+      parentQuestionId,
+      selectedValue,
+      followUpQuestion: followUpQuestion.id
+    });
+    
+    // Add the follow-up question to the sequence
+    setProjectState(prev => {
+      const newSequence = [...prev.questionsSequence];
+      const parentIndex = newSequence.findIndex(q => q.id === parentQuestionId);
+      
+      if (parentIndex !== -1) {
+        // Insert the follow-up question right after the parent
+        newSequence.splice(parentIndex + 1, 0, followUpQuestion);
+        
+        return {
+          ...prev,
+          questionsSequence: newSequence,
+          questionsWithVisibleOptions: new Set([
+            ...prev.questionsWithVisibleOptions,
+            followUpQuestion.id
+          ])
+        };
+      }
+      
+      return prev;
+    });
+    
+    // Add the follow-up question as a system message so it renders
+    addMessage(JSON.stringify(followUpQuestion), 'system');
+  }, [setProjectState, addMessage]);
 
   // SIMPLIFIED guide step calculation - only calculate on major state changes
   const currentGuideStep = useMemo(() => {
@@ -271,17 +305,47 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
     setShowGuide(false);
   }, []);
 
-  // Memoized plugin warning detection
-  const isPluginWarningMessage = useCallback((content: string) => {
-    return content.includes('🚨 MISSING SERVICES:') || 
-           content.includes('🚨 MISSING PLUGINS:') || 
-           (content.includes('MISSING SERVICES:') || content.includes('MISSING PLUGINS:'));
-  }, []);
-
+  // FIXED: Enhanced plugin warning detection
+// Replace your isPluginWarningMessage function with this updated version:
+const isPluginWarningMessage = useCallback((content: string) => {
+  if (!content || typeof content !== 'string') return false;
+  
+  const warningPatterns = [
+    'MISSING SERVICES:',
+    'MISSING PLUGINS:',
+    'missing services',
+    'missing plugins',
+    'services that aren\'t connected',
+    'plugins that aren\'t connected',
+    'haven\'t connected',
+    'not connected',
+    'connect services',
+    'connect plugins',
+    'services are missing',
+    'plugins are missing',
+    // NEW: Add patterns for the specific message you're seeing
+    'aren\'t connected',
+    'services aren\'t connected',
+    'but these services aren\'t connected',
+    'mentions.*but.*aren\'t connected',
+    'focus on your connected services',
+    'Note: Your request mentions'
+  ];
+  
+  const contentLower = content.toLowerCase();
+  return warningPatterns.some(pattern => {
+    if (pattern.includes('.*')) {
+      // Handle regex patterns
+      const regex = new RegExp(pattern, 'i');
+      return regex.test(content);
+    }
+    return contentLower.includes(pattern.toLowerCase());
+  });
+}, []);
   // SIMPLIFIED message rendering - stable keys, minimal complexity
   const renderMessage = useCallback((message, index) => {
     // System "question answered" chip
-    if (message.type === 'system' && message.content.startsWith('✅ Question')) {
+    if (message.type === 'system' && message.content.startsWith('Question answered')) {
       return (
         <div key={`${message.id}-system`} className="flex justify-center">
           <div className="inline-flex items-center gap-2 bg-gradient-to-r from-emerald-500/20 to-green-500/20 text-emerald-700 px-3 py-1.5 rounded-lg text-xs font-medium border border-emerald-200/50 backdrop-blur-sm">
@@ -307,9 +371,10 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
             isProcessing={projectState.isProcessingQuestion}
             onSelect={handleOptionSelect}
             onCustomSubmit={handleCustomAnswer}
-            onCustomChange={handleCustomInputChange} // FIXED: Use new handler
+            onCustomChange={handleCustomInputChange}
             onChangeAnswer={handleChangeAnswer}
             readOnly={projectState.isInReviewMode}
+            onFollowUpQuestion={handleFollowUpQuestion}
           />
         );
       } catch (e) {
@@ -347,31 +412,38 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
                     message.isQuestionAnswer ? 'ring-1 ring-green-300 ring-offset-1' : ''
                   }`
                 : isPluginWarningMessage(message.content)
-                ? 'bg-gradient-to-br from-red-50 to-orange-50 text-red-900 border border-red-300'
+                ? 'bg-gradient-to-br from-red-100 to-orange-100 text-red-900 border-2 border-red-400 shadow-lg animate-pulse'
                 : 'bg-white/80 text-gray-800 border-white/30 hover:bg-white/90 transition-colors'
             }`}
           >
+            {/* Warning icon for plugin warnings */}
+            {message.type === 'ai' && isPluginWarningMessage(message.content) && (
+              <div className="absolute -top-2 -right-2 w-6 h-6 bg-gradient-to-br from-red-500 to-red-600 rounded-full flex items-center justify-center shadow-lg animate-pulse">
+                <AlertCircle className="h-3 w-3 text-white" />
+              </div>
+            )}
+
             {message.isQuestionAnswer && (
               <div className="absolute -top-1 -right-1 w-4 h-4 bg-gradient-to-br from-emerald-400 to-green-500 rounded-full flex items-center justify-center shadow-md">
                 <CheckCircle className="h-2 w-2 text-white" />
               </div>
             )}
 
-            {isPluginWarningMessage(message.content) && (
-              <div className="absolute -top-1 -right-1 w-4 h-4 bg-gradient-to-br from-red-500 to-red-600 rounded-full flex items-center justify-center shadow-md animate-pulse">
-                <AlertCircle className="h-2 w-2 text-white" />
-              </div>
-            )}
-
             <div
               className={`whitespace-pre-wrap leading-relaxed ${
-                isPluginWarningMessage(message.content) ? 'font-medium' : ''
+                isPluginWarningMessage(message.content) ? 'font-semibold' : ''
               }`}
             >
               {message.content}
             </div>
 
-            <div className={`text-xs mt-2 flex items-center gap-1 ${message.type === 'user' ? 'text-blue-100' : 'text-gray-500'}`}>
+            <div className={`text-xs mt-2 flex items-center gap-1 ${
+              message.type === 'user' 
+                ? 'text-blue-100' 
+                : isPluginWarningMessage(message.content)
+                ? 'text-red-700'
+                : 'text-gray-500'
+            }`}>
               <Clock className="h-2.5 w-2.5" />
               {formatMessageTimestamp(message.timestamp)}
             </div>
@@ -458,7 +530,7 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
         )}
       </div>
     );
-}, [
+  }, [
     projectState.enhancementComplete, 
     projectState.planApproved, 
     projectState.isInReviewMode, 
@@ -471,7 +543,8 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
     handleOptionSelect, 
     handleCustomAnswer, 
     handleChangeAnswer,
-    handleCustomInputChange, // FIXED: Add to dependencies
+    handleCustomInputChange,
+    handleFollowUpQuestion,
     setProjectState, 
     handleSaveEnhancedEdit, 
     handleCancelEnhancedEdit, 
@@ -479,6 +552,7 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
     handleEditEnhanced, 
     handleUseOriginal
   ]);
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
       {/* Compact Header */}

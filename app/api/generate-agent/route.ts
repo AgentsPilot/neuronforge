@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
-import OpenAI from 'openai'
+import { createClient } from '@supabase/supabase-js'
+import { v4 as uuidv4 } from 'uuid'
+import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics'
+import { OpenAIProvider } from '@/lib/ai/providers/openaiProvider'
 import { 
   pluginRegistry,
   getPluginDefinition,
@@ -9,7 +12,14 @@ import {
   getInputTemplatesForCapability
   } from '@/lib/plugins/pluginRegistry'
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
+// Initialize service role client for analytics
+const supabaseServiceRole = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+)
+
+// Initialize AI Analytics
+const aiAnalytics = new AIAnalyticsService(supabaseServiceRole)
 
 function generateDynamicOutputTemplateContext(connectedPluginData: any[]): string {
   return connectedPluginData.map(plugin => {
@@ -101,7 +111,14 @@ Extract what is explicitly specified in each section:
 
 export async function POST(req: Request) {
   try {
-    const { prompt, clarificationAnswers } = await req.json()
+    // FIXED: Extract agent ID and session ID from request body
+    const { 
+      prompt, 
+      clarificationAnswers,
+      agentId: providedAgentId,    // FIXED: Extract agent ID from request body
+      sessionId: providedSessionId // FIXED: Extract session ID from request body
+    } = await req.json()
+    
     const cookieStore = await cookies()
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -118,6 +135,31 @@ export async function POST(req: Request) {
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+
+    // FIXED: Use provided IDs with proper fallback and prioritization
+    const sessionId = providedSessionId || 
+                      clarificationAnswers?.sessionId || 
+                      req.headers.get('x-session-id') || 
+                      uuidv4()
+    
+    const agentId = providedAgentId || 
+                    clarificationAnswers?.agentId || 
+                    req.headers.get('x-agent-id') || 
+                    uuidv4()
+
+    console.log('🆔 AGENT GENERATION API - Using CONSISTENT IDs:', {
+      providedAgentId,        // FIXED: Log provided agent ID
+      providedSessionId,      // FIXED: Log provided session ID
+      finalAgentId: agentId,
+      finalSessionId: sessionId,
+      agentIdSource: providedAgentId ? 'request_body' : 
+                     clarificationAnswers?.agentId ? 'clarificationAnswers' : 
+                     req.headers.get('x-agent-id') ? 'header' : 'generated',
+      sessionIdSource: providedSessionId ? 'request_body' : 
+                       clarificationAnswers?.sessionId ? 'clarificationAnswers' : 
+                       req.headers.get('x-session-id') ? 'header' : 'generated',
+      agentIdConsistent: true // FIXED: Track consistency
+    })
 
     const { data: pluginRows } = await supabase
       .from('plugin_connections')
@@ -167,15 +209,40 @@ Map operations to correct capabilities:
 
 Return JSON: {"workflow_steps": [{"operation": "description", "plugin": "plugin_key", "plugin_action": "capability"}]}`
 
-    const initialCompletion = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      messages: [
-        { role: 'system', content: initialSystemPrompt },
-        { role: 'user', content: `Map this workflow to plugin capabilities:\n\n"${fullPrompt}"` }
-      ],
-      temperature: 0.1,
-      max_tokens: 1000
+    // Initialize AI Provider with analytics
+    const openaiProvider = new OpenAIProvider(process.env.OPENAI_API_KEY!, aiAnalytics)
+
+    console.log('📊 Making INITIAL AI call with consistent tracking IDs:', {
+      agentId,
+      sessionId
     })
+    
+    // PHASE 1: Track initial analysis call - FIXED: Use consistent agent ID
+    const initialCompletion = await openaiProvider.chatCompletion(
+      {
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: initialSystemPrompt },
+          { role: 'user', content: `Map this workflow to plugin capabilities:\n\n"${fullPrompt}"` }
+        ],
+        temperature: 0.1,
+        max_tokens: 1000
+      },
+      {
+        userId: user.id,
+        sessionId: sessionId,           // FIXED: Use consistent session ID
+        feature: 'agent_generation',
+        component: 'agent-generator',
+        workflow_step: 'initial_analysis',
+        category: 'agent_creation',
+        activity_type: 'agent_creation',
+        activity_name: 'Analyzing workflow capabilities',
+        activity_step: 'capability_mapping',
+        agent_id: agentId               // FIXED: Use consistent agent ID
+      }
+    )
+
+    console.log('✅ Initial analysis call completed with tracking')
 
     const initialRaw = initialCompletion.choices[0]?.message?.content || ''
     let preliminarySteps = []
@@ -311,15 +378,37 @@ COMPLETE JSON RESPONSE:
 
 Analyze the enhanced prompt and create agent specification with minimal essential inputs only.`
 
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      messages: [
-        { role: 'system', content: enhancedSystemPrompt },
-        { role: 'user', content: fullPrompt }
-      ],
-      temperature: 0.1,
-      max_tokens: 2000
+    console.log('📊 Making FINAL AI call with consistent tracking IDs:', {
+      agentId,
+      sessionId
     })
+
+    // PHASE 3: Track final generation call - FIXED: Use consistent agent ID
+    const completion = await openaiProvider.chatCompletion(
+      {
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: enhancedSystemPrompt },
+          { role: 'user', content: fullPrompt }
+        ],
+        temperature: 0.1,
+        max_tokens: 2000
+      },
+      {
+        userId: user.id,
+        sessionId: sessionId,           // FIXED: Use consistent session ID
+        feature: 'agent_generation',
+        component: 'agent-generator',
+        workflow_step: 'agent_specification',
+        category: 'agent_creation',
+        activity_type: 'agent_creation',
+        activity_name: `Creating agent specification`,
+        activity_step: 'specification_generation',
+        agent_id: agentId               // FIXED: Use consistent agent ID
+      }
+    )
+
+    console.log('✅ Final generation call completed with tracking')
 
     const raw = completion.choices[0]?.message?.content || ''
     const jsonMatch = raw.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/)
@@ -395,41 +484,16 @@ Analyze the enhanced prompt and create agent specification with minimal essentia
       detected_categories: validDetectedPlugins.map(plugin => ({ plugin, detected: true }))
     }
 
-    // ADD ACTIVITY TRACKING for agent generation
-    try {
-      await supabase.from('token_usage').insert({
-        user_id: user.id,
-        model_name: 'gpt-4o',
-        provider: 'openai',
-        input_tokens: completion.usage?.prompt_tokens || 0,
-        output_tokens: completion.usage?.completion_tokens || 0,
-        cost_usd: 0.0, // Calculate based on your pricing
-        request_type: 'chat',
-        category: 'agent_generation',
-        feature: 'agent_creation',
-        component: 'agent-generator',
-        workflow_step: 'final_generation',
-        // ADD ACTIVITY TRACKING FIELDS
-        activity_type: 'agent_creation',
-        activity_name: `Creating agent: ${agentData.agent_name}`,
-        activity_step: 'agent_generation',
-        agent_id: clarificationAnswers?.session_id || `agent_${Date.now()}`,
-        session_id: clarificationAnswers?.session_id,
-        metadata: {
-          agent_name: agentData.agent_name,
-          plugins_used: validDetectedPlugins,
-          workflow_steps_count: enhancedWorkflowSteps.length,
-          input_schema_count: extracted.input_schema?.length || 0,
-          has_schedule: !!extracted.schedule,
-          output_inference: outputInference
-        }
-      })
-      console.log('✅ Activity tracking completed for agent generation')
-    } catch (trackingError) {
-      console.warn('⚠️ Token tracking failed:', trackingError)
-      // Don't fail the request if tracking fails
-    }
+    console.log('✅ Agent generation completed successfully with full tracking:', {
+      agentName: agentData.agent_name,
+      pluginsUsed: validDetectedPlugins,
+      workflowStepsCount: enhancedWorkflowSteps.length,
+      inputSchemaCount: extracted.input_schema?.length || 0,
+      agentId: agentId,                // FIXED: Log consistent agent ID
+      sessionId: sessionId             // FIXED: Log consistent session ID
+    })
 
+    // FIXED: Return consistent agent ID and session ID in response
     return NextResponse.json({ 
       agent: agentData,
       extraction_details: {
@@ -437,7 +501,9 @@ Analyze the enhanced prompt and create agent specification with minimal essentia
         output_inference: outputInference,
         workflow_steps: enhancedWorkflowSteps,
         input_template_analysis: inputTemplateAnalysis,
-        activity_tracked: true
+        activity_tracked: true,
+        agentId: agentId,              // FIXED: Return consistent agent ID
+        sessionId: sessionId           // FIXED: Return consistent session ID
       }
     })
 
