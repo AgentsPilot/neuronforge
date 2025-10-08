@@ -120,15 +120,21 @@ export class UserPluginConnections {
         return null;
       }
 
-      // Check if token needs refresh
+      // Check if token needs refresh (only if it has an expiry and is expired)
       if (!this.isTokenValid(connection.expires_at)) {
-        if (this.debug) console.log(`DEBUG: Token expired for ${pluginKey}, attempting refresh`);
-        
+        if (this.debug) console.log(`DEBUG: Token expired for ${pluginKey}, attempting auto-refresh`);
+
+        // Only attempt refresh if we have a refresh token
+        if (!connection.refresh_token) {
+          if (this.debug) console.log(`DEBUG: No refresh token available for ${pluginKey} - user needs to reconnect`);
+          return null;
+        }
+
         const refreshedConnection = await this.refreshToken(connection, authConfig);
         if (refreshedConnection) {
           return refreshedConnection;
         } else {
-          if (this.debug) console.log(`DEBUG: Token refresh failed for ${pluginKey}`);
+          if (this.debug) console.log(`DEBUG: Failed to refresh token for ${pluginKey} - user needs to reconnect`);
           return null;
         }
       }
@@ -214,7 +220,7 @@ export class UserPluginConnections {
         plugin_name: this.getPluginDisplayName(plugin_key),
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token || null,
-        expires_at: expiresAt,
+        expires_at: expiresAt, // null if token doesn't expire
         scope: tokens.scope || tokens.scopes || null,
         username: profile.name || profile.email || profile.user?.name || profile.user || (plugin_key+' user'),
         email: profile.email,
@@ -397,6 +403,7 @@ export class UserPluginConnections {
   // Check if token is still valid
   public isTokenValid(expiresAt: string | null): boolean {
     if (!expiresAt) {
+      if (this.debug) console.log(`DEBUG: Token has no expiry, considered valid`);
       return true; // No expiry means it doesn't expire
     }
     
@@ -461,9 +468,12 @@ export class UserPluginConnections {
   }
   
   // Calculate expiration date from expires_in seconds
-  private getExpiresAt(expires_in: any): string {
+  private getExpiresAt(expires_in: any): string | null {
+    if (!expires_in) {
+      return null; // Token doesn't expire (e.g., Slack without token rotation)
+    }
     const expiresAt = new Date();
-    expiresAt.setSeconds(expiresAt.getSeconds() + (expires_in || 3600));
+    expiresAt.setSeconds(expiresAt.getSeconds() + expires_in);
     return expiresAt.toISOString();
   }
 
