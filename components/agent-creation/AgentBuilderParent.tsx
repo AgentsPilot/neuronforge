@@ -81,6 +81,9 @@ export default function AgentBuilderParent({
   const [conversationalState, setConversationalState] = useState<Partial<ConversationalState> | null>(null);
   const [smartBuilderState, setSmartBuilderState] = useState<Partial<SmartBuilderState> | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
+  
+  // FIXED: Add completion state to prevent flash
+  const [isCompletingAgent, setIsCompletingAgent] = useState(false);
 
   // Clear all storage
   const clearAllStorage = useCallback(() => {
@@ -383,9 +386,12 @@ export default function AgentBuilderParent({
     }
   }, [conversationalState, handleConversationalStateChange]);
 
-  // Handle agent creation
+  // FIXED: Handle agent creation with completion state
   const handleAgentCreated = useCallback((agent: Agent) => {
     console.log('🎉 Agent created successfully');
+    
+    // FIXED: Set completion flag immediately to prevent flash
+    setIsCompletingAgent(true);
     
     try {
       // Mark agent as created in both states
@@ -404,11 +410,11 @@ export default function AgentBuilderParent({
         agent
       };
 
-      // Save final states
+      // Save final states (keep setTimeout for state persistence to support navigation)
       handleConversationalStateChange(finalConversationalState);
       handleSmartBuilderStateChange(finalSmartState);
       
-      // Clear everything after small delay and complete
+      // Keep the setTimeout but completion flag prevents flash
       setTimeout(() => {
         clearAllStorage();
         setConversationalState(null);
@@ -422,6 +428,7 @@ export default function AgentBuilderParent({
       
     } catch (error) {
       console.error('❌ Error handling agent creation:', error);
+      setIsCompletingAgent(false); // Reset on error
     }
   }, [conversationalState, smartBuilderState, handleConversationalStateChange, handleSmartBuilderStateChange, clearAllStorage, onComplete]);
 
@@ -438,6 +445,18 @@ export default function AgentBuilderParent({
       onCancel();
     }
   }, [clearAllStorage, onCancel]);
+
+  // FIXED: Show completion screen during agent creation
+  if (isCompletingAgent) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-gray-100">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Agent created successfully! Redirecting...</p>
+        </div>
+      </div>
+    );
+  }
 
   // Wait for initialization
   if (!isInitialized) {
@@ -462,7 +481,8 @@ export default function AgentBuilderParent({
     shouldShowSmartBuilder,
     planApproved: conversationalState?.planApproved,
     hasAgent: !!smartBuilderState?.agent,
-    isInReviewMode: conversationalState?.isInReviewMode
+    isInReviewMode: conversationalState?.isInReviewMode,
+    isCompletingAgent
   });
 
   if (shouldShowSmartBuilder) {

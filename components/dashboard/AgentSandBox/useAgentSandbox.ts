@@ -11,6 +11,70 @@ import {
   PHASE_PATTERNS 
 } from './types'
 
+// Helper function to format schedule display
+const formatScheduleDisplay = (mode: string, scheduleCron?: string): string => {
+  if (mode === 'on_demand') {
+    return 'Manual trigger only';
+  }
+  
+  if (mode === 'scheduled' && scheduleCron) {
+    return parseCronToHuman(scheduleCron);
+  }
+  
+  return 'Not scheduled';
+};
+
+const parseCronToHuman = (cron: string): string => {
+  if (!cron || typeof cron !== 'string') return 'Invalid schedule';
+  
+  const parts = cron.trim().split(' ');
+  if (parts.length !== 5) return cron; // fallback to raw cron
+  
+  const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
+  
+  try {
+    // Convert hour to 12-hour format
+    const hourNum = parseInt(hour);
+    const minuteNum = parseInt(minute);
+    
+    if (isNaN(hourNum) || isNaN(minuteNum)) return cron;
+    
+    const time = hourNum === 0 ? `12:${minuteNum.toString().padStart(2, '0')} AM` : 
+                 hourNum < 12 ? `${hourNum}:${minuteNum.toString().padStart(2, '0')} AM` :
+                 hourNum === 12 ? `12:${minuteNum.toString().padStart(2, '0')} PM` :
+                 `${hourNum - 12}:${minuteNum.toString().padStart(2, '0')} PM`;
+    
+    // Handle day of week
+    if (dayOfWeek !== '*') {
+      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const dayName = days[parseInt(dayOfWeek)] || `Day ${dayOfWeek}`;
+      return `${dayName}s at ${time}`;
+    }
+    
+    // Handle daily
+    if (dayOfMonth === '*' && month === '*') {
+      return `Daily at ${time}`;
+    }
+    
+    // Handle monthly
+    if (dayOfMonth !== '*' && month === '*') {
+      const getOrdinalSuffix = (num: number): string => {
+        const j = num % 10;
+        const k = num % 100;
+        if (j == 1 && k != 11) return "st";
+        if (j == 2 && k != 12) return "nd";
+        if (j == 3 && k != 13) return "rd";
+        return "th";
+      };
+      return `Monthly on the ${dayOfMonth}${getOrdinalSuffix(parseInt(dayOfMonth))} at ${time}`;
+    }
+    
+    return cron; // fallback
+  } catch (error) {
+    return cron; // fallback to raw cron on any parsing error
+  }
+};
+
 export function useAgentSandbox({
   agentId,
   inputSchema = [],
@@ -73,13 +137,13 @@ export function useAgentSandbox({
 
   // Use props schema first (since parent already loaded it), then DB schema as fallback
   const actualInputSchema = (() => {
-    // If props schema exists and is valid, use it
-    if (Array.isArray(inputSchema) && inputSchema.length > 0) {
+    // If props schema exists and is valid, use it (even if empty)
+    if (Array.isArray(inputSchema)) {
       console.log('Using props inputSchema:', inputSchema.length, 'fields')
       return inputSchema
     }
-    // Otherwise use DB schema if available
-    if (schemaLoaded && dbInputSchema.length > 0) {
+    // Otherwise use DB schema if available (even if empty)
+    if (schemaLoaded && Array.isArray(dbInputSchema)) {
       console.log('Using DB inputSchema:', dbInputSchema.length, 'fields')
       return dbInputSchema
     }
@@ -95,6 +159,8 @@ export function useAgentSandbox({
   const loadInputSchemaFromDB = async () => {
     if (!agentId) {
       console.log('No agentId provided, cannot load schema')
+      setDbInputSchema([])
+      setSchemaLoaded(true)
       return
     }
 
@@ -110,28 +176,66 @@ export function useAgentSandbox({
         .single()
 
       if (agentError) {
-        console.error('Error loading agent schema:', agentError)
-      } else if (agentData) {
-        console.log('Agent data loaded:', agentData)
-        
-        // Try input_schema first
-        if (agentData.input_schema && Array.isArray(agentData.input_schema)) {
-          console.log('Found input_schema in agent data')
-          setDbInputSchema(agentData.input_schema)
+        console.log('Database error loading agent schema:', agentError)
+        // If it's a "no rows" error, that's expected for some agents
+        if (agentError.code === 'PGRST116') {
+          console.log('No agent found with ID:', agentId)
+          setDbInputSchema([])
           setSchemaLoaded(true)
           return
         }
-        
-        // Try workflow_config.inputSchema as fallback
-        if (agentData.workflow_config?.inputSchema && Array.isArray(agentData.workflow_config.inputSchema)) {
-          console.log('Found inputSchema in workflow_config')
-          setDbInputSchema(agentData.workflow_config.inputSchema)
-          setSchemaLoaded(true)
-          return
-        }
+        // For other errors, still set empty schema and continue
+        console.log('Setting empty schema due to database error')
+        setDbInputSchema([])
+        setSchemaLoaded(true)
+        return
       }
 
-      // If no schema found in agents table, try agent_executions for historical data
+      if (agentData) {
+        console.log('Agent data loaded:', agentData)
+        
+        // Handle input_schema - explicitly handle null, undefined, and empty array cases
+        let inputSchemaToUse = []
+        
+        // Check input_schema field first
+        if (agentData.input_schema !== null && agentData.input_schema !== undefined) {
+          if (Array.isArray(agentData.input_schema)) {
+            inputSchemaToUse = agentData.input_schema
+            if (inputSchemaToUse.length === 0) {
+              console.log('Agent has empty input schema - no user inputs required')
+            } else {
+              console.log('Found input_schema in agent data:', inputSchemaToUse.length, 'fields')
+            }
+          } else {
+            console.log('input_schema is not an array, defaulting to empty')
+            inputSchemaToUse = []
+          }
+        }
+        // Check workflow_config as fallback
+        else if (agentData.workflow_config?.inputSchema !== null && agentData.workflow_config?.inputSchema !== undefined) {
+          if (Array.isArray(agentData.workflow_config.inputSchema)) {
+            inputSchemaToUse = agentData.workflow_config.inputSchema
+            if (inputSchemaToUse.length === 0) {
+              console.log('Agent workflow has empty input schema - no user inputs required')
+            } else {
+              console.log('Found inputSchema in workflow_config:', inputSchemaToUse.length, 'fields')
+            }
+          } else {
+            console.log('workflow_config.inputSchema is not an array, defaulting to empty')
+            inputSchemaToUse = []
+          }
+        } else {
+          console.log('No input schema found in agent data - defaulting to empty array')
+          inputSchemaToUse = []
+        }
+        
+        setDbInputSchema(inputSchemaToUse)
+        setSchemaLoaded(true)
+        return
+      }
+
+      // If no agent data found, try agent_executions for historical data
+      console.log('No agent data found, checking executions table')
       const { data: executionData, error: executionError } = await supabase
         .from('agent_executions')
         .select('input_schema')
@@ -139,20 +243,35 @@ export function useAgentSandbox({
         .not('input_schema', 'is', null)
         .order('created_at', { ascending: false })
         .limit(1)
-        .single()
+        .maybeSingle()
 
-      if (executionData && executionData.input_schema) {
+      if (executionError) {
+        console.log('Error loading execution schema (this is OK if table doesn\'t exist):', executionError)
+        setDbInputSchema([])
+      } else if (executionData && executionData.input_schema !== null && executionData.input_schema !== undefined) {
         console.log('Found input_schema in agent_executions')
-        setDbInputSchema(executionData.input_schema)
-        setSchemaLoaded(true)
+        if (Array.isArray(executionData.input_schema)) {
+          const executionSchema = executionData.input_schema
+          if (executionSchema.length === 0) {
+            console.log('Execution has empty input schema - no user inputs required')
+          }
+          setDbInputSchema(executionSchema)
+        } else {
+          console.log('Execution input_schema is not an array, defaulting to empty')
+          setDbInputSchema([])
+        }
       } else {
-        console.log('No schema found in database, using props schema')
-        setSchemaLoaded(true) // Mark as loaded even if we didn't find anything
+        console.log('No schema found in database - agent will use empty schema (no inputs required)')
+        setDbInputSchema([])
       }
+      
+      setSchemaLoaded(true)
 
     } catch (error) {
-      console.error('Error loading input schema:', error)
-      setSchemaLoaded(true) // Mark as loaded to prevent infinite loading
+      console.error('Unexpected error loading input schema:', error)
+      // Don't fail completely - set empty schema and mark as loaded
+      setDbInputSchema([])
+      setSchemaLoaded(true)
     } finally {
       setLoadingSchema(false)
     }
@@ -191,11 +310,11 @@ export function useAgentSandbox({
     fetchConnectedPlugins()
   }, [user])
 
-  // Load schema on mount or when agentId changes - but only if no props schema
+  // Load schema on mount or when agentId changes - always load from DB if no props schema
   useEffect(() => {
-    // Only load from DB if we don't have a props schema or if it's empty
-    if (agentId && (!inputSchema || !Array.isArray(inputSchema) || inputSchema.length === 0)) {
-      console.log('Loading schema from DB because props schema is missing/empty')
+    // Always load from DB if we don't have a props schema, even if it might be empty
+    if (agentId && (!inputSchema || !Array.isArray(inputSchema))) {
+      console.log('Loading schema from DB because props schema is missing/invalid')
       loadInputSchemaFromDB()
     } else {
       console.log('Using props schema, skipping DB load')
@@ -209,9 +328,9 @@ export function useAgentSandbox({
       // IMPORTANT: Only load if we haven't loaded before and have necessary data
       if (!user?.id || !agentId || configurationLoaded) return
       
-      // Check if we have any schema available (props or DB)
-      const hasSchema = (inputSchema && Array.isArray(inputSchema) && inputSchema.length > 0) || 
-                       (schemaLoaded && dbInputSchema.length > 0)
+      // Check if we have any schema available (props or DB) - include empty schemas as valid
+      const hasSchema = (inputSchema && Array.isArray(inputSchema)) || 
+                       (schemaLoaded && Array.isArray(dbInputSchema))
       
       if (!hasSchema) return // Wait until we have schema from somewhere
       
@@ -507,6 +626,11 @@ export function useAgentSandbox({
   const isCurrentFormCompleteForActivation = (): boolean => {
     if (executionContext !== 'configure') return true // Only relevant in configure mode
     
+    // If no input schema or empty schema, form is always complete
+    if (!filteredInputSchema || filteredInputSchema.length === 0) {
+      return true
+    }
+    
     const requiredFields = filteredInputSchema.filter(field => field.required)
     return requiredFields.every(field => {
       const value = formData[field.name]
@@ -516,6 +640,12 @@ export function useAgentSandbox({
 
   const validateForm = (): boolean => {
     const errors: Record<string, string> = {}
+    
+    // If no input schema, validation always passes
+    if (!filteredInputSchema || filteredInputSchema.length === 0) {
+      setValidationErrors({})
+      return true
+    }
     
     filteredInputSchema.forEach(field => {
       const value = formData[field.name]
@@ -632,6 +762,11 @@ export function useAgentSandbox({
   }
 
   const isFormValid = (): boolean => {
+    // If no input schema or empty schema, form is always valid
+    if (!filteredInputSchema || filteredInputSchema.length === 0) {
+      return true
+    }
+    
     const requiredFields = filteredInputSchema.filter(field => 
       isFieldRequiredInCurrentContext(field)
     )
@@ -1039,6 +1174,8 @@ export function useAgentSandbox({
     validateForm,
     isFormValid,
     isCurrentFormCompleteForActivation,
-    loadInputSchemaFromDB // Expose for manual debugging
+    loadInputSchemaFromDB, // Expose for manual debugging
+    formatScheduleDisplay, // Export for use in UI components
+    parseCronToHuman // Export for use in UI components
   }
 }

@@ -77,7 +77,7 @@ function validateConnectedPlugins(prompt: string, connectedPlugins: string[]): {
   return { missingServices, availableServices };
 }
 
-// FIXED: Only add these two standardized questions if AI doesn't generate them
+// UPDATED: Only add error handling question if missing - removed all scheduling
 function addStandardQuestionsIfMissing(questions: ClarificationQuestion[], userPrompt: string): ClarificationQuestion[] {
   const hasErrorHandling = questions.some(q => 
     q.dimension === 'error_handling' ||
@@ -86,546 +86,47 @@ function addStandardQuestionsIfMissing(questions: ClarificationQuestion[], userP
     q.question.toLowerCase().includes('fail')
   );
 
-  const hasScheduling = questions.some(q => 
-    q.dimension === 'scheduling_timing' ||
-    q.question.toLowerCase().includes('when') ||
-    q.question.toLowerCase().includes('schedule') ||
-    q.question.toLowerCase().includes('frequency') ||
-    q.question.toLowerCase().includes('time')
-  );
-
   // Only add if missing and not already specified in user prompt
   const promptLower = userPrompt.toLowerCase();
-  const userSpecifiedTiming = promptLower.includes('daily') || 
-                              promptLower.includes('weekly') || 
-                              promptLower.includes('monthly') ||
-                              promptLower.includes('every') ||
-                              /\d+\s*(am|pm|hour|minute)/.test(promptLower);
-
   const userSpecifiedErrorHandling = promptLower.includes('error') ||
                                      promptLower.includes('fail') ||
                                      promptLower.includes('retry') ||
                                      promptLower.includes('notify');
 
   // Add simple error handling if missing
-// Find this section in your file and replace the error handling question:
-if (!hasErrorHandling && !userSpecifiedErrorHandling) {
-  questions.push({
-    id: 'error_handling_standard',
-    question: 'If something goes wrong, how should I be notified?',
-    type: 'select',
-    required: true,
-    dimension: 'error_handling',
-    placeholder: 'Choose notification method',
-    options: [
-      {
-        value: 'email_me',
-        label: 'Email me',
-        description: 'Send an email notification when there\'s an issue'
-      },
-      {
-        value: 'alert_me', 
-        label: 'Alert me',
-        description: 'Show a dashboard alert when there\'s a problem'
-      },
-      {
-        value: 'retry_once',
-        label: 'Retry (one time)',
-        description: 'Try the automation once more before stopping'
-      }
-    ],
-    allowCustom: false
-  });
-}
-  // Add dynamic scheduling if missing
-  if (!hasScheduling && !userSpecifiedTiming) {
+  if (!hasErrorHandling && !userSpecifiedErrorHandling) {
     questions.push({
-      id: 'schedule_frequency',
-      question: 'How often should this automation run?',
+      id: 'error_handling_standard',
+      question: 'If something goes wrong, how should I be notified?',
       type: 'select',
       required: true,
-      dimension: 'scheduling_timing',
-      placeholder: 'Choose frequency',
+      dimension: 'error_handling',
+      placeholder: 'Choose notification method',
       options: [
-        { value: 'every_15_minutes', label: 'Every 15 minutes', description: 'Very frequent monitoring' },
-        { value: 'hourly', label: 'Every hour', description: 'Regular hourly checks' },
-        { value: 'every_4_hours', label: 'Every 4 hours', description: 'Several times per day' },
-        { value: 'daily', label: 'Daily', description: 'Once per day' },
-        { value: 'weekly', label: 'Weekly', description: 'Once per week' },
-        { value: 'monthly', label: 'Monthly', description: 'Once per month' },
-        { value: 'on_demand', label: 'Only when I trigger it', description: 'Manual execution only' }
+        {
+          value: 'email_me',
+          label: 'Email me',
+          description: 'Send an email notification when there\'s an issue'
+        },
+        {
+          value: 'alert_me', 
+          label: 'Alert me',
+          description: 'Show a dashboard alert when there\'s a problem'
+        },
+        {
+          value: 'retry_once',
+          label: 'Retry (one time)',
+          description: 'Try the automation once more before stopping'
+        }
       ],
-      allowCustom: true,
-      followUpQuestions: {
-        'every_15_minutes': [
-          {
-            id: 'time_range_15min',
-            question: 'During what hours should it run every 15 minutes?',
-            type: 'select',
-            required: true,
-            options: [
-              { value: 'business_hours', label: '9 AM to 5 PM', description: 'Only during work hours' },
-              { value: 'extended_hours', label: '8 AM to 8 PM', description: 'Extended monitoring hours' },
-              { value: 'all_day', label: '24/7', description: 'Around the clock monitoring' }
-            ],
-            allowCustom: true
-          }
-        ],
-        'hourly': [
-          {
-            id: 'time_range_hourly',
-            question: 'During what hours should it run every hour?',
-            type: 'select',
-            required: true,
-            options: [
-              { value: 'business_hours', label: '9 AM to 5 PM', description: 'Only during work hours' },
-              { value: 'extended_hours', label: '8 AM to 8 PM', description: 'Extended hours' },
-              { value: 'all_day', label: '24/7', description: 'All day monitoring' }
-            ],
-            allowCustom: true
-          }
-        ],
-        'every_4_hours': [
-          {
-            id: 'start_time_4hour',
-            question: 'What time should the 4-hour cycle start?',
-            type: 'select',
-            required: true,
-            options: [
-              { value: '8am', label: '8:00 AM', description: 'Start early morning (8 AM, 12 PM, 4 PM, 8 PM)' },
-              { value: '9am', label: '9:00 AM', description: 'Start work day (9 AM, 1 PM, 5 PM, 9 PM)' },
-              { value: '10am', label: '10:00 AM', description: 'Start mid-morning (10 AM, 2 PM, 6 PM, 10 PM)' }
-            ],
-            allowCustom: true
-          }
-        ],
-        'daily': [
-          {
-            id: 'daily_time',
-            question: 'What time each day should this run?',
-            type: 'select',
-            required: true,
-            options: [
-              { value: '6am', label: '6:00 AM', description: 'Very early morning' },
-              { value: '8am', label: '8:00 AM', description: 'Early morning' },
-              { value: '9am', label: '9:00 AM', description: 'Start of work day' },
-              { value: '12pm', label: '12:00 PM', description: 'Midday' },
-              { value: '3pm', label: '3:00 PM', description: 'Mid afternoon' },
-              { value: '5pm', label: '5:00 PM', description: 'End of work day' },
-              { value: '6pm', label: '6:00 PM', description: 'Early evening' },
-              { value: '9pm', label: '9:00 PM', description: 'Evening' }
-            ],
-            allowCustom: true
-          }
-        ],
-        'weekly': [
-          {
-            id: 'weekly_day',
-            question: 'Which day of the week?',
-            type: 'select',
-            required: true,
-            options: [
-              { value: 'monday', label: 'Monday', description: 'Start of work week' },
-              { value: 'tuesday', label: 'Tuesday', description: 'Early week' },
-              { value: 'wednesday', label: 'Wednesday', description: 'Mid-week' },
-              { value: 'thursday', label: 'Thursday', description: 'Late week' },
-              { value: 'friday', label: 'Friday', description: 'End of work week' },
-              { value: 'saturday', label: 'Saturday', description: 'Weekend' },
-              { value: 'sunday', label: 'Sunday', description: 'Weekend/week preparation' }
-            ],
-            allowCustom: false,
-            followUpQuestions: {
-              'monday': [
-                {
-                  id: 'monday_time',
-                  question: 'What time on Monday?',
-                  type: 'select',
-                  required: true,
-                  options: [
-                    { value: '8am', label: '8:00 AM', description: 'Early morning start' },
-                    { value: '9am', label: '9:00 AM', description: 'Work day start' },
-                    { value: '10am', label: '10:00 AM', description: 'Mid-morning' },
-                    { value: '12pm', label: '12:00 PM', description: 'Midday' },
-                    { value: '5pm', label: '5:00 PM', description: 'End of day' }
-                  ],
-                  allowCustom: true
-                }
-              ],
-              'tuesday': [
-                {
-                  id: 'tuesday_time',
-                  question: 'What time on Tuesday?',
-                  type: 'select',
-                  required: true,
-                  options: [
-                    { value: '8am', label: '8:00 AM', description: 'Early morning start' },
-                    { value: '9am', label: '9:00 AM', description: 'Work day start' },
-                    { value: '10am', label: '10:00 AM', description: 'Mid-morning' },
-                    { value: '12pm', label: '12:00 PM', description: 'Midday' },
-                    { value: '5pm', label: '5:00 PM', description: 'End of day' }
-                  ],
-                  allowCustom: true
-                }
-              ],
-              'wednesday': [
-                {
-                  id: 'wednesday_time',
-                  question: 'What time on Wednesday?',
-                  type: 'select',
-                  required: true,
-                  options: [
-                    { value: '8am', label: '8:00 AM', description: 'Early morning start' },
-                    { value: '9am', label: '9:00 AM', description: 'Work day start' },
-                    { value: '10am', label: '10:00 AM', description: 'Mid-morning' },
-                    { value: '12pm', label: '12:00 PM', description: 'Midday' },
-                    { value: '5pm', label: '5:00 PM', description: 'End of day' }
-                  ],
-                  allowCustom: true
-                }
-              ],
-              'thursday': [
-                {
-                  id: 'thursday_time',
-                  question: 'What time on Thursday?',
-                  type: 'select',
-                  required: true,
-                  options: [
-                    { value: '8am', label: '8:00 AM', description: 'Early morning start' },
-                    { value: '9am', label: '9:00 AM', description: 'Work day start' },
-                    { value: '10am', label: '10:00 AM', description: 'Mid-morning' },
-                    { value: '12pm', label: '12:00 PM', description: 'Midday' },
-                    { value: '5pm', label: '5:00 PM', description: 'End of day' }
-                  ],
-                  allowCustom: true
-                }
-              ],
-              'friday': [
-                {
-                  id: 'friday_time',
-                  question: 'What time on Friday?',
-                  type: 'select',
-                  required: true,
-                  options: [
-                    { value: '8am', label: '8:00 AM', description: 'Early morning start' },
-                    { value: '9am', label: '9:00 AM', description: 'Work day start' },
-                    { value: '10am', label: '10:00 AM', description: 'Mid-morning' },
-                    { value: '12pm', label: '12:00 PM', description: 'Midday' },
-                    { value: '3pm', label: '3:00 PM', description: 'Afternoon' },
-                    { value: '5pm', label: '5:00 PM', description: 'End of work week' }
-                  ],
-                  allowCustom: true
-                }
-              ],
-              'saturday': [
-                {
-                  id: 'saturday_time',
-                  question: 'What time on Saturday?',
-                  type: 'select',
-                  required: true,
-                  options: [
-                    { value: '9am', label: '9:00 AM', description: 'Weekend morning' },
-                    { value: '10am', label: '10:00 AM', description: 'Late morning' },
-                    { value: '12pm', label: '12:00 PM', description: 'Midday' },
-                    { value: '2pm', label: '2:00 PM', description: 'Afternoon' },
-                    { value: '6pm', label: '6:00 PM', description: 'Evening' }
-                  ],
-                  allowCustom: true
-                }
-              ],
-              'sunday': [
-                {
-                  id: 'sunday_time',
-                  question: 'What time on Sunday?',
-                  type: 'select',
-                  required: true,
-                  options: [
-                    { value: '9am', label: '9:00 AM', description: 'Weekend morning' },
-                    { value: '10am', label: '10:00 AM', description: 'Late morning' },
-                    { value: '12pm', label: '12:00 PM', description: 'Midday' },
-                    { value: '6pm', label: '6:00 PM', description: 'Sunday evening prep' },
-                    { value: '8pm', label: '8:00 PM', description: 'Week preparation time' }
-                  ],
-                  allowCustom: true
-                }
-              ]
-            }
-          }
-        ],
-        'monthly': [
-          {
-            id: 'monthly_day_type',
-            question: 'Which day of the month?',
-            type: 'select',
-            required: true,
-            options: [
-              { value: 'first_day', label: 'First day of the month', description: '1st of each month' },
-              { value: 'specific_date', label: 'Specific date each month', description: 'Same date every month (e.g., 15th)' },
-              { value: 'first_weekday', label: 'First weekday of the month', description: 'First Monday, Tuesday, etc.' },
-              { value: 'last_day', label: 'Last day of the month', description: 'Final day of each month' },
-              { value: 'last_weekday', label: 'Last weekday of the month', description: 'Last Friday, etc.' }
-            ],
-            allowCustom: false,
-            followUpQuestions: {
-              'first_day': [
-                {
-                  id: 'first_day_time',
-                  question: 'What time on the 1st of each month?',
-                  type: 'select',
-                  required: true,
-                  options: [
-                    { value: '9am', label: '9:00 AM', description: 'Start of business day' },
-                    { value: '12pm', label: '12:00 PM', description: 'Midday' },
-                    { value: '5pm', label: '5:00 PM', description: 'End of business day' },
-                    { value: '8pm', label: '8:00 PM', description: 'Evening' }
-                  ],
-                  allowCustom: true
-                }
-              ],
-              'specific_date': [
-                {
-                  id: 'specific_date_day',
-                  question: 'Which date each month?',
-                  type: 'select',
-                  required: true,
-                  options: [
-                    { value: '5th', label: '5th of each month', description: 'Early in the month' },
-                    { value: '10th', label: '10th of each month', description: 'Early-mid month' },
-                    { value: '15th', label: '15th of each month', description: 'Middle of month' },
-                    { value: '20th', label: '20th of each month', description: 'Late in month' },
-                    { value: '25th', label: '25th of each month', description: 'Near month end' }
-                  ],
-                  allowCustom: true,
-                  followUpQuestions: {
-                    '5th': [
-                      {
-                        id: 'fifth_time',
-                        question: 'What time on the 5th?',
-                        type: 'select',
-                        required: true,
-                        options: [
-                          { value: '9am', label: '9:00 AM', description: 'Morning' },
-                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
-                          { value: '5pm', label: '5:00 PM', description: 'Evening' }
-                        ],
-                        allowCustom: true
-                      }
-                    ],
-                    '10th': [
-                      {
-                        id: 'tenth_time',
-                        question: 'What time on the 10th?',
-                        type: 'select',
-                        required: true,
-                        options: [
-                          { value: '9am', label: '9:00 AM', description: 'Morning' },
-                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
-                          { value: '5pm', label: '5:00 PM', description: 'Evening' }
-                        ],
-                        allowCustom: true
-                      }
-                    ],
-                    '15th': [
-                      {
-                        id: 'fifteenth_time',
-                        question: 'What time on the 15th?',
-                        type: 'select',
-                        required: true,
-                        options: [
-                          { value: '9am', label: '9:00 AM', description: 'Morning' },
-                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
-                          { value: '5pm', label: '5:00 PM', description: 'Evening' }
-                        ],
-                        allowCustom: true
-                      }
-                    ],
-                    '20th': [
-                      {
-                        id: 'twentieth_time',
-                        question: 'What time on the 20th?',
-                        type: 'select',
-                        required: true,
-                        options: [
-                          { value: '9am', label: '9:00 AM', description: 'Morning' },
-                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
-                          { value: '5pm', label: '5:00 PM', description: 'Evening' }
-                        ],
-                        allowCustom: true
-                      }
-                    ],
-                    '25th': [
-                      {
-                        id: 'twentyfifth_time',
-                        question: 'What time on the 25th?',
-                        type: 'select',
-                        required: true,
-                        options: [
-                          { value: '9am', label: '9:00 AM', description: 'Morning' },
-                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
-                          { value: '5pm', label: '5:00 PM', description: 'Evening' }
-                        ],
-                        allowCustom: true
-                      }
-                    ]
-                  }
-                }
-              ],
-              'first_weekday': [
-                {
-                  id: 'first_weekday_type',
-                  question: 'Which weekday?',
-                  type: 'select',
-                  required: true,
-                  options: [
-                    { value: 'first_monday', label: 'First Monday of each month', description: 'Start of work month' },
-                    { value: 'first_tuesday', label: 'First Tuesday of each month', description: 'Early week start' },
-                    { value: 'first_wednesday', label: 'First Wednesday of each month', description: 'Mid-week start' },
-                    { value: 'first_friday', label: 'First Friday of each month', description: 'Week-end timing' }
-                  ],
-                  allowCustom: false,
-                  followUpQuestions: {
-                    'first_monday': [
-                      {
-                        id: 'first_monday_time',
-                        question: 'What time on the first Monday?',
-                        type: 'select',
-                        required: true,
-                        options: [
-                          { value: '9am', label: '9:00 AM', description: 'Start of work day' },
-                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
-                          { value: '5pm', label: '5:00 PM', description: 'End of work day' }
-                        ],
-                        allowCustom: true
-                      }
-                    ],
-                    'first_tuesday': [
-                      {
-                        id: 'first_tuesday_time',
-                        question: 'What time on the first Tuesday?',
-                        type: 'select',
-                        required: true,
-                        options: [
-                          { value: '9am', label: '9:00 AM', description: 'Start of work day' },
-                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
-                          { value: '5pm', label: '5:00 PM', description: 'End of work day' }
-                        ],
-                        allowCustom: true
-                      }
-                    ],
-                    'first_wednesday': [
-                      {
-                        id: 'first_wednesday_time',
-                        question: 'What time on the first Wednesday?',
-                        type: 'select',
-                        required: true,
-                        options: [
-                          { value: '9am', label: '9:00 AM', description: 'Start of work day' },
-                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
-                          { value: '5pm', label: '5:00 PM', description: 'End of work day' }
-                        ],
-                        allowCustom: true
-                      }
-                    ],
-                    'first_friday': [
-                      {
-                        id: 'first_friday_time',
-                        question: 'What time on the first Friday?',
-                        type: 'select',
-                        required: true,
-                        options: [
-                          { value: '9am', label: '9:00 AM', description: 'Start of work day' },
-                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
-                          { value: '5pm', label: '5:00 PM', description: 'End of work day' }
-                        ],
-                        allowCustom: true
-                      }
-                    ]
-                  }
-                }
-              ],
-              'last_day': [
-                {
-                  id: 'last_day_time',
-                  question: 'What time on the last day of each month?',
-                  type: 'select',
-                  required: true,
-                  options: [
-                    { value: '9am', label: '9:00 AM', description: 'Morning' },
-                    { value: '12pm', label: '12:00 PM', description: 'Midday' },
-                    { value: '5pm', label: '5:00 PM', description: 'End of business day' },
-                    { value: '11pm', label: '11:00 PM', description: 'End of day processing' }
-                  ],
-                  allowCustom: true
-                }
-              ],
-              'last_weekday': [
-                {
-                  id: 'last_weekday_type',
-                  question: 'Which weekday?',
-                  type: 'select',
-                  required: true,
-                  options: [
-                    { value: 'last_monday', label: 'Last Monday of each month', description: 'End-month Monday' },
-                    { value: 'last_wednesday', label: 'Last Wednesday of each month', description: 'End-month mid-week' },
-                    { value: 'last_friday', label: 'Last Friday of each month', description: 'End-month Friday' }
-                  ],
-                  allowCustom: false,
-                  followUpQuestions: {
-                    'last_monday': [
-                      {
-                        id: 'last_monday_time',
-                        question: 'What time on the last Monday?',
-                        type: 'select',
-                        required: true,
-                        options: [
-                          { value: '9am', label: '9:00 AM', description: 'Start of work day' },
-                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
-                          { value: '5pm', label: '5:00 PM', description: 'End of work day' }
-                        ],
-                        allowCustom: true
-                      }
-                    ],
-                    'last_wednesday': [
-                      {
-                        id: 'last_wednesday_time',
-                        question: 'What time on the last Wednesday?',
-                        type: 'select',
-                        required: true,
-                        options: [
-                          { value: '9am', label: '9:00 AM', description: 'Start of work day' },
-                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
-                          { value: '5pm', label: '5:00 PM', description: 'End of work day' }
-                        ],
-                        allowCustom: true
-                      }
-                    ],
-                    'last_friday': [
-                      {
-                        id: 'last_friday_time',
-                        question: 'What time on the last Friday?',
-                        type: 'select',
-                        required: true,
-                        options: [
-                          { value: '9am', label: '9:00 AM', description: 'Start of work day' },
-                          { value: '12pm', label: '12:00 PM', description: 'Midday' },
-                          { value: '5pm', label: '5:00 PM', description: 'End of work day' }
-                        ],
-                        allowCustom: true
-                      }
-                    ]
-                  }
-                }
-              ]
-            }
-          }
-        ]
-      }
+      allowCustom: false
     });
   }
 
   return questions;
 }
 
-// COMPLETELY AI-DRIVEN SYSTEM PROMPT - NO HARDCODED QUESTIONS
+// UPDATED: System prompt with no scheduling instructions
 export function buildClarifySystemPrompt(connectedPlugins: string[], missingServices: string[]) {
   const connectedPluginData = getConnectedPluginsWithMetadata(connectedPlugins);
   const pluginCapabilities = connectedPluginData.length > 0 
@@ -669,9 +170,9 @@ CORE PRINCIPLES:
 5. Generate questions dynamically based on what the user actually wants to do
 
 CRITICAL REQUIREMENTS:
-- DO NOT include scheduling/timing questions (system handles this automatically)
+- DO NOT include scheduling/timing questions (system handles scheduling separately)
 - DO NOT include error handling questions (system adds standardized options)
-- Focus on the core automation logic and data flow
+- Focus ONLY on the core automation logic and data flow
 
 ANALYSIS DIMENSIONS TO EVALUATE:
 
@@ -795,6 +296,7 @@ CRITICAL:
 - Adapt questions to the ACTUAL user prompt - don't force pre-defined patterns
 - Ask what you genuinely need to know to build their specific automation
 - Keep questions relevant to their connected services only
+- NO SCHEDULING OR TIMING QUESTIONS - the system handles this separately
 - Return ONLY the JSON array, no markdown formatting or explanatory text
 
 Analyze the user's specific request and generate the minimal essential clarification questions needed.
@@ -1042,75 +544,61 @@ async function parseAndValidateLLMResponse(llmResponse: any, originalPrompt: str
       })
       .filter(Boolean) as ClarificationQuestion[]
 
-    // Add standard questions only if missing
+    // UPDATED: Add only error handling if missing - no scheduling
     const finalQuestions = addStandardQuestionsIfMissing(questions, originalPrompt);
 
     if (finalQuestions.length === 0) {
       return {
         questions: [
-// In the fallback questions section, replace the error handling question:
-        {
-          id: 'error_handling_standard',
-          question: 'If something goes wrong, how should I be notified?',
-          type: 'select',
-          required: true,
-          dimension: 'error_handling',
-          placeholder: 'Choose notification method',
-          options: [
-            {
-              value: 'email_me',
-              label: 'Email me',
-              description: 'Send an email notification when there\'s an issue'
-            },
-            {
-              value: 'alert_me',
-              label: 'Alert me', 
-              description: 'Show a dashboard alert when there\'s a problem'
-            },
-            {
-              value: 'retry_once',
-              label: 'Retry (one time)',
-              description: 'Try the automation once more before stopping'
-            }
-          ],
-          allowCustom: false
-        },
           {
-            id: 'schedule_frequency',
-            question: 'How often should this automation run?',
+            id: 'error_handling_standard',
+            question: 'If something goes wrong, how should I be notified?',
             type: 'select',
             required: true,
-            dimension: 'scheduling_timing',
-            placeholder: 'Choose frequency',
+            dimension: 'error_handling',
+            placeholder: 'Choose notification method',
             options: [
-              { value: 'daily', label: 'Daily', description: 'Once per day' },
-              { value: 'weekly', label: 'Weekly', description: 'Once per week' },
-              { value: 'on_demand', label: 'Only when I trigger it', description: 'Manual execution only' }
+              {
+                value: 'email_me',
+                label: 'Email me',
+                description: 'Send an email notification when there\'s an issue'
+              },
+              {
+                value: 'alert_me',
+                label: 'Alert me', 
+                description: 'Show a dashboard alert when there\'s a problem'
+              },
+              {
+                value: 'retry_once',
+                label: 'Retry (one time)',
+                description: 'Try the automation once more before stopping'
+              }
             ],
-            allowCustom: true,
-            followUpQuestions: {
-              'daily': [
-                {
-                  id: 'daily_time',
-                  question: 'What time each day?',
-                  type: 'select',
-                  options: [
-                    { value: '9am', label: '9:00 AM', description: 'Start of work day' },
-                    { value: '5pm', label: '5:00 PM', description: 'End of work day' }
-                  ]
-                }
-              ]
-            }
+            allowCustom: false
+          },
+          {
+            id: 'automation_goal',
+            question: 'Could you describe what you want this automation to accomplish?',
+            type: 'select',
+            required: true,
+            dimension: 'processing_logic',
+            options: [
+              { value: 'process_emails', label: 'Process emails', description: 'Work with email data' },
+              { value: 'create_reports', label: 'Create reports', description: 'Generate summaries or analysis' },
+              { value: 'monitor_changes', label: 'Monitor for changes', description: 'Watch for updates or alerts' },
+              { value: 'organize_files', label: 'Organize files', description: 'Manage documents or data' }
+            ],
+            allowCustom: true
           }
         ],
-        reasoning: 'Using fallback questions with smart scheduling follow-ups.',
+        reasoning: 'Using fallback questions focused on execution logic only.',
         confidence: 30
       }
     }
 
     return {
       questions: finalQuestions.slice(0, 8),
-      reasoning: `Generated ${finalQuestions.length} targeted clarification questions with dynamic scheduling follow-ups.`,
+      reasoning: `Generated ${finalQuestions.length} targeted clarification questions focused on execution logic.`,
       confidence: Math.min(95, 70 + (finalQuestions.length * 5))
     }
 

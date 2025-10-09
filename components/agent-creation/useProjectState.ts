@@ -35,7 +35,6 @@ export function useProjectState({
       enhancedPrompt: '',
       requirements: [
         { id: 'data', label: 'Data & Tools', status: 'missing' },
-        { id: 'timing', label: 'When to Run', status: 'missing' },
         { id: 'output', label: 'What to Create', status: 'missing' },
         { id: 'actions', label: 'Specific Actions', status: 'missing' },
         { id: 'delivery', label: 'How to Deliver', status: 'missing' },
@@ -261,8 +260,6 @@ export function useProjectState({
             'output_actions': 'delivery',
             'delivery': 'delivery',
             'actions': 'actions',
-            'timing': 'timing',
-            'scheduling_timing': 'timing',
             'error_handling': 'error_handling'
           };
 
@@ -279,18 +276,6 @@ export function useProjectState({
             const answerText = relevantAnswers.map(([_, answer]) => answer).join(', ');
             console.log(`✅ Updated requirement ${req.id} with: ${answerText.slice(0, 100)}`);
             return { ...req, status: 'clear' as const, detected: answerText };
-          }
-
-          // Special handling for timing from scheduling questions
-          if (req.id === 'timing') {
-            const timingKeywords = ['daily', 'weekly', 'monthly', 'hourly', 'every', 'once', 'regularly', 'schedule'];
-            const timingAnswers = Object.entries(answers).filter(([_, answer]) => {
-              return timingKeywords.some((kw) => answer.toLowerCase().includes(kw));
-            });
-            if (timingAnswers.length > 0) {
-              const timingText = timingAnswers.map(([_, a]) => a).join(', ');
-              return { ...req, status: 'clear' as const, detected: timingText };
-            }
           }
 
           // Special mapping for actions requirement based on connected services

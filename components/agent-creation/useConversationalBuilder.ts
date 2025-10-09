@@ -191,7 +191,9 @@ export function useConversationalBuilder(params: {
 
       setIsProcessing(true);
       isCurrentlyProcessing.current = true;
-      addMessage('Let me enhance your plan with clear, simple details...', 'ai');
+      
+      // FIXED: Single enhancement message - removed duplicate
+      addMessage('Creating your detailed automation plan...', 'ai');
 
       try {
         const response = await fetch('/api/enhance-prompt', {
@@ -246,12 +248,13 @@ export function useConversationalBuilder(params: {
           })
         }));
 
-        const message = `Here's your enhanced automation plan:
+        // FIXED: Updated message format for consistency
+        const message = `Perfect! I've created a detailed plan for your automation:
 
-**Enhanced Plan:**
+**Your Automation Plan:**
 ${result.enhancedPrompt}
 
-This breaks down exactly what your agent will do. Would you like to use this enhanced version, edit it, or stick with your original request?`;
+This plan explains step-by-step what your agent will do. You can approve this plan or make changes to it.`;
 
         addMessage(message, 'ai');
         console.log('✅ STEP 3: Enhancement completed');
@@ -426,8 +429,8 @@ This breaks down exactly what your agent will do. Would you like to use this enh
       }));
       
       updateRequirementsFromAnswers(projectState.clarificationAnswers, projectState.questionsSequence);
-      addMessage('Perfect! Let me enhance your plan with all these details...', 'ai');
-
+      
+      // FIXED: Removed duplicate message - only one enhancement message now
       const fullPrompt = `${projectState.originalPrompt}\n\nAdditional details:\n${Object.entries(projectState.clarificationAnswers)
         .map(([qid, ans]) => {
           const q = projectState.questionsSequence.find((qq) => qq.id === qid);
@@ -459,7 +462,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
     projectState.originalPrompt,
     projectState.questionsSequence,
     updateRequirementsFromAnswers, 
-    addMessage, 
+    addMessage,
     startEnhancement,
     setProjectState
   ]);
@@ -807,7 +810,7 @@ This breaks down exactly what your agent will do. Would you like to use this enh
     }));
 
     addMessage(
-      "I've updated your enhanced plan. Please review and let me know if you'd like to use it or make more changes.",
+      "I've updated your plan. Please review and let me know if you'd like to use it or make more changes.",
       'ai'
     );
   };

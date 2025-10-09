@@ -21,102 +21,45 @@ const supabaseServiceRole = createClient(
 // Initialize AI Analytics
 const aiAnalytics = new AIAnalyticsService(supabaseServiceRole)
 
-function generateDynamicOutputTemplateContext(connectedPluginData: any[]): string {
-  return connectedPluginData.map(plugin => {
-    if (!plugin.outputTemplates) return null
-    return Object.entries(plugin.outputTemplates).map(([capability, template]: [string, any]) => {
-      return `${plugin.key} with ${capability} action → produces ${template.type}: ${template.description}`
-    }).join('\n')
-  }).filter(Boolean).join('\n')
-}
-
-function generateDynamicIntentMappingRules(connectedPluginData: any[]): string {
-  const mappingRules: string[] = []
-  connectedPluginData.forEach(plugin => {
-    plugin.capabilities.forEach((capability: string) => {
-      const capWords = capability.replace(/_/g, ' ')
-      mappingRules.push(`"${capWords}" operations → ${plugin.key} (${plugin.displayName || plugin.label}) with ${capability} action`)
-    })
-  })
-  return [...new Set(mappingRules)].join('\n')
-}
-
-function inferActionFromStep(step: any, pluginDef: any): string {
-  if (!pluginDef || !step.action) return 'unknown'
-  const action = step.action.toLowerCase()
-  const capabilities = pluginDef.capabilities || []
-  for (const capability of capabilities) {
-    const capWords = capability.replace(/_/g, ' ').toLowerCase()
-    if (action.includes(capWords) || capWords.split(' ').some(word => action.includes(word))) {
-      return capability
-    }
-  }
-  return capabilities[0] || 'unknown'
-}
-
 function getUsedCapabilities(steps: any[]): Record<string, string[]> {
   const used: Record<string, string[]> = {}
   steps.forEach(step => {
-    if (!used[step.plugin]) used[step.plugin] = []
-    if (!used[step.plugin].includes(step.plugin_action)) {
-      used[step.plugin].push(step.plugin_action)
+    if (step.plugin && step.plugin !== 'ai_processing') {
+      if (!used[step.plugin]) used[step.plugin] = []
+      if (!used[step.plugin].includes(step.plugin_action)) {
+        used[step.plugin].push(step.plugin_action)
+      }
     }
   })
   return used
 }
 
-function generateInputTemplateAnalysis(
-  connectedPluginData: any[],
-  usedCapabilities: Record<string, string[]>
-): string {
-  const analyses = []
-  
-  for (const plugin of connectedPluginData) {
-    const capsUsed = usedCapabilities[plugin.key] || []
+function buildCompletePluginContext(connectedPluginKeys: string[]) {
+  return connectedPluginKeys.map(key => {
+    const plugin = pluginRegistry[key];
+    if (!plugin) return null;
     
-    for (const capability of capsUsed) {
-      const templates = getInputTemplatesForCapability(plugin.key, capability)
-      
-      if (templates.length > 0) {
-        analyses.push(`
-${plugin.key.toUpperCase()} | ${capability.toUpperCase()}:
-Available input templates:
-${templates.map(template => {
-  let analysis = `- ${template.name} (${template.type})`
-  if (template.required) analysis += ' [REQUIRED]'
-  if (template.runtime_populated) analysis += ' [AUTO-POPULATED]'
-  analysis += `: ${template.description}`
-  if (template.placeholder) analysis += ` (placeholder: "${template.placeholder}")`
-  return analysis
-}).join('\n')}`)
-      }
-    }
-  }
-  
-  return analyses.join('\n')
-}
-
-function generatePromptSectionAnalysis(fullPrompt: string): string {
-  return `Enhanced Prompt Sections:
-${fullPrompt}
-
-Extract what is explicitly specified in each section:
-- Data Source section defines what data to process
-- Trigger Conditions section defines when to run
-- Processing Steps section defines how to process
-- Output Creation section defines what to generate
-- Delivery Method section defines where/how to deliver
-- Error Handling section defines notification preferences`
+    return {
+      key,
+      name: plugin.displayName || plugin.label,
+      capabilities: plugin.capabilities || [],
+      capabilityDetails: plugin.capabilities?.map(cap => ({
+        name: cap,
+        requiredInputs: plugin.inputTemplates?.[cap] || [],
+        outputs: plugin.outputTemplates?.[cap] || [],
+        description: plugin.descriptions?.[cap] || `Performs ${cap} action`
+      })) || []
+    };
+  }).filter(Boolean);
 }
 
 export async function POST(req: Request) {
   try {
-    // FIXED: Extract agent ID and session ID from request body
     const { 
       prompt, 
       clarificationAnswers,
-      agentId: providedAgentId,    // FIXED: Extract agent ID from request body
-      sessionId: providedSessionId // FIXED: Extract session ID from request body
+      agentId: providedAgentId,
+      sessionId: providedSessionId
     } = await req.json()
     
     const cookieStore = await cookies()
@@ -131,12 +74,12 @@ export async function POST(req: Request) {
         }
       }
     )
+    
     const { data: { user }, error: authError } = await supabase.auth.getUser()
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // FIXED: Use provided IDs with proper fallback and prioritization
     const sessionId = providedSessionId || 
                       clarificationAnswers?.sessionId || 
                       req.headers.get('x-session-id') || 
@@ -147,18 +90,11 @@ export async function POST(req: Request) {
                     req.headers.get('x-agent-id') || 
                     uuidv4()
 
-    console.log('🆔 AGENT GENERATION API - Using CONSISTENT IDs:', {
-      providedAgentId,        // FIXED: Log provided agent ID
-      providedSessionId,      // FIXED: Log provided session ID
+    console.log('AGENT GENERATION API - Using CONSISTENT IDs:', {
+      providedAgentId,
+      providedSessionId,
       finalAgentId: agentId,
-      finalSessionId: sessionId,
-      agentIdSource: providedAgentId ? 'request_body' : 
-                     clarificationAnswers?.agentId ? 'clarificationAnswers' : 
-                     req.headers.get('x-agent-id') ? 'header' : 'generated',
-      sessionIdSource: providedSessionId ? 'request_body' : 
-                       clarificationAnswers?.sessionId ? 'clarificationAnswers' : 
-                       req.headers.get('x-session-id') ? 'header' : 'generated',
-      agentIdConsistent: true // FIXED: Track consistency
+      finalSessionId: sessionId
     })
 
     const { data: pluginRows } = await supabase
@@ -167,348 +103,315 @@ export async function POST(req: Request) {
       .eq('user_id', user.id)
 
     const connectedPluginKeys = pluginRows?.map(p => p.plugin_key) || []
-    const connectedPluginData = getConnectedPluginsWithMetadata(connectedPluginKeys)
+    const pluginContext = buildCompletePluginContext(connectedPluginKeys)
     const fullPrompt = prompt
-
-    const pluginCapabilityContext = connectedPluginData.map(plugin =>
-      `${plugin.key} (${plugin.displayName || plugin.label}): ${plugin.capabilities.join(', ')}`
-    ).join('\n')
-
-    const dynamicOutputTemplates = generateDynamicOutputTemplateContext(connectedPluginData)
-    const dynamicIntentMappingRules = generateDynamicIntentMappingRules(connectedPluginData)
-
-    // PHASE 1: Initial workflow analysis to determine used capabilities
-    const initialSystemPrompt = `Analyze this workflow and determine which plugin capabilities will be used.
-
-CONNECTED PLUGINS: ${pluginCapabilityContext}
-CAPABILITY MAPPING: ${dynamicIntentMappingRules}
-
-CRITICAL DOCUMENT GENERATION RULE:
-When users request document creation (PDF, Word, CSV, etc.), this is handled by AI naturally within existing plugins, NOT as separate workflow steps.
-
-EXAMPLES:
-❌ WRONG - Don't create separate document generation steps:
-{
-  "operation": "Create PDF document",
-  "plugin": "pdf-creator",
-  "plugin_action": "generate_pdf"
-}
-
-✅ CORRECT - Include document format in the processing step:
-{
-  "operation": "Summarize emails and format as PDF document",
-  "plugin": "chatgpt-research",
-  "plugin_action": "summarize"
-}
-
-Map operations to correct capabilities:
-- "read gmail" → google-mail with read_email
-- "summarize and create PDF/Word/CSV" → chatgpt-research with summarize (AI handles format)
-- "upload to drive" → google-drive with upload_files
-- "send alert" → google-mail with send_email
-
-Return JSON: {"workflow_steps": [{"operation": "description", "plugin": "plugin_key", "plugin_action": "capability"}]}`
 
     // Initialize AI Provider with analytics
     const openaiProvider = new OpenAIProvider(process.env.OPENAI_API_KEY!, aiAnalytics)
 
-    console.log('📊 Making INITIAL AI call with consistent tracking IDs:', {
-      agentId,
-      sessionId
-    })
-    
-    // PHASE 1: Track initial analysis call - FIXED: Use consistent agent ID
-    const initialCompletion = await openaiProvider.chatCompletion(
+    // HYBRID SMART ANALYSIS - Single comprehensive prompt
+    const smartAnalysisPrompt = `You are a brilliant agent specification generator. You must analyze workflows and determine if they need plugins or are pure AI processing.
+
+ENHANCED WORKFLOW PLAN:
+"""
+${fullPrompt}
+"""
+
+AVAILABLE PLUGINS WITH COMPLETE DETAILS:
+${JSON.stringify(pluginContext, null, 2)}
+
+YOUR ANALYSIS FRAMEWORK:
+
+1. WORKFLOW TYPE DETECTION:
+   - Is this pure AI processing? (analysis, generation, transformation of provided data)
+   - Does this need external data sources? (emails, files, databases)
+   - Does this need external actions? (sending emails, saving files, API calls)
+
+2. PARSE THE WORKFLOW PLAN STEP BY STEP:
+   - Break down every action mentioned
+   - Identify what each action needs to accomplish
+   - Determine if it's AI processing or requires a plugin
+
+3. FOR PURE AI WORKFLOWS:
+   - Identify what input data the user needs to provide
+   - Determine the AI processing steps required
+   - Define the expected output format
+
+4. FOR PLUGIN-BASED WORKFLOWS:
+   - Match actions to available plugins and capabilities
+   - Check plugin requirements against provided information
+   - Identify missing inputs needed for plugin operations
+
+5. INPUT SCHEMA GENERATION:
+   - For pure AI: Create fields for data the AI needs to process
+   - For plugins: Create fields for missing plugin parameters
+   - Use appropriate field types and make required only when necessary
+
+CRITICAL INPUT RULE:
+- Only create input fields for information that is EXPLICITLY MISSING and REQUIRED for execution
+- Do not create "configuration" or "preference" fields unless specifically mentioned
+- If the workflow provides specific values (like "detailed summary"), don't make it configurable
+- Focus on the gap between what's specified and what's needed to execute
+
+MISSING vs CONFIGURATION EXAMPLES:
+❌ WRONG: "detailed summary" → create summary_length field (it's already specified!)
+✅ RIGHT: "send to your manager" → create manager_email field (email address missing!)
+❌ WRONG: "unread emails" → create max_results field (not mentioned in workflow)
+✅ RIGHT: No mention of email subject → create subject_template field (required for sending)
+❌ WRONG: "summarize emails" → create summary_style field (not requested in workflow)
+✅ RIGHT: "save to important folder" → create folder_path field (folder location missing!)
+
+6. WORKFLOW STEPS CREATION:
+   - For pure AI: Define the AI processing pipeline
+   - For plugins: Map actions to specific plugin + capability combinations
+   - Ensure logical flow and dependencies
+
+WORKFLOW CATEGORIES:
+
+A. PURE AI PROCESSING:
+   - Text analysis, summarization, generation
+   - Data transformation, classification
+   - Content creation, editing, formatting
+   - Research synthesis, comparison
+   
+B. DATA RETRIEVAL + AI:
+   - Read emails/files then analyze
+   - Fetch data then process
+   - Monitor sources then summarize
+   
+C. AI + EXTERNAL ACTIONS:
+   - Generate content then save/send
+   - Analyze data then notify/alert
+   - Process input then execute actions
+
+CRITICAL RULES:
+- If no plugins are needed, workflow_steps should describe AI processing steps
+- Only use plugins when external data/actions are required
+- Don't force plugin usage for pure AI tasks
+- Create minimal, essential input fields
+- Be precise about what the agent actually does
+
+OUTPUT REQUIRED:
+{
+  "analysis": {
+    "workflow_type": "pure_ai|data_retrieval_ai|ai_external_actions",
+    "requires_plugins": true|false,
+    "workflow_actions": [
       {
-        model: 'gpt-4o',
-        messages: [
-          { role: 'system', content: initialSystemPrompt },
-          { role: 'user', content: `Map this workflow to plugin capabilities:\n\n"${fullPrompt}"` }
-        ],
-        temperature: 0.1,
-        max_tokens: 1000
-      },
-      {
-        userId: user.id,
-        sessionId: sessionId,           // FIXED: Use consistent session ID
-        feature: 'agent_generation',
-        component: 'agent-generator',
-        workflow_step: 'initial_analysis',
-        category: 'agent_creation',
-        activity_type: 'agent_creation',
-        activity_name: 'Analyzing workflow capabilities',
-        activity_step: 'capability_mapping',
-        agent_id: agentId               // FIXED: Use consistent agent ID
+        "action_description": "what this step does",
+        "execution_type": "ai_processing|plugin_action",
+        "chosen_plugin": "plugin_key or null for AI processing",
+        "chosen_capability": "capability_name or null for AI processing", 
+        "ai_processing_type": "analysis|generation|transformation|classification",
+        "reasoning": "why this choice was made",
+        "required_data": ["list of data this step needs"],
+        "missing_data": ["data not provided in workflow plan"]
       }
-    )
-
-    console.log('✅ Initial analysis call completed with tracking')
-
-    const initialRaw = initialCompletion.choices[0]?.message?.content || ''
-    let preliminarySteps = []
-    
-    try {
-      const initialData = JSON.parse(initialRaw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim())
-      preliminarySteps = initialData.workflow_steps || []
-    } catch (e) {
-      console.log('Could not parse initial analysis, proceeding with empty steps')
-    }
-
-    const preliminaryCapabilities = getUsedCapabilities(preliminarySteps)
-    
-    // PHASE 2: Generate input template analysis and prompt section analysis
-    const inputTemplateAnalysis = generateInputTemplateAnalysis(connectedPluginData, preliminaryCapabilities)
-    const promptSectionAnalysis = generatePromptSectionAnalysis(fullPrompt)
-    
-    // PHASE 3: Strict gap analysis with proper JSON structure
-    const enhancedSystemPrompt = `You are an AI agent-generation assistant. Your job is to turn a structured user workflow into an executable AI agent specification.
-
-CRITICAL: You must perform STRICT GAP ANALYSIS between what's specified in the prompt vs what's needed.
-
-CRITICAL DOCUMENT GENERATION RULE:
-When users request document creation (PDF, Word, CSV, etc.), this is handled by AI naturally within existing plugins, NOT as separate workflow steps.
-
-WORKFLOW MAPPING RULES:
-- "read emails" → google-mail with read_email
-- "summarize and create PDF/Word/CSV" → chatgpt-research with summarize (AI handles document format)
-- "upload file to drive" → google-drive with upload_files  
-- "send email with attachment" → google-mail with send_email
-
-EXAMPLES:
-When prompt says "Create a PDF containing email summaries":
-✅ CORRECT workflow:
-{
-  "operation": "Summarize emails and format as PDF document",
-  "plugin": "chatgpt-research",
-  "plugin_action": "summarize"
-}
-
-❌ WRONG - Don't create separate PDF generation steps:
-{
-  "operation": "Generate PDF",
-  "plugin": "pdf-creator",
-  "plugin_action": "create_pdf"
-}
-
----
-📋 ENHANCED PROMPT ANALYSIS:
-${promptSectionAnalysis}
-
----
-🔍 AVAILABLE INPUT TEMPLATES:
-${inputTemplateAnalysis}
-
----
-🧠 STRICT GAP ANALYSIS RULES:
-
-STEP 1: For each plugin capability being used, check what input fields are available.
-STEP 2: For each available input field, ask: "Is this value EXPLICITLY specified in the enhanced prompt sections above?"
-STEP 3: If YES → SKIP the field completely (don't create input for it)
-STEP 4: If NO and field is essential for execution → CREATE input field with proper structure
-
-EXPLICIT SPECIFICATIONS IN THIS PROMPT:
-- Data Source section specifies: specific data to read → SKIP any query/filter fields
-- Trigger section specifies: timing → SKIP any time/schedule fields  
-- Processing section specifies: how to process → SKIP any processing style fields
-- Output Creation section specifies: document format → AI handles this naturally
-- The prompt mentions "send to manager" but NO specific email → CREATE manager email field
-
-MAXIMUM TARGET: 2-3 input fields for non-technical users.
-
----
-🧾 REQUIRED JSON STRUCTURE:
-
-Each input field MUST have this exact structure:
-{
-  "name": "field_name",
-  "type": "string|email|select|number",
-  "required": true|false,
-  "description": "User-friendly description",
-  "placeholder": "Example value"
-}
-
-COMPLETE JSON RESPONSE:
-{
-  "agent_name": "Daily Email Summary to Manager",
-  "user_prompt": "Reads emails daily, creates summary document, and sends to manager",
-  "system_prompt": "You are an email processing agent that reads Gmail, summarizes content, creates documents, and sends them via email.",
-  "description": "Automates daily email processing and reporting",
-  "schedule": "0 8 * * *",
-  "input_schema": [
-    {
-      "name": "manager_email",
-      "type": "email",
-      "required": true,
-      "description": "Email address of the manager to send the summary",
-      "placeholder": "manager@example.com"
-    }
-  ],
-  "workflow_steps": [
-    {
-      "operation": "Read last 10 emails from Gmail",
-      "plugin": "google-mail",
-      "plugin_action": "read_email"
-    },
-    {
-      "operation": "Summarize emails and format as PDF document",
-      "plugin": "chatgpt-research",
-      "plugin_action": "summarize"
-    },
-    {
-      "operation": "Send PDF summary to manager",
-      "plugin": "google-mail",
-      "plugin_action": "send_email"
-    }
-  ],
-  "error_notifications": {
-    "on_failure": "email",
-    "retry_on_fail": true
+    ],
+    "missing_inputs_analysis": [
+      {
+        "input_name": "field_name",
+        "input_type": "email|text|number|file|select|url|date|textarea",
+        "required": true|false,
+        "description": "what user needs to provide",
+        "reason": "which step needs this and why",
+        "example": "example value"
+      }
+    ]
   },
-  "output_format": "pdf"
+  "agent_specification": {
+    "agent_name": "descriptive name based on workflow",
+    "description": "clear description of what agent does",
+    "input_schema": [
+      {
+        "name": "field_name",
+        "type": "email|text|number|file|select|url|date|textarea",
+        "required": true|false,
+        "description": "user-friendly description",
+        "placeholder": "example value"
+      }
+    ],
+    "workflow_steps": [
+      {
+        "operation": "clear description of what this step does",
+        "plugin": "plugin_key or 'ai_processing'",
+        "plugin_action": "capability_name or ai_task_type"
+      }
+    ],
+    "schedule": "cron expression if timing mentioned or null",
+    "error_notifications": {
+      "on_failure": "email",
+      "retry_on_fail": true
+    }
+  }
 }
 
----
-🚨 CRITICAL REQUIREMENTS:
-1. Use ONLY the input field structure shown above
-2. Perform strict gap analysis - only create fields for MISSING values
-3. Target maximum 2-3 input fields total
-4. Never create fields for values already specified in prompt sections
-5. Document generation happens within existing plugins (chatgpt-research)
-6. Return valid JSON only, no markdown or explanations
+ANALYZE THE WORKFLOW PLAN AND CREATE THE PERFECT AGENT SPECIFICATION.`
 
-Analyze the enhanced prompt and create agent specification with minimal essential inputs only.`
-
-    console.log('📊 Making FINAL AI call with consistent tracking IDs:', {
+    console.log('Making SMART ANALYSIS AI call with consistent tracking IDs:', {
       agentId,
       sessionId
     })
-
-    // PHASE 3: Track final generation call - FIXED: Use consistent agent ID
+    
+    // Single comprehensive AI call
     const completion = await openaiProvider.chatCompletion(
       {
         model: 'gpt-4o',
         messages: [
-          { role: 'system', content: enhancedSystemPrompt },
-          { role: 'user', content: fullPrompt }
+          { role: 'system', content: smartAnalysisPrompt },
+          { role: 'user', content: `Create agent specification for this workflow plan.` }
         ],
         temperature: 0.1,
-        max_tokens: 2000
+        max_tokens: 3000
       },
       {
         userId: user.id,
-        sessionId: sessionId,           // FIXED: Use consistent session ID
+        sessionId: sessionId,
         feature: 'agent_generation',
-        component: 'agent-generator',
-        workflow_step: 'agent_specification',
+        component: 'smart-injection',
+        workflow_step: 'complete_analysis',
         category: 'agent_creation',
         activity_type: 'agent_creation',
-        activity_name: `Creating agent specification`,
-        activity_step: 'specification_generation',
-        agent_id: agentId               // FIXED: Use consistent agent ID
+        activity_name: 'Smart agent specification generation',
+        activity_step: 'hybrid_analysis',
+        agent_id: agentId
       }
     )
 
-    console.log('✅ Final generation call completed with tracking')
+    console.log('Smart analysis call completed with tracking')
 
-    const raw = completion.choices[0]?.message?.content || ''
-    const jsonMatch = raw.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/)
-    const jsonString = jsonMatch ? jsonMatch[1] : raw.trim()
-
-    let extracted
+    const rawResponse = completion.choices[0]?.message?.content || ''
+    
+    let result;
     try {
-      extracted = JSON.parse(jsonString)
+      const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
+      const jsonString = jsonMatch ? jsonMatch[0] : rawResponse;
+      result = JSON.parse(jsonString);
     } catch (e) {
       try {
-        const cleaned = raw
+        const cleaned = rawResponse
           .replace(/```json\n?/g, '')
           .replace(/```\n?/g, '')
           .replace(/^\s*[\r\n]/gm, '')
           .trim()
-        extracted = JSON.parse(cleaned)
+        result = JSON.parse(cleaned)
       } catch (e2) {
         return NextResponse.json({ 
           error: 'Failed to parse AI response',
-          raw_response: raw.slice(0, 500)
+          raw_response: rawResponse.slice(0, 500)
         }, { status: 500 })
       }
     }
 
-    const enhancedWorkflowSteps = extracted.workflow_steps?.map((step: any) => {
-      const pluginDef = getPluginDefinition(step.plugin)
-      const pluginAction = step.plugin_action || inferActionFromStep(step, pluginDef)
-      return {
-        ...step,
-        plugin_action: pluginAction,
-        validated: pluginDef && pluginDef.capabilities.includes(pluginAction)
+    const agentSpec = result.agent_specification;
+    const analysis = result.analysis;
+
+    // Validate workflow steps - handle both plugin and AI-only steps
+    const validatedSteps = agentSpec.workflow_steps?.map(step => {
+      if (step.plugin === 'ai_processing' || !step.plugin || step.plugin === 'null') {
+        // Pure AI processing step
+        return {
+          ...step,
+          plugin: 'ai_processing',
+          validated: true,
+          type: 'ai_processing'
+        };
+      } else {
+        // Plugin-based step  
+        const plugin = pluginRegistry[step.plugin];
+        const isValid = plugin && plugin.capabilities.includes(step.plugin_action);
+        
+        return {
+          ...step,
+          validated: isValid,
+          type: 'plugin_action',
+          available_capabilities: plugin ? plugin.capabilities : []
+        };
       }
-    }) || []
+    }) || [];
 
-    const usedCapabilities = getUsedCapabilities(enhancedWorkflowSteps)
+    // Validate input schema
+    const validatedInputs = agentSpec.input_schema?.map(input => ({
+      ...input,
+      name: input.name || 'unnamed_field',
+      type: input.type || 'text',
+      required: input.required !== false,
+      description: input.description || `Please provide ${input.name}`,
+      placeholder: input.placeholder || input.example || ''
+    })) || [];
 
+    const usedCapabilities = getUsedCapabilities(validatedSteps)
+
+    // Generate output inference
     const { enhanceOutputInference } = await import('@/lib/outputInference')
     const outputInference = enhanceOutputInference(
       fullPrompt,
       clarificationAnswers || {},
       connectedPluginKeys,
-      enhancedWorkflowSteps
+      validatedSteps
     )
 
     const validDetectedPlugins = Object.keys(usedCapabilities)
       .filter(key => pluginRegistry[key]);
 
-    console.log('🔍 Valid detected plugins:', validDetectedPlugins);
-    console.log('🔍 Used capabilities:', usedCapabilities);
-    console.log('🔍 Final input schema:', extracted.input_schema);
+    console.log('Valid detected plugins:', validDetectedPlugins);
+    console.log('Used capabilities:', usedCapabilities);
+    console.log('Final input schema:', validatedInputs);
+    console.log('Analysis result:', analysis);
 
+    // Maintain the exact JSON structure expected by the system
     const agentData = {
       user_id: user.id,
-      agent_name: extracted.agent_name || 'Untitled Agent',
+      agent_name: agentSpec.agent_name || 'Untitled Agent',
       user_prompt: fullPrompt,
-      system_prompt: extracted.system_prompt || 'You are a helpful assistant.',
-      description: extracted.description || '',
+      system_prompt: `You are an agent that accomplishes: ${analysis?.workflow_type || agentSpec.description || 'user workflow'}`,
+      description: agentSpec.description || '',
       plugins_required: validDetectedPlugins,
       connected_plugins: validDetectedPlugins,
-      input_schema: extracted.input_schema || [],
+      input_schema: validatedInputs,
       output_schema: outputInference.outputs,
       status: 'draft',
-      mode: extracted.schedule ? 'scheduled' : 'on_demand',
-      schedule_cron: extracted.schedule || null,
-      created_from_prompt: extracted.user_prompt,
+      mode: agentSpec.schedule ? 'scheduled' : 'on_demand',
+      schedule_cron: agentSpec.schedule || null,
+      created_from_prompt: fullPrompt,
       ai_reasoning: outputInference.reasoning,
       ai_confidence: Math.round((outputInference.confidence || 0) * 100),
       ai_generated_at: new Date().toISOString(),
-      workflow_steps: enhancedWorkflowSteps,
-      trigger_conditions: extracted.error_notifications ? {
-        error_handling: extracted.error_notifications
+      workflow_steps: validatedSteps,
+      trigger_conditions: agentSpec.error_notifications ? {
+        error_handling: agentSpec.error_notifications
       } : null,
       detected_categories: validDetectedPlugins.map(plugin => ({ plugin, detected: true }))
     }
 
-    console.log('✅ Agent generation completed successfully with full tracking:', {
+    console.log('Agent generation completed successfully with full tracking:', {
       agentName: agentData.agent_name,
       pluginsUsed: validDetectedPlugins,
-      workflowStepsCount: enhancedWorkflowSteps.length,
-      inputSchemaCount: extracted.input_schema?.length || 0,
-      agentId: agentId,                // FIXED: Log consistent agent ID
-      sessionId: sessionId             // FIXED: Log consistent session ID
+      workflowStepsCount: validatedSteps.length,
+      inputSchemaCount: validatedInputs.length,
+      workflowType: analysis?.workflow_type,
+      requiresPlugins: analysis?.requires_plugins,
+      agentId: agentId,
+      sessionId: sessionId
     })
 
-    // FIXED: Return consistent agent ID and session ID in response
     return NextResponse.json({ 
       agent: agentData,
       extraction_details: {
         usedCapabilities,
         output_inference: outputInference,
-        workflow_steps: enhancedWorkflowSteps,
-        input_template_analysis: inputTemplateAnalysis,
+        workflow_steps: validatedSteps,
+        analysis: analysis,
+        workflow_type: analysis?.workflow_type,
+        requires_plugins: analysis?.requires_plugins,
         activity_tracked: true,
-        agentId: agentId,              // FIXED: Return consistent agent ID
-        sessionId: sessionId           // FIXED: Return consistent session ID
+        agentId: agentId,
+        sessionId: sessionId
       }
     })
 
   } catch (error) {
-    console.error('❌ Error in agent generation:', error)
+    console.error('Error in agent generation:', error)
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Unknown error' }, { status: 500 })
   }
 }

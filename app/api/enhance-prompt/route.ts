@@ -98,8 +98,8 @@ export async function POST(req: NextRequest) {
       connected_plugins, 
       missingPlugins = [], 
       pluginWarning,
-      sessionId: providedSessionId, // FIXED: Extract session ID from request
-      agentId: providedAgentId // FIXED: Extract agent ID from request
+      sessionId: providedSessionId,
+      agentId: providedAgentId
     } = await req.json()
     
     // Extract missing plugins from pluginWarning if not provided directly (backward compatibility)
@@ -112,7 +112,7 @@ export async function POST(req: NextRequest) {
     // Get user ID from request headers if not in body (fallback method)
     const userIdToUse = userId || req.headers.get('x-user-id') || 'anonymous'
 
-    // FIXED: Use provided IDs instead of generating new ones - with proper UUID format
+    // Use provided IDs instead of generating new ones - with proper UUID format
     const sessionId = providedSessionId || 
                       req.headers.get('x-session-id') || 
                       uuidv4()
@@ -124,9 +124,9 @@ export async function POST(req: NextRequest) {
     console.log('🚀 Processing enhancement request with CONSISTENT agent ID:', {
       userId: userIdToUse,
       providedSessionId,
-      providedAgentId, // FIXED: Log provided agent ID
+      providedAgentId,
       finalSessionId: sessionId,
-      finalAgentId: agentId, // FIXED: Log final agent ID
+      finalAgentId: agentId,
       agentIdSource: providedAgentId ? 'request_body' : 
                      req.headers.get('x-agent-id') ? 'header' : 'generated',
       sessionIdSource: providedSessionId ? 'request_body' : 
@@ -214,10 +214,6 @@ Create a bullet-point execution plan with these sections:
 • What specific information to monitor/read
 ${connectedPluginData.some(p => p.capabilities && p.capabilities.includes('read_email')) ? '• Use email reading capabilities when the user wants to read emails' : ''}
 
-**Trigger Conditions:**
-• When the automation should activate
-${connectedPluginData.some(p => p.capabilities && p.capabilities.includes('search_email')) ? '• Use email filtering only if user wants to filter emails' : ''}
-
 **Processing Steps:**
 • What actions to take with the data
 • Focus ONLY on the user's stated requirements
@@ -255,7 +251,7 @@ Respond with only a JSON object:
   "rationale": "Brief explanation of what you made clearer and more specific"
 }`
 
-    // REPLACED: Manual fetch call with AI Analytics OpenAI Provider
+    // Use AI Analytics OpenAI Provider
     const openaiProvider = new OpenAIProvider(process.env.OPENAI_API_KEY!, aiAnalytics)
     
     console.log('📊 Making tracked enhancement AI call with CONSISTENT agent ID')
@@ -269,7 +265,7 @@ Respond with only a JSON object:
             content: `You are an expert prompt engineer who specializes in creating structured, user-friendly automation execution plans. You write in simple, conversational language that anyone can understand, completely avoiding technical jargon. You excel at taking vague automation requests and making them specific and actionable while keeping the language friendly and approachable. You ONLY suggest capabilities and services that are directly relevant to what the user asked for - you never add extra features or suggest additional storage/backup unless explicitly requested. You always respond with valid JSON only - no markdown, no extra text, just clean JSON. ${Object.keys(clarificationAnswers).length > 0 
               ? 'You are excellent at incorporating user-provided clarification answers to create specific, actionable prompts using only the details the user actually provided.'
               : 'You avoid making assumptions about specific parameters and use friendly placeholder language instead.'
-            } You focus strictly on the user's stated requirements and avoid suggesting additional features they didn't ask for.`
+            } You focus strictly on the user's stated requirements and avoid suggesting additional features they didn't ask for. NOTE: Do not include any scheduling or trigger conditions as these are handled separately by the system.`
           },
           {
             role: 'user', 
@@ -282,7 +278,7 @@ Respond with only a JSON object:
       },
       {
         userId: userIdToUse,
-        sessionId: sessionId, // FIXED: Use consistent session ID
+        sessionId: sessionId,
         feature: 'prompt_enhancement',
         component: 'enhance-prompt-api',
         workflow_step: 'prompt_enhancement',
@@ -290,7 +286,7 @@ Respond with only a JSON object:
         activity_type: 'agent_creation',
         activity_name: 'Enhancing prompt with clarification details',
         activity_step: 'prompt_enhancement',
-        agent_id: agentId // FIXED: Use consistent agent ID
+        agent_id: agentId
       }
     )
 
@@ -299,7 +295,7 @@ Respond with only a JSON object:
       sessionId
     })
 
-    // Parse the response (existing logic)
+    // Parse the response
     let fullResponse = openAIResponse.choices[0]?.message?.content?.trim()
     if (!fullResponse) {
       throw new Error('Empty response from OpenAI')
@@ -331,7 +327,7 @@ Respond with only a JSON object:
       let rawEnhancedPrompt = parsedResponse.enhanced_prompt || parsedResponse.enhancedPrompt || ''
       rationale = parsedResponse.rationale || ''
       
-      // CRITICAL FIX: Handle both string and object formats for enhanced_prompt
+      // Handle both string and object formats for enhanced_prompt
       if (typeof rawEnhancedPrompt === 'object' && rawEnhancedPrompt !== null) {
         // Convert object format to structured string format
         console.log('🔄 Converting object format to structured string');
@@ -346,14 +342,7 @@ Respond with only a JSON object:
           sections.push('');
         }
         
-        if (rawEnhancedPrompt['Trigger Conditions']) {
-          sections.push('**Trigger Conditions:**');
-          const items = Array.isArray(rawEnhancedPrompt['Trigger Conditions']) 
-            ? rawEnhancedPrompt['Trigger Conditions'] 
-            : [rawEnhancedPrompt['Trigger Conditions']];
-          items.forEach(item => sections.push(`• ${item}`));
-          sections.push('');
-        }
+        // REMOVED: Trigger Conditions section
         
         if (rawEnhancedPrompt['Processing Steps']) {
           sections.push('**Processing Steps:**');
@@ -404,7 +393,8 @@ Respond with only a JSON object:
       console.log('✅ Successfully parsed:', {
         enhancedPromptLength: enhancedPrompt.length,
         rationaleLength: rationale.length,
-        hasStructuredFormat: enhancedPrompt.includes('**Data Source:**')
+        hasStructuredFormat: enhancedPrompt.includes('**Data Source:**'),
+        removedTriggerConditions: !enhancedPrompt.includes('**Trigger Conditions:**')
       })
       
     } catch (parseError) {
@@ -442,9 +432,6 @@ Respond with only a JSON object:
         enhancedPrompt = `**Data Source:**
 • ${prompt.split('.')[0] || 'Your specified data source'}${hasEmailCaps ? ' (using email capabilities)' : ''}
 
-**Trigger Conditions:**
-• Based on your requirements${hasEmailCaps ? ' with email filtering' : ''}
-
 **Processing Steps:**
 • Process the data according to your needs
 • Apply the necessary transformations
@@ -465,8 +452,6 @@ Respond with only a JSON object:
       }
     }
 
-    // REMOVED: Manual token tracking - now handled automatically by AI Analytics
-
     // Return enhanced response with plugin metadata
     console.log('🎉 Returning plugin-aware enhanced prompt with CONSISTENT agent ID tracking:', {
       enhancedPromptPreview: typeof enhancedPrompt === 'string' ? enhancedPrompt.substring(0, 100) + '...' : 'Object format converted to string',
@@ -475,18 +460,19 @@ Respond with only a JSON object:
       connectedPluginDataCount: connectedPluginData.length,
       missingPlugins: finalMissingPlugins,
       sessionId: sessionId,
-      agentId: agentId, // FIXED: Log consistent agent ID
-      agentIdConsistent: providedAgentId === agentId // FIXED: Verify consistency
+      agentId: agentId,
+      agentIdConsistent: providedAgentId === agentId,
+      removedScheduling: true
     })
 
     return NextResponse.json({ 
-      enhancedPrompt,     // camelCase for frontend consistency
-      rationale,          // Available for backend storage/tracking (not shown in UI)
+      enhancedPrompt,
+      rationale,
       originalPrompt: prompt,
       clarificationAnswersUsed: Object.keys(clarificationAnswers).length > 0,
-      connectedPluginData, // Include plugin metadata in response
-      sessionId: sessionId, // FIXED: Return consistent session ID
-      agentId: agentId,     // FIXED: Return consistent agent ID
+      connectedPluginData,
+      sessionId: sessionId,
+      agentId: agentId,
       metadata: {
         enhancementType: Object.keys(clarificationAnswers).length > 0 ? 'with_clarification' : 'basic',
         clarificationAnswersCount: Object.keys(clarificationAnswers).length,
@@ -500,7 +486,9 @@ Respond with only a JSON object:
         isPluginAware: true,
         analyticsTracked: true,
         activityTracked: true,
-        agentIdConsistent: providedAgentId === agentId // FIXED: Track consistency
+        agentIdConsistent: providedAgentId === agentId,
+        removedSchedulingFeatures: true,
+        focusOnExecutionOnly: true
       }
     })
   } catch (error) {

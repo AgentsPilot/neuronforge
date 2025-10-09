@@ -41,7 +41,7 @@ Respond only with the JSON array, no text before or after.
     const aiRes = await openai.chat.completions.create({
       model: 'gpt-4o', // or 'gpt-3.5-turbo'
       messages: [{ role: 'user', content: prompt }],
-      temperature: 0.3,
+      temperature: 0.1,
       max_tokens: 800,
     })
 

@@ -12,7 +12,8 @@ import {
   X,
   Play,
   AlertTriangle,
-  Lock
+  Lock,
+  Clock
 } from 'lucide-react';
 
 // Import the visual flow visualizer
@@ -23,6 +24,7 @@ import AgentPreview from './components/AgentPreview';
 import InputSchemaEditor from './components/InputSchemaEditor';
 import PluginRequirements from './components/PluginRequirements';
 import SystemPromptEditor from './components/SystemPromptEditor';
+import ScheduleEditor from './components/ScheduleEditor';
 
 // Import separated components
 import {
@@ -359,6 +361,19 @@ export default function SmartAgentBuilder({
     });
   };
 
+  // NEW: Handle schedule updates that work outside of edit mode
+  const updateAgentSchedule = (updates: Partial<Agent>) => {
+    // Update the main agent if not in editing mode
+    if (!isEditing && agent) {
+      setAgent(prev => prev ? { ...prev, ...updates } : prev);
+    }
+    
+    // Also update the edited agent if in editing mode
+    if (isEditing) {
+      updateEditedAgent(updates);
+    }
+  };
+
   const handleCreateAgent = async () => {
     const finalAgent = isEditing ? editedAgent : agent;
     console.log('Creating agent:', finalAgent?.agent_name);
@@ -642,58 +657,58 @@ export default function SmartAgentBuilder({
                   <div className="flex items-center gap-2">
                     <button
                       onClick={handleSaveEdit}
-                      className="bg-gradient-to-r from-green-600 to-emerald-600 text-white px-4 py-2 rounded-xl hover:from-green-700 hover:to-emerald-700 transition-all duration-200 flex items-center gap-2 font-medium shadow-lg"
+                      className="bg-gradient-to-r from-green-600 to-emerald-600 text-white px-3 py-1.5 rounded-lg hover:from-green-700 hover:to-emerald-700 transition-all duration-200 flex items-center gap-1.5 text-sm font-medium shadow-lg"
                     >
-                      <Save className="h-4 w-4" />
+                      <Save className="h-3.5 w-3.5" />
                       Save Changes
                     </button>
                     <button
                       onClick={handleCancelEdit}
-                      className="bg-gray-600 text-white px-4 py-2 rounded-xl hover:bg-gray-700 transition-all duration-200 flex items-center gap-2 font-medium"
+                      className="bg-gray-600 text-white px-3 py-1.5 rounded-lg hover:bg-gray-700 transition-all duration-200 flex items-center gap-1.5 text-sm font-medium"
                     >
-                      <X className="h-4 w-4" />
+                      <X className="h-3.5 w-3.5" />
                       Cancel
                     </button>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-2">
+                   <div className="flex items-center gap-2">
                     {editMode && onCancel && (
                       <button
                         onClick={onCancel}
-                        className="bg-gray-600 text-white px-4 py-2 rounded-xl hover:bg-gray-700 transition-all duration-200 flex items-center gap-2 font-medium"
+                        className="bg-gray-600 text-white px-3 py-1.5 rounded-lg hover:bg-gray-700 transition-all duration-200 flex items-center gap-1.5 text-sm font-medium"
                       >
-                        <ArrowLeft className="h-4 w-4" />
+                        <ArrowLeft className="h-3.5 w-3.5" />
                         Back to Agent
                       </button>
                     )}
                     
                     <button
                       onClick={handleEdit}
-                      className="bg-white/90 text-gray-700 px-4 py-2 rounded-xl hover:bg-white transition-all duration-200 flex items-center gap-2 font-medium shadow-sm border border-gray-200"
+                      className="bg-white/90 text-gray-700 px-3 py-1.5 rounded-lg hover:bg-white transition-all duration-200 flex items-center gap-1.5 text-sm font-medium shadow-sm border border-gray-200"
                     >
-                      <Edit className="h-4 w-4" />
+                      <Edit className="h-3.5 w-3.5" />
                       Edit
                     </button>
                     
                     <button
                       onClick={handleCreateAgent}
                       disabled={isCreating}
-                      className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-6 py-2.5 rounded-xl hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 transition-all duration-200 flex items-center gap-2 shadow-lg font-semibold"
+                      className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-4 py-1.5 rounded-lg hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 transition-all duration-200 flex items-center gap-1.5 shadow-lg text-sm font-semibold"
                     >
                       {isCreating ? (
                         <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
                           {editMode ? 'Updating...' : 'Creating...'}
                         </>
                       ) : (
                         <>
-                          <Zap className="h-4 w-4" />
+                          <Zap className="h-3.5 w-3.5" />
                           {editMode ? 'Update Agent' : 'Create Agent'}
                         </>
                       )}
                     </button>
                   </div>
-                )}
+                                )}
               </div>
             </div>
           </div>
@@ -734,13 +749,30 @@ export default function SmartAgentBuilder({
           />
         </div>
  
+        {/* Schedule Configuration Card - UPDATED: Always editable */}
+        <CollapsibleSection
+          title="Schedule Configuration"
+          description="Configure when and how often your agent runs"
+          icon={Clock}
+          gradient="bg-gradient-to-br from-indigo-500 to-blue-500"
+          isEditing={true} // Always show as editable
+          defaultExpanded={true}
+        >
+          <ScheduleEditor
+            mode={currentAgent?.mode as 'on_demand' | 'scheduled'}
+            scheduleCron={currentAgent?.schedule_cron}
+            isEditing={true} // Always allow editing
+            onUpdate={(updates) => updateAgentSchedule(updates)} // Use new handler
+          />
+        </CollapsibleSection>
+
+
         {/* Execution Preview Card - Full Width */}
         <CollapsibleSection
           title="Execution Preview"
           description="Visual workflow and process flow"
           icon={Play}
           gradient="bg-gradient-to-br from-orange-500 to-red-500"
-          isEditing={isEditing}
           defaultExpanded={false}
         >
           <div className="bg-gradient-to-br from-orange-50 to-red-50 rounded-xl p-6 border border-orange-200/50">

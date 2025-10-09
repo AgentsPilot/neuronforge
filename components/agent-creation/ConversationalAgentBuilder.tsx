@@ -55,7 +55,7 @@ const InlineGuideBanner = React.memo(({ currentStep, onDismiss, isVisible }) => 
     },
     'review': {
       title: 'Review your enhanced plan',
-      message: 'Perfect! Check the plan below. You can edit it, approve it, or go back to your original idea.',
+      message: 'Perfect! Check the plan below. You can edit it or approve it.',
       icon: Eye,
       color: 'green'
     },
@@ -305,63 +305,49 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
     setShowGuide(false);
   }, []);
 
-  // FIXED: Enhanced plugin warning detection
-// Replace your isPluginWarningMessage function with this updated version:
-const isPluginWarningMessage = useCallback((content: string) => {
-  if (!content || typeof content !== 'string') return false;
-  
-  const warningPatterns = [
-    'MISSING SERVICES:',
-    'MISSING PLUGINS:',
-    'missing services',
-    'missing plugins',
-    'services that aren\'t connected',
-    'plugins that aren\'t connected',
-    'haven\'t connected',
-    'not connected',
-    'connect services',
-    'connect plugins',
-    'services are missing',
-    'plugins are missing',
-    // NEW: Add patterns for the specific message you're seeing
-    'aren\'t connected',
-    'services aren\'t connected',
-    'but these services aren\'t connected',
-    'mentions.*but.*aren\'t connected',
-    'focus on your connected services',
-    'Note: Your request mentions'
-  ];
-  
-  const contentLower = content.toLowerCase();
-  return warningPatterns.some(pattern => {
-    if (pattern.includes('.*')) {
-      // Handle regex patterns
-      const regex = new RegExp(pattern, 'i');
-      return regex.test(content);
-    }
-    return contentLower.includes(pattern.toLowerCase());
-  });
-}, []);
+  // Enhanced plugin warning detection
+  const isPluginWarningMessage = useCallback((content: string) => {
+    if (!content || typeof content !== 'string') return false;
+    
+    const warningPatterns = [
+      'MISSING SERVICES:',
+      'MISSING PLUGINS:',
+      'missing services',
+      'missing plugins',
+      'services that aren\'t connected',
+      'plugins that aren\'t connected',
+      'haven\'t connected',
+      'not connected',
+      'connect services',
+      'connect plugins',
+      'services are missing',
+      'plugins are missing',
+      'aren\'t connected',
+      'services aren\'t connected',
+      'but these services aren\'t connected',
+      'mentions.*but.*aren\'t connected',
+      'focus on your connected services',
+      'Note: Your request mentions'
+    ];
+    
+    const contentLower = content.toLowerCase();
+    return warningPatterns.some(pattern => {
+      if (pattern.includes('.*')) {
+        // Handle regex patterns
+        const regex = new RegExp(pattern, 'i');
+        return regex.test(content);
+      }
+      return contentLower.includes(pattern.toLowerCase());
+    });
+  }, []);
+
   // SIMPLIFIED message rendering - stable keys, minimal complexity
   const renderMessage = useCallback((message, index) => {
-    // System "question answered" chip
-    if (message.type === 'system' && message.content.startsWith('Question answered')) {
-      return (
-        <div key={`${message.id}-system`} className="flex justify-center">
-          <div className="inline-flex items-center gap-2 bg-gradient-to-r from-emerald-500/20 to-green-500/20 text-emerald-700 px-3 py-1.5 rounded-lg text-xs font-medium border border-emerald-200/50 backdrop-blur-sm">
-            <div className="w-4 h-4 bg-emerald-500 rounded-full flex items-center justify-center">
-              <CheckCircle className="h-2 w-2 text-white" />
-            </div>
-            Question Completed
-          </div>
-        </div>
-      );
-    }
-
     // System question payload -> render interactive block
     if (message.type === 'system' && message.content.startsWith('{')) {
       try {
         const question = JSON.parse(message.content) as ClarificationQuestion;
+        
         return (
           <MemoizedQuestionRenderer
             key={`${message.id}-question`}
@@ -391,6 +377,20 @@ const isPluginWarningMessage = useCallback((content: string) => {
           </div>
         );
       }
+    }
+
+    // System "question answered" chip
+    if (message.type === 'system' && message.content.startsWith('Question answered')) {
+      return (
+        <div key={`${message.id}-system`} className="flex justify-center">
+          <div className="inline-flex items-center gap-2 bg-gradient-to-r from-emerald-500/20 to-green-500/20 text-emerald-700 px-3 py-1.5 rounded-lg text-xs font-medium border border-emerald-200/50 backdrop-blur-sm">
+            <div className="w-4 h-4 bg-emerald-500 rounded-full flex items-center justify-center">
+              <CheckCircle className="h-2 w-2 text-white" />
+            </div>
+            Question Completed
+          </div>
+        </div>
+      );
     }
 
     // Regular AI/User message bubble
@@ -448,10 +448,10 @@ const isPluginWarningMessage = useCallback((content: string) => {
               {formatMessageTimestamp(message.timestamp)}
             </div>
 
-            {/* Enhanced plan controls */}
+            {/* Enhanced plan controls - FIXED: Updated condition */}
             {message.type === 'ai' &&
               projectState.enhancementComplete &&
-              message.content.includes('Enhanced Plan:') &&
+              message.content.includes('Your Automation Plan:') &&
               !projectState.planApproved &&
               !projectState.isInReviewMode && (
                 <div className="mt-3 space-y-2">
@@ -459,14 +459,14 @@ const isPluginWarningMessage = useCallback((content: string) => {
                     <div className="bg-gray-50/90 backdrop-blur-sm rounded-lg p-3 space-y-2 border border-gray-200/50">
                       <div className="flex items-center gap-1.5">
                         <Edit className="h-3 w-3 text-gray-600" />
-                        <span className="text-xs font-medium text-gray-700">Edit enhanced plan:</span>
+                        <span className="text-xs font-medium text-gray-700">Edit your plan:</span>
                       </div>
                       <textarea
                         ref={editTextareaRef}
                         value={projectState.editedEnhancedPrompt}
                         onChange={(e) => setProjectState((prev) => ({ ...prev, editedEnhancedPrompt: e.target.value }))}
                         className="w-full px-3 py-2 bg-white/90 text-gray-900 border border-gray-300 rounded-lg focus:ring-1 focus:ring-purple-500 focus:border-transparent min-h-[80px] resize-none text-xs leading-relaxed backdrop-blur-sm"
-                        placeholder="Edit your enhanced plan..."
+                        placeholder="Edit your automation plan..."
                       />
                       <div className="flex gap-2">
                         <button
@@ -475,7 +475,7 @@ const isPluginWarningMessage = useCallback((content: string) => {
                           className="flex-1 bg-gradient-to-r from-purple-600 to-purple-700 text-white px-3 py-2 rounded-lg hover:from-purple-700 hover:to-purple-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center gap-1.5 text-xs font-medium shadow-md"
                         >
                           <Save className="h-3 w-3" />
-                          Save
+                          Save Changes
                         </button>
                         <button
                           onClick={handleCancelEnhancedEdit}
@@ -494,26 +494,19 @@ const isPluginWarningMessage = useCallback((content: string) => {
                         <div className="w-5 h-5 bg-white/20 rounded-lg flex items-center justify-center">
                           <CheckCircle className="h-3 w-3" />
                         </div>
-                        Use Enhanced Plan
+                        Use This Plan
                         <ChevronRight className="h-3 w-3 group-hover:translate-x-0.5 transition-transform" />
                       </button>
                       
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          onClick={handleEditEnhanced}
-                          className="bg-white/90 text-gray-700 px-3 py-2 rounded-lg hover:bg-white transition-all duration-200 flex items-center justify-center gap-1.5 font-medium shadow-sm border border-gray-200 text-xs"
-                        >
+                      <button
+                        onClick={handleEditEnhanced}
+                        className="w-full group bg-white text-gray-700 px-4 py-2.5 rounded-lg hover:bg-gray-50 transition-all duration-200 flex items-center justify-center gap-2 font-medium shadow-md border border-gray-200 transform hover:scale-[1.01] text-sm"
+                      >
+                        <div className="w-5 h-5 bg-gray-100 rounded-lg flex items-center justify-center">
                           <Edit className="h-3 w-3" />
-                          Edit
-                        </button>
-                        <button
-                          onClick={handleUseOriginal}
-                          className="bg-gray-600/90 text-white px-3 py-2 rounded-lg hover:bg-gray-700 transition-all duration-200 flex items-center justify-center gap-1.5 font-medium shadow-sm text-xs"
-                        >
-                          <MessageSquare className="h-3 w-3" />
-                          Original
-                        </button>
-                      </div>
+                        </div>
+                        Edit Plan
+                      </button>
                     </div>
                   )}
                 </div>
@@ -539,7 +532,7 @@ const isPluginWarningMessage = useCallback((content: string) => {
     projectState.questionsSequence, 
     projectState.currentQuestionIndex, 
     projectState.isProcessingQuestion, 
-    isPluginWarningMessage, 
+    isPluginWarningMessage,
     handleOptionSelect, 
     handleCustomAnswer, 
     handleChangeAnswer,
@@ -659,7 +652,11 @@ const isPluginWarningMessage = useCallback((content: string) => {
                 ref={messagesContainerRef}
                 className="flex-1 overflow-y-auto p-3 space-y-4"
               >
-                {messages.map(renderMessage)}
+                {messages.map((message, index) => {
+                  const renderedMessage = renderMessage(message, index);
+                  // Filter out null messages (scheduling questions)
+                  return renderedMessage;
+                }).filter(Boolean)}
 
                 {isProcessing && (
                   <div className="flex gap-3 justify-start">
@@ -714,9 +711,20 @@ const isPluginWarningMessage = useCallback((content: string) => {
                   />
                 </div>
 
+                {/* Question progress counter */}
                 {projectState.questionsSequence.length > 0 && (
                   <div className="text-xs text-gray-600">
-                    Question {Math.max(0, projectState.currentQuestionIndex + 1)} of {projectState.questionsSequence.length}
+                    {(() => {
+                      const answeredCount = Object.keys(projectState.clarificationAnswers).length;
+                      const totalQuestions = projectState.questionsSequence.length;
+                      
+                      if (projectState.currentQuestionIndex === -1 || answeredCount === totalQuestions) {
+                        return `All ${totalQuestions} questions completed`;
+                      } else {
+                        const currentQuestion = Math.max(1, projectState.currentQuestionIndex + 1);
+                        return `Question ${currentQuestion} of ${totalQuestions}`;
+                      }
+                    })()}
                     {projectState.isProcessingQuestion && <span className="ml-1 text-blue-600">(processing...)</span>}
                   </div>
                 )}
@@ -896,7 +904,7 @@ const isPluginWarningMessage = useCallback((content: string) => {
               </div>
             )}
 
-            {/* Next Steps - Simplified */}
+            {/* Next Steps - Simplified, UPDATED: removed scheduling references */}
             <div className="bg-white/70 backdrop-blur-xl rounded-2xl p-4 shadow-lg border border-white/20">
               <div className="flex items-center gap-2 mb-4">
                 <div className="w-6 h-6 bg-gradient-to-br from-orange-500 to-red-500 rounded-lg flex items-center justify-center">
