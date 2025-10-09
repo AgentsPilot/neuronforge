@@ -1,7 +1,7 @@
 // components/dashboard/AgentDashboardWithVisualization.tsx
 
 import React, { useState, useCallback } from 'react'
-import AgentSandbox from './AgentSandBox/AgentSandbox'
+import AgentSandbox from './AgentSandbox'
 import StandaloneAgentVisualizer from './StandaloneAgentVisualizer'
 import { Brain, Play, BarChart3, ArrowLeft } from 'lucide-react'
 

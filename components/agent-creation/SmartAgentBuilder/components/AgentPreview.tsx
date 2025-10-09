@@ -11,7 +11,7 @@ export default function AgentPreview({
   isEditing,
   onUpdate
 }: AgentPreviewProps) {
-  const [expandedSection, setExpandedSection] = useState<string>('workflow'); // Changed to open by default
+  const [expandedSection, setExpandedSection] = useState<string | null>(null);
 
   if (!agent) return null;
 
@@ -23,14 +23,56 @@ export default function AgentPreview({
   };
 
   const formatSchedule = (cron: string) => {
-    const [min, hr] = cron.split(' ');
-    if (min === '0' && hr !== '*') {
-      const h = parseInt(hr);
-      return h < 12 ? `${h || 12}:00 AM` : `${h === 12 ? 12 : h - 12}:00 PM`;
+    const parts = cron.split(' ');
+    
+    if (parts.length >= 5) {
+      const min = parts[0];
+      const hr = parts[1];
+      const dayOfMonth = parts[2];
+      const month = parts[3];
+      const dayOfWeek = parts[4];
+      
+      // Only format if we have specific minute and hour (not wildcards)
+      if (min !== '*' && hr !== '*') {
+        const minute = parseInt(min);
+        const hour = parseInt(hr);
+        
+        // Format time in 12-hour format
+        let timeStr;
+        if (hour === 0) {
+          timeStr = `12:${minute.toString().padStart(2, '0')} AM`;
+        } else if (hour < 12) {
+          timeStr = `${hour}:${minute.toString().padStart(2, '0')} AM`;
+        } else if (hour === 12) {
+          timeStr = `12:${minute.toString().padStart(2, '0')} PM`;
+        } else {
+          timeStr = `${hour - 12}:${minute.toString().padStart(2, '0')} PM`;
+        }
+        
+        // Add frequency/day information
+        if (dayOfWeek !== '*') {
+          // Specific day of week
+          const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+          const dayName = days[parseInt(dayOfWeek)] || days[parseInt(dayOfWeek) === 7 ? 0 : parseInt(dayOfWeek)];
+          return `${dayName} ${timeStr}`;
+        } else if (dayOfMonth !== '*') {
+          // Specific day of month
+          return `${dayOfMonth}th ${timeStr}`;
+        } else if (month !== '*') {
+          // Monthly
+          return `Monthly ${timeStr}`;
+        } else {
+          // Daily
+          return `Daily ${timeStr}`;
+        }
+      }
     }
+    
+    // Fallback to showing the raw cron if we can't parse it
     return cron;
   };
 
+  // Define the missing variables
   const steps = agent.workflow_steps || [];
   const outputs = [...(agent.output_schema?.filter(o => o.category === 'human-facing') || [])];
 
@@ -105,7 +147,7 @@ export default function AgentPreview({
           <div className="flex flex-wrap gap-2">
             <div className="px-3 py-1.5 bg-gradient-to-br from-blue-50 to-blue-100 rounded-full flex items-center gap-2 border border-blue-200/50">
               <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-              <span className="text-xs font-semibold text-blue-700">{agent.plugins_required?.length || 0} Tools</span>
+              <span className="text-xs font-semibold text-blue-700">{agent.plugins_required?.length || 0} Plugins/services</span>
             </div>
             <div className="px-3 py-1.5 bg-gradient-to-br from-purple-50 to-purple-100 rounded-full flex items-center gap-2 border border-purple-200/50">
               <div className="w-1.5 h-1.5 rounded-full bg-purple-500" />
