@@ -4,6 +4,9 @@
     "version": "1.0.0",
     "description": "Send templated messages, manage customer conversations, and automate WhatsApp Business messaging",
     "context": "Use for customer communication, sending notifications, managing WhatsApp Business conversations, responding to customer messages, and integrating WhatsApp messaging workflows with agent actions. Supports template messages, interactive buttons, and real-time text messaging.",
+    "icon": "<Calendar className='w-5 h-5 text-green-600'/>",
+    "category": "communication",
+    "isPopular": false,
     "auth_config": {
       "auth_type": "oauth2",
       "client_id": "${WHATSAPP_CLIENT_ID}",

@@ -4,6 +4,9 @@
     "version": "1.0.0",
     "description": "Access, search, and read files and folders in Google Drive",
     "context": "Use for accessing Google Drive files, searching documents, reading file contents, and browsing folder structures",
+    "icon": "<Calendar className='w-5 h-5 text-blue-600'/>",
+    "category": "productivity",
+    "isPopular": true,
     "auth_config": {
       "auth_type": "oauth2_google",
       "client_id": "${GOOGLE_CLIENT_ID}",

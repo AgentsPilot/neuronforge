@@ -3,7 +3,10 @@
     "name": "google-mail",
     "version": "1.0.0",
     "description": "Send, read, and manage Gmail emails",
-    "context": "Use for all email-related tasks including sending messages, searching conversations, and managing drafts",
+    "context": "Use for all Gmail email-related tasks including sending messages, searching conversations, and managing drafts",
+    "icon": "<Calendar className='w-5 h-5 text-red-600'/>",
+    "category": "communication",
+    "isPopular": true,
     "auth_config": {
       "auth_type": "oauth2_google",
       "client_id": "${GOOGLE_CLIENT_ID}",
@@ -26,7 +29,7 @@
   "actions": {
     "send_email": {
       "description": "Compose and send an email message",
-      "usage_context": "When user wants to send a new message to specific recipients",
+      "usage_context": "When user wants to send a new message to specific recipients via Gmail",
       "parameters": {
         "type": "object",
         "required": ["recipients", "content"],
@@ -142,7 +145,7 @@
     },
     "search_emails": {
       "description": "Search for emails in the user's Gmail account",
-      "usage_context": "When user wants to find specific emails or conversations",
+      "usage_context": "When user wants to find specific emails or conversations in their Gmail",
       "parameters": {
         "type": "object",
         "required": ["query"],
@@ -200,7 +203,7 @@
     },
     "create_draft": {
       "description": "Create a draft email without sending",
-      "usage_context": "When user wants to prepare an email for later sending or review",
+      "usage_context": "When user wants to prepare an email for later sending or review via Gmail",
       "parameters": {
         "type": "object",
         "required": ["content"],

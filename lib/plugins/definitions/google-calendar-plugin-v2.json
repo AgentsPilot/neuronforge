@@ -4,6 +4,9 @@
     "version": "1.0.0",
     "description": "Manage events, meetings, and schedules in Google Calendar",
     "context": "Use for fetching calendar events, creating meetings, scheduling appointments, setting reminders, managing attendees, and organizing time-based activities for agents",
+    "icon": "<Calendar className='w-5 h-5 text-blue-500'/>",
+    "category": "communication",
+    "isPopular": true,
     "auth_config": {
       "auth_type": "oauth2_google",
       "client_id": "${GOOGLE_CLIENT_ID}",

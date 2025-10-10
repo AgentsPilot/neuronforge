@@ -4,6 +4,9 @@
     "version": "1.0.0",
     "description": "Read, write, and manage data in Google Sheets spreadsheets",
     "context": "Use for reading data from spreadsheets, writing structured output, appending rows, creating new spreadsheets, and managing spreadsheet data as structured input/output for agents",
+    "icon": "<Calendar className='w-5 h-5 text-green-600'/>",
+    "category": "productivity",
+    "isPopular": true,
     "auth_config": {
       "auth_type": "oauth2_google",
       "client_id": "${GOOGLE_CLIENT_ID}",

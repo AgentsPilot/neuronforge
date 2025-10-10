@@ -4,6 +4,9 @@
     "version": "1.0.0",
     "description": "Send messages, manage channels, upload files, and interact with your Slack workspace",
     "context": "Use for team communication, sending notifications, reading messages, managing channels, looking up users, adding reactions, uploading files, and integrating Slack workflows with agent actions",
+    "icon": "<Calendar className='w-5 h-5 text-purple-600'/>",
+    "category": "communication",
+    "isPopular": true,
     "auth_config": {
       "auth_type": "oauth2",
       "client_id": "${SLACK_CLIENT_ID}",

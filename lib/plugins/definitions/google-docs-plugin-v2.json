@@ -4,6 +4,9 @@
     "version": "1.0.0",
     "description": "Read, write, and manage content in Google Docs documents",
     "context": "Use for reading document text, inserting content, appending text, creating new documents, and managing document content as structured input/output for agents",
+    "icon": "<Calendar className='w-5 h-5 text-gray-800'/>",
+    "category": "productivity",
+    "isPopular": true,
     "auth_config": {
       "auth_type": "oauth2_google",
       "client_id": "${GOOGLE_CLIENT_ID}",

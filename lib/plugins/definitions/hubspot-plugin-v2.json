@@ -4,6 +4,9 @@
     "version": "1.0.0",
     "description": "Access HubSpot CRM data including contacts, deals, companies, and activity timelines",
     "context": "Use for retrieving contact information, viewing deal pipelines, accessing customer activity history, searching CRM records, and integrating HubSpot customer data with agent workflows",
+    "icon": "<Calendar className='w-5 h-5 text-orange-600'/>",
+    "category": "crm",
+    "isPopular": true,
     "auth_config": {
       "auth_type": "oauth2_hubspot",
       "client_id": "${HUBSPOT_CLIENT_ID}",

@@ -1,12 +1,28 @@
 // lib/types/plugin-types.ts
 
 // Core plugin definition structure (loaded from JSON files)
+export type PluginCategory = 
+  | 'communication'
+  | 'productivity'
+  | 'crm'
+  | 'marketing'
+  | 'project'
+  | 'finance'
+  | 'integration'
+  | 'ai'
+  | 'other';
+
 export interface PluginDefinition {
   plugin: {
     name: string;
+    DisplayName?: string; // Optional friendly name
+    Label?: string; // Optional label for backward compatibility
     version: string;
     description: string;
     context: string;
+    icon: React.ReactNode;
+    category?: PluginCategory;  // Optional category for grouping
+    isPopular?: boolean; // Optional flag for popular plugins    
     auth_config: PluginAuthConfig;
   };
   actions: Record<string, ActionDefinition>;
@@ -126,21 +142,6 @@ export interface UserPluginStatus {
     total_available: number;
   };
 }
-
-
-// export interface UserPluginStatus {
-//   connected: PluginInfo[];
-//   disconnected: (PluginInfo & {
-//     status: string;
-//     reason: string;
-//     auth_url: string;
-//   })[];
-//   summary: {
-//     connected_count: number;
-//     disconnected_count: number;
-//     total_available: number;
-//   };
-// }
 
 // LLM context structure
 export interface LLMContext {

@@ -379,6 +379,13 @@ export class PluginManagerV2 {
     return action?.output_guidance;
   }
 
+  // Get plugin Display Name by name
+  getPluginDisplayName(pluginName: string): string {
+    if (this.debug) console.log(`DEBUG: Getting plugin display name for ${pluginName}`);
+    const plugin = this.getPluginDefinition(pluginName);
+    return plugin?.plugin.DisplayName || plugin?.plugin.Label || pluginName;
+  }
+
   // Private helper methods
 
   // Validate plugin definition structure
