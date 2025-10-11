@@ -242,6 +242,15 @@ export const pluginList: PluginDefinition[] = [
     isPopular: true,
   },
   {
+    pluginKey: 'google-docs',
+    name: 'Google Docs',
+    description: 'Create, read, and edit documents with collaborative real-time editing and formatting tools',
+    detailedDescription: 'Word processing application for creating and editing text documents. Supports formatting, inserting images and tables, tracking changes, comments, collaborative editing in real time, and exporting in multiple formats (PDF, DOCX, etc.). Ideal for drafting, reviewing, and sharing written content.',
+    icon: <FileText className="w-5 h-5 text-gray-800" />,
+    category: 'productivity',
+    isPopular: true,
+  },
+  {
     pluginKey: 'airtable',
     name: 'Airtable',
     description: 'Read/write records, filter and query views, use structured data for workflows and dashboards',
