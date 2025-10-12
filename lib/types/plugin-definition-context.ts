@@ -1,26 +1,68 @@
 // lib/types/plugin-definition-context.ts
 
-import { PluginDefinition, ActionDefinition } from './plugin-types';
+import { PluginDefinition, ActionDefinition, IPluginDefinitionContext, InputTemplate, OutputTemplate } from './plugin-types';
 
 /**
  * Wrapper class for PluginDefinition that provides context helper methods
  * for LLM interactions and context generation.
  */
-export class PluginDefinitionContext {
-  private definition: PluginDefinition;
+export class PluginDefinitionContext implements IPluginDefinitionContext {
+  // Properties from IPluginDefinitionContext
+  key: string;
+  label: string;
+  displayName: string;
+  icon?: string;
+  category: string;
+  capabilities: string[];
+  usage: ('input' | 'output' | 'both')[];
+  requiresMapping: boolean;
+  inputTemplates?: { [capability: string]: InputTemplate[] };
+  outputTemplates?: { [capability: string]: OutputTemplate };
+
+  // Properties from PluginDefinition
+  plugin: PluginDefinition['plugin'];
+  actions: Record<string, ActionDefinition>;
 
   constructor(definition: PluginDefinition) {
-    this.definition = definition;
+    // Assign PluginDefinition properties
+    this.plugin = definition.plugin;
+    this.actions = definition.actions;
+
+    // Assign context properties
+    this.key = definition.plugin.name;
+    this.label = definition.plugin.label || definition.plugin.name;
+    this.displayName = definition.plugin.displayName || definition.plugin.name;
+    this.icon = definition.plugin.icon as string || '';
+    this.category = definition.plugin.category;
+
+    this.capabilities = this.getActionNames(); // Default to all action names
+    this.usage = ["both"]; // Default to 'both' if not specified
+    this.requiresMapping = false;
+    
+    this.inputTemplates = undefined;  // TO FIX
+    this.outputTemplates = undefined; // TO FIX
   }
 
   /**
-   * Get the plugin's display name (prioritizing DisplayName > Label > name)
+   * convert PluginDefinition action to InputTemplate format
+   */
+  // private convertActionToInputTemplate(action: ActionDefinition): InputTemplate {
+  //   const inputTemplate: InputTemplate = {
+  //     name: action.name,
+  //     type: 'object', // Assuming action parameters are objects
+  //   }
+
+  //   return inputTemplate
+  // }  
+
+  /**
+   * Get the plugin's display name (prioritizing displayName > Label > name)
    */
   getDisplayName(): string {
     return (
-      this.definition.plugin.DisplayName ||
-      this.definition.plugin.Label ||
-      this.definition.plugin.name
+      this.plugin.displayName ||
+      this.plugin.label ||
+      this.plugin.name
     );
   }
 
@@ -28,56 +70,59 @@ export class PluginDefinitionContext {
    * Get the plugin's internal name
    */
   getName(): string {
-    return this.definition.plugin.name;
+    return this.plugin.name;
   }
 
   /**
    * Get the plugin's description
    */
   getDescription(): string {
-    return this.definition.plugin.description;
+    return this.plugin.description;
   }
 
   /**
    * Get the plugin's context information
    */
   getContext(): string {
-    return this.definition.plugin.context;
+    return this.plugin.context;
   }
 
   /**
    * Get the plugin's Category information (default to 'other' if not set)
    */
   getCategory(): string {
-    return this.definition.plugin.category || 'other';
+    return this.plugin.category || 'other';
   }
 
   /**
    * Get all action names available in this plugin
    */
   getActionNames(): string[] {
-    return Object.keys(this.definition.actions);
+    return Object.keys(this.actions);
   }
 
   /**
    * Get a specific action definition by name
    */
   getActionDefinition(actionName: string): ActionDefinition | undefined {
-    return this.definition.actions[actionName];
+    return this.actions[actionName];
   }
 
   /**
    * Get the raw plugin definition
    */
   getRawDefinition(): PluginDefinition {
-    return this.definition;
+    return {
+      plugin: this.plugin,
+      actions: this.actions
+    };
   }
 
   /**
    * Check if a specific action contains a keyword in its description or usage_context
    */
   isActionIncludeKeyword(actionName: string, keyword: string): boolean {
-    const action = this.definition.actions[actionName];
+    const action = this.actions[actionName];
     if (!action) return false;
 
     const searchText = `${actionName} ${action.description} ${action.usage_context}`.toLowerCase();
@@ -88,7 +133,7 @@ export class PluginDefinitionContext {
    * Check if a specific action contains a keyword in its description or usage_context
    */
   someActionsIncludeKeyword(keyword: string): boolean {
-    return Object.keys(this.definition.actions).some((actionName) =>
+    return Object.keys(this.actions).some((actionName) =>
       this.isActionIncludeKeyword(actionName, keyword));
   }
 
@@ -97,7 +142,7 @@ export class PluginDefinitionContext {
    * Returns an array of action names that match the keyword
    */
   filterActionsByKeyword(keyword: string): string[] {
-    return Object.keys(this.definition.actions).filter((actionName) =>
+    return Object.keys(this.actions).filter((actionName) =>
       this.isActionIncludeKeyword(actionName, keyword)
     );
   }
@@ -122,7 +167,7 @@ export class PluginDefinitionContext {
       parameters: any;
     }> = {};
 
-    Object.entries(this.definition.actions).forEach(([actionName, actionDef]) => {
+    Object.entries(this.actions).forEach(([actionName, actionDef]) => {
       actions[actionName] = {
         description: actionDef.description,
         usage_context: actionDef.usage_context,
@@ -131,9 +176,9 @@ export class PluginDefinitionContext {
     });
 
     return {
-      name: this.definition.plugin.name,
-      description: this.definition.plugin.description,
-      context: this.definition.plugin.context,
+      name: this.plugin.name,
+      description: this.plugin.description,
+      context: this.plugin.context,
       actions,
     };
   }
@@ -143,13 +188,13 @@ export class PluginDefinitionContext {
    * Returns plugin basic information and actions names formatted for LLM consumption
    */
   toShortLLMContext(): {
-    name: string;    
+    name: string;
     context: string;
     key_actions: string[];
-  } {    
+  } {
     return {
-      name: this.definition.plugin.name,      
-      context: this.definition.plugin.context,
+      name: this.plugin.name,
+      context: this.plugin.context,
       key_actions: this.getActionNames(),
     };
   }

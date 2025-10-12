@@ -2,6 +2,7 @@
 
 import { UserPluginConnections } from './user-plugin-connections';
 import { PluginDefinition, ActionDefinition, ValidationResult, RuleDefinition, ActionablePlugin, UserConnection, ActionRuleDefinition } from '@/lib/types/plugin-types'
+import { PluginDefinitionContext } from '@/lib/types/plugin-definition-context'
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -363,7 +364,7 @@ export class PluginManagerV2 {
     return this.plugins.get(pluginName);
   }
 
-  // Get action definition
+    // Get action definition
   getActionDefinition(pluginName: string, actionName: string): ActionDefinition | undefined {
     if (this.debug) console.log(`DEBUG: Getting action definition for ${pluginName}.${actionName}`);
     
@@ -379,11 +380,28 @@ export class PluginManagerV2 {
     return action?.output_guidance;
   }
 
+  // Convert connected plugins to PluginDefinitionContext array
+  convertToPluginDefinitionContext(connectedPlugins: Record<string, ActionablePlugin>): PluginDefinitionContext[] {    
+    return Object.values(connectedPlugins).map(p => new PluginDefinitionContext(p.definition));
+  }
+
+  // Get multiple plugin definition by name
+  getPluginsDefinitionContext(plugins: string[]): PluginDefinitionContext[] {    
+    const pluginsDefs: PluginDefinitionContext[] = [];
+    for (const name of plugins) {
+      const def = this.getPluginDefinition(name);
+      if (def) {
+        pluginsDefs.push(new PluginDefinitionContext(def));
+      }  
+    }
+    return pluginsDefs;
+  }
+
   // Get plugin Display Name by name
   getPluginDisplayName(pluginName: string): string {
     if (this.debug) console.log(`DEBUG: Getting plugin display name for ${pluginName}`);
     const plugin = this.getPluginDefinition(pluginName);
-    return plugin?.plugin.DisplayName || plugin?.plugin.Label || pluginName;
+    return plugin?.plugin.displayName || plugin?.plugin.label || pluginName;
   }
 
   // Private helper methods

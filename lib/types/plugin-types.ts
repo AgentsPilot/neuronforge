@@ -12,20 +12,59 @@ export type PluginCategory =
   | 'ai'
   | 'other';
 
+// Input template types (from pluginRegistry.ts)
+export interface InputTemplate {
+  name: string;
+  type: string;
+  required: boolean;
+  placeholder?: string;
+  description: string;
+  enum?: string[];
+  runtime_populated?: boolean;
+  sandboxFetch?: string;
+  dependsOn?: string;
+}
+
+export interface OutputTemplate {
+  type: string;
+  description: string;
+  schema?: Record<string, any>;
+}
+
 export interface PluginDefinition {
   plugin: {
     name: string;
-    DisplayName?: string; // Optional friendly name
-    Label?: string; // Optional label for backward compatibility
+    displayName?: string; // Optional friendly name
+    label?: string; // Optional label for backward compatibility
     version: string;
     description: string;
     context: string;
-    icon: React.ReactNode;
-    category?: PluginCategory;  // Optional category for grouping
-    isPopular?: boolean; // Optional flag for popular plugins    
+    icon?: React.ReactNode;
+    category: PluginCategory;  // Optional category for grouping
+    isPopular?: boolean; // Optional flag for popular plugins
     auth_config: PluginAuthConfig;
   };
   actions: Record<string, ActionDefinition>;
+}
+
+// Extended plugin definition that includes fields from pluginRegistry.ts
+export interface IPluginDefinitionContext extends PluginDefinition {
+  key: string;
+  label: string;
+  displayName: string;
+  icon?: string;
+  category: string;
+  capabilities: string[];
+  usage: ('input' | 'output' | 'both')[];
+  requiresMapping: boolean;
+
+  // Input/Output templates for agent generation
+  inputTemplates?: {
+    [capability: string]: InputTemplate[];
+  };
+  outputTemplates?: {
+    [capability: string]: OutputTemplate;
+  };
 }
 
 // Core plugin definition structure and user connection details in a single object
@@ -163,6 +202,11 @@ export interface LLMContext {
     auth_url: string;
     message: string;
   }>;
+  summary: {
+    connected_count: number;
+    disconnected_count: number;
+    total_available: number;
+  };
 }
 
 // Plugin action execution result
