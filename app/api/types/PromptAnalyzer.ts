@@ -35,6 +35,12 @@ export interface PromptAnalyzerServicesCheck {
   missingServices: string[]
 }
 
+export interface PromptAnalyzerServicesWarning {
+  hasWarning?: boolean
+  missingServices: string[]
+  message: string
+}
+
 /**
  * PromptAnalyzer - A helper class for analyzing and understanding user prompts
  * Provides methods to extract requirements, detect services, and generate clarification questions
@@ -93,8 +99,8 @@ export class PromptAnalyzer {
    * Analyze all requirements from the prompt
    */
   analyzeRequirements(clarityScore: number, serviceNames: string[] = []): PromptAnalyzerRequirementsAnalysis {
-    console.log('🔍 Analyzing requirements for prompt:', this.prompt.slice(0, 100))
-    console.log('🔍 Connected plugins for analysis:', serviceNames)
+    console.log('🔍 PromptAnalyzer: Analyzing requirements for prompt:', this.prompt.slice(0, 100))
+    console.log('🔍 PromptAnalyzer: Connected plugins for analysis:', serviceNames)
 
     const analysis: PromptAnalyzerRequirementsAnalysis = {
       data: this.analyzeDataRequirement(),
@@ -105,7 +111,7 @@ export class PromptAnalyzer {
       error_handling: this.analyzeErrorHandlingRequirement()
     }
 
-    console.log('✅ Requirements analysis completed:', analysis)
+    console.log('✅ PromptAnalyzer: Requirements analysis completed:', analysis)
     return analysis
   }
 
@@ -314,6 +320,14 @@ export class PromptAnalyzer {
   }
 
   /**
+   * Check if prompt already has timing specified
+   */
+  hasErrorHandlingInPrompt(specificKetwords?: string[]): boolean {
+    const errorHandlingKeywords = ['error','fail','retry','notify', 'issue', 'problem', 'retry', 'try again', ...specificKetwords?specificKetwords:[]];
+    return this.containsAny(errorHandlingKeywords);
+  }
+
+  /**
    * Generate context-aware scheduling questions based on prompt and plugin capabilities
    * @param hasEmailCapabilities - Whether connected plugins have email capabilities
    * @param hasFileCapabilities - Whether connected plugins have file capabilities
@@ -321,7 +335,7 @@ export class PromptAnalyzer {
   generateSchedulingQuestions(hasEmailCapabilities: boolean, hasFileCapabilities: boolean): PromptAnalyzerSchedulingQuestion[] {
     // Check if user already specified timing in prompt
     if (this.hasTimingInPrompt()) {
-      console.log('Timing already specified in prompt, skipping scheduling questions')
+      console.log('PromptAnalyzer: Timing already specified in prompt, skipping scheduling questions')
       return []
     }
 
@@ -397,7 +411,7 @@ export class PromptAnalyzer {
   ): PromptAnalyzerServicesCheck {    
     const mentionedServices: string[] = []
 
-    console.log('🔍checkMentionedServices - Connected Services:', connectedServices)
+    console.log('🔍PromptAnalyzer: checkMentionedServices - Connected Services:', connectedServices)
 
     // Check against available Services
     for (const serviceName of availableServices) {      
@@ -410,7 +424,7 @@ export class PromptAnalyzer {
       ]
 
       const isDetected = keyVariations.some(variation =>
-        this.getPromptLower().includes(variation)
+        this.promptLower.includes(variation)
       )
 
       if (isDetected && !mentionedServices.includes(serviceName)) {
@@ -421,21 +435,21 @@ export class PromptAnalyzer {
     // Check for commonly mentioned services if provided
     if (commonServices) {
       for (const [serviceKey, keywords] of Object.entries(commonServices)) {
-        const isDetected = keywords.some(keyword => this.getPromptLower().includes(keyword))
+        const isDetected = keywords.some(keyword => this.promptLower.includes(keyword))
         if (isDetected && !mentionedServices.includes(serviceKey)) {
           mentionedServices.push(serviceKey)
         }
       }
     }
 
-    console.log('🔍checkMentionedServices -  Detected mentioned services:', mentionedServices)
+    console.log('🔍PromptAnalyzer: checkMentionedServices -  Detected mentioned services:', mentionedServices)
 
     // Find missing services - services mentioned but not connected
     const missingServices = mentionedServices.filter(service =>
       !connectedServices.includes(service)
     )
 
-    console.log('🔍checkMentionedServices -  Missing services:', missingServices)
+    console.log('🔍PromptAnalyzer: checkMentionedServices -  Missing services:', missingServices)
 
     return { mentionedServices, missingServices }
   }
@@ -448,18 +462,18 @@ export class PromptAnalyzer {
    */
   validateConsistency(result: any, hasEmailCapabilities: boolean, hasFileCapabilities: boolean): any {
     const scheduleQuestions = this.generateSchedulingQuestions(hasEmailCapabilities, hasFileCapabilities)
-    console.log(`Generated ${scheduleQuestions.length} scheduling questions for consistency check`)
+    console.log(`PromptAnalyzer: Generated ${scheduleQuestions.length} scheduling questions for consistency check`)
 
     if (scheduleQuestions.length > 0) {
       result.questionsSequence = [...(result.questionsSequence || []), ...scheduleQuestions]
-      console.log(`Added ${scheduleQuestions.length} scheduling questions. Total questions: ${result.questionsSequence.length}`)
+      console.log(`PromptAnalyzer: Added ${scheduleQuestions.length} scheduling questions. Total questions: ${result.questionsSequence.length}`)
     }
 
     const finalQuestionCount = result.questionsSequence?.length || 0
 
     // Adjust clarity score if it doesn't match question count
     if (result.clarityScore > 75 && finalQuestionCount > 2) {
-      console.log('Adjusting clarity score due to high question count')
+      console.log('PromptAnalyzer: Adjusting clarity score due to high question count')
       result.clarityScore = Math.max(55, result.clarityScore - (finalQuestionCount * 10))
     }
 
@@ -467,5 +481,36 @@ export class PromptAnalyzer {
     result.needsClarification = finalQuestionCount > 0 || result.clarityScore < 65
 
     return result
+  }
+
+  /**
+   * Validates if user mentioned missing services and generates a warning
+   * @param connectedServices - Array of connected plugin keys
+   * @param availableServices - Map of {pluginKey: pluginName} for all available plugins
+   * @param commonServices - Optional map of {serviceKey: keywords[]} for additional services to check
+   */
+  generateWarningIfMenthodMissingServices(    
+    connectedServices: string[],
+    availableServices: string[],
+    commonServices?: Record<string, string[]>
+  ): PromptAnalyzerServicesWarning {
+    const { mentionedServices, missingServices } = this.checkMentionedServices(connectedServices, availableServices, commonServices);
+    let pluginWarning: PromptAnalyzerServicesWarning = { hasWarning: false, missingServices: [], message: '' };
+
+    if (missingServices.length > 0) {
+      console.log('⚠️ PromptAnalyzer: User mentioned unconnected services:', missingServices)
+      
+      // TO REMOVE
+      //const missingDisplayNames = missingServices.map(service => pluginManager.getPluginDisplayName(service));
+      //const missingDisplayNames = missingServices;
+      
+      const pluginWarning: PromptAnalyzerServicesWarning = {
+        hasWarning: true,
+        missingServices: missingServices,
+        message: `Note: Your request mentions ${missingServices.join(', ')} but ${missingServices.length === 1 ? 'this service isn\'t' : 'these services aren\'t'} connected. Questions will focus on connected services only.`
+      }
+      console.log('✅ Plugin warning created:', pluginWarning.message)
+    }
+    return pluginWarning;
   }
 }
