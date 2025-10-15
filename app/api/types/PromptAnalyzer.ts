@@ -499,11 +499,7 @@ export class PromptAnalyzer {
 
     if (missingServices.length > 0) {
       console.log('⚠️ PromptAnalyzer: User mentioned unconnected services:', missingServices)
-      
-      // TO REMOVE
-      //const missingDisplayNames = missingServices.map(service => pluginManager.getPluginDisplayName(service));
-      //const missingDisplayNames = missingServices;
-      
+            
       const pluginWarning: PromptAnalyzerServicesWarning = {
         hasWarning: true,
         missingServices: missingServices,

@@ -2,6 +2,14 @@
 
 import { PluginDefinition, ActionDefinition, IPluginDefinitionContext, InputTemplate, OutputTemplate } from './plugin-types';
 
+export interface IShortPluginContext {
+  name: string;
+  key: string;
+  context: string;
+  key_actions: string[];
+  capabilities: string[];
+}
+
 /**
  * Wrapper class for PluginDefinition that provides context helper methods
  * for LLM interactions and context generation.
@@ -153,6 +161,7 @@ export class PluginDefinitionContext implements IPluginDefinitionContext {
    */
   toLongLLMContext(): {
     name: string;
+    key: string;
     description: string;
     context: string;
     actions: Record<string, {
@@ -177,6 +186,7 @@ export class PluginDefinitionContext implements IPluginDefinitionContext {
 
     return {
       name: this.plugin.name,
+      key: this.key,
       description: this.plugin.description,
       context: this.plugin.context,
       actions,
@@ -187,15 +197,13 @@ export class PluginDefinitionContext implements IPluginDefinitionContext {
    * Generate LLM context structure similar to LLMContext interface, but shorter
    * Returns plugin basic information and actions names formatted for LLM consumption
    */
-  toShortLLMContext(): {
-    name: string;
-    context: string;
-    key_actions: string[];
-  } {
+  toShortLLMContext(): IShortPluginContext {
     return {
       name: this.plugin.name,
+      key: this.key,
       context: this.plugin.context,
       key_actions: this.getActionNames(),
+      capabilities: this.capabilities,
     };
   }
 }
