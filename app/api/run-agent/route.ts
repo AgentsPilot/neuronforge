@@ -137,16 +137,14 @@ export async function POST(req: Request) {
         )
       }
 
-      // Add job to queue
-      const jobId = await addAgentJob({
-        agent_id: agent.id,
-        user_id: executionUserId,
-        execution_id: execution.id,
-        execution_type: 'manual',
-        scheduled_at: scheduledAt,
-        cron_expression: agent.schedule_cron,
-        timezone: agent.timezone || 'UTC',
-      })
+      // Add job to queue - FIXED: Use correct function name and parameters
+      const { jobId, executionId } = await addManualExecution(
+        agent.id,          // agentId
+        executionUserId,   // userId  
+        execution.id,      // executionId
+        input_variables,   // inputVariables
+        override_user_prompt // overrideUserPrompt
+      )
 
       console.log(`✅ Queued manual execution for agent ${agent.agent_name}`, {
         agentId: agent.id,

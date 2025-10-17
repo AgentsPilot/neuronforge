@@ -4,7 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabaseClient';
-import { addAgentJob } from '@/lib/queues/agentQueue';
+import { addManualExecution } from '@/lib/queues/agentQueue'; // FIXED: Use correct function
 import parser from 'cron-parser';
 
 /**
@@ -63,7 +63,8 @@ function calculateNextRun(cronExpression: string, timezone: string = 'UTC'): Dat
  */
 export async function GET(request: NextRequest) {
   const startTime = Date.now();
-  
+  console.log('🕐 Scheduler called at:', new Date().toISOString());
+  console.log('🔍 Request headers:', Object.fromEntries(request.headers.entries()));
   try {
     console.log('🕐 Starting scheduled agent scan...');
     
@@ -160,16 +161,14 @@ export async function GET(request: NextRequest) {
             throw new Error(`Failed to create execution record: ${executionError?.message}`);
           }
 
-          // Add job to queue
-          const jobId = await addAgentJob({
-            agent_id: agent.id,
-            user_id: agent.user_id,
-            execution_id: execution.id,
-            execution_type: 'scheduled',
-            scheduled_at: scheduledAt,
-            cron_expression: agent.schedule_cron,
-            timezone: agent.timezone || 'UTC',
-          });
+          // FIXED: Add job to queue using correct function and parameters
+          const { jobId } = await addManualExecution(
+            agent.id,           // agentId
+            agent.user_id,      // userId
+            execution.id,       // executionId
+            {},                 // inputVariables (empty for scheduled runs)
+            undefined           // overrideUserPrompt
+          );
 
           // Update agent's next_run for efficient future queries
           const nextRun = calculateNextRun(agent.schedule_cron, agent.timezone || 'UTC');
