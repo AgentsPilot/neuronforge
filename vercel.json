@@ -9,18 +9,6 @@
       "maxDuration": 30
     }
   },
-  "routes": [
-    {
-      "src": "/api/run-agent",
-      "methods": ["POST", "GET"],
-      "dest": "app/api/run-agent/route.ts"
-    },
-    {
-      "src": "/api/run-scheduled-agents",
-      "methods": ["GET"],
-      "dest": "app/api/run-scheduled-agents/route.ts"
-    }
-  ],
   "crons": [
     {
       "path": "/api/run-scheduled-agents",
