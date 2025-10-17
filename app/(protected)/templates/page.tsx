@@ -298,22 +298,22 @@ export default function AgentTemplates() {
     const ModeIcon = getModeIcon(agent.mode || 'on_demand')
 
     return (
-      <div className="group relative bg-white rounded-xl border border-gray-200/60 hover:border-gray-300/60 shadow-sm hover:shadow-lg transition-all duration-300 overflow-hidden">
+      <div className="group relative bg-white rounded-xl border border-gray-200 hover:border-gray-300 shadow-sm hover:shadow-md transition-all duration-300 overflow-hidden">
         {/* Header */}
         <div className="p-5">
           {/* Top section with icon and import button */}
           <div className="flex items-start justify-between mb-3">
             <div className="relative flex-shrink-0">
-              <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 rounded-xl flex items-center justify-center shadow-lg">
+              <div className="w-12 h-12 rounded-xl flex items-center justify-center">
                 <Share2 className="h-6 w-6 text-white" />
               </div>
-              <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-blue-500 rounded-full border-2 border-white shadow-sm" />
+              <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-blue-500 rounded-full border-2 border-white" />
             </div>
             
             <button
               onClick={() => handleImportAgent(agent)}
               disabled={importingAgents.has(agent.id)}
-              className="flex items-center gap-2 px-3 py-2 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium rounded-lg transition-all duration-200 shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 px-3 py-2 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {importingAgents.has(agent.id) ? (
                 <>
@@ -405,14 +405,14 @@ export default function AgentTemplates() {
     const ModeIcon = getModeIcon(agent.mode || 'on_demand')
 
     return (
-      <div className="group bg-white rounded-lg border border-gray-200/60 hover:border-gray-300/60 shadow-sm hover:shadow-md transition-all duration-200 p-3">
+      <div className="group bg-white rounded-lg border border-gray-200 hover:border-gray-300 shadow-sm hover:shadow-md transition-all duration-200 p-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3 flex-1 min-w-0">
             <div className="relative">
-              <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 rounded-lg flex items-center justify-center shadow-md">
+              <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 rounded-lg flex items-center justify-center">
                 <Share2 className="h-4 w-4 text-white" />
               </div>
-              <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-blue-500 rounded-full border border-white shadow-sm" />
+              <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-blue-500 rounded-full border border-white" />
             </div>
             
             <div className="flex-1 min-w-0">
@@ -474,11 +474,11 @@ export default function AgentTemplates() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
+      <div className="min-h-screen">
         <div className="max-w-7xl mx-auto p-4">
           <div className="flex items-center justify-center py-32">
             <div className="text-center">
-              <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 rounded-2xl flex items-center justify-center mx-auto shadow-xl mb-6">
+              <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 rounded-2xl flex items-center justify-center mx-auto mb-6">
                 <Share2 className="h-8 w-8 text-white animate-pulse" />
               </div>
               <h3 className="text-xl font-bold text-gray-900 mb-2">Loading templates...</h3>
@@ -491,11 +491,11 @@ export default function AgentTemplates() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
+    <div className="min-h-screen">
       <div className="max-w-7xl mx-auto p-4 space-y-5">
       {/* Header */}
       <div className="text-center space-y-3">
-        <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl shadow-xl mb-4">
+        <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl mb-4">
           <Share2 className="h-8 w-8 text-white" />
         </div>
         <h1 className="text-3xl font-bold text-gray-900">
@@ -506,7 +506,7 @@ export default function AgentTemplates() {
 
       {/* Status Messages */}
       {importStatus && (
-        <div className={`relative overflow-hidden p-4 rounded-2xl border-l-4 shadow-lg ${
+        <div className={`relative overflow-hidden p-4 rounded-2xl border-l-4 ${
           importStatus.type === 'success' 
             ? 'bg-green-50 border-green-400 text-green-800' 
             : 'bg-red-50 border-red-400 text-red-800'
@@ -533,7 +533,7 @@ export default function AgentTemplates() {
       )}
 
       {/* Controls */}
-      <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg p-5">
+      <div className="bg-white rounded-2xl border border-gray-200 p-5">
         <div className="space-y-4">
           
           {/* First Row: Search Bar and View Toggle */}
@@ -545,7 +545,7 @@ export default function AgentTemplates() {
                 placeholder="Search templates..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-12 pr-4 py-3 border border-gray-200 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white/80 backdrop-blur-sm transition-all"
+                className="w-full pl-12 pr-4 py-3 border border-gray-200 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white transition-all"
               />
             </div>
 
@@ -555,7 +555,7 @@ export default function AgentTemplates() {
                 onClick={() => setViewType('grid')}
                 className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
                   viewType === 'grid'
-                    ? 'bg-white text-blue-600 shadow-md'
+                    ? 'bg-white text-blue-600 shadow-sm'
                     : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
                 }`}
               >
@@ -566,7 +566,7 @@ export default function AgentTemplates() {
                 onClick={() => setViewType('list')}
                 className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
                   viewType === 'list'
-                    ? 'bg-white text-blue-600 shadow-md'
+                    ? 'bg-white text-blue-600 shadow-sm'
                     : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
                 }`}
               >
@@ -587,7 +587,7 @@ export default function AgentTemplates() {
                   onClick={() => setCategoryFilter(filter.value as FilterType)}
                   className={`px-3 py-2 rounded-lg text-sm font-semibold transition-all duration-200 flex items-center gap-2 ${
                     categoryFilter === filter.value
-                      ? 'bg-white text-blue-600 shadow-md'
+                      ? 'bg-white text-blue-600 shadow-sm'
                       : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
                   }`}
                 >
@@ -611,7 +611,7 @@ export default function AgentTemplates() {
                   onClick={() => setSortBy(option.value as SortType)}
                   className={`px-3 py-2 rounded-lg text-sm font-semibold transition-all duration-200 flex items-center gap-2 ${
                     sortBy === option.value
-                      ? 'bg-white text-blue-600 shadow-md'
+                      ? 'bg-white text-blue-600 shadow-sm'
                       : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
                   }`}
                 >
@@ -631,7 +631,7 @@ export default function AgentTemplates() {
                   onClick={() => setSelectedCategory('all')}
                   className={`px-3 py-2 rounded-lg text-sm font-semibold transition-all duration-200 whitespace-nowrap ${
                     selectedCategory === 'all'
-                      ? 'bg-white text-blue-600 shadow-md'
+                      ? 'bg-white text-blue-600 shadow-sm'
                       : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
                   }`}
                 >
@@ -643,7 +643,7 @@ export default function AgentTemplates() {
                     onClick={() => setSelectedCategory(category)}
                     className={`px-3 py-2 rounded-lg text-sm font-semibold transition-all duration-200 whitespace-nowrap ${
                       selectedCategory === category
-                        ? 'bg-white text-blue-600 shadow-md'
+                        ? 'bg-white text-blue-600 shadow-sm'
                         : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
                     }`}
                   >
@@ -661,15 +661,15 @@ export default function AgentTemplates() {
 
       {/* Results Info */}
       <div className="text-center">
-        <p className="text-sm text-gray-600 bg-white/60 backdrop-blur-sm rounded-full px-3 py-1.5 inline-block border border-gray-200/50">
+        <p className="text-sm text-gray-600 bg-white rounded-full px-3 py-1.5 inline-block border border-gray-200">
           Showing {filteredAndSortedAgents.length} of {sharedAgents.length} templates
         </p>
       </div>
 
       {/* Template List */}
       {filteredAndSortedAgents.length === 0 ? (
-        <div className="text-center py-16 bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg">
-          <div className="w-20 h-20 bg-gradient-to-br from-gray-400 to-gray-500 rounded-xl flex items-center justify-center mx-auto shadow-xl mb-6">
+        <div className="text-center py-16 bg-white rounded-2xl border border-gray-200">
+          <div className="w-20 h-20 bg-gradient-to-br from-gray-400 to-gray-500 rounded-xl flex items-center justify-center mx-auto mb-6">
             <Share2 className="h-10 w-10 text-white" />
           </div>
           <h3 className="text-2xl font-bold text-gray-900 mb-3">
@@ -682,7 +682,7 @@ export default function AgentTemplates() {
           </p>
           <Link
             href="/agents"
-            className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-all shadow-lg"
+            className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-all"
           >
             <Bot className="h-5 w-5" />
             View My Assistants

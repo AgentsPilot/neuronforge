@@ -234,10 +234,10 @@ export function useAgentSandbox({
         return
       }
 
-      // If no agent data found, try agent_executions for historical data
+      // If no agent data found, try agent_configurations for historical data
       console.log('No agent data found, checking executions table')
       const { data: executionData, error: executionError } = await supabase
-        .from('agent_executions')
+        .from('agent_configurations')
         .select('input_schema')
         .eq('agent_id', agentId)
         .not('input_schema', 'is', null)
@@ -249,7 +249,7 @@ export function useAgentSandbox({
         console.log('Error loading execution schema (this is OK if table doesn\'t exist):', executionError)
         setDbInputSchema([])
       } else if (executionData && executionData.input_schema !== null && executionData.input_schema !== undefined) {
-        console.log('Found input_schema in agent_executions')
+        console.log('Found input_schema in agent_configurations')
         if (Array.isArray(executionData.input_schema)) {
           const executionSchema = executionData.input_schema
           if (executionSchema.length === 0) {
@@ -340,11 +340,10 @@ export function useAgentSandbox({
         
         // FIXED: Use maybeSingle() to avoid errors when no records exist
         const { data, error } = await supabase
-          .from('agent_executions') // FIXED: Use correct table name (plural)
+          .from('agent_configurations') // FIXED: Use correct table name (plural)
           .select('input_values, status')
           .eq('agent_id', agentId)
           .eq('user_id', user.id)
-          .eq('status', 'configured')
           .order('created_at', { ascending: false })
           .limit(1)
           .maybeSingle() // This won't throw errors when no records exist
@@ -867,7 +866,7 @@ export function useAgentSandbox({
           const configId = `config_${agentId}_${user?.id}`
           
           const { error } = await supabase
-            .from('agent_executions')
+            .from('agent_configurations')
             .upsert({
               id: configId,
               agent_id: agentId,

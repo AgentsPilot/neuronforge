@@ -385,7 +385,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     console.log(`Starting execution tracking for: ${executionId}`)
     
     const { error: execError } = await supabase
-      .from('agent_executions')
+      .from('agent_configurations')
       .insert({
         id: executionId,
         agent_id: agentId,
@@ -448,7 +448,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           })
         }
 
-        await supabase.from('agent_executions').update({
+        await supabase.from('agent_configurations').update({
           status: 'completed',
           duration_ms: Date.now() - startTime,
           completed_at: new Date().toISOString()
@@ -661,7 +661,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       console.error('Failed to insert completion log:', completeLogError)
     }
 
-    const { error: updateError } = await supabase.from('agent_executions').update({
+    const { error: updateError } = await supabase.from('agent_configurations').update({
       status: overallSuccess ? (failedSteps > 0 ? 'partial' : 'completed') : 'failed',
       duration_ms: executionDuration,
       completed_at: new Date().toISOString()
@@ -818,7 +818,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           phase: 'workflow'
         })
 
-        await supabase.from('agent_executions').update({
+        await supabase.from('agent_configurations').update({
           status: 'failed',
           completed_at: new Date().toISOString()
         }).eq('id', executionId)

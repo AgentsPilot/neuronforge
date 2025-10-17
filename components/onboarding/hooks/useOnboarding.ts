@@ -21,9 +21,11 @@ export interface Plugin {
 }
 
 export type UserRole = 'admin' | 'user' | 'viewer';
+export type UserDomain = 'sales' | 'marketing' | 'operations' | 'engineering' | 'executive' | 'other';
 
 export interface OnboardingData {
   profile: ProfileData;
+  domain: UserDomain; // Add domain field
   plugins: Plugin[];
   role: UserRole;
 }
@@ -36,7 +38,7 @@ export interface OnboardingState {
   isInitialized: boolean;
 }
 
-const TOTAL_STEPS = 3;
+const TOTAL_STEPS = 4; // Updated from 3 to 4 steps
 
 const initialState: OnboardingState = {
   currentStep: 0,
@@ -48,6 +50,7 @@ const initialState: OnboardingState = {
       jobTitle: '',
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     },
+    domain: 'other', // Add domain to initial state
     plugins: [
       { id: 'slack', name: 'Slack', description: 'Connect your Slack workspace', enabled: false },
       { id: 'google-mail', name: 'Gmail', description: 'Connect your Gmail account', enabled: false },
@@ -73,13 +76,27 @@ export const useOnboarding = () => {
       const { data: { user } } = await supabase.auth.getUser();
       
       if (user) {
-        const { data: profile, error } = await supabase
+        // Try to fetch profile with domain and role columns
+        let { data: profile, error } = await supabase
           .from('profiles')
-          .select('full_name')
+          .select('full_name, domain, role')
           .eq('id', user.id)
           .single();
         
-        if (error) {
+        // If domain column doesn't exist, fall back to full_name and role only
+        if (error && error.code === '42703') {
+          console.log('Domain column not found, falling back to full_name and role only');
+          const { data: fallbackProfile, error: fallbackError } = await supabase
+            .from('profiles')
+            .select('full_name, role')
+            .eq('id', user.id)
+            .single();
+          
+          profile = fallbackProfile ? { ...fallbackProfile, domain: null } : null;
+          error = fallbackError;
+        }
+        
+        if (error && error.code !== '42703') {
           console.error('Error fetching profile:', error);
         }
         
@@ -90,8 +107,10 @@ export const useOnboarding = () => {
             profile: {
               ...prev.data.profile,
               fullName: profile?.full_name || '',
-              email: user.email || '', // Load user email
-            }
+              email: user.email || '',
+            },
+            domain: (profile?.domain as any) || 'other',
+            role: (profile?.role as any) || 'user', // Load existing role
           },
           isInitialized: true,
           isLoading: false,
@@ -153,7 +172,16 @@ export const useOnboarding = () => {
     }));
   }, []);
 
-  // Remove updatePlugins since plugins are handled by the PluginsStep component directly
+  // Add updateDomain function
+  const updateDomain = useCallback((domain: UserDomain) => {
+    setState(prev => ({
+      ...prev,
+      data: {
+        ...prev.data,
+        domain,
+      },
+    }));
+  }, []);
 
   const updateRole = useCallback((role: UserRole) => {
     setState(prev => ({
@@ -176,14 +204,16 @@ export const useOnboarding = () => {
     switch (state.currentStep) {
       case 0: // Profile step
         return isProfileValid();
-      case 1: // Plugins step (optional)
+      case 1: // Domain step
+        return state.data.domain !== null && state.data.domain !== '';
+      case 2: // Plugins step (optional)
         return true;
-      case 2: // Role step
+      case 3: // Role step
         return state.data.role !== null;
       default:
         return false;
     }
-  }, [state.currentStep, state.data.role, isProfileValid]);
+  }, [state.currentStep, state.data.domain, state.data.role, isProfileValid]);
 
   // API functions
   const saveOnboardingData = useCallback(async () => {
@@ -198,16 +228,38 @@ export const useOnboarding = () => {
       }
 
       // Update the profiles table with onboarding data
-      const { error: profileError } = await supabase
+      // First, try to update with all fields including domain
+      let { error: profileError } = await supabase
         .from('profiles')
         .update({
           company: state.data.profile.company || null,
           job_title: state.data.profile.jobTitle || null,
           timezone: state.data.profile.timezone,
-          // Note: full_name and email are already set during signup
+          domain: state.data.domain,
+          role: state.data.role,
           updated_at: new Date().toISOString(),
         })
         .eq('id', user.id);
+
+      // If domain column doesn't exist, try without it (role column exists)
+      if (profileError && profileError.code === '42703') {
+        console.log('Domain column not found, saving without domain field');
+        const { error: fallbackError } = await supabase
+          .from('profiles')
+          .update({
+            company: state.data.profile.company || null,
+            job_title: state.data.profile.jobTitle || null,
+            timezone: state.data.profile.timezone,
+            role: state.data.role, // Keep role as it exists in the table
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', user.id);
+        
+        profileError = fallbackError;
+        
+        // Store domain in localStorage as backup
+        localStorage.setItem('user_domain', state.data.domain);
+      }
 
       if (profileError) {
         console.error('Profile update error:', profileError);
@@ -221,12 +273,14 @@ export const useOnboarding = () => {
         company: state.data.profile.company,
         job_title: state.data.profile.jobTitle,
         timezone: state.data.profile.timezone,
+        domain: state.data.domain,
         role: state.data.role
       });
       
       // Save to localStorage as backup
       localStorage.setItem('onboarding_completed', 'true');
       localStorage.setItem('user_profile', JSON.stringify(state.data.profile));
+      localStorage.setItem('user_domain', state.data.domain);
       
       return { success: true };
     } catch (error) {
@@ -252,7 +306,12 @@ export const useOnboarding = () => {
   // Utility functions
   const getStepTitle = useCallback((step?: number) => {
     const currentStepIndex = step ?? state.currentStep;
-    const titles = ['Complete Your Profile', 'Connect Plugins', 'Select Your Role'];
+    const titles = [
+      'Complete Your Profile', 
+      'Choose Your Domain', 
+      'Connect Plugins', 
+      'Select Your Role'
+    ];
     return titles[currentStepIndex] || 'Unknown Step';
   }, [state.currentStep]);
 
@@ -278,6 +337,7 @@ export const useOnboarding = () => {
     
     // Data updates
     updateProfile,
+    updateDomain, // Add updateDomain
     updateRole,
     
     // Validation

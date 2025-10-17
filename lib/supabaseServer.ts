@@ -8,3 +8,4 @@ export function createServerSupabaseClient() {
     process.env.SUPABASE_SERVICE_ROLE_KEY! // use a key that allows secure server-side writes
   )
 }
+export const supabaseServer = createServerSupabaseClient()

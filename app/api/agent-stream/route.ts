@@ -229,7 +229,7 @@ export async function POST(request: NextRequest) {
         try {
           // Create execution record
           if (execution_id) {
-            await supabase.from('agent_executions').insert({
+            await supabase.from('agent_configurations').insert({
               id: execution_id,
               agent_id,
               user_id: user.id,
@@ -270,7 +270,7 @@ export async function POST(request: NextRequest) {
 
           // Update execution record
           if (execution_id) {
-            await supabase.from('agent_executions').update({
+            await supabase.from('agent_configurations').update({
               status: 'completed',
               duration_ms: duration,
               completed_at: new Date().toISOString()
@@ -393,7 +393,7 @@ export async function POST(request: NextRequest) {
           console.error(`Critical error: ${error.message}`)
           
           if (execution_id) {
-            await supabase.from('agent_executions').update({
+            await supabase.from('agent_configurations').update({
               status: 'failed',
               completed_at: new Date().toISOString()
             }).eq('id', execution_id)

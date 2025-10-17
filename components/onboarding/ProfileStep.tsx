@@ -26,467 +26,91 @@ const ProfileStep: React.FC<ProfileStepProps> = ({ data, onChange }) => {
     onChange({ [field]: e.target.value });
   };
 
-  // Comprehensive timezone list - all IANA timezone identifiers
-  const timezones = [
-    // Africa
-    'Africa/Abidjan',
-    'Africa/Accra',
-    'Africa/Addis_Ababa',
-    'Africa/Algiers',
-    'Africa/Asmara',
-    'Africa/Bamako',
-    'Africa/Bangui',
-    'Africa/Banjul',
-    'Africa/Bissau',
-    'Africa/Blantyre',
-    'Africa/Brazzaville',
-    'Africa/Bujumbura',
-    'Africa/Cairo',
-    'Africa/Casablanca',
-    'Africa/Ceuta',
-    'Africa/Conakry',
-    'Africa/Dakar',
-    'Africa/Dar_es_Salaam',
-    'Africa/Djibouti',
-    'Africa/Douala',
-    'Africa/El_Aaiun',
-    'Africa/Freetown',
-    'Africa/Gaborone',
-    'Africa/Harare',
-    'Africa/Johannesburg',
-    'Africa/Juba',
-    'Africa/Kampala',
-    'Africa/Khartoum',
-    'Africa/Kigali',
-    'Africa/Kinshasa',
-    'Africa/Lagos',
-    'Africa/Libreville',
-    'Africa/Lome',
-    'Africa/Luanda',
-    'Africa/Lubumbashi',
-    'Africa/Lusaka',
-    'Africa/Malabo',
-    'Africa/Maputo',
-    'Africa/Maseru',
-    'Africa/Mbabane',
-    'Africa/Mogadishu',
-    'Africa/Monrovia',
-    'Africa/Nairobi',
-    'Africa/Ndjamena',
-    'Africa/Niamey',
-    'Africa/Nouakchott',
-    'Africa/Ouagadougou',
-    'Africa/Porto-Novo',
-    'Africa/Sao_Tome',
-    'Africa/Tripoli',
-    'Africa/Tunis',
-    'Africa/Windhoek',
-
-    // America
-    'America/Adak',
-    'America/Anchorage',
-    'America/Anguilla',
-    'America/Antigua',
-    'America/Araguaina',
-    'America/Argentina/Buenos_Aires',
-    'America/Argentina/Catamarca',
-    'America/Argentina/Cordoba',
-    'America/Argentina/Jujuy',
-    'America/Argentina/La_Rioja',
-    'America/Argentina/Mendoza',
-    'America/Argentina/Rio_Gallegos',
-    'America/Argentina/Salta',
-    'America/Argentina/San_Juan',
-    'America/Argentina/San_Luis',
-    'America/Argentina/Tucuman',
-    'America/Argentina/Ushuaia',
-    'America/Aruba',
-    'America/Asuncion',
-    'America/Atikokan',
-    'America/Bahia',
-    'America/Bahia_Banderas',
-    'America/Barbados',
-    'America/Belem',
-    'America/Belize',
-    'America/Blanc-Sablon',
-    'America/Boa_Vista',
-    'America/Bogota',
-    'America/Boise',
-    'America/Cambridge_Bay',
-    'America/Campo_Grande',
-    'America/Cancun',
-    'America/Caracas',
-    'America/Cayenne',
-    'America/Cayman',
-    'America/Chicago',
-    'America/Chihuahua',
-    'America/Ciudad_Juarez',
-    'America/Costa_Rica',
-    'America/Creston',
-    'America/Cuiaba',
-    'America/Curacao',
-    'America/Danmarkshavn',
-    'America/Dawson',
-    'America/Dawson_Creek',
-    'America/Denver',
-    'America/Detroit',
-    'America/Dominica',
-    'America/Edmonton',
-    'America/Eirunepe',
-    'America/El_Salvador',
-    'America/Fort_Nelson',
-    'America/Fortaleza',
-    'America/Glace_Bay',
-    'America/Goose_Bay',
-    'America/Grand_Turk',
-    'America/Grenada',
-    'America/Guadeloupe',
-    'America/Guatemala',
-    'America/Guayaquil',
-    'America/Guyana',
-    'America/Halifax',
-    'America/Havana',
-    'America/Hermosillo',
-    'America/Indiana/Indianapolis',
-    'America/Indiana/Knox',
-    'America/Indiana/Marengo',
-    'America/Indiana/Petersburg',
-    'America/Indiana/Tell_City',
-    'America/Indiana/Vevay',
-    'America/Indiana/Vincennes',
-    'America/Indiana/Winamac',
-    'America/Inuvik',
-    'America/Iqaluit',
-    'America/Jamaica',
-    'America/Juneau',
-    'America/Kentucky/Louisville',
-    'America/Kentucky/Monticello',
-    'America/Kralendijk',
-    'America/La_Paz',
-    'America/Lima',
-    'America/Los_Angeles',
-    'America/Lower_Princes',
-    'America/Maceio',
-    'America/Managua',
-    'America/Manaus',
-    'America/Marigot',
-    'America/Martinique',
-    'America/Matamoros',
-    'America/Mazatlan',
-    'America/Menominee',
-    'America/Merida',
-    'America/Metlakatla',
-    'America/Mexico_City',
-    'America/Miquelon',
-    'America/Moncton',
-    'America/Monterrey',
-    'America/Montevideo',
-    'America/Montserrat',
-    'America/Nassau',
-    'America/New_York',
-    'America/Nipigon',
-    'America/Nome',
-    'America/Noronha',
-    'America/North_Dakota/Beulah',
-    'America/North_Dakota/Center',
-    'America/North_Dakota/New_Salem',
-    'America/Nuuk',
-    'America/Ojinaga',
-    'America/Panama',
-    'America/Pangnirtung',
-    'America/Paramaribo',
-    'America/Phoenix',
-    'America/Port-au-Prince',
-    'America/Port_of_Spain',
-    'America/Porto_Velho',
-    'America/Puerto_Rico',
-    'America/Punta_Arenas',
-    'America/Rainy_River',
-    'America/Rankin_Inlet',
-    'America/Recife',
-    'America/Regina',
-    'America/Resolute',
-    'America/Rio_Branco',
-    'America/Santarem',
-    'America/Santiago',
-    'America/Santo_Domingo',
-    'America/Sao_Paulo',
-    'America/Scoresbysund',
-    'America/Sitka',
-    'America/St_Barthelemy',
-    'America/St_Johns',
-    'America/St_Kitts',
-    'America/St_Lucia',
-    'America/St_Thomas',
-    'America/St_Vincent',
-    'America/Swift_Current',
-    'America/Tegucigalpa',
-    'America/Thule',
-    'America/Thunder_Bay',
-    'America/Tijuana',
-    'America/Toronto',
-    'America/Tortola',
-    'America/Vancouver',
-    'America/Whitehorse',
-    'America/Winnipeg',
-    'America/Yakutat',
-    'America/Yellowknife',
-
-    // Antarctica
-    'Antarctica/Casey',
-    'Antarctica/Davis',
-    'Antarctica/DumontDUrville',
-    'Antarctica/Macquarie',
-    'Antarctica/Mawson',
-    'Antarctica/McMurdo',
-    'Antarctica/Palmer',
-    'Antarctica/Rothera',
-    'Antarctica/Syowa',
-    'Antarctica/Troll',
-    'Antarctica/Vostok',
-
-    // Arctic
-    'Arctic/Longyearbyen',
-
-    // Asia
-    'Asia/Aden',
-    'Asia/Almaty',
-    'Asia/Amman',
-    'Asia/Anadyr',
-    'Asia/Aqtau',
-    'Asia/Aqtobe',
-    'Asia/Ashgabat',
-    'Asia/Atyrau',
-    'Asia/Baghdad',
-    'Asia/Bahrain',
-    'Asia/Baku',
-    'Asia/Bangkok',
-    'Asia/Barnaul',
-    'Asia/Beirut',
-    'Asia/Bishkek',
-    'Asia/Brunei',
-    'Asia/Chita',
-    'Asia/Choibalsan',
-    'Asia/Colombo',
-    'Asia/Damascus',
-    'Asia/Dhaka',
-    'Asia/Dili',
-    'Asia/Dubai',
-    'Asia/Dushanbe',
-    'Asia/Famagusta',
-    'Asia/Gaza',
-    'Asia/Hebron',
-    'Asia/Ho_Chi_Minh',
-    'Asia/Hong_Kong',
-    'Asia/Hovd',
-    'Asia/Irkutsk',
-    'Asia/Jakarta',
-    'Asia/Jayapura',
-    'Asia/Jerusalem',
-    'Asia/Kabul',
-    'Asia/Kamchatka',
-    'Asia/Karachi',
-    'Asia/Kathmandu',
-    'Asia/Khandyga',
-    'Asia/Kolkata',
-    'Asia/Krasnoyarsk',
-    'Asia/Kuala_Lumpur',
-    'Asia/Kuching',
-    'Asia/Kuwait',
-    'Asia/Macau',
-    'Asia/Magadan',
-    'Asia/Makassar',
-    'Asia/Manila',
-    'Asia/Muscat',
-    'Asia/Nicosia',
-    'Asia/Novokuznetsk',
-    'Asia/Novosibirsk',
-    'Asia/Omsk',
-    'Asia/Oral',
-    'Asia/Phnom_Penh',
-    'Asia/Pontianak',
-    'Asia/Pyongyang',
-    'Asia/Qatar',
-    'Asia/Qostanay',
-    'Asia/Qyzylorda',
-    'Asia/Riyadh',
-    'Asia/Sakhalin',
-    'Asia/Samarkand',
-    'Asia/Seoul',
-    'Asia/Shanghai',
-    'Asia/Singapore',
-    'Asia/Srednekolymsk',
-    'Asia/Taipei',
-    'Asia/Tashkent',
-    'Asia/Tbilisi',
-    'Asia/Tehran',
-    'Asia/Thimphu',
-    'Asia/Tokyo',
-    'Asia/Tomsk',
-    'Asia/Ulaanbaatar',
-    'Asia/Urumqi',
-    'Asia/Ust-Nera',
-    'Asia/Vientiane',
-    'Asia/Vladivostok',
-    'Asia/Yakutsk',
-    'Asia/Yangon',
-    'Asia/Yekaterinburg',
-    'Asia/Yerevan',
-
-    // Atlantic
-    'Atlantic/Azores',
-    'Atlantic/Bermuda',
-    'Atlantic/Canary',
-    'Atlantic/Cape_Verde',
-    'Atlantic/Faroe',
-    'Atlantic/Madeira',
-    'Atlantic/Reykjavik',
-    'Atlantic/South_Georgia',
-    'Atlantic/St_Helena',
-    'Atlantic/Stanley',
-
-    // Australia
-    'Australia/Adelaide',
-    'Australia/Brisbane',
-    'Australia/Broken_Hill',
-    'Australia/Darwin',
-    'Australia/Eucla',
-    'Australia/Hobart',
-    'Australia/Lindeman',
-    'Australia/Lord_Howe',
-    'Australia/Melbourne',
-    'Australia/Perth',
-    'Australia/Sydney',
-
-    // Europe
-    'Europe/Amsterdam',
-    'Europe/Andorra',
-    'Europe/Astrakhan',
-    'Europe/Athens',
-    'Europe/Belgrade',
-    'Europe/Berlin',
-    'Europe/Bratislava',
-    'Europe/Brussels',
-    'Europe/Bucharest',
-    'Europe/Budapest',
-    'Europe/Busingen',
-    'Europe/Chisinau',
-    'Europe/Copenhagen',
-    'Europe/Dublin',
-    'Europe/Gibraltar',
-    'Europe/Guernsey',
-    'Europe/Helsinki',
-    'Europe/Isle_of_Man',
-    'Europe/Istanbul',
-    'Europe/Jersey',
-    'Europe/Kaliningrad',
-    'Europe/Kiev',
-    'Europe/Kirov',
-    'Europe/Lisbon',
-    'Europe/Ljubljana',
-    'Europe/London',
-    'Europe/Luxembourg',
-    'Europe/Madrid',
-    'Europe/Malta',
-    'Europe/Mariehamn',
-    'Europe/Minsk',
-    'Europe/Monaco',
-    'Europe/Moscow',
-    'Europe/Oslo',
-    'Europe/Paris',
-    'Europe/Podgorica',
-    'Europe/Prague',
-    'Europe/Riga',
-    'Europe/Rome',
-    'Europe/Samara',
-    'Europe/San_Marino',
-    'Europe/Sarajevo',
-    'Europe/Saratov',
-    'Europe/Simferopol',
-    'Europe/Skopje',
-    'Europe/Sofia',
-    'Europe/Stockholm',
-    'Europe/Tallinn',
-    'Europe/Tirane',
-    'Europe/Ulyanovsk',
-    'Europe/Uzhgorod',
-    'Europe/Vaduz',
-    'Europe/Vatican',
-    'Europe/Vienna',
-    'Europe/Vilnius',
-    'Europe/Volgograd',
-    'Europe/Warsaw',
-    'Europe/Zagreb',
-    'Europe/Zaporozhye',
-    'Europe/Zurich',
-
-    // Indian
-    'Indian/Antananarivo',
-    'Indian/Chagos',
-    'Indian/Christmas',
-    'Indian/Cocos',
-    'Indian/Comoro',
-    'Indian/Kerguelen',
-    'Indian/Mahe',
-    'Indian/Maldives',
-    'Indian/Mauritius',
-    'Indian/Mayotte',
-    'Indian/Reunion',
-
-    // Pacific
-    'Pacific/Apia',
-    'Pacific/Auckland',
-    'Pacific/Bougainville',
-    'Pacific/Chatham',
-    'Pacific/Chuuk',
-    'Pacific/Easter',
-    'Pacific/Efate',
-    'Pacific/Enderbury',
-    'Pacific/Fakaofo',
-    'Pacific/Fiji',
-    'Pacific/Funafuti',
-    'Pacific/Galapagos',
-    'Pacific/Gambier',
-    'Pacific/Guadalcanal',
-    'Pacific/Guam',
-    'Pacific/Honolulu',
-    'Pacific/Kiritimati',
-    'Pacific/Kosrae',
-    'Pacific/Kwajalein',
-    'Pacific/Majuro',
-    'Pacific/Marquesas',
-    'Pacific/Midway',
-    'Pacific/Nauru',
-    'Pacific/Niue',
-    'Pacific/Norfolk',
-    'Pacific/Noumea',
-    'Pacific/Pago_Pago',
-    'Pacific/Palau',
-    'Pacific/Pitcairn',
-    'Pacific/Pohnpei',
-    'Pacific/Port_Moresby',
-    'Pacific/Rarotonga',
-    'Pacific/Saipan',
-    'Pacific/Tahiti',
-    'Pacific/Tarawa',
-    'Pacific/Tongatapu',
-    'Pacific/Wake',
-    'Pacific/Wallis',
-
-    // UTC
+  // Popular timezones for quick selection
+  const popularTimezones = [
     'UTC',
+    'America/New_York',
+    'America/Los_Angeles',
+    'America/Chicago',
+    'America/Denver',
+    'Europe/London',
+    'Europe/Paris',
+    'Europe/Berlin',
+    'Asia/Tokyo',
+    'Asia/Shanghai',
+    'Asia/Kolkata',
+    'Australia/Sydney',
+    'Pacific/Honolulu',
+  ];
+
+  // Comprehensive timezone list for search
+  const allTimezones = [
+    'UTC',
+    // Americas
+    'America/New_York', 'America/Los_Angeles', 'America/Chicago', 'America/Denver',
+    'America/Phoenix', 'America/Anchorage', 'America/Honolulu', 'America/Toronto',
+    'America/Vancouver', 'America/Montreal', 'America/Halifax', 'America/Winnipeg',
+    'America/Edmonton', 'America/Regina', 'America/St_Johns', 'America/Mexico_City',
+    'America/Tijuana', 'America/Cancun', 'America/Merida', 'America/Monterrey',
+    'America/Bogota', 'America/Lima', 'America/Santiago', 'America/Buenos_Aires',
+    'America/Sao_Paulo', 'America/Rio_Branco', 'America/Manaus', 'America/Fortaleza',
+    'America/Recife', 'America/Belem', 'America/Caracas', 'America/La_Paz',
+    'America/Asuncion', 'America/Montevideo', 'America/Cayenne', 'America/Paramaribo',
+    'America/Guyana', 'America/Barbados', 'America/Jamaica', 'America/Haiti',
+    'America/Dominican_Republic', 'America/Puerto_Rico', 'America/Cuba',
+    
+    // Europe
+    'Europe/London', 'Europe/Dublin', 'Europe/Paris', 'Europe/Berlin',
+    'Europe/Rome', 'Europe/Madrid', 'Europe/Barcelona', 'Europe/Amsterdam',
+    'Europe/Brussels', 'Europe/Vienna', 'Europe/Zurich', 'Europe/Prague',
+    'Europe/Budapest', 'Europe/Warsaw', 'Europe/Stockholm', 'Europe/Oslo',
+    'Europe/Copenhagen', 'Europe/Helsinki', 'Europe/Tallinn', 'Europe/Riga',
+    'Europe/Vilnius', 'Europe/Minsk', 'Europe/Kiev', 'Europe/Moscow',
+    'Europe/Istanbul', 'Europe/Athens', 'Europe/Bucharest', 'Europe/Sofia',
+    'Europe/Belgrade', 'Europe/Zagreb', 'Europe/Ljubljana', 'Europe/Sarajevo',
+    'Europe/Podgorica', 'Europe/Skopje', 'Europe/Tirana', 'Europe/Malta',
+    'Europe/Lisbon', 'Europe/Gibraltar',
+    
+    // Asia
+    'Asia/Tokyo', 'Asia/Shanghai', 'Asia/Hong_Kong', 'Asia/Singapore',
+    'Asia/Kuala_Lumpur', 'Asia/Jakarta', 'Asia/Bangkok', 'Asia/Ho_Chi_Minh',
+    'Asia/Manila', 'Asia/Taipei', 'Asia/Seoul', 'Asia/Kolkata', 'Asia/Mumbai',
+    'Asia/Delhi', 'Asia/Dhaka', 'Asia/Karachi', 'Asia/Kathmandu', 'Asia/Colombo',
+    'Asia/Dubai', 'Asia/Riyadh', 'Asia/Kuwait', 'Asia/Doha', 'Asia/Muscat',
+    'Asia/Bahrain', 'Asia/Tehran', 'Asia/Baghdad', 'Asia/Damascus',
+    'Asia/Beirut', 'Asia/Jerusalem', 'Asia/Amman', 'Asia/Yerevan',
+    'Asia/Baku', 'Asia/Tbilisi', 'Asia/Almaty', 'Asia/Tashkent',
+    'Asia/Ashgabat', 'Asia/Dushanbe', 'Asia/Bishkek', 'Asia/Kabul',
+    'Asia/Islamabad', 'Asia/Karachi', 'Asia/Ulaanbaatar', 'Asia/Irkutsk',
+    'Asia/Krasnoyarsk', 'Asia/Novosibirsk', 'Asia/Yekaterinburg', 'Asia/Omsk',
+    'Asia/Vladivostok', 'Asia/Magadan', 'Asia/Kamchatka', 'Asia/Anadyr',
+    
+    // Africa
+    'Africa/Cairo', 'Africa/Lagos', 'Africa/Nairobi', 'Africa/Johannesburg',
+    'Africa/Cape_Town', 'Africa/Casablanca', 'Africa/Tunis', 'Africa/Algiers',
+    'Africa/Tripoli', 'Africa/Khartoum', 'Africa/Addis_Ababa', 'Africa/Dar_es_Salaam',
+    'Africa/Kampala', 'Africa/Kigali', 'Africa/Bujumbura', 'Africa/Lusaka',
+    'Africa/Harare', 'Africa/Maputo', 'Africa/Windhoek', 'Africa/Gaborone',
+    'Africa/Maseru', 'Africa/Mbabane', 'Africa/Blantyre', 'Africa/Lilongwe',
+    
+    // Australia/Oceania
+    'Australia/Sydney', 'Australia/Melbourne', 'Australia/Brisbane',
+    'Australia/Perth', 'Australia/Adelaide', 'Australia/Darwin',
+    'Australia/Hobart', 'Pacific/Auckland', 'Pacific/Wellington',
+    'Pacific/Fiji', 'Pacific/Tahiti', 'Pacific/Honolulu', 'Pacific/Guam',
+    'Pacific/Saipan', 'Pacific/Palau', 'Pacific/Majuro', 'Pacific/Tarawa',
+    'Pacific/Funafuti', 'Pacific/Wallis', 'Pacific/Apia', 'Pacific/Tongatapu',
+    'Pacific/Nuku_alofa', 'Pacific/Port_Moresby', 'Pacific/Noumea',
+    'Pacific/Norfolk', 'Pacific/Lord_Howe', 'Pacific/Chatham'
   ];
 
   // Helper function to format timezone display names
   const formatTimezone = (timezone: string) => {
     if (timezone === 'UTC') return 'UTC';
     
-    // Convert timezone to readable format
     const parts = timezone.split('/');
     const city = parts[parts.length - 1].replace(/_/g, ' ');
-    const region = parts[0];
     
-    // Get current time offset
     try {
       const now = new Date();
       const formatter = new Intl.DateTimeFormat('en', {
@@ -496,256 +120,204 @@ const ProfileStep: React.FC<ProfileStepProps> = ({ data, onChange }) => {
       const timeZoneName = formatter.formatToParts(now)
         .find(part => part.type === 'timeZoneName')?.value || '';
       
-      return `${city} (${region}) - ${timeZoneName}`;
+      return `${city} ${timeZoneName}`;
     } catch {
-      return `${city} (${region})`;
+      return city;
     }
   };
 
-  // Smart search for timezones
-  const filteredTimezones = useMemo(() => {
-    if (!timezoneSearch.trim()) return timezones.slice(0, 50); // Show first 50 by default
-
-    const searchTerm = timezoneSearch.toLowerCase().trim();
-    const results = timezones.filter(timezone => {
-      const formatted = formatTimezone(timezone).toLowerCase();
-      const parts = timezone.toLowerCase().split('/');
-      const city = parts[parts.length - 1].replace(/_/g, ' ');
-      const region = parts[0];
-      
-      // Search in multiple ways for smart matching
-      return (
-        formatted.includes(searchTerm) ||
-        timezone.toLowerCase().includes(searchTerm) ||
-        city.includes(searchTerm) ||
-        region.includes(searchTerm) ||
-        // Smart abbreviation matching (e.g., "pst" matches Pacific)
-        (searchTerm === 'pst' && timezone.includes('Los_Angeles')) ||
-        (searchTerm === 'est' && timezone.includes('New_York')) ||
-        (searchTerm === 'mst' && timezone.includes('Denver')) ||
-        (searchTerm === 'cst' && timezone.includes('Chicago')) ||
-        (searchTerm === 'gmt' && timezone.includes('London')) ||
-        (searchTerm === 'cet' && (timezone.includes('Paris') || timezone.includes('Berlin'))) ||
-        (searchTerm === 'jst' && timezone.includes('Tokyo')) ||
-        (searchTerm === 'ist' && timezone.includes('Kolkata')) ||
-        // Country name matching
-        (searchTerm.includes('united states') && timezone.startsWith('America/')) ||
-        (searchTerm.includes('usa') && timezone.startsWith('America/')) ||
-        (searchTerm.includes('uk') && timezone.includes('London')) ||
-        (searchTerm.includes('japan') && timezone.includes('Tokyo')) ||
-        (searchTerm.includes('india') && timezone.includes('Kolkata')) ||
-        (searchTerm.includes('australia') && timezone.startsWith('Australia/')) ||
-        (searchTerm.includes('canada') && (timezone.includes('Toronto') || timezone.includes('Vancouver'))) ||
-        (searchTerm.includes('france') && timezone.includes('Paris')) ||
-        (searchTerm.includes('germany') && timezone.includes('Berlin')) ||
-        (searchTerm.includes('china') && timezone.includes('Shanghai')) ||
-        // Common city aliases
-        (searchTerm.includes('nyc') && timezone.includes('New_York')) ||
-        (searchTerm.includes('la') && timezone.includes('Los_Angeles')) ||
-        (searchTerm.includes('sf') && timezone.includes('Los_Angeles')) ||
-        (searchTerm.includes('chicago') && timezone.includes('Chicago'))
-      );
-    });
-
-    // Sort results by relevance
-    return results.sort((a, b) => {
-      const aFormatted = formatTimezone(a).toLowerCase();
-      const bFormatted = formatTimezone(b).toLowerCase();
-      
-      // Exact matches first
-      if (aFormatted.startsWith(searchTerm) && !bFormatted.startsWith(searchTerm)) return -1;
-      if (bFormatted.startsWith(searchTerm) && !aFormatted.startsWith(searchTerm)) return 1;
-      
-      // Then city name matches
-      const aCity = a.split('/').pop()?.replace(/_/g, ' ').toLowerCase() || '';
-      const bCity = b.split('/').pop()?.replace(/_/g, ' ').toLowerCase() || '';
-      if (aCity.startsWith(searchTerm) && !bCity.startsWith(searchTerm)) return -1;
-      if (bCity.startsWith(searchTerm) && !aCity.startsWith(searchTerm)) return 1;
-      
-      return aFormatted.localeCompare(bFormatted);
-    }).slice(0, 100); // Limit to 100 results for performance
-  }, [timezoneSearch, timezones]);
-
   const handleTimezoneSelect = (timezone: string) => {
-    console.log('Selecting timezone:', timezone); // Debug log
     onChange({ timezone });
     setTimezoneSearch('');
     setIsTimezoneDropdownOpen(false);
   };
 
-  // Get display text for selected timezone
   const getSelectedTimezoneDisplay = () => {
     if (!data.timezone) return '';
     return formatTimezone(data.timezone);
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      {/* Header */}
       <div className="text-center">
-        <p className="text-sm text-gray-600">
-          Tell us a bit about yourself to personalize your experience
+        <p className="text-gray-300 text-sm">
+          Complete your profile to get started
         </p>
       </div>
 
-      <div className="space-y-4">
-        {/* Full Name (Read-only from signup) */}
-        <div>
-          <label htmlFor="fullName" className="block text-sm font-medium text-gray-700 mb-2">
+      {/* Compact form grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Full Name (Read-only) - Compact */}
+        <div className="md:col-span-2">
+          <label className="block text-sm font-medium text-gray-300 mb-2">
             Full Name
           </label>
-          <input
-            id="fullName"
-            type="text"
-            value={data.fullName}
-            disabled
-            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm bg-gray-50 text-gray-500 cursor-not-allowed"
-          />
-          <p className="text-xs text-gray-500 mt-1">This was set during signup and cannot be changed here.</p>
+          <div className="relative">
+            <input
+              type="text"
+              value={data.fullName}
+              disabled
+              className="w-full px-3 py-2.5 bg-gray-800/40 border border-gray-600/40 rounded-lg text-gray-300 text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+            />
+            <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+              <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+            </div>
+          </div>
         </div>
 
-        {/* Email (Read-only from signup) */}
-        <div>
-          <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+        {/* Email (Read-only) - Compact */}
+        <div className="md:col-span-2">
+          <label className="block text-sm font-medium text-gray-300 mb-2">
             Email Address
           </label>
-          <input
-            id="email"
-            type="email"
-            value={data.email}
-            disabled
-            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm bg-gray-50 text-gray-500 cursor-not-allowed"
-          />
-          <p className="text-xs text-gray-500 mt-1">Your account email address.</p>
+          <div className="relative">
+            <input
+              type="email"
+              value={data.email}
+              disabled
+              className="w-full px-3 py-2.5 bg-gray-800/40 border border-gray-600/40 rounded-lg text-gray-300 text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+            />
+            <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+              <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 12a4 4 0 10-8 0 4 4 0 008 0zm0 0v1.5a2.5 2.5 0 005 0V12a9 9 0 10-9 9m4.5-1.206a8.959 8.959 0 01-4.5 1.207" />
+              </svg>
+            </div>
+          </div>
         </div>
 
-        {/* Company Field (Optional) */}
+        {/* Company (Optional) */}
         <div>
-          <label htmlFor="company" className="block text-sm font-medium text-gray-700 mb-2">
-            Company Name
+          <label className="block text-sm font-medium text-gray-300 mb-2">
+            Company <span className="text-gray-500 text-xs">(Optional)</span>
           </label>
           <input
-            id="company"
             type="text"
             value={data.company}
             onChange={handleInputChange('company')}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-            placeholder="Enter your company name (optional)"
+            placeholder="Your company"
+            className="w-full px-3 py-2.5 bg-gray-800/20 border border-gray-600/30 rounded-lg text-gray-100 text-sm placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 focus:bg-gray-800/40 transition-all duration-200"
           />
         </div>
 
-        {/* Job Title Field (Optional) */}
+        {/* Job Title (Optional) */}
         <div>
-          <label htmlFor="jobTitle" className="block text-sm font-medium text-gray-700 mb-2">
-            Job Title
+          <label className="block text-sm font-medium text-gray-300 mb-2">
+            Job Title <span className="text-gray-500 text-xs">(Optional)</span>
           </label>
           <input
-            id="jobTitle"
             type="text"
             value={data.jobTitle}
             onChange={handleInputChange('jobTitle')}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-            placeholder="e.g., Software Engineer, Product Manager (optional)"
+            placeholder="Your role"
+            className="w-full px-3 py-2.5 bg-gray-800/20 border border-gray-600/30 rounded-lg text-gray-100 text-sm placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 focus:bg-gray-800/40 transition-all duration-200"
           />
         </div>
 
-        {/* Timezone Field - Smart Searchable */}
-        <div className="relative">
-          <label htmlFor="timezone" className="block text-sm font-medium text-gray-700 mb-2">
-            Timezone *
+        {/* Timezone - Compact Smart Selector */}
+        <div className="md:col-span-2">
+          <label className="block text-sm font-medium text-gray-300 mb-2">
+            Timezone <span className="text-red-400">*</span>
           </label>
           
-          {/* Selected timezone display */}
-          {data.timezone && !isTimezoneDropdownOpen && (
-            <div className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm bg-blue-50 text-blue-900 mb-2">
-              <div className="flex justify-between items-center">
-                <div className="flex-1">
-                  <span className="text-sm font-medium">{getSelectedTimezoneDisplay()}</span>
-                  <div className="text-xs text-gray-600 mt-1">
+          {/* Current timezone display */}
+          {data.timezone && !isTimezoneDropdownOpen ? (
+            <div className="flex items-center justify-between p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+              <div className="flex items-center space-x-3">
+                <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
+                <div>
+                  <div className="text-blue-200 text-sm font-medium">
+                    {getSelectedTimezoneDisplay()}
+                  </div>
+                  <div className="text-blue-300/60 text-xs">
                     {data.timezone === Intl.DateTimeFormat().resolvedOptions().timeZone 
-                      ? '✓ Auto-detected based on your location' 
-                      : 'Manually selected'
+                      ? 'Auto-detected' 
+                      : 'Custom selection'
                     }
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsTimezoneDropdownOpen(true);
-                    setTimezoneSearch('');
-                  }}
-                  className="text-blue-600 hover:text-blue-800 text-sm ml-2 px-2 py-1 rounded"
-                >
-                  Change
-                </button>
               </div>
+              <button
+                type="button"
+                onClick={() => setIsTimezoneDropdownOpen(true)}
+                className="text-blue-400 hover:text-blue-300 text-sm px-3 py-1 rounded-md hover:bg-blue-500/20 transition-all duration-200"
+              >
+                Change
+              </button>
             </div>
-          )}
+          ) : (
+            /* Timezone selection */
+            <div className="relative">
+              {/* Quick timezone buttons */}
+              <div className="flex flex-wrap gap-2 mb-3">
+                {popularTimezones.slice(0, 6).map((tz) => (
+                  <button
+                    key={tz}
+                    type="button"
+                    onClick={() => handleTimezoneSelect(tz)}
+                    className="px-3 py-1.5 bg-gray-700/50 hover:bg-blue-500/20 border border-gray-600/30 hover:border-blue-500/30 rounded-md text-xs text-gray-300 hover:text-blue-300 transition-all duration-200"
+                  >
+                    {formatTimezone(tz)}
+                  </button>
+                ))}
+              </div>
 
-          {/* Search input - always show when dropdown is open OR no timezone selected */}
-          {(!data.timezone || isTimezoneDropdownOpen) && (
-            <>
+              {/* Search input for other timezones */}
               <div className="relative">
                 <input
                   type="text"
-                  placeholder="Search for your city, country, or timezone (e.g., 'New York', 'PST', 'Japan')..."
+                  placeholder="Or search for your timezone..."
                   value={timezoneSearch}
                   onChange={(e) => setTimezoneSearch(e.target.value)}
-                  className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  autoComplete="off"
-                  autoFocus={isTimezoneDropdownOpen}
+                  className="w-full px-3 py-2.5 pr-10 bg-gray-800/20 border border-gray-600/30 rounded-lg text-gray-100 text-sm placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 focus:bg-gray-800/40 transition-all duration-200"
                 />
-                
-                {/* Search icon */}
                 <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                  <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                   </svg>
                 </div>
               </div>
 
-              {/* Dropdown results */}
-              <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-y-auto">
-                {filteredTimezones.length === 0 ? (
-                  <div className="px-3 py-2 text-sm text-gray-500">
-                    {timezoneSearch.trim() ? 
-                      `No timezones found for "${timezoneSearch}". Try searching for a city or country name.` :
-                      'Start typing to search for timezones...'
-                    }
-                  </div>
-                ) : (
-                  <>
-                    {/* Search hint */}
-                    {timezoneSearch.trim() && (
-                      <div className="px-3 py-2 text-xs text-blue-600 bg-blue-50 border-b border-gray-100">
-                        📍 {filteredTimezones.length} timezone{filteredTimezones.length !== 1 ? 's' : ''} found
-                      </div>
-                    )}
-                    
-                    {/* Popular/Default options when no search */}
-                    {!timezoneSearch.trim() && (
-                      <div className="px-3 py-2 text-xs text-green-600 bg-green-50 border-b border-gray-100">
-                        🌟 Popular timezones (or start typing to search all 400+)
-                      </div>
-                    )}
-                    
-                    {filteredTimezones.map((timezone) => (
+              {/* Search results */}
+              {timezoneSearch.trim() && (
+                <div className="absolute z-50 w-full mt-1 bg-gray-800/95 backdrop-blur-sm border border-gray-600/50 rounded-lg shadow-xl max-h-40 overflow-y-auto">
+                  {allTimezones
+                    .filter(tz => {
+                      const searchTerm = timezoneSearch.toLowerCase();
+                      const formattedTz = formatTimezone(tz).toLowerCase();
+                      const city = tz.split('/').pop()?.replace(/_/g, ' ').toLowerCase() || '';
+                      return formattedTz.includes(searchTerm) || 
+                             tz.toLowerCase().includes(searchTerm) || 
+                             city.includes(searchTerm);
+                    })
+                    .slice(0, 10)
+                    .map((timezone) => (
                       <button
                         key={timezone}
                         type="button"
                         onClick={() => handleTimezoneSelect(timezone)}
-                        className="w-full px-3 py-2 text-left text-sm hover:bg-blue-50 focus:bg-blue-50 focus:outline-none border-none bg-transparent"
+                        className="w-full px-3 py-2 text-left text-sm hover:bg-gray-700/50 focus:bg-gray-700/50 focus:outline-none transition-colors duration-200"
                       >
-                        <div className="font-medium text-gray-900">
-                          {formatTimezone(timezone)}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {timezone}
-                        </div>
+                        <div className="text-gray-200">{formatTimezone(timezone)}</div>
+                        <div className="text-gray-500 text-xs">{timezone}</div>
                       </button>
                     ))}
-                  </>
-                )}
-              </div>
+                  {allTimezones.filter(tz => {
+                    const searchTerm = timezoneSearch.toLowerCase();
+                    const formattedTz = formatTimezone(tz).toLowerCase();
+                    const city = tz.split('/').pop()?.replace(/_/g, ' ').toLowerCase() || '';
+                    return formattedTz.includes(searchTerm) || 
+                           tz.toLowerCase().includes(searchTerm) || 
+                           city.includes(searchTerm);
+                  }).length === 0 && (
+                    <div className="px-3 py-2 text-sm text-gray-400">
+                      No timezones found for "{timezoneSearch}"
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Cancel button */}
               {data.timezone && (
@@ -755,24 +327,24 @@ const ProfileStep: React.FC<ProfileStepProps> = ({ data, onChange }) => {
                     setIsTimezoneDropdownOpen(false);
                     setTimezoneSearch('');
                   }}
-                  className="mt-2 text-sm text-gray-500 hover:text-gray-700"
+                  className="mt-2 text-sm text-gray-400 hover:text-gray-300 transition-colors duration-200"
                 >
                   Cancel
                 </button>
               )}
-            </>
+            </div>
           )}
-
-          {/* Help text */}
-          <p className="text-xs text-gray-500 mt-1">
-            Try searching: city names, countries, abbreviations (PST, EST, GMT), or regions
-          </p>
         </div>
       </div>
 
-      {/* Helper Text */}
-      <div className="text-xs text-gray-500 text-center">
-        <p>This information helps us customize your dashboard and notifications</p>
+      {/* Compact status indicator */}
+      <div className="text-center pt-2">
+        <div className="inline-flex items-center space-x-2 text-xs text-gray-400">
+          <div className={`w-2 h-2 rounded-full ${
+            data.fullName && data.email && data.timezone ? 'bg-green-400' : 'bg-gray-500'
+          }`}></div>
+          <span>Profile {data.fullName && data.email && data.timezone ? 'complete' : 'in progress'}</span>
+        </div>
       </div>
     </div>
   );

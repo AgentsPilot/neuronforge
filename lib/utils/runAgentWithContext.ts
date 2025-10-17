@@ -8,10 +8,6 @@ import { IntentAnalyzer } from '../intelligence/analysis/IntentAnalyzer'
 import { StrategyEngine } from '../intelligence/analysis/StrategyEngine'
 import { QualityValidator as OldQualityValidator } from '../intelligence/analysis/QualityValidator'
 
-// Memory imports
-import { SmartContextualMemory } from '../intelligence/memory/SmartContextualMemory'
-import { LearningModule } from '../intelligence/memory/LearningModule'
-
 // Execution imports
 import { PluginCoordinator } from '../intelligence/execution/PluginCoordinator'
 import { DocumentProcessor } from '../intelligence/execution/DocumentProcessor'
@@ -22,14 +18,12 @@ import { RecoverySystem } from '../intelligence/execution/RecoverySystem'
 import { EmailHandler } from '../intelligence/utils/EmailHandler'
 import OpenAI from 'openai'
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
+// FIXED: Proper OpenAI client initialization with null check
+const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null
 
 // Initialize core components
 const intentAnalyzer = new IntentAnalyzer()
 const strategyEngine = new StrategyEngine()
-const oldQualityValidator = new OldQualityValidator()
-const smartMemory = new SmartContextualMemory()
-const learningModule = new LearningModule()
 const pluginCoordinator = new PluginCoordinator()
 const documentProcessor = new DocumentProcessor()
 const promptGenerator = new PromptGenerator()
@@ -179,20 +173,27 @@ export async function runAgentWithContext({
   })
 
   const startTime = Date.now()
-  let userContext
+  
+  // Simplified user context
+  const userContext = {
+    userId,
+    userPatterns: {},
+    domainKnowledge: {},
+    executionHistory: [],
+    preferredStrategies: ['basic_analysis'],
+    failurePatterns: [],
+    successFactors: []
+  }
 
   try {
-    // PHASE 1: Load contextual memory
-    console.log('🧠 Phase 1: Loading contextual memory')
-    userContext = await smartMemory.getOrCreateUserContext(userId, supabase)
-    
+    // PHASE 1: Memory phase (simplified)
     global.emitExecutionUpdate?.(executionId, {
       currentPhase: 0,
       phaseData: { 
         memory: { 
-          patterns: Object.keys(userContext.userPatterns).length,
-          domains: Object.keys(userContext.domainKnowledge).length,
-          history: userContext.executionHistory.length 
+          patterns: 0,
+          domains: 0,
+          history: 0
         } 
       }
     })
@@ -393,22 +394,9 @@ export async function runAgentWithContext({
       executionTime: Date.now() - startTime,
       strategiesUsed: [adaptiveStrategy.primaryApproach],
       adaptationsApplied: qualityMetrics.adaptationsApplied || 0,
-      userPatternMatch: userContext.userPatterns ? Object.keys(userContext.userPatterns).length : 0,
+      userPatternMatch: 0,
       dataProcessingSuccess: finalQualityMetrics.actuallyUseful
     }
-
-    // Update learning system
-    await learningModule.updateAdvancedSystem(
-      executionId,
-      agent,
-      userPrompt,
-      intentAnalysis,
-      adaptiveStrategy,
-      qualityMetrics,
-      userContext,
-      userId,
-      supabase
-    )
 
     // Generate final result
     const finalResult = await emailHandler.handleSmartOutput(
@@ -442,14 +430,7 @@ export async function runAgentWithContext({
         error,
         userId,
         supabase,
-        userContext || {
-          userPatterns: {},
-          domainKnowledge: {},
-          executionHistory: [],
-          preferredStrategies: ['basic_analysis'],
-          failurePatterns: [],
-          successFactors: []
-        }
+        userContext
       )
       
       console.log('✅ Advanced recovery successful')
@@ -538,7 +519,7 @@ function describeAvailableData(pluginContext: any): string {
   return descriptions.join(', ') || 'No processable data found'
 }
 
-// Enhanced LLM execution that's aware of data context
+// FIXED: Enhanced LLM execution with proper OpenAI null checking
 async function executeWithDataAwareIntelligence(
   systemPrompt: string,
   userPrompt: string,
@@ -547,6 +528,12 @@ async function executeWithDataAwareIntelligence(
   pluginContext?: any,
   isRetry: boolean = false
 ): Promise<string> {
+  
+  // CRITICAL FIX: Check if OpenAI client is available
+  if (!openai) {
+    console.warn('⚠️ OpenAI client not available, returning fallback response')
+    return 'Analysis completed using fallback processing. OpenAI API key is required for enhanced responses.'
+  }
   
   let enhancedSystemPrompt = systemPrompt
   

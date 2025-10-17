@@ -64,7 +64,8 @@ export const pluginRegistry: Record<string, PluginDefinition> = {
     displayName: 'Gmail',
     icon: '/icons/gmail.svg',
     category: 'communication',
-    capabilities: ['read_email', 'send_email', 'draft_email', 'summarize_email', 'reply_email', 'search_email', 'filter_email'],
+    //capabilities: ['read_email', 'send_email', 'draft_email', 'summarize_email', 'reply_email', 'search_email', 'filter_email'],
+    capabilities: ['read_email', 'send_email', 'draft_email', 'reply_email', 'search_email', 'filter_email'],
     usage: ['input', 'output'],
     requiresMapping: false,
     

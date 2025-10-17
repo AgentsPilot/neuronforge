@@ -3,13 +3,28 @@
     "app/api/run-agent/route.ts": {
       "memory": 512,
       "maxDuration": 10
+    },
+    "app/api/run-scheduled-agents/route.ts": {
+      "memory": 256,
+      "maxDuration": 30
     }
   },
   "routes": [
     {
       "src": "/api/run-agent",
-      "methods": ["POST"],
+      "methods": ["POST", "GET"],
       "dest": "app/api/run-agent/route.ts"
+    },
+    {
+      "src": "/api/run-scheduled-agents",
+      "methods": ["GET"],
+      "dest": "app/api/run-scheduled-agents/route.ts"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/run-scheduled-agents",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

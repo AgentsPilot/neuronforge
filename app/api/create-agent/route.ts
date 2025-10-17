@@ -47,8 +47,16 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     console.log('Request body keys:', Object.keys(body));
     
-    // Extract agent data from the request body
-    const { agent } = body;
+    // FIXED: Extract agent data AND IDs from the request body
+    const { agent, sessionId: providedSessionId, agentId: providedAgentId } = body;
+    
+    console.log('🆔 CREATE-AGENT API - Extracted IDs:', {
+      providedAgentId,
+      providedSessionId,
+      hasAgent: !!agent,
+      agentIdType: typeof providedAgentId,
+      sessionIdType: typeof providedSessionId
+    });
     
     if (!agent) {
       console.error('❌ No agent data provided');
@@ -90,8 +98,22 @@ export async function POST(request: NextRequest) {
         : agent.ai_reasoning
       : null;
 
-    // ENHANCED: Prepare data for insertion with agent_config support
+    // CRITICAL FIX: Use the provided agent ID for database consistency
+    const finalAgentId = providedAgentId || agent.id;
+    
+    console.log('🆔 AGENT ID DECISION:', {
+      providedAgentId,
+      agentId: agent.id,
+      finalAgentId,
+      willUseProvidedId: !!providedAgentId,
+      idSource: providedAgentId ? 'frontend_provided' : agent.id ? 'agent_object' : 'database_generated'
+    });
+
+    // ENHANCED: Prepare data for insertion with agent_config support AND consistent agent ID
     const agentData = {
+      // CRITICAL FIX: Use the provided agent ID to maintain consistency with token tracking
+      ...(finalAgentId && { id: finalAgentId }),
+      
       agent_name: agent.agent_name,
       user_prompt: agent.user_prompt,
       user_id: agentUserIdToUse, // Use the authenticated user's ID
@@ -119,6 +141,7 @@ export async function POST(request: NextRequest) {
 
     console.log('💾 Inserting agent for user:', agentUserIdToUse);
     console.log('💾 Agent name:', agentData.agent_name);
+    console.log('💾 Agent ID being used:', finalAgentId || 'database_generated');
     console.log('💾 Agent config being saved:', !!agentData.agent_config);
 
     // Test Supabase connection first
@@ -176,6 +199,12 @@ export async function POST(request: NextRequest) {
     }
 
     console.log('✅ Agent created successfully:', data.id, 'for user:', agentUserIdToUse);
+    console.log('✅ Agent ID consistency check:', {
+      requestedId: finalAgentId,
+      createdId: data.id,
+      idsMatch: finalAgentId === data.id,
+      tokenTrackingWillWork: finalAgentId === data.id
+    });
     console.log('✅ Saved agent_config present:', !!data.agent_config);
     console.log('✅ Saved agent_config size:', data.agent_config ? JSON.stringify(data.agent_config).length : 0);
 
@@ -184,7 +213,12 @@ export async function POST(request: NextRequest) {
       { 
         success: true, 
         agent: data,
-        message: 'Agent created successfully' 
+        message: 'Agent created successfully',
+        analytics: {
+          agentId: data.id,
+          sessionId: providedSessionId,
+          tokenTrackingConsistent: finalAgentId === data.id
+        }
       },
       { status: 201 }
     );
