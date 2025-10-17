@@ -8,7 +8,9 @@ import { addManualExecution } from '@/lib/queues/agentQueue';
 import parser from 'cron-parser';
 
 // Required exports for Vercel function detection
+export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 30;
 
 /**
  * Check if an agent is due to run based on its cron schedule
@@ -64,18 +66,24 @@ function calculateNextRun(cronExpression: string, timezone: string = 'UTC'): Dat
  * Main scheduler function
  * Called every 5 minutes by Vercel Cron
  */
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY! // Use service role for server-side
-);
-
 export async function GET(request: NextRequest) {
   const startTime = Date.now();
   
   try {
     console.log('Scheduler called at:', new Date().toISOString());
     console.log('Starting scheduled agent scan...');
+    
+    // Create server-side Supabase client
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        }
+      }
+    );
     
     // Verify this is called by Vercel Cron (security check)
     const authHeader = request.headers.get('authorization');
