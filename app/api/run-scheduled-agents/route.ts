@@ -8,9 +8,7 @@ import { addManualExecution } from '@/lib/queues/agentQueue';
 import parser from 'cron-parser';
 
 // Required exports for Vercel function detection
-export const runtime = 'nodejs20.x';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 30;
 
 /**
  * Check if an agent is due to run based on its cron schedule
