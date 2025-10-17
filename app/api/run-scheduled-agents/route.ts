@@ -3,7 +3,7 @@
 // Finds agents due to run and queues them for execution
 
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabaseClient';
+import { createClient } from '@supabase/supabase-js';
 import { addManualExecution } from '@/lib/queues/agentQueue';
 import parser from 'cron-parser';
 
@@ -64,6 +64,12 @@ function calculateNextRun(cronExpression: string, timezone: string = 'UTC'): Dat
  * Main scheduler function
  * Called every 5 minutes by Vercel Cron
  */
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY! // Use service role for server-side
+);
+
 export async function GET(request: NextRequest) {
   const startTime = Date.now();
   
