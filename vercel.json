@@ -1,10 +1,15 @@
 {
   "version": 2,
   "functions": {
-    "app/api/**/route.ts": {
+    "app/api/run-scheduled-agents/route.ts": {
       "runtime": "nodejs20.x",
-      "memory": 512,
+      "memory": 256,
       "maxDuration": 30
+    },
+    "app/api/run-agent/route.ts": {
+      "runtime": "nodejs20.x", 
+      "memory": 512,
+      "maxDuration": 10
     }
   },
   "crons": [
@@ -12,8 +17,5 @@
       "path": "/api/run-scheduled-agents",
       "schedule": "*/5 * * * *"
     }
-  ],
-  "env": {
-    "NODE_ENV": "production"
-  }
+  ]
 }
