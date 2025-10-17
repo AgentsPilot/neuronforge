@@ -4,8 +4,13 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabaseClient';
-import { addManualExecution } from '@/lib/queues/agentQueue'; // FIXED: Use correct function
+import { addManualExecution } from '@/lib/queues/agentQueue';
 import parser from 'cron-parser';
+
+// Required exports for Vercel function detection
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export const maxDuration = 30;
 
 /**
  * Check if an agent is due to run based on its cron schedule
@@ -63,15 +68,15 @@ function calculateNextRun(cronExpression: string, timezone: string = 'UTC'): Dat
  */
 export async function GET(request: NextRequest) {
   const startTime = Date.now();
-  console.log('🕐 Scheduler called at:', new Date().toISOString());
-  console.log('🔍 Request headers:', Object.fromEntries(request.headers.entries()));
+  
   try {
-    console.log('🕐 Starting scheduled agent scan...');
+    console.log('Scheduler called at:', new Date().toISOString());
+    console.log('Starting scheduled agent scan...');
     
     // Verify this is called by Vercel Cron (security check)
     const authHeader = request.headers.get('authorization');
     if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-      console.warn('❌ Unauthorized cron request');
+      console.warn('Unauthorized cron request - Auth header:', authHeader);
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -80,11 +85,11 @@ export async function GET(request: NextRequest) {
       .from('agents')
       .select('id, agent_name, user_id, schedule_cron, timezone, last_run, next_run, status, mode')
       .eq('mode', 'scheduled')
-      .neq('status', 'archived')
-      .neq('status', 'inactive');
+      .eq('status', 'active')
+      .not('schedule_cron', 'is', null);
 
     if (agentsError) {
-      console.error('❌ Failed to fetch scheduled agents:', agentsError);
+      console.error('Failed to fetch scheduled agents:', agentsError);
       return NextResponse.json(
         { error: 'Failed to fetch agents', details: agentsError.message },
         { status: 500 }
@@ -92,7 +97,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (!agents || agents.length === 0) {
-      console.log('ℹ️ No scheduled agents found');
+      console.log('No scheduled agents found');
       return NextResponse.json({
         success: true,
         message: 'No scheduled agents to process',
@@ -101,12 +106,12 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    console.log(`📋 Found ${agents.length} scheduled agents, checking which are due...`);
+    console.log(`Found ${agents.length} scheduled agents, checking which are due...`);
 
     // 2. Check which agents are due to run
     const agentsDue = agents.filter(agent => {
       if (!agent.schedule_cron) {
-        console.warn(`⚠️ Agent ${agent.id} has no cron expression`);
+        console.warn(`Agent ${agent.id} has no cron expression`);
         return false;
       }
 
@@ -118,14 +123,14 @@ export async function GET(request: NextRequest) {
       );
 
       if (isDue) {
-        console.log(`⏰ Agent ${agent.agent_name} (${agent.id}) is due to run`);
+        console.log(`Agent ${agent.agent_name} (${agent.id}) is due to run`);
       }
 
       return isDue;
     });
 
     if (agentsDue.length === 0) {
-      console.log('✅ No agents are due to run at this time');
+      console.log('No agents are due to run at this time');
       return NextResponse.json({
         success: true,
         message: 'No agents due to run',
@@ -135,7 +140,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    console.log(`🚀 Found ${agentsDue.length} agents due to run, processing...`);
+    console.log(`Found ${agentsDue.length} agents due to run, processing...`);
 
     // 3. Process each due agent
     const results = await Promise.allSettled(
@@ -161,7 +166,7 @@ export async function GET(request: NextRequest) {
             throw new Error(`Failed to create execution record: ${executionError?.message}`);
           }
 
-          // FIXED: Add job to queue using correct function and parameters
+          // Add job to queue using correct function and parameters
           const { jobId } = await addManualExecution(
             agent.id,           // agentId
             agent.user_id,      // userId
@@ -174,10 +179,14 @@ export async function GET(request: NextRequest) {
           const nextRun = calculateNextRun(agent.schedule_cron, agent.timezone || 'UTC');
           await supabase
             .from('agents')
-            .update({ next_run: nextRun.toISOString() })
+            .update({ 
+              next_run: nextRun.toISOString(),
+              last_run: scheduledAt,
+              updated_at: new Date().toISOString()
+            })
             .eq('id', agent.id);
 
-          console.log(`✅ Queued agent ${agent.agent_name} (${agent.id})`, {
+          console.log(`Queued agent ${agent.agent_name} (${agent.id})`, {
             executionId: execution.id,
             jobId,
             nextRun: nextRun.toISOString(),
@@ -188,11 +197,12 @@ export async function GET(request: NextRequest) {
             agentName: agent.agent_name,
             executionId: execution.id,
             jobId,
+            nextRun: nextRun.toISOString(),
             success: true,
           };
 
         } catch (error) {
-          console.error(`❌ Failed to queue agent ${agent.id}:`, error);
+          console.error(`Failed to queue agent ${agent.id}:`, error);
           return {
             agentId: agent.id,
             agentName: agent.agent_name,
@@ -209,7 +219,7 @@ export async function GET(request: NextRequest) {
 
     const duration = Date.now() - startTime;
 
-    console.log(`📊 Scheduler completed in ${duration}ms:`, {
+    console.log(`Scheduler completed in ${duration}ms:`, {
       totalAgents: agents.length,
       agentsDue: agentsDue.length,
       successful: successful.length,
@@ -225,25 +235,26 @@ export async function GET(request: NextRequest) {
         successful: successful.length,
         failed: failed.length,
         duration,
+        timestamp: new Date().toISOString(),
       },
-      results: results.map(r => r.status === 'fulfilled' ? r.value : { error: 'Promise rejected' }),
+      results: results.map(r => r.status === 'fulfilled' ? r.value : { 
+        error: r.status === 'rejected' ? r.reason?.message || 'Promise rejected' : 'Unknown error' 
+      }),
     });
 
   } catch (error) {
     const duration = Date.now() - startTime;
-    console.error('❌ Scheduler failed:', error);
+    console.error('Scheduler failed:', error);
     
     return NextResponse.json(
       {
+        success: false,
         error: 'Scheduler failed',
         message: error instanceof Error ? error.message : 'Unknown error',
         duration,
+        timestamp: new Date().toISOString(),
       },
       { status: 500 }
     );
   }
 }
-
-// Prevent caching of this endpoint
-export const dynamic = 'force-dynamic';
-export const runtime = 'nodejs';
