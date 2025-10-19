@@ -1,4 +1,5 @@
-// Updated scheduleFormatter.ts with new execution tracking functions
+// Updated scheduleFormatter.ts with proper timezone support
+import parser from 'cron-parser';
 
 export const formatScheduleDisplay = (mode: string, scheduleCron?: string): string => {
   if (mode === 'on_demand') {
@@ -74,69 +75,44 @@ const parseCronToHuman = (cron: string): string => {
   }
 };
 
-// NEW FUNCTIONS FOR EXECUTION TRACKING
-
-// Calculate when the agent should run next
-export const calculateNextRun = (cronExpression: string, lastRun?: string): Date | null => {
+// FIXED: Use proper cron-parser with timezone support
+export const calculateNextRun = (cronExpression: string, timezone: string = 'UTC'): Date | null => {
   if (!cronExpression) return null;
   
   try {
-    const parts = cronExpression.split(' ');
-    if (parts.length !== 5) return null;
+    const interval = parser.parseExpression(cronExpression, {
+      tz: timezone,
+      currentDate: new Date(),
+    });
     
-    const [minute, hour, dayMonth, month, dayWeek] = parts;
+    const nextRun = interval.next().toDate();
     
-    const now = new Date();
-    const next = new Date();
+    // Debug logging for timezone issues
+    console.log(`calculateNextRun debug:`, {
+      cronExpression,
+      timezone,
+      nextRunUTC: nextRun.toISOString(),
+      nextRunLocal: nextRun.toLocaleString('en-US', { timeZone: timezone }),
+      currentTime: new Date().toISOString()
+    });
     
-    // Set the target time
-    next.setHours(parseInt(hour), parseInt(minute), 0, 0);
-    
-    // Handle different schedule types
-    if (dayWeek !== '*') {
-      // Weekly schedule
-      const targetDay = parseInt(dayWeek);
-      const currentDay = now.getDay();
-      let daysUntil = (targetDay - currentDay + 7) % 7;
-      
-      if (daysUntil === 0 && now >= next) {
-        daysUntil = 7; // Next week
-      }
-      
-      next.setDate(now.getDate() + daysUntil);
-    } else if (dayMonth !== '*') {
-      // Monthly schedule
-      const targetDate = parseInt(dayMonth);
-      next.setDate(targetDate);
-      
-      // If the target date has passed this month, go to next month
-      if (now >= next) {
-        next.setMonth(next.getMonth() + 1);
-        next.setDate(targetDate);
-      }
-    } else {
-      // Daily schedule
-      if (now >= next) {
-        next.setDate(next.getDate() + 1);
-      }
-    }
-    
-    return next;
+    return nextRun;
   } catch (error) {
     console.error('Error calculating next run:', error);
     return null;
   }
 };
 
-// Format the next run time in relative terms
-export const formatNextRun = (nextRun: Date | null): string => {
+// Format the next run time in relative terms with timezone support
+export const formatNextRun = (nextRun: Date | string | null, timezone: string = 'UTC'): string => {
   if (!nextRun) return 'On demand';
   
+  const nextRunDate = typeof nextRun === 'string' ? new Date(nextRun) : nextRun;
   const now = new Date();
-  const diffMs = nextRun.getTime() - now.getTime();
+  const diffMs = nextRunDate.getTime() - now.getTime();
   
   // If the time has passed, return "Soon" or "Overdue"
-  if (diffMs <= 0) return 'Soon';
+  if (diffMs <= 0) return 'Overdue';
   
   const diffMinutes = Math.floor(diffMs / (1000 * 60));
   const diffHours = Math.floor(diffMinutes / 60);
@@ -158,8 +134,9 @@ export const formatNextRun = (nextRun: Date | null): string => {
 };
 
 // Get absolute formatted time for next run
-export const formatAbsoluteTime = (date: Date): string => {
+export const formatAbsoluteTime = (date: Date, timezone: string = 'UTC'): string => {
   return date.toLocaleString('en-US', {
+    timeZone: timezone,
     weekday: 'short',
     month: 'short',
     day: 'numeric',
@@ -218,16 +195,24 @@ export const formatLastRun = (date: string | Date): string => {
 };
 
 // Get next few runs for display
-export const getUpcomingRuns = (cronExpression: string, count: number = 3): Date[] => {
+export const getUpcomingRuns = (cronExpression: string, timezone: string = 'UTC', count: number = 3): Date[] => {
   const runs: Date[] = [];
-  let current = new Date();
   
-  for (let i = 0; i < count; i++) {
-    const next = calculateNextRun(cronExpression);
-    if (next) {
+  try {
+    let currentDate = new Date();
+    
+    for (let i = 0; i < count; i++) {
+      const interval = parser.parseExpression(cronExpression, {
+        tz: timezone,
+        currentDate: currentDate,
+      });
+      
+      const next = interval.next().toDate();
       runs.push(next);
-      current = new Date(next.getTime() + 60000); // Add 1 minute to get next occurrence
+      currentDate = new Date(next.getTime() + 60000); // Add 1 minute to get next occurrence
     }
+  } catch (error) {
+    console.error('Error getting upcoming runs:', error);
   }
   
   return runs;

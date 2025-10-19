@@ -2,13 +2,14 @@
 
 import Link from 'next/link'
 import { useEffect, useState, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabaseClient'
 import { 
   Bot, Plus, Search, Filter, Play, Pause, Edit, AlertCircle, CheckCircle, Clock,
   FileText, Zap, Calendar, Settings, ArrowUpDown, Sparkles, Rocket, Star, Heart,
   Grid3X3, List, ChevronDown, ChevronUp, TrendingUp, Activity, MoreHorizontal,
   Eye, Copy, Archive, Trash2, ExternalLink, Square, Loader2, StopCircle, Timer,
-  PlayCircle, Cpu, BarChart3, Shield, Workflow, History, Globe
+  PlayCircle, Cpu, BarChart3, Shield, Workflow, History, Globe, X, Info
 } from 'lucide-react'
 import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
 
@@ -70,6 +71,31 @@ interface AgentExecutionStatus {
   runningExecutions: ExecutionHistoryItem[];
 }
 
+// Ultra-Modern Modal with Dynamic Sizing
+const Modal = ({ isOpen, onClose, children }: { isOpen: boolean; onClose: () => void; children: React.ReactNode }) => {
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+    return () => setMounted(false)
+  }, [])
+
+  if (!mounted || !isOpen) return null
+
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+      <div 
+        className="absolute inset-0 bg-black/20 backdrop-blur-md"
+        onClick={onClose}
+      />
+      <div className="relative bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/20 max-w-lg w-full mx-auto max-h-[90vh] overflow-y-auto">
+        {children}
+      </div>
+    </div>,
+    document.body
+  )
+}
+
 // Enhanced next run formatting with timezone support
 const formatNextRun = (nextRunString: string, timezone?: string) => {
   if (!nextRunString) return null;
@@ -121,36 +147,17 @@ const formatNextRun = (nextRunString: string, timezone?: string) => {
 
 // Next Run Badge Component
 const NextRunBadge = ({ agent }: { agent: Agent }) => {
-  // Debug logging
-console.log('NextRunBadge Debug - Full agent object:', {
-    agentId: agent.id,
-    agentName: agent.agent_name,
-    mode: agent.mode,
-    nextRun: agent.next_run, // This should now have the value
-    timezone: agent.timezone,
-    scheduleCron: agent.schedule_cron,
-    status: agent.status,
-    // Log the entire agent object to see what's actually being passed
-    fullAgent: agent
-  });
-  
-if (agent.mode !== 'scheduled') {
-    console.log(`NextRunBadge: Agent ${agent.agent_name} not scheduled (mode: ${agent.mode})`);
+  if (agent.mode !== 'scheduled') {
     return null;
   }
 
   if (!agent.next_run) {
-    console.log(`NextRunBadge: Agent ${agent.agent_name} has no next_run value:`, agent.next_run);
-    // Let's also check if it might be in a different field
-    console.log('NextRunBadge: Checking all agent fields:', Object.keys(agent));
     return null;
   }
 
   const nextRunInfo = formatNextRun(agent.next_run, agent.timezone);
-  console.log('NextRunBadge: formatNextRun result:', nextRunInfo);
   
   if (!nextRunInfo) {
-    console.log('NextRunBadge: formatNextRun returned null/undefined');
     return null;
   }
 
@@ -188,20 +195,10 @@ if (agent.mode !== 'scheduled') {
 
   const styleConfig = getStyleConfig();
 
-  console.log(`NextRunBadge: Rendering badge for ${agent.agent_name} with:`, {
-    text: nextRunInfo.text,
-    time: nextRunInfo.time,
-    styleConfig
-  });
-
   return (
     <div 
       className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium ${styleConfig.bg} ${styleConfig.text} border ${styleConfig.border}`}
-      style={{ 
-        minWidth: '80px',
-        // Temporary red border for debugging - remove after confirming it works
-        border: '2px solid red'
-      }}
+      style={{ minWidth: '80px' }}
     >
       <Timer className={`w-3 h-3 ${styleConfig.icon} flex-shrink-0`} />
       <span className="whitespace-nowrap">{nextRunInfo.text}</span>
@@ -633,6 +630,8 @@ export default function AgentList() {
   const [sortBy, setSortBy] = useState<SortType>('created_desc')
   const [viewType, setViewType] = useState<ViewType>('grid')
   const [executingAgents, setExecutingAgents] = useState<Set<string>>(new Set())
+  const [pausingAgents, setPausingAgents] = useState<Set<string>>(new Set())
+  const [showPauseConfirm, setShowPauseConfirm] = useState<string | null>(null)
   const [refreshTrigger, setRefreshTrigger] = useState<Record<string, number>>({})
   const [toasts, setToasts] = useState<Array<{ id: string; message: string; type: 'success' | 'error' | 'warning' | 'info' }>>([])
 
@@ -792,6 +791,67 @@ export default function AgentList() {
     }
   };
 
+  const handlePauseAgent = async (agentId: string, agentName: string) => {
+    if (pausingAgents.has(agentId)) return;
+    
+    setPausingAgents(prev => new Set(prev).add(agentId));
+    
+    try {
+      const { error } = await supabase
+        .from('agents')
+        .update({ status: 'inactive' })
+        .eq('id', agentId);
+      
+      if (error) {
+        console.error('Error pausing agent:', error);
+        addToast(`Failed to pause ${agentName}`, 'error');
+      } else {
+        // Update local state immediately for better UX
+        setAgents(prev => prev.map(agent => 
+          agent.id === agentId 
+            ? { ...agent, status: 'inactive' }
+            : agent
+        ));
+        addToast(`${agentName} has been paused`, 'success');
+      }
+    } catch (error) {
+      console.error('Error pausing agent:', error);
+      addToast(`Failed to pause ${agentName}`, 'error');
+    } finally {
+      setPausingAgents(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(agentId);
+        return newSet;
+      });
+      setShowPauseConfirm(null);
+    }
+  };
+
+  const handleActivateAgent = async (agentId: string, agentName: string) => {
+    try {
+      const { error } = await supabase
+        .from('agents')
+        .update({ status: 'active' })
+        .eq('id', agentId);
+      
+      if (error) {
+        console.error('Error activating agent:', error);
+        addToast(`Failed to activate ${agentName}`, 'error');
+      } else {
+        // Update local state immediately for better UX
+        setAgents(prev => prev.map(agent => 
+          agent.id === agentId 
+            ? { ...agent, status: 'active' }
+            : agent
+        ));
+        addToast(`${agentName} is now active`, 'success');
+      }
+    } catch (error) {
+      console.error('Error activating agent:', error);
+      addToast(`Failed to activate ${agentName}`, 'error');
+    }
+  };
+
   useEffect(() => {
     async function fetchAgents() {
       const { data, error } = await supabase
@@ -803,7 +863,6 @@ export default function AgentList() {
       if (error) {
         console.error('Error fetching agents:', error)
       } else {
-        console.log('Fetched agents with next_run:', data) // Debug log
         setAgents(data || [])
       }
       setLoading(false)
@@ -899,41 +958,77 @@ export default function AgentList() {
     }).format(date)
   }
 
+  // Enhanced AgentActionButtons with pause functionality
   const AgentActionButtons = ({ agent }: { agent: Agent }) => {
     const isCurrentlyExecuting = executingAgents.has(agent.id);
+    const isPausing = pausingAgents.has(agent.id);
     const { executionStatus } = useAgentExecutionStatus(agent.id, agent.status);
     
     const isRunningFromAPI = executionStatus?.isRunning || false;
-    const isDisabled = isCurrentlyExecuting || isRunningFromAPI;
+    const isDisabled = isCurrentlyExecuting || isRunningFromAPI || isPausing;
     
     return (
       <div className="flex gap-1.5">
         {agent.status === 'active' && (
+          <>
+            <button
+              onClick={() => handleExecuteAgent(agent.id)}
+              disabled={isDisabled}
+              className={`group flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ${
+                isDisabled
+                  ? 'bg-gray-400 text-white cursor-not-allowed opacity-60'
+                  : 'bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white shadow-md hover:shadow-lg hover:scale-105 active:scale-95'
+              }`}
+            >
+              {isRunningFromAPI ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Run
+                </>
+              ) : isCurrentlyExecuting ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Wait
+                </>
+              ) : (
+                <>
+                  <PlayCircle className="h-3 w-3 group-hover:scale-110 transition-transform" />
+                  Run
+                </>
+              )}
+            </button>
+            
+            <button
+              onClick={() => setShowPauseConfirm(agent.id)}
+              disabled={isPausing}
+              className={`group flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ${
+                isPausing
+                  ? 'bg-gray-400 text-white cursor-not-allowed opacity-60'
+                  : 'bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white shadow-md hover:shadow-lg hover:scale-105 active:scale-95'
+              }`}
+            >
+              {isPausing ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Pause
+                </>
+              ) : (
+                <>
+                  <Pause className="h-3 w-3 group-hover:scale-110 transition-transform" />
+                  Pause
+                </>
+              )}
+            </button>
+          </>
+        )}
+        
+        {(agent.status === 'inactive' || agent.status === 'draft') && (
           <button
-            onClick={() => handleExecuteAgent(agent.id)}
-            disabled={isDisabled}
-            className={`group flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ${
-              isDisabled
-                ? 'bg-gray-400 text-white cursor-not-allowed opacity-60'
-                : 'bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white shadow-md hover:shadow-lg hover:scale-105 active:scale-95'
-            }`}
+            onClick={() => handleActivateAgent(agent.id, agent.agent_name)}
+            className="group flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-green-500 to-emerald-500 text-white text-xs font-semibold rounded-lg transition-all duration-200 shadow-md hover:shadow-lg hover:scale-105 active:scale-95"
           >
-            {isRunningFromAPI ? (
-              <>
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Run
-              </>
-            ) : isCurrentlyExecuting ? (
-              <>
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Wait
-              </>
-            ) : (
-              <>
-                <PlayCircle className="h-3 w-3 group-hover:scale-110 transition-transform" />
-                Run
-              </>
-            )}
+            <Play className="h-3 w-3 group-hover:scale-110 transition-transform" />
+            Activate
           </button>
         )}
         
@@ -948,136 +1043,107 @@ export default function AgentList() {
     );
   };
 
-// Improved ModernAgentCard - replace your existing one with this
-// Improved ModernAgentCard - replace your existing one with this
-const ModernAgentCard = ({ agent }: { agent: Agent }) => {
-  const statusConfig = getStatusConfig(agent.status)
-  const { executionStatus } = useAgentExecutionStatus(agent.id, agent.status);
-  const isRunning = executionStatus?.isRunning || false;
-  const StatusIcon = statusConfig.icon
+  const ModernAgentCard = ({ agent }: { agent: Agent }) => {
+    const statusConfig = getStatusConfig(agent.status)
+    const { executionStatus } = useAgentExecutionStatus(agent.id, agent.status);
+    const isRunning = executionStatus?.isRunning || false;
+    const StatusIcon = statusConfig.icon
 
-  // Helper to get next run info
-  const getNextRunInfo = () => {
-    if (!agent.next_run) return null;
-    return formatNextRun(agent.next_run, agent.timezone);
-  };
+    // Helper to get next run info
+    const getNextRunInfo = () => {
+      if (!agent.next_run) return null;
+      return formatNextRun(agent.next_run, agent.timezone);
+    };
 
-  const nextRunInfo = getNextRunInfo();
+    const nextRunInfo = getNextRunInfo();
 
-  return (
-    <div className="group relative">
-      {isRunning && (
-        <div className="absolute -inset-0.5 bg-gradient-to-r from-emerald-400 via-blue-400 to-purple-400 rounded-lg blur opacity-25 group-hover:opacity-40 transition duration-1000 animate-pulse" />
-      )}
-      
-      <div className="relative bg-white/95 backdrop-blur-sm rounded-lg border border-gray-200/80 hover:border-purple-300/60 transition-all duration-300 overflow-hidden hover:shadow-lg hover:-translate-y-1">
+    return (
+      <div className="group relative">
+        {isRunning && (
+          <div className="absolute -inset-0.5 bg-gradient-to-r from-emerald-400 via-blue-400 to-purple-400 rounded-lg blur opacity-25 group-hover:opacity-40 transition duration-1000 animate-pulse" />
+        )}
         
-        <div className="h-0.5 bg-gradient-to-r from-violet-500 via-purple-500 to-blue-500 opacity-60 group-hover:opacity-100 transition-opacity duration-300" />
+        <div className="relative bg-white/95 backdrop-blur-sm rounded-lg border border-gray-200/80 hover:border-purple-300/60 transition-all duration-300 overflow-hidden hover:shadow-lg hover:-translate-y-1">
+          
+          <div className="h-0.5 bg-gradient-to-r from-violet-500 via-purple-500 to-blue-500 opacity-60 group-hover:opacity-100 transition-opacity duration-300" />
 
-        <div className="relative p-4">
-          {/* Simplified Header */}
-          <div className="flex items-start gap-3 mb-3">
-            <div className="relative flex-shrink-0">
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm transition-all duration-300 group-hover:scale-105 ${
-                isRunning 
-                  ? 'bg-gradient-to-br from-emerald-500 via-blue-500 to-purple-500 animate-pulse' 
-                  : 'bg-gradient-to-br from-violet-600 via-purple-600 to-blue-600'
-              }`}>
-                <Bot className="h-5 w-5 text-white" />
+          <div className="relative p-4">
+            {/* Header */}
+            <div className="flex items-start gap-3 mb-3">
+              <div className="relative flex-shrink-0">
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm transition-all duration-300 group-hover:scale-105 ${
+                  isRunning 
+                    ? 'bg-gradient-to-br from-emerald-500 via-blue-500 to-purple-500 animate-pulse' 
+                    : 'bg-gradient-to-br from-violet-600 via-purple-600 to-blue-600'
+                }`}>
+                  <Bot className="h-5 w-5 text-white" />
+                </div>
+                {!isRunning && (
+                  <div className={`absolute -bottom-1 -right-1 w-3 h-3 ${statusConfig.dot} rounded-full border-2 border-white shadow-sm`} />
+                )}
               </div>
-              {/* Status dot - only show if not running */}
-              {!isRunning && (
-                <div className={`absolute -bottom-1 -right-1 w-3 h-3 ${statusConfig.dot} rounded-full border-2 border-white shadow-sm`} />
-              )}
-            </div>
-            
-            <div className="min-w-0 flex-1">
-              <h3 className="text-base font-semibold text-gray-900 mb-1.5 group-hover:text-purple-700 transition-colors truncate">
-                {agent.agent_name}
-              </h3>
               
-              {/* Single status line - consolidated */}
-              <div className="flex items-center gap-2 flex-wrap">
-                {isRunning ? (
-                  <div className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-blue-50 text-blue-700 border border-blue-200 font-medium">
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                    <span>Running</span>
-                  </div>
-                ) : (
-                  <div className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium ${statusConfig.bg} ${statusConfig.color}`}>
-                    <StatusIcon className="w-3 h-3" />
-                    {statusConfig.label}
-                  </div>
-                )}
+              <div className="min-w-0 flex-1">
+                <h3 className="text-base font-semibold text-gray-900 mb-1.5 group-hover:text-purple-700 transition-colors truncate">
+                  {agent.agent_name}
+                </h3>
                 
-                {/* Inline next run - subtle */}
-                {agent.mode === 'scheduled' && nextRunInfo && (
-                  <div className="flex items-center gap-1 text-xs text-gray-500">
-                    <Timer className="w-3 h-3" />
-                    <span>{nextRunInfo.text}</span>
-                  </div>
-                )}
+                {/* Status line */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {isRunning ? (
+                    <div className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-blue-50 text-blue-700 border border-blue-200 font-medium">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      <span>Running</span>
+                    </div>
+                  ) : (
+                    <div className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium ${statusConfig.bg} ${statusConfig.color}`}>
+                      <StatusIcon className="w-3 h-3" />
+                      {statusConfig.label}
+                    </div>
+                  )}
+                  
+                  {agent.mode === 'scheduled' && nextRunInfo && (
+                    <div className="flex items-center gap-1 text-xs text-gray-500">
+                      <Timer className="w-3 h-3" />
+                      <span>{nextRunInfo.text}</span>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* Description - only if short */}
-          {agent.description && agent.description.length < 80 && (
-            <p className="text-sm text-gray-600 mb-3 line-clamp-2">
-              {agent.description}
-            </p>
-          )}
+            {/* Description */}
+            {agent.description && agent.description.length < 80 && (
+              <p className="text-sm text-gray-600 mb-3 line-clamp-2">
+                {agent.description}
+              </p>
+            )}
 
-          {/* Schedule info - compact */}
-          {agent.mode === 'scheduled' && agent.schedule_cron && (
+            {/* Schedule info */}
+            {agent.mode === 'scheduled' && agent.schedule_cron && (
+              <div className="mb-3">
+                <div className="flex items-center gap-2 p-2 bg-blue-50/50 rounded-lg">
+                  <Calendar className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                  <span className="text-sm text-blue-700 font-medium">
+                    {formatScheduleDisplay(agent.mode, agent.schedule_cron)}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Action Buttons */}
             <div className="mb-3">
-              <div className="flex items-center gap-2 p-2 bg-blue-50/50 rounded-lg">
-                <Calendar className="w-4 h-4 text-blue-600 flex-shrink-0" />
-                <span className="text-sm text-blue-700 font-medium">
-                  {formatScheduleDisplay(agent.mode, agent.schedule_cron)}
-                </span>
-              </div>
+              <AgentActionButtons agent={agent} />
             </div>
-          )}
 
-          {/* Action Buttons */}
-          <div className="mb-3">
-            <AgentActionButtons agent={agent} />
+            {/* Compact Execution History */}
+            <AgentExecutionHistory agent={agent} />
           </div>
-
-          {/* Compact Execution History */}
-          <AgentExecutionHistoryCompact agent={agent} />
         </div>
       </div>
-    </div>
-  )
-}
+    )
+  }
 
-// Add this new compact history component
-const AgentExecutionHistoryCompact = ({ agent }: { agent: Agent }) => {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <div className="border-t border-gray-100 pt-2">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex items-center justify-between w-full text-left hover:bg-gray-50 p-1 rounded transition-all duration-200"
-      >
-        <div className="flex items-center gap-2">
-          <History className="w-3 h-3 text-gray-400" />
-          <span className="text-xs text-gray-500">Activity</span>
-        </div>
-        <ChevronDown className={`w-3 h-3 text-gray-400 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
-      </button>
-
-      {expanded && (
-        <div className="mt-2">
-          <AgentExecutionHistory agent={agent} />
-        </div>
-      )}
-    </div>
-  );
-};
   const ModernAgentRow = ({ agent }: { agent: Agent }) => {
     const statusConfig = getStatusConfig(agent.status)
 
@@ -1306,7 +1372,7 @@ const AgentExecutionHistoryCompact = ({ agent }: { agent: Agent }) => {
           </p>
         </div>
 
-        {/* Toast Container - Positioned right before agent cards for immediate visibility */}
+        {/* Toast Container */}
         <ToastContainer toasts={toasts} removeToast={removeToast} />
 
         {filteredAndSortedAgents.length === 0 ? (
@@ -1337,6 +1403,88 @@ const AgentExecutionHistoryCompact = ({ agent }: { agent: Agent }) => {
           </div>
         )}
       </div>
+
+      {/* Pause Confirmation Modal */}
+      <Modal isOpen={showPauseConfirm !== null} onClose={() => setShowPauseConfirm(null)}>
+        <div className="p-6">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 bg-gradient-to-br from-orange-400 to-red-500 rounded-xl flex items-center justify-center">
+              <Pause className="h-6 w-6 text-white" />
+            </div>
+            <div className="flex-1">
+              <h3 className="font-semibold text-slate-900 mb-3 text-lg">
+                Pause "{agents.find(a => a.id === showPauseConfirm)?.agent_name}"
+              </h3>
+              
+              <div className="space-y-3 mb-4">
+                <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Pause className="h-4 w-4 text-orange-600" />
+                    <span className="font-medium text-orange-800">What happens when paused:</span>
+                  </div>
+                  <ul className="text-orange-700 text-sm space-y-1">
+                    <li>• All automated executions will stop</li>
+                    <li>• Scheduled tasks will be disabled</li>
+                    <li>• Manual testing will be unavailable</li>
+                    <li>• No new execution history will be created</li>
+                  </ul>
+                </div>
+                
+                <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Shield className="h-4 w-4 text-green-600" />
+                    <span className="font-medium text-green-800">What stays safe:</span>
+                  </div>
+                  <ul className="text-green-700 text-sm space-y-1">
+                    <li>• All configurations and settings preserved</li>
+                    <li>• Execution history and logs remain intact</li>
+                    <li>• You can reactivate anytime</li>
+                    <li>• No data or setup will be lost</li>
+                  </ul>
+                </div>
+                
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Info className="h-4 w-4 text-blue-600" />
+                    <span className="font-medium text-blue-800">Good for:</span>
+                  </div>
+                  <p className="text-blue-700 text-sm">
+                    Temporary breaks, maintenance periods, or when you want to stop automation without losing your setup.
+                  </p>
+                </div>
+              </div>
+              
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowPauseConfirm(null)}
+                  className="flex-1 px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors font-medium text-sm"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    const agent = agents.find(a => a.id === showPauseConfirm);
+                    if (agent) {
+                      handlePauseAgent(agent.id, agent.agent_name);
+                    }
+                  }}
+                  disabled={pausingAgents.has(showPauseConfirm || '')}
+                  className="flex-1 px-4 py-2 bg-gradient-to-r from-orange-500 to-red-600 text-white rounded-lg hover:from-orange-600 hover:to-red-700 transition-all duration-200 font-medium text-sm disabled:opacity-50"
+                >
+                  {pausingAgents.has(showPauseConfirm || '') ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2 inline" />
+                      Pausing...
+                    </>
+                  ) : (
+                    'Pause Agent'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }
