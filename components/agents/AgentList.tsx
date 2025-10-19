@@ -8,7 +8,7 @@ import {
   FileText, Zap, Calendar, Settings, ArrowUpDown, Sparkles, Rocket, Star, Heart,
   Grid3X3, List, ChevronDown, ChevronUp, TrendingUp, Activity, MoreHorizontal,
   Eye, Copy, Archive, Trash2, ExternalLink, Square, Loader2, StopCircle, Timer,
-  PlayCircle, Cpu, BarChart3, Shield, Workflow, History
+  PlayCircle, Cpu, BarChart3, Shield, Workflow, History, Globe
 } from 'lucide-react'
 import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
 
@@ -46,6 +46,8 @@ type Agent = {
   created_at?: string
   mode?: string
   schedule_cron?: string
+  timezone?: string
+  next_run?: string
 }
 
 type FilterType = 'all' | 'active' | 'inactive' | 'draft'
@@ -68,6 +70,148 @@ interface AgentExecutionStatus {
   runningExecutions: ExecutionHistoryItem[];
 }
 
+// Enhanced next run formatting with timezone support
+const formatNextRun = (nextRunString: string, timezone?: string) => {
+  if (!nextRunString) return null;
+  
+  try {
+    const nextRun = new Date(nextRunString);
+    const now = new Date();
+    const diffInMs = nextRun.getTime() - now.getTime();
+    const diffInMinutes = Math.floor(diffInMs / (1000 * 60));
+    const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60));
+    const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24));
+
+    // Format time in user's timezone or UTC
+    const timeFormatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone || 'UTC',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    });
+
+    const timeString = timeFormatter.format(nextRun);
+
+    // Relative time formatting
+    if (diffInMinutes < 0) {
+      return { text: 'Overdue', time: timeString, isOverdue: true };
+    } else if (diffInMinutes < 5) {
+      return { text: 'In < 5min', time: timeString, isImmediate: true };
+    } else if (diffInMinutes < 60) {
+      return { text: `In ${diffInMinutes}min`, time: timeString, isImmediate: true };
+    } else if (diffInHours < 24) {
+      return { text: `In ${diffInHours}h`, time: timeString, isToday: true };
+    } else if (diffInDays === 1) {
+      return { text: 'Tomorrow', time: timeString, isTomorrow: true };
+    } else if (diffInDays < 7) {
+      return { text: `In ${diffInDays}d`, time: timeString, isThisWeek: true };
+    } else {
+      const dateFormatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone || 'UTC',
+        month: 'short',
+        day: 'numeric'
+      });
+      return { text: dateFormatter.format(nextRun), time: timeString, isFuture: true };
+    }
+  } catch (error) {
+    console.error('Error formatting next run:', error);
+    return null;
+  }
+};
+
+// Next Run Badge Component
+const NextRunBadge = ({ agent }: { agent: Agent }) => {
+  // Debug logging
+console.log('NextRunBadge Debug - Full agent object:', {
+    agentId: agent.id,
+    agentName: agent.agent_name,
+    mode: agent.mode,
+    nextRun: agent.next_run, // This should now have the value
+    timezone: agent.timezone,
+    scheduleCron: agent.schedule_cron,
+    status: agent.status,
+    // Log the entire agent object to see what's actually being passed
+    fullAgent: agent
+  });
+  
+if (agent.mode !== 'scheduled') {
+    console.log(`NextRunBadge: Agent ${agent.agent_name} not scheduled (mode: ${agent.mode})`);
+    return null;
+  }
+
+  if (!agent.next_run) {
+    console.log(`NextRunBadge: Agent ${agent.agent_name} has no next_run value:`, agent.next_run);
+    // Let's also check if it might be in a different field
+    console.log('NextRunBadge: Checking all agent fields:', Object.keys(agent));
+    return null;
+  }
+
+  const nextRunInfo = formatNextRun(agent.next_run, agent.timezone);
+  console.log('NextRunBadge: formatNextRun result:', nextRunInfo);
+  
+  if (!nextRunInfo) {
+    console.log('NextRunBadge: formatNextRun returned null/undefined');
+    return null;
+  }
+
+  const getStyleConfig = () => {
+    if (nextRunInfo.isOverdue) {
+      return {
+        bg: 'bg-red-50',
+        text: 'text-red-700',
+        border: 'border-red-200',
+        icon: 'text-red-600'
+      };
+    } else if (nextRunInfo.isImmediate) {
+      return {
+        bg: 'bg-orange-50',
+        text: 'text-orange-700',
+        border: 'border-orange-200',
+        icon: 'text-orange-600'
+      };
+    } else if (nextRunInfo.isToday || nextRunInfo.isTomorrow) {
+      return {
+        bg: 'bg-blue-50',
+        text: 'text-blue-700',
+        border: 'border-blue-200',
+        icon: 'text-blue-600'
+      };
+    } else {
+      return {
+        bg: 'bg-gray-50',
+        text: 'text-gray-700',
+        border: 'border-gray-200',
+        icon: 'text-gray-600'
+      };
+    }
+  };
+
+  const styleConfig = getStyleConfig();
+
+  console.log(`NextRunBadge: Rendering badge for ${agent.agent_name} with:`, {
+    text: nextRunInfo.text,
+    time: nextRunInfo.time,
+    styleConfig
+  });
+
+  return (
+    <div 
+      className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium ${styleConfig.bg} ${styleConfig.text} border ${styleConfig.border}`}
+      style={{ 
+        minWidth: '80px',
+        // Temporary red border for debugging - remove after confirming it works
+        border: '2px solid red'
+      }}
+    >
+      <Timer className={`w-3 h-3 ${styleConfig.icon} flex-shrink-0`} />
+      <span className="whitespace-nowrap">{nextRunInfo.text}</span>
+      {nextRunInfo.time && (
+        <span className="opacity-75 whitespace-nowrap">at {nextRunInfo.time}</span>
+      )}
+    </div>
+  );
+};
+
 // Toast Notification Component
 const Toast = ({ 
   message, 
@@ -78,8 +222,6 @@ const Toast = ({
   type?: 'success' | 'error' | 'warning' | 'info'; 
   onClose: () => void;
 }) => {
-  // Removed auto-dismiss timer - users must manually close messages
-
   const config = {
     success: {
       icon: CheckCircle,
@@ -113,8 +255,6 @@ const Toast = ({
 
   const Icon = config.icon;
 
-  console.log('🎨 Toast rendering:', type, message.substring(0, 30) + '...');
-
   return (
     <div className={`flex items-start gap-3 p-4 rounded-xl border-2 ${config.border} ${config.bg} shadow-xl animate-slide-in-right`}>
       <Icon className={`w-6 h-6 ${config.iconColor} flex-shrink-0 mt-0.5`} />
@@ -124,7 +264,6 @@ const Toast = ({
       <button
         onClick={(e) => {
           e.preventDefault();
-          console.log('👆 Manual close clicked');
           onClose();
         }}
         className={`${config.text} hover:opacity-70 transition-opacity flex-shrink-0 p-1`}
@@ -138,7 +277,7 @@ const Toast = ({
   );
 };
 
-// Toast Container Component - Positioned above agent cards
+// Toast Container Component
 const ToastContainer = ({ 
   toasts, 
   removeToast 
@@ -146,27 +285,19 @@ const ToastContainer = ({
   toasts: Array<{ id: string; message: string; type: 'success' | 'error' | 'warning' | 'info' }>; 
   removeToast: (id: string) => void;
 }) => {
-  console.log('🎨 ToastContainer rendering with toasts:', toasts.length);
-  
-  if (toasts.length === 0) {
-    console.log('⚠️ No toasts to display');
-    return null;
-  }
+  if (toasts.length === 0) return null;
   
   return (
     <div className="space-y-3 mb-4">
-      {toasts.map((toast) => {
-        console.log('🎨 Rendering toast:', toast.id, toast.type);
-        return (
-          <div key={toast.id}>
-            <Toast
-              message={toast.message}
-              type={toast.type}
-              onClose={() => removeToast(toast.id)}
-            />
-          </div>
-        );
-      })}
+      {toasts.map((toast) => (
+        <div key={toast.id}>
+          <Toast
+            message={toast.message}
+            type={toast.type}
+            onClose={() => removeToast(toast.id)}
+          />
+        </div>
+      ))}
     </div>
   );
 };
@@ -508,18 +639,14 @@ export default function AgentList() {
   // Fixed addToast function without dependency on toasts.length
   const addToast = useCallback((message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info') => {
     const id = `${Date.now()}-${Math.random()}`;
-    console.log('🍞 Adding toast:', { id, message, type });
     
     setToasts(prev => {
-      console.log('🍞 Current toasts before add:', prev.length);
-      
       // Prevent adding duplicate messages that are already visible
       const isDuplicate = prev.some(toast => 
         toast.message === message && toast.type === type
       );
       
       if (isDuplicate) {
-        console.log('🚫 Duplicate toast prevented:', message);
         return prev;
       }
       
@@ -529,13 +656,11 @@ export default function AgentList() {
         newToasts.shift(); // Remove oldest toast
       }
       
-      console.log('🍞 New toasts array:', newToasts);
       return newToasts;
     });
   }, []);
 
   const removeToast = useCallback((id: string) => {
-    console.log('🗑️ Removing toast:', id);
     setToasts(prev => prev.filter(toast => toast.id !== id));
   }, []);
 
@@ -555,15 +680,12 @@ export default function AgentList() {
 
   const handleExecuteAgent = async (agentId: string) => {
     if (executingAgents.has(agentId)) {
-      console.log('⚠️ Agent already executing, ignoring duplicate request');
       return;
     }
 
     setExecutingAgents(prev => new Set(prev).add(agentId));
 
     try {
-      console.log(`🚀 Starting queue-based execution for agent ${agentId}`);
-      
       const response = await fetch('/api/run-agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -575,14 +697,11 @@ export default function AgentList() {
         }),
       });
 
-      console.log('📡 Response status:', response.status);
-
       if (response.status === 409) {
         const errorData = await response.json();
-        console.warn('⚠️ Agent already running:', errorData);
         
         addToast(
-          '⚠️ Agent Already Running\n\nThis agent is currently executing. Please wait for it to complete.',
+          'Agent Already Running\n\nThis agent is currently executing. Please wait for it to complete.',
           'warning'
         );
         
@@ -597,7 +716,6 @@ export default function AgentList() {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('❌ HTTP Error:', errorText);
         
         let errorMessage = 'Failed to start agent';
         try {
@@ -607,7 +725,7 @@ export default function AgentList() {
           errorMessage = errorText || errorMessage;
         }
         
-        addToast(`❌ Failed to Start Agent\n\n${errorMessage}`, 'error');
+        addToast(`Failed to Start Agent\n\n${errorMessage}`, 'error');
         
         setExecutingAgents(prev => {
           const newSet = new Set(prev);
@@ -619,15 +737,10 @@ export default function AgentList() {
       }
 
       const result = await response.json();
-      console.log('✅ Response data:', result);
 
       if (result.success) {
-        console.log('✅ Agent queued successfully');
-        console.log('🆔 Execution ID:', result.execution_id);
-        console.log('🎯 Job ID:', result.job_id);
-        
         addToast(
-          '✅ Agent Started Successfully!\n\nYour agent has been queued and will start processing shortly.',
+          'Agent Started Successfully!\n\nYour agent has been queued and will start processing shortly.',
           'success'
         );
         
@@ -651,9 +764,7 @@ export default function AgentList() {
           job_id: result.job_id
         };
       } else {
-        console.error('❌ Failed to queue agent:', result.error);
-        
-        addToast(`❌ Failed to Start Agent\n\n${result.error}`, 'error');
+        addToast(`Failed to Start Agent\n\n${result.error}`, 'error');
         
         setExecutingAgents(prev => {
           const newSet = new Set(prev);
@@ -665,13 +776,11 @@ export default function AgentList() {
       }
       
     } catch (error) {
-      console.error('❌ Exception during agent execution:', error);
-      
       const errorMessage = error instanceof Error 
         ? error.message 
         : 'Unknown error occurred';
       
-      addToast(`❌ Error\n\n${errorMessage}`, 'error');
+      addToast(`Error\n\n${errorMessage}`, 'error');
       
       setExecutingAgents(prev => {
         const newSet = new Set(prev);
@@ -687,13 +796,14 @@ export default function AgentList() {
     async function fetchAgents() {
       const { data, error } = await supabase
         .from('agents')
-        .select('id, agent_name, description, status, deactivation_reason, created_at, mode, schedule_cron')
+        .select('id, agent_name, description, status, deactivation_reason, created_at, mode, schedule_cron, timezone, next_run')
         .eq('is_archived', false)
         .order('created_at', { ascending: false })
 
       if (error) {
-        console.error('❌ Error fetching agents:', error)
+        console.error('Error fetching agents:', error)
       } else {
+        console.log('Fetched agents with next_run:', data) // Debug log
         setAgents(data || [])
       }
       setLoading(false)
@@ -797,31 +907,31 @@ export default function AgentList() {
     const isDisabled = isCurrentlyExecuting || isRunningFromAPI;
     
     return (
-      <div className="flex gap-2">
+      <div className="flex gap-1.5">
         {agent.status === 'active' && (
           <button
             onClick={() => handleExecuteAgent(agent.id)}
             disabled={isDisabled}
-            className={`group flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-xl transition-all duration-200 ${
+            className={`group flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ${
               isDisabled
-                ? 'bg-gradient-to-r from-gray-400 to-gray-500 text-white shadow-lg shadow-gray-500/25 cursor-not-allowed opacity-60'
-                : 'bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/40 hover:scale-105'
+                ? 'bg-gray-400 text-white cursor-not-allowed opacity-60'
+                : 'bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white shadow-md hover:shadow-lg hover:scale-105 active:scale-95'
             }`}
           >
             {isRunningFromAPI ? (
               <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Running
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Run
               </>
             ) : isCurrentlyExecuting ? (
               <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Queuing...
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Wait
               </>
             ) : (
               <>
-                <PlayCircle className="h-4 w-4 group-hover:scale-110 transition-transform" />
-                {agent.mode === 'scheduled' ? 'Run Now' : 'Run'}
+                <PlayCircle className="h-3 w-3 group-hover:scale-110 transition-transform" />
+                Run
               </>
             )}
           </button>
@@ -829,98 +939,145 @@ export default function AgentList() {
         
         <Link
           href={`/agents/${agent.id}`}
-          className="group flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-slate-800 to-slate-900 hover:from-slate-700 hover:to-slate-800 text-white text-sm font-semibold rounded-xl transition-all duration-200 shadow-lg shadow-slate-500/25 hover:shadow-slate-500/40 hover:scale-105"
+          className="group flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-slate-700 to-slate-800 hover:from-slate-600 hover:to-slate-700 text-white text-xs font-semibold rounded-lg transition-all duration-200 shadow-md hover:shadow-lg hover:scale-105 active:scale-95"
         >
-          <Settings className="h-4 w-4 group-hover:rotate-90 transition-transform duration-300" />
+          <Settings className="h-3 w-3 group-hover:rotate-90 transition-transform duration-300" />
           Manage
         </Link>
       </div>
     );
   };
 
-  const ModernAgentCard = ({ agent }: { agent: Agent }) => {
-    const statusConfig = getStatusConfig(agent.status)
-    const { executionStatus } = useAgentExecutionStatus(agent.id, agent.status);
-    const isRunning = executionStatus?.isRunning || false;
-    const StatusIcon = statusConfig.icon
+// Improved ModernAgentCard - replace your existing one with this
+// Improved ModernAgentCard - replace your existing one with this
+const ModernAgentCard = ({ agent }: { agent: Agent }) => {
+  const statusConfig = getStatusConfig(agent.status)
+  const { executionStatus } = useAgentExecutionStatus(agent.id, agent.status);
+  const isRunning = executionStatus?.isRunning || false;
+  const StatusIcon = statusConfig.icon
 
-    return (
-      <div className="group relative">
-        {isRunning && (
-          <div className="absolute -inset-0.5 bg-gradient-to-r from-emerald-400 via-blue-400 to-purple-400 rounded-lg blur opacity-25 group-hover:opacity-40 transition duration-1000 animate-pulse" />
-        )}
+  // Helper to get next run info
+  const getNextRunInfo = () => {
+    if (!agent.next_run) return null;
+    return formatNextRun(agent.next_run, agent.timezone);
+  };
+
+  const nextRunInfo = getNextRunInfo();
+
+  return (
+    <div className="group relative">
+      {isRunning && (
+        <div className="absolute -inset-0.5 bg-gradient-to-r from-emerald-400 via-blue-400 to-purple-400 rounded-lg blur opacity-25 group-hover:opacity-40 transition duration-1000 animate-pulse" />
+      )}
+      
+      <div className="relative bg-white/95 backdrop-blur-sm rounded-lg border border-gray-200/80 hover:border-purple-300/60 transition-all duration-300 overflow-hidden hover:shadow-lg hover:-translate-y-1">
         
-        <div className="relative bg-white/95 backdrop-blur-sm rounded-lg border border-gray-200/80 hover:border-purple-300/60 transition-all duration-300 overflow-hidden hover:shadow-lg hover:-translate-y-1 group">
-          
-          <div className="h-0.5 bg-gradient-to-r from-violet-500 via-purple-500 to-blue-500 opacity-60 group-hover:opacity-100 transition-opacity duration-300" />
+        <div className="h-0.5 bg-gradient-to-r from-violet-500 via-purple-500 to-blue-500 opacity-60 group-hover:opacity-100 transition-opacity duration-300" />
 
-          <div className="relative p-3">
-            <div className="flex items-start justify-between mb-2">
-              <div className="flex items-center gap-2 min-w-0 flex-1">
-                <div className="relative flex-shrink-0">
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shadow-sm transition-all duration-300 group-hover:scale-105 ${
-                    isRunning 
-                      ? 'bg-gradient-to-br from-emerald-500 via-blue-500 to-purple-500 animate-pulse' 
-                      : 'bg-gradient-to-br from-violet-600 via-purple-600 to-blue-600'
-                  }`}>
-                    <Bot className="h-4 w-4 text-white" />
-                  </div>
-                  <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 ${statusConfig.dot} rounded-full border border-white shadow-sm`} />
-                </div>
-                
-                <div className="min-w-0 flex-1">
-                  <h3 className="text-sm font-semibold text-gray-900 mb-1 group-hover:text-purple-700 transition-colors truncate">
-                    {agent.agent_name}
-                  </h3>
-                  <div className="flex items-center gap-1.5">
-                    <div className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium ${statusConfig.bg} ${statusConfig.color}`}>
-                      <StatusIcon className="w-2.5 h-2.5" />
-                      {statusConfig.label}
-                    </div>
-                    <ExecutionStatusBadge agent={agent} forceRefresh={refreshTrigger[agent.id]} />
-                  </div>
-                </div>
+        <div className="relative p-4">
+          {/* Simplified Header */}
+          <div className="flex items-start gap-3 mb-3">
+            <div className="relative flex-shrink-0">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm transition-all duration-300 group-hover:scale-105 ${
+                isRunning 
+                  ? 'bg-gradient-to-br from-emerald-500 via-blue-500 to-purple-500 animate-pulse' 
+                  : 'bg-gradient-to-br from-violet-600 via-purple-600 to-blue-600'
+              }`}>
+                <Bot className="h-5 w-5 text-white" />
               </div>
+              {/* Status dot - only show if not running */}
+              {!isRunning && (
+                <div className={`absolute -bottom-1 -right-1 w-3 h-3 ${statusConfig.dot} rounded-full border-2 border-white shadow-sm`} />
+              )}
+            </div>
+            
+            <div className="min-w-0 flex-1">
+              <h3 className="text-base font-semibold text-gray-900 mb-1.5 group-hover:text-purple-700 transition-colors truncate">
+                {agent.agent_name}
+              </h3>
               
-              <div className="text-right flex-shrink-0 ml-2">
-                <div className="flex items-center gap-0.5 text-xs text-gray-500 mb-0.5">
-                  <Activity className="w-2.5 h-2.5" />
-                  <span>--</span>
-                </div>
-                <div className="flex gap-0.5">
-                  {[...Array(5)].map((_, i) => (
-                    <div key={i} className={`w-0.5 h-1.5 rounded-full bg-gray-200`} />
-                  ))}
-                </div>
+              {/* Single status line - consolidated */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {isRunning ? (
+                  <div className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-blue-50 text-blue-700 border border-blue-200 font-medium">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>Running</span>
+                  </div>
+                ) : (
+                  <div className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium ${statusConfig.bg} ${statusConfig.color}`}>
+                    <StatusIcon className="w-3 h-3" />
+                    {statusConfig.label}
+                  </div>
+                )}
+                
+                {/* Inline next run - subtle */}
+                {agent.mode === 'scheduled' && nextRunInfo && (
+                  <div className="flex items-center gap-1 text-xs text-gray-500">
+                    <Timer className="w-3 h-3" />
+                    <span>{nextRunInfo.text}</span>
+                  </div>
+                )}
               </div>
             </div>
+          </div>
 
-            {agent.description && (
-              <p className="text-xs text-gray-600 line-clamp-1 mb-2">
-                {agent.description}
-              </p>
-            )}
+          {/* Description - only if short */}
+          {agent.description && agent.description.length < 80 && (
+            <p className="text-sm text-gray-600 mb-3 line-clamp-2">
+              {agent.description}
+            </p>
+          )}
 
-            {agent.mode === 'scheduled' && agent.schedule_cron && (
-              <div className="mb-2 p-1.5 bg-blue-50 rounded text-xs flex items-center gap-1.5">
-                <Timer className="w-3 h-3 text-blue-600 flex-shrink-0" />
-                <span className="text-blue-700 font-medium truncate">
+          {/* Schedule info - compact */}
+          {agent.mode === 'scheduled' && agent.schedule_cron && (
+            <div className="mb-3">
+              <div className="flex items-center gap-2 p-2 bg-blue-50/50 rounded-lg">
+                <Calendar className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                <span className="text-sm text-blue-700 font-medium">
                   {formatScheduleDisplay(agent.mode, agent.schedule_cron)}
                 </span>
               </div>
-            )}
-
-            <div className="mb-2">
-              <AgentActionButtons agent={agent} />
             </div>
+          )}
 
-            <AgentExecutionHistory agent={agent} />
+          {/* Action Buttons */}
+          <div className="mb-3">
+            <AgentActionButtons agent={agent} />
           </div>
+
+          {/* Compact Execution History */}
+          <AgentExecutionHistoryCompact agent={agent} />
         </div>
       </div>
-    )
-  }
+    </div>
+  )
+}
 
+// Add this new compact history component
+const AgentExecutionHistoryCompact = ({ agent }: { agent: Agent }) => {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="border-t border-gray-100 pt-2">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center justify-between w-full text-left hover:bg-gray-50 p-1 rounded transition-all duration-200"
+      >
+        <div className="flex items-center gap-2">
+          <History className="w-3 h-3 text-gray-400" />
+          <span className="text-xs text-gray-500">Activity</span>
+        </div>
+        <ChevronDown className={`w-3 h-3 text-gray-400 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
+      </button>
+
+      {expanded && (
+        <div className="mt-2">
+          <AgentExecutionHistory agent={agent} />
+        </div>
+      )}
+    </div>
+  );
+};
   const ModernAgentRow = ({ agent }: { agent: Agent }) => {
     const statusConfig = getStatusConfig(agent.status)
 
@@ -949,14 +1106,17 @@ export default function AgentList() {
               <p className="text-sm text-gray-600 truncate mb-1">
                 {agent.description || 'An intelligent assistant ready to automate workflows'}
               </p>
-              {agent.mode === 'scheduled' && agent.schedule_cron && (
-                <div className="flex items-center gap-1.5">
-                  <Timer className="w-3 h-3 text-blue-600" />
-                  <p className="text-xs text-blue-600 font-medium">
-                    {formatScheduleDisplay(agent.mode, agent.schedule_cron)}
-                  </p>
-                </div>
-              )}
+              <div className="flex items-center gap-3 flex-wrap">
+                {agent.mode === 'scheduled' && agent.schedule_cron && (
+                  <div className="flex items-center gap-1.5">
+                    <Calendar className="w-3 h-3 text-blue-600" />
+                    <p className="text-xs text-blue-600 font-medium">
+                      {formatScheduleDisplay(agent.mode, agent.schedule_cron)}
+                    </p>
+                  </div>
+                )}
+                <NextRunBadge agent={agent} />
+              </div>
             </div>
           </div>
 

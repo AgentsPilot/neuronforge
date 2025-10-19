@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/components/UserProvider';
+import { createClient } from '@supabase/supabase-js';
 import { 
   Brain, 
   Loader2, 
@@ -45,6 +46,12 @@ import {
 // Import hooks and types
 import { useAgentGeneration } from './hooks/useAgentGeneration';
 import { Agent, SmartAgentBuilderProps } from './types/agent';
+
+// Initialize Supabase client
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 // FIXED: Generate proper UUID format for database compatibility (matches backend)
 const generateUUID = () => {
@@ -153,6 +160,9 @@ export default function SmartAgentBuilder({
     promptsLocked
   });
   
+  // User profile state for timezone
+  const [userProfile, setUserProfile] = useState(null);
+  
   // State management
   const [agent, setAgent] = useState<Agent | null>(() => {
     if (restoredAgent) {
@@ -202,7 +212,49 @@ export default function SmartAgentBuilder({
     willShowLockedPrompts: promptsLocked
   });
 
-  // Effects
+  // Effects - Fetch user profile timezone
+  useEffect(() => {
+    const fetchUserProfile = async () => {
+      if (user?.id) {
+        try {
+          const { data: profile, error } = await supabase
+            .from('profiles')
+            .select('timezone')
+            .eq('id', user.id)
+            .single();
+          
+          if (error) {
+            console.warn('Could not fetch user profile timezone:', error);
+          } else {
+            setUserProfile(profile);
+            console.log('User profile timezone loaded:', profile?.timezone);
+          }
+        } catch (error) {
+          console.warn('Error fetching user profile:', error);
+        }
+      }
+    };
+    
+    fetchUserProfile();
+  }, [user?.id]);
+
+  // Get user's preferred timezone with intelligent fallbacks
+  const getUserTimezone = () => {
+    // Priority: user profile > browser detection > UTC fallback
+    if (userProfile?.timezone) {
+      return userProfile.timezone;
+    }
+    
+    try {
+      const detectedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      console.log('Auto-detected user timezone:', detectedTimezone);
+      return detectedTimezone;
+    } catch (error) {
+      console.warn('Could not detect user timezone:', error);
+      return 'UTC';
+    }
+  };
+
   useEffect(() => {
     if (onStateChange) {
       onStateChange({
@@ -412,7 +464,7 @@ export default function SmartAgentBuilder({
       setIsCreating(true);
       setCreationError(null);
 
-      // Enhanced agent data preparation with plugin security
+      // Enhanced agent data preparation with plugin security and timezone support
       const agentData = {
         user_id: user.id,
         agent_name: finalAgent.agent_name.trim(),
@@ -422,6 +474,7 @@ export default function SmartAgentBuilder({
         status: 'draft',
         mode: finalAgent.mode || 'on_demand',
         schedule_cron: finalAgent.schedule_cron || null,
+        timezone: finalAgent.timezone || getUserTimezone(), // Use smart timezone detection
         
         input_schema: finalAgent.input_schema || [],
         output_schema: finalAgent.output_schema || [],
@@ -451,6 +504,7 @@ export default function SmartAgentBuilder({
           
           mode: finalAgent.mode || 'on_demand',
           schedule_cron: finalAgent.schedule_cron || null,
+          timezone: finalAgent.timezone || getUserTimezone(), // Use smart timezone detection
           trigger_conditions: finalAgent.trigger_conditions || null,
           
           metadata: {
@@ -479,6 +533,7 @@ export default function SmartAgentBuilder({
       console.log('Saving agent via API:', agentData.agent_name);
       console.log('🔒 Plugins locked:', pluginsLocked);
       console.log('🔒 Original plugins preserved:', pluginsLocked ? originalPlugins.length : 'N/A');
+      console.log('🌍 Using timezone:', agentData.timezone);
       console.log('🆔 Using consistent IDs:', { agentId: agentId.current, sessionId: sessionId.current });
 
       const apiEndpoint = editMode && finalAgent.id ? `/api/agents/${finalAgent.id}` : '/api/create-agent';
@@ -542,7 +597,8 @@ export default function SmartAgentBuilder({
       console.log('Agent saved via API with consistent ID tracking:', {
         savedAgentId: savedAgent.id,
         agentId: agentId.current,
-        sessionId: sessionId.current
+        sessionId: sessionId.current,
+        timezone: savedAgent.timezone
       });
 
       if (onAgentCreated) {
@@ -749,7 +805,7 @@ export default function SmartAgentBuilder({
           />
         </div>
  
-        {/* Schedule Configuration Card - UPDATED: Always editable */}
+        {/* Schedule Configuration Card - UPDATED: Always editable with timezone support */}
         <CollapsibleSection
           title="Schedule Configuration"
           description="Configure when and how often your agent runs"
@@ -761,6 +817,7 @@ export default function SmartAgentBuilder({
           <ScheduleEditor
             mode={currentAgent?.mode as 'on_demand' | 'scheduled'}
             scheduleCron={currentAgent?.schedule_cron}
+            timezone={currentAgent?.timezone || getUserTimezone()} // Pass detected timezone
             isEditing={true} // Always allow editing
             onUpdate={(updates) => updateAgentSchedule(updates)} // Use new handler
           />

@@ -1,18 +1,19 @@
 // components/agent-creation/SmartAgentBuilder/components/ScheduleEditor.tsx
-
 import React, { useState, useEffect } from 'react';
-import { Clock, Calendar, PlayCircle, ChevronDown } from 'lucide-react';
+import { Clock, Calendar, PlayCircle, ChevronDown, Globe } from 'lucide-react';
 
 interface ScheduleEditorProps {
   mode?: 'on_demand' | 'scheduled';
   scheduleCron?: string | null;
+  timezone?: string;
   isEditing: boolean;
-  onUpdate: (updates: { mode?: string; schedule_cron?: string | null }) => void;
+  onUpdate: (updates: { mode?: string; schedule_cron?: string | null; timezone?: string }) => void;
 }
 
 export default function ScheduleEditor({
   mode = 'on_demand',
   scheduleCron,
+  timezone, // Will come from user profile or auto-detection
   isEditing,
   onUpdate
 }: ScheduleEditorProps) {
@@ -21,6 +22,54 @@ export default function ScheduleEditor({
   const [selectedFrequency, setSelectedFrequency] = useState('daily');
   const [selectedDays, setSelectedDays] = useState<string[]>(['monday']);
   const [selectedMonthDay, setSelectedMonthDay] = useState('1');
+  
+  // Smart timezone detection with fallbacks
+  const getDefaultTimezone = () => {
+    if (timezone) return timezone; // Use provided timezone (from user profile)
+    
+    try {
+      // Auto-detect user's local timezone
+      const detectedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      console.log('Auto-detected user timezone:', detectedTimezone);
+      return detectedTimezone;
+    } catch (error) {
+      console.warn('Could not detect user timezone, falling back to UTC:', error);
+      return 'UTC';
+    }
+  };
+  
+  const [selectedTimezone, setSelectedTimezone] = useState(getDefaultTimezone);
+
+  // Enhanced timezone options - includes user's detected timezone at top
+  const getTimezoneOptions = () => {
+    const detectedTimezone = getDefaultTimezone();
+    const commonTimezones = [
+      { value: 'America/New_York', label: 'Eastern Time (EST/EDT)' },
+      { value: 'America/Chicago', label: 'Central Time (CST/CDT)' },
+      { value: 'America/Denver', label: 'Mountain Time (MST/MDT)' },
+      { value: 'America/Los_Angeles', label: 'Pacific Time (PST/PDT)' },
+      { value: 'Europe/London', label: 'London Time (GMT/BST)' },
+      { value: 'Europe/Paris', label: 'Central European Time (CET/CEST)' },
+      { value: 'Asia/Tokyo', label: 'Japan Time (JST)' },
+      { value: 'Asia/Shanghai', label: 'China Time (CST)' },
+      { value: 'Australia/Sydney', label: 'Australia Eastern Time (AEST/AEDT)' },
+      { value: 'UTC', label: 'UTC (Coordinated Universal Time)' }
+    ];
+
+    // Add user's timezone at the top if it's not already in the list
+    const userTimezoneOption = {
+      value: detectedTimezone,
+      label: `My Local Time (${detectedTimezone.split('/').pop()?.replace('_', ' ')})`
+    };
+
+    const hasUserTimezone = commonTimezones.some(tz => tz.value === detectedTimezone);
+    
+    return hasUserTimezone 
+      ? commonTimezones 
+      : [userTimezoneOption, ...commonTimezones];
+  };
+
+  const timezoneOptions = getTimezoneOptions();
 
   const timeOptions = [
     '06:00', '07:00', '08:00', '09:00', '10:00', '11:00', '12:00',
@@ -73,6 +122,13 @@ export default function ScheduleEditor({
     }
   }, [scheduleCron]);
 
+  // Update timezone when prop changes
+  useEffect(() => {
+    if (timezone) {
+      setSelectedTimezone(timezone);
+    }
+  }, [timezone]);
+
   const generateCron = () => {
     const [hour, minute] = selectedTime.split(':');
     
@@ -97,20 +153,47 @@ export default function ScheduleEditor({
 
   const getScheduleDescription = () => {
     const timeDesc = formatTime(selectedTime);
+    const tzLabel = timezoneOptions.find(tz => tz.value === selectedTimezone)?.label.split(' ')[0] || selectedTimezone.split('/').pop()?.replace('_', ' ') || 'Local';
+    
+    let freqDesc;
     switch (selectedFrequency) {
-      case 'daily': return `Daily at ${timeDesc}`;
-      case 'weekdays': return `Weekdays at ${timeDesc}`;
+      case 'daily': freqDesc = 'Daily'; break;
+      case 'weekdays': freqDesc = 'Weekdays'; break;
       case 'weekly':
         const dayNames = selectedDays.map(day => dayOptions.find(d => d.value === day)?.short).join(',');
-        return `${dayNames} at ${timeDesc}`;
-      case 'monthly': return `${selectedMonthDay}${['th','st','nd','rd'][selectedMonthDay.slice(-1)] || 'th'} monthly at ${timeDesc}`;
-      default: return `Daily at ${timeDesc}`;
+        freqDesc = dayNames;
+        break;
+      case 'monthly': 
+        freqDesc = `${selectedMonthDay}${['th','st','nd','rd'][selectedMonthDay.slice(-1)] || 'th'} monthly`;
+        break;
+      default: freqDesc = 'Daily';
     }
+    
+    return `${freqDesc} at ${timeDesc} ${tzLabel}`;
   };
 
   const handleModeChange = (newMode: 'on_demand' | 'scheduled') => {
     setCurrentMode(newMode);
-    onUpdate({ mode: newMode, schedule_cron: newMode === 'scheduled' ? generateCron() : null });
+    onUpdate({ 
+      mode: newMode, 
+      schedule_cron: newMode === 'scheduled' ? generateCron() : null,
+      timezone: selectedTimezone // Always include timezone
+    });
+  };
+
+  const handleTimezoneChange = (newTimezone: string) => {
+    setSelectedTimezone(newTimezone);
+    if (currentMode === 'scheduled') {
+      onUpdate({ 
+        schedule_cron: generateCron(),
+        timezone: newTimezone // Include timezone in updates
+      });
+    } else {
+      // Even in on_demand mode, update timezone for when they switch to scheduled
+      onUpdate({ 
+        timezone: newTimezone
+      });
+    }
   };
 
   const handleTimeChange = (time: string) => {
@@ -128,7 +211,10 @@ export default function ScheduleEditor({
         case 'monthly': cronValue = `${minute} ${hour} ${selectedMonthDay} * *`; break;
         default: cronValue = `${minute} ${hour} * * *`;
       }
-      onUpdate({ schedule_cron: cronValue });
+      onUpdate({ 
+        schedule_cron: cronValue,
+        timezone: selectedTimezone // Include timezone
+      });
     }
   };
 
@@ -147,7 +233,10 @@ export default function ScheduleEditor({
         case 'monthly': cronValue = `${minute} ${hour} ${selectedMonthDay} * *`; break;
         default: cronValue = `${minute} ${hour} * * *`;
       }
-      onUpdate({ schedule_cron: cronValue });
+      onUpdate({ 
+        schedule_cron: cronValue,
+        timezone: selectedTimezone // Include timezone
+      });
     }
   };
 
@@ -161,7 +250,10 @@ export default function ScheduleEditor({
     if (currentMode === 'scheduled' && selectedFrequency === 'weekly') {
       const [hour, minute] = selectedTime.split(':');
       const cronDays = finalDays.map(day => dayToCron[day]).join(',');
-      onUpdate({ schedule_cron: `${minute} ${hour} * * ${cronDays}` });
+      onUpdate({ 
+        schedule_cron: `${minute} ${hour} * * ${cronDays}`,
+        timezone: selectedTimezone // Include timezone
+      });
     }
   };
 
@@ -169,13 +261,16 @@ export default function ScheduleEditor({
     setSelectedMonthDay(day);
     if (currentMode === 'scheduled') {
       const [hour, minute] = selectedTime.split(':');
-      onUpdate({ schedule_cron: `${minute} ${hour} ${day} * *` });
+      onUpdate({ 
+        schedule_cron: `${minute} ${hour} ${day} * *`,
+        timezone: selectedTimezone // Include timezone
+      });
     }
   };
 
   return (
     <div className="space-y-3">
-      {/* Current Schedule - Modern glassmorphism */}
+      {/* Current Schedule - Enhanced with timezone display */}
       {scheduleCron && (
         <div className="relative overflow-hidden bg-gradient-to-r from-violet-500 via-purple-500 to-indigo-500 rounded-xl px-4 py-3 text-white shadow-lg">
           <div className="absolute inset-0 bg-white/10 backdrop-blur-sm"></div>
@@ -183,17 +278,23 @@ export default function ScheduleEditor({
             <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center backdrop-blur-sm">
               <Clock className="h-4 w-4" />
             </div>
-            <div>
+            <div className="flex-1">
               <div className="font-semibold text-sm">{getScheduleDescription()}</div>
-              <div className="inline-flex items-center px-3 py-1 bg-white/20 backdrop-blur-sm rounded-full text-xs text-white/90 font-medium border border-white/10">
-                Active schedule
+              <div className="flex items-center gap-2 mt-1">
+                <div className="inline-flex items-center px-3 py-1 bg-white/20 backdrop-blur-sm rounded-full text-xs text-white/90 font-medium border border-white/10">
+                  Active schedule
+                </div>
+                <div className="inline-flex items-center gap-1 px-2 py-1 bg-white/10 backdrop-blur-sm rounded-full text-xs text-white/80">
+                  <Globe className="h-3 w-3" />
+                  {timezoneOptions.find(tz => tz.value === selectedTimezone)?.label.split(' ')[0] || selectedTimezone.split('/').pop()?.replace('_', ' ')}
+                </div>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Mode Selection - Modern cards */}
+      {/* Mode Selection - Unchanged */}
       <div className="flex gap-3">
         <button
           onClick={() => handleModeChange('on_demand')}
@@ -217,9 +318,6 @@ export default function ScheduleEditor({
               </div>
             </div>
           </div>
-          {currentMode !== 'on_demand' && (
-            <div className="absolute inset-0 bg-gradient-to-br from-blue-50/50 to-indigo-50/50 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-          )}
         </button>
         
         <button
@@ -244,16 +342,37 @@ export default function ScheduleEditor({
               </div>
             </div>
           </div>
-          {currentMode !== 'scheduled' && (
-            <div className="absolute inset-0 bg-gradient-to-br from-emerald-50/50 to-teal-50/50 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-          )}
         </button>
       </div>
 
-      {/* Schedule Options - Modern glass container */}
+      {/* Schedule Options - Enhanced with smart timezone selector */}
       {currentMode === 'scheduled' && (
         <div className="relative overflow-hidden bg-white/60 backdrop-blur-xl rounded-2xl border border-white/20 shadow-xl p-4 space-y-3">
           <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent"></div>
+          
+          {/* Enhanced Timezone Selector with auto-detection */}
+          <div className="relative z-10 space-y-1">
+            <label className="text-xs font-medium text-gray-700 flex items-center gap-1">
+              <Globe className="h-3 w-3" />
+              Timezone
+              {timezoneOptions[0]?.label.includes('My Local Time') && (
+                <span className="text-xs text-blue-600 font-normal">(auto-detected)</span>
+              )}
+            </label>
+            <div className="relative group">
+              <select
+                value={selectedTimezone}
+                onChange={(e) => handleTimezoneChange(e.target.value)}
+                disabled={!isEditing}
+                className="w-full px-3 py-2.5 text-sm bg-white/80 backdrop-blur-sm border-0 rounded-xl shadow-sm focus:ring-2 focus:ring-indigo-500/50 focus:shadow-lg transition-all appearance-none cursor-pointer disabled:opacity-60 font-medium"
+              >
+                {timezoneOptions.map(tz => (
+                  <option key={tz.value} value={tz.value}>{tz.label}</option>
+                ))}
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none group-hover:text-gray-600 transition-colors" />
+            </div>
+          </div>
           
           {/* Time & Frequency - Modern selectors */}
           <div className="relative z-10 grid grid-cols-2 gap-3">
@@ -293,7 +412,7 @@ export default function ScheduleEditor({
             </div>
           </div>
 
-          {/* Weekly Days - Smaller modern button grid */}
+          {/* Weekly Days Selection */}
           {selectedFrequency === 'weekly' && (
             <div className="relative z-10 space-y-2">
               <label className="text-xs font-medium text-gray-700">Days</label>
@@ -316,7 +435,7 @@ export default function ScheduleEditor({
             </div>
           )}
 
-          {/* Monthly Day - Modern selector */}
+          {/* Monthly Day Selection */}
           {selectedFrequency === 'monthly' && (
             <div className="relative z-10 space-y-2">
               <label className="text-xs font-medium text-gray-700">Day of month</label>
@@ -338,7 +457,7 @@ export default function ScheduleEditor({
             </div>
           )}
 
-          {/* Preview - Modern pill */}
+          {/* Enhanced Preview with timezone */}
           <div className="relative z-10 inline-flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-emerald-500/10 to-teal-500/10 backdrop-blur-sm rounded-full border border-emerald-200/50">
             <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
             <span className="text-xs font-medium text-emerald-700">{getScheduleDescription()}</span>

@@ -13,6 +13,8 @@
     "worker": "tsx scripts/start-worker.ts"
   },
   "dependencies": {
+    "@bull-board/api": "^6.13.1",
+    "@bull-board/express": "^6.13.1",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/modifiers": "^9.0.0",
     "@dnd-kit/sortable": "^10.0.0",
@@ -38,7 +40,7 @@
     "jspdf": "^3.0.1",
     "jspdf-autotable": "^5.0.2",
     "lucide-react": "^0.525.0",
-    "next": "14.2.18",
+    "next": "^14.2.33",
     "next-auth": "^4.24.11",
     "openai": "^5.9.0",
     "pdf-parse": "^1.1.1",

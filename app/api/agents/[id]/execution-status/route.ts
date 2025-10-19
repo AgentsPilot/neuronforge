@@ -20,7 +20,7 @@ export async function GET(
     // Get agent info
     const { data: agent, error: agentError } = await supabase
       .from('agents')
-      .select('mode, schedule_cron, status')
+      .select('mode, schedule_cron, status, timezone')
       .eq('id', agentId)
       .single();
 
@@ -140,11 +140,10 @@ export async function GET(
     let nextRun = null;
     let nextRunFormatted = 'On demand';
     
-    if (agent.mode === 'scheduled' && agent.schedule_cron) {
-      nextRun = calculateNextRun(agent.schedule_cron);
-      nextRunFormatted = formatNextRun(nextRun);
-    }
-
+if (agent.mode === 'scheduled' && agent.schedule_cron) {
+  nextRun = calculateNextRun(agent.schedule_cron, agent.timezone || 'UTC');  // ← Add timezone
+  nextRunFormatted = formatNextRun(nextRun, agent.timezone || 'UTC');
+}
     console.log(`Agent ${agentId} status: isRunning=${isRunning}, source=${latestExecutionSource}, bullmq=${isBullmqRunning}, workflow=${isWorkflowRunning}, hasActiveJob=${hasActiveJob}`);
 
     return NextResponse.json({
