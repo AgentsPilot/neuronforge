@@ -1,689 +1,1342 @@
-'use client'
+'use client';
 
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 
-export default function ModernAILanding() {
-  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 })
-  const [isVisible, setIsVisible] = useState(false)
-  const [currentStep, setCurrentStep] = useState(0)
+// ============================================================================
+// HERO ANIMATION COMPONENTS
+// ============================================================================
 
-  useEffect(() => {
-    const handleMouseMove = (e) => {
-      setMousePosition({ x: e.clientX, y: e.clientY })
-    }
+type AnimationStep = 'typing' | 'building' | 'connecting' | 'dashboard' | 'tagline';
 
-    window.addEventListener('mousemove', handleMouseMove)
-    setIsVisible(true)
-    
-    // Auto-cycle through demo steps
-    const interval = setInterval(() => {
-      setCurrentStep((prev) => (prev + 1) % 3)
-    }, 4000)
+// Modern SVG Icons for Hero Animation
+const MailIcon = () => (
+  <svg className="w-10 h-10" viewBox="0 0 24 24" fill="none">
+    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" className="fill-blue-500"/>
+    <path d="m22 6-10 7L2 6" stroke="white" strokeWidth="2" fill="none"/>
+  </svg>
+);
 
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove)
-      clearInterval(interval)
-    }
-  }, [])
+const BrainIcon = () => (
+  <svg className="w-10 h-10" viewBox="0 0 24 24" fill="none">
+    <path d="M12 3C8.5 3 6 5.5 6 8.5c0 1.5-.7 2.8-1.8 3.5C3.5 12.5 3 13.7 3 15c0 2.8 2.2 5 5 5h8c2.8 0 5-2.2 5-5 0-1.3-.5-2.5-1.2-3-.5-.3-1.1-.7-1.4-1.2-.6-.9-1.4-1.8-1.4-2.8 0-3-2.5-5.5-6-5.5z" className="fill-purple-500"/>
+    <circle cx="9" cy="12" r="1.5" className="fill-white"/>
+    <circle cx="15" cy="12" r="1.5" className="fill-white"/>
+    <path d="M10 16h4" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+  </svg>
+);
 
-  const demoSteps = [
-    {
-      user: "Schedule my quarterly board meeting and send personalized invites to all directors with agenda prep.",
-      ai: "✅ Meeting scheduled for next Thursday 2PM\n✅ Calendar invites sent to 8 board members\n✅ Personalized agenda packets prepared\n✅ Meeting room reserved with AV setup\n\n🎯 All directors confirmed attendance",
-      status: "Completed in 12 seconds"
-    },
-    {
-      user: "Monitor our competitor's product launches and alert me when they announce anything in our market segment.",
-      ai: "🔍 Monitoring 23 competitor sources\n📊 AI scanning: news, social media, press releases\n🎯 Smart filters active for your market keywords\n📱 Instant alerts configured\n\n✨ Your competitive intelligence agent is live",
-      status: "Monitoring activated"
-    },
-    {
-      user: "Analyze our Q4 sales data and create executive summary with key insights for tomorrow's leadership meeting.",
-      ai: "📈 Analyzing 4,847 transactions\n🔍 Identifying trends and patterns\n📊 Generating visual charts\n📝 Creating executive summary\n\n📋 Report ready: 23% growth, new opportunities in Enterprise segment identified",
-      status: "Analysis complete"
-    }
-  ]
+const SlackIcon = () => (
+  <svg className="w-10 h-10" viewBox="0 0 54 54" fill="none">
+    <path d="M19.715 34.542a4.5 4.5 0 0 1-4.5 4.5 4.5 4.5 0 0 1-4.5-4.5 4.5 4.5 0 0 1 4.5-4.5h4.5v4.5z" className="fill-green-400"/>
+    <path d="M21.965 34.542a4.5 4.5 0 0 1 4.5-4.5 4.5 4.5 0 0 1 4.5 4.5v11.25a4.5 4.5 0 0 1-4.5 4.5 4.5 4.5 0 0 1-4.5-4.5V34.542z" className="fill-green-400"/>
+    <path d="M26.465 19.5a4.5 4.5 0 0 1-4.5-4.5 4.5 4.5 0 0 1 4.5-4.5 4.5 4.5 0 0 1 4.5 4.5v4.5h-4.5z" className="fill-blue-400"/>
+    <path d="M26.465 21.75a4.5 4.5 0 0 1 4.5 4.5 4.5 4.5 0 0 1-4.5 4.5H15.215a4.5 4.5 0 0 1-4.5-4.5 4.5 4.5 0 0 1 4.5-4.5h11.25z" className="fill-blue-400"/>
+    <path d="M41.535 26.25a4.5 4.5 0 0 1 4.5 4.5 4.5 4.5 0 0 1-4.5 4.5 4.5 4.5 0 0 1-4.5-4.5v-4.5h4.5z" className="fill-yellow-400"/>
+    <path d="M39.285 26.25a4.5 4.5 0 0 1-4.5-4.5 4.5 4.5 0 0 1 4.5-4.5 4.5 4.5 0 0 1 4.5 4.5v11.25a4.5 4.5 0 0 1-4.5 4.5 4.5 4.5 0 0 1-4.5-4.5V26.25z" className="fill-yellow-400"/>
+    <path d="M34.785 41.5a4.5 4.5 0 0 1 4.5 4.5 4.5 4.5 0 0 1-4.5 4.5 4.5 4.5 0 0 1-4.5-4.5v-4.5h4.5z" className="fill-pink-400"/>
+    <path d="M34.785 39.25a4.5 4.5 0 0 1-4.5-4.5 4.5 4.5 0 0 1 4.5-4.5h11.25a4.5 4.5 0 0 1 4.5 4.5 4.5 4.5 0 0 1-4.5 4.5H34.785z" className="fill-pink-400"/>
+  </svg>
+);
+
+const RobotIcon = () => (
+  <svg className="w-7 h-7" viewBox="0 0 24 24" fill="none">
+    <path d="M8 2a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2a6 6 0 0 1 6 6v8a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4v-8a6 6 0 0 1 6-6V2z" className="fill-purple-500"/>
+    <circle cx="9" cy="12" r="1.5" className="fill-white"/>
+    <circle cx="15" cy="12" r="1.5" className="fill-white"/>
+    <path d="M9 16h6" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+    <circle cx="12" cy="4" r="1" className="fill-purple-300"/>
+  </svg>
+);
+
+const Icon = ({ type, label, pulse = false, delay = 0 }) => {
+  const icons = {
+    mail: <MailIcon />,
+    brain: <BrainIcon />,
+    slack: <SlackIcon />,
+  };
 
   return (
-    <div className="relative text-white overflow-hidden">
-      <div className="relative z-10 bg-gradient-to-br from-blue-900 via-purple-900 to-indigo-900 overflow-hidden">
-        {/* Background Effects - Contained within this section */}
-        <div className="absolute inset-0 z-0">
-          {/* Animated mesh gradient */}
-          <div className="absolute inset-0 opacity-40">
-            <div 
-              className="absolute inset-0"
-              style={{
-                background: `
-                  radial-gradient(circle at 20% 80%, rgba(59, 130, 246, 0.3) 0%, transparent 50%),
-                  radial-gradient(circle at 80% 20%, rgba(147, 51, 234, 0.3) 0%, transparent 50%),
-                  radial-gradient(circle at 40% 40%, rgba(99, 102, 241, 0.2) 0%, transparent 50%)
-                `,
-                animation: 'float 20s ease-in-out infinite'
-              }}
-            />
-          </div>
-
-          {/* Dynamic grid */}
-          <div 
-            className="absolute inset-0 opacity-20"
-            style={{
-              backgroundImage: `
-                linear-gradient(rgba(139, 92, 246, 0.3) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(139, 92, 246, 0.3) 1px, transparent 1px)
-              `,
-              backgroundSize: '40px 40px',
-              animation: 'gridShift 25s linear infinite'
+    <motion.div
+      initial={{ opacity: 0, scale: 0.5, y: 40, rotateY: -90 }}
+      animate={{ 
+        opacity: 1, 
+        scale: pulse ? [1, 1.2, 1] : 1,
+        y: 0,
+        rotateY: 0
+      }}
+      transition={{ 
+        duration: 0.8,
+        delay,
+        scale: { 
+          repeat: pulse ? Infinity : 0, 
+          duration: 2.5,
+          ease: "easeInOut"
+        }
+      }}
+      className="flex flex-col items-center gap-3 relative"
+    >
+      {pulse && (
+        <>
+          <motion.div
+            animate={{
+              opacity: [0.2, 0.6, 0.2],
+              scale: [1, 1.6, 1],
             }}
+            transition={{
+              duration: 2.5,
+              repeat: Infinity,
+              ease: "easeInOut"
+            }}
+            className="absolute inset-0 bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 rounded-3xl blur-2xl"
           />
-
-          {/* Floating orbs */}
-          <div className="absolute inset-0 hidden lg:block">
-            <div
-              className="absolute rounded-full bg-gradient-to-br from-blue-400/30 to-purple-400/30 blur-xl"
-              style={{
-                width: '60px',
-                height: '60px',
-                left: '10%',
-                top: '20%',
-                animation: 'float 8s ease-in-out infinite'
-              }}
-            />
-            <div
-              className="absolute rounded-full bg-gradient-to-br from-cyan-400/20 to-blue-400/20 blur-xl"
-              style={{
-                width: '80px',
-                height: '80px',
-                left: '80%',
-                top: '60%',
-                animation: 'float 10s ease-in-out infinite',
-                animationDelay: '2s'
-              }}
-            />
-          </div>
-        </div>
-
-        {/* Interactive mouse glow */}
-        <div 
-          className="absolute inset-0 z-0 pointer-events-none transition-all duration-500 hidden lg:block"
-          style={{
-            background: `radial-gradient(600px circle at ${mousePosition.x}px ${mousePosition.y}px, rgba(139, 92, 246, 0.15), transparent 60%)`
-          }}
-        />
-
-        {/* Redesigned Banner Section */}
-        <div className="bg-gradient-to-br from-slate-900 via-blue-900 to-purple-900 text-white relative overflow-hidden">
-          <div className="max-w-7xl mx-auto relative z-10">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-center py-16">
-              
-              {/* Left side - Content */}
-              <div className="space-y-6 px-4">
-                <div className="inline-flex items-center px-4 py-2 rounded-full bg-cyan-500/20 border border-cyan-400/40 backdrop-blur-sm">
-                  <div className="w-2 h-2 bg-cyan-300 rounded-full mr-2 animate-pulse"></div>
-                  <span className="text-sm font-medium text-cyan-100">AI Platform 3.0 • Enterprise Ready</span>
-                </div>
-                
-                <h1 className="text-4xl md:text-5xl lg:text-6xl font-black leading-tight">
-                  <span className="block text-white mb-2">Your Personal</span>
-                  <span className="block bg-gradient-to-r from-cyan-300 via-blue-300 to-purple-300 bg-clip-text text-transparent mb-2">
-                    AI Workforce
-                  </span>
-                  <span className="block text-white">Ready in Minutes</span>
-                </h1>
-                
-                <p className="text-xl text-gray-100 leading-relaxed">
-                  Deploy intelligent agents that automate complex workflows with zero coding required.
-                </p>
-                
-                <div className="flex flex-col sm:flex-row gap-4">
-                  <button className="group bg-gradient-to-r from-cyan-500 to-blue-600 text-white px-8 py-4 text-lg rounded-xl hover:shadow-xl transition-all duration-300 hover:scale-105 font-semibold">
-                    <span className="flex items-center justify-center">
-                      Start Building Free
-                      <svg className="w-5 h-5 ml-2 group-hover:translate-x-1 transition-transform" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clipRule="evenodd" />
-                        </svg>
-                    </span>
-                  </button>
-                </div>
-                
-                {/* Trust indicators */}
-                <div className="flex items-center space-x-6 text-sm text-gray-200 pt-4">
-                  <span className="flex items-center">
-                    <svg className="w-4 h-4 mr-2 text-cyan-300" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                    </svg>
-                    No credit card
-                  </span>
-                  <span className="flex items-center">
-                    <svg className="w-4 h-4 mr-2 text-cyan-300" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                    </svg>
-                    60s setup
-                  </span>
-                  <span className="flex items-center">
-                    <svg className="w-4 h-4 mr-2 text-cyan-300" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                    </svg>
-                    Enterprise secure
-                  </span>
-                </div>
-              </div>
-              
-              {/* Right side - Image Container */}
-              <div className="relative px-4 flex justify-center items-center">
-                <div className="relative">
-                  {/* Decorative background elements */}
-                  <div className="absolute -inset-4 bg-gradient-to-r from-blue-600/20 to-purple-600/20 rounded-2xl blur-xl"></div>
-                  <div className="absolute -inset-2 bg-gradient-to-r from-cyan-500/30 to-blue-500/30 rounded-xl blur-lg"></div>
-                  
-                  {/* Image container with proper aspect ratio */}
-                  <div className="relative bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
-                    <img 
-                      src="/images/AgentsPilot%20Banner.png" 
-                      alt="AgentPilot AI Agents Dashboard"
-                      className="w-full h-auto max-w-lg rounded-lg shadow-2xl"
-                      style={{
-                        filter: 'drop-shadow(0 25px 25px rgba(0, 0, 0, 0.3))'
-                      }}
-                    />
-                  </div>
-                  
-                  {/* Floating elements for visual interest */}
-                  <div className="absolute -top-4 -right-4 w-8 h-8 bg-gradient-to-r from-cyan-400 to-blue-500 rounded-full animate-pulse"></div>
-                  <div className="absolute -bottom-4 -left-4 w-6 h-6 bg-gradient-to-r from-purple-400 to-pink-500 rounded-full animate-bounce" style={{animationDelay: '1s'}}></div>
-                </div>
-              </div>
-            </div>
-          </div>
           
-          {/* Subtle background pattern */}
-          <div className="absolute inset-0 opacity-5">
-            <div className="absolute inset-0" style={{
-              backgroundImage: `radial-gradient(circle at 1px 1px, rgba(255,255,255,0.15) 1px, transparent 0)`,
-              backgroundSize: '20px 20px'
-            }}></div>
-          </div>
+          <motion.div
+            animate={{
+              opacity: [0.8, 0, 0.8],
+              scale: [1, 2, 1],
+            }}
+            transition={{
+              duration: 2.5,
+              repeat: Infinity,
+              ease: "easeOut"
+            }}
+            className="absolute inset-0 border-2 border-blue-400 rounded-3xl"
+          />
+        </>
+      )}
+      
+      <motion.div
+        animate={pulse ? {
+          rotateY: [0, 10, -10, 0],
+        } : {}}
+        transition={{
+          duration: 4,
+          repeat: pulse ? Infinity : 0,
+          ease: "easeInOut"
+        }}
+        className="relative w-24 h-24 bg-gradient-to-br from-slate-800/90 to-slate-900/90 backdrop-blur-xl rounded-3xl flex items-center justify-center shadow-2xl border border-white/20"
+        style={{ transformStyle: 'preserve-3d' }}
+      >
+        <div className="absolute inset-2 bg-gradient-to-br from-blue-500/10 to-purple-500/10 rounded-2xl blur-sm" />
+        
+        <motion.div
+          animate={pulse ? {
+            scale: [1, 1.1, 1],
+          } : {}}
+          transition={{
+            duration: 2.5,
+            repeat: pulse ? Infinity : 0,
+          }}
+        >
+          {icons[type]}
+        </motion.div>
+        
+        <motion.div
+          animate={{
+            x: [-100, 100],
+            opacity: [0, 0.5, 0]
+          }}
+          transition={{
+            duration: 3,
+            repeat: Infinity,
+            repeatDelay: 2
+          }}
+          className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent skew-x-12 rounded-3xl"
+        />
+      </motion.div>
+      
+      <motion.span
+        animate={pulse ? {
+          opacity: [0.7, 1, 0.7]
+        } : {}}
+        transition={{
+          duration: 2,
+          repeat: pulse ? Infinity : 0
+        }}
+        className="text-sm text-slate-300 font-bold"
+      >
+        {label}
+      </motion.span>
+    </motion.div>
+  );
+};
+
+const Arrow = ({ delay = 0 }) => (
+  <motion.div
+    initial={{ opacity: 0, scaleX: 0 }}
+    animate={{ opacity: 1, scaleX: 1 }}
+    transition={{ duration: 0.8, delay, ease: "easeOut" }}
+    className="flex items-center relative"
+  >
+    <div className="w-24 h-1.5 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-full relative overflow-hidden shadow-lg">
+      <motion.div
+        animate={{ x: [-40, 120] }}
+        transition={{ 
+          duration: 2.5, 
+          repeat: Infinity,
+          ease: "easeInOut",
+          repeatDelay: 0.5
+        }}
+        className="absolute inset-0 w-12 bg-gradient-to-r from-transparent via-white/80 to-transparent"
+      />
+      
+      <motion.div
+        animate={{ 
+          x: [0, 90],
+          opacity: [0, 1, 0]
+        }}
+        transition={{ 
+          duration: 2, 
+          repeat: Infinity,
+          ease: "easeInOut"
+        }}
+        className="absolute top-1/2 -translate-y-1/2 w-1 h-1 bg-white rounded-full shadow-lg shadow-white/50"
+      />
+    </div>
+    
+    <motion.div
+      animate={{ 
+        x: [0, 6, 0],
+        filter: ['brightness(1)', 'brightness(1.5)', 'brightness(1)']
+      }}
+      transition={{ 
+        duration: 2.5, 
+        repeat: Infinity,
+        ease: "easeInOut"
+      }}
+      className="absolute right-0 drop-shadow-lg"
+    >
+      <div className="w-0 h-0 border-t-[8px] border-t-transparent border-l-[14px] border-l-pink-500 border-b-[8px] border-b-transparent" />
+      <motion.div
+        animate={{ opacity: [0.5, 1, 0.5] }}
+        transition={{ duration: 2, repeat: Infinity }}
+        className="absolute -inset-2 bg-pink-500/30 blur-md rounded-full"
+      />
+    </motion.div>
+  </motion.div>
+);
+
+const DashboardCard = ({ status }) => (
+  <motion.div
+    initial={{ opacity: 0, y: 60, scale: 0.8, rotateX: -20 }}
+    animate={{ opacity: 1, y: 0, scale: 1, rotateX: 0 }}
+    transition={{ duration: 1, ease: "easeOut" }}
+    className="relative max-w-lg w-full group"
+    style={{ transformStyle: 'preserve-3d' }}
+  >
+    <motion.div 
+      animate={{
+        rotate: [0, 360],
+      }}
+      transition={{
+        duration: 8,
+        repeat: Infinity,
+        ease: "linear"
+      }}
+      className="absolute -inset-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-2xl opacity-75 blur-xl"
+    />
+    
+    <motion.div
+      animate={{
+        opacity: [0.5, 1, 0.5],
+        scale: [0.98, 1.02, 0.98]
+      }}
+      transition={{
+        duration: 3,
+        repeat: Infinity,
+        ease: "easeInOut"
+      }}
+      className="absolute -inset-2 bg-gradient-to-r from-blue-600/30 via-purple-600/30 to-pink-600/30 rounded-2xl blur-2xl"
+    />
+    
+    <div className="relative bg-gradient-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-2xl rounded-2xl p-8 shadow-2xl border border-white/20">
+      <motion.div
+        animate={{
+          y: [-20, 20, -20],
+          x: [-10, 10, -10],
+        }}
+        transition={{
+          duration: 6,
+          repeat: Infinity,
+          ease: "easeInOut"
+        }}
+        className="absolute top-4 right-4 w-2 h-2 bg-blue-400 rounded-full blur-sm opacity-50"
+      />
+      <motion.div
+        animate={{
+          y: [20, -20, 20],
+          x: [10, -10, 10],
+        }}
+        transition={{
+          duration: 7,
+          repeat: Infinity,
+          ease: "easeInOut"
+        }}
+        className="absolute bottom-4 left-4 w-2 h-2 bg-purple-400 rounded-full blur-sm opacity-50"
+      />
+      
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <motion.div
+            animate={{
+              rotate: [0, 360],
+            }}
+            transition={{
+              duration: 10,
+              repeat: Infinity,
+              ease: "linear"
+            }}
+            className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg"
+          >
+            <RobotIcon />
+          </motion.div>
+          <h3 className="text-xl font-bold text-white">Email Summary Bot</h3>
         </div>
-
-        {/* Hero Section with Metrics */}
-        <section className="relative py-20 flex items-center justify-center">
-          <div className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center transition-all duration-1000 ${isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
-            
-
-            {/* Live metrics */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 max-w-4xl mx-auto">
-              {[
-                { value: "47,000+", label: "AI Agents Created", trend: "+12% this week" },
-                { value: "2.3M", label: "Tasks Automated", trend: "Last 30 days" },
-                { value: "8.4s", label: "Average Setup Time", trend: "Industry leading" }
-              ].map((metric, index) => (
-                <div key={index} className="bg-purple-900/40 backdrop-blur-sm rounded-2xl p-6 border border-purple-500/30 hover:scale-105 transition-all duration-300 group shadow-lg hover:shadow-purple-500/25">
-                  <div className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent mb-1">
-                    {metric.value}
-                  </div>
-                  <div className="text-gray-300 font-medium mb-2">{metric.label}</div>
-                  <div className="text-xs text-gray-500">{metric.trend}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* Interactive Demo Section */}
-        <section className="py-20 relative">
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="text-center mb-16">
-              <h2 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6">
-                <span className="bg-gradient-to-r from-blue-400 via-purple-400 to-cyan-400 bg-clip-text text-transparent">
-                  See It In Action
-                </span>
-              </h2>
-              <p className="text-xl text-gray-300 max-w-3xl mx-auto">
-                Watch how professionals create powerful AI agents with simple conversations
-              </p>
-            </div>
-
-            {/* Interactive Demo */}
-            <div className="relative bg-black/50 backdrop-blur-xl border border-purple-500/30 rounded-3xl p-8 shadow-2xl overflow-hidden">
-              {/* Demo header */}
-              <div className="flex items-center justify-between mb-6 pb-4 border-b border-purple-500/30">
-                <div className="flex items-center space-x-3">
-                  <div className="flex space-x-2">
-                    <div className="w-3 h-3 bg-red-400 rounded-full"></div>
-                    <div className="w-3 h-3 bg-yellow-400 rounded-full"></div>
-                    <div className="w-3 h-3 bg-green-400 rounded-full"></div>
-                  </div>
-                  <span className="text-gray-200 font-semibold">AgentPilot Studio</span>
-                </div>
-                <div className="flex items-center space-x-2 text-sm text-gray-400">
-                  <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                  <span>Live Demo</span>
-                </div>
-              </div>
-
-              {/* Step indicators */}
-              <div className="flex justify-center mb-8">
-                <div className="flex space-x-2">
-                  {[0, 1, 2].map((step) => (
-                    <button
-                      key={step}
-                      onClick={() => setCurrentStep(step)}
-                      className={`w-3 h-3 rounded-full transition-all duration-300 ${
-                        currentStep === step 
-                          ? 'bg-purple-500 scale-125' 
-                          : 'bg-gray-600 hover:bg-gray-500'
-                      }`}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              {/* Demo conversation */}
-              <div className="space-y-6 min-h-[400px]">
-                {/* User message */}
-                <div className="flex justify-end">
-                  <div className="max-w-2xl bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl rounded-br-lg p-6 shadow-lg">
-                    <p className="text-white text-lg font-medium">
-                      {demoSteps[currentStep].user}
-                    </p>
-                    <div className="flex items-center text-blue-200 text-sm mt-3 opacity-90">
-                      <div className="w-2 h-2 bg-blue-300 rounded-full mr-2"></div>
-                      Professional User
-                    </div>
-                  </div>
-                </div>
-
-                {/* AI response with typing animation */}
-                <div className="flex justify-start">
-                  <div className="max-w-3xl bg-purple-900/50 border border-purple-500/30 rounded-2xl rounded-bl-lg p-6 shadow-lg backdrop-blur-sm">
-                    <div className="flex items-center space-x-3 mb-4">
-                      <div className="w-8 h-8 bg-gradient-to-r from-purple-600 to-blue-600 rounded-full flex items-center justify-center">
-                        <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                        </svg>
-                      </div>
-                      <span className="text-gray-200 font-semibold">AI Agent</span>
-                      <div className="flex space-x-1">
-                        {[0, 1, 2].map((i) => (
-                          <div key={i} className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{animationDelay: `${i * 0.1}s`}} />
-                        ))}
-                      </div>
-                    </div>
-                    
-                    <div className="text-gray-200 text-lg whitespace-pre-line mb-4">
-                      {demoSteps[currentStep].ai}
-                    </div>
-
-                    <div className="bg-gradient-to-r from-green-900/30 to-blue-900/30 rounded-xl p-4 border border-green-500/30">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center">
-                          <div className="w-3 h-3 bg-green-400 rounded-full mr-3 animate-pulse"></div>
-                          <span className="text-green-300 font-semibold">{demoSteps[currentStep].status}</span>
-                        </div>
-                        <button className="px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg text-white text-sm font-medium hover:scale-105 transition-transform shadow-lg">
-                          View Results
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Demo footer */}
-              <div className="text-center mt-8 pt-6 border-t border-purple-500/30">
-                <div className="inline-flex items-center px-6 py-3 bg-gradient-to-r from-green-900/30 to-blue-900/30 rounded-full border border-green-500/30 backdrop-blur-sm shadow-lg">
-                  <svg className="w-5 h-5 mr-3 text-green-400" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                  </svg>
-                  <span className="text-gray-200 font-semibold">Enterprise AI Agent deployed in seconds</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Features Section with Cards */}
-        <section className="py-20 relative">
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="text-center mb-16">
-              <h2 className="text-4xl md:text-5xl font-bold text-white mb-6">
-                <span className="bg-gradient-to-r from-blue-400 via-purple-400 to-cyan-400 bg-clip-text text-transparent">
-                  Built for Every Professional
-                </span>
-              </h2>
-              <p className="text-xl text-gray-300 max-w-3xl mx-auto">
-                Whether you're a CEO, consultant, or team lead - create AI agents that understand your unique workflow
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 mb-16">
-              {[
-                {
-                  icon: (
-                    <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                    </svg>
-                  ),
-                  title: "Executive Assistant",
-                  description: "Manage calendar, prioritize emails, prepare briefings, track KPIs",
-                  color: "from-blue-500 to-cyan-500",
-                  bgColor: "from-blue-500/10 to-cyan-500/10",
-                  borderColor: "border-blue-400/30",
-                  features: ["Email prioritization", "Meeting scheduling", "Report generation"]
-                },
-                {
-                  icon: (
-                    <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                    </svg>
-                  ),
-                  title: "Business Analyst",
-                  description: "Monitor markets, analyze trends, generate insights, create reports",
-                  color: "from-purple-500 to-pink-500",
-                  bgColor: "from-purple-500/10 to-pink-500/10",
-                  borderColor: "border-purple-400/30",
-                  features: ["Market monitoring", "Data analysis", "Trend identification"]
-                },
-                {
-                  icon: (
-                    <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                    </svg>
-                  ),
-                  title: "Sales Assistant",
-                  description: "Lead qualification, follow-ups, pipeline management, customer insights",
-                  color: "from-green-500 to-emerald-500",
-                  bgColor: "from-green-500/10 to-emerald-500/10",
-                  borderColor: "border-green-400/30",
-                  features: ["Lead scoring", "Follow-up automation", "CRM integration"]
-                },
-                {
-                  icon: (
-                    <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                    </svg>
-                  ),
-                  title: "Compliance Monitor",
-                  description: "Track regulations, audit deadlines, risk assessment, documentation",
-                  color: "from-orange-500 to-red-500",
-                  bgColor: "from-orange-500/10 to-red-500/10",
-                  borderColor: "border-orange-400/30",
-                  features: ["Regulation tracking", "Risk alerts", "Audit preparation"]
-                },
-                {
-                  icon: (
-                    <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
-                  ),
-                  title: "Research Agent",
-                  description: "Market research, competitor analysis, industry reports, data gathering",
-                  color: "from-indigo-500 to-purple-500",
-                  bgColor: "from-indigo-500/10 to-purple-500/10",
-                  borderColor: "border-indigo-400/30",
-                  features: ["Competitor tracking", "Industry insights", "Research automation"]
-                },
-                {
-                  icon: (
-                    <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                    </svg>
-                  ),
-                  title: "Operations Manager",
-                  description: "Process optimization, resource allocation, performance tracking",
-                  color: "from-teal-500 to-blue-500",
-                  bgColor: "from-teal-500/10 to-blue-500/10",
-                  borderColor: "border-teal-400/30",
-                  features: ["Process automation", "Resource optimization", "Performance metrics"]
-                }
-              ].map((agent, index) => (
-                <div key={index} className={`group bg-gradient-to-br ${agent.bgColor} backdrop-blur-sm rounded-2xl p-6 border ${agent.borderColor} hover:scale-105 transition-all duration-300 shadow-lg hover:shadow-purple-500/25 overflow-hidden`}>
-                  {/* Glassmorphism effect */}
-                  <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent rounded-2xl"></div>
-                  
-                  <div className="relative z-10">
-                    {/* Icon and Title Section - Horizontal Layout */}
-                    <div className="flex items-center mb-4">
-                      <div className={`w-12 h-12 bg-gradient-to-r ${agent.color} rounded-xl flex items-center justify-center mr-4 group-hover:scale-110 transition-transform shadow-lg`}>
-                        {agent.icon}
-                      </div>
-                      <h3 className="text-xl font-bold text-white">{agent.title}</h3>
-                    </div>
-                    
-                    {/* Description */}
-                    <p className="text-gray-300 mb-4">{agent.description}</p>
-                    
-                    {/* Features with compact styling */}
-                    <div className="space-y-2">
-                      {agent.features.map((feature, idx) => (
-                        <div key={idx} className="flex items-center text-sm text-gray-400">
-                          <svg className="w-4 h-4 mr-2 text-green-400" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                          </svg>
-                          {feature}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  
-                  {/* Hover glow effect */}
-                  <div className={`absolute inset-0 bg-gradient-to-r ${agent.color} opacity-0 group-hover:opacity-5 rounded-2xl transition-opacity duration-300 blur-lg`}></div>
-                </div>
-              ))}
-            </div>
-
-            {/* Quick start CTA */}
-            <div className="text-center">
-              <button className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-8 py-4 text-lg rounded-xl hover:shadow-xl transition-all duration-300 hover:scale-105 font-semibold">
-                Choose Your AI Agent Template
-              </button>
-            </div>
-          </div>
-        </section>
-
-        {/* How It Works - Simplified */}
-        <section className="py-20 relative">
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="text-center mb-16">
-              <h2 className="text-4xl md:text-5xl font-bold text-white mb-6">
-                <span className="bg-gradient-to-r from-blue-400 via-purple-400 to-cyan-400 bg-clip-text text-transparent">
-                  From Idea to AI Agent
-                </span>
-              </h2>
-              <p className="text-xl text-gray-300 max-w-3xl mx-auto">
-                Three simple steps to automate any business process
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 relative">
-              {/* Connection lines */}
-              <div className="hidden md:block absolute top-16 left-1/3 w-1/3 h-0.5 bg-gradient-to-r from-blue-400 to-purple-400"></div>
-              <div className="hidden md:block absolute top-16 right-1/3 w-1/3 h-0.5 bg-gradient-to-r from-purple-400 to-cyan-400"></div>
-
-              {[
-                {
-                  step: "1",
-                  title: "Describe Your Need",
-                  description: "Tell us what you want to automate in plain English. No technical knowledge required.",
-                  icon: (
-                    <svg className="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                    </svg>
-                  )
-                },
-                {
-                  step: "2",
-                  title: "AI Builds Your Agent",
-                  description: "Our AI understands your requirements and automatically creates a custom agent for your specific workflow.",
-                  icon: (
-                    <svg className="w-8 h-8 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                    </svg>
-                  )
-                },
-                {
-                  step: "3",
-                  title: "Deploy & Monitor",
-                  description: "Your AI agent starts working immediately. Monitor performance and adjust as needed through our intuitive dashboard.",
-                  icon: (
-                    <svg className="w-8 h-8 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                  )
-                }
-              ].map((item, index) => (
-                <div key={index} className="text-center relative">
-                  <div className="relative mb-6">
-                    <div className="w-20 h-20 sm:w-24 sm:h-24 lg:w-28 lg:h-28 bg-purple-900/50 border-2 border-purple-500/30 rounded-2xl sm:rounded-3xl flex items-center justify-center mx-auto shadow-lg hover:scale-110 transition-transform duration-300 backdrop-blur-sm">
-                      {item.icon}
-                    </div>
-                    <div className="absolute -bottom-2 sm:-bottom-3 left-1/2 transform -translate-x-1/2">
-                      <div className="px-3 sm:px-4 py-1 sm:py-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white text-xs font-bold rounded-full shadow-lg">
-                        {item.step}
-                      </div>
-                    </div>
-                  </div>
-                  <h3 className="text-xl sm:text-2xl font-bold text-white mb-3">{item.title}</h3>
-                  <p className="text-gray-300 text-base sm:text-lg">{item.description}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* Social Proof */}
-        <section className="py-20 relative">
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="text-center mb-16">
-              <h2 className="text-4xl md:text-5xl font-bold text-white mb-6">
-                <span className="bg-gradient-to-r from-blue-400 via-purple-400 to-cyan-400 bg-clip-text text-transparent">
-                  Trusted by Professionals Worldwide
-                </span>
-              </h2>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 mb-16">
-              {[
-                {
-                  quote: "AgentPilot transformed how we handle client communications. Our AI agent processes 200+ emails daily and only escalates what truly needs our attention.",
-                  author: "Sarah Chen",
-                  role: "Managing Partner",
-                  company: "Global Consulting Group",
-                  avatar: "SC",
-                  color: "from-blue-600 to-purple-600"
-                },
-                {
-                  quote: "We automated our entire lead qualification process. The AI agent scores leads, schedules follow-ups, and even drafts personalized outreach messages.",
-                  author: "Marcus Rodriguez",
-                  role: "VP of Sales",
-                  company: "TechScale Solutions",
-                  avatar: "MR",
-                  color: "from-purple-600 to-pink-600"
-                },
-                {
-                  quote: "Our compliance monitoring agent tracks 15 different regulatory frameworks. It's like having a dedicated compliance officer working 24/7.",
-                  author: "Dr. Emily Watson",
-                  role: "Chief Compliance Officer",
-                  company: "FinSecure Bank",
-                  avatar: "EW",
-                  color: "from-green-600 to-blue-600"
-                }
-              ].map((testimonial, index) => (
-                <div key={index} className="bg-purple-900/30 backdrop-blur-sm rounded-2xl p-6 border border-purple-500/30 hover:scale-105 transition-all duration-300 shadow-lg hover:shadow-purple-500/25">
-                  <p className="text-gray-300 text-lg mb-6 italic">"{testimonial.quote}"</p>
-                  <div className="flex items-center">
-                    <div className={`w-12 h-12 bg-gradient-to-r ${testimonial.color} rounded-full flex items-center justify-center mr-4`}>
-                      <span className="text-white font-bold">{testimonial.avatar}</span>
-                    </div>
-                    <div>
-                      <div className="text-white font-semibold">{testimonial.author}</div>
-                      <div className="text-gray-300 text-sm">{testimonial.role}</div>
-                      <div className="text-blue-400 text-sm font-medium">{testimonial.company}</div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Company logos placeholder */}
-            <div className="text-center">
-              <p className="text-gray-400 mb-8">Trusted by teams at companies like:</p>
-              <div className="flex justify-center items-center space-x-8 opacity-60">
-                {['Microsoft', 'Google', 'Amazon', 'Salesforce', 'IBM'].map((company, index) => (
-                  <div key={index} className="text-2xl font-bold text-gray-500">{company}</div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Final CTA */}
-        <section className="py-20 relative bg-gradient-to-br from-blue-900 via-purple-900 to-indigo-900 text-white overflow-hidden">
-          {/* Background effects */}
-          <div className="absolute inset-0 opacity-30">
-            <div className="absolute inset-0" style={{
-              backgroundImage: `
-                radial-gradient(circle at 25% 25%, rgba(139, 92, 246, 0.3) 0%, transparent 50%),
-                radial-gradient(circle at 75% 75%, rgba(59, 130, 246, 0.3) 0%, transparent 50%)
-              `
-            }}></div>
-          </div>
-
-          <div className="max-w-4xl mx-auto text-center px-4 sm:px-6 lg:px-8 relative z-10">
-            <h2 className="text-4xl md:text-5xl lg:text-6xl font-bold mb-6">
-              Ready to Build Your AI Workforce?
-            </h2>
-            <p className="text-xl md:text-2xl mb-8 opacity-90">
-              Join thousands of professionals who've automated their workflows with AI
-            </p>
-            
-            <div className="flex flex-col sm:flex-row gap-4 justify-center mb-12">
-              <button className="bg-white text-blue-600 px-8 py-4 text-lg rounded-xl hover:shadow-2xl transition-all duration-300 hover:scale-105 font-semibold">
-                Start Building Free
-              </button>
-              <button className="border-2 border-white/30 text-white hover:bg-white/10 px-8 py-4 text-lg rounded-xl transition-all duration-300 hover:scale-105 font-semibold backdrop-blur-sm">
-                Schedule Demo
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 text-sm opacity-80">
-              <div className="flex items-center justify-center">
-                <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
-                Setup in 60 seconds
-              </div>
-              <div className="flex items-center justify-center">
-                <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
-                No coding required
-              </div>
-              <div className="flex items-center justify-center">
-                <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
-                Enterprise security
-              </div>
-            </div>
-          </div>
-        </section>
-
+        <motion.div
+          animate={status === 'running' ? { 
+            opacity: [1, 0.6, 1],
+            boxShadow: ['0 0 20px rgba(59, 130, 246, 0.5)', '0 0 40px rgba(147, 51, 234, 0.8)', '0 0 20px rgba(59, 130, 246, 0.5)']
+          } : {
+            scale: [0.9, 1.1, 1],
+            boxShadow: ['0 0 20px rgba(34, 197, 94, 0.5)', '0 0 40px rgba(34, 197, 94, 0.8)', '0 0 20px rgba(34, 197, 94, 0.5)']
+          }}
+          transition={{ 
+            duration: status === 'running' ? 2.5 : 0.6,
+            repeat: status === 'running' ? Infinity : 0 
+          }}
+          className={`px-5 py-2.5 rounded-xl text-sm font-bold backdrop-blur-sm ${
+            status === 'running' 
+              ? 'bg-gradient-to-r from-blue-500/30 to-purple-500/30 text-blue-200 border-2 border-blue-400/50' 
+              : 'bg-gradient-to-r from-green-500/30 to-emerald-500/30 text-green-200 border-2 border-green-400/50'
+          }`}
+        >
+          {status === 'running' ? '⚡ Running...' : '✨ Completed'}
+        </motion.div>
       </div>
 
-      {/* Custom animations */}
-      <style jsx>{`
-        @keyframes float {
-          0%, 100% { transform: translate(0, 0) rotate(0deg); }
-          33% { transform: translate(30px, -30px) rotate(120deg); }
-          66% { transform: translate(-20px, 20px) rotate(240deg); }
-        }
-        @keyframes gridShift {
-          0% { background-position: 0 0; }
-          100% { background-position: 40px 40px; }
-        }
-      `}</style>
+      {status === 'running' && (
+        <div className="mb-6">
+          <div className="w-full h-2.5 bg-slate-700/50 rounded-full overflow-hidden backdrop-blur-sm shadow-inner">
+            <motion.div
+              initial={{ width: '0%' }}
+              animate={{ width: '100%' }}
+              transition={{ duration: 3, ease: "easeInOut" }}
+              className="h-full bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 relative shadow-lg"
+            >
+              <motion.div
+                animate={{ x: [-40, 500] }}
+                transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
+                className="absolute inset-0 w-24 bg-gradient-to-r from-transparent via-white/60 to-transparent"
+              />
+              
+              <motion.div
+                className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow-lg"
+                animate={{
+                  boxShadow: ['0 0 10px rgba(255,255,255,0.8)', '0 0 20px rgba(255,255,255,1)', '0 0 10px rgba(255,255,255,0.8)']
+                }}
+                transition={{ duration: 1, repeat: Infinity }}
+              />
+            </motion.div>
+          </div>
+        </div>
+      )}
+
+      <AnimatePresence mode="wait">
+        {status === 'completed' && (
+          <motion.div
+            initial={{ opacity: 0, y: 20, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ duration: 0.8, delay: 0.4, type: "spring" }}
+            className="relative"
+          >
+            {[...Array(6)].map((_, i) => (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, scale: 0, x: 0, y: 0 }}
+                animate={{
+                  opacity: [0, 1, 0],
+                  scale: [0, 1, 0.5],
+                  x: [0, (Math.random() - 0.5) * 100],
+                  y: [0, -50 - Math.random() * 50],
+                  rotate: [0, Math.random() * 360]
+                }}
+                transition={{
+                  duration: 1.2,
+                  delay: 0.4 + i * 0.1,
+                  ease: "easeOut"
+                }}
+                className={`absolute top-0 left-1/2 w-2 h-2 rounded-full ${
+                  i % 3 === 0 ? 'bg-green-400' : i % 3 === 1 ? 'bg-blue-400' : 'bg-purple-400'
+                }`}
+              />
+            ))}
+            
+            <div className="absolute -inset-3 bg-gradient-to-r from-green-500/20 to-emerald-500/20 rounded-xl blur-xl"></div>
+            <motion.div
+              animate={{
+                boxShadow: ['0 0 20px rgba(34, 197, 94, 0.3)', '0 0 40px rgba(34, 197, 94, 0.5)', '0 0 20px rgba(34, 197, 94, 0.3)']
+              }}
+              transition={{ duration: 2, repeat: Infinity }}
+              className="relative bg-slate-800/60 backdrop-blur-sm rounded-xl p-6 border border-green-500/30"
+            >
+              <div className="flex items-center gap-2 mb-4">
+                <motion.svg 
+                  initial={{ pathLength: 0 }}
+                  animate={{ pathLength: 1 }}
+                  transition={{ duration: 1, delay: 0.6 }}
+                  className="w-7 h-7" 
+                  viewBox="0 0 24 24" 
+                  fill="none" 
+                  stroke="currentColor" 
+                  strokeWidth="2.5"
+                >
+                  <motion.path 
+                    d="M3 3v18h18" 
+                    className="text-green-400"
+                  />
+                  <motion.path 
+                    d="M18 17l-5-5-3 3-4-4" 
+                    className="text-green-400"
+                  />
+                </motion.svg>
+                <p className="text-lg text-green-300 font-bold">Output</p>
+              </div>
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.8, staggerChildren: 0.1 }}
+              >
+                <motion.p 
+                  initial={{ x: -10, opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  transition={{ delay: 0.9 }}
+                  className="text-slate-300 leading-relaxed mb-1"
+                >
+                  ✓ 5 emails summarized
+                </motion.p>
+                <motion.p 
+                  initial={{ x: -10, opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  transition={{ delay: 1.0 }}
+                  className="text-slate-300 leading-relaxed mb-1"
+                >
+                  ✓ 2 action items sent to Slack
+                </motion.p>
+                <motion.p 
+                  initial={{ x: -10, opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  transition={{ delay: 1.1 }}
+                  className="text-slate-300 leading-relaxed"
+                >
+                  ✓ Team notified successfully
+                </motion.p>
+              </motion.div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
-  )
+  </motion.div>
+);
+
+const TypingPrompt = ({ text }) => {
+  const [displayText, setDisplayText] = useState('');
+
+  useEffect(() => {
+    let index = 0;
+    const interval = setInterval(() => {
+      if (index <= text.length) {
+        setDisplayText(text.slice(0, index));
+        index++;
+      } else {
+        clearInterval(interval);
+      }
+    }, 50);
+
+    return () => clearInterval(interval);
+  }, [text]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20, scale: 0.95 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ duration: 0.5 }}
+      className="relative max-w-3xl w-full group"
+    >
+      <div className="absolute -inset-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-2xl opacity-50 group-hover:opacity-75 blur-xl transition duration-1000"></div>
+      
+      <div className="relative bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-2xl rounded-2xl p-8 shadow-2xl border border-white/10">
+        <div className="flex items-center gap-2 mb-6">
+          <div className="w-3.5 h-3.5 bg-gradient-to-br from-red-400 to-red-600 rounded-full"></div>
+          <div className="w-3.5 h-3.5 bg-gradient-to-br from-yellow-400 to-yellow-600 rounded-full"></div>
+          <div className="w-3.5 h-3.5 bg-gradient-to-br from-green-400 to-green-600 rounded-full"></div>
+          <div className="ml-auto text-xs text-slate-500 font-mono">prompt.ai</div>
+        </div>
+        
+        <div className="bg-gradient-to-br from-slate-800/80 to-slate-900/80 backdrop-blur-sm rounded-xl p-6 min-h-[100px] flex items-center border border-white/5 relative overflow-hidden">
+          <motion.div
+            animate={{
+              opacity: [0.03, 0.08, 0.03],
+            }}
+            transition={{ duration: 3, repeat: Infinity }}
+            className="absolute inset-0 bg-gradient-to-r from-blue-500 to-purple-500"
+          />
+          
+          <p className="relative text-white font-mono text-base md:text-lg leading-relaxed">
+            {displayText}
+            <motion.span
+              animate={{ opacity: [1, 0.3, 1] }}
+              transition={{ duration: 0.8, repeat: Infinity }}
+              className="inline-block w-0.5 h-6 bg-gradient-to-b from-blue-400 to-purple-400 ml-1 rounded-full"
+            />
+          </p>
+        </div>
+      </div>
+    </motion.div>
+  );
+};
+
+const HeroAnimation = () => {
+  const [step, setStep] = useState('typing');
+  const [dashboardStatus, setDashboardStatus] = useState('running');
+
+  const TIMINGS = {
+    typing: 5000,
+    building: 4500,
+    connecting: 4000,
+    dashboard: 6000,
+    tagline: 4500,
+  };
+
+  useEffect(() => {
+    let timeout;
+
+    switch (step) {
+      case 'typing':
+        timeout = setTimeout(() => setStep('building'), TIMINGS.typing);
+        break;
+      case 'building':
+        timeout = setTimeout(() => setStep('connecting'), TIMINGS.building);
+        break;
+      case 'connecting':
+        timeout = setTimeout(() => {
+          setStep('dashboard');
+          setDashboardStatus('running');
+        }, TIMINGS.connecting);
+        break;
+      case 'dashboard':
+        timeout = setTimeout(() => {
+          setDashboardStatus('completed');
+        }, 2000);
+        
+        const taglineTimeout = setTimeout(() => {
+          setStep('tagline');
+        }, TIMINGS.dashboard);
+        
+        return () => {
+          clearTimeout(timeout);
+          clearTimeout(taglineTimeout);
+        };
+      case 'tagline':
+        timeout = setTimeout(() => {
+          setStep('typing');
+        }, TIMINGS.tagline);
+        break;
+    }
+
+    return () => clearTimeout(timeout);
+  }, [step]);
+
+  return (
+    <div className="min-h-[600px] flex items-center justify-center p-6">
+      <div className="relative z-10 w-full max-w-6xl">
+        <AnimatePresence mode="wait">
+          {step === 'typing' && (
+            <motion.div
+              key="typing"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.6 }}
+              className="flex flex-col items-center gap-8"
+            >
+              <motion.h2
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="text-3xl text-transparent bg-clip-text bg-gradient-to-r from-slate-300 to-slate-500 font-bold mb-4 flex items-center justify-center gap-3"
+              >
+                <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
+                  <path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" className="fill-blue-400"/>
+                </svg>
+                Create Your Agent
+              </motion.h2>
+              <TypingPrompt text="Summarize my last 10 emails and send to Slack." />
+            </motion.div>
+          )}
+
+          {step === 'building' && (
+            <motion.div
+              key="building"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.6 }}
+              className="flex flex-col items-center gap-8"
+            >
+              <motion.h2
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="text-3xl text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400 font-bold mb-4 flex items-center justify-center gap-3"
+              >
+                <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
+                  <path d="M11.25 4.533A9.707 9.707 0 006 3a9.735 9.735 0 00-3.25.555.75.75 0 00-.5.707v14.25a.75.75 0 001 .707A8.237 8.237 0 016 18.75c1.995 0 3.823.707 5.25 1.886V4.533zM12.75 20.636A8.214 8.214 0 0118 18.75c.966 0 1.89.166 2.75.47a.75.75 0 001-.708V4.262a.75.75 0 00-.5-.707A9.735 9.735 0 0018 3a9.707 9.707 0 00-5.25 1.533v16.103z" className="fill-blue-400"/>
+                  <path d="M9 12.75L11.25 15 15 9.75" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                </svg>
+                Building Your Workflow
+              </motion.h2>
+              <div className="flex items-center gap-6">
+                <Icon type="mail" label="Gmail" delay={0} />
+                <Arrow delay={0.4} />
+                <Icon type="brain" label="AI Agent" delay={0.7} />
+                <Arrow delay={1.0} />
+                <Icon type="slack" label="Slack" delay={1.3} />
+              </div>
+            </motion.div>
+          )}
+
+          {step === 'connecting' && (
+            <motion.div
+              key="connecting"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.6 }}
+              className="flex flex-col items-center gap-8"
+            >
+              <motion.h2
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="text-3xl text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-emerald-400 font-bold mb-4 flex items-center justify-center gap-3"
+              >
+                <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
+                  <path d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636a9 9 0 1012.728 0l-1.591 1.591M12 6.75a5.25 5.25 0 110 10.5 5.25 5.25 0 010-10.5z" className="fill-green-400"/>
+                  <path d="M9 12l2 2 4-4" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                </svg>
+                Connecting Plugins
+              </motion.h2>
+              <div className="flex items-center gap-6">
+                <Icon type="mail" label="Connected ✅" pulse delay={0} />
+                <Arrow />
+                <Icon type="brain" label="Connected ✅" pulse delay={0.3} />
+                <Arrow />
+                <Icon type="slack" label="Connected ✅" pulse delay={0.6} />
+              </div>
+            </motion.div>
+          )}
+
+          {step === 'dashboard' && (
+            <motion.div
+              key="dashboard"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.6 }}
+              className="flex flex-col items-center gap-8"
+            >
+              <motion.h2
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="text-3xl text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400 font-bold mb-4 flex items-center justify-center gap-3"
+              >
+                <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
+                  <path d="M10.5 1.875a1.125 1.125 0 012.25 0v8.219c0 .621.504 1.125 1.125 1.125h8.25a1.125 1.125 0 010 2.25h-8.25a1.125 1.125 0 01-1.125-1.125V3.375a1.125 1.125 0 01-1.125-1.125h8.25zM9 12.75a.75.75 0 00.75.75h.008a.75.75 0 00.75-.75v-.008a.75.75 0 00-.75-.75H9.75a.75.75 0 00-.75.75v.008zM5.25 12.75a.75.75 0 00.75.75h.008a.75.75 0 00.75-.75v-.008a.75.75 0 00-.75-.75H6a.75.75 0 00-.75.75v.008zM1.5 12.75a.75.75 0 00.75.75h.008a.75.75 0 00.75-.75v-.008a.75.75 0 00-.75-.75H2.25a.75.75 0 00-.75.75v.008z" className="fill-purple-400"/>
+                  <path d="M3.375 3C2.339 3 1.5 3.84 1.5 4.875v11.25C1.5 17.16 2.34 18 3.375 18H9.75v1.5H6A.75.75 0 006 21h12a.75.75 0 000-1.5h-3.75V18h6.375c1.035 0 1.875-.84 1.875-1.875V4.875C22.5 3.839 21.66 3 20.625 3H3.375z" className="fill-pink-400"/>
+                </svg>
+                Your Agent Dashboard
+              </motion.h2>
+              <DashboardCard status={dashboardStatus} />
+            </motion.div>
+          )}
+
+          {step === 'tagline' && (
+            <motion.div
+              key="tagline"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.6 }}
+              className="flex items-center justify-center min-h-[400px]"
+            >
+              <motion.div
+                initial={{ opacity: 0, y: 40, scale: 0.9 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ duration: 1.2, type: "spring" }}
+                className="text-center relative"
+              >
+                <motion.div 
+                  animate={{
+                    scale: [1, 1.2, 1],
+                    opacity: [0.3, 0.6, 0.3]
+                  }}
+                  transition={{
+                    duration: 4,
+                    repeat: Infinity,
+                    ease: "easeInOut"
+                  }}
+                  className="absolute inset-0 bg-gradient-to-r from-blue-500/30 via-purple-500/30 to-pink-500/30 blur-3xl"
+                />
+                
+                <motion.h2
+                  initial={{ backgroundPosition: '0% 50%' }}
+                  animate={{ 
+                    backgroundPosition: ['0% 50%', '100% 50%', '0% 50%'],
+                  }}
+                  transition={{ duration: 6, repeat: Infinity, ease: "linear" }}
+                  className="relative text-5xl md:text-7xl font-black bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent mb-6 bg-[length:200%_auto] drop-shadow-2xl"
+                >
+                  Your Personal AI Workforce
+                </motion.h2>
+                
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: 0.5, duration: 0.8 }}
+                >
+                  <p className="text-2xl md:text-3xl text-slate-300 font-bold flex items-center justify-center gap-3">
+                    Ready in Minutes
+                    <motion.svg 
+                      animate={{
+                        rotate: [0, 10, -10, 0],
+                        scale: [1, 1.2, 1]
+                      }}
+                      transition={{
+                        duration: 2,
+                        repeat: Infinity,
+                        ease: "easeInOut"
+                      }}
+                      className="w-8 h-8" 
+                      viewBox="0 0 24 24" 
+                      fill="none" 
+                      stroke="currentColor" 
+                      strokeWidth="2.5"
+                    >
+                      <motion.path 
+                        d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" 
+                        className="text-yellow-400 fill-yellow-400"
+                        animate={{
+                          opacity: [0.6, 1, 0.6]
+                        }}
+                        transition={{
+                          duration: 1.5,
+                          repeat: Infinity
+                        }}
+                      />
+                    </motion.svg>
+                  </p>
+                </motion.div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+};
+
+// ============================================================================
+// LANDING PAGE COMPONENTS
+// ============================================================================
+
+const CheckIcon = () => (
+  <svg className="w-6 h-6 text-green-400" viewBox="0 0 24 24" fill="none">
+    <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" strokeWidth="2.5" fill="none"/>
+  </svg>
+);
+
+const ArrowRightIcon = () => (
+  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none">
+    <path d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+);
+
+const PlayIcon = () => (
+  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none">
+    <path d="M8 6.82v10.36c0 .79.87 1.27 1.54.84l8.14-5.18a1 1 0 000-1.69L9.54 5.98A.998.998 0 008 6.82z" fill="currentColor"/>
+  </svg>
+);
+
+export default function AgentPilotLanding() {
+  const [email, setEmail] = useState('');
+
+  return (
+    <div className="min-h-screen bg-black text-white overflow-hidden">
+      {/* Background Effects */}
+      <div className="fixed inset-0 pointer-events-none">
+        <motion.div
+          animate={{
+            backgroundPosition: ['0% 0%', '100% 100%', '0% 0%'],
+          }}
+          transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
+          className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,_var(--tw-gradient-stops))] from-blue-900/40 via-purple-900/30 to-pink-900/40 bg-[length:200%_200%]"
+        />
+        <motion.div
+          animate={{
+            backgroundPosition: ['100% 100%', '0% 0%', '100% 100%'],
+          }}
+          transition={{ duration: 30, repeat: Infinity, ease: "linear" }}
+          className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_var(--tw-gradient-stops))] from-indigo-900/30 via-transparent to-fuchsia-900/30 bg-[length:200%_200%]"
+        />
+        <motion.div
+          animate={{
+            x: [0, 150, 0],
+            y: [0, -150, 0],
+            scale: [1, 1.3, 1],
+            opacity: [0.3, 0.5, 0.3]
+          }}
+          transition={{ duration: 20, repeat: Infinity, ease: "easeInOut" }}
+          className="absolute top-20 left-20 w-[500px] h-[500px] bg-blue-500/20 rounded-full blur-3xl"
+        />
+        <motion.div
+          animate={{
+            x: [0, -150, 0],
+            y: [0, 150, 0],
+            scale: [1, 1.4, 1],
+            opacity: [0.3, 0.5, 0.3]
+          }}
+          transition={{ duration: 25, repeat: Infinity, ease: "easeInOut" }}
+          className="absolute bottom-20 right-20 w-[500px] h-[500px] bg-purple-500/20 rounded-full blur-3xl"
+        />
+        <motion.div
+          animate={{
+            x: [0, 100, -100, 0],
+            y: [0, -100, 100, 0],
+            scale: [1, 1.2, 1.3, 1],
+            opacity: [0.2, 0.4, 0.3, 0.2]
+          }}
+          transition={{ duration: 30, repeat: Infinity, ease: "easeInOut" }}
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-pink-500/15 rounded-full blur-3xl"
+        />
+      </div>
+
+      {/* Hero Section */}
+      <section className="relative z-10 pt-20 pb-32">
+        <div className="max-w-7xl mx-auto px-6">
+          {/* Hero Text */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.8 }}
+            className="text-center mb-16"
+          >
+            <motion.h1 
+              className="text-5xl md:text-7xl font-black mb-6 leading-tight"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, delay: 0.2 }}
+            >
+              <span className="bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
+                Your Personal AI Workforce
+              </span>
+              <br />
+              <span className="text-white">Ready in Minutes</span>
+            </motion.h1>
+            
+            <motion.p
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, delay: 0.4 }}
+              className="text-xl md:text-2xl text-slate-300 max-w-4xl mx-auto mb-8 leading-relaxed"
+            >
+              AgentPilot turns natural language into real, working AI automations — no code, no setup.
+              <br />
+              Just describe what you want, connect your tools once, and your personal AI pilot does the rest.
+            </motion.p>
+            
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, delay: 0.6 }}
+              className="flex flex-col sm:flex-row items-center justify-center gap-4"
+            >
+              <button className="group px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl font-bold text-lg hover:shadow-2xl hover:shadow-purple-500/50 transition flex items-center gap-2">
+                Create Your First Agent
+                <ArrowRightIcon />
+              </button>
+            </motion.div>
+          </motion.div>
+
+          {/* Hero Animation */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 1, delay: 0.8 }}
+          >
+            <HeroAnimation />
+          </motion.div>
+        </div>
+      </section>
+
+      {/* Plugin Integrations */}
+      <section className="relative z-10 py-12 border-y border-white/5">
+        <div className="max-w-7xl mx-auto px-6">
+          <p className="text-center text-slate-400 mb-8">Works with your favorite tools</p>
+          <div className="flex flex-wrap items-center justify-center gap-12 opacity-70">
+            {/* Gmail */}
+            <div className="flex items-center gap-3 group hover:opacity-100 transition">
+              <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
+                <path d="M24 5.457v13.909c0 .904-.732 1.636-1.636 1.636h-3.819V11.73L12 16.64l-6.545-4.91v9.273H1.636A1.636 1.636 0 0 1 0 19.366V5.457c0-.904.732-1.636 1.636-1.636a1.636 1.636 0 0 1 .909.273L12 9.375l9.455-5.281a1.636 1.636 0 0 1 .909-.273C23.268 3.821 24 4.553 24 5.457z" className="fill-red-500"/>
+              </svg>
+              <span className="text-slate-300 font-medium">Gmail</span>
+            </div>
+
+            {/* Slack */}
+            <div className="flex items-center gap-3 group hover:opacity-100 transition">
+              <svg className="w-8 h-8" viewBox="0 0 54 54" fill="none">
+                <path d="M19.715 34.542a4.5 4.5 0 0 1-4.5 4.5 4.5 4.5 0 0 1-4.5-4.5 4.5 4.5 0 0 1 4.5-4.5h4.5v4.5z" className="fill-green-400"/>
+                <path d="M21.965 34.542a4.5 4.5 0 0 1 4.5-4.5 4.5 4.5 0 0 1 4.5 4.5v11.25a4.5 4.5 0 0 1-4.5 4.5 4.5 4.5 0 0 1-4.5-4.5V34.542z" className="fill-green-400"/>
+                <path d="M26.465 19.5a4.5 4.5 0 0 1-4.5-4.5 4.5 4.5 0 0 1 4.5-4.5 4.5 4.5 0 0 1 4.5 4.5v4.5h-4.5z" className="fill-blue-400"/>
+                <path d="M26.465 21.75a4.5 4.5 0 0 1 4.5 4.5 4.5 4.5 0 0 1-4.5 4.5H15.215a4.5 4.5 0 0 1-4.5-4.5 4.5 4.5 0 0 1 4.5-4.5h11.25z" className="fill-blue-400"/>
+                <path d="M41.535 26.25a4.5 4.5 0 0 1 4.5 4.5 4.5 4.5 0 0 1-4.5 4.5 4.5 4.5 0 0 1-4.5-4.5v-4.5h4.5z" className="fill-yellow-400"/>
+                <path d="M39.285 26.25a4.5 4.5 0 0 1-4.5-4.5 4.5 4.5 0 0 1 4.5-4.5 4.5 4.5 0 0 1 4.5 4.5v11.25a4.5 4.5 0 0 1-4.5 4.5 4.5 4.5 0 0 1-4.5-4.5V26.25z" className="fill-yellow-400"/>
+                <path d="M34.785 41.5a4.5 4.5 0 0 1 4.5 4.5 4.5 4.5 0 0 1-4.5 4.5 4.5 4.5 0 0 1-4.5-4.5v-4.5h4.5z" className="fill-pink-400"/>
+                <path d="M34.785 39.25a4.5 4.5 0 0 1-4.5-4.5 4.5 4.5 0 0 1 4.5-4.5h11.25a4.5 4.5 0 0 1 4.5 4.5 4.5 4.5 0 0 1-4.5 4.5H34.785z" className="fill-pink-400"/>
+              </svg>
+              <span className="text-slate-300 font-medium">Slack</span>
+            </div>
+
+            {/* Notion */}
+            <div className="flex items-center gap-3 group hover:opacity-100 transition">
+              <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
+                <path d="M4.459 4.208c.746.606 1.026.56 2.428.465l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466l1.823 1.447zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.934zm14.337-.653c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.139c-.093-.514.28-.887.747-.933l3.269-.186z" className="fill-slate-300"/>
+              </svg>
+              <span className="text-slate-300 font-medium">Notion</span>
+            </div>
+
+            {/* Google Drive */}
+            <div className="flex items-center gap-3 group hover:opacity-100 transition">
+              <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
+                <path d="M8.203 5.3L4.09 12.837h8.226L16.428 5.3H8.203z" className="fill-yellow-500"/>
+                <path d="M15.3 6.428l-4.113 7.538L15.3 21.504l8.226-7.538L15.3 6.428z" className="fill-blue-500"/>
+                <path d="M8.203 18.201L0 18.201l4.113-7.538 8.204 7.538z" className="fill-green-500"/>
+              </svg>
+              <span className="text-slate-300 font-medium">Google Drive</span>
+            </div>
+
+            {/* Google Calendar */}
+            <div className="flex items-center gap-3 group hover:opacity-100 transition">
+              <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
+                <path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z" className="fill-blue-500"/>
+              </svg>
+              <span className="text-slate-300 font-medium">Calendar</span>
+            </div>
+
+            {/* And more indicator */}
+            <div className="flex items-center gap-2 text-slate-500">
+              <span className="text-2xl">+</span>
+              <span className="text-sm font-medium">15 more</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* How It Works */}
+      <section id="how-it-works" className="relative z-10 py-32">
+        <div className="max-w-7xl mx-auto px-6">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.8 }}
+            className="text-center mb-20"
+          >
+            <h2 className="text-4xl md:text-5xl font-black mb-4">
+              <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                How It Works
+              </span>
+            </h2>
+            <p className="text-xl text-slate-400 max-w-2xl mx-auto">
+              From prompt to production in three simple steps
+            </p>
+          </motion.div>
+
+          <div className="grid md:grid-cols-3 gap-8">
+            {[
+              {
+                step: "01",
+                title: "Describe Your Goal",
+                description: "Tell AgentPilot what you want in plain English. No technical knowledge required.",
+                icon: (
+                  <svg className="w-12 h-12" viewBox="0 0 24 24" fill="none">
+                    <path d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" className="fill-blue-400"/>
+                  </svg>
+                ),
+                color: "blue"
+              },
+              {
+                step: "02",
+                title: "AI Builds Your Agent",
+                description: "Our AI automatically creates the workflow, connects the right tools, and configures everything.",
+                icon: (
+                  <svg className="w-12 h-12" viewBox="0 0 24 24" fill="none">
+                    <path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" className="fill-purple-400"/>
+                    <path d="M18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" className="fill-purple-300"/>
+                  </svg>
+                ),
+                color: "purple"
+              },
+              {
+                step: "03",
+                title: "Connect & Run",
+                description: "Authorize your tools once with OAuth, then run on demand or schedule automatically.",
+                icon: (
+                  <svg className="w-12 h-12" viewBox="0 0 24 24" fill="none">
+                    <path d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" className="fill-pink-400"/>
+                  </svg>
+                ),
+                color: "pink"
+              }
+            ].map((item, index) => (
+              <motion.div
+                key={index}
+                initial={{ opacity: 0, y: 40 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ duration: 0.6, delay: index * 0.2 }}
+                className="relative group"
+              >
+                <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-2xl opacity-0 group-hover:opacity-75 blur-lg transition duration-500" />
+                <div className="relative bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-xl rounded-2xl p-8 border border-white/10 h-full">
+                  <div className="mb-6">{item.icon}</div>
+                  <div className="text-sm font-bold text-slate-500 mb-2">STEP {item.step}</div>
+                  <h3 className="text-2xl font-bold mb-4">{item.title}</h3>
+                  <p className="text-slate-400 leading-relaxed">{item.description}</p>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Use Cases */}
+      <section id="use-cases" className="relative z-10 py-32 bg-gradient-to-b from-transparent via-slate-900/20 to-transparent">
+        <div className="max-w-7xl mx-auto px-6">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.8 }}
+            className="text-center mb-20"
+          >
+            <h2 className="text-4xl md:text-5xl font-black mb-4">
+              <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                What You Can Do
+              </span>
+            </h2>
+            <p className="text-xl text-slate-400 max-w-2xl mx-auto">
+              Automate your work across the tools you already use
+            </p>
+          </motion.div>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            {[
+              {
+                title: "Email → Notion",
+                description: "Automatically summarize important emails and save them to your Notion workspace",
+                tools: ["Gmail", "Notion"],
+                gradient: "from-red-500/20 to-slate-500/20"
+              },
+              {
+                title: "Email → Drive",
+                description: "Extract and save invoice attachments to organized folders in Google Drive",
+                tools: ["Gmail", "Google Drive"],
+                gradient: "from-red-500/20 to-blue-500/20"
+              },
+              {
+                title: "Calendar → Slack",
+                description: "Post daily meeting summaries and action items to your team's Slack channel",
+                tools: ["Google Calendar", "Slack"],
+                gradient: "from-blue-500/20 to-purple-500/20"
+              },
+              {
+                title: "Research → Email",
+                description: "Send daily trend reports on topics you care about directly to your inbox",
+                tools: ["Web Search", "Gmail"],
+                gradient: "from-green-500/20 to-red-500/20"
+              }
+            ].map((useCase, index) => (
+              <motion.div
+                key={index}
+                initial={{ opacity: 0, y: 40 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ duration: 0.6, delay: index * 0.1 }}
+                className="group relative"
+              >
+                <div className={`absolute -inset-0.5 bg-gradient-to-r ${useCase.gradient} rounded-2xl opacity-50 group-hover:opacity-75 blur-lg transition duration-500`} />
+                <div className="relative bg-slate-900/90 backdrop-blur-xl rounded-2xl p-8 border border-white/10">
+                  <h3 className="text-2xl font-bold mb-3">{useCase.title}</h3>
+                  <p className="text-slate-400 mb-6 leading-relaxed">{useCase.description}</p>
+                  <div className="flex items-center gap-3">
+                    {useCase.tools.map((tool, i) => (
+                      <React.Fragment key={i}>
+                        <span className="px-3 py-1.5 bg-white/5 rounded-lg text-sm font-medium text-slate-300 border border-white/10">
+                          {tool}
+                        </span>
+                        {i < useCase.tools.length - 1 && (
+                          <ArrowRightIcon />
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </div>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Features / Why AgentPilot */}
+      <section id="features" className="relative z-10 py-32">
+        <div className="max-w-7xl mx-auto px-6">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.8 }}
+            className="text-center mb-20"
+          >
+            <h2 className="text-4xl md:text-5xl font-black mb-4">
+              <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                Why AgentPilot
+              </span>
+            </h2>
+            <p className="text-xl text-slate-400 max-w-2xl mx-auto">
+              Built for everyone, from solopreneurs to teams
+            </p>
+          </motion.div>
+
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+            {[
+              {
+                icon: (
+                  <svg className="w-12 h-12" viewBox="0 0 24 24" fill="none">
+                    <path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" className="fill-blue-400"/>
+                    <path d="M18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" className="fill-blue-300"/>
+                  </svg>
+                ),
+                title: "No Code Required",
+                description: "Just describe what you want in natural language. No programming, no complex workflows.",
+                color: "blue"
+              },
+              {
+                icon: (
+                  <svg className="w-12 h-12" viewBox="0 0 24 24" fill="none">
+                    <path d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.508c-1.141 0-2.318.664-2.66 1.905A9.76 9.76 0 001.5 12c0 .898.121 1.768.35 2.595.341 1.24 1.518 1.905 2.659 1.905h1.93l4.5 4.5c.945.945 2.561.276 2.561-1.06V4.06zM18.584 5.106a.75.75 0 011.06 0 11.5 11.5 0 010 16.268.75.75 0 11-1.06-1.06 10 10 0 000-14.147.75.75 0 010-1.061zM15.932 7.757a.75.75 0 011.061 0 7.5 7.5 0 010 10.606.75.75 0 01-1.06-1.06 6 6 0 000-8.486.75.75 0 010-1.06z" className="fill-purple-400"/>
+                  </svg>
+                ),
+                title: "Works With Your Tools",
+                description: "Connect Gmail, Notion, Slack, Drive, Calendar, and more. We integrate with the apps you love.",
+                color: "purple"
+              },
+              {
+                icon: (
+                  <svg className="w-12 h-12" viewBox="0 0 24 24" fill="none">
+                    <path d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-16.5 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-13.5h9.75a3 3 0 013 3v6a3 3 0 01-3 3H6.75a3 3 0 01-3-3v-6a3 3 0 013-3z" className="fill-pink-400"/>
+                  </svg>
+                ),
+                title: "Smart Agent Builder",
+                description: "Our AI understands context and builds sophisticated automations from simple descriptions.",
+                color: "pink"
+              },
+              {
+                icon: (
+                  <svg className="w-12 h-12" viewBox="0 0 24 24" fill="none">
+                    <path d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" className="fill-green-400"/>
+                  </svg>
+                ),
+                title: "Run or Schedule",
+                description: "Execute agents on demand or set them to run automatically on your schedule.",
+                color: "green"
+              },
+              {
+                icon: (
+                  <svg className="w-12 h-12" viewBox="0 0 24 24" fill="none">
+                    <path d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" className="fill-blue-400"/>
+                  </svg>
+                ),
+                title: "Secure OAuth",
+                description: "Industry-standard OAuth connections keep your data safe. We never store your passwords.",
+                color: "blue"
+              },
+              {
+                icon: (
+                  <svg className="w-12 h-12" viewBox="0 0 24 24" fill="none">
+                    <path d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" className="fill-purple-400"/>
+                  </svg>
+                ),
+                title: "Lightning Fast",
+                description: "Go from idea to working automation in minutes, not hours or days.",
+                color: "purple"
+              }
+            ].map((feature, index) => (
+              <motion.div
+                key={index}
+                initial={{ opacity: 0, y: 40 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ duration: 0.6, delay: index * 0.1 }}
+                className="bg-gradient-to-br from-slate-900/50 to-slate-800/50 backdrop-blur-xl rounded-2xl p-8 border border-white/10 hover:border-white/20 transition"
+              >
+                <div className="mb-6">{feature.icon}</div>
+                <h3 className="text-xl font-bold mb-3">{feature.title}</h3>
+                <p className="text-slate-400 leading-relaxed">{feature.description}</p>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Testimonials */}
+      <section className="relative z-10 py-32 bg-gradient-to-b from-transparent via-slate-900/20 to-transparent">
+        <div className="max-w-7xl mx-auto px-6">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.8 }}
+            className="text-center mb-20"
+          >
+            <h2 className="text-4xl md:text-5xl font-black mb-4">
+              <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                Loved by Early Users
+              </span>
+            </h2>
+          </motion.div>
+
+          <div className="grid md:grid-cols-2 gap-8 max-w-5xl mx-auto">
+            {[
+              {
+                quote: "AgentPilot saved me 10 hours a week. I just tell it what I need, and it handles all my email-to-Notion workflows automatically.",
+                author: "Sarah Chen",
+                role: "Product Manager",
+                avatar: "SC"
+              },
+              {
+                quote: "I'm not technical at all, but I built 3 working agents in my first day. This is the future of personal automation.",
+                author: "Marcus Rodriguez",
+                role: "Marketing Director",
+                avatar: "MR"
+              }
+            ].map((testimonial, index) => (
+              <motion.div
+                key={index}
+                initial={{ opacity: 0, y: 40 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ duration: 0.6, delay: index * 0.2 }}
+                className="relative group"
+              >
+                <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500 to-purple-500 rounded-2xl opacity-50 group-hover:opacity-75 blur-lg transition duration-500" />
+                <div className="relative bg-slate-900/90 backdrop-blur-xl rounded-2xl p-8 border border-white/10">
+                  <div className="text-4xl mb-4 text-slate-600">"</div>
+                  <p className="text-lg text-slate-300 mb-6 leading-relaxed italic">
+                    {testimonial.quote}
+                  </p>
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center font-bold">
+                      {testimonial.avatar}
+                    </div>
+                    <div>
+                      <div className="font-semibold">{testimonial.author}</div>
+                      <div className="text-sm text-slate-400">{testimonial.role}</div>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Final CTA */}
+      <section className="relative z-10 py-32">
+        <div className="max-w-4xl mx-auto px-6">
+          <motion.div
+            initial={{ opacity: 0, y: 40 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.8 }}
+            className="relative group"
+          >
+            <div className="absolute -inset-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-3xl opacity-75 blur-2xl group-hover:opacity-100 transition duration-1000" />
+            <div className="relative bg-gradient-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-2xl rounded-3xl p-12 md:p-16 border border-white/20 text-center">
+              <h2 className="text-4xl md:text-5xl font-black mb-6">
+                Be Among the First to Build
+                <br />
+                <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                  Your Personal AI Workforce
+                </span>
+              </h2>
+              <p className="text-xl text-slate-300 mb-8 max-w-2xl mx-auto">
+                No code. No setup. Start automating in minutes.
+              </p>
+              
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="Enter your email"
+                  className="w-full sm:w-80 px-6 py-4 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 transition"
+                />
+                <button className="w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl font-bold text-lg hover:shadow-2xl hover:shadow-purple-500/50 transition whitespace-nowrap">
+                  Join Beta Now
+                </button>
+              </div>
+              
+              <div className="flex flex-wrap items-center justify-center gap-6 text-sm text-slate-400">
+                <div className="flex items-center gap-2">
+                  <CheckIcon />
+                  <span>Free during beta</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <CheckIcon />
+                  <span>No credit card required</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <CheckIcon />
+                  <span>Cancel anytime</span>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="relative z-10 border-t border-white/5 py-12">
+        <div className="max-w-7xl mx-auto px-6">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center font-bold">
+                AP
+              </div>
+              <span className="font-bold">AgentPilot</span>
+            </div>
+            
+            <div className="flex items-center gap-8 text-sm text-slate-400">
+              <a href="#" className="hover:text-white transition">Privacy</a>
+              <a href="#" className="hover:text-white transition">Terms</a>
+              <a href="#" className="hover:text-white transition">Contact</a>
+            </div>
+            
+            <div className="text-sm text-slate-500">
+              © 2025 AgentPilot. All rights reserved.
+            </div>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
 }

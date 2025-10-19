@@ -14,7 +14,7 @@ export async function GET() {
     });
 
     // Create queue instance
-    const agentQueue = new Queue('agent-queue', {
+    const agentQueue = new Queue('agent-execution', {
       connection: redis,
     });
 
