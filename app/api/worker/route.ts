@@ -35,9 +35,16 @@ export async function GET(request: NextRequest) {
 
     // Start the worker
     console.log('🚀 Starting background worker...');
+    console.log('📊 Worker Configuration:', {
+      redisUrl: process.env.REDIS_URL?.substring(0, 20) + '...',
+      supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL?.substring(0, 30) + '...',
+      timestamp: new Date().toISOString()
+    });
+
     workerInstance = startAgentWorker();
 
     console.log('✅ Background worker started successfully');
+    console.log('⏰ Worker is now listening for jobs...');
 
     return NextResponse.json({
       success: true,
