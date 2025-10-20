@@ -6,6 +6,9 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY! // Use service role for admin access
 );
 
+// Mark as dynamic since it uses request.url and searchParams
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
