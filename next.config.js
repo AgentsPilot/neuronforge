@@ -14,8 +14,6 @@ const nextConfig = {
   experimental: {
     serverComponentsExternalPackages: ['bullmq', 'ioredis'],
   },
-  // Ensure proper API route compilation
-  output: 'standalone',
   poweredByHeader: false,
 }
 
