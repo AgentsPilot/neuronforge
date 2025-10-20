@@ -9,11 +9,11 @@ const supabase = createClient(
 async function scheduleFor645PM() {
   const agentId = '832a8039-d864-4d25-bdbb-23c02db5b810';
 
-  // Set to 7:10 PM today
+  // Set to 7:15 PM today
   const nextRun = new Date();
-  nextRun.setHours(19, 10, 0, 0); // 7:10:00 PM
+  nextRun.setHours(19, 15, 0, 0); // 7:15:00 PM
 
-  // If 7:10 PM has already passed today, set it for tomorrow
+  // If 7:15 PM has already passed today, set it for tomorrow
   if (nextRun < new Date()) {
     nextRun.setDate(nextRun.getDate() + 1);
   }
@@ -34,7 +34,7 @@ async function scheduleFor645PM() {
     process.exit(1);
   }
 
-  console.log('\n✅ Agent scheduled for 7:10 PM!');
+  console.log('\n✅ Agent scheduled for 7:15 PM!');
   console.log('='.repeat(60));
   console.log('Agent Name:', data.agent_name);
   console.log('Agent Status:', data.status);
@@ -45,7 +45,7 @@ async function scheduleFor645PM() {
   console.log('='.repeat(60));
   console.log('\n⏰ Vercel Cron will check every 5 minutes!');
   console.log('   Next cron runs: :00, :05, :10, :15, :20');
-  console.log('   Your agent will be picked up at :10\n');
+  console.log('   Your agent will be picked up at :15\n');
 }
 
 scheduleFor645PM();

@@ -635,5 +635,53 @@ export async function stopAgentWorker() {
   }
 }
 
+/**
+ * Process a single job from the queue (for serverless/Vercel)
+ * This is a stateless approach that processes ONE job when called
+ */
+export async function processOneJob(): Promise<boolean> {
+  const connection = getWorkerRedisConnection();
+  const queue = new Queue<AgentJobData>('agent-execution', { connection });
+
+  try {
+    // Get the next waiting job
+    const jobs = await queue.getWaiting(0, 0); // Get first job only
+
+    if (jobs.length === 0) {
+      console.log('📭 No jobs waiting in queue');
+      await connection.quit();
+      return false;
+    }
+
+    const job = jobs[0];
+    console.log(`🔄 Processing job ${job.id} from queue`);
+
+    try {
+      // Process the job directly
+      const result = await processAgentJob(job);
+
+      // Mark as completed
+      await job.moveToCompleted(result, job.id || 'unknown', false);
+
+      console.log(`✅ Job ${job.id} completed successfully`);
+      return true;
+
+    } catch (error) {
+      // Mark job as failed
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      await job.moveToFailed(new Error(errorMessage), job.id || 'unknown', false);
+
+      console.error(`❌ Job ${job.id} failed:`, errorMessage);
+      return false;
+    }
+
+  } catch (error) {
+    console.error('❌ Error processing job:', error);
+    return false;
+  } finally {
+    await connection.quit();
+  }
+}
+
 // Export worker creation function
 export default createAgentWorker;

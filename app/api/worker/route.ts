@@ -1,78 +1,78 @@
 // /app/api/worker/route.ts
-// Vercel Background Worker for processing agent jobs
-// This runs as a long-running serverless function (Vercel Pro feature)
+// Vercel Cron Worker - Processes pending jobs from Redis queue
+// Called every minute by Vercel Cron to process waiting jobs
 
 import { NextRequest, NextResponse } from 'next/server';
-import { startAgentWorker } from '@/lib/queues/agentWorker';
+import { Queue } from 'bullmq';
+import { getRedisConnection } from '@/lib/redis';
 
-// Configure as a background function
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300; // 5 minutes max (Vercel Pro limit)
+export const maxDuration = 60; // 1 minute max
 
-let workerInstance: any = null;
-
+/**
+ * Process pending jobs from the queue
+ * This is called by Vercel Cron every minute
+ */
 export async function GET(request: NextRequest) {
-  try {
-    console.log('🔧 Background worker endpoint called');
+  const startTime = Date.now();
 
-    // Security: Only allow internal calls or authenticated requests
+  try {
+    console.log('🔧 Worker endpoint called at:', new Date().toISOString());
+
+    // Security: Only allow Vercel Cron
     const authHeader = request.headers.get('authorization');
     if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-      console.warn('Unauthorized worker request');
+      console.warn('⚠️ Unauthorized worker request');
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Check if worker is already running
-    if (workerInstance) {
-      console.log('⚠️ Worker already running');
-      return NextResponse.json({
-        success: true,
-        message: 'Worker already running',
-        status: 'active'
-      });
-    }
+    // Connect to the queue
+    const connection = getRedisConnection();
+    const queue = new Queue('agent-execution', { connection });
 
-    // Start the worker
-    console.log('🚀 Starting background worker...');
-    console.log('📊 Worker Configuration:', {
-      redisUrl: process.env.REDIS_URL?.substring(0, 20) + '...',
-      supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL?.substring(0, 30) + '...',
-      timestamp: new Date().toISOString()
-    });
+    // Get queue stats
+    const waiting = await queue.getWaitingCount();
+    const active = await queue.getActiveCount();
+    const delayed = await queue.getDelayedCount();
 
-    workerInstance = startAgentWorker();
+    console.log('📊 Queue Status:', { waiting, active, delayed });
 
-    console.log('✅ Background worker started successfully');
-    console.log('⏰ Worker is now listening for jobs...');
+    // NOTE: The actual job processing happens via BullMQ worker in agentWorker.ts
+    // This endpoint just triggers the worker to wake up and process jobs
+    // For Vercel, we need to import and call the worker directly here
+
+    const { processOneJob } = await import('@/lib/queues/agentWorker');
+    const processed = await processOneJob();
+
+    const duration = Date.now() - startTime;
+
+    console.log(`✅ Worker completed in ${duration}ms`);
+    console.log(`📦 Processed ${processed ? 1 : 0} job(s)`);
 
     return NextResponse.json({
       success: true,
-      message: 'Background worker started',
-      status: 'running',
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      duration,
+      queueStats: {
+        waiting,
+        active,
+        delayed
+      },
+      processed: processed ? 1 : 0
     });
 
   } catch (error) {
-    console.error('❌ Failed to start background worker:', error);
+    console.error('❌ Worker error:', error);
 
     return NextResponse.json(
       {
         success: false,
-        error: 'Failed to start worker',
+        error: 'Worker failed',
         message: error instanceof Error ? error.message : 'Unknown error',
         timestamp: new Date().toISOString()
       },
       { status: 500 }
     );
   }
-}
-
-// Health check endpoint
-export async function POST(request: NextRequest) {
-  return NextResponse.json({
-    success: true,
-    workerRunning: !!workerInstance,
-    timestamp: new Date().toISOString()
-  });
 }
