@@ -639,47 +639,74 @@ export async function stopAgentWorker() {
  * Process a single job from the queue (for serverless/Vercel)
  * This is a stateless approach that processes ONE job when called
  */
-export async function processOneJob(): Promise<boolean> {
+export async function processOneJob(): Promise<{ processed: boolean; jobId?: string; error?: string }> {
   const connection = getWorkerRedisConnection();
-  const queue = new Queue<AgentJobData>('agent-execution', { connection });
 
   try {
-    // Get the next waiting job
-    const jobs = await queue.getWaiting(0, 0); // Get first job only
+    // Create a temporary worker that processes ONE job then exits
+    const worker = new Worker<AgentJobData>(
+      'agent-execution',
+      async (job) => {
+        console.log(`🔄 Processing job ${job.id} (${job.data.execution_type})`);
+        return await processAgentJob(job);
+      },
+      {
+        connection,
+        concurrency: 1,
+        autorun: false, // Don't auto-start
+        lockDuration: 60000, // 60 second lock
+      }
+    );
 
-    if (jobs.length === 0) {
-      console.log('📭 No jobs waiting in queue');
-      await connection.quit();
-      return false;
-    }
+    // Process exactly ONE job
+    return new Promise((resolve) => {
+      let processed = false;
 
-    const job = jobs[0];
-    console.log(`🔄 Processing job ${job.id} from queue`);
+      worker.on('completed', (job, result) => {
+        console.log(`✅ Job ${job.id} completed`);
+        processed = true;
+        worker.close().then(() => {
+          connection.quit();
+          resolve({ processed: true, jobId: job.id });
+        });
+      });
 
-    try {
-      // Process the job directly
-      const result = await processAgentJob(job);
+      worker.on('failed', (job, err) => {
+        console.error(`❌ Job ${job?.id} failed:`, err.message);
+        processed = true;
+        worker.close().then(() => {
+          connection.quit();
+          resolve({ processed: false, jobId: job?.id, error: err.message });
+        });
+      });
 
-      // Mark as completed
-      await job.moveToCompleted(result, job.id || 'unknown', false);
+      // Start processing
+      worker.run().catch((err) => {
+        console.error('❌ Worker run error:', err);
+        worker.close().then(() => {
+          connection.quit();
+          resolve({ processed: false, error: err.message });
+        });
+      });
 
-      console.log(`✅ Job ${job.id} completed successfully`);
-      return true;
-
-    } catch (error) {
-      // Mark job as failed
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      await job.moveToFailed(new Error(errorMessage), job.id || 'unknown', false);
-
-      console.error(`❌ Job ${job.id} failed:`, errorMessage);
-      return false;
-    }
+      // Timeout after 50 seconds (Vercel has 60s limit)
+      setTimeout(async () => {
+        if (!processed) {
+          console.log('⏱️ Worker timeout - no jobs available');
+          await worker.close();
+          await connection.quit();
+          resolve({ processed: false });
+        }
+      }, 50000);
+    });
 
   } catch (error) {
-    console.error('❌ Error processing job:', error);
-    return false;
-  } finally {
+    console.error('❌ Error in processOneJob:', error);
     await connection.quit();
+    return {
+      processed: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    };
   }
 }
 

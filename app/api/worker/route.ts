@@ -27,28 +27,26 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Connect to the queue
+    // Get queue stats BEFORE processing
     const connection = getRedisConnection();
     const queue = new Queue('agent-execution', { connection });
 
-    // Get queue stats
     const waiting = await queue.getWaitingCount();
     const active = await queue.getActiveCount();
     const delayed = await queue.getDelayedCount();
 
     console.log('📊 Queue Status:', { waiting, active, delayed });
 
-    // NOTE: The actual job processing happens via BullMQ worker in agentWorker.ts
-    // This endpoint just triggers the worker to wake up and process jobs
-    // For Vercel, we need to import and call the worker directly here
+    await connection.quit();
 
+    // Process one job from the queue
     const { processOneJob } = await import('@/lib/queues/agentWorker');
-    const processed = await processOneJob();
+    const result = await processOneJob();
 
     const duration = Date.now() - startTime;
 
     console.log(`✅ Worker completed in ${duration}ms`);
-    console.log(`📦 Processed ${processed ? 1 : 0} job(s)`);
+    console.log(`📦 Result:`, result);
 
     return NextResponse.json({
       success: true,
@@ -59,7 +57,9 @@ export async function GET(request: NextRequest) {
         active,
         delayed
       },
-      processed: processed ? 1 : 0
+      processed: result.processed ? 1 : 0,
+      jobId: result.jobId,
+      error: result.error
     });
 
   } catch (error) {
