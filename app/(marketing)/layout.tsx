@@ -45,14 +45,11 @@ export default function MarketingLayout({
               <Link href="/features" className="text-gray-300 hover:text-white transition-colors duration-200">
                 Features
               </Link>
-              <Link href="/docs" className="text-gray-300 hover:text-white transition-colors duration-200">
-                Docs
+              <Link href="/use-cases" className="text-gray-300 hover:text-white transition-colors duration-200">
+                Use Cases
               </Link>
               <Link href="/pricing" className="text-gray-300 hover:text-white transition-colors duration-200">
                 Pricing
-              </Link>
-              <Link href="/blog" className="text-gray-300 hover:text-white transition-colors duration-200">
-                Blog
               </Link>
               <Link href="/about" className="text-gray-300 hover:text-white transition-colors duration-200">
                 About
@@ -128,7 +125,7 @@ export default function MarketingLayout({
               </div>
             </div>
             <div className="border-t border-gray-800 mt-8 pt-8 text-center text-sm text-gray-400">
-              <p>&copy; 2024 AgentPilot. All rights reserved. • Privacy Policy • Terms of Service</p>
+              <p>&copy; 2025 AgentPilot. All rights reserved. • Privacy Policy • Terms of Service</p>
             </div>
           </div>
         </footer>

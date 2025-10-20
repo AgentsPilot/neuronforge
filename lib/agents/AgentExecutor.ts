@@ -1,4 +1,6 @@
 // lib/agents/AgentExecutor.ts
+import { enrichClaudeContext } from '../utils/enrichClaudeContext';
+
 export interface AgentConfig {
   type: 'openai' | 'anthropic' | 'custom' | 'webhook';
   apiKey?: string;
@@ -115,6 +117,9 @@ export class RealAgentExecutor {
   }
 
   private async executeAnthropic(context: ExecutionContext): Promise<ExecutionResult> {
+    // Enrich context with project information
+    const enrichedContext = await enrichClaudeContext(context, process.cwd());
+    
     // Implementation for Anthropic API calls
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -204,15 +209,19 @@ Please process these inputs and return the results in JSON format.
   }
 
   private buildAnthropicPrompt(context: ExecutionContext): Array<{role: string, content: string}> {
+    const systemPrompt = context.metadata?.systemContext ? 
+      `${context.metadata.systemContext}\n\n${this.config.parameters?.systemPrompt || ''}` :
+      this.config.parameters?.systemPrompt || 'Process these inputs and return results in JSON format.';
+
     const userPrompt = `
 Step ID: ${context.stepId}
 Inputs: ${JSON.stringify(context.inputs, null, 2)}
-${context.previousResults ? `Previous Results: ${JSON.stringify(context.previousResults, null, 2)}` : ''}
+${context.previousResults ? `Previous Results: ${JSON.stringify(context.previousResults, null, 2)}` : ''}`;
 
-${this.config.parameters?.systemPrompt || 'Process these inputs and return results in JSON format.'}
-`;
-
-    return [{ role: 'user', content: userPrompt }];
+    return [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ];
   }
 
   private parseAgentResponse(response: string): Record<string, any> {

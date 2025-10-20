@@ -5,6 +5,9 @@ import { slackStrategy } from '@/lib/plugins/strategies/slackPluginStrategy'
 import { googleDriveStrategy } from '@/lib/plugins/strategies/googleDrivePluginStrategy'
 import { createServerClient } from '@supabase/ssr'
 
+// Mark this route as dynamic since it uses request.url and searchParams
+export const dynamic = 'force-dynamic'
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)

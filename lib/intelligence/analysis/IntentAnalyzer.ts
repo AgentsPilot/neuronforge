@@ -2,7 +2,6 @@
 import { SmartIntentAnalysis, ContextualMemory } from '../core/types'
 import OpenAI from 'openai'
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
 
 export class IntentAnalyzer {
   async analyzeIntent(

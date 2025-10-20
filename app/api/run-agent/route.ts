@@ -1,18 +1,39 @@
-// app/api/run-agent/route.ts
+// /app/api/run-agent/route.ts
+// Enhanced agent runner supporting both immediate execution and queue-based execution
 
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
 import { runAgentWithContext } from '@/lib/utils/runAgentWithContext'
 import { extractPdfTextFromBase64 } from '@/lib/utils/extractPdfTextFromBase64'
+import { addManualExecution } from '@/lib/queues/agentQueue'
 
 export const runtime = 'nodejs'
 
-export async function POST(req: Request) {
-  const body = await req.json()
-  const { agent_id, input_variables = {}, override_user_prompt, execution_id } = body
-  const cookieStore = await cookies()
+interface RunAgentRequest {
+  agent_id: string;
+  input_variables?: Record<string, any>;
+  override_user_prompt?: string;
+  execution_id?: string;
+  use_queue?: boolean; // New: whether to use queue-based execution
+  user_id?: string; // For queue-based execution
+}
 
+/**
+ * Enhanced POST handler supporting both immediate and queue-based execution
+ */
+export async function POST(req: Request) {
+  const body: RunAgentRequest = await req.json()
+  const { 
+    agent_id, 
+    input_variables = {}, 
+    override_user_prompt, 
+    execution_id,
+    use_queue = false, // Default to immediate execution for backward compatibility
+    user_id: provided_user_id
+  } = body
+
+  const cookieStore = await cookies()
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -25,15 +46,13 @@ export async function POST(req: Request) {
     }
   )
 
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser()
-
+  // Get authenticated user
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
   if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // Fetch agent
   const { data: agent, error: agentError } = await supabase
     .from('agents')
     .select('*')
@@ -45,13 +64,132 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
   }
 
+  // **NEW QUEUE-BASED EXECUTION PATH**
+  if (use_queue) {
+    console.log(`🔄 Using queue-based execution for agent ${agent_id}`)
+    
+    try {
+      // Validate agent can be executed
+      if (agent.status === 'archived') {
+        return NextResponse.json({ error: 'Cannot execute archived agent' }, { status: 400 })
+      }
+      if (agent.status === 'inactive') {
+        return NextResponse.json({ error: 'Cannot execute inactive agent' }, { status: 400 })
+      }
+
+      const executionUserId = provided_user_id || user.id
+
+      // Check if agent is already running
+      const { data: runningExecutions, error: runningError } = await supabase
+        .from('agent_executions')
+        .select('id')
+        .eq('agent_id', agent_id)
+        .in('status', ['pending', 'running'])
+        .limit(1)
+
+      if (runningError) {
+        console.error('Error checking running executions:', runningError)
+        return NextResponse.json(
+          { error: 'Failed to check agent status', details: runningError.message },
+          { status: 500 }
+        )
+      }
+
+      if (runningExecutions && runningExecutions.length > 0) {
+        return NextResponse.json(
+          { 
+            error: 'Agent is already running',
+            message: 'Please wait for the current execution to complete before starting a new one',
+            currentExecutionId: runningExecutions[0].id
+          },
+          { status: 409 }
+        )
+      }
+
+      // Create execution record in new table
+      const scheduledAt = new Date().toISOString()
+      const { data: execution, error: executionError } = await supabase
+        .from('agent_executions')
+        .insert({
+          agent_id: agent.id,
+          user_id: executionUserId,
+          execution_type: 'manual',
+          scheduled_at: scheduledAt,
+          status: 'pending',
+          cron_expression: agent.schedule_cron,
+          progress: 0,
+          logs: {
+            created_via: 'manual_api_queue',
+            requested_at: scheduledAt,
+            ip_address: req.headers.get('x-forwarded-for') || 'unknown',
+            input_variables: Object.keys(input_variables).length > 0 ? input_variables : null,
+            override_user_prompt: override_user_prompt || null,
+          }
+        })
+        .select('id')
+        .single()
+
+      if (executionError || !execution) {
+        console.error('Failed to create execution record:', executionError)
+        return NextResponse.json(
+          { error: 'Failed to create execution record', details: executionError?.message },
+          { status: 500 }
+        )
+      }
+
+      // Add job to queue - FIXED: Use correct function name and parameters
+      const { jobId, executionId } = await addManualExecution(
+        agent.id,          // agentId
+        executionUserId,   // userId  
+        execution.id,      // executionId
+        input_variables,   // inputVariables
+        override_user_prompt // overrideUserPrompt
+      )
+
+      console.log(`✅ Queued manual execution for agent ${agent.agent_name}`, {
+        agentId: agent.id,
+        executionId: execution.id,
+        jobId,
+      })
+
+      return NextResponse.json({
+        success: true,
+        message: 'Agent execution queued successfully',
+        data: {
+          agent_id: agent.id,
+          agent_name: agent.agent_name,
+          execution_id: execution.id,
+          job_id: jobId,
+          execution_type: 'manual',
+          status: 'pending',
+          scheduled_at: scheduledAt,
+          estimated_duration: '1-5 minutes',
+        },
+        queue_based: true,
+      })
+
+    } catch (queueError) {
+      console.error('Failed to queue agent job:', queueError)
+      return NextResponse.json(
+        { 
+          error: 'Failed to queue agent execution', 
+          details: queueError instanceof Error ? queueError.message : 'Unknown error',
+        },
+        { status: 500 }
+      )
+    }
+  }
+
+  // **EXISTING IMMEDIATE EXECUTION PATH** (preserves backward compatibility)
+  console.log(`⚡ Using immediate execution for agent ${agent_id}`)
+
   // Initialize execution tracking if execution_id provided
   if (execution_id) {
     console.log(`🚀 Starting execution tracking for: ${execution_id}`)
     
     // Update execution record to running status
     const { error: execError } = await supabase
-      .from('agent_executions')
+      .from('agent_configurations')
       .update({
         status: 'running',
         created_at: new Date().toISOString()
@@ -177,7 +315,7 @@ export async function POST(req: Request) {
       }
 
       // Update execution record with final metrics
-      const { error: updateError } = await supabase.from('agent_executions').update({
+      const { error: updateError } = await supabase.from('agent_configurations').update({
         status: 'completed',
         duration_ms: executionDuration,
         completed_at: new Date().toISOString()
@@ -292,6 +430,7 @@ export async function POST(req: Request) {
         send_status,
       },
       execution_id: execution_id || null,
+      queue_based: false,
     })
 
   } catch (err: any) {
@@ -313,7 +452,7 @@ export async function POST(req: Request) {
       }
 
       // Update execution record as failed
-      const { error: updateError } = await supabase.from('agent_executions').update({
+      const { error: updateError } = await supabase.from('agent_configurations').update({
         status: 'failed',
         completed_at: new Date().toISOString()
       }).eq('id', execution_id)
@@ -329,3 +468,105 @@ export async function POST(req: Request) {
     )
   }
 }
+
+/**
+ * Get execution status for agents
+ */
+export async function GET(request: Request) {
+  console.log('GET /api/run-agent handler reached', { url: request.url });
+  try {
+    const { searchParams } = new URL(request.url);
+    const agent_id = searchParams.get('agent_id');
+    const execution_id = searchParams.get('execution_id');
+    const status_only = searchParams.get('status_only');
+
+    // If status_only is present but no agent_id or execution_id, return a valid JSON error
+    if ((status_only === 'true' || status_only === '1') && !agent_id && !execution_id) {
+      return NextResponse.json(
+        { error: 'Must provide agent_id or execution_id for status query.' },
+        { status: 400 }
+      );
+    }
+
+    if (!agent_id && !execution_id) {
+      return NextResponse.json(
+        { error: 'Must provide either agent_id or execution_id' },
+        { status: 400 }
+      );
+    }
+
+    // Check required env vars
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+      return NextResponse.json(
+        { error: 'Supabase environment variables missing' },
+        { status: 500 }
+      );
+    }
+
+    let cookieStore;
+    try {
+      cookieStore = await cookies();
+    } catch (cookieError) {
+      return NextResponse.json(
+        { error: 'Failed to get cookies', details: cookieError instanceof Error ? cookieError.message : String(cookieError) },
+        { status: 500 }
+      );
+    }
+
+    let supabase;
+    try {
+      supabase = createServerClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        {
+          cookies: {
+            get: (name) => cookieStore.get(name)?.value,
+            set: async () => {},
+            remove: async () => {},
+          },
+        }
+      );
+    } catch (supabaseError) {
+      return NextResponse.json(
+        { error: 'Failed to create Supabase client', details: supabaseError instanceof Error ? supabaseError.message : String(supabaseError) },
+        { status: 500 }
+      );
+    }
+
+    let query = supabase
+      .from('agent_executions')
+      .select('id, agent_id, execution_type, status, progress, scheduled_at, started_at, completed_at, error_message, execution_duration_ms')
+      .order('created_at', { ascending: false });
+
+    if (execution_id) {
+      query = query.eq('id', execution_id);
+    } else if (agent_id) {
+      query = query.eq('agent_id', agent_id).limit(5); // Last 5 executions
+    }
+
+    const { data: executions, error } = await query;
+
+    if (error) {
+      return NextResponse.json(
+        { error: 'Failed to fetch execution status', details: error.message },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      executions: executions || [],
+      count: executions?.length || 0,
+    });
+
+  } catch (error) {
+    // Always return valid JSON, never HTML
+    return NextResponse.json(
+      { error: 'Internal server error', message: error instanceof Error ? error.message : String(error) },
+      { status: 500 }
+    );
+  }
+}
+
+// Prevent caching
+export const dynamic = 'force-dynamic';

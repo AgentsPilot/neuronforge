@@ -1,4 +1,4 @@
-// app/api/agents/[id]/route.ts - FIXED with schedule support
+// app/api/agents/[id]/route.ts - FIXED with timezone-safe schedule updates
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
@@ -24,7 +24,7 @@ function getUserIdFromRequest(request: NextRequest): string | null {
   return null;
 }
 
-// GET /api/agents/[id] - Retrieve a specific agent
+// GET /api/agents/[id] - Retrieve a specific agent (unchanged)
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -90,13 +90,6 @@ export async function GET(
       );
     }
 
-    // SCHEDULE DEBUG: Log schedule data being returned
-    console.log('=== SCHEDULE GET DEBUG ===');
-    console.log('Agent schedule_cron:', agent.schedule_cron);
-    console.log('Agent mode:', agent.mode);
-    console.log('Agent agent_config schedule:', agent.agent_config?.schedule_cron);
-    console.log('========================');
-
     console.log(`Agent fetched successfully: ${agent.agent_name || 'Unnamed Agent'} for user ${userId}`);
 
     return NextResponse.json({
@@ -121,7 +114,7 @@ export async function GET(
   }
 }
 
-// PUT /api/agents/[id] - Update a specific agent
+// PUT /api/agents/[id] - Update a specific agent with TIMEZONE-SAFE schedule updates
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -161,12 +154,9 @@ export async function PUT(
       );
     }
 
-    // CRITICAL DEBUG: Log schedule data being updated
     console.log('=== SCHEDULE UPDATE DEBUG ===');
     console.log('Incoming schedule_cron:', agentData.schedule_cron);
     console.log('Incoming mode:', agentData.mode);
-    console.log('Incoming agent_config schedule:', agentData.agent_config?.schedule_cron);
-    console.log('Incoming agent_config mode:', agentData.agent_config?.mode);
     console.log('===========================');
 
     console.log(`Updating agent ${agentId} for user ${userId}`);
@@ -194,9 +184,6 @@ export async function PUT(
       );
     }
 
-    console.log('Existing agent schedule_cron:', existingAgent.schedule_cron);
-    console.log('Existing agent mode:', existingAgent.mode);
-
     // Convert ai_reasoning array to string if it exists
     const aiReasoning = agentData.ai_reasoning 
       ? Array.isArray(agentData.ai_reasoning) 
@@ -204,7 +191,44 @@ export async function PUT(
         : agentData.ai_reasoning
       : null;
 
-    // CRITICAL FIX: Include ALL fields including schedule fields and agent_config
+    // CRITICAL FIX: Handle schedule updates with timezone safety
+    let scheduleUpdateResult = null;
+    const hasScheduleChanges = (
+      agentData.schedule_cron !== existingAgent.schedule_cron ||
+      agentData.mode !== existingAgent.mode ||
+      (agentData.timezone || 'UTC') !== (existingAgent.timezone || 'UTC')
+    );
+
+    if (hasScheduleChanges && agentData.mode === 'scheduled' && agentData.schedule_cron) {
+      console.log('🕐 Schedule changes detected - using timezone-safe update');
+      console.log('Old schedule:', existingAgent.schedule_cron, 'New:', agentData.schedule_cron);
+      console.log('Old timezone:', existingAgent.timezone, 'New:', agentData.timezone || 'UTC');
+      
+      // Use our timezone-safe function for schedule updates
+      const { data: scheduleResult, error: scheduleError } = await supabase
+        .rpc('update_agent_schedule_safe', {
+          agent_uuid: agentId,
+          new_cron: agentData.schedule_cron,
+          new_timezone: agentData.timezone || 'UTC'
+        });
+
+      if (scheduleError) {
+        console.error('Schedule update failed:', scheduleError);
+        return NextResponse.json(
+          { 
+            success: false, 
+            error: 'Failed to update schedule with timezone conversion',
+            details: scheduleError.message
+          },
+          { status: 500 }
+        );
+      }
+
+      scheduleUpdateResult = scheduleResult;
+      console.log('✅ Timezone-safe schedule update completed:', scheduleResult);
+    }
+
+    // Prepare update data for non-schedule fields
     const updateData = {
       agent_name: agentData.agent_name,
       description: agentData.description,
@@ -223,14 +247,15 @@ export async function PUT(
       created_from_prompt: agentData.created_from_prompt,
       ai_generated_at: agentData.ai_generated_at ? new Date(agentData.ai_generated_at).toISOString() : null,
       status: agentData.status,
-      
-      // CRITICAL FIX: Include schedule fields
-      mode: agentData.mode || 'on_demand',
-      schedule_cron: agentData.schedule_cron || null,
-      
-      // CRITICAL FIX: Include agent_config
       agent_config: agentData.agent_config || null
     };
+
+    // Only include schedule fields if we didn't use the safe function
+    if (!hasScheduleChanges || agentData.mode !== 'scheduled') {
+      updateData.mode = agentData.mode || 'on_demand';
+      updateData.schedule_cron = agentData.schedule_cron || null;
+      updateData.timezone = agentData.timezone || 'UTC';
+    }
 
     // Remove undefined values to avoid Supabase errors
     Object.keys(updateData).forEach(key => {
@@ -239,18 +264,9 @@ export async function PUT(
       }
     });
 
-    // CRITICAL DEBUG: Log exactly what's being sent to database
-    console.log('=== DATABASE UPDATE DEBUG ===');
-    console.log('updateData.schedule_cron:', updateData.schedule_cron);
-    console.log('updateData.mode:', updateData.mode);
-    console.log('updateData.agent_config schedule:', updateData.agent_config?.schedule_cron);
-    console.log('updateData.agent_config mode:', updateData.agent_config?.mode);
-    console.log('All updateData keys:', Object.keys(updateData));
-    console.log('============================');
-
     console.log('Update data prepared:', Object.keys(updateData));
 
-    // Update the agent
+    // Update the agent with non-schedule fields
     const { data: updatedAgent, error: updateError } = await supabase
       .from('agents')
       .update(updateData)
@@ -276,20 +292,23 @@ export async function PUT(
       );
     }
 
-    // CRITICAL DEBUG: Log what was actually saved
-    console.log('=== DATABASE SAVE RESULT ===');
+    console.log('=== FINAL SAVE RESULT ===');
     console.log('updatedAgent.schedule_cron:', updatedAgent.schedule_cron);
     console.log('updatedAgent.mode:', updatedAgent.mode);
-    console.log('updatedAgent.agent_config schedule:', updatedAgent.agent_config?.schedule_cron);
-    console.log('updatedAgent.agent_config mode:', updatedAgent.agent_config?.mode);
-    console.log('===========================');
+    console.log('updatedAgent.next_run:', updatedAgent.next_run);
+    console.log('updatedAgent.timezone:', updatedAgent.timezone);
+    if (scheduleUpdateResult) {
+      console.log('Schedule function result:', scheduleUpdateResult);
+    }
+    console.log('========================');
 
     console.log(`Agent updated: ${updatedAgent.agent_name} by user ${userId}`);
 
     return NextResponse.json({
       success: true,
       agent: updatedAgent,
-      message: 'Agent updated successfully'
+      message: 'Agent updated successfully',
+      scheduleUpdate: scheduleUpdateResult
     });
 
   } catch (error) {
@@ -305,7 +324,7 @@ export async function PUT(
   }
 }
 
-// DELETE /api/agents/[id] - Delete a specific agent
+// DELETE /api/agents/[id] - Delete a specific agent (unchanged)
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }

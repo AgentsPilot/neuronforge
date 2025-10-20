@@ -109,6 +109,7 @@ type Agent = {
   updated_at?: string
   mode?: string
   schedule_cron?: string
+  timezone?: string // Add timezone field
   generated_plan?: string
   ai_reasoning?: string
   ai_confidence?: number
@@ -184,8 +185,38 @@ const getModeIcon = (mode: string) => {
   }
 }
 
+// Enhanced timezone display function
+const getTimezoneDisplayName = (timezone: string) => {
+  const timezoneMap = {
+    'America/New_York': 'Eastern Time (EST/EDT)',
+    'America/Chicago': 'Central Time (CST/CDT)', 
+    'America/Denver': 'Mountain Time (MST/MDT)',
+    'America/Los_Angeles': 'Pacific Time (PST/PDT)',
+    'Europe/London': 'London Time (GMT/BST)',
+    'Europe/Paris': 'Central European Time (CET/CEST)',
+    'Asia/Tokyo': 'Japan Time (JST)',
+    'Asia/Shanghai': 'China Time (CST)',
+    'Australia/Sydney': 'Australia Eastern Time (AEST/AEDT)',
+    'UTC': 'UTC (Coordinated Universal Time)'
+  }
+  
+  return timezoneMap[timezone] || timezone.replace('_', ' ').split('/').pop() || 'Local Time'
+}
+
+// Format schedule with timezone
+const formatScheduleWithTimezone = (mode: string, scheduleCron: string, timezone?: string, userTimezone?: string) => {
+  const baseSchedule = formatScheduleDisplay(mode, scheduleCron)
+  
+  if (mode === 'scheduled' && timezone) {
+    const timezoneDisplay = getTimezoneDisplayName(timezone)
+    return `${baseSchedule} (${timezoneDisplay})`
+  }
+  
+  return baseSchedule
+}
+
 export default function AgentPage() {
-  const { user, connectedPlugins } = useAuth() // Get connectedPlugins from UserProvider
+  const { user, connectedPlugins } = useAuth()
   const router = useRouter()
   const params = useParams()
   
@@ -197,6 +228,7 @@ export default function AgentPage() {
   })()
 
   const [agent, setAgent] = useState<Agent | null>(null)
+  const [userProfile, setUserProfile] = useState<{ timezone?: string } | null>(null) // Add user profile state
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
@@ -258,25 +290,55 @@ export default function AgentPage() {
     }))
   }
 
+  // Enhanced user profile fetching with timezone
+  const fetchUserProfile = async () => {
+    if (!user?.id) return
+    
+    try {
+      const { data: profile, error } = await supabase
+        .from('profiles')
+        .select('timezone')
+        .eq('id', user.id)
+        .single()
+      
+      if (error) {
+        console.warn('Could not fetch user profile timezone:', error)
+      } else {
+        setUserProfile(profile)
+        console.log('User profile timezone loaded:', profile?.timezone)
+      }
+    } catch (error) {
+      console.warn('Error fetching user profile:', error)
+    }
+  }
+
+  // Get user's detected timezone as fallback
+  const getUserDetectedTimezone = () => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone
+    } catch (error) {
+      console.warn('Could not detect user timezone:', error)
+      return 'UTC'
+    }
+  }
+
+  // Get the effective user timezone (profile > detected > UTC)
+  const getEffectiveUserTimezone = () => {
+    return userProfile?.timezone || getUserDetectedTimezone()
+  }
+
   // Configuration check
   const checkAgentConfiguration = async (agentData: Agent) => {
-    if (!user?.id || !agentData.input_schema) {
-      setIsConfigured(true)
-      return
-    }
-
-    const inputSchema = Array.isArray(agentData.input_schema) ? agentData.input_schema : []
-    const hasRequiredFields = inputSchema.some((field: any) => field.required)
-
-    if (!hasRequiredFields) {
-      setIsConfigured(true)
+    if (!user?.id) {
+      setIsConfigured(false)
       return
     }
 
     try {
-      const { data } = await supabase
-        .from('agent_executions')
-        .select('input_values')
+      // Get the latest configuration for this agent and user
+      const { data, error } = await supabase
+        .from('agent_configurations')
+        .select('input_values, input_schema')
         .eq('agent_id', agentData.id)
         .eq('user_id', user.id)
         .eq('status', 'configured')
@@ -284,21 +346,60 @@ export default function AgentPage() {
         .limit(1)
         .maybeSingle()
 
-      if (data?.input_values) {
-        const requiredFields = inputSchema.filter((field: any) => field.required)
-        const hasAllRequiredValues = requiredFields.every((field: any) => {
-          const value = data.input_values[field.name]
-          return value !== undefined && value !== null && value !== ''
-        })
-        setIsConfigured(hasAllRequiredValues)
-      } else {
+      console.log('Configuration check:', {
+        agentId: agentData.id,
+        userId: user.id,
+        data,
+        error
+      })
+
+      if (error) {
+        console.error('Error fetching configuration:', error)
         setIsConfigured(false)
+        return
       }
+
+      // If no configuration found, agent is not configured
+      if (!data) {
+        console.log('No configuration found')
+        setIsConfigured(false)
+        return
+      }
+
+      // Configuration exists - check if it has requirements
+      if (!data.input_schema || !Array.isArray(data.input_schema)) {
+        console.log('No input schema - considering configured')
+        setIsConfigured(true)
+        return
+      }
+
+      const requiredFields = data.input_schema.filter((field: any) => field.required)
+      console.log('Required fields:', requiredFields)
+      
+      // If no required fields, consider it configured
+      if (requiredFields.length === 0) {
+        console.log('No required fields - configured')
+        setIsConfigured(true)
+        return
+      }
+
+      // Check if all required fields have non-empty values
+      const hasAllRequiredValues = requiredFields.every((field: any) => {
+        const value = data.input_values?.[field.name]
+        const isValid = value !== undefined && value !== null && value !== ''
+        console.log(`Field ${field.name}: ${value} (valid: ${isValid})`)
+        return isValid
+      })
+
+      console.log('Has all required values:', hasAllRequiredValues)
+      setIsConfigured(hasAllRequiredValues)
+      
     } catch (error) {
+      console.error('Error in checkAgentConfiguration:', error)
       setIsConfigured(false)
     }
   }
-
+  
   const fetchAgent = async () => {
     if (!agentId || !isValidUUID(agentId)) {
       setError('Invalid assistant ID')
@@ -310,7 +411,7 @@ export default function AgentPage() {
       if (user?.id) {
         const { data: regularAgent } = await supabase
           .from('agents')
-          .select('*, connected_plugins, plugins_required, workflow_steps, schedule_cron')
+          .select('*, connected_plugins, plugins_required, workflow_steps, schedule_cron, timezone') // Include timezone
           .eq('id', agentId)
           .eq('user_id', user.id)
           .maybeSingle()
@@ -380,7 +481,10 @@ export default function AgentPage() {
   useEffect(() => {
     if (agentId && isValidUUID(agentId)) {
       fetchAgent()
-      if (user) fetchUserCredits()
+      if (user) {
+        fetchUserCredits()
+        fetchUserProfile() // Fetch user profile with timezone
+      }
     } else if (agentId) {
       setError('Invalid assistant ID')
       setLoading(false)
@@ -541,6 +645,7 @@ export default function AgentPage() {
       workflow_steps: agent.workflow_steps,
       mode: agent.mode,
       schedule_cron: agent.schedule_cron,
+      timezone: agent.timezone, // Include timezone in export
       exported_at: new Date().toISOString(),
       export_version: "1.0"
     }
@@ -576,6 +681,7 @@ export default function AgentPage() {
           workflow_steps: agent.workflow_steps,
           mode: agent.mode,
           schedule_cron: agent.schedule_cron,
+          timezone: agent.timezone, // Include timezone in duplication
           status: 'draft' // Always start duplicates as draft
         }])
         .select()
@@ -834,7 +940,7 @@ export default function AgentPage() {
               </div>
             )}
 
-            {/* Schedule Information */}
+            {/* Enhanced Schedule Information with Timezone */}
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
               <div 
                 className="bg-gradient-to-r from-purple-50 to-pink-50 p-3 cursor-pointer hover:from-purple-100 hover:to-pink-100 transition-colors"
@@ -863,7 +969,7 @@ export default function AgentPage() {
                       <div className="w-10 h-10 bg-gradient-to-br from-purple-400 to-blue-500 rounded-lg flex items-center justify-center">
                         <ModeIcon className="h-5 w-5 text-white" />
                       </div>
-                      <div>
+                      <div className="flex-1">
                         <h3 className="font-semibold text-slate-900 mb-2 text-sm">
                           {agent.mode === 'on_demand' ? 'Manual Execution' : 
                            agent.mode === 'scheduled' ? 'Scheduled Execution' : 
@@ -874,9 +980,28 @@ export default function AgentPage() {
                             <span className="font-medium">Mode:</span> {agent.mode || 'on_demand'}
                           </p>
                           {agent.mode === 'scheduled' && agent.schedule_cron && (
-                            <p className="text-slate-700 text-sm">
-                              <span className="font-medium">Schedule:</span> {formatScheduleDisplay(agent.mode, agent.schedule_cron)}
-                            </p>
+                            <>
+                              <p className="text-slate-700 text-sm">
+                                <span className="font-medium">Schedule:</span> {formatScheduleWithTimezone(agent.mode, agent.schedule_cron, agent.timezone, getEffectiveUserTimezone())}
+                              </p>
+                              {/* Enhanced timezone information */}
+                              {agent.timezone && (
+                                <div className="flex items-center gap-2 mt-2">
+                                  <div className="flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 rounded-lg text-xs">
+                                    <Globe className="h-3 w-3" />
+                                    <span className="font-medium">Timezone:</span>
+                                  </div>
+                                  <span className="text-xs text-slate-600">
+                                    {getTimezoneDisplayName(agent.timezone)}
+                                  </span>
+                                  {agent.timezone !== getEffectiveUserTimezone() && (
+                                    <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-lg">
+                                      Different from your local time ({getTimezoneDisplayName(getEffectiveUserTimezone())})
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </>
                           )}
                           {agent.mode === 'scheduled' && !agent.schedule_cron && (
                             <p className="text-amber-700 text-sm">
@@ -901,6 +1026,7 @@ export default function AgentPage() {
               )}
             </div>
 
+            {/* Rest of the existing sections remain the same... */}
             {/* Assistant Instructions/Prompt */}
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
               <div 
@@ -996,21 +1122,42 @@ export default function AgentPage() {
                               : ' Once you launch it, it will be active and ready to help you.'
                             }
                           </p>
-                          <div className="flex items-center gap-2">
-                            <div className={`px-3 py-1 rounded-lg text-xs font-medium ${
+                          <div className="space-y-3">
+                            <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-lg text-xs font-medium ${
                               isConfigured 
                                 ? 'bg-green-100 text-green-800'
                                 : 'bg-amber-100 text-amber-800'
                             }`}>
-                              {isConfigured ? '✓ Configuration Complete' : '⚠ Configuration Required'}
+                              {isConfigured ? (
+                                <>
+                                  <CheckCircle className="h-3 w-3" />
+                                  Configuration Complete
+                                </>
+                              ) : (
+                                <>
+                                  <AlertTriangle className="h-3 w-3" />
+                                  Configuration Required
+                                </>
+                              )}
                             </div>
                             {canActivate && (
                               <button
                                 onClick={handleToggleStatus}
-                                className="px-4 py-2 bg-gradient-to-r from-green-400 to-emerald-500 text-white rounded-lg hover:from-green-500 hover:to-emerald-600 transition-all duration-200 shadow-lg shadow-green-500/25 font-medium text-sm"
+                                className="group flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-xl hover:from-green-600 hover:to-emerald-700 transition-all duration-200 shadow-lg shadow-green-500/30 hover:shadow-xl hover:shadow-green-500/40 font-semibold text-sm transform hover:-translate-y-0.5 hover:scale-105"
                               >
-                                <Rocket className="h-3 w-3 mr-1" />
+                                <Rocket className="h-4 w-4 group-hover:scale-110 transition-transform" />
                                 Launch Assistant
+                                <div className="ml-1 text-xs opacity-80">Ready to go!</div>
+                              </button>
+                            )}
+                            {!canActivate && hasRequiredFields() && !isConfigured && (
+                              <button
+                                onClick={() => setCurrentView('test')}
+                                className="group flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-xl hover:from-amber-600 hover:to-orange-700 transition-all duration-200 shadow-lg shadow-amber-500/30 hover:shadow-xl hover:shadow-amber-500/40 font-semibold text-sm transform hover:-translate-y-0.5"
+                              >
+                                <Settings className="h-4 w-4 group-hover:scale-110 transition-transform" />
+                                Complete Setup
+                                <div className="ml-1 text-xs opacity-80">Go to Test Run</div>
                               </button>
                             )}
                           </div>
@@ -1053,7 +1200,7 @@ export default function AgentPage() {
           </div>
         )}
 
-        {/* Configuration Tab - More Compact */}
+        {/* Configuration Tab - Unchanged from original */}
         {currentView === 'configuration' && (
           <div className="space-y-4">
             
@@ -1214,7 +1361,7 @@ export default function AgentPage() {
           </div>
         )}
 
-        {/* Test Tab - More Compact */}
+        {/* Test Tab - Unchanged from original */}
         {currentView === 'test' && (
           <div className="space-y-4">
             {!isConfigured && hasRequiredFields() && (
@@ -1260,7 +1407,7 @@ export default function AgentPage() {
           </div>
         )}
 
-        {/* Performance Tab - More Compact */}
+        {/* Performance Tab - Unchanged from original */}
         {currentView === 'performance' && (
           <div className="space-y-4">
             {!isSharedAgent && agent.status !== 'draft' ? (
@@ -1348,7 +1495,7 @@ export default function AgentPage() {
           </div>
         )}
 
-        {/* Settings Tab - More Compact */}
+        {/* Settings Tab - Unchanged from original */}
         {currentView === 'settings' && (
           <div className="space-y-4">
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -1389,6 +1536,21 @@ export default function AgentPage() {
                       <label className="text-xs font-medium text-slate-500 uppercase tracking-wide">Current Status</label>
                       <div className="text-slate-900 mt-1 text-sm">{statusConfig.label}</div>
                     </div>
+                    {/* Add timezone information in settings */}
+                    {agent.timezone && (
+                      <div>
+                        <label className="text-xs font-medium text-slate-500 uppercase tracking-wide">Schedule Timezone</label>
+                        <div className="text-slate-900 mt-1 text-sm flex items-center gap-2">
+                          <Globe className="h-4 w-4 text-slate-500" />
+                          {getTimezoneDisplayName(agent.timezone)}
+                          {agent.timezone !== getEffectiveUserTimezone() && (
+                            <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-lg">
+                              Different from your local time
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1475,7 +1637,7 @@ export default function AgentPage() {
         )}
       </div>
 
-      {/* Modern Modals */}
+      {/* All existing modals remain unchanged */}
       <Modal isOpen={showActivationWarning} onClose={() => setShowActivationWarning(false)}>
         <div className="p-6">
           <div className="flex items-start gap-4">

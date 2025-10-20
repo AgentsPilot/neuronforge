@@ -1,429 +1,514 @@
-'use client'
+'use client';
 
-import { useState, useEffect } from 'react'
+import React, { useState } from 'react';
+import { motion } from 'framer-motion';
 
-export default function AboutPage() {
-  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 })
-  const [isVisible, setIsVisible] = useState(false)
+const AboutPage = () => {
+  const [hoveredSection, setHoveredSection] = useState(null);
 
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      setMousePosition({ x: e.clientX, y: e.clientY })
-    }
+  // Icon components
+  const BrainIcon = () => (
+    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
+      <path d="M12 3C8.5 3 6 5.5 6 8.5c0 1.5-.7 2.8-1.8 3.5C3.5 12.5 3 13.7 3 15c0 2.8 2.2 5 5 5h8c2.8 0 5-2.2 5-5 0-1.3-.5-2.5-1.2-3-.5-.3-1.1-.7-1.4-1.2-.6-.9-1.4-1.8-1.4-2.8 0-3-2.5-5.5-6-5.5z" className="fill-purple-400"/>
+      <circle cx="9" cy="12" r="1.5" className="fill-white"/>
+      <circle cx="15" cy="12" r="1.5" className="fill-white"/>
+      <path d="M10 16h4" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+    </svg>
+  );
 
-    window.addEventListener('mousemove', handleMouseMove)
-    setIsVisible(true)
-    return () => window.removeEventListener('mousemove', handleMouseMove)
-  }, [])
+  const LightbulbIcon = () => (
+    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
+      <path d="M9 21h6m-6-4h6m-6-4h6m-6-4h6M9 3a5 5 0 0 1 5 5v3a5 5 0 0 1-5 5 5 5 0 0 1-5-5V8a5 5 0 0 1 5-5z" className="fill-blue-400"/>
+      <path d="M12 2v2M12 18v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" stroke="white" strokeWidth="2"/>
+    </svg>
+  );
 
-  const teamMembers = [
-    {
-      name: 'Sarah Chen',
-      role: 'CEO & Co-Founder',
-      background: 'Former VP of AI at Microsoft, 15+ years in enterprise software',
-      image: '👩‍💼',
-      expertise: ['AI Strategy', 'Enterprise Sales', 'Product Vision']
-    },
-    {
-      name: 'Marcus Rodriguez',
-      role: 'CTO & Co-Founder', 
-      background: 'Ex-Google AI Research, PhD in Machine Learning from Stanford',
-      image: '👨‍💻',
-      expertise: ['AI Architecture', 'Scalable Systems', 'Natural Language Processing']
-    },
-    {
-      name: 'Jennifer Walsh',
-      role: 'VP of Engineering',
-      background: 'Former Principal Engineer at Amazon, built systems serving billions',
-      image: '👩‍🔬',
-      expertise: ['Cloud Architecture', 'DevOps', 'Platform Engineering']
-    },
-    {
-      name: 'David Kim',
-      role: 'Head of Security',
-      background: 'Ex-Palantir Security Lead, certified in enterprise compliance',
-      image: '👨‍🔒',
-      expertise: ['Cybersecurity', 'Compliance', 'Risk Management']
-    }
-  ]
+  const HeartIcon = () => (
+    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
+      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" className="fill-pink-400"/>
+    </svg>
+  );
 
-  const milestones = [
-    {
-      year: '2022',
-      title: 'Company Founded',
-      description: 'Started with a vision to democratize AI automation for professionals'
-    },
-    {
-      year: '2023',
-      title: 'Series A Funding',
-      description: '$15M raised from leading VCs to accelerate product development'
-    },
-    {
-      year: '2023',
-      title: 'First Enterprise Customers',
-      description: 'Fortune 500 companies begin automating critical workflows'
-    },
-    {
-      year: '2024',
-      title: 'Platform Launch',
-      description: 'Public launch with 500+ integrations and enterprise features'
-    },
-    {
-      year: '2024',
-      title: 'Global Expansion',
-      description: 'Opened offices in London and Singapore, serving 50+ countries'
-    }
-  ]
-
-  const values = [
-    {
-      title: 'Democratize AI',
-      description: 'Making powerful AI automation accessible to every professional, regardless of technical background',
-      icon: '🌍'
-    },
-    {
-      title: 'Enterprise First',
-      description: 'Building with security, compliance, and scalability as core principles from day one',
-      icon: '🏢'
-    },
-    {
-      title: 'Human-Centric',
-      description: 'AI should amplify human capabilities, not replace human judgment and creativity',
-      icon: '🤝'
-    },
-    {
-      title: 'Transparency',
-      description: 'Open about our processes, pricing, and limitations. No black boxes or hidden agendas',
-      icon: '🔍'
-    }
-  ]
+  const RocketIcon = () => (
+    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
+      <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09zM12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z" className="fill-green-400"/>
+      <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" stroke="white" strokeWidth="2" fill="none"/>
+    </svg>
+  );
 
   return (
-    <div className="min-h-screen text-white relative overflow-hidden">
-      <div className="relative z-10 bg-gradient-to-br from-blue-900 via-purple-900 to-indigo-900 overflow-hidden min-h-screen">
-        {/* Background Effects - Matching home page */}
-        <div className="absolute inset-0 z-0">
-          {/* Animated mesh gradient */}
-          <div className="absolute inset-0 opacity-40">
-            <div 
-              className="absolute inset-0"
-              style={{
-                background: `
-                  radial-gradient(circle at 20% 80%, rgba(59, 130, 246, 0.3) 0%, transparent 50%),
-                  radial-gradient(circle at 80% 20%, rgba(147, 51, 234, 0.3) 0%, transparent 50%),
-                  radial-gradient(circle at 40% 40%, rgba(99, 102, 241, 0.2) 0%, transparent 50%)
-                `,
-                animation: 'float 20s ease-in-out infinite'
-              }}
-            />
-          </div>
-
-          {/* Dynamic grid */}
-          <div 
-            className="absolute inset-0 opacity-20"
-            style={{
-              backgroundImage: `
-                linear-gradient(rgba(139, 92, 246, 0.3) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(139, 92, 246, 0.3) 1px, transparent 1px)
-              `,
-              backgroundSize: '40px 40px',
-              animation: 'gridShift 25s linear infinite'
-            }}
-          />
-
-          {/* Floating orbs */}
-          <div className="absolute inset-0 hidden lg:block">
-            <div
-              className="absolute rounded-full bg-gradient-to-br from-blue-400/30 to-purple-400/30 blur-xl"
-              style={{
-                width: '60px',
-                height: '60px',
-                left: '10%',
-                top: '20%',
-                animation: 'float 8s ease-in-out infinite'
-              }}
-            />
-            <div
-              className="absolute rounded-full bg-gradient-to-br from-cyan-400/20 to-blue-400/20 blur-xl"
-              style={{
-                width: '80px',
-                height: '80px',
-                left: '80%',
-                top: '60%',
-                animation: 'float 10s ease-in-out infinite',
-                animationDelay: '2s'
-              }}
-            />
-          </div>
-        </div>
-
-        {/* Interactive mouse glow */}
-        <div 
-          className="absolute inset-0 z-0 pointer-events-none transition-all duration-500 hidden lg:block"
-          style={{
-            background: `radial-gradient(600px circle at ${mousePosition.x}px ${mousePosition.y}px, rgba(139, 92, 246, 0.15), transparent 60%)`
+    <div className="min-h-screen bg-black text-white overflow-hidden">
+      {/* Background Effects - Same as main page */}
+      <div className="fixed inset-0 pointer-events-none">
+        <motion.div
+          animate={{
+            backgroundPosition: ['0% 0%', '100% 100%', '0% 0%'],
           }}
+          transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
+          className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,_var(--tw-gradient-stops))] from-blue-900/40 via-purple-900/30 to-pink-900/40 bg-[length:200%_200%]"
         />
-
-        <div className="relative z-10">
-          {/* Header Section */}
-          <section className="py-20 relative">
-            <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className={`transition-all duration-1000 ${isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
-                <div className="text-center mb-16">
-                  <div className="inline-flex items-center px-6 py-3 rounded-full bg-cyan-500/20 border border-cyan-400/40 backdrop-blur-sm mb-8">
-                    <span className="text-sm font-medium text-cyan-100">Our Story • Our Mission</span>
-                  </div>
-
-                  <h1 className="text-5xl md:text-7xl font-black mb-8 leading-tight">
-                    <span className="block text-white mb-2">Building the</span>
-                    <span className="block bg-gradient-to-r from-cyan-300 via-blue-300 to-purple-300 bg-clip-text text-transparent">
-                      Future of Work
-                    </span>
-                  </h1>
-
-                  <p className="text-xl md:text-2xl text-gray-100 mb-12 max-w-4xl mx-auto leading-relaxed">
-                    We're on a mission to democratize AI automation, making intelligent workflows accessible to every professional and organization.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* Mission Statement */}
-          <section className="py-20 relative">
-            <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="bg-black/50 backdrop-blur-xl rounded-3xl p-12 border border-purple-500/30 shadow-2xl">
-                <div className="text-center mb-8">
-                  <h2 className="text-4xl font-bold text-white mb-6">Our Mission</h2>
-                </div>
-                
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
-                  <div>
-                    <h3 className="text-2xl font-bold text-white mb-6">Democratizing AI Automation</h3>
-                    <p className="text-gray-200 text-lg leading-relaxed mb-6">
-                      We believe every professional should have access to powerful AI automation, regardless of their technical background. 
-                      Traditional automation tools require coding skills and technical expertise that most professionals don't have.
-                    </p>
-                    <p className="text-gray-200 text-lg leading-relaxed">
-                      AgentPilot changes that by letting you describe what you want in plain English and automatically building 
-                      intelligent workflows that integrate with your existing tools and processes.
-                    </p>
-                  </div>
-                  
-                  <div className="bg-gradient-to-br from-blue-900/50 to-purple-900/50 rounded-2xl p-8 border border-blue-400/30">
-                    <div className="space-y-6">
-                      <div className="text-center">
-                        <div className="text-3xl font-bold text-blue-300 mb-2">10,000+</div>
-                        <div className="text-gray-300">Professionals Automated</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-3xl font-bold text-purple-300 mb-2">500+</div>
-                        <div className="text-gray-300">Enterprise Integrations</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-3xl font-bold text-cyan-300 mb-2">99.9%</div>
-                        <div className="text-gray-300">Platform Uptime</div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* Company Values */}
-          <section className="py-20 relative">
-            <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="text-center mb-12">
-                <h2 className="text-4xl font-bold text-white mb-4">
-                  <span className="bg-gradient-to-r from-cyan-300 via-blue-300 to-purple-300 bg-clip-text text-transparent">
-                    Our Values
-                  </span>
-                </h2>
-                <p className="text-xl text-gray-200">The principles that guide everything we do</p>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                {values.map((value, index) => (
-                  <div key={index} className="bg-purple-900/40 backdrop-blur-sm rounded-2xl p-8 border border-purple-500/30 shadow-lg hover:shadow-purple-500/25 transition-all duration-300">
-                    <div className="flex items-start space-x-4">
-                      <div className="text-4xl">{value.icon}</div>
-                      <div>
-                        <h3 className="text-2xl font-bold text-white mb-3">{value.title}</h3>
-                        <p className="text-gray-200 leading-relaxed">{value.description}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-
-          {/* Company Timeline */}
-          <section className="py-20 relative">
-            <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="text-center mb-12">
-                <h2 className="text-4xl font-bold text-white mb-4">Our Journey</h2>
-                <p className="text-xl text-gray-200">Key milestones in building the future of work</p>
-              </div>
-
-              <div className="relative">
-                <div className="absolute left-1/2 transform -translate-x-1/2 w-1 h-full bg-gradient-to-b from-blue-400 to-purple-500"></div>
-                
-                <div className="space-y-12">
-                  {milestones.map((milestone, index) => (
-                    <div key={index} className={`flex items-center ${index % 2 === 0 ? 'flex-row' : 'flex-row-reverse'}`}>
-                      <div className={`w-5/12 ${index % 2 === 0 ? 'text-right pr-8' : 'text-left pl-8'}`}>
-                        <div className="bg-purple-900/40 backdrop-blur-sm rounded-xl p-6 border border-purple-500/30 shadow-lg">
-                          <div className="text-2xl font-bold text-blue-300 mb-2">{milestone.year}</div>
-                          <h3 className="text-xl font-bold text-white mb-2">{milestone.title}</h3>
-                          <p className="text-gray-200">{milestone.description}</p>
-                        </div>
-                      </div>
-                      
-                      <div className="w-2/12 flex justify-center">
-                        <div className="w-4 h-4 bg-gradient-to-r from-blue-400 to-purple-500 rounded-full border-4 border-white shadow-lg"></div>
-                      </div>
-                      
-                      <div className="w-5/12"></div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* Investors & Partners */}
-          <section className="py-20 relative">
-            <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="text-center mb-12">
-                <h2 className="text-4xl font-bold text-white mb-4">Backed by Leading Investors</h2>
-                <p className="text-xl text-gray-200">Trusted by top-tier venture capital firms and industry experts</p>
-              </div>
-
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
-                {[
-                  { name: 'Sequoia Capital', category: 'Lead Investor' },
-                  { name: 'Andreessen Horowitz', category: 'Series A' },
-                  { name: 'GV (Google Ventures)', category: 'Strategic' },
-                  { name: 'Salesforce Ventures', category: 'Strategic' }
-                ].map((investor, index) => (
-                  <div key={index} className="bg-purple-900/40 backdrop-blur-sm rounded-xl p-6 border border-purple-500/30 shadow-lg text-center hover:shadow-purple-500/25 transition-all duration-300">
-                    <div className="text-2xl font-bold text-white mb-2">{investor.name}</div>
-                    <div className="text-sm text-gray-300">{investor.category}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-
-          {/* Culture & Benefits */}
-          <section className="py-20 relative">
-            <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="text-center mb-12">
-                <h2 className="text-4xl font-bold text-white mb-4">
-                  <span className="bg-gradient-to-r from-cyan-300 via-blue-300 to-purple-300 bg-clip-text text-transparent">
-                    Join Our Team
-                  </span>
-                </h2>
-                <p className="text-xl text-gray-200">Building the future of work requires the best talent</p>
-              </div>
-
-              <div className="bg-black/50 backdrop-blur-xl rounded-3xl p-12 border border-purple-500/30 shadow-2xl">
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
-                  <div>
-                    <h3 className="text-2xl font-bold text-white mb-6">Why Work Here?</h3>
-                    <div className="space-y-4">
-                      <div className="flex items-center">
-                        <div className="w-2 h-2 bg-blue-400 rounded-full mr-4"></div>
-                        <span className="text-gray-200">Work on cutting-edge AI technology</span>
-                      </div>
-                      <div className="flex items-center">
-                        <div className="w-2 h-2 bg-purple-400 rounded-full mr-4"></div>
-                        <span className="text-gray-200">Competitive salary and equity</span>
-                      </div>
-                      <div className="flex items-center">
-                        <div className="w-2 h-2 bg-cyan-400 rounded-full mr-4"></div>
-                        <span className="text-gray-200">Flexible remote work options</span>
-                      </div>
-                      <div className="flex items-center">
-                        <div className="w-2 h-2 bg-green-400 rounded-full mr-4"></div>
-                        <span className="text-gray-200">Comprehensive health benefits</span>
-                      </div>
-                      <div className="flex items-center">
-                        <div className="w-2 h-2 bg-yellow-400 rounded-full mr-4"></div>
-                        <span className="text-gray-200">Professional development budget</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <h3 className="text-2xl font-bold text-white mb-6">Open Positions</h3>
-                    <div className="space-y-3">
-                      {[
-                        'Senior AI Engineer',
-                        'Product Manager - Enterprise',
-                        'DevOps Engineer',
-                        'Customer Success Manager',
-                        'Sales Development Representative'
-                      ].map((position, index) => (
-                        <div key={index} className="flex items-center justify-between p-3 bg-purple-800/30 rounded-lg border border-purple-500/30">
-                          <span className="text-gray-200 font-medium">{position}</span>
-                          <button className="text-blue-300 hover:text-blue-200 font-medium text-sm">
-                            Apply →
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                    
-                    <div className="mt-6">
-                      <button className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 text-white py-3 rounded-xl font-semibold hover:scale-105 transition-transform">
-                        View All Careers
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* Contact CTA */}
-          <section className="py-20 relative">
-            <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-              <div className="bg-black/50 backdrop-blur-xl rounded-3xl p-12 border border-purple-500/30 shadow-2xl">
-                <h2 className="text-4xl font-bold text-white mb-4">
-                  Want to Learn More?
-                </h2>
-                <p className="text-xl text-gray-200 mb-8 max-w-2xl mx-auto">
-                  We'd love to hear from you. Whether you're interested in our platform, partnerships, or joining our team.
-                </p>
-                
-                <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                  <button className="bg-gradient-to-r from-cyan-500 to-blue-600 text-white px-8 py-4 rounded-xl font-semibold hover:scale-105 transition-transform shadow-lg">
-                    Contact Us
-                  </button>
-                  <button className="border-2 border-purple-400/50 text-purple-200 hover:bg-purple-800/30 px-8 py-4 rounded-xl font-semibold hover:scale-105 transition-transform backdrop-blur-sm">
-                    Schedule Demo
-                  </button>
-                </div>
-              </div>
-            </div>
-          </section>
-        </div>
-
-        <style jsx>{`
-          @keyframes float {
-            0%, 100% { transform: translate(0, 0) rotate(0deg); }
-            33% { transform: translate(30px, -30px) rotate(120deg); }
-            66% { transform: translate(-20px, 20px) rotate(240deg); }
-          }
-          @keyframes gridShift {
-            0% { background-position: 0 0; }
-            100% { background-position: 40px 40px; }
-          }
-        `}</style>
+        <motion.div
+          animate={{
+            backgroundPosition: ['100% 100%', '0% 0%', '100% 100%'],
+          }}
+          transition={{ duration: 30, repeat: Infinity, ease: "linear" }}
+          className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_var(--tw-gradient-stops))] from-indigo-900/30 via-transparent to-fuchsia-900/30 bg-[length:200%_200%]"
+        />
+        <motion.div
+          animate={{
+            x: [0, 150, 0],
+            y: [0, -150, 0],
+            scale: [1, 1.3, 1],
+            opacity: [0.3, 0.5, 0.3]
+          }}
+          transition={{ duration: 20, repeat: Infinity, ease: "easeInOut" }}
+          className="absolute top-20 left-20 w-[500px] h-[500px] bg-blue-500/20 rounded-full blur-3xl"
+        />
+        <motion.div
+          animate={{
+            x: [0, -150, 0],
+            y: [0, 150, 0],
+            scale: [1, 1.4, 1],
+            opacity: [0.3, 0.5, 0.3]
+          }}
+          transition={{ duration: 25, repeat: Infinity, ease: "easeInOut" }}
+          className="absolute bottom-20 right-20 w-[500px] h-[500px] bg-purple-500/20 rounded-full blur-3xl"
+        />
+        <motion.div
+          animate={{
+            x: [0, 100, -100, 0],
+            y: [0, -100, 100, 0],
+            scale: [1, 1.2, 1.3, 1],
+            opacity: [0.2, 0.4, 0.3, 0.2]
+          }}
+          transition={{ duration: 30, repeat: Infinity, ease: "easeInOut" }}
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-pink-500/15 rounded-full blur-3xl"
+        />
       </div>
+
+      {/* Hero Section */}
+      <section className="relative z-10 pt-20 pb-32">
+        <div className="max-w-7xl mx-auto px-6">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.8 }}
+            className="text-center"
+          >
+            <motion.h1 
+              className="text-5xl md:text-7xl font-black mb-6 leading-tight"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, delay: 0.2 }}
+            >
+              <span className="bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
+                The Future of Work
+              </span>
+              <br />
+              <span className="text-white">Is Personal AI</span>
+            </motion.h1>
+            
+            <motion.p
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, delay: 0.4 }}
+              className="text-xl md:text-2xl text-slate-300 max-w-4xl mx-auto mb-8 leading-relaxed"
+            >
+              We're building the world's first AI Workforce for everyone — intelligent agents that understand your intent
+              <br />
+              and execute your vision across all your tools, without a single line of code.
+            </motion.p>
+            
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, delay: 0.6 }}
+              className="flex flex-col sm:flex-row items-center justify-center gap-4"
+            >
+              <button className="group px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl font-bold text-lg hover:shadow-2xl hover:shadow-purple-500/50 transition flex items-center gap-2">
+                See It In Action
+                <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" viewBox="0 0 24 24" fill="none">
+                  <path d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+            </motion.div>
+          </motion.div>
+        </div>
+      </section>
+
+      {/* The Vision Section */}
+      <section className="relative z-10 py-32">
+        <div className="max-w-7xl mx-auto px-6">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.8 }}
+            className="text-center mb-20"
+          >
+            <h2 className="text-4xl md:text-5xl font-black mb-4">
+              <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                Reimagining Automation
+              </span>
+            </h2>
+            <p className="text-xl text-slate-400 max-w-3xl mx-auto">
+              Today's automation tools are complex, technical, and built for engineers. We believe everyone deserves intelligent automation.
+            </p>
+          </motion.div>
+
+          <div className="grid md:grid-cols-2 gap-16 items-center">
+            <motion.div
+              initial={{ opacity: 0, x: -40 }}
+              whileInView={{ opacity: 1, x: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.8 }}
+            >
+              <h3 className="text-3xl font-bold mb-6 text-white">The Problem</h3>
+              <div className="space-y-4 text-slate-300">
+                <p>
+                  Professionals spend hours on repetitive digital tasks — copying data between tools, 
+                  sending routine emails, organizing files, tracking deadlines.
+                </p>
+                <p>
+                  Existing automation requires technical setup, complex workflows, and constant maintenance. 
+                  Most people want outcomes, not setup screens.
+                </p>
+                <p>
+                  They want to describe what they need and see it work — instantly.
+                </p>
+              </div>
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0, x: 40 }}
+              whileInView={{ opacity: 1, x: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.8, delay: 0.2 }}
+            >
+              <h3 className="text-3xl font-bold mb-6 text-white">Our Solution</h3>
+              <div className="space-y-4 text-slate-300">
+                <p>
+                  AgentPilot transforms natural language into intelligent agents. Simply describe your goal,
+                  and our AI understands your intent, designs the workflow, and executes it seamlessly.
+                </p>
+                <p>
+                  No scripts. No complex integrations. No technical knowledge required.
+                </p>
+                <p>
+                  Just human ideas becoming automated reality in seconds.
+                </p>
+              </div>
+            </motion.div>
+          </div>
+        </div>
+      </section>
+
+      {/* How It Works Section */}
+      <section className="relative z-10 py-32 bg-gradient-to-b from-transparent via-slate-900/20 to-transparent">
+        <div className="max-w-7xl mx-auto px-6">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.8 }}
+            className="text-center mb-20"
+          >
+            <h2 className="text-4xl md:text-5xl font-black mb-4">
+              <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                Four Simple Steps
+              </span>
+            </h2>
+            <p className="text-xl text-slate-400 max-w-2xl mx-auto">
+              From idea to automation in under two minutes
+            </p>
+          </motion.div>
+
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
+            {[
+              {
+                step: "01",
+                title: "Type Your Goal",
+                description: "Describe what you want in plain English. No technical knowledge needed.",
+                icon: <LightbulbIcon />,
+                color: "blue"
+              },
+              {
+                step: "02", 
+                title: "AI Clarifies Intent",
+                description: "Our intelligent system asks clarifying questions to understand exactly what you need.",
+                icon: <BrainIcon />,
+                color: "purple"
+              },
+              {
+                step: "03",
+                title: "Instant Build",
+                description: "AgentPilot designs the workflow, connects tools, and configures everything automatically.",
+                icon: <RocketIcon />,
+                color: "pink"
+              },
+              {
+                step: "04",
+                title: "Your AI Pilot Runs It",
+                description: "Your personal agent executes tasks on demand, on schedule, or triggered by events.",
+                icon: <HeartIcon />,
+                color: "green"
+              }
+            ].map((item, index) => (
+              <motion.div
+                key={index}
+                initial={{ opacity: 0, y: 40 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ duration: 0.6, delay: index * 0.1 }}
+                className="relative group"
+                onHoverStart={() => setHoveredSection(index)}
+                onHoverEnd={() => setHoveredSection(null)}
+              >
+                <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-2xl opacity-0 group-hover:opacity-75 blur-lg transition duration-500" />
+                <div className="relative bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-xl rounded-2xl p-8 border border-white/10 h-full text-center">
+                  <div className="text-sm font-bold text-slate-500 mb-2">STEP {item.step}</div>
+                  <div className="mb-6 flex justify-center">
+                    <motion.div
+                      animate={hoveredSection === index ? { scale: 1.1, rotate: 360 } : { scale: 1, rotate: 0 }}
+                      transition={{ duration: 0.5 }}
+                    >
+                      {item.icon}
+                    </motion.div>
+                  </div>
+                  <h3 className="text-xl font-bold mb-4 text-white">{item.title}</h3>
+                  <p className="text-slate-400 leading-relaxed text-sm">{item.description}</p>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Philosophy Section */}
+      <section className="relative z-10 py-32">
+        <div className="max-w-6xl mx-auto px-6">
+          <motion.div
+            initial={{ opacity: 0, y: 40 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.8 }}
+            className="relative group"
+          >
+            <div className="absolute -inset-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-3xl opacity-50 group-hover:opacity-75 blur-2xl transition duration-1000"></div>
+            <div className="relative bg-gradient-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-2xl rounded-3xl p-12 md:p-16 border border-white/20 text-center">
+              <h2 className="text-4xl md:text-5xl font-black mb-8">
+                <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                  Our Philosophy
+                </span>
+              </h2>
+              
+              <div className="grid md:grid-cols-2 gap-8 text-left max-w-4xl mx-auto">
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="text-xl font-bold text-white mb-2">AI Should Work for You</h3>
+                    <p className="text-slate-300">Not overwhelm you with complexity. Intelligence should amplify human capability, not replace human judgment.</p>
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold text-white mb-2">Human Ideas First</h3>
+                    <p className="text-slate-300">The best automations start with human creativity and intent, not technical specifications.</p>
+                  </div>
+                </div>
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="text-xl font-bold text-white mb-2">Everyone Deserves AI Power</h3>
+                    <p className="text-slate-300">Intelligent automation shouldn't require engineering expertise. It should be as natural as conversation.</p>
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold text-white mb-2">Trust Through Transparency</h3>
+                    <p className="text-slate-300">You should always understand what your agents do, how they work, and maintain full control.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      </section>
+
+      {/* Behind AgentPilot Section */}
+      <section className="relative z-10 py-32">
+        <div className="max-w-6xl mx-auto px-6">
+          <motion.div
+            initial={{ opacity: 0, y: 40 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.8 }}
+            className="relative group"
+          >
+            <div className="absolute -inset-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-3xl opacity-50 group-hover:opacity-75 blur-2xl transition duration-1000"></div>
+            <div className="relative bg-gradient-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-2xl rounded-3xl p-12 md:p-16 border border-white/20">
+              <h2 className="text-4xl md:text-5xl font-black mb-8 text-center">
+                <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                  Behind AgentPilot
+                </span>
+              </h2>
+              
+              <div className="space-y-6 text-slate-300 max-w-4xl mx-auto text-center">
+                <p className="text-xl leading-relaxed">
+                  AgentPilot was born from a simple frustration: watching brilliant professionals 
+                  waste hours on repetitive digital tasks that should be automated.
+                </p>
+                <p className="text-xl leading-relaxed">
+                  We experienced firsthand how existing automation tools failed 
+                  non-technical users. AgentPilot represents a fundamental shift in how we think about AI and work.
+                </p>
+                <p className="text-xl leading-relaxed">
+                  We believe the future isn't about replacing humans with AI — it's about giving 
+                  every professional their own intelligent pilot to handle the mundane, 
+                  so they can focus on what truly matters.
+                </p>
+                <p className="text-xl leading-relaxed">
+                  Every design decision prioritizes simplicity, trust, and human empowerment. 
+                  Because AI should make work more human, not less.
+                </p>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      </section>
+
+      {/* Future of Work Section */}
+      <section className="relative z-10 py-32 bg-gradient-to-b from-transparent via-slate-900/20 to-transparent">
+        <div className="max-w-7xl mx-auto px-6">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.8 }}
+            className="text-center mb-20"
+          >
+            <h2 className="text-4xl md:text-5xl font-black mb-4">
+              <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                The Future We're Building
+              </span>
+            </h2>
+            <p className="text-xl text-slate-400 max-w-3xl mx-auto">
+              A world where every professional has a personal AI workforce
+            </p>
+          </motion.div>
+
+          <div className="grid md:grid-cols-3 gap-8">
+            {[
+              {
+                title: "Personal AI Workforce",
+                description: "Every professional will have intelligent agents handling routine tasks, freeing humans for creative and strategic work.",
+                icon: "🤖"
+              },
+              {
+                title: "Cross-Tool Collaboration", 
+                description: "Agents will seamlessly coordinate across all your tools — Gmail, Slack, Notion, CRM — creating unified workflows.",
+                icon: "🔗"
+              },
+              {
+                title: "Human + AI Orchestration",
+                description: "The best outcomes come from humans setting the vision and AI handling execution, creating perfect collaboration.",
+                icon: "🎼"
+              }
+            ].map((item, index) => (
+              <motion.div
+                key={index}
+                initial={{ opacity: 0, y: 40 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ duration: 0.6, delay: index * 0.2 }}
+                className="bg-gradient-to-br from-slate-900/50 to-slate-800/50 backdrop-blur-xl rounded-2xl p-8 border border-white/10 hover:border-white/20 transition text-center"
+              >
+                <div className="text-4xl mb-6">{item.icon}</div>
+                <h3 className="text-xl font-bold mb-4 text-white">{item.title}</h3>
+                <p className="text-slate-400 leading-relaxed">{item.description}</p>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Mission Statement */}
+      <section className="relative z-10 py-32">
+        <div className="max-w-4xl mx-auto px-6 text-center">
+          <motion.div
+            initial={{ opacity: 0, y: 40 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.8 }}
+            className="relative group"
+          >
+            <div className="absolute -inset-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-3xl opacity-50 group-hover:opacity-75 blur-2xl transition duration-1000"></div>
+            <div className="relative bg-gradient-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-2xl rounded-3xl p-12 md:p-16 border border-white/20">
+              <h2 className="text-3xl md:text-4xl font-black mb-6">
+                <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                  Our Mission
+                </span>
+              </h2>
+              <p className="text-2xl md:text-3xl text-white font-light leading-relaxed">
+                To make intelligent automation accessible to everyone — 
+                one natural-language agent at a time.
+              </p>
+            </div>
+          </motion.div>
+        </div>
+      </section>
+
+      {/* Final CTA */}
+      <section className="relative z-10 py-32">
+        <div className="max-w-4xl mx-auto px-6">
+          <motion.div
+            initial={{ opacity: 0, y: 40 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.8 }}
+            className="relative group"
+          >
+            <div className="absolute -inset-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-3xl opacity-75 blur-2xl group-hover:opacity-100 transition duration-1000" />
+            <div className="relative bg-gradient-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-2xl rounded-3xl p-12 md:p-16 border border-white/20 text-center">
+              <h2 className="text-4xl md:text-5xl font-black mb-6">
+                Ready to Meet
+                <br />
+                <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                  Your AI Pilot?
+                </span>
+              </h2>
+              <p className="text-xl text-slate-300 mb-8 max-w-2xl mx-auto">
+                Join thousands of professionals who've discovered the power of natural-language automation.
+                Build your first agent in under 2 minutes.
+              </p>
+              
+              <button className="px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl font-bold text-lg hover:shadow-2xl hover:shadow-purple-500/50 transition flex items-center gap-2 mx-auto">
+                Create Your First Agent
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none">
+                  <path d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+              
+              <div className="flex items-center justify-center gap-6 mt-8 text-sm text-slate-400">
+                <div className="flex items-center gap-2">
+                  <svg className="w-4 h-4 text-green-400" viewBox="0 0 24 24" fill="none">
+                    <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" strokeWidth="2" fill="none"/>
+                  </svg>
+                  <span>Free to start</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <svg className="w-4 h-4 text-green-400" viewBox="0 0 24 24" fill="none">
+                    <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" strokeWidth="2" fill="none"/>
+                  </svg>
+                  <span>No technical skills required</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <svg className="w-4 h-4 text-green-400" viewBox="0 0 24 24" fill="none">
+                    <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" strokeWidth="2" fill="none"/>
+                  </svg>
+                  <span>Ready in minutes</span>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      </section>
     </div>
-  )
-}
+  );
+};
+
+export default AboutPage;

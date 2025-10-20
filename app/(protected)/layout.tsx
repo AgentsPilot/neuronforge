@@ -398,20 +398,95 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   }, [searchQuery, handleSearch])
 
   // Show loading spinner while auth state is being determined
+// Show loading spinner while auth state is being determined
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-purple-50">
-        <div className="text-center">
-          <div className="relative">
-            <div className="w-16 h-16 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-6"></div>
-            <div className="absolute inset-0 w-16 h-16 border-4 border-purple-200 border-b-purple-600 rounded-full animate-spin mx-auto mb-6 animate-reverse"></div>
+      <div className="min-h-screen relative text-white overflow-hidden">
+        {/* Same animated background as onboarding */}
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-900 via-purple-900 to-indigo-900">
+          {/* Animated mesh gradient */}
+          <div className="absolute inset-0 opacity-40">
+            <div 
+              className="absolute inset-0"
+              style={{
+                background: `
+                  radial-gradient(circle at 20% 80%, rgba(59, 130, 246, 0.3) 0%, transparent 50%),
+                  radial-gradient(circle at 80% 20%, rgba(147, 51, 234, 0.3) 0%, transparent 50%),
+                  radial-gradient(circle at 40% 40%, rgba(99, 102, 241, 0.2) 0%, transparent 50%)
+                `,
+                animation: 'float 20s ease-in-out infinite'
+              }}
+            />
           </div>
-          <p className="text-slate-600 font-medium">Loading your workspace...</p>
+
+          {/* Dynamic grid */}
+          <div 
+            className="absolute inset-0 opacity-20"
+            style={{
+              backgroundImage: `
+                linear-gradient(rgba(139, 92, 246, 0.3) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(139, 92, 246, 0.3) 1px, transparent 1px)
+              `,
+              backgroundSize: '40px 40px',
+              animation: 'gridShift 25s linear infinite'
+            }}
+          />
+
+          {/* Floating orbs */}
+          <div className="absolute inset-0 hidden lg:block">
+            <div
+              className="absolute rounded-full bg-gradient-to-br from-blue-400/30 to-purple-400/30 blur-xl"
+              style={{
+                width: '60px',
+                height: '60px',
+                left: '10%',
+                top: '20%',
+                animation: 'float 8s ease-in-out infinite'
+              }}
+            />
+            <div
+              className="absolute rounded-full bg-gradient-to-br from-cyan-400/20 to-blue-400/20 blur-xl"
+              style={{
+                width: '80px',
+                height: '80px',
+                left: '80%',
+                top: '60%',
+                animation: 'float 10s ease-in-out infinite',
+                animationDelay: '2s'
+              }}
+            />
+          </div>
         </div>
+
+        <div className="relative z-10 flex items-center justify-center min-h-screen">
+          <div className="text-center">
+            <div className="relative mb-8">
+              <div className="w-12 h-12 mx-auto">
+                <div className="absolute inset-0 rounded-full border-4 border-gray-700"></div>
+                <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-blue-500 animate-spin"></div>
+                <div className="absolute inset-2 rounded-full border-2 border-transparent border-t-purple-400 animate-spin" style={{ animationDuration: '0.8s', animationDirection: 'reverse' }}></div>
+              </div>
+            </div>
+            <h2 className="text-xl font-medium text-gray-100 mb-2">Loading your workspace</h2>
+            <p className="text-gray-400 text-sm">Setting up your dashboard...</p>
+          </div>
+        </div>
+
+        {/* CSS animations */}
+        <style jsx>{`
+          @keyframes float {
+            0%, 100% { transform: translate(0, 0) rotate(0deg); }
+            33% { transform: translate(30px, -30px) rotate(120deg); }
+            66% { transform: translate(-20px, 20px) rotate(240deg); }
+          }
+          @keyframes gridShift {
+            0% { background-position: 0 0; }
+            100% { background-position: 40px 40px; }
+          }
+        `}</style>
       </div>
     )
   }
-
   // Only redirect after loading is complete and we know user is not authenticated
   if (!user) {
     redirect('/login')

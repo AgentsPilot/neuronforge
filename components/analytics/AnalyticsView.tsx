@@ -1,0 +1,364 @@
+// components/analytics/AnalyticsView.tsx
+
+import React from 'react';
+import { 
+  Bot, 
+  TrendingUp, 
+  Calendar, 
+  PieChart, 
+  DollarSign, 
+  Activity, 
+  Brain,
+  CheckCircle,
+  XCircle,
+  AlertTriangle,
+  Rocket,
+  Sparkles,
+  FileText,
+  BarChart3,
+  MessageSquare,
+  Zap,
+  Award,
+  Star
+} from 'lucide-react';
+import { formatCost, formatTokens, formatTime } from '@/lib/utils/analyticsHelpers';
+import type { 
+  AnalyticsView, 
+  ProcessedAnalyticsData 
+} from '@/types/analytics';
+
+// Icon mapping helper
+const getIconComponent = (iconName: string) => {
+  const iconMap: { [key: string]: React.ComponentType<{ className?: string }> } = {
+    Bot,
+    Rocket,
+    Sparkles,
+    FileText,
+    BarChart3,
+    MessageSquare,
+    Zap,
+    Award,
+    Star,
+    AlertTriangle,
+    TrendingUp
+  };
+  
+  return iconMap[iconName] || Zap;
+};
+
+interface AnalyticsViewsProps {
+  selectedView: AnalyticsView;
+  data: ProcessedAnalyticsData;
+}
+
+export const AnalyticsViews: React.FC<AnalyticsViewsProps> = ({ selectedView, data }) => {
+  const { activities, agents, dailyUsage, costBreakdown, insights } = data;
+
+  // Overview View
+  if (selectedView === 'overview') {
+    return (
+      <div className="grid lg:grid-cols-2 gap-6">
+        {/* Daily Activity */}
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg p-6">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center">
+              <TrendingUp className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h3 className="font-bold text-gray-900">Daily Activity</h3>
+              <p className="text-sm text-gray-600">AI usage trends</p>
+            </div>
+          </div>
+          
+          {dailyUsage.length === 0 ? (
+            <div className="text-center py-8">
+              <Calendar className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+              <p className="text-gray-500 text-sm">No daily data available</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {dailyUsage.slice(-7).map((day, index) => {
+                const maxCost = Math.max(...dailyUsage.map(d => d.cost));
+                const costWidth = maxCost > 0 ? (day.cost / maxCost) * 100 : 0;
+                
+                return (
+                  <div key={day.date} className="space-y-2">
+                    <div className="flex justify-between text-sm">
+                      <span className="font-medium text-gray-700">
+                        {new Date(day.date).toLocaleDateString('en-US', { 
+                          weekday: 'short', 
+                          month: 'short', 
+                          day: 'numeric' 
+                        })}
+                      </span>
+                      <div className="text-right">
+                        <div className="font-bold text-gray-900">{formatCost(day.cost)}</div>
+                        <div className="text-xs text-gray-500">{formatTokens(day.tokens)} tokens</div>
+                      </div>
+                    </div>
+                    <div className="bg-gray-100 rounded-full h-2 overflow-hidden">
+                      <div 
+                        className="bg-gradient-to-r from-blue-500 to-purple-600 h-2 rounded-full transition-all duration-500"
+                        style={{ width: `${Math.max(costWidth, 2)}%` }}
+                      ></div>
+                    </div>
+                    <div className="flex justify-between text-xs text-gray-500">
+                      <span>{day.agents_created} created</span>
+                      <span>{day.agents_run} executed</span>
+                      <span>{day.activities} total</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Cost Breakdown */}
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg p-6">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-600 rounded-lg flex items-center justify-center">
+              <PieChart className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h3 className="font-bold text-gray-900">Spending Analysis</h3>
+              <p className="text-sm text-gray-600">Where your budget goes</p>
+            </div>
+          </div>
+          
+          {costBreakdown.length === 0 ? (
+            <div className="text-center py-8">
+              <DollarSign className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+              <p className="text-gray-500 text-sm">No cost data available</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {costBreakdown.slice(0, 5).map((item, index) => (
+                <div key={index} className="group hover:bg-gray-50/50 rounded-xl p-3 transition-all duration-200">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-3 h-3 rounded ${item.bgColor}`}></div>
+                      <span className="text-sm font-medium text-gray-700">{item.name}</span>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-bold text-gray-900">{formatCost(item.cost)}</div>
+                      <div className="text-xs text-gray-500">{item.percentage.toFixed(1)}%</div>
+                    </div>
+                  </div>
+                  <div className="bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                    <div 
+                      className={`h-1.5 rounded-full transition-all duration-500 ${item.bgColor}`}
+                      style={{ width: `${item.percentage}%` }}
+                    ></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Insights View
+  if (selectedView === 'insights') {
+    return (
+      <div className="space-y-6">
+        {insights.length === 0 ? (
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg p-12 text-center">
+            <Brain className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Generating Insights</h3>
+            <p className="text-gray-600">Create more agents to unlock AI-powered insights</p>
+          </div>
+        ) : (
+          <div className="grid lg:grid-cols-2 gap-4">
+            {insights.map((insight, index) => {
+              const IconComponent = getIconComponent(insight.icon);
+              return (
+                <div key={index} className={`${insight.bgColor} backdrop-blur-sm rounded-2xl border ${insight.borderColor} shadow-lg p-6 hover:shadow-xl transition-all duration-300`}>
+                  <div className="flex items-start gap-3">
+                    <div className={`w-10 h-10 ${insight.color.replace('text-', 'bg-').replace('600', '100')} rounded-lg flex items-center justify-center ${insight.color}`}>
+                      <IconComponent className="w-4 h-4" />
+                    </div>
+                    <div className="flex-1">
+                      <h4 className="font-bold text-gray-900 mb-1">{insight.title}</h4>
+                      <p className="text-gray-700 text-sm leading-relaxed">{insight.message}</p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Activities View
+  // Activities View - FIXED to show individual records
+if (selectedView === 'activities') {
+  return (
+    <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg p-6">
+      <div className="flex items-center gap-3 mb-6">
+        <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-lg flex items-center justify-center">
+          <Activity className="w-5 h-5 text-white" />
+        </div>
+        <div>
+          <h3 className="text-xl font-bold text-gray-900">AI Activities</h3>
+          <p className="text-gray-600">Complete history of AI operations</p>
+        </div>
+      </div>
+      
+      {data.rawActivities.length === 0 ? (
+        <div className="text-center py-12">
+          <Activity className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+          <h4 className="text-lg font-bold text-gray-900 mb-2">No Activities Yet</h4>
+          <p className="text-gray-600">Start using AI features to see activity log</p>
+        </div>
+      ) : (
+        <div className="space-y-3 max-h-96 overflow-y-auto">
+          {data.rawActivities.map((activity, index) => (
+            <div key={activity.id} className="border border-gray-200/50 rounded-xl p-4 hover:shadow-md transition-all duration-200">
+              <div className="flex items-start justify-between mb-2">
+                <div className="flex-1">
+                  <h4 className="font-medium text-gray-900">{activity.activity_name}</h4>
+                  <p className="text-sm text-gray-500">
+                    {new Date(activity.created_at).toLocaleString()}
+                  </p>
+                </div>
+                <div className="text-right ml-4">
+                  <p className="font-bold text-gray-900">{formatCost(activity.cost_usd)}</p>
+                  <p className="text-sm text-gray-500">{formatTokens(activity.total_tokens)} tokens</p>
+                </div>
+              </div>
+              
+              <div className="flex items-center gap-4 text-sm text-gray-600">
+                <span className="flex items-center gap-1">
+                  <span>{formatTime(activity.latency_ms)}</span>
+                </span>
+                <span className={`flex items-center gap-1 ${activity.success ? 'text-green-600' : 'text-red-600'}`}>
+                  {activity.success ? (
+                    <CheckCircle className="w-4 h-4" />
+                  ) : (
+                    <XCircle className="w-4 h-4" />
+                  )}
+                  {activity.success ? 'Success' : 'Failed'}
+                </span>
+                <span>{activity.model_name}</span>
+                <span className="text-xs bg-gray-100 px-2 py-1 rounded">
+                  {activity.provider}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+  // Agents View
+  if (selectedView === 'agents') {
+    return (
+      <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg p-6">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center">
+            <Bot className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h3 className="text-xl font-bold text-gray-900">Workflow Agents</h3>
+            <p className="text-gray-600">Performance analytics for your AI agents</p>
+          </div>
+        </div>
+        
+        {agents.length === 0 ? (
+          <div className="text-center py-12">
+            <Bot className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+            <h4 className="text-lg font-bold text-gray-900 mb-2">No Agents Created Yet</h4>
+            <p className="text-gray-600">Build your first workflow agent to see metrics</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {agents.map((agent, index) => (
+              <div key={agent.id || index} className="border border-gray-200/50 rounded-xl p-4 hover:shadow-md transition-all duration-200">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center shadow-lg ${
+                      agent.status === 'excellent' ? 'bg-gradient-to-br from-green-500 to-emerald-600' :
+                      agent.status === 'good' ? 'bg-gradient-to-br from-blue-500 to-indigo-600' :
+                      'bg-gradient-to-br from-orange-500 to-red-600'
+                    }`}>
+                      <Bot className="w-6 h-6 text-white" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-gray-900">{agent.name}</h4>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-500">ID: {agent.id.slice(0, 8)}...</span>
+                        <div className={`px-2 py-1 rounded-lg text-xs font-bold ${
+                          agent.status === 'excellent' ? 'bg-green-100 text-green-700' :
+                          agent.status === 'good' ? 'bg-blue-100 text-blue-700' :
+                          'bg-orange-100 text-orange-700'
+                        }`}>
+                          {agent.status === 'excellent' ? 'Excellent' :
+                           agent.status === 'good' ? 'Good' : 'Needs Attention'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-lg font-bold text-gray-900">{formatCost(agent.totalCost)}</p>
+                    <p className="text-sm text-gray-500">Total Investment</p>
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-3 lg:grid-cols-6 gap-3 text-sm">
+                  <div className="text-center">
+                    <p className="text-xs text-gray-500 mb-1">Creation</p>
+                    <p className="font-bold text-gray-900">{formatCost(agent.creationCost)}</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-gray-500 mb-1">Usage</p>
+                    <p className="font-bold text-gray-900">{formatCost(agent.usageCost)}</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-gray-500 mb-1">Runs</p>
+                    <p className="font-bold text-gray-900">{agent.totalRuns}</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-gray-500 mb-1">Success</p>
+                    <div className="flex items-center justify-center gap-1">
+                      {agent.totalRuns > 0 ? (
+                        <>
+                          {agent.successRate >= 95 ? (
+                            <CheckCircle className="w-3 h-3 text-green-500" />
+                          ) : agent.successRate >= 80 ? (
+                            <AlertTriangle className="w-3 h-3 text-yellow-500" />
+                          ) : (
+                            <XCircle className="w-3 h-3 text-red-500" />
+                          )}
+                          <span className="font-bold text-gray-900">{agent.successRate.toFixed(1)}%</span>
+                        </>
+                      ) : (
+                        <span className="font-bold text-gray-500">N/A</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-gray-500 mb-1">Efficiency</p>
+                    <p className="font-bold text-gray-900">{agent.efficiency.toFixed(0)}%</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-gray-500 mb-1">Last Used</p>
+                    <p className="font-bold text-gray-900">{new Date(agent.lastUsed).toLocaleDateString()}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return null;
+};
