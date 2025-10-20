@@ -155,24 +155,26 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
   }
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
-      {/* Compact Header */}
-      <div className="p-4 border-b border-gray-200">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-              <BarChart3 className="h-5 w-5 text-blue-600" />
-              Agent Performance
-            </h2>
-            <p className="text-gray-600 text-xs mt-0.5">Monitor execution statistics and performance metrics</p>
+    <div className="h-full flex flex-col">
+      {/* Header */}
+      <div className="p-6 border-b border-gray-200/50 bg-gradient-to-r from-emerald-50 to-green-50 rounded-t-2xl">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-green-500 rounded-xl flex items-center justify-center shadow-lg">
+              <BarChart3 className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">Agent Performance</h2>
+              <p className="text-gray-600 text-sm font-medium">Execution statistics and metrics</p>
+            </div>
           </div>
-          
-          <div className="flex items-center gap-1">
+
+          <div className="flex items-center gap-1 bg-white rounded-xl px-2 py-2 shadow-md border border-gray-200">
             <button
               onClick={() => setViewMode('cards')}
-              className={`px-2 py-1 text-xs rounded-md transition-colors ${
-                viewMode === 'cards' 
-                  ? 'bg-blue-100 text-blue-700' 
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ${
+                viewMode === 'cards'
+                  ? 'bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-md'
                   : 'text-gray-600 hover:bg-gray-100'
               }`}
             >
@@ -180,9 +182,9 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
             </button>
             <button
               onClick={() => setViewMode('table')}
-              className={`px-2 py-1 text-xs rounded-md transition-colors ${
-                viewMode === 'table' 
-                  ? 'bg-blue-100 text-blue-700' 
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ${
+                viewMode === 'table'
+                  ? 'bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-md'
                   : 'text-gray-600 hover:bg-gray-100'
               }`}
             >
@@ -191,44 +193,44 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
           </div>
         </div>
 
-        {/* Compact Summary Stats */}
+        {/* Summary Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div className="bg-blue-50 rounded-lg p-3">
+          <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-3 border border-blue-200 shadow-sm">
             <div className="flex items-center gap-1.5 mb-1">
-              <Activity className="h-3 w-3 text-blue-600" />
-              <span className="text-xs font-medium text-blue-900">Total Runs</span>
+              <Activity className="h-3.5 w-3.5 text-blue-600" />
+              <span className="text-xs font-semibold text-blue-900">Total Runs</span>
             </div>
-            <div className="text-lg font-bold text-blue-700">{totalRuns.toLocaleString()}</div>
+            <div className="text-xl font-bold text-blue-700">{totalRuns.toLocaleString()}</div>
           </div>
-          
-          <div className="bg-green-50 rounded-lg p-3">
+
+          <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-3 border border-green-200 shadow-sm">
             <div className="flex items-center gap-1.5 mb-1">
-              <CheckCircle className="h-3 w-3 text-green-600" />
-              <span className="text-xs font-medium text-green-900">Success Rate</span>
+              <CheckCircle className="h-3.5 w-3.5 text-green-600" />
+              <span className="text-xs font-semibold text-green-900">Success Rate</span>
             </div>
-            <div className="text-lg font-bold text-green-700">{averageSuccessRate}%</div>
+            <div className="text-xl font-bold text-green-700">{averageSuccessRate}%</div>
           </div>
-          
-          <div className="bg-purple-50 rounded-lg p-3">
+
+          <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-3 border border-purple-200 shadow-sm">
             <div className="flex items-center gap-1.5 mb-1">
-              <Zap className="h-3 w-3 text-purple-600" />
-              <span className="text-xs font-medium text-purple-900">Active Agents</span>
+              <Zap className="h-3.5 w-3.5 text-purple-600" />
+              <span className="text-xs font-semibold text-purple-900">Active</span>
             </div>
-            <div className="text-lg font-bold text-purple-700">{activeAgents}</div>
+            <div className="text-xl font-bold text-purple-700">{activeAgents}</div>
           </div>
-          
-          <div className="bg-gray-50 rounded-lg p-3">
+
+          <div className="bg-gradient-to-br from-gray-50 to-slate-100 rounded-xl p-3 border border-gray-200 shadow-sm">
             <div className="flex items-center gap-1.5 mb-1">
-              <Target className="h-3 w-3 text-gray-600" />
-              <span className="text-xs font-medium text-gray-900">Total Agents</span>
+              <Target className="h-3.5 w-3.5 text-gray-600" />
+              <span className="text-xs font-semibold text-gray-900">Total</span>
             </div>
-            <div className="text-lg font-bold text-gray-700">{stats.length}</div>
+            <div className="text-xl font-bold text-gray-700">{stats.length}</div>
           </div>
         </div>
       </div>
 
-      {/* Compact Content */}
-      <div className="p-4">
+      {/* Content */}
+      <div className="p-6 flex-1">
         {stats.length === 0 ? (
           <div className="text-center py-8">
             <BarChart3 className="h-10 w-10 text-gray-400 mx-auto mb-3" />

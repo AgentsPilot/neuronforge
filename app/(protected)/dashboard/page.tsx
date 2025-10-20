@@ -7,12 +7,9 @@ import AgentStatsChart from '@/components/dashboard/AgentStatsChart'
 import AgentStatsTable from '@/components/dashboard/AgentStatsTable'
 import ScheduledAgentsCard from '@/components/dashboard/ScheduledAgentsCard'
 import AlertFeed from '@/components/dashboard/AlertFeed'
-import { 
-  Activity, 
-  TrendingUp, 
-  Clock, 
+import {
+  Activity,
   Bell,
-  Zap,
   Bot,
   Calendar,
   BarChart3,
@@ -25,14 +22,17 @@ import {
 export default function DashboardPage() {
   const { user } = useAuth()
   const [agentStats, setAgentStats] = useState<any[]>([])
+  const [scheduledCount, setScheduledCount] = useState(0)
+  const [alertsCount, setAlertsCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
 
   const fetchDashboardData = async () => {
     if (!user) return
-    
+
     setLoading(true)
 
+    // Fetch agent stats
     const { data: stats, error: statsError } = await supabase
       .from('agent_stats')
       .select('agent_id, run_count, last_run_at, agents (agent_name)')
@@ -49,13 +49,44 @@ export default function DashboardPage() {
       setAgentStats(parsedStats)
     }
 
+    // Fetch scheduled agents count
+    const { count: scheduledAgentsCount, error: scheduledError } = await supabase
+      .from('agents')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+      .eq('mode', 'scheduled')
+      .eq('status', 'active')
+
+    if (scheduledError) {
+      console.error('❌ Failed to fetch scheduled agents:', scheduledError.message)
+    } else {
+      setScheduledCount(scheduledAgentsCount || 0)
+    }
+
+    // Fetch failed executions (alerts) from last 24 hours
+    const oneDayAgo = new Date()
+    oneDayAgo.setDate(oneDayAgo.getDate() - 1)
+
+    const { count: failedCount, error: alertsError } = await supabase
+      .from('agent_logs')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+      .eq('status', 'failed')
+      .gte('created_at', oneDayAgo.toISOString())
+
+    if (alertsError) {
+      console.error('❌ Failed to fetch alerts:', alertsError.message)
+    } else {
+      setAlertsCount(failedCount || 0)
+    }
+
     setLastUpdated(new Date())
     setLoading(false)
   }
 
   useEffect(() => {
     fetchDashboardData()
-    
+
     // Auto-refresh every 5 minutes
     const interval = setInterval(fetchDashboardData, 5 * 60 * 1000)
     return () => clearInterval(interval)
@@ -70,17 +101,17 @@ export default function DashboardPage() {
       <div className="space-y-6">
         {/* Loading Header */}
         <div className="text-center space-y-3">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 rounded-3xl shadow-xl mb-4">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-violet-600 via-purple-600 to-blue-600 rounded-3xl shadow-xl mb-4">
             <BarChart3 className="h-8 w-8 text-white" />
           </div>
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-gray-900 via-indigo-800 to-purple-800 bg-clip-text text-transparent">
+          <h1 className="text-3xl font-bold text-gray-900">
             Dashboard
           </h1>
           <p className="text-gray-600 font-medium">Monitor your AI agents and automation performance</p>
         </div>
 
         <div className="text-center py-16 bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-3xl shadow-xl mb-6">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-violet-600 via-purple-600 to-blue-600 rounded-3xl shadow-xl mb-6">
             <div className="animate-spin w-8 h-8 border-2 border-white border-t-transparent rounded-full"></div>
           </div>
           <h3 className="text-xl font-bold text-slate-700 mb-2">Loading Dashboard</h3>
@@ -91,107 +122,30 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Modern Header */}
-      <div className="text-center space-y-3">
-        <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 rounded-3xl shadow-xl mb-4">
-          <BarChart3 className="h-8 w-8 text-white" />
-        </div>
-        <h1 className="text-3xl font-bold bg-gradient-to-r from-gray-900 via-indigo-800 to-purple-800 bg-clip-text text-transparent">
-          Dashboard
-        </h1>
-        <p className="text-gray-600 font-medium">Monitor your AI agents and automation performance</p>
-      </div>
-
-      {/* Dashboard Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="group relative overflow-hidden bg-gradient-to-br from-purple-50 to-indigo-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
-          <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-indigo-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-          <div className="relative flex items-center gap-3">
-            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-indigo-500 rounded-2xl flex items-center justify-center shadow-lg">
-              <Activity className="h-6 w-6 text-white" />
-            </div>
-            <div>
-              <p className="text-sm text-purple-700 font-semibold">Total Runs</p>
-              <p className="text-2xl font-bold text-purple-900">{totalRuns.toLocaleString()}</p>
-            </div>
-          </div>
-          <p className="text-xs text-purple-600 font-medium mt-3 flex items-center gap-1">
-            <TrendingUp className="h-3 w-3" />
-            All time performance
-          </p>
-        </div>
-
-        <div className="group relative overflow-hidden bg-gradient-to-br from-indigo-50 to-purple-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
-          <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-purple-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-          <div className="relative flex items-center gap-3">
-            <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-2xl flex items-center justify-center shadow-lg">
-              <Bot className="h-6 w-6 text-white" />
-            </div>
-            <div>
-              <p className="text-sm text-indigo-700 font-semibold">Active Agents</p>
-              <p className="text-2xl font-bold text-indigo-900">{activeAgents}</p>
-            </div>
-          </div>
-          <p className="text-xs text-indigo-600 font-medium mt-3 flex items-center gap-1">
-            <Zap className="h-3 w-3" />
-            Currently running
-          </p>
-        </div>
-
-        <div className="group relative overflow-hidden bg-gradient-to-br from-purple-50 to-pink-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
-          <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-pink-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-          <div className="relative flex items-center gap-3">
-            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-pink-500 rounded-2xl flex items-center justify-center shadow-lg">
-              <Calendar className="h-6 w-6 text-white" />
-            </div>
-            <div>
-              <p className="text-sm text-purple-700 font-semibold">Scheduled</p>
-              <p className="text-2xl font-bold text-purple-900">2</p>
-            </div>
-          </div>
-          <p className="text-xs text-purple-600 font-medium mt-3 flex items-center gap-1">
-            <Clock className="h-3 w-3" />
-            Next: Today 3PM
-          </p>
-        </div>
-
-        <div className="group relative overflow-hidden bg-gradient-to-br from-indigo-50 to-violet-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
-          <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-violet-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-          <div className="relative flex items-center gap-3">
-            <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-violet-500 rounded-2xl flex items-center justify-center shadow-lg">
-              <Bell className="h-6 w-6 text-white" />
-            </div>
-            <div>
-              <p className="text-sm text-indigo-700 font-semibold">Alerts</p>
-              <p className="text-2xl font-bold text-indigo-900">1</p>
-            </div>
-          </div>
-          <p className="text-xs text-indigo-600 font-medium mt-3 flex items-center gap-1">
-            <Bell className="h-3 w-3" />
-            Needs attention
-          </p>
-        </div>
-      </div>
-
-      {/* Controls */}
-      <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl p-6">
+    <div className="space-y-8">
+      {/* Welcome Header - More Personal */}
+      <div className="bg-gradient-to-br from-violet-600 via-purple-600 to-blue-600 rounded-3xl p-8 text-white shadow-2xl">
         <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-bold text-slate-800">Dashboard Overview</h2>
-            <p className="text-sm text-slate-500 font-medium mt-1">
-              Real-time monitoring of your AI automation ecosystem
-            </p>
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 bg-white/20 backdrop-blur-sm rounded-2xl flex items-center justify-center shadow-xl">
+                <BarChart3 className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <h1 className="text-3xl font-bold">Welcome Back!</h1>
+                <p className="text-violet-100 font-medium">Here's what's happening with your automations</p>
+              </div>
+            </div>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 text-sm text-slate-500 font-medium">
-              <Clock className="h-4 w-4" />
-              Last updated: {lastUpdated.toLocaleTimeString()}
+          <div className="flex items-center gap-3">
+            <div className="text-right">
+              <p className="text-sm text-violet-100 font-medium">Last updated</p>
+              <p className="text-white font-semibold">{lastUpdated.toLocaleTimeString()}</p>
             </div>
             <button
               onClick={fetchDashboardData}
               disabled={loading}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 text-sm font-semibold disabled:opacity-50 disabled:transform-none"
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-white/20 backdrop-blur-sm hover:bg-white/30 text-white rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 text-sm font-semibold disabled:opacity-50 disabled:transform-none"
             >
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               Refresh
@@ -200,110 +154,198 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Main Content Grid */}
+      {/* Quick Stats - Simplified Language */}
+      <div>
+        <div className="mb-4">
+          <h2 className="text-xl font-bold text-gray-900">Quick Overview</h2>
+          <p className="text-gray-600">A snapshot of your automation activity</p>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="group relative overflow-hidden bg-gradient-to-br from-violet-50 to-purple-50 p-5 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 border-2 border-violet-100">
+            <div className="absolute inset-0 bg-gradient-to-br from-violet-500/10 to-purple-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            <div className="relative space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="w-12 h-12 bg-gradient-to-br from-violet-500 via-purple-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
+                  <Activity className="h-6 w-6 text-white" />
+                </div>
+                <div className="text-3xl font-bold text-gray-900">{totalRuns.toLocaleString()}</div>
+              </div>
+              <div>
+                <p className="text-sm text-violet-700 font-semibold">Tasks Completed</p>
+                <p className="text-xs text-violet-600 font-medium mt-1">Total automations run</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="group relative overflow-hidden bg-gradient-to-br from-emerald-50 to-green-50 p-5 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 border-2 border-emerald-100">
+            <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/10 to-green-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            <div className="relative space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="w-12 h-12 bg-gradient-to-br from-emerald-500 via-green-500 to-teal-600 rounded-2xl flex items-center justify-center shadow-lg">
+                  <Bot className="h-6 w-6 text-white" />
+                </div>
+                <div className="text-3xl font-bold text-gray-900">{activeAgents}</div>
+              </div>
+              <div>
+                <p className="text-sm text-emerald-700 font-semibold">Active Automations</p>
+                <p className="text-xs text-emerald-600 font-medium mt-1">Working for you right now</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="group relative overflow-hidden bg-gradient-to-br from-amber-50 to-orange-50 p-5 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 border-2 border-amber-100">
+            <div className="absolute inset-0 bg-gradient-to-br from-amber-500/10 to-orange-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            <div className="relative space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="w-12 h-12 bg-gradient-to-br from-amber-500 via-orange-500 to-red-600 rounded-2xl flex items-center justify-center shadow-lg">
+                  <Calendar className="h-6 w-6 text-white" />
+                </div>
+                <div className="text-3xl font-bold text-gray-900">{scheduledCount}</div>
+              </div>
+              <div>
+                <p className="text-sm text-amber-700 font-semibold">On Schedule</p>
+                <p className="text-xs text-amber-600 font-medium mt-1">{scheduledCount > 0 ? 'Running automatically' : 'No scheduled tasks yet'}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="group relative overflow-hidden bg-gradient-to-br from-slate-50 to-gray-50 p-5 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 border-2 border-slate-100">
+            <div className="absolute inset-0 bg-gradient-to-br from-slate-500/10 to-gray-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            <div className="relative space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="w-12 h-12 bg-gradient-to-br from-slate-500 via-gray-500 to-zinc-600 rounded-2xl flex items-center justify-center shadow-lg">
+                  <Bell className="h-6 w-6 text-white" />
+                </div>
+                <div className="text-3xl font-bold text-gray-900">{alertsCount}</div>
+              </div>
+              <div>
+                <p className="text-sm text-slate-700 font-semibold">Needs Attention</p>
+                <p className="text-xs text-slate-600 font-medium mt-1">{alertsCount > 0 ? 'Issues in last 24 hours' : 'Everything looks good!'}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Upcoming Tasks and Recent Activity - Side by Side */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left Column - Chart */}
-        <div className="space-y-6">
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl">
-            <AgentStatsChart />
+        {/* Upcoming Tasks */}
+        <div className="flex flex-col">
+          <div className="mb-4">
+            <h2 className="text-xl font-bold text-gray-900">Upcoming Tasks</h2>
+            <p className="text-gray-600">Automations scheduled to run soon</p>
+          </div>
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl flex-1">
+            <ScheduledAgentsCard />
           </div>
         </div>
 
-        {/* Right Column - Stats Table */}
-        <div className="space-y-6">
+        {/* Recent Activity */}
+        <div className="flex flex-col">
+          <div className="mb-4">
+            <h2 className="text-xl font-bold text-gray-900">Recent Activity</h2>
+            <p className="text-gray-600">Latest automations that completed successfully</p>
+          </div>
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl flex-1 flex flex-col">
+            <div className="p-6 border-b border-gray-200/50 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-t-2xl">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-indigo-500 rounded-xl flex items-center justify-center shadow-lg">
+                  <Activity className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-800">Completed Tasks</h3>
+                  <p className="text-sm text-slate-600 font-medium">Tasks that finished running</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 flex-1">
+              <div className="space-y-4">
+                {agentStats.slice(0, 5).map((stat, index) => (
+                  <div
+                    key={index}
+                    className="flex items-center justify-between py-4 border-b border-gray-100 last:border-0 hover:bg-slate-50 rounded-lg px-3 transition-colors duration-200"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-gradient-to-br from-purple-100 to-indigo-100 rounded-xl flex items-center justify-center">
+                        <CheckCircle className="w-5 h-5 text-purple-600" />
+                      </div>
+                      <div>
+                        <p className="font-semibold text-slate-900">{stat.name}</p>
+                        <p className="text-sm text-slate-600">Successfully completed</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-lg font-bold text-slate-900">{stat.count}</p>
+                      <p className="text-xs text-slate-500 font-medium">times run</p>
+                    </div>
+                  </div>
+                ))}
+
+                {agentStats.length === 0 && !loading && (
+                  <div className="text-center py-12">
+                    <div className="w-16 h-16 bg-gradient-to-br from-slate-400 to-slate-500 rounded-3xl flex items-center justify-center mx-auto shadow-xl mb-4">
+                      <Activity className="w-8 h-8 text-white" />
+                    </div>
+                    <h4 className="text-lg font-bold text-slate-700 mb-2">No activity yet</h4>
+                    <p className="text-slate-500 font-medium mb-4">Create your first automation to get started!</p>
+                    <button className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-violet-600 to-purple-600 text-white rounded-xl hover:from-violet-700 hover:to-purple-700 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 font-semibold">
+                      <Bot className="w-5 h-5" />
+                      Create Your First Automation
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* What Needs Your Attention */}
+      <div>
+        <div className="mb-4">
+          <h2 className="text-xl font-bold text-gray-900">What Needs Your Attention</h2>
+          <p className="text-gray-600">Tasks that didn't complete successfully</p>
+        </div>
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl">
+          <AlertFeed />
+        </div>
+      </div>
+
+      {/* Performance Details - For Advanced Users */}
+      <div>
+        <div className="mb-4">
+          <h2 className="text-xl font-bold text-gray-900">Performance Details</h2>
+          <p className="text-gray-600">Detailed charts and statistics</p>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl">
+            <AgentStatsChart />
+          </div>
           <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl">
             <AgentStatsTable />
           </div>
         </div>
       </div>
 
-      {/* Full Width Alert Center */}
-      <div className="w-full">
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl">
-          <AlertFeed />
-        </div>
-      </div>
-
-      {/* Secondary Content Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Scheduled Agents */}
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl">
-          <ScheduledAgentsCard />
-        </div>
-        
-        {/* Recent Activity */}
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl">
-          <div className="p-6 border-b border-gray-200/50 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-t-2xl">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-indigo-500 rounded-xl flex items-center justify-center shadow-lg">
-                <Activity className="w-5 h-5 text-white" />
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-slate-800">Recent Activity</h3>
-                <p className="text-sm text-slate-600 font-medium">Latest agent executions and system events</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="p-6">
-            <div className="space-y-4">
-              {agentStats.slice(0, 5).map((stat, index) => (
-                <div 
-                  key={index} 
-                  className="flex items-center justify-between py-4 border-b border-gray-100 last:border-0 hover:bg-slate-50 rounded-lg px-3 transition-colors duration-200"
-                  style={{ animationDelay: `${index * 100}ms` }}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-3 h-3 bg-gradient-to-r from-purple-500 to-indigo-500 rounded-full shadow-sm"></div>
-                    <div>
-                      <p className="font-semibold text-slate-900">{stat.name}</p>
-                      <div className="flex items-center gap-1 mt-1">
-                        <CheckCircle className="w-3 h-3 text-purple-600" />
-                        <p className="text-sm text-purple-700 font-medium">Completed successfully</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm font-bold text-slate-900">{stat.count} runs</p>
-                    <p className="text-xs text-slate-500 font-medium">
-                      {stat.lastRun ? new Date(stat.lastRun).toLocaleDateString() : 'Never'}
-                    </p>
-                  </div>
-                </div>
-              ))}
-              
-              {agentStats.length === 0 && !loading && (
-                <div className="text-center py-12">
-                  <div className="w-16 h-16 bg-gradient-to-br from-slate-400 to-slate-500 rounded-3xl flex items-center justify-center mx-auto shadow-xl mb-4">
-                    <Activity className="w-8 w-8 text-white" />
-                  </div>
-                  <h4 className="text-lg font-bold text-slate-700 mb-2">No recent activity</h4>
-                  <p className="text-slate-500 font-medium">Your agents haven't run yet. Create and execute your first agent to see activity here.</p>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* System Status Footer */}
+      {/* Help Section - Always Visible */}
       <div className="bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-600 rounded-3xl p-8 text-white shadow-2xl">
-        <div className="text-center space-y-6">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-white/20 backdrop-blur-sm rounded-2xl shadow-xl mb-2">
-            <Globe className="h-8 w-8 text-white" />
+        <div className="text-center space-y-4">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-white/20 backdrop-blur-sm rounded-2xl shadow-xl">
+            <Sparkles className="h-8 w-8 text-white" />
           </div>
-          <h3 className="text-2xl font-bold">System Status: All Systems Operational</h3>
+          <h3 className="text-2xl font-bold">Everything Running Smoothly</h3>
           <p className="text-indigo-100 font-medium max-w-2xl mx-auto leading-relaxed">
-            Your AI agents are running smoothly. All integrations are connected and automation workflows are processing normally.
+            Your automations are working in the background. Need help? Check out our guides or create a new automation.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center pt-4">
             <button className="inline-flex items-center gap-2 px-6 py-3 bg-white text-indigo-600 font-semibold rounded-xl hover:bg-indigo-50 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105">
-              <Sparkles className="w-4 h-4" />
-              View System Health
+              <Bot className="w-5 h-5" />
+              Create New Automation
             </button>
             <button className="inline-flex items-center gap-2 px-6 py-3 bg-indigo-500 hover:bg-indigo-400 text-white font-semibold rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105">
-              Performance Reports
-              <BarChart3 className="w-4 h-4" />
+              <Globe className="w-5 h-5" />
+              View All Automations
             </button>
           </div>
         </div>

@@ -8,8 +8,6 @@ import { runAgentWithContext } from '@/lib/utils/runAgentWithContext';
 import { AgentJobData } from './agentQueue';
 import parser from 'cron-parser';
 
-// Use shared Redis connection for BullMQ worker
-const connection = getWorkerRedisConnection();
 // Create Supabase client for worker
 const supabase = createServerClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -493,19 +491,30 @@ async function processAgentJob(job: Job<AgentJobData>) {
   }
 }
 
+// Singleton worker instance
+let workerInstance: Worker<AgentJobData> | null = null;
+
 /**
  * Create and start the agent worker
  */
 export function createAgentWorker() {
+  // Return existing worker if already created
+  if (workerInstance) {
+    console.log('⚠️ Worker already exists, returning existing instance');
+    return workerInstance;
+  }
+
+  const connection = getWorkerRedisConnection();
   const queue = new Queue('agent-execution', { connection });
-  const worker = new Worker<AgentJobData>(
+
+  workerInstance = new Worker<AgentJobData>(
     'agent-execution',
     processAgentJob,
     {
       connection,
-      concurrency: parseInt(process.env.AGENT_WORKER_CONCURRENCY || '3'),
+      concurrency: parseInt(process.env.AGENT_WORKER_CONCURRENCY || '2'), // Reduced from 3 to 2
       autorun: true,
-      lockDuration: 90000,
+      lockDuration: 60000, // Reduced from 90s to 60s
       removeOnComplete: {
         age: 24 * 60 * 60,
         count: 1000,
@@ -514,12 +523,14 @@ export function createAgentWorker() {
         age: 7 * 24 * 60 * 60,
         count: 500,
       },
-      maxStalledCount: 3,
-      stalledInterval: 45000,
-      drainDelay: 3,
-      lockRenewTime: 30000
+      maxStalledCount: 2, // Reduced from 3 to 2
+      stalledInterval: 30000, // Reduced from 45s to 30s
+      drainDelay: 5,
+      lockRenewTime: 15000 // Reduced from 30s to 15s
     }
   );
+
+  const worker = workerInstance;
 
   // Worker pause/resume logic
   let paused = false;
@@ -587,23 +598,41 @@ export function createAgentWorker() {
  */
 export function startAgentWorker() {
   const worker = createAgentWorker();
-  
-  // Graceful shutdown handling
-  process.on('SIGINT', async () => {
-    console.log('🛑 Gracefully shutting down agent worker...');
-    await worker.close();
-    await connection.quit();
-    process.exit(0);
-  });
 
-  process.on('SIGTERM', async () => {
-    console.log('🛑 Gracefully shutting down agent worker...');
-    await worker.close();
-    await connection.quit();
-    process.exit(0);
-  });
+  // Graceful shutdown handling
+  const shutdownHandler = async (signal: string) => {
+    console.log(`🛑 Received ${signal}, gracefully shutting down agent worker...`);
+    try {
+      if (workerInstance) {
+        await workerInstance.close();
+        workerInstance = null;
+      }
+      const connection = getWorkerRedisConnection();
+      await connection.quit();
+      console.log('✅ Worker shut down successfully');
+      process.exit(0);
+    } catch (error) {
+      console.error('❌ Error during shutdown:', error);
+      process.exit(1);
+    }
+  };
+
+  process.on('SIGINT', () => shutdownHandler('SIGINT'));
+  process.on('SIGTERM', () => shutdownHandler('SIGTERM'));
 
   return worker;
+}
+
+/**
+ * Stop and cleanup the worker
+ */
+export async function stopAgentWorker() {
+  if (workerInstance) {
+    console.log('🛑 Stopping agent worker...');
+    await workerInstance.close();
+    workerInstance = null;
+    console.log('✅ Worker stopped');
+  }
 }
 
 // Export worker creation function

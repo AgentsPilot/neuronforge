@@ -3,18 +3,16 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { useAuth } from '@/components/UserProvider'
-import { Button } from '@/components/ui/button'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Switch } from '@/components/ui/switch'
-import { 
-  AlertTriangle, 
-  AlertCircle, 
-  Info, 
-  X, 
-  Check, 
-  Clock, 
+import {
+  AlertTriangle,
+  AlertCircle,
+  Info,
+  X,
+  Check,
+  Clock,
   Filter,
-  SortAsc,
   SortDesc,
   Eye,
   EyeOff,
@@ -393,59 +391,62 @@ export default function AlertFeed() {
   }
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+    <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl">
       {/* Header */}
-      <div className="p-6 border-b border-gray-200">
+      <div className="p-6 border-b border-gray-200/50 bg-gradient-to-r from-red-50 to-orange-50 rounded-t-2xl">
         <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-              <AlertTriangle className="h-6 w-6 text-red-600" />
-              Alert Center
-            </h2>
-            <p className="text-gray-600 mt-1">Monitor and manage system alerts</p>
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-red-500 to-orange-500 rounded-2xl flex items-center justify-center shadow-lg">
+              <AlertTriangle className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900">Alert Center</h2>
+              <p className="text-gray-600 text-sm font-medium">Monitor and manage system alerts</p>
+            </div>
           </div>
-          <div className="flex gap-2">
-            <Button onClick={fetchAlerts} variant="outline" size="sm">
-              <Clock className="h-4 w-4 mr-2" />
-              Refresh
-            </Button>
-          </div>
+          <button
+            onClick={fetchAlerts}
+            className="inline-flex items-center gap-2 px-4 py-2.5 bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 rounded-xl transition-all duration-300 shadow-md hover:shadow-lg transform hover:scale-105 text-sm font-semibold"
+          >
+            <Clock className="h-4 w-4" />
+            Refresh
+          </button>
         </div>
 
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-          <div className="bg-gray-50 rounded-lg p-3 text-center">
-            <div className="text-2xl font-bold text-gray-900">{stats.total}</div>
-            <div className="text-sm text-gray-600">Total</div>
+          <div className="bg-white rounded-xl p-4 text-center shadow-md border border-gray-100 hover:shadow-lg transition-all duration-300">
+            <div className="text-3xl font-bold text-gray-900 mb-1">{stats.total}</div>
+            <div className="text-sm text-gray-600 font-medium">Total</div>
           </div>
-          <div className="bg-red-50 rounded-lg p-3 text-center">
-            <div className="text-2xl font-bold text-red-600">{stats.high}</div>
-            <div className="text-sm text-red-600">High</div>
+          <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-xl p-4 text-center shadow-md border border-red-200 hover:shadow-lg transition-all duration-300">
+            <div className="text-3xl font-bold text-red-600 mb-1">{stats.high}</div>
+            <div className="text-sm text-red-700 font-semibold">High</div>
           </div>
-          <div className="bg-yellow-50 rounded-lg p-3 text-center">
-            <div className="text-2xl font-bold text-yellow-600">{stats.medium}</div>
-            <div className="text-sm text-yellow-600">Medium</div>
+          <div className="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-xl p-4 text-center shadow-md border border-yellow-200 hover:shadow-lg transition-all duration-300">
+            <div className="text-3xl font-bold text-yellow-600 mb-1">{stats.medium}</div>
+            <div className="text-sm text-yellow-700 font-semibold">Medium</div>
           </div>
-          <div className="bg-blue-50 rounded-lg p-3 text-center">
-            <div className="text-2xl font-bold text-blue-600">{stats.low}</div>
-            <div className="text-sm text-blue-600">Low</div>
+          <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4 text-center shadow-md border border-blue-200 hover:shadow-lg transition-all duration-300">
+            <div className="text-3xl font-bold text-blue-600 mb-1">{stats.low}</div>
+            <div className="text-sm text-blue-700 font-semibold">Low</div>
           </div>
-          <div className="bg-purple-50 rounded-lg p-3 text-center">
-            <div className="text-2xl font-bold text-purple-600">{stats.unread}</div>
-            <div className="text-sm text-purple-600">Unread</div>
+          <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-4 text-center shadow-md border border-purple-200 hover:shadow-lg transition-all duration-300">
+            <div className="text-3xl font-bold text-purple-600 mb-1">{stats.unread}</div>
+            <div className="text-sm text-purple-700 font-semibold">Unread</div>
           </div>
         </div>
 
         {/* Controls */}
         <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between">
-          <div className="flex flex-wrap items-center gap-4">
+          <div className="flex flex-wrap items-center gap-3">
             {/* Filter */}
-            <div className="flex items-center gap-2">
-              <Filter className="h-4 w-4 text-gray-500" />
-              <select 
-                value={filterBy} 
+            <div className="flex items-center gap-2 bg-white rounded-xl px-3 py-2 shadow-md border border-gray-200">
+              <Filter className="h-4 w-4 text-violet-600" />
+              <select
+                value={filterBy}
                 onChange={(e) => setFilterBy(e.target.value as FilterOption)}
-                className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="border-0 bg-transparent text-sm font-medium text-gray-700 focus:outline-none focus:ring-0 cursor-pointer"
               >
                 <option value="all">All Alerts</option>
                 <option value="high">High Priority</option>
@@ -456,12 +457,12 @@ export default function AlertFeed() {
             </div>
 
             {/* Sort */}
-            <div className="flex items-center gap-2">
-              <SortDesc className="h-4 w-4 text-gray-500" />
-              <select 
-                value={sortBy} 
+            <div className="flex items-center gap-2 bg-white rounded-xl px-3 py-2 shadow-md border border-gray-200">
+              <SortDesc className="h-4 w-4 text-violet-600" />
+              <select
+                value={sortBy}
                 onChange={(e) => setSortBy(e.target.value as SortOption)}
-                className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="border-0 bg-transparent text-sm font-medium text-gray-700 focus:outline-none focus:ring-0 cursor-pointer"
               >
                 <option value="newest">Newest First</option>
                 <option value="oldest">Oldest First</option>
@@ -472,35 +473,35 @@ export default function AlertFeed() {
             </div>
 
             {/* Page Size Selector */}
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-600 whitespace-nowrap">Show:</span>
-              <select 
-                value={pageSize} 
+            <div className="flex items-center gap-2 bg-white rounded-xl px-3 py-2 shadow-md border border-gray-200">
+              <span className="text-sm text-gray-600 font-medium whitespace-nowrap">Show:</span>
+              <select
+                value={pageSize}
                 onChange={(e) => handlePageSizeChange(Number(e.target.value) as PageSizeOption)}
-                className="border border-gray-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="border-0 bg-transparent text-sm font-medium text-gray-700 focus:outline-none focus:ring-0 cursor-pointer"
               >
-                <option value={10}>10 per page</option>
-                <option value={25}>25 per page</option>
-                <option value={50}>50 per page</option>
-                <option value={100}>100 per page</option>
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
               </select>
             </div>
 
             {/* Show Dismissed Toggle */}
-            <div className="flex items-center gap-2">
-              <Switch 
-                checked={showDismissed} 
+            <div className="flex items-center gap-2 bg-white rounded-xl px-4 py-2 shadow-md border border-gray-200">
+              <Switch
+                checked={showDismissed}
                 onCheckedChange={setShowDismissed}
               />
-              <span className="text-sm text-gray-600 whitespace-nowrap">Show Dismissed Only</span>
+              <span className="text-sm text-gray-700 font-medium whitespace-nowrap">Dismissed Only</span>
             </div>
           </div>
 
           {/* Bulk Actions */}
           {selectedAlerts.size > 0 && (
             <div className="w-full lg:w-auto">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 bg-blue-50 px-4 py-3 rounded-lg border border-blue-200">
-                <span className="text-sm text-blue-700 font-medium whitespace-nowrap">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 bg-gradient-to-r from-violet-50 to-purple-50 px-5 py-3 rounded-xl border-2 border-violet-200 shadow-lg">
+                <span className="text-sm text-violet-700 font-bold whitespace-nowrap">
                   {selectedAlerts.size} selected
                 </span>
                 <div className="flex flex-wrap items-center gap-2">
@@ -508,31 +509,43 @@ export default function AlertFeed() {
                     const selectedAlertItems = alerts.filter(alert => selectedAlerts.has(alert.id))
                     const hasUnreadAlerts = selectedAlertItems.some(alert => !alert.isRead)
                     const hasReadAlerts = selectedAlertItems.some(alert => alert.isRead)
-                    
+
                     return (
                       <>
                         {hasUnreadAlerts && (
-                          <Button onClick={markSelectedAsRead} variant="outline" size="sm" className="h-8">
-                            <Eye className="h-4 w-4 mr-1" />
-                            Mark as Read
-                          </Button>
+                          <button
+                            onClick={markSelectedAsRead}
+                            className="inline-flex items-center gap-1 px-3 py-2 bg-white hover:bg-blue-50 border border-blue-200 text-blue-700 rounded-lg transition-all duration-200 shadow-sm hover:shadow-md text-xs font-semibold"
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                            Mark Read
+                          </button>
                         )}
                         {hasReadAlerts && (
-                          <Button onClick={markSelectedAsUnread} variant="outline" size="sm" className="h-8">
-                            <EyeOff className="h-4 w-4 mr-1" />
-                            Mark as Unread
-                          </Button>
+                          <button
+                            onClick={markSelectedAsUnread}
+                            className="inline-flex items-center gap-1 px-3 py-2 bg-white hover:bg-orange-50 border border-orange-200 text-orange-700 rounded-lg transition-all duration-200 shadow-sm hover:shadow-md text-xs font-semibold"
+                          >
+                            <EyeOff className="h-3.5 w-3.5" />
+                            Mark Unread
+                          </button>
                         )}
                       </>
                     )
                   })()}
-                  <Button onClick={dismissSelected} variant="destructive" size="sm" className="h-8">
-                    <X className="h-4 w-4 mr-1" />
-                    Dismiss Selected
-                  </Button>
-                  <Button onClick={deselectAll} variant="outline" size="sm" className="h-8">
-                    Clear Selection
-                  </Button>
+                  <button
+                    onClick={dismissSelected}
+                    className="inline-flex items-center gap-1 px-3 py-2 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white rounded-lg transition-all duration-200 shadow-md hover:shadow-lg text-xs font-semibold"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    Dismiss
+                  </button>
+                  <button
+                    onClick={deselectAll}
+                    className="inline-flex items-center gap-1 px-3 py-2 bg-white hover:bg-gray-50 border border-gray-300 text-gray-700 rounded-lg transition-all duration-200 shadow-sm hover:shadow-md text-xs font-semibold"
+                  >
+                    Clear
+                  </button>
                 </div>
               </div>
             </div>
@@ -541,13 +554,16 @@ export default function AlertFeed() {
 
         {/* Select All */}
         {paginatedAlerts.length > 0 && (
-          <div className="flex flex-col sm:flex-row sm:items-center gap-2 mt-4 pt-4 border-t border-gray-200">
-            <Button onClick={selectAll} variant="outline" size="sm">
-              <CheckCircle2 className="h-4 w-4 mr-1" />
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 mt-4 pt-4 border-t border-gray-200">
+            <button
+              onClick={selectAll}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-white hover:bg-violet-50 border border-violet-200 text-violet-700 rounded-xl transition-all duration-200 shadow-sm hover:shadow-md text-sm font-semibold"
+            >
+              <CheckCircle2 className="h-4 w-4" />
               Select All on Page ({paginatedAlerts.length})
-            </Button>
+            </button>
             {filteredAndSortedAlerts.length > paginatedAlerts.length && (
-              <span className="text-sm text-gray-500">
+              <span className="text-sm text-gray-600 font-medium">
                 Showing {startIndex + 1}-{Math.min(endIndex, totalAlerts)} of {totalAlerts} alerts
               </span>
             )}
@@ -677,37 +693,37 @@ export default function AlertFeed() {
                           </div>
 
                           <div className="flex items-center gap-2">
-                            <Button
-                              onClick={() => toggleReadStatus(alert.id, alert.isRead)}
-                              variant="ghost"
-                              size="sm"
-                              className={!alert.isRead ? "text-blue-600 hover:text-blue-800" : "text-orange-600 hover:text-orange-800"}
+                            <button
+                              onClick={() => toggleReadStatus(alert.id, alert.isRead || false)}
+                              className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg transition-all duration-200 text-xs font-semibold shadow-sm hover:shadow-md ${
+                                !alert.isRead
+                                  ? "bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700"
+                                  : "bg-orange-50 hover:bg-orange-100 border border-orange-200 text-orange-700"
+                              }`}
                             >
                               {!alert.isRead ? (
                                 <>
-                                  <Eye className="h-4 w-4 mr-1" />
+                                  <Eye className="h-3.5 w-3.5" />
                                   Mark Read
                                 </>
                               ) : (
                                 <>
-                                  <EyeOff className="h-4 w-4 mr-1" />
+                                  <EyeOff className="h-3.5 w-3.5" />
                                   Mark Unread
                                 </>
                               )}
-                            </Button>
-                            
+                            </button>
+
                             {!alert.isDismissed ? (
-                              <Button
+                              <button
                                 onClick={() => dismissAlert(alert.id)}
-                                variant="ghost"
-                                size="sm"
-                                className="text-gray-600 hover:text-red-600"
+                                className="inline-flex items-center gap-1 px-3 py-1.5 bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 rounded-lg transition-all duration-200 text-xs font-semibold shadow-sm hover:shadow-md"
                               >
-                                <X className="h-4 w-4 mr-1" />
+                                <X className="h-3.5 w-3.5" />
                                 Dismiss
-                              </Button>
+                              </button>
                             ) : (
-                              <span className="text-xs text-gray-500 italic">
+                              <span className="text-xs text-gray-500 italic px-3 py-1.5">
                                 Dismissed
                               </span>
                             )}
@@ -722,23 +738,22 @@ export default function AlertFeed() {
 
             {/* Pagination */}
             {totalPages > 1 && (
-              <div className="p-6 border-t border-gray-200 bg-gray-50">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm text-gray-600">
+              <div className="p-6 border-t border-gray-200 bg-gradient-to-r from-gray-50 to-slate-50">
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="text-sm text-gray-600 font-medium">
                     Showing {startIndex + 1}-{Math.min(endIndex, totalAlerts)} of {totalAlerts} alerts
                   </div>
-                  
+
                   <div className="flex items-center gap-2">
-                    <Button
+                    <button
                       onClick={() => goToPage(currentPage - 1)}
                       disabled={currentPage === 1}
-                      variant="outline"
-                      size="sm"
+                      className="inline-flex items-center gap-1 px-3 py-2 bg-white hover:bg-violet-50 border border-gray-200 disabled:border-gray-100 text-gray-700 disabled:text-gray-400 rounded-lg transition-all duration-200 shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed text-sm font-semibold"
                     >
                       <ChevronLeft className="h-4 w-4" />
                       Previous
-                    </Button>
-                    
+                    </button>
+
                     <div className="flex items-center gap-1">
                       {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
                         let pageNum
@@ -751,30 +766,31 @@ export default function AlertFeed() {
                         } else {
                           pageNum = currentPage - 2 + i
                         }
-                        
+
                         return (
-                          <Button
+                          <button
                             key={pageNum}
                             onClick={() => goToPage(pageNum)}
-                            variant={currentPage === pageNum ? "default" : "outline"}
-                            size="sm"
-                            className="w-8 h-8 p-0"
+                            className={`w-9 h-9 rounded-lg transition-all duration-200 text-sm font-bold shadow-sm ${
+                              currentPage === pageNum
+                                ? "bg-gradient-to-r from-violet-500 to-purple-500 text-white shadow-md scale-110"
+                                : "bg-white hover:bg-violet-50 border border-gray-200 text-gray-700 hover:shadow-md"
+                            }`}
                           >
                             {pageNum}
-                          </Button>
+                          </button>
                         )
                       })}
                     </div>
-                    
-                    <Button
+
+                    <button
                       onClick={() => goToPage(currentPage + 1)}
                       disabled={currentPage === totalPages}
-                      variant="outline"
-                      size="sm"
+                      className="inline-flex items-center gap-1 px-3 py-2 bg-white hover:bg-violet-50 border border-gray-200 disabled:border-gray-100 text-gray-700 disabled:text-gray-400 rounded-lg transition-all duration-200 shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed text-sm font-semibold"
                     >
                       Next
                       <ChevronRight className="h-4 w-4" />
-                    </Button>
+                    </button>
                   </div>
                 </div>
               </div>

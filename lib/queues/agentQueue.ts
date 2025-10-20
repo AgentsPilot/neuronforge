@@ -35,28 +35,36 @@ async function persistJobFallback(jobData) {
   }
 }
 
-// Use shared Redis connection for BullMQ queue
-const connection = getWorkerRedisConnection();
+// Singleton pattern for queue
+let queueInstance: Queue | null = null;
 
-// Create the agent execution queue with enhanced configuration
-export const agentQueue = new Queue('agent-execution', { 
-  connection,
-  defaultJobOptions: {
-    removeOnComplete: {
-      age: 24 * 60 * 60, // Keep completed jobs for 24 hours
-      count: 1000, // Keep last 1000 completed jobs
-    },
-    removeOnFail: {
-      age: 7 * 24 * 60 * 60, // Keep failed jobs for 7 days
-      count: 500, // Keep last 500 failed jobs
-    },
-    attempts: 5,
-    backoff: {
-      type: 'exponential',
-      delay: 1000, // Start with 1 second delay
-    }
+function getQueue(): Queue {
+  if (!queueInstance) {
+    const connection = getWorkerRedisConnection();
+    queueInstance = new Queue('agent-execution', {
+      connection,
+      defaultJobOptions: {
+        removeOnComplete: {
+          age: 24 * 60 * 60, // Keep completed jobs for 24 hours
+          count: 1000, // Keep last 1000 completed jobs
+        },
+        removeOnFail: {
+          age: 7 * 24 * 60 * 60, // Keep failed jobs for 7 days
+          count: 500, // Keep last 500 failed jobs
+        },
+        attempts: 3, // Reduced from 5 to 3
+        backoff: {
+          type: 'exponential',
+          delay: 2000, // Start with 2 second delay
+        }
+      }
+    });
   }
-});
+  return queueInstance;
+}
+
+// Export the queue getter
+export const agentQueue = getQueue();
 
 // Job data interface
 export interface AgentJobData {
@@ -92,6 +100,7 @@ export async function addManualExecution(
   };
 
   // Check Redis connection status
+  const connection = getWorkerRedisConnection();
   if (!connection.status || connection.status === 'end' || connection.status === 'wait') {
     await persistJobFallback(jobData);
     return {
@@ -140,6 +149,7 @@ export async function addScheduledExecution(
   };
 
   // Check Redis connection status
+  const connection = getWorkerRedisConnection();
   if (!connection.status || connection.status === 'end' || connection.status === 'wait') {
     await persistJobFallback(jobData);
     return {
@@ -250,29 +260,40 @@ export async function cleanupOldJobs(olderThanHours: number = 24) {
   };
 }
 
-// Create queue events listener
-const queueEvents = new QueueEvents('agent-execution', { connection });
+// Singleton pattern for QueueEvents
+let queueEventsInstance: QueueEvents | null = null;
 
-// Event listeners for debugging and monitoring
-queueEvents.on('completed', ({ jobId, returnvalue }) => {
-  console.log(`✅ Job ${jobId} completed`, {
-    result: returnvalue,
-    timestamp: new Date().toISOString()
-  });
-});
+function getQueueEvents(): QueueEvents {
+  if (!queueEventsInstance) {
+    const connection = getWorkerRedisConnection();
+    queueEventsInstance = new QueueEvents('agent-execution', { connection });
 
-queueEvents.on('failed', ({ jobId, failedReason }) => {
-  console.error(`❌ Job ${jobId} failed:`, {
-    error: failedReason,
-    timestamp: new Date().toISOString()
-  });
-});
+    // Event listeners for debugging and monitoring
+    queueEventsInstance.on('completed', ({ jobId, returnvalue }) => {
+      console.log(`✅ Job ${jobId} completed`, {
+        result: returnvalue,
+        timestamp: new Date().toISOString()
+      });
+    });
 
-queueEvents.on('stalled', ({ jobId }) => {
-  console.warn(`⚠️ Job ${jobId} stalled`, {
-    timestamp: new Date().toISOString()
-  });
-});
+    queueEventsInstance.on('failed', ({ jobId, failedReason }) => {
+      console.error(`❌ Job ${jobId} failed:`, {
+        error: failedReason,
+        timestamp: new Date().toISOString()
+      });
+    });
+
+    queueEventsInstance.on('stalled', ({ jobId }) => {
+      console.warn(`⚠️ Job ${jobId} stalled`, {
+        timestamp: new Date().toISOString()
+      });
+    });
+  }
+  return queueEventsInstance;
+}
+
+// Initialize queue events
+const queueEvents = getQueueEvents();
 
 // Export the queue instance and functions
 export default agentQueue;
