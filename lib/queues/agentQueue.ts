@@ -1,32 +1,60 @@
 // /lib/queues/agentQueue.ts
 // Enhanced BullMQ queue for agent executions with unified scheduling
 
-import { Queue } from 'bullmq';
-import { Redis } from 'ioredis';
+import { Queue, Job, QueueEvents } from 'bullmq';
+import { getWorkerRedisConnection } from '@/lib/redis';
 import { v4 as uuidv4 } from 'uuid';
+import { createServerClient } from '@supabase/ssr';
+// Use same fallback table name as worker
+const FALLBACK_TABLE = 'agent_job_fallback';
+const supabase = createServerClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  {
+    cookies: {
+      get: () => undefined,
+      set: () => {},
+      remove: () => {},
+    },
+  }
+);
 
-// Redis connection - FIXED to use proper Redis URL
-const connection = new Redis(process.env.REDIS_URL!, {
-  maxRetriesPerRequest: null,
-  retryDelayOnFailover: 100,
-  lazyConnect: true,
-  connectTimeout: 10000,
-  commandTimeout: 30000,
-  enableReadyCheck: false,
-  maxLoadingTimeout: 10000,
-});
+async function persistJobFallback(jobData) {
+  try {
+    const { error } = await supabase.from(FALLBACK_TABLE).insert({
+      job_data: jobData,
+      created_at: new Date().toISOString(),
+    });
+    if (error) {
+      console.error('Failed to persist job to fallback table:', error);
+    } else {
+      console.warn('Job persisted to fallback table due to Redis unavailability');
+    }
+  } catch (err) {
+    console.error('Error persisting job to fallback table:', err);
+  }
+}
 
-// Create the agent execution queue
+// Use shared Redis connection for BullMQ queue
+const connection = getWorkerRedisConnection();
+
+// Create the agent execution queue with enhanced configuration
 export const agentQueue = new Queue('agent-execution', { 
   connection,
   defaultJobOptions: {
-    removeOnComplete: 100,
-    removeOnFail: 50,
-    attempts: 3,
+    removeOnComplete: {
+      age: 24 * 60 * 60, // Keep completed jobs for 24 hours
+      count: 1000, // Keep last 1000 completed jobs
+    },
+    removeOnFail: {
+      age: 7 * 24 * 60 * 60, // Keep failed jobs for 7 days
+      count: 500, // Keep last 500 failed jobs
+    },
+    attempts: 5,
     backoff: {
       type: 'exponential',
-      delay: 5000,
-    },
+      delay: 1000, // Start with 1 second delay
+    }
   }
 });
 
@@ -63,6 +91,14 @@ export async function addManualExecution(
     override_user_prompt: overrideUserPrompt,
   };
 
+  // Check Redis connection status
+  if (!connection.status || connection.status === 'end' || connection.status === 'wait') {
+    await persistJobFallback(jobData);
+    return {
+      jobId: 'fallback',
+      executionId: finalExecutionId,
+    };
+  }
   const job = await agentQueue.add(
     `manual-${agentId}-${Date.now()}`,
     jobData,
@@ -71,13 +107,11 @@ export async function addManualExecution(
       delay: 0, // Execute immediately
     }
   );
-
   console.log(`✅ Added manual job for agent ${agentId}`, {
     jobId: job.id,
     executionId: finalExecutionId,
     scheduledAt: new Date().toISOString(),
   });
-
   return {
     jobId: job.id!,
     executionId: finalExecutionId,
@@ -105,6 +139,14 @@ export async function addScheduledExecution(
     timezone,
   };
 
+  // Check Redis connection status
+  if (!connection.status || connection.status === 'end' || connection.status === 'wait') {
+    await persistJobFallback(jobData);
+    return {
+      jobId: 'fallback',
+      executionId: finalExecutionId,
+    };
+  }
   const job = await agentQueue.add(
     `scheduled-${agentId}-${Date.now()}`,
     jobData,
@@ -116,14 +158,12 @@ export async function addScheduledExecution(
       },
     }
   );
-
   console.log(`✅ Added scheduled job for agent ${agentId}`, {
     jobId: job.id,
     executionId: finalExecutionId,
     cronExpression,
     timezone,
   });
-
   return {
     jobId: job.id!,
     executionId: finalExecutionId,
@@ -176,28 +216,62 @@ export async function getQueueStats() {
 }
 
 /**
- * Clean up old jobs
+ * Clean up old jobs and perform queue maintenance
  */
 export async function cleanupOldJobs(olderThanHours: number = 24) {
   const cutoffTime = Date.now() - (olderThanHours * 60 * 60 * 1000);
   
-  await agentQueue.clean(cutoffTime, 100, 'completed');
-  await agentQueue.clean(cutoffTime, 50, 'failed');
+  // Clean up completed jobs
+  const completedCount = await agentQueue.clean(cutoffTime, 1000, 'completed');
   
-  console.log(`✅ Cleaned up jobs older than ${olderThanHours} hours`);
+  // Clean up failed jobs
+  const failedCount = await agentQueue.clean(cutoffTime, 500, 'failed');
+  
+  // Clean up delayed jobs
+  const delayedCount = await agentQueue.clean(cutoffTime, 100, 'delayed');
+
+  // Clean up waiting jobs
+  const waitingCount = await agentQueue.clean(cutoffTime, 100, 'waiting');
+  
+  console.log(`✅ Queue maintenance completed:`, {
+    timestamp: new Date().toISOString(),
+    completedJobsRemoved: completedCount,
+    failedJobsRemoved: failedCount,
+    delayedJobsRemoved: delayedCount,
+    waitingJobsRemoved: waitingCount,
+    olderThan: `${olderThanHours} hours`
+  });
+  
+  return {
+    completedJobsRemoved: completedCount,
+    failedJobsRemoved: failedCount,
+    delayedJobsRemoved: delayedCount,
+    waitingJobsRemoved: waitingCount
+  };
 }
 
-// Event listeners for debugging
-agentQueue.on('completed', (job) => {
-  console.log(`✅ Job ${job.id} completed for agent ${job.data?.agent_id}`);
+// Create queue events listener
+const queueEvents = new QueueEvents('agent-execution', { connection });
+
+// Event listeners for debugging and monitoring
+queueEvents.on('completed', ({ jobId, returnvalue }) => {
+  console.log(`✅ Job ${jobId} completed`, {
+    result: returnvalue,
+    timestamp: new Date().toISOString()
+  });
 });
 
-agentQueue.on('failed', (job, err) => {
-  console.error(`❌ Job ${job?.id} failed for agent ${job?.data?.agent_id}:`, err.message);
+queueEvents.on('failed', ({ jobId, failedReason }) => {
+  console.error(`❌ Job ${jobId} failed:`, {
+    error: failedReason,
+    timestamp: new Date().toISOString()
+  });
 });
 
-agentQueue.on('stalled', (jobId) => {
-  console.warn(`⚠️ Job ${jobId} stalled`);
+queueEvents.on('stalled', ({ jobId }) => {
+  console.warn(`⚠️ Job ${jobId} stalled`, {
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Export the queue instance and functions

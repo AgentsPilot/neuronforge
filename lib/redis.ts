@@ -6,7 +6,7 @@ let workerRedis: Redis | null = null;
 export function getRedisConnection(): Redis {
   if (!redis) {
     redis = new Redis(process.env.REDIS_URL!, {
-      maxRetriesPerRequest: 3,
+      maxRetriesPerRequest: null,
       retryDelayOnFailover: 100,
     });
   }
@@ -18,6 +18,8 @@ export function getWorkerRedisConnection(): Redis {
   if (!workerRedis) {
     workerRedis = new Redis(process.env.REDIS_URL!, {
       maxRetriesPerRequest: null, // Required for BullMQ workers
+      commandTimeout: 120000, // 2 minutes
+      connectTimeout: 10000,  // 10 seconds
       retryDelayOnFailover: 100,
     });
   }

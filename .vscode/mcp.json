@@ -1,0 +1,17 @@
+{
+  "servers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "@playwright/mcp@latest",
+        "--debug",
+        "--headed",
+        "--viewport-size=1280,720",
+        "--artifacts-dir=./debug-artifacts",
+        "--save-trace",
+        "--screenshot-on-failure",
+        "--allow-origin=http://localhost:3000"
+      ]
+    }
+  }
+}

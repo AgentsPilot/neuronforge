@@ -473,10 +473,20 @@ export async function POST(req: Request) {
  * Get execution status for agents
  */
 export async function GET(request: Request) {
+  console.log('GET /api/run-agent handler reached', { url: request.url });
   try {
     const { searchParams } = new URL(request.url);
     const agent_id = searchParams.get('agent_id');
     const execution_id = searchParams.get('execution_id');
+    const status_only = searchParams.get('status_only');
+
+    // If status_only is present but no agent_id or execution_id, return a valid JSON error
+    if ((status_only === 'true' || status_only === '1') && !agent_id && !execution_id) {
+      return NextResponse.json(
+        { error: 'Must provide agent_id or execution_id for status query.' },
+        { status: 400 }
+      );
+    }
 
     if (!agent_id && !execution_id) {
       return NextResponse.json(
@@ -485,18 +495,43 @@ export async function GET(request: Request) {
       );
     }
 
-    const cookieStore = await cookies()
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          get: (name) => cookieStore.get(name)?.value,
-          set: async () => {},
-          remove: async () => {},
-        },
-      }
-    )
+    // Check required env vars
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+      return NextResponse.json(
+        { error: 'Supabase environment variables missing' },
+        { status: 500 }
+      );
+    }
+
+    let cookieStore;
+    try {
+      cookieStore = await cookies();
+    } catch (cookieError) {
+      return NextResponse.json(
+        { error: 'Failed to get cookies', details: cookieError instanceof Error ? cookieError.message : String(cookieError) },
+        { status: 500 }
+      );
+    }
+
+    let supabase;
+    try {
+      supabase = createServerClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        {
+          cookies: {
+            get: (name) => cookieStore.get(name)?.value,
+            set: async () => {},
+            remove: async () => {},
+          },
+        }
+      );
+    } catch (supabaseError) {
+      return NextResponse.json(
+        { error: 'Failed to create Supabase client', details: supabaseError instanceof Error ? supabaseError.message : String(supabaseError) },
+        { status: 500 }
+      );
+    }
 
     let query = supabase
       .from('agent_executions')
@@ -525,8 +560,9 @@ export async function GET(request: Request) {
     });
 
   } catch (error) {
+    // Always return valid JSON, never HTML
     return NextResponse.json(
-      { error: 'Internal server error', message: error instanceof Error ? error.message : 'Unknown error' },
+      { error: 'Internal server error', message: error instanceof Error ? error.message : String(error) },
       { status: 500 }
     );
   }

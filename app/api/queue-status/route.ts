@@ -1,17 +1,12 @@
 // /app/api/queue-status/route.ts
 import { NextResponse } from 'next/server';
 import { Queue } from 'bullmq';
-import { Redis } from 'ioredis';
+import { getWorkerRedisConnection } from '@/lib/redis';
 
 export async function GET() {
   try {
-    // Create Redis connection
-    const redis = new Redis({
-      host: 'redis-18958.c14.us-east-1-2.ec2.redns.redis-cloud.com',
-      port: 18958,
-      password: '9T1oNBiaPUwALct21DV7kT2uYQFGafsh',
-      maxRetriesPerRequest: 3,
-    });
+    // Use shared Redis connection
+    const redis = getWorkerRedisConnection();
 
     // Create queue instance
     const agentQueue = new Queue('agent-execution', {
@@ -65,13 +60,19 @@ export async function GET() {
       }
     };
 
-    await redis.disconnect();
+  // Do not disconnect singleton connection
 
     return NextResponse.json(stats);
   } catch (error) {
     console.error('Queue status error:', error);
+    let details = 'Unknown error';
+    if (error instanceof Error) {
+      details = error.message;
+    } else if (typeof error === 'string') {
+      details = error;
+    }
     return NextResponse.json(
-      { error: 'Failed to get queue status', details: error.message },
+      { error: 'Failed to get queue status', details },
       { status: 500 }
     );
   }

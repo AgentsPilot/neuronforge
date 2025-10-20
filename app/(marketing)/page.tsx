@@ -1314,29 +1314,6 @@ export default function AgentPilotLanding() {
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="relative z-10 border-t border-white/5 py-12">
-        <div className="max-w-7xl mx-auto px-6">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-6">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center font-bold">
-                AP
-              </div>
-              <span className="font-bold">AgentPilot</span>
-            </div>
-            
-            <div className="flex items-center gap-8 text-sm text-slate-400">
-              <a href="#" className="hover:text-white transition">Privacy</a>
-              <a href="#" className="hover:text-white transition">Terms</a>
-              <a href="#" className="hover:text-white transition">Contact</a>
-            </div>
-            
-            <div className="text-sm text-slate-500">
-              © 2025 AgentPilot. All rights reserved.
-            </div>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 }

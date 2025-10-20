@@ -1,23 +1,15 @@
 // /lib/queue/agentWorker.ts
 // Enhanced BullMQ worker that supports both legacy and unified execution tracking
 
-import { Worker, Job } from 'bullmq';
-import { Redis } from 'ioredis';
+import { Worker, Job, Queue } from 'bullmq';
+import { getWorkerRedisConnection } from '@/lib/redis';
 import { createServerClient } from '@supabase/ssr'
 import { runAgentWithContext } from '@/lib/utils/runAgentWithContext';
 import { AgentJobData } from './agentQueue';
 import parser from 'cron-parser';
 
-// Redis connection - FIXED to use proper Redis URL
-const connection = new Redis(process.env.REDIS_URL!, {
-  maxRetriesPerRequest: null,
-  retryDelayOnFailover: 100,
-  lazyConnect: true,
-  connectTimeout: 10000,
-  commandTimeout: 30000, // Increase from 5000 to 30000
-  enableReadyCheck: false,
-  maxLoadingTimeout: 10000,
-});
+// Use shared Redis connection for BullMQ worker
+const connection = getWorkerRedisConnection();
 // Create Supabase client for worker
 const supabase = createServerClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -30,6 +22,48 @@ const supabase = createServerClient(
     },
   }
 );
+
+// Fallback job persistence table name
+const FALLBACK_TABLE = 'agent_job_fallback';
+
+// Helper: Save job to fallback table if Redis is unreachable
+async function persistJobFallback(jobData) {
+  try {
+    const { error } = await supabase.from(FALLBACK_TABLE).insert({
+      job_data: jobData,
+      created_at: new Date().toISOString(),
+    });
+    if (error) {
+      console.error('Failed to persist job to fallback table:', error);
+    } else {
+      console.warn('Job persisted to fallback table due to Redis unavailability');
+    }
+  } catch (err) {
+    console.error('Error persisting job to fallback table:', err);
+  }
+}
+
+// Helper: Replay jobs from fallback table when Redis is restored
+async function replayFallbackJobs(queue) {
+  try {
+    const { data, error } = await supabase.from(FALLBACK_TABLE).select('*');
+    if (error) {
+      console.error('Failed to fetch fallback jobs:', error);
+      return;
+    }
+    for (const row of data) {
+      try {
+        await queue.add('agent-execution', row.job_data);
+        await supabase.from(FALLBACK_TABLE).delete().eq('id', row.id);
+        console.log('Replayed fallback job to Redis queue:', row.id);
+      } catch (err) {
+        console.error('Error replaying fallback job:', err);
+      }
+    }
+  } catch (err) {
+    console.error('Error in fallback job replay:', err);
+  }
+}
 
 /**
  * Calculate the next run time for a cron expression
@@ -463,30 +497,67 @@ async function processAgentJob(job: Job<AgentJobData>) {
  * Create and start the agent worker
  */
 export function createAgentWorker() {
+  const queue = new Queue('agent-execution', { connection });
   const worker = new Worker<AgentJobData>(
     'agent-execution',
     processAgentJob,
     {
       connection,
-      concurrency: parseInt(process.env.AGENT_WORKER_CONCURRENCY || '3'), // Process up to 3 agents simultaneously
-      removeOnComplete: 100,
-      removeOnFail: 50,
-      // Job timing settings
-      maxStalledCount: 2,
-      stalledInterval: 30 * 1000, // 30 seconds
-      maxStalls: 1,
+      concurrency: parseInt(process.env.AGENT_WORKER_CONCURRENCY || '3'),
+      autorun: true,
+      lockDuration: 90000,
+      removeOnComplete: {
+        age: 24 * 60 * 60,
+        count: 1000,
+      },
+      removeOnFail: {
+        age: 7 * 24 * 60 * 60,
+        count: 500,
+      },
+      maxStalledCount: 3,
+      stalledInterval: 45000,
+      drainDelay: 3,
+      lockRenewTime: 30000
     }
   );
+
+  // Worker pause/resume logic
+  let paused = false;
+  async function pauseWorker() {
+    if (!paused) {
+      await worker.pause();
+      paused = true;
+      console.warn('⏸️ Agent worker paused due to Redis connection error');
+    }
+  }
+  async function resumeWorker() {
+    if (paused) {
+      await worker.resume();
+      paused = false;
+      console.log('▶️ Agent worker resumed after Redis recovery');
+      // Replay fallback jobs when Redis is restored
+      await replayFallbackJobs(queue);
+    }
+  }
+
+  // Listen for Redis connection events
+  connection.on('error', (err) => {
+  pauseWorker();
+  });
+  connection.on('end', () => {
+  pauseWorker();
+  });
+  connection.on('ready', () => {
+  resumeWorker();
+  });
 
   // Event listeners for monitoring and debugging
   worker.on('ready', () => {
     console.log('🔧 Agent worker is ready and waiting for jobs');
   });
-
   worker.on('active', (job) => {
     console.log(`⚡ Agent worker started processing job ${job.id} (${job.data.execution_type})`);
   });
-
   worker.on('completed', (job, result) => {
     console.log(`✅ Agent worker completed job ${job.id}:`, {
       agentId: job.data.agent_id,
@@ -494,7 +565,6 @@ export function createAgentWorker() {
       duration: result?.duration,
     });
   });
-
   worker.on('failed', (job, err) => {
     console.error(`❌ Agent worker failed job ${job?.id}:`, {
       agentId: job?.data?.agent_id,
@@ -503,15 +573,12 @@ export function createAgentWorker() {
       attempts: job?.attemptsMade,
     });
   });
-
   worker.on('stalled', (jobId) => {
     console.warn(`⚠️ Agent worker job ${jobId} stalled`);
   });
-
   worker.on('error', (err) => {
     console.error('❌ Agent worker error:', err);
   });
-
   return worker;
 }
 
