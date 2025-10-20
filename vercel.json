@@ -3,6 +3,10 @@
     {
       "path": "/api/run-scheduled-agents",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/worker",
+      "schedule": "* * * * *"
     }
   ]
 }
