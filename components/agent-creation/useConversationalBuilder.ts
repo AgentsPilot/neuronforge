@@ -6,6 +6,10 @@ import {
   ClarificationQuestion,
   ClarityAnalysis,
   RequirementItem,
+  PromptRequestPayload,
+  PromptResponsePayload,
+  ClarificationQuestionRequestPayload,
+  EnhancedPromptRequestPayload
 } from './types';
 import { useProjectState } from './useProjectState';
 import { useMessageHandlers } from './useMessageHandlers';
@@ -94,17 +98,17 @@ export function useConversationalBuilder(params: {
   });
 
   // STEP 1: Analyze prompt clarity
-  const analyzePromptClarity = async (prompt: string): Promise<ClarityAnalysis> => {
-    if (!user?.id || !prompt?.trim()) {
+  const analyzePromptClarity = async (originalPrompt: string): Promise<PromptResponsePayload> => {
+    if (!user?.id || !originalPrompt?.trim()) {
       throw new Error('Invalid parameters for analysis');
     }
 
-    const requestPayload = {
-      prompt: prompt.trim(),
+    const requestPayload: PromptRequestPayload ={
+      prompt: originalPrompt.trim(),
       userId: user.id,
       sessionId: sessionId.current,
       agentId: agentId.current,
-      connected_plugins: user?.connectedPlugins || {},
+      connectedPlugins: [],
       bypassPluginValidation: false,
     };
 
@@ -115,63 +119,83 @@ export function useConversationalBuilder(params: {
       agentId: agentId.current,
     });
 
-    const response = await fetch('/api/analyze-prompt-clarity', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user-id': user.id,
-        'x-session-id': sessionId.current,
-        'x-agent-id': agentId.current,
-      },
-      body: JSON.stringify(requestPayload),
-    });
+    try {
+      const response = await fetch('/api/analyze-prompt-clarity', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': user.id,
+          'x-session-id': sessionId.current,
+          'x-agent-id': agentId.current,
+        },
+        body: JSON.stringify(requestPayload),
+      });
 
-    if (!response.ok) {
-      throw new Error(`Analysis API failed: ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`Analysis API failed: ${response.status}`);
+      }
+
+      const result = await response.json() as PromptResponsePayload;
+      console.log('✅ STEP 1: Analysis API success');
+      return result;
     }
-
-    const result = await response.json();
-    console.log('✅ STEP 1: Analysis API success');
-    return result;
+    catch (err) { 
+      console.error('Analysis API call error:', err);
+      throw err;
+    }    
   };
 
   // STEP 2: Generate clarification questions
-  const generateClarificationQuestions = async (originalPrompt: string, analysisResult: ClarityAnalysis): Promise<any> => {
+  const generateClarificationQuestions = async (originalPrompt: string, analyzeResponsePayload: PromptResponsePayload): Promise<PromptResponsePayload> => {
     console.log('🚀 STEP 2: Making clarification questions API call');
+    try {      
+      const analysisResult: ClarityAnalysis = analyzeResponsePayload.analysis;
+      const response = await fetch('/api/generate-clarification-questions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': user?.id || 'anonymous',
+          'x-session-id': sessionId.current,
+          'x-agent-id': agentId.current,
+        },
+        body: JSON.stringify({
+          prompt: originalPrompt,
+          agentName: `Agent for: ${originalPrompt.slice(0, 50)}...`,
+          description: `Automated agent based on: ${originalPrompt}`,
+          connectedPlugins: analyzeResponsePayload.connectedPlugins || [],
+          connectedPluginsData: analyzeResponsePayload.connectedPluginsData || [],
+          userId: user?.id,
+          agentId: agentId.current,
+          sessionId: sessionId.current,
+          analysis: analysisResult,
+        } as ClarificationQuestionRequestPayload),
+      });
 
-    const response = await fetch('/api/generate-clarification-questions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user-id': user?.id || 'anonymous',
-        'x-session-id': sessionId.current,
-        'x-agent-id': agentId.current,
-      },
-      body: JSON.stringify({
-        original_prompt: originalPrompt,
-        agent_name: `Agent for: ${originalPrompt.slice(0, 50)}...`,
-        description: `Automated agent based on: ${originalPrompt}`,
-        connected_plugins: user?.connectedPlugins || {},
-        user_id: user?.id,
-        agentId: agentId.current,
-        sessionId: sessionId.current,
-        clarity_analysis: analysisResult,
-      }),
-    });
+      if (!response.ok) {
+        throw new Error(`Clarification questions API failed: ${response.status}`);
+      }
 
-    if (!response.ok) {
-      throw new Error(`Clarification questions API failed: ${response.status}`);
+      const result = await response.json() as PromptResponsePayload;
+      console.log('✅ STEP 2: Clarification Questions API success:', result);
+      return result;
     }
-
-    const result = await response.json();
-    console.log('✅ STEP 2: Clarification Questions API success');
-    return result;
+    catch (err) { 
+      console.error('Clarification Questions API call error:', err);
+      throw err;
+    }   
   };
 
   // STEP 3: Enhancement logic
   const startEnhancement = useCallback(
-    async (prompt: string, finalAnswers: Record<string, string>) => {
+    async (originalPrompt: string, finalAnswers: Record<string, string>) => {
       console.log('🚀 STEP 3: Starting enhancement with CONSISTENT agent ID:', agentId.current);
+
+      const conPlugins = projectState.connectedPlugins || [];
+      const conPluginsData = projectState.connectedPluginsData || [];
+      if (conPlugins) {        
+        console.log('Received Connected Plugins from Clarification Step:', conPlugins);
+        console.log('Received Connected Plugins Data from Clarification Step:', conPluginsData);
+      }      
 
       // Validation checks
       if (enhancementStarted.current && projectState.enhancementComplete) {
@@ -184,7 +208,7 @@ export function useConversationalBuilder(params: {
         return;
       }
 
-      if (!prompt?.trim() || !user?.id) {
+      if (!originalPrompt?.trim() || !user?.id) {
         addMessage('I encountered an error. Please try again.', 'ai');
         return;
       }
@@ -205,15 +229,16 @@ export function useConversationalBuilder(params: {
             'x-agent-id': agentId.current,
           },
           body: JSON.stringify({
-            prompt: prompt.trim(),
+            prompt: originalPrompt.trim(),
             clarificationAnswers: finalAnswers,
             userId: user.id,
             sessionId: sessionId.current,
             agentId: agentId.current,
-            connected_plugins: user?.connectedPlugins || {},
+            connectedPlugins: conPlugins,
+            connectedPluginsData: conPluginsData,
             missingPlugins: projectState.missingPlugins || [],
             pluginWarning: projectState.pluginWarning,
-          }),
+          } as EnhancedPromptRequestPayload),
         });
 
         if (!response.ok) {
@@ -221,9 +246,10 @@ export function useConversationalBuilder(params: {
         }
 
         const result = await response.json();
+        console.log('Enhanced Prompt Response: ', result);
         
         // Update project state with enhancement results
-        const connectedServiceKeys = getConnectedServiceKeys(result);
+        const connectedServiceKeys = getConnectedServiceKeys(result.metadata.connectedPlugins || []);
         const serviceDisplayNames = getServiceDisplayNames(connectedServiceKeys, result.connectedPluginData);
         
         setProjectState((prev) => ({
@@ -494,53 +520,60 @@ This plan explains step-by-step what your agent will do. You can approve this pl
     hasProcessedInitialPrompt.current = true;
     isCurrentlyProcessing.current = true;
     isInitialized.current = true;
-    
+    const prompt = initialPrompt.trim();
+
     const processPrompt = async () => {
       try {
         setIsProcessing(true);
-        addMessage(initialPrompt, 'user');
+        addMessage(prompt, 'user');
         
         setProjectState((prev) => ({ 
           ...prev, 
-          originalPrompt: initialPrompt.trim(),
+          originalPrompt: prompt,
           hasProcessedInitial: true,
           isInitialized: true,
           workflowPhase: 'questions'
         }));
 
         // Step 1: Analyze prompt clarity
-        const analysis = await analyzePromptClarity(initialPrompt.trim());
+        const responsePromptClarity = await analyzePromptClarity(prompt);
+        const analysisPromptClarity = responsePromptClarity.analysis;
         
         // FIXED: Handle plugin warnings from analysis
-        if (analysis.pluginWarning) {
-          console.log('Adding plugin warning message from analysis:', analysis.pluginWarning.message);
-          addMessage(analysis.pluginWarning.message, 'ai');
+        if (analysisPromptClarity.pluginWarning) {
+          console.log('Adding plugin warning message from analysis:', analysisPromptClarity.pluginWarning.message);
+          addMessage(analysisPromptClarity.pluginWarning.message, 'ai');
           setProjectState((prev) => ({
             ...prev,
-            missingPlugins: analysis.pluginWarning?.missingServices || [],
-            pluginWarning: analysis.pluginWarning
+            missingPlugins: analysisPromptClarity.pluginWarning?.missingPlugins || [],
+            pluginWarning: analysisPromptClarity.pluginWarning
           }));
         }
         
-        updateRequirementsFromAnalysis(analysis);
+        updateRequirementsFromAnalysis(responsePromptClarity);
 
         // Step 2 & 3: Questions or direct enhancement
-        if (analysis.needsClarification && analysis.clarityScore < 90) {
-          const clarificationResult = await generateClarificationQuestions(initialPrompt.trim(), analysis);
+        if (analysisPromptClarity.needsClarification && analysisPromptClarity.clarityScore < 90) {          
+          const resClarification = await generateClarificationQuestions(prompt, responsePromptClarity);
           
-          // Handle plugin warnings from clarification API (if different from analysis)
-          if (clarificationResult.pluginWarning && !analysis.pluginWarning) {
-            console.log('Adding plugin warning message from clarification:', clarificationResult.pluginWarning.message);
-            addMessage(clarificationResult.pluginWarning.message, 'ai');
-            setProjectState((prev) => ({
-              ...prev,
-              missingPlugins: clarificationResult.pluginWarning?.missingServices || [],
-              pluginWarning: clarificationResult.pluginWarning
-            }));
-          }
+          // const analysisClarificationQuestions = responseClarificationQuestions.analysis;
+
+          // // TI FIX: this will not be triggered as generateClarificationQuestions returns only questions and not performes any analysis.
+          // // Handle plugin warnings from clarification API (if different from analysis)
+          // if (analysisClarificationQuestions && analysisClarificationQuestions.pluginWarning && !analysisPromptClarity.pluginWarning) {
+          //   console.log('Adding plugin warning message from clarification:', analysisClarificationQuestions.pluginWarning.message);
+          //   addMessage(analysisClarificationQuestions.pluginWarning.message, 'ai');
+          //   setProjectState((prev) => ({
+          //     ...prev,
+          //     missingPlugins: analysisClarificationQuestions.pluginWarning?.missingPlugins || [],
+          //     pluginWarning: analysisClarificationQuestions.pluginWarning
+          //   }));
+          // }
           
-          if (clarificationResult.questions && clarificationResult.questions.length > 0) {
-            const validQuestions = clarificationResult.questions.filter((q: any) => 
+          const analysis = resClarification.analysis;
+          const questionsSequence = analysis ? analysis.questionsSequence : [];
+          if (questionsSequence && questionsSequence.length > 0) {
+            const validQuestions = questionsSequence.filter((q: ClarificationQuestion) => 
               q?.id && q?.question && q?.type
             );
             
@@ -555,13 +588,15 @@ This plan explains step-by-step what your agent will do. You can approve this pl
                 currentQuestionIndex: 0,
                 isProcessingQuestion: false,
                 questionsWithVisibleOptions: initialVisible,
-                clarityScore: analysis.clarityScore || 50
+                clarityScore: analysis.clarityScore || 50,
+                connectedPlugins: resClarification.connectedPlugins || [],
+                connectedPluginsData: resClarification.connectedPluginsData || [],
               }));
 
               console.log('🎯 3-API sequence: Questions setup complete. User can now answer questions.');
             } else {
               addMessage('I need more details, but let me enhance your request directly...', 'ai');
-              setTimeout(() => startEnhancement(initialPrompt.trim(), {}), 1000);
+              setTimeout(() => startEnhancement(prompt, {}), 1000);
             }
           } else {
             addMessage('Let me enhance your request directly...', 'ai');
@@ -569,13 +604,13 @@ This plan explains step-by-step what your agent will do. You can approve this pl
           }
         } else {
           addMessage('Your request is very clear. Let me enhance it...', 'ai');
-          setTimeout(() => startEnhancement(initialPrompt.trim(), {}), 1000);
+          setTimeout(() => startEnhancement(prompt, {}), 1000);
         }
         
       } catch (err) {
         console.error('❌ 3-API sequence error:', err);
         addMessage('I encountered an error analyzing your request. Let me try to enhance it directly...', 'ai');
-        setTimeout(() => startEnhancement(initialPrompt.trim(), {}), 1000);
+        setTimeout(() => startEnhancement(prompt, {}), 1000);
       } finally {
         setIsProcessing(false);
         isCurrentlyProcessing.current = false;
@@ -585,7 +620,7 @@ This plan explains step-by-step what your agent will do. You can approve this pl
     setTimeout(processPrompt, 500);
     
   }, [
-    initialPrompt, 
+    prompt, 
     shouldSkipAIProcessing, 
     projectState.originalPrompt, 
     projectState.conversationCompleted, 

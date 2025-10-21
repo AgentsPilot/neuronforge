@@ -4,6 +4,7 @@ import {
   ClarityAnalysis,
   ClarificationQuestion,
   RequirementItem,
+  PromptResponsePayload
 } from './types';
 
 interface UseProjectStateParams {
@@ -58,6 +59,9 @@ export function useProjectState({
       missingPlugins: [],
       requiredServices: [],
       suggestions: [],
+      connectedPlugins: [],
+      connectedPluginsData: [],
+      pluginWarning: null,
       questionsWithVisibleOptions: new Set(),
       hasProcessedInitial: false,
       sessionId: sessionId,
@@ -127,19 +131,17 @@ export function useProjectState({
   }, [user?.connectedPlugins]);
 
   // Get connected service keys with proper fallback
-  const getConnectedServiceKeys = useCallback((apiResponse?: any): string[] => {
+  const getConnectedServiceKeys = useCallback((connectedPlugins?: string[]): string[] => {
     // Priority 1: API response data (most up-to-date)
-    if (apiResponse?.connectedPluginData && Array.isArray(apiResponse.connectedPluginData)) {
-      return apiResponse.connectedPluginData.map(p => p.key);
-    }
-    
+    if (connectedPlugins && Array.isArray(connectedPlugins)) {
+      return connectedPlugins;
     // Priority 2: UserProvider data (should be primary source after auth)
-    if (user?.connectedPlugins && Object.keys(user.connectedPlugins).length > 0) {
+    } else if (user?.connectedPlugins && Object.keys(user.connectedPlugins).length > 0) {
       return Object.keys(user.connectedPlugins);
-    }
-    
-    // Priority 3: Empty array (no connections)
-    return [];
+    } else { 
+      // Priority 3: Empty array (no connections)
+      return [];
+    }    
   }, [user?.connectedPlugins]);
 
   // Wait for user context to be loaded before processing
@@ -194,8 +196,13 @@ export function useProjectState({
   }, []);
 
   // Update requirements from analysis
-  const updateRequirementsFromAnalysis = useCallback((analysis: ClarityAnalysis, addMessage?: any) => {
+  const updateRequirementsFromAnalysis = useCallback((promptPayload: PromptResponsePayload, addMessage?: any) => {
     console.log('🔍 Updating requirements from analysis');
+    const analysis = promptPayload.analysis;
+    if (!analysis) {
+      console.warn('No analysis data available to update requirements');
+      return;
+    }
 
     // Handle plugin warnings from analysis - but DON'T add message here
     // The message should be added by the calling component
@@ -204,21 +211,21 @@ export function useProjectState({
       
       setProjectState((prev) => ({
         ...prev,
-        missingPlugins: analysis.pluginWarning?.missingServices || [],
+        missingPlugins: analysis.pluginWarning?.missingPlugins || [],
         pluginWarning: analysis.pluginWarning
       }));
     }
 
     // Update requirements with analysis data
-    const connectedServiceKeys = getConnectedServiceKeys(analysis);
+    const connectedServiceKeys = getConnectedServiceKeys(promptPayload.connectedPlugins);
     setProjectState((prev) => ({
       ...prev,
       requirements: prev.requirements.map(req => {
         const analysisData = (analysis.analysis as any)?.[req.id];
         
         // Special handling for actions: Filter out unconnected services
-        if (req.id === 'actions' && analysisData?.detected && analysis.pluginWarning?.missingServices) {
-          const serviceDisplayNames = getServiceDisplayNames(connectedServiceKeys, analysis.connectedPluginData);
+        if (req.id === 'actions' && analysisData?.detected && analysis.pluginWarning?.missingPlugins) {
+          const serviceDisplayNames = getServiceDisplayNames(connectedServiceKeys, promptPayload.connectedPluginsData);
           const filteredActions = connectedServiceKeys.length > 0 
             ? `Summarize and save to ${serviceDisplayNames.join(', ')}`
             : 'Actions require service connections';
@@ -280,7 +287,7 @@ export function useProjectState({
 
           // Special mapping for actions requirement based on connected services
           if (req.id === 'actions') {
-            const connectedServiceKeys = getConnectedServiceKeys();
+            const connectedServiceKeys = getConnectedServiceKeys(prev.connectedPlugins);
             const serviceDisplayNames = getServiceDisplayNames(connectedServiceKeys);
             
             if (serviceDisplayNames.length > 0) {

@@ -1,3 +1,6 @@
+
+import { IPluginContext } from '@/lib/types/plugin-definition-context'
+
 // Enhanced types with completion tracking
 export interface Message {
   id: string;
@@ -20,10 +23,17 @@ export interface ClarificationQuestion {
   id: string;
   question: string;
   dimension: string;
-  options: Array<{
+  type: string; // e.g., 'text' | 'textarea' | 'select' | 'multiselect' | 'enum' | 'date'
+  options?: Array<{
     value: string;
     label: string;
-  }>;
+    description?: string
+  }> | string[];
+  placeholder?: string;
+  required?: boolean;
+  allowCustom?: boolean;
+  followUpQuestions?: Record<string, ClarificationQuestion[]>;
+  depends_on?: string[];
 }
 
 export interface ClarityAnalysis {
@@ -68,6 +78,9 @@ export interface ProjectState {
   missingPlugins?: string[];
   requiredServices?: string[];
   suggestions?: string[];
+  pluginWarning?: any | null;
+  connectedPlugins?: string[]; // Changed to optional and generic object
+  connectedPluginsData?: IPluginContext[]; // Changed to optional and generic object
   questionsWithVisibleOptions: Set<string>;
   hasProcessedInitial: boolean;
   sessionId: string;
@@ -106,4 +119,37 @@ export interface ConversationalAgentBuilderProps {
   onCancel?: () => void;
   restoredState?: Partial<ProjectState>;
   onStateChange?: (state: ProjectState) => void;
+}
+
+export interface PromptPayload {
+  prompt: string;
+  userId: string;
+  sessionId: string;
+  agentId?: string;
+  connectedPlugins?: string[]; // Changed to optional and generic object
+}
+
+// Requests to the API
+export interface PromptRequestPayload extends PromptPayload {  
+  bypassPluginValidation?: boolean;
+}
+
+export interface ClarificationQuestionRequestPayload extends PromptPayload {  
+  agentName: string;
+  description: string;  
+  connectedPluginsData?: IPluginContext[];
+  analysis: ClarityAnalysis;
+}
+
+export interface EnhancedPromptRequestPayload extends PromptPayload {  
+  clarificationAnswers: Record<string, string>;
+  connectedPluginsData?: IPluginContext[];
+  missingPlugins?: string[];  
+  pluginWarning?: any | null;
+}
+
+// Responses from the API
+export interface PromptResponsePayload extends PromptPayload {  
+  connectedPluginsData?: IPluginContext[];
+  analysis: ClarityAnalysis;
 }

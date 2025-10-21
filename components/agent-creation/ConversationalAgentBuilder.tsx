@@ -451,7 +451,8 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
             {/* Enhanced plan controls - FIXED: Updated condition */}
             {message.type === 'ai' &&
               projectState.enhancementComplete &&
-              message.content.includes('Your Automation Plan:') &&
+              // TO FIXED IMMIDIATLY (BARAK)
+              message.content?.includes('Your Automation Plan:') &&
               !projectState.planApproved &&
               !projectState.isInReviewMode && (
                 <div className="mt-3 space-y-2">
