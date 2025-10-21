@@ -2,11 +2,11 @@
 
 import { PluginDefinition, ActionDefinition, IPluginDefinitionContext, InputTemplate, OutputTemplate } from './plugin-types';
 
-export interface IShortPluginContext {
-  name: string;
+export interface IPluginContext {
   key: string;
+  displayName: string;
   context: string;
-  key_actions: string[];
+  category: string;
   capabilities: string[];
 }
 
@@ -197,12 +197,12 @@ export class PluginDefinitionContext implements IPluginDefinitionContext {
    * Generate LLM context structure similar to LLMContext interface, but shorter
    * Returns plugin basic information and actions names formatted for LLM consumption
    */
-  toShortLLMContext(): IShortPluginContext {
-    return {
-      name: this.plugin.name,
+  toShortLLMContext(): IPluginContext {
+    return {      
       key: this.key,
+      displayName: this.getDisplayName(),
       context: this.plugin.context,
-      key_actions: this.getActionNames(),
+      category: this.plugin.category,      
       capabilities: this.capabilities,
     };
   }

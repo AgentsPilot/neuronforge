@@ -57,23 +57,47 @@ export class PluginAPIClient {
   }
 
   // Connect a plugin (initiate OAuth flow)
-  async connectPlugin(userId: string, pluginKey: string): Promise<{ success: boolean; data?: any; error?: string }> {
+  async connectPlugin(
+    userId: string,
+    pluginKey: string,
+    onAdditionalConfigRequired?: (pluginKey: string, pluginName: string, additionalConfig: any) => void
+  ): Promise<{ success: boolean; data?: any; error?: string; requiresAdditionalConfig?: boolean }> {
     if (this.debug) console.log(`DEBUG: Client - Connecting plugin ${pluginKey} for user ${userId}`);
 
     try {
       // Get plugin auth configuration from server
       const authConfig = await this.getPluginAuthConfig(pluginKey);
-      
+
       // Check if popups are blocked first
       const popupBlocked = await this.oauthHandler.testPopupBlocking();
       if (popupBlocked) {
         throw new Error('Popup blocked. Please allow popups for this site and try again.');
       }
-      
+
       // Initiate OAuth flow
       const result = await this.oauthHandler.initiateOAuth(userId, pluginKey, authConfig);
 
       if (this.debug) console.log(`DEBUG: Client - Plugin connection result for ${pluginKey}:`, { success: result.success });
+
+      // If OAuth succeeded, check if plugin requires additional configuration
+      if (result.success) {
+        const pluginDefinition = await this.getPluginDefinition(pluginKey);
+        const additionalConfig = (pluginDefinition as any)?.additional_config;
+
+        if (additionalConfig?.enabled) {
+          if (this.debug) console.log(`DEBUG: Client - Plugin ${pluginKey} requires additional configuration`);
+
+          // Trigger callback if provided
+          if (onAdditionalConfigRequired) {
+            onAdditionalConfigRequired(pluginKey, pluginDefinition.name, additionalConfig);
+          }
+
+          return {
+            ...result,
+            requiresAdditionalConfig: true
+          };
+        }
+      }
 
       return result;
     } catch (error: any) {
@@ -228,19 +252,26 @@ export class PluginAPIClient {
     }
   }
 
+  // Get plugin definition from server
+  async getPluginDefinition(pluginKey: string): Promise<any> {
+    const availablePlugins = await this.getAvailablePlugins();
+    const plugin = availablePlugins.find(p => p.key === pluginKey);
+
+    if (!plugin) {
+      throw new Error(`Plugin ${pluginKey} not found`);
+    }
+
+    return plugin;
+  }
+
   // Get plugin auth configuration from server
   private async getPluginAuthConfig(pluginKey: string): Promise<any> {
-  // Get plugin definition which includes processed auth_config
-  const availablePlugins = await this.getAvailablePlugins();
-  const plugin = availablePlugins.find(p => p.key === pluginKey);
-  
-  if (!plugin) {
-    throw new Error(`Plugin ${pluginKey} not found`);
+    // Get plugin definition which includes processed auth_config
+    const plugin = await this.getPluginDefinition(pluginKey);
+
+    // The auth_config should be included in the plugin definition from server
+    return plugin.auth_config;
   }
-  
-  // The auth_config should be included in the plugin definition from server
-  return plugin.auth_config;
-}
 
   // Batch operations
   async getMultiplePluginStatuses(userId: string, pluginKeys: string[]): Promise<Record<string, any>> {

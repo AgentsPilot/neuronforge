@@ -3,6 +3,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { gmailStrategy } from '@/lib/plugins/strategies/gmailPluginStrategy'
 import { slackStrategy } from '@/lib/plugins/strategies/slackPluginStrategy'
 import { googleDriveStrategy } from '@/lib/plugins/strategies/googleDrivePluginStrategy'
+//import { googleCalendarStrategy } from '@/lib/plugins/strategies/googleCalendarPluginStrategy'
+//import { googleSheetsStrategy } from '@/lib/plugins/strategies/googleSheetsPluginStrategy'
+//import { googleDocsStrategy } from '@/lib/plugins/strategies/googleDocsPluginStrategy'
 import { createServerClient } from '@supabase/ssr'
 
 // Mark this route as dynamic since it uses request.url and searchParams
@@ -78,6 +81,39 @@ export async function GET(request: NextRequest) {
 
       return NextResponse.json({ success: true, data: result })
     }
+
+    // Handle google-calendar plugin
+    // if (plugin === 'google-calendar') {
+    //   const result = await googleCalendarStrategy.handleOAuthCallback({
+    //     code,
+    //     state,
+    //     supabase
+    //   })
+
+    //   return NextResponse.json({ success: true, data: result })
+    // }
+
+    // Handle google-sheets plugin
+    // if (plugin === 'google-sheets') {
+    //   const result = await googleSheetsStrategy.handleOAuthCallback({
+    //     code,
+    //     state,
+    //     supabase
+    //   })
+
+    //   return NextResponse.json({ success: true, data: result })
+    // }
+
+    // Handle google-docs plugin
+    // if (plugin === 'google-docs') {
+    //   const result = await googleDocsStrategy.handleOAuthCallback({
+    //     code,
+    //     state,
+    //     supabase
+    //   })
+
+    //   return NextResponse.json({ success: true, data: result })
+    // }
 
     // Handle other plugins here if needed
     return NextResponse.json(

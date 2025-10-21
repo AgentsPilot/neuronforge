@@ -32,6 +32,27 @@
       "setup_instructions": "After OAuth, configure webhook in Meta App Dashboard > WhatsApp > Configuration. Subscribe to 'messages' field. Webhook URL will be provided after connection.",
       "verify_token_required": true,
       "profile_data_required": ["phone_number_id", "waba_id"]
+    },
+    "additional_config": {
+      "enabled": true,
+      "fields": [
+        {
+          "key": "phone_number_id",
+          "label": "Phone Number ID",
+          "description": "Your WhatsApp Business phone number ID from Meta Business Manager",
+          "type": "text",
+          "required": true,
+          "placeholder": "Enter phone number ID"
+        },
+        {
+          "key": "waba_id",
+          "label": "WhatsApp Business Account ID",
+          "description": "Your WABA ID from Meta Business Manager",
+          "type": "text",
+          "required": true,
+          "placeholder": "Enter WABA ID"
+        }
+      ]
     }
   },
   "actions": {

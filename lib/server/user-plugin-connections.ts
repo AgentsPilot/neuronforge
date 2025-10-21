@@ -331,7 +331,7 @@ export class UserPluginConnections {
     profileData: any
   ): Promise<boolean> {
     if (this.debug) console.log(`DEBUG: Updating profile_data for ${pluginKey}, user ${userId}`);
-    
+
     try {
       // Get existing connection to merge with new profile data
       const { data: existingConnection, error: fetchError } = await this.supabase
@@ -355,7 +355,7 @@ export class UserPluginConnections {
       // Update the connection with merged profile data
       const { error: updateError } = await this.supabase
         .from('plugin_connections')
-        .update({ 
+        .update({
           profile_data: mergedProfileData,
           updated_at: new Date().toISOString()
         })
@@ -372,6 +372,85 @@ export class UserPluginConnections {
     } catch (error) {
       console.error('DEBUG: Error updating connection profile data:', error);
       return false;
+    }
+  }
+
+  // Update additional configuration data for a plugin connection
+  async updateAdditionalConfig(
+    userId: string,
+    pluginKey: string,
+    additionalData: Record<string, any>
+  ): Promise<boolean> {
+    if (this.debug) console.log(`DEBUG: Updating additional config for ${pluginKey}, user ${userId}`);
+
+    try {
+      // Get existing connection to preserve auth data
+      const { data: existingConnection, error: fetchError } = await this.supabase
+        .from('plugin_connections')
+        .select('profile_data')
+        .eq('user_id', userId)
+        .eq('plugin_key', pluginKey)
+        .single();
+
+      if (fetchError) {
+        console.error('DEBUG: Error fetching existing connection:', fetchError);
+        return false;
+      }
+
+      // Build nested structure: { auth: {...}, additional: {...} }
+      const updatedProfileData = {
+        auth: existingConnection?.profile_data?.auth || existingConnection?.profile_data || {},
+        additional: additionalData
+      };
+
+      // Update the connection with new structure
+      const { error: updateError } = await this.supabase
+        .from('plugin_connections')
+        .update({
+          profile_data: updatedProfileData,
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', userId)
+        .eq('plugin_key', pluginKey);
+
+      if (updateError) {
+        console.error('DEBUG: Failed to update additional config:', updateError);
+        return false;
+      }
+
+      if (this.debug) console.log(`DEBUG: Additional config updated successfully for ${pluginKey}`);
+      return true;
+    } catch (error) {
+      console.error('DEBUG: Error updating additional config:', error);
+      return false;
+    }
+  }
+
+  // Get additional configuration data for a plugin connection
+  async getAdditionalConfig(
+    userId: string,
+    pluginKey: string
+  ): Promise<Record<string, any> | null> {
+    if (this.debug) console.log(`DEBUG: Getting additional config for ${pluginKey}, user ${userId}`);
+
+    try {
+      const { data: connection, error } = await this.supabase
+        .from('plugin_connections')
+        .select('profile_data')
+        .eq('user_id', userId)
+        .eq('plugin_key', pluginKey)
+        .single();
+
+      if (error || !connection) {
+        if (this.debug) console.log(`DEBUG: No connection found for ${pluginKey}`);
+        return null;
+      }
+
+      // Return additional data if it exists in nested structure
+      return connection.profile_data?.additional || null;
+    } catch (error) {
+      console.error('DEBUG: Error getting additional config:', error);
+      return null;
     }
   }
 
