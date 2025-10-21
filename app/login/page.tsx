@@ -26,14 +26,68 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-      const { error: loginError } = await supabase.auth.signInWithPassword({
+      const { data, error: loginError } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
       if (loginError) {
         setErrorMessage(loginError.message);
+
+        // AUDIT TRAIL: Log failed login attempt
+        try {
+          await fetch('/api/audit/log', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-user-id': 'anonymous' // No user ID for failed login
+            },
+            body: JSON.stringify({
+              action: 'USER_LOGIN_FAILED',
+              entityType: 'user',
+              entityId: null,
+              userId: null,
+              resourceName: email,
+              details: {
+                email,
+                error: loginError.message,
+                timestamp: new Date().toISOString()
+              },
+              severity: 'warning',
+              complianceFlags: ['SOC2']
+            })
+          });
+        } catch (auditError) {
+          console.error('Audit logging failed (non-critical):', auditError);
+        }
       } else {
+        // AUDIT TRAIL: Log successful login
+        try {
+          await fetch('/api/audit/log', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-user-id': data.user?.id || ''
+            },
+            body: JSON.stringify({
+              action: 'USER_LOGIN',
+              entityType: 'user',
+              entityId: data.user?.id,
+              userId: data.user?.id,
+              resourceName: data.user?.email || email,
+              details: {
+                email: data.user?.email,
+                timestamp: new Date().toISOString(),
+                login_method: 'password'
+              },
+              severity: 'info',
+              complianceFlags: ['SOC2']
+            })
+          });
+        } catch (auditError) {
+          console.error('Audit logging failed (non-critical):', auditError);
+        }
+
         router.push('/dashboard');
       }
     } catch (error) {

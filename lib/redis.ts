@@ -24,7 +24,9 @@ const redisConfig = {
 };
 
 export function getRedisConnection(): Redis {
-  if (!redis || redis.status === 'end') {
+  // Only create if it doesn't exist - don't recreate on status change
+  if (!redis) {
+    console.log('🔌 Creating new Redis connection');
     redis = new Redis(process.env.REDIS_URL!, redisConfig);
 
     redis.on('error', (err) => {
@@ -38,13 +40,19 @@ export function getRedisConnection(): Redis {
     redis.on('ready', () => {
       console.log('✅ Redis ready');
     });
+
+    redis.on('close', () => {
+      console.warn('⚠️ Redis connection closed');
+    });
   }
   return redis;
 }
 
 // Separate connection for BullMQ workers with longer timeouts
 export function getWorkerRedisConnection(): Redis {
-  if (!workerRedis || workerRedis.status === 'end') {
+  // Only create if it doesn't exist - don't recreate on status change
+  if (!workerRedis) {
+    console.log('🔌 Creating new Worker Redis connection');
     workerRedis = new Redis(process.env.REDIS_URL!, {
       ...redisConfig,
       commandTimeout: 30000, // 30 seconds for long-running commands
@@ -60,6 +68,10 @@ export function getWorkerRedisConnection(): Redis {
 
     workerRedis.on('ready', () => {
       console.log('✅ Worker Redis ready');
+    });
+
+    workerRedis.on('close', () => {
+      console.warn('⚠️ Worker Redis connection closed');
     });
   }
   return workerRedis;

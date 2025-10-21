@@ -32,6 +32,13 @@ export default function NotificationsTab({
       setSuccessMessage('')
       setErrorMessage('')
 
+      // Get existing settings for audit trail
+      const { data: existingSettings } = await supabase
+        .from('notification_settings')
+        .select('*')
+        .eq('user_id', user.id)
+        .single()
+
       const { error } = await supabase
         .from('notification_settings')
         .upsert({
@@ -41,6 +48,36 @@ export default function NotificationsTab({
         })
 
       if (error) throw error
+
+      // AUDIT TRAIL: Log notification settings update
+      try {
+        await fetch('/api/audit/log', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-id': user.id
+          },
+          body: JSON.stringify({
+            action: 'SETTINGS_NOTIFICATIONS_UPDATED',
+            entityType: 'settings',
+            entityId: user.id,
+            userId: user.id,
+            resourceName: 'Notification Settings',
+            before: existingSettings,
+            after: notificationsForm,
+            details: {
+              fields_updated: Object.keys(notificationsForm).filter(key =>
+                existingSettings?.[key] !== notificationsForm[key]
+              ),
+              timestamp: new Date().toISOString()
+            },
+            severity: 'info'
+          })
+        });
+      } catch (auditError) {
+        // Silent failure for audit logging - don't break the user experience
+        console.error('Audit logging failed (non-critical):', auditError);
+      }
 
       setSuccessMessage('Notification settings updated successfully!')
 
@@ -144,8 +181,8 @@ export default function NotificationsTab({
         </div>
 
         <div className="space-y-3">
-          {notificationSettings.map((setting, index) => {
-            const isEnabled = notificationsForm[setting.key as keyof NotificationSettings] ?? setting.default
+          {notificationSettings.map((setting) => {
+            const isEnabled = Boolean(notificationsForm[setting.key as keyof NotificationSettings] ?? setting.default)
             const Icon = setting.icon
 
             return (

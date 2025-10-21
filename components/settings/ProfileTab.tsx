@@ -229,12 +229,19 @@ export default function ProfileTab({
 
   const saveProfile = async () => {
     if (!user) return
-    
+
     try {
       setSaving(true)
       setSuccessMessage('')
       setErrorMessage('')
-      
+
+      // Get existing profile for audit trail
+      const { data: existingProfile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single()
+
       const { error } = await supabase
         .from('profiles')
         .upsert({
@@ -244,9 +251,39 @@ export default function ProfileTab({
         })
 
       if (error) throw error
-      
+
+      // AUDIT TRAIL: Log profile update
+      try {
+        await fetch('/api/audit/log', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-id': user.id
+          },
+          body: JSON.stringify({
+            action: 'SETTINGS_PROFILE_UPDATED',
+            entityType: 'user',
+            entityId: user.id,
+            userId: user.id,
+            resourceName: profileForm.full_name || user.email || 'User Profile',
+            before: existingProfile,
+            after: profileForm,
+            details: {
+              fields_updated: Object.keys(profileForm).filter(key =>
+                existingProfile?.[key] !== profileForm[key]
+              ),
+              timestamp: new Date().toISOString()
+            },
+            severity: 'info'
+          })
+        });
+      } catch (auditError) {
+        // Silent failure for audit logging - don't break the user experience
+        console.error('Audit logging failed (non-critical):', auditError);
+      }
+
       setSuccessMessage('Profile updated successfully!')
-      
+
     } catch (error) {
       console.error('Error saving profile:', error)
       setErrorMessage('Failed to save profile. Please try again.')

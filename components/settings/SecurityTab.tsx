@@ -47,6 +47,13 @@ export default function SecurityTab() {
       setSuccessMessage('')
       setErrorMessage('')
 
+      // Get existing settings for audit trail
+      const { data: existingSettings } = await supabase
+        .from('security_settings')
+        .select('*')
+        .eq('user_id', user.id)
+        .single()
+
       const { error } = await supabase
         .from('security_settings')
         .upsert({
@@ -61,6 +68,43 @@ export default function SecurityTab() {
 
       if (error) {
         throw new Error(`Database error: ${error.message || 'Unknown error'}`)
+      }
+
+      // AUDIT TRAIL: Log security settings update
+      try {
+        await fetch('/api/audit/log', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-id': user.id
+          },
+          body: JSON.stringify({
+            action: 'SETTINGS_SECURITY_UPDATED',
+            entityType: 'settings',
+            entityId: user.id,
+            userId: user.id,
+            resourceName: 'Security Settings',
+            before: existingSettings,
+            after: {
+              session_timeout_minutes: securitySettings.sessionTimeout,
+              two_factor_enabled: securitySettings.twoFactorEnabled
+            },
+            details: {
+              fields_updated: ['session_timeout_minutes', 'two_factor_enabled'].filter(field => {
+                const oldVal = existingSettings?.[field];
+                const newVal = field === 'session_timeout_minutes'
+                  ? securitySettings.sessionTimeout
+                  : securitySettings.twoFactorEnabled;
+                return oldVal !== newVal;
+              }),
+              timestamp: new Date().toISOString()
+            },
+            severity: 'critical',
+            complianceFlags: ['SOC2', 'GDPR']
+          })
+        });
+      } catch (auditError) {
+        console.error('Audit logging failed (non-critical):', auditError);
       }
 
       setSuccessMessage('Security settings updated successfully!')
@@ -98,6 +142,32 @@ export default function SecurityTab() {
       })
 
       if (error) throw error
+
+      // AUDIT TRAIL: Log password change
+      try {
+        await fetch('/api/audit/log', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-id': user?.id || ''
+          },
+          body: JSON.stringify({
+            action: 'USER_PASSWORD_CHANGED',
+            entityType: 'user',
+            entityId: user?.id,
+            userId: user?.id,
+            resourceName: user?.email || 'User Account',
+            details: {
+              timestamp: new Date().toISOString(),
+              method: 'user_initiated'
+            },
+            severity: 'critical',
+            complianceFlags: ['SOC2', 'GDPR']
+          })
+        });
+      } catch (auditError) {
+        console.error('Audit logging failed (non-critical):', auditError);
+      }
 
       setSuccessMessage('Password updated successfully!')
       setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' })

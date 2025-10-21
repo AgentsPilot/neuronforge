@@ -1,0 +1,293 @@
+// /lib/audit/events.ts
+// Centralized registry of all auditable events
+// Add new event types here as needed - zero code changes elsewhere
+
+import { AuditSeverity, ComplianceFlag } from './types';
+
+/**
+ * Event metadata defining how each event should be logged
+ */
+interface EventMetadata {
+  severity: AuditSeverity;
+  complianceFlags?: ComplianceFlag[];
+  description: string;
+}
+
+/**
+ * All auditable events in the system
+ * Organized by category for maintainability
+ */
+export const AUDIT_EVENTS = {
+  // ==========================================
+  // AGENT EVENTS
+  // ==========================================
+  AGENT_CREATED: 'AGENT_CREATED',
+  AGENT_UPDATED: 'AGENT_UPDATED',
+  AGENT_DELETED: 'AGENT_DELETED',
+  AGENT_ARCHIVED: 'AGENT_ARCHIVED',
+  AGENT_RESTORED: 'AGENT_RESTORED',
+  AGENT_STATUS_CHANGED: 'AGENT_STATUS_CHANGED', // draft → active, etc.
+  AGENT_SCHEDULE_CHANGED: 'AGENT_SCHEDULE_CHANGED', // cron/timezone updates
+  AGENT_MODE_CHANGED: 'AGENT_MODE_CHANGED', // instant ↔ scheduled
+  AGENT_RUN_STARTED: 'AGENT_RUN_STARTED',
+  AGENT_RUN_COMPLETED: 'AGENT_RUN_COMPLETED',
+  AGENT_RUN_FAILED: 'AGENT_RUN_FAILED',
+  AGENT_SCHEMA_UPDATED: 'AGENT_SCHEMA_UPDATED', // input/output schema changes
+
+  // ==========================================
+  // USER / PROFILE EVENTS
+  // ==========================================
+  USER_CREATED: 'USER_CREATED',
+  USER_LOGIN: 'USER_LOGIN',
+  USER_LOGOUT: 'USER_LOGOUT',
+  USER_LOGIN_FAILED: 'USER_LOGIN_FAILED',
+  USER_PASSWORD_CHANGED: 'USER_PASSWORD_CHANGED',
+  USER_EMAIL_CHANGED: 'USER_EMAIL_CHANGED',
+  USER_TERMINATED: 'USER_TERMINATED',
+  USER_SUSPENDED: 'USER_SUSPENDED',
+  USER_REACTIVATED: 'USER_REACTIVATED',
+
+  PROFILE_UPDATED: 'PROFILE_UPDATED', // name, avatar, company, etc.
+  PROFILE_VIEWED: 'PROFILE_VIEWED', // Who viewed whose profile
+
+  // ==========================================
+  // SETTINGS EVENTS (Phase 1 focus)
+  // ==========================================
+  SETTINGS_PROFILE_UPDATED: 'SETTINGS_PROFILE_UPDATED',
+  SETTINGS_PREFERENCES_UPDATED: 'SETTINGS_PREFERENCES_UPDATED',
+  SETTINGS_NOTIFICATIONS_UPDATED: 'SETTINGS_NOTIFICATIONS_UPDATED',
+  SETTINGS_SECURITY_UPDATED: 'SETTINGS_SECURITY_UPDATED',
+  SETTINGS_API_KEY_CREATED: 'SETTINGS_API_KEY_CREATED',
+  SETTINGS_API_KEY_REVOKED: 'SETTINGS_API_KEY_REVOKED',
+  SETTINGS_2FA_ENABLED: 'SETTINGS_2FA_ENABLED',
+  SETTINGS_2FA_DISABLED: 'SETTINGS_2FA_DISABLED',
+
+  // ==========================================
+  // PLUGIN / CONNECTION EVENTS
+  // ==========================================
+  PLUGIN_CONNECTED: 'PLUGIN_CONNECTED',
+  PLUGIN_DISCONNECTED: 'PLUGIN_DISCONNECTED',
+  PLUGIN_RECONNECTED: 'PLUGIN_RECONNECTED',
+  PLUGIN_AUTH_FAILED: 'PLUGIN_AUTH_FAILED',
+  PLUGIN_PERMISSION_GRANTED: 'PLUGIN_PERMISSION_GRANTED',
+  PLUGIN_PERMISSION_REVOKED: 'PLUGIN_PERMISSION_REVOKED',
+
+  // ==========================================
+  // DATA EVENTS (GDPR compliance)
+  // ==========================================
+  DATA_EXPORTED: 'DATA_EXPORTED', // User data export
+  DATA_DELETED: 'DATA_DELETED', // Right to erasure
+  DATA_ANONYMIZED: 'DATA_ANONYMIZED', // PII anonymization
+  DATA_ACCESSED: 'DATA_ACCESSED', // Who accessed what data
+  CONSENT_GRANTED: 'CONSENT_GRANTED',
+  CONSENT_REVOKED: 'CONSENT_REVOKED',
+
+  // ==========================================
+  // ADMIN / SYSTEM EVENTS
+  // ==========================================
+  ADMIN_ACTION: 'ADMIN_ACTION',
+  ADMIN_IMPERSONATION_STARTED: 'ADMIN_IMPERSONATION_STARTED',
+  ADMIN_IMPERSONATION_ENDED: 'ADMIN_IMPERSONATION_ENDED',
+  SYSTEM_CONFIG_CHANGED: 'SYSTEM_CONFIG_CHANGED',
+  SYSTEM_MAINTENANCE_STARTED: 'SYSTEM_MAINTENANCE_STARTED',
+  SYSTEM_MAINTENANCE_ENDED: 'SYSTEM_MAINTENANCE_ENDED',
+
+  // ==========================================
+  // SECURITY EVENTS
+  // ==========================================
+  SECURITY_BREACH_DETECTED: 'SECURITY_BREACH_DETECTED',
+  SECURITY_ANOMALY_DETECTED: 'SECURITY_ANOMALY_DETECTED',
+  SECURITY_RATE_LIMIT_EXCEEDED: 'SECURITY_RATE_LIMIT_EXCEEDED',
+  SECURITY_UNAUTHORIZED_ACCESS: 'SECURITY_UNAUTHORIZED_ACCESS',
+} as const;
+
+// Type-safe event names
+export type AuditEvent = typeof AUDIT_EVENTS[keyof typeof AUDIT_EVENTS];
+
+/**
+ * Metadata for each event type
+ * Defines default severity and compliance requirements
+ */
+export const EVENT_METADATA: Record<string, EventMetadata> = {
+  // Agent events - mostly info
+  [AUDIT_EVENTS.AGENT_CREATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'New agent created',
+  },
+  [AUDIT_EVENTS.AGENT_UPDATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Agent configuration updated',
+  },
+  [AUDIT_EVENTS.AGENT_DELETED]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2', 'GDPR'],
+    description: 'Agent permanently deleted',
+  },
+  [AUDIT_EVENTS.AGENT_SCHEDULE_CHANGED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'Agent schedule modified',
+  },
+
+  // User events - critical for security
+  [AUDIT_EVENTS.USER_LOGIN]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'User logged in',
+  },
+  [AUDIT_EVENTS.USER_LOGIN_FAILED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'Failed login attempt',
+  },
+  [AUDIT_EVENTS.USER_PASSWORD_CHANGED]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2', 'GDPR'],
+    description: 'User password changed',
+  },
+  [AUDIT_EVENTS.USER_EMAIL_CHANGED]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2', 'GDPR'],
+    description: 'User email address changed',
+  },
+  [AUDIT_EVENTS.USER_TERMINATED]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2', 'GDPR'],
+    description: 'User account terminated',
+  },
+
+  // Settings events - Phase 1 focus
+  [AUDIT_EVENTS.SETTINGS_PROFILE_UPDATED]: {
+    severity: 'info',
+    complianceFlags: ['GDPR'],
+    description: 'User profile settings updated',
+  },
+  [AUDIT_EVENTS.SETTINGS_NOTIFICATIONS_UPDATED]: {
+    severity: 'info',
+    complianceFlags: ['GDPR'],
+    description: 'Notification preferences updated',
+  },
+  [AUDIT_EVENTS.SETTINGS_SECURITY_UPDATED]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2', 'GDPR'],
+    description: 'Security settings modified',
+  },
+  [AUDIT_EVENTS.SETTINGS_API_KEY_CREATED]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2'],
+    description: 'New API key generated',
+  },
+  [AUDIT_EVENTS.SETTINGS_API_KEY_REVOKED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'API key revoked',
+  },
+  [AUDIT_EVENTS.SETTINGS_2FA_ENABLED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Two-factor authentication enabled',
+  },
+  [AUDIT_EVENTS.SETTINGS_2FA_DISABLED]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2'],
+    description: 'Two-factor authentication disabled',
+  },
+
+  // Plugin events
+  [AUDIT_EVENTS.PLUGIN_CONNECTED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Plugin connected',
+  },
+  [AUDIT_EVENTS.PLUGIN_DISCONNECTED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'Plugin disconnected',
+  },
+
+  // GDPR events - all critical
+  [AUDIT_EVENTS.DATA_EXPORTED]: {
+    severity: 'critical',
+    complianceFlags: ['GDPR', 'SOC2'],
+    description: 'User data exported (GDPR Article 20)',
+  },
+  [AUDIT_EVENTS.DATA_DELETED]: {
+    severity: 'critical',
+    complianceFlags: ['GDPR', 'SOC2'],
+    description: 'User data deleted (GDPR Article 17)',
+  },
+  [AUDIT_EVENTS.DATA_ANONYMIZED]: {
+    severity: 'critical',
+    complianceFlags: ['GDPR'],
+    description: 'Personal data anonymized',
+  },
+  [AUDIT_EVENTS.CONSENT_GRANTED]: {
+    severity: 'info',
+    complianceFlags: ['GDPR'],
+    description: 'User consent granted',
+  },
+  [AUDIT_EVENTS.CONSENT_REVOKED]: {
+    severity: 'warning',
+    complianceFlags: ['GDPR'],
+    description: 'User consent revoked',
+  },
+
+  // Admin events - all critical
+  [AUDIT_EVENTS.ADMIN_IMPERSONATION_STARTED]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2'],
+    description: 'Admin started impersonating user',
+  },
+  [AUDIT_EVENTS.ADMIN_IMPERSONATION_ENDED]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2'],
+    description: 'Admin stopped impersonating user',
+  },
+
+  // Security events - all critical
+  [AUDIT_EVENTS.SECURITY_BREACH_DETECTED]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2', 'GDPR', 'HIPAA'],
+    description: 'Security breach detected',
+  },
+  [AUDIT_EVENTS.SECURITY_ANOMALY_DETECTED]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2'],
+    description: 'Anomalous activity detected',
+  },
+  [AUDIT_EVENTS.SECURITY_UNAUTHORIZED_ACCESS]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2', 'GDPR'],
+    description: 'Unauthorized access attempt',
+  },
+};
+
+/**
+ * Get metadata for an event
+ * Returns default metadata if event not found
+ */
+export function getEventMetadata(event: string): EventMetadata {
+  return EVENT_METADATA[event] || {
+    severity: 'info',
+    description: `Unknown event: ${event}`,
+  };
+}
+
+/**
+ * Check if an event requires specific compliance tracking
+ */
+export function requiresCompliance(event: string, flag: ComplianceFlag): boolean {
+  const metadata = EVENT_METADATA[event];
+  return metadata?.complianceFlags?.includes(flag) || false;
+}
+
+/**
+ * Get all events for a specific compliance framework
+ */
+export function getEventsByCompliance(flag: ComplianceFlag): string[] {
+  return Object.entries(EVENT_METADATA)
+    .filter(([_, metadata]) => metadata.complianceFlags?.includes(flag))
+    .map(([event]) => event);
+}
