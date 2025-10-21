@@ -3,7 +3,10 @@
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
 import { pluginList } from '@/lib/plugins/pluginList'
-import { getConnectedPluginsWithMetadata } from '@/lib/plugins/pluginRegistry'
+
+// Import PluginManagerV2 for enhanced plugin management
+import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2'
+import { PluginDefinitionContext } from '@/lib/types/plugin-definition-context'
 
 export async function GET() {
   console.log('API: /api/user/plugins called')
@@ -31,24 +34,28 @@ export async function GET() {
     return new Response(JSON.stringify({}), { status: 401 })
   }
 
-  // Fetch all plugin connections for this user
-  const { data: pluginRows, error } = await supabase
-    .from('plugin_connections')
-    .select('plugin_key')
-    .eq('user_id', user.id)
+  let connectedPluginKeys: string[] = [];
+  let connectedPluginMetaData: PluginDefinitionContext[] = []
+  try {
+    const userId = user.id;
 
-  if (error) {
-    return new Response(JSON.stringify({ error: error.message }), { status: 500 })
+    // Fetch all plugin connections for this user
+    const pluginManager = await PluginManagerV2.getInstance();
+    const userConnectedPlugins = await pluginManager.getUserActionablePlugins(userId);
+    connectedPluginKeys = Object.keys(userConnectedPlugins);
+    
+    // Get full plugin metadata for LLM context    
+    connectedPluginMetaData = pluginManager.getPluginsDefinitionContext(connectedPluginKeys);
+  } catch (e) {
+    console.error('Error logging user info:', e)
+    return new Response(JSON.stringify({ error: e }), { status: 500 })
   }
-
-  // Flatten connected plugin keys
-  const connectedPluginKeys = pluginRows?.map((row) => row.plugin_key) || []
   
   console.log(`User ${user.id} has connected plugins:`, connectedPluginKeys)
 
   // ENHANCED: Get full plugin metadata using the registry
-  const connectedPluginData = getConnectedPluginsWithMetadata(connectedPluginKeys)
-  
+  const connectedPluginData = connectedPluginMetaData;
+
   // Build status object using pluginList (maintain backward compatibility)
   const pluginStatus = pluginList.reduce((acc, plugin) => {
     acc[plugin.pluginKey] = {
@@ -64,8 +71,8 @@ export async function GET() {
   const userConnectedPlugins = connectedPluginData.reduce((acc, plugin) => {
     acc[plugin.key] = {
       key: plugin.key,
-      name: plugin.label,
-      displayName: plugin.displayName || plugin.label,
+      name: plugin.getName(),
+      displayName: plugin.displayName,
       label: plugin.label,
       isConnected: true,
       capabilities: plugin.capabilities,

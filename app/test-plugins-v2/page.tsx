@@ -4,12 +4,15 @@
 import { useState, useEffect } from 'react';
 import { PluginAPIClient } from '@/lib/client/plugin-api-client';
 import { PluginInfo, UserPluginStatus, ExecutionResult } from '@/lib/types/plugin-types';
+import { v4 as uuidv4 } from 'uuid';
 
 interface DebugLog {
   timestamp: string;
   type: 'info' | 'error' | 'success';
   message: string;
 }
+
+type TabType = 'plugins' | 'ai-services';
 
 const PARAMETER_TEMPLATES = {
   "google-mail": {
@@ -290,7 +293,54 @@ const PARAMETER_TEMPLATES = {
   }
 };
 
+const AI_SERVICE_TEMPLATES = {
+  "analyze-prompt-clarity": {
+    prompt: "Create an automation that sends me daily email summaries of my calendar events",
+    userId: "test_user_123",
+    sessionId: "550e8400-e29b-41d4-a716-446655440000",
+    agentId: "660e8400-e29b-41d4-a716-446655440001",
+    connected_plugins: {},
+    bypassPluginValidation: false
+  },
+  "enhance-prompt": {
+    prompt: "Send emails automatically",
+    userId: "test_user_123",
+    sessionId: "550e8400-e29b-41d4-a716-446655440000",
+    agentId: "660e8400-e29b-41d4-a716-446655440001",
+    clarificationAnswers: {
+      "timing": "daily_9am",
+      "recipients": "manager@example.com"
+    },
+    connected_plugins: {},
+    missingPlugins: [],
+    pluginWarning: null
+  },
+  "generate-clarification-questions": {
+    prompt: "I need to track project tasks and send updates",
+    agentName: "Task Tracker Agent",
+    description: "An agent that helps track project tasks and send updates",
+    userId: "test_user_123",
+    sessionId: "550e8400-e29b-41d4-a716-446655440000",
+    agentId: "660e8400-e29b-41d4-a716-446655440001",
+    connectedPlugins: {},
+    analysis: {
+      clarityScore: 45,
+      questionsCount: 0,
+      needsClarification: true,
+      aiValidationFailed: false,
+      bypassedPluginValidation: false,
+      hadPluginWarning: false,
+      missingPlugins: [],
+      requiredServices: [],
+      suggestions: []
+    }
+  }
+};
+
 export default function TestPluginsPage() {
+  // Tab state
+  const [activeTab, setActiveTab] = useState<TabType>('plugins');
+
   // Core state
   const [userId, setUserId] = useState('');
   const [apiClient] = useState(() => new PluginAPIClient());
@@ -305,6 +355,11 @@ export default function TestPluginsPage() {
   const [parameters, setParameters] = useState<string>('{}');
   const [lastResponse, setLastResponse] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  // AI Services state
+  const [selectedAIService, setSelectedAIService] = useState<string>('');
+  const [aiServiceRequestBody, setAiServiceRequestBody] = useState<string>('{}');
+  const [aiServiceResponse, setAiServiceResponse] = useState<any>(null);
   
   // Debug logging
   const [debugLogs, setDebugLogs] = useState<DebugLog[]>([]);
@@ -495,10 +550,138 @@ export default function TestPluginsPage() {
     setDebugLogs([]);
   };
 
+  // AI Services functions
+  const generateNewSessionId = () => {
+    const newSessionId = uuidv4();
+    try {
+      const currentBody = JSON.parse(aiServiceRequestBody);
+      currentBody.sessionId = newSessionId;
+      setAiServiceRequestBody(JSON.stringify(currentBody, null, 2));
+      addDebugLog('success', `Generated new session ID: ${newSessionId}`);
+    } catch (error: any) {
+      addDebugLog('error', `Failed to update session ID: ${error.message}`);
+    }
+  };
+
+  const generateNewAgentId = () => {
+    const newAgentId = uuidv4();
+    try {
+      const currentBody = JSON.parse(aiServiceRequestBody);
+      currentBody.agentId = newAgentId;
+      setAiServiceRequestBody(JSON.stringify(currentBody, null, 2));
+      addDebugLog('success', `Generated new agent ID: ${newAgentId}`);
+    } catch (error: any) {
+      addDebugLog('error', `Failed to update agent ID: ${error.message}`);
+    }
+  };
+
+  const resetToAITemplate = () => {
+    if (selectedAIService) {
+      const template = (AI_SERVICE_TEMPLATES as any)[selectedAIService];
+      if (template) {
+        // Generate fresh UUIDs for the template
+        const templateWithNewIds = {
+          ...template,
+          sessionId: uuidv4(),
+          agentId: uuidv4()
+        };
+        setAiServiceRequestBody(JSON.stringify(templateWithNewIds, null, 2));
+        addDebugLog('info', `Reset to template for ${selectedAIService} with new IDs`);
+      }
+    }
+  };
+
+  const executeAIService = async () => {
+    if (!selectedAIService) {
+      addDebugLog('error', 'AI service is required');
+      return;
+    }
+
+    let parsedRequestBody;
+    try {
+      parsedRequestBody = JSON.parse(aiServiceRequestBody);
+    } catch (error) {
+      addDebugLog('error', 'Invalid JSON in request body');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      addDebugLog('info', `Calling AI service: /api/${selectedAIService}`);
+      const response = await fetch(`/api/${selectedAIService}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': parsedRequestBody.userId || 'anonymous',
+          'x-session-id': parsedRequestBody.sessionId || '',
+          'x-agent-id': parsedRequestBody.agentId || '',
+        },
+        body: JSON.stringify(parsedRequestBody),
+      });
+
+      const result = await response.json();
+
+      if (response.ok) {
+        addDebugLog('success', `AI service executed successfully`);
+      } else {
+        addDebugLog('error', `AI service failed: ${result.error || 'Unknown error'}`);
+      }
+
+      setAiServiceResponse(result);
+    } catch (error: any) {
+      addDebugLog('error', `Execution error: ${error.message}`);
+      setAiServiceResponse({ success: false, error: error.message });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Update AI service template when selection changes
+  useEffect(() => {
+    if (selectedAIService) {
+      resetToAITemplate();
+    }
+  }, [selectedAIService]);
+
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px', fontFamily: 'monospace' }}>
       <h1>Plugin System Testing Interface</h1>
-      
+
+      {/* Tab Navigation */}
+      <div style={{ marginBottom: '30px', borderBottom: '2px solid #ccc' }}>
+        <button
+          onClick={() => setActiveTab('plugins')}
+          style={{
+            padding: '10px 20px',
+            marginRight: '5px',
+            backgroundColor: activeTab === 'plugins' ? '#007bff' : '#f8f9fa',
+            color: activeTab === 'plugins' ? 'white' : '#333',
+            border: 'none',
+            borderBottom: activeTab === 'plugins' ? '3px solid #0056b3' : 'none',
+            cursor: 'pointer',
+            fontSize: '16px',
+            fontWeight: activeTab === 'plugins' ? 'bold' : 'normal'
+          }}
+        >
+          Plugins
+        </button>
+        <button
+          onClick={() => setActiveTab('ai-services')}
+          style={{
+            padding: '10px 20px',
+            backgroundColor: activeTab === 'ai-services' ? '#007bff' : '#f8f9fa',
+            color: activeTab === 'ai-services' ? 'white' : '#333',
+            border: 'none',
+            borderBottom: activeTab === 'ai-services' ? '3px solid #0056b3' : 'none',
+            cursor: 'pointer',
+            fontSize: '16px',
+            fontWeight: activeTab === 'ai-services' ? 'bold' : 'normal'
+          }}
+        >
+          AI Services
+        </button>
+      </div>
+
       {/* User Section */}
       <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
         <h2>User Configuration</h2>
@@ -520,9 +703,12 @@ export default function TestPluginsPage() {
         )}
       </div>
 
-      {/* Plugin Management */}
-      <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
-        <h2>Plugin Management</h2>
+      {/* Plugins Tab Content */}
+      {activeTab === 'plugins' && (
+        <>
+          {/* Plugin Management */}
+          <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
+            <h2>Plugin Management</h2>
         <div style={{ marginBottom: '15px' }}>
           <label htmlFor="pluginSelect" style={{ display: 'block', marginBottom: '5px' }}>Select Plugin:</label>
           <select
@@ -649,37 +835,197 @@ export default function TestPluginsPage() {
         )}
       </div>
 
-      {/* Response Display */}
-      {lastResponse && (
-        <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-            <h2 style={{ margin: 0 }}>Last API Response</h2>
-            <button
-              onClick={copyToClipboard}
-              style={{ 
-                padding: '8px 16px',
-                backgroundColor: copySuccess ? '#28a745' : '#007bff',
-                color: 'white',
-                border: 'none',
+          {/* Response Display */}
+          {lastResponse && (
+            <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <h2 style={{ margin: 0 }}>Last API Response</h2>
+                <button
+                  onClick={copyToClipboard}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: copySuccess ? '#28a745' : '#007bff',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: 'pointer',
+                    fontSize: '14px'
+                  }}
+                >
+                  {copySuccess ? '✓ Copied!' : 'Copy to Clipboard'}
+                </button>
+              </div>
+              <pre style={{
+                backgroundColor: '#f8f9fa',
+                padding: '15px',
                 borderRadius: '3px',
-                cursor: 'pointer',
-                fontSize: '14px'
-              }}
-            >
-              {copySuccess ? '✓ Copied!' : 'Copy to Clipboard'}
-            </button>
+                overflow: 'auto',
+                fontSize: '12px',
+                maxHeight: '300px'
+              }}>
+                {JSON.stringify(lastResponse, null, 2)}
+              </pre>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* AI Services Tab Content */}
+      {activeTab === 'ai-services' && (
+        <>
+          {/* AI Service Selection */}
+          <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
+            <h2>AI Service Selection</h2>
+            <div style={{ marginBottom: '15px' }}>
+              <label htmlFor="aiServiceSelect" style={{ display: 'block', marginBottom: '5px' }}>Select AI Service:</label>
+              <select
+                id="aiServiceSelect"
+                value={selectedAIService}
+                onChange={(e) => setSelectedAIService(e.target.value)}
+                style={{ width: '300px', padding: '8px', fontSize: '14px' }}
+              >
+                <option value="">-- Select AI Service --</option>
+                {Object.keys(AI_SERVICE_TEMPLATES).map(serviceKey => (
+                  <option key={serviceKey} value={serviceKey}>
+                    {serviceKey}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
-          <pre style={{ 
-            backgroundColor: '#f8f9fa', 
-            padding: '15px', 
-            borderRadius: '3px', 
-            overflow: 'auto',
-            fontSize: '12px',
-            maxHeight: '300px'
-          }}>
-            {JSON.stringify(lastResponse, null, 2)}
-          </pre>
-        </div>
+
+          {/* Request Configuration */}
+          {selectedAIService && (
+            <>
+              <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
+                <h2>Request Body Configuration</h2>
+
+                {/* Helper Buttons */}
+                <div style={{ marginBottom: '15px', display: 'flex', gap: '10px' }}>
+                  <button
+                    onClick={generateNewSessionId}
+                    style={{
+                      padding: '8px 16px',
+                      backgroundColor: '#17a2b8',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '3px',
+                      cursor: 'pointer',
+                      fontSize: '14px'
+                    }}
+                  >
+                    Generate New Session ID
+                  </button>
+                  <button
+                    onClick={generateNewAgentId}
+                    style={{
+                      padding: '8px 16px',
+                      backgroundColor: '#17a2b8',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '3px',
+                      cursor: 'pointer',
+                      fontSize: '14px'
+                    }}
+                  >
+                    Generate New Agent ID
+                  </button>
+                  <button
+                    onClick={resetToAITemplate}
+                    style={{
+                      padding: '8px 16px',
+                      backgroundColor: '#6c757d',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '3px',
+                      cursor: 'pointer',
+                      fontSize: '14px'
+                    }}
+                  >
+                    Reset to Template
+                  </button>
+                </div>
+
+                {/* Request Body Editor */}
+                <div style={{ marginBottom: '15px' }}>
+                  <label htmlFor="aiServiceRequestBody" style={{ display: 'block', marginBottom: '5px' }}>Request Body (JSON):</label>
+                  <textarea
+                    id="aiServiceRequestBody"
+                    value={aiServiceRequestBody}
+                    onChange={(e) => setAiServiceRequestBody(e.target.value)}
+                    rows={16}
+                    style={{
+                      width: '100%',
+                      padding: '8px',
+                      fontSize: '12px',
+                      fontFamily: 'monospace',
+                      border: '1px solid #ccc',
+                      borderRadius: '3px'
+                    }}
+                  />
+                </div>
+
+                {/* Execute Button */}
+                <button
+                  onClick={executeAIService}
+                  disabled={isLoading}
+                  style={{
+                    padding: '10px 20px',
+                    backgroundColor: '#28a745',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                    fontSize: '16px',
+                    fontWeight: 'bold'
+                  }}
+                >
+                  {isLoading ? 'Executing...' : 'Execute AI Service'}
+                </button>
+              </div>
+
+              {/* AI Service Response Display */}
+              {aiServiceResponse && (
+                <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                    <h2 style={{ margin: 0 }}>AI Service Response</h2>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(JSON.stringify(aiServiceResponse, null, 2));
+                          addDebugLog('success', 'AI service response copied to clipboard');
+                        } catch (error: any) {
+                          addDebugLog('error', `Failed to copy: ${error.message}`);
+                        }
+                      }}
+                      style={{
+                        padding: '8px 16px',
+                        backgroundColor: '#007bff',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '3px',
+                        cursor: 'pointer',
+                        fontSize: '14px'
+                      }}
+                    >
+                      Copy to Clipboard
+                    </button>
+                  </div>
+                  <pre style={{
+                    backgroundColor: '#f8f9fa',
+                    padding: '15px',
+                    borderRadius: '3px',
+                    overflow: 'auto',
+                    fontSize: '12px',
+                    maxHeight: '400px'
+                  }}>
+                    {JSON.stringify(aiServiceResponse, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </>
+          )}
+        </>
       )}
 
       {/* Control Panel */}
