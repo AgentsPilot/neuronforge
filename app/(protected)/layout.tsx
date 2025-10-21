@@ -592,11 +592,10 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
             onClick={() => setIsMobileOpen(false)}
             isCollapsed={isCollapsed}
           />          
-          <SidebarLink 
-            href="/monitoring" 
-            label="Monitoring" 
+          <SidebarLink
+            href="/monitoring"
+            label="Audit Trail"
             icon={Activity}
-            badge="2"
             isActive={pathname === '/monitoring'}
             onClick={() => setIsMobileOpen(false)}
             isCollapsed={isCollapsed}

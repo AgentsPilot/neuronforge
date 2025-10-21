@@ -4,6 +4,9 @@ import { auditLog } from '@/lib/services/AuditTrailService';
 import { generateDiff } from '@/lib/audit/diff';
 import { EntityType, AuditSeverity, ComplianceFlag } from '@/lib/audit/types';
 
+// Force dynamic rendering for this route
+export const dynamic = 'force-dynamic';
+
 // POST /api/audit/log - Log an audit event
 export async function POST(request: NextRequest) {
   try {

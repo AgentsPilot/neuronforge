@@ -3,8 +3,6 @@
 // Called every minute by Vercel Cron to process waiting jobs
 
 import { NextRequest, NextResponse } from 'next/server';
-import { Queue } from 'bullmq';
-import { getRedisConnection } from '@/lib/redis';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -27,19 +25,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Get queue stats BEFORE processing
-    const connection = getRedisConnection();
-    const queue = new Queue('agent-execution', { connection });
-
-    const waiting = await queue.getWaitingCount();
-    const active = await queue.getActiveCount();
-    const delayed = await queue.getDelayedCount();
-
-    console.log('📊 Queue Status:', { waiting, active, delayed });
-
-    await connection.quit();
-
     // Process one job from the queue
+    // Note: processOneJob() handles its own connection lifecycle
     const { processOneJob } = await import('@/lib/queues/agentWorker');
     const result = await processOneJob();
 
@@ -52,11 +39,6 @@ export async function GET(request: NextRequest) {
       success: true,
       timestamp: new Date().toISOString(),
       duration,
-      queueStats: {
-        waiting,
-        active,
-        delayed
-      },
       processed: result.processed ? 1 : 0,
       jobId: result.jobId,
       error: result.error

@@ -2,6 +2,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AuditTrail } from '@/lib/services/AuditTrailService';
 
+// Force dynamic rendering for this route
+export const dynamic = 'force-dynamic';
+
 // GET /api/audit/query - Query audit logs for current user
 export async function GET(request: NextRequest) {
   try {
@@ -20,7 +23,7 @@ export async function GET(request: NextRequest) {
     const entityType = searchParams.get('entityType') || undefined;
     const severity = searchParams.get('severity') || undefined;
     const limit = parseInt(searchParams.get('limit') || '50');
-    const offset = parseInt(searchParams.get('offset') || '0');
+    const page = parseInt(searchParams.get('page') || '1');
 
     // Query audit logs
     const result = await AuditTrail.query({
@@ -29,7 +32,7 @@ export async function GET(request: NextRequest) {
       entityType: entityType as any,
       severity: severity as any,
       limit,
-      offset,
+      page,
       sortBy: 'created_at',
       sortOrder: 'desc'
     });
