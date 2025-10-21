@@ -1,807 +1,438 @@
 'use client'
 
 import React, { useState, useEffect } from 'react';
-import { Activity, Cpu, HardDrive, Users, Zap, AlertTriangle, CheckCircle, Clock, TrendingUp, Download, Workflow, GitBranch, Play, Pause, CheckSquare, XSquare, FileText, Monitor } from 'lucide-react';
+import { useAuth } from '@/components/UserProvider';
+import {
+  Shield, Clock, User, Settings, AlertTriangle, CheckCircle,
+  Filter, Download, RefreshCw, Search, ChevronDown, FileText,
+  Lock, Bell, UserCheck, UserX, Eye, Calendar, MapPin
+} from 'lucide-react';
 
-const AgentPilotMonitoring = () => {
-  const [currentTime, setCurrentTime] = useState(new Date());
-  const [systemMetrics, setSystemMetrics] = useState({
-    cpu: 0,
-    memory: 0,
-    disk: 0,
-    activeAgents: 24,
-    queueLength: 156,
-    apiCalls: 12847,
-    activeWorkflows: 8,
-    completedWorkflows: 145,
-    llmCalls: 45234,
-    tokensUsed: 2847592,
-    tokensRemaining: 15847233,
-    averageResponseTime: 1.2
-  });
+interface AuditLogEntry {
+  id: string;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  resource_name: string | null;
+  changes: any;
+  details: any;
+  ip_address: string | null;
+  user_agent: string | null;
+  session_id: string | null;
+  severity: 'info' | 'warning' | 'critical';
+  compliance_flags: string[];
+  created_at: string;
+}
 
-  const [agents, setAgents] = useState([
-    { id: 'AG001', name: 'Customer Data Processor', status: 'active', uptime: '12h 34m', lastTask: '2m ago', successRate: 98.7, currentTask: 'Processing customer onboarding data', tasksCompleted: 1247 },
-    { id: 'AG002', name: 'Content Intelligence Analyzer', status: 'active', uptime: '8h 12m', lastTask: '15s ago', successRate: 94.2, currentTask: 'Reviewing customer feedback sentiment', tasksCompleted: 856 },
-    { id: 'AG003', name: 'Customer Service Manager', status: 'warning', uptime: '6h 45m', lastTask: '5m ago', successRate: 89.1, currentTask: 'Managing customer service tickets', tasksCompleted: 634 },
-    { id: 'AG004', name: 'Business Process Coordinator', status: 'error', uptime: '0m', lastTask: '45m ago', successRate: 76.3, currentTask: 'Connection issues - IT team notified', tasksCompleted: 423 },
-    { id: 'AG005', name: 'Integration Hub Manager', status: 'active', uptime: '24h 18m', lastTask: '3s ago', successRate: 99.1, currentTask: 'Connecting with CRM systems', tasksCompleted: 2156 }
-  ]);
+export default function AuditTrailPage() {
+  const { user } = useAuth();
+  const [logs, setLogs] = useState<AuditLogEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [totalLogs, setTotalLogs] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [filterAction, setFilterAction] = useState('');
+  const [filterSeverity, setFilterSeverity] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const logsPerPage = 20;
 
-  // Get real system metrics where possible
-  const getRealMetrics = async () => {
-    let realMemory = 0;
-    let realStorage = 0;
-    let cpuEstimate = 0;
+  const fetchAuditLogs = async () => {
+    if (!user) return;
 
     try {
-      // Real memory usage from Performance API
-      if (performance.memory) {
-        const memInfo = performance.memory;
-        realMemory = (memInfo.usedJSHeapSize / memInfo.totalJSHeapSize) * 100;
-      }
+      setLoading(true);
+      const offset = (currentPage - 1) * logsPerPage;
 
-      // Real storage usage
-      if (navigator.storage && navigator.storage.estimate) {
-        const estimate = await navigator.storage.estimate();
-        if (estimate.usage && estimate.quota) {
-          realStorage = (estimate.usage / estimate.quota) * 100;
+      const params = new URLSearchParams({
+        limit: logsPerPage.toString(),
+        offset: offset.toString(),
+      });
+
+      if (filterAction) params.append('action', filterAction);
+      if (filterSeverity) params.append('severity', filterSeverity);
+
+      const response = await fetch(`/api/audit/query?${params}`, {
+        headers: {
+          'x-user-id': user.id
         }
-      }
+      });
 
-      // CPU estimation based on performance timing
-      const startTime = performance.now();
-      // Small computation to measure performance
-      let sum = 0;
-      for (let i = 0; i < 100000; i++) {
-        sum += Math.random();
-      }
-      const endTime = performance.now();
-      const executionTime = endTime - startTime;
-      
-      // Convert execution time to rough CPU usage estimate (0-100%)
-      cpuEstimate = Math.min(95, Math.max(10, executionTime * 2));
+      const data = await response.json();
 
+      if (data.success) {
+        setLogs(data.logs || []);
+        setTotalLogs(data.total || 0);
+      }
     } catch (error) {
-      console.log('Error getting real metrics:', error);
-    }
-
-    return {
-      cpu: cpuEstimate || Math.random() * 40 + 30,
-      memory: realMemory || Math.random() * 40 + 40,
-      disk: realStorage || Math.random() * 30 + 20
-    };
-  };
-
-  // Helper function to generate random tasks
-  const getRandomTask = (agentName) => {
-    const tasks = {
-      'Customer Data Processor': [
-        'Processing customer onboarding data',
-        'Validating invoice information',
-        'Analyzing sales performance metrics',
-        'Generating quarterly reports'
-      ],
-      'Content Intelligence Analyzer': [
-        'Reviewing customer feedback sentiment',
-        'Analyzing market research data',
-        'Processing social media mentions',
-        'Evaluating brand perception metrics'
-      ],
-      'Customer Service Manager': [
-        'Managing customer service tickets',
-        'Processing support requests',
-        'Handling escalated cases',
-        'Coordinating follow-up actions'
-      ],
-      'Business Process Coordinator': [
-        'Coordinating marketing campaigns',
-        'Managing project workflows',
-        'Scheduling team deliverables',
-        'Optimizing resource allocation'
-      ],
-      'Integration Hub Manager': [
-        'Connecting with CRM systems',
-        'Syncing financial data',
-        'Managing third-party integrations',
-        'Monitoring system performance'
-      ]
-    };
-    
-    const agentTasks = tasks[agentName] || ['Processing business task'];
-    return agentTasks[Math.floor(Math.random() * agentTasks.length)];
-  };
-
-  // PDF Export Function
-  const exportToPDF = () => {
-    // Create a simplified report for PDF export
-    const reportData = {
-      timestamp: currentTime.toLocaleString(),
-      systemMetrics,
-      agents: agents.filter(a => a.status !== 'error').length,
-      activeWorkflows: systemMetrics.activeWorkflows,
-      totalTokens: systemMetrics.tokensUsed,
-      successRate: agents.reduce((sum, a) => sum + a.successRate, 0) / agents.length
-    };
-
-    // Create HTML content for PDF
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>AgentPilot Monitoring Report</title>
-          <style>
-            body { font-family: Arial, sans-serif; margin: 20px; color: #333; }
-            .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #3B82F6; padding-bottom: 20px; }
-            .metric { display: inline-block; margin: 10px; padding: 15px; border: 1px solid #ddd; border-radius: 8px; min-width: 150px; }
-            .metric h3 { margin: 0 0 10px 0; color: #3B82F6; }
-            .metric p { margin: 5px 0; font-size: 18px; font-weight: bold; }
-            .agents { margin-top: 30px; }
-            .agent { margin: 10px 0; padding: 10px; background: #f9f9f9; border-radius: 5px; }
-            .status-active { color: #10B981; }
-            .status-warning { color: #F59E0B; }
-            .status-error { color: #EF4444; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <h1>AgentPilot Monitoring Report</h1>
-            <p>Generated: ${reportData.timestamp}</p>
-          </div>
-          
-          <div class="metrics">
-            <div class="metric">
-              <h3>CPU Performance</h3>
-              <p>${systemMetrics.cpu.toFixed(1)}ms</p>
-            </div>
-            <div class="metric">
-              <h3>Memory Usage</h3>
-              <p>${systemMetrics.memory.toFixed(1)}%</p>
-            </div>
-            <div class="metric">
-              <h3>LLM Calls</h3>
-              <p>${systemMetrics.llmCalls.toLocaleString()}</p>
-            </div>
-            <div class="metric">
-              <h3>Active Workflows</h3>
-              <p>${systemMetrics.activeWorkflows}</p>
-            </div>
-            <div class="metric">
-              <h3>Tokens Used</h3>
-              <p>${(systemMetrics.tokensUsed / 1000).toFixed(1)}k</p>
-            </div>
-            <div class="metric">
-              <h3>Avg Response Time</h3>
-              <p>${systemMetrics.averageResponseTime.toFixed(1)}s</p>
-            </div>
-          </div>
-
-          <div class="agents">
-            <h2>Agent Status Summary</h2>
-            ${agents.map(agent => `
-              <div class="agent">
-                <strong class="status-${agent.status}">${agent.name}</strong> - 
-                ${agent.status.toUpperCase()} (${agent.successRate}% success rate)
-                <br><small>Uptime: ${agent.uptime} | Tasks: ${agent.tasksCompleted}</small>
-              </div>
-            `).join('')}
-          </div>
-        </body>
-      </html>
-    `;
-
-    // Create and download PDF
-    const printWindow = window.open('', '_blank');
-    if (printWindow) {
-      printWindow.document.write(htmlContent);
-      printWindow.document.close();
-      printWindow.print();
+      console.error('Error fetching audit logs:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Update metrics and agent status
   useEffect(() => {
-    const updateMetrics = async () => {
-      const realData = await getRealMetrics();
-      
-      setCurrentTime(new Date());
-      setSystemMetrics(prev => ({
-        ...prev,
-        cpu: realData.cpu,
-        memory: realData.memory,
-        disk: realData.disk,
-        queueLength: Math.max(0, prev.queueLength + Math.floor((Math.random() - 0.4) * 20)),
-        apiCalls: prev.apiCalls + Math.floor(Math.random() * 15),
-        activeWorkflows: Math.max(1, Math.min(15, prev.activeWorkflows + Math.floor((Math.random() - 0.5) * 3))),
-        completedWorkflows: prev.completedWorkflows + Math.floor(Math.random() * 2),
-        llmCalls: prev.llmCalls + Math.floor(Math.random() * 25),
-        tokensUsed: prev.tokensUsed + Math.floor(Math.random() * 5000),
-        tokensRemaining: Math.max(1000000, prev.tokensRemaining - Math.floor(Math.random() * 2000)),
-        averageResponseTime: Math.max(0.5, Math.min(3.0, prev.averageResponseTime + (Math.random() - 0.5) * 0.2))
-      }));
+    fetchAuditLogs();
+  }, [user, currentPage, filterAction, filterSeverity]);
 
-      // Update agent status and metrics
-      setAgents(prevAgents => 
-        prevAgents.map(agent => {
-          let newStatus = agent.status;
-          let newSuccessRate = agent.successRate;
-          let newTasksCompleted = agent.tasksCompleted;
-          let newCurrentTask = agent.currentTask;
-          let newLastTask = agent.lastTask;
+  const getActionIcon = (action: string) => {
+    if (action.includes('LOGIN')) return <UserCheck className="w-4 h-4" />;
+    if (action.includes('PASSWORD')) return <Lock className="w-4 h-4" />;
+    if (action.includes('SETTINGS')) return <Settings className="w-4 h-4" />;
+    if (action.includes('SECURITY')) return <Shield className="w-4 h-4" />;
+    if (action.includes('NOTIFICATION')) return <Bell className="w-4 h-4" />;
+    if (action.includes('FAILED')) return <UserX className="w-4 h-4" />;
+    return <FileText className="w-4 h-4" />;
+  };
 
-          // Simulate status changes
-          if (agent.status === 'error' && Math.random() > 0.7) {
-            newStatus = 'warning';
-            newCurrentTask = 'System recovery in progress...';
-          } else if (agent.status === 'warning' && Math.random() > 0.8) {
-            newStatus = 'active';
-            newCurrentTask = getRandomTask(agent.name);
-            newLastTask = 'just now';
-          }
+  const getSeverityColor = (severity: string) => {
+    switch (severity) {
+      case 'critical': return 'from-red-50 to-rose-50 border-red-200';
+      case 'warning': return 'from-orange-50 to-amber-50 border-orange-200';
+      default: return 'from-blue-50 to-indigo-50 border-blue-200';
+    }
+  };
 
-          // Update success rates slightly
-          if (agent.status === 'active') {
-            newSuccessRate = Math.min(99.9, Math.max(85, agent.successRate + (Math.random() - 0.3) * 2));
-            newTasksCompleted = agent.tasksCompleted + Math.floor(Math.random() * 3);
-            
-            // Update current task occasionally
-            if (Math.random() > 0.6) {
-              newCurrentTask = getRandomTask(agent.name);
-              newLastTask = Math.random() > 0.5 ? 'just now' : `${Math.floor(Math.random() * 30)}s ago`;
-            }
-          }
+  const getSeverityBadge = (severity: string) => {
+    switch (severity) {
+      case 'critical': return 'bg-red-100 text-red-700 border-red-200';
+      case 'warning': return 'bg-orange-100 text-orange-700 border-orange-200';
+      default: return 'bg-blue-100 text-blue-700 border-blue-200';
+    }
+  };
 
-          return {
-            ...agent,
-            status: newStatus,
-            successRate: Math.round(newSuccessRate * 10) / 10,
-            tasksCompleted: newTasksCompleted,
-            currentTask: newCurrentTask,
-            lastTask: newLastTask
-          };
-        })
-      );
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString();
+  };
+
+  const formatActionName = (action: string) => {
+    return action.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, l => l.toUpperCase());
+  };
+
+  // Convert technical field names to user-friendly labels
+  const formatFieldLabel = (field: string): string => {
+    const fieldLabels: Record<string, string> = {
+      'email_enabled': 'Email Notifications',
+      'email_agent_updates': 'Agent Update Emails',
+      'email_system_alerts': 'System Alert Emails',
+      'email_marketing': 'Marketing Emails',
+      'session_timeout_minutes': 'Session Timeout',
+      'two_factor_enabled': 'Two-Factor Authentication',
+      'full_name': 'Full Name',
+      'company_name': 'Company',
+      'job_title': 'Job Title',
+      'timezone': 'Timezone',
+      'phone_number': 'Phone Number',
     };
 
-    // Initial load
-    updateMetrics();
-
-    // Update every 3 seconds
-    const timer = setInterval(updateMetrics, 3000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const workflows = [
-    { 
-      id: 'WF001', 
-      name: 'Customer Onboarding Process', 
-      status: 'running', 
-      progress: 75,
-      currentStep: 'Identity Verification',
-      totalSteps: 4,
-      completedSteps: 3,
-      duration: '12m 34s',
-      agents: ['Customer Data Processor', 'Integration Hub Manager']
-    },
-    { 
-      id: 'WF002', 
-      name: 'Market Intelligence Pipeline', 
-      status: 'completed', 
-      progress: 100,
-      currentStep: 'Report Generated',
-      totalSteps: 5,
-      completedSteps: 5,
-      duration: '8m 45s',
-      agents: ['Content Intelligence Analyzer', 'Business Process Coordinator']
-    },
-    { 
-      id: 'WF003', 
-      name: 'Customer Satisfaction Analysis', 
-      status: 'failed', 
-      progress: 40,
-      currentStep: 'Sentiment Analysis',
-      totalSteps: 6,
-      completedSteps: 2,
-      duration: '15m 22s',
-      agents: ['Content Intelligence Analyzer']
-    },
-    { 
-      id: 'WF004', 
-      name: 'Monthly Business Report Generation', 
-      status: 'paused', 
-      progress: 60,
-      currentStep: 'Financial Data Aggregation',
-      totalSteps: 3,
-      completedSteps: 1,
-      duration: '25m 10s',
-      agents: ['Customer Data Processor', 'Integration Hub Manager']
-    }
-  ];
-
-  const orchestrationMetrics = [
-    { label: 'Active Processes', value: systemMetrics.activeWorkflows, change: '+2', trend: 'up', icon: Play },
-    { label: 'Completed Today', value: systemMetrics.completedWorkflows, change: '+23', trend: 'up', icon: CheckSquare },
-    { label: 'Issues Resolved', value: 3, change: '+3', trend: 'up', icon: CheckCircle },
-    { label: 'Avg Process Time', value: '14m 32s', change: '-2m 15s', trend: 'down', icon: Clock }
-  ];
-
-  const apiEndpoints = [
-    { endpoint: '/api/v1/agents', status: 'healthy', responseTime: '45ms', requests: 1247, errors: 0 },
-    { endpoint: '/api/v1/tasks', status: 'healthy', responseTime: '67ms', requests: 2156, errors: 3 },
-    { endpoint: '/api/v1/analytics', status: 'degraded', responseTime: '234ms', requests: 892, errors: 12 },
-    { endpoint: '/api/v1/users', status: 'healthy', responseTime: '23ms', requests: 445, errors: 0 }
-  ];
-
-  const alerts = [
-    { id: 1, type: 'warning', message: 'Customer Satisfaction Analysis process requires attention', time: '2 minutes ago' },
-    { id: 2, type: 'error', message: 'Business Process Coordinator is temporarily unavailable', time: '15 minutes ago' },
-    { id: 3, type: 'info', message: 'Customer Onboarding Process completed successfully', time: '1 hour ago' },
-    { id: 4, type: 'warning', message: 'Higher than usual server load detected', time: '2 hours ago' }
-  ];
-
-  const getWorkflowStatusColor = (status) => {
-    switch (status) {
-      case 'running': return 'text-purple-600';
-      case 'completed': return 'text-purple-600';
-      case 'failed': return 'text-red-600';
-      case 'paused': return 'text-indigo-600';
-      default: return 'text-gray-600';
-    }
+    return fieldLabels[field] || field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
   };
 
-  const getWorkflowStatusBg = (status) => {
-    switch (status) {
-      case 'running': return 'bg-gradient-to-r from-purple-50 to-indigo-50';
-      case 'completed': return 'bg-gradient-to-r from-purple-50 to-violet-50';
-      case 'failed': return 'bg-gradient-to-r from-red-50 to-rose-50';
-      case 'paused': return 'bg-gradient-to-r from-indigo-50 to-purple-50';
-      default: return 'bg-gradient-to-r from-gray-50 to-slate-50';
+  // Format field values to be user-friendly
+  const formatFieldValue = (value: any): string => {
+    if (value === null || value === undefined) return 'Not set';
+    if (typeof value === 'boolean') return value ? 'Enabled' : 'Disabled';
+    if (typeof value === 'number') {
+      // Handle session timeout specially
+      if (value >= 60) {
+        const hours = Math.floor(value / 60);
+        const mins = value % 60;
+        return mins > 0 ? `${hours}h ${mins}m` : `${hours} hour${hours > 1 ? 's' : ''}`;
+      }
+      return `${value} minutes`;
     }
+    if (typeof value === 'string') {
+      // Don't show empty strings
+      if (value.trim() === '') return 'Not set';
+      return value;
+    }
+    return JSON.stringify(value);
   };
 
-  const getWorkflowIcon = (status) => {
-    switch (status) {
-      case 'running': return Play;
-      case 'completed': return CheckSquare;
-      case 'failed': return XSquare;
-      case 'paused': return Pause;
-      default: return Clock;
-    }
+  const exportToCSV = () => {
+    const headers = ['Timestamp', 'Action', 'Entity', 'Resource', 'Severity', 'IP Address', 'Details'];
+    const rows = logs.map(log => [
+      new Date(log.created_at).toLocaleString(),
+      log.action,
+      log.entity_type,
+      log.resource_name || '',
+      log.severity,
+      log.ip_address || '',
+      log.details?.changeSummary || ''
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `audit-trail-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
   };
 
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'active': case 'healthy': return 'text-purple-600';
-      case 'warning': case 'degraded': return 'text-indigo-600';
-      case 'error': return 'text-red-600';
-      default: return 'text-gray-600';
-    }
-  };
+  const totalPages = Math.ceil(totalLogs / logsPerPage);
 
-  const getStatusBg = (status) => {
-    switch (status) {
-      case 'active': case 'healthy': return 'bg-gradient-to-r from-purple-50 to-indigo-50';
-      case 'warning': case 'degraded': return 'bg-gradient-to-r from-indigo-50 to-violet-50';
-      case 'error': return 'bg-gradient-to-r from-red-50 to-rose-50';
-      default: return 'bg-gradient-to-r from-gray-50 to-slate-50';
-    }
+  const stats = {
+    total: totalLogs,
+    critical: logs.filter(l => l.severity === 'critical').length,
+    warning: logs.filter(l => l.severity === 'warning').length,
+    info: logs.filter(l => l.severity === 'info').length,
   };
 
   return (
     <div className="p-6 space-y-6">
-      {/* Modern Header */}
+      {/* Header */}
       <div className="text-center space-y-3">
-        <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 rounded-3xl shadow-xl mb-4">
-          <Monitor className="h-8 w-8 text-white" />
+        <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-500 rounded-3xl shadow-xl mb-4">
+          <Shield className="h-8 w-8 text-white" />
         </div>
-        <h1 className="text-3xl font-bold bg-gradient-to-r from-gray-900 via-indigo-800 to-purple-800 bg-clip-text text-transparent">
-          System Monitoring
+        <h1 className="text-3xl font-bold bg-gradient-to-r from-gray-900 via-blue-800 to-indigo-800 bg-clip-text text-transparent">
+          Audit Trail
         </h1>
-        <p className="text-gray-600 font-medium">Real-time platform monitoring and analytics dashboard</p>
+        <p className="text-gray-600 font-medium">Complete activity log for compliance and security monitoring</p>
       </div>
 
-      {/* Control Bar */}
-      <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 bg-purple-500 rounded-full animate-pulse"></div>
-              <span className="text-sm font-medium text-gray-700">Live Data</span>
+      {/* Stats Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200/50 rounded-xl p-4 hover:shadow-md transition-all">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-md">
+              <FileText className="h-5 w-5 text-white" />
             </div>
-            <div className="text-sm text-gray-600 font-medium">
-              Updated: {currentTime.toLocaleTimeString()}
+            <div>
+              <p className="text-xs text-blue-700 font-medium">Total Events</p>
+              <p className="text-2xl font-bold text-blue-900">{stats.total}</p>
             </div>
           </div>
-          <button 
-            onClick={exportToPDF}
-            className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white text-sm font-semibold rounded-xl shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200"
+        </div>
+
+        <div className="bg-gradient-to-br from-red-50 to-rose-50 border border-red-200/50 rounded-xl p-4 hover:shadow-md transition-all">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-red-500 to-rose-600 rounded-lg flex items-center justify-center shadow-md">
+              <AlertTriangle className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <p className="text-xs text-red-700 font-medium">Critical</p>
+              <p className="text-2xl font-bold text-red-900">{stats.critical}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-gradient-to-br from-orange-50 to-amber-50 border border-orange-200/50 rounded-xl p-4 hover:shadow-md transition-all">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-orange-500 to-amber-600 rounded-lg flex items-center justify-center shadow-md">
+              <Eye className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <p className="text-xs text-orange-700 font-medium">Warning</p>
+              <p className="text-2xl font-bold text-orange-900">{stats.warning}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200/50 rounded-xl p-4 hover:shadow-md transition-all">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-600 rounded-lg flex items-center justify-center shadow-md">
+              <CheckCircle className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <p className="text-xs text-green-700 font-medium">Info</p>
+              <p className="text-2xl font-bold text-green-900">{stats.info}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Controls */}
+      <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl p-4">
+        <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
+          <div className="flex gap-3 flex-1 flex-wrap">
+            <select
+              value={filterSeverity}
+              onChange={(e) => setFilterSeverity(e.target.value)}
+              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            >
+              <option value="">All Severities</option>
+              <option value="info">Info</option>
+              <option value="warning">Warning</option>
+              <option value="critical">Critical</option>
+            </select>
+
+            <select
+              value={filterAction}
+              onChange={(e) => setFilterAction(e.target.value)}
+              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            >
+              <option value="">All Actions</option>
+              <option value="USER_LOGIN">Login</option>
+              <option value="USER_LOGIN_FAILED">Failed Login</option>
+              <option value="USER_PASSWORD_CHANGED">Password Change</option>
+              <option value="SETTINGS_PROFILE_UPDATED">Profile Update</option>
+              <option value="SETTINGS_SECURITY_UPDATED">Security Update</option>
+              <option value="SETTINGS_NOTIFICATIONS_UPDATED">Notifications Update</option>
+            </select>
+
+            <button
+              onClick={fetchAuditLogs}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 transition-all"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Refresh
+            </button>
+          </div>
+
+          <button
+            onClick={exportToCSV}
+            disabled={logs.length === 0}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg text-sm font-semibold hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md disabled:opacity-50"
           >
-            <FileText className="w-4 h-4" />
-            Export PDF
+            <Download className="w-4 h-4" />
+            Export CSV
           </button>
         </div>
       </div>
 
-      {/* Modern Stats Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="group relative overflow-hidden bg-gradient-to-br from-purple-50 to-indigo-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
-          <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-indigo-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-          <div className="relative flex items-center gap-3">
-            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-indigo-500 rounded-2xl flex items-center justify-center shadow-lg">
-              <Cpu className="h-6 w-6 text-white" />
-            </div>
-            <div>
-              <p className="text-sm text-purple-700 font-semibold">CPU Performance</p>
-              <p className="text-2xl font-bold text-purple-900">{systemMetrics.cpu.toFixed(1)}ms</p>
-            </div>
-          </div>
-          <div className="mt-4 bg-purple-200 rounded-full h-2">
-            <div 
-              className="bg-gradient-to-r from-purple-500 to-indigo-500 h-2 rounded-full transition-all duration-500 shadow-sm"
-              style={{ width: `${Math.min(100, systemMetrics.cpu)}%` }}
-            ></div>
-          </div>
-        </div>
-
-        <div className="group relative overflow-hidden bg-gradient-to-br from-indigo-50 to-purple-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
-          <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-purple-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-          <div className="relative flex items-center gap-3">
-            <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-2xl flex items-center justify-center shadow-lg">
-              <HardDrive className="h-6 w-6 text-white" />
-            </div>
-            <div>
-              <p className="text-sm text-indigo-700 font-semibold">Memory Usage</p>
-              <p className="text-2xl font-bold text-indigo-900">{systemMetrics.memory.toFixed(1)}%</p>
-            </div>
-          </div>
-          <div className="mt-4 bg-indigo-200 rounded-full h-2">
-            <div 
-              className="bg-gradient-to-r from-indigo-500 to-purple-500 h-2 rounded-full transition-all duration-500 shadow-sm"
-              style={{ width: `${systemMetrics.memory}%` }}
-            ></div>
-          </div>
-        </div>
-
-        <div className="group relative overflow-hidden bg-gradient-to-br from-purple-50 to-pink-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
-          <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-pink-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-          <div className="relative flex items-center gap-3">
-            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-pink-500 rounded-2xl flex items-center justify-center shadow-lg">
-              <Zap className="h-6 w-6 text-white" />
-            </div>
-            <div>
-              <p className="text-sm text-purple-700 font-semibold">LLM Calls</p>
-              <p className="text-2xl font-bold text-purple-900">{(systemMetrics.llmCalls / 1000).toFixed(1)}k</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="group relative overflow-hidden bg-gradient-to-br from-indigo-50 to-violet-100 p-4 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
-          <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-violet-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-          <div className="relative flex items-center gap-3">
-            <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-violet-500 rounded-2xl flex items-center justify-center shadow-lg">
-              <Workflow className="h-6 w-6 text-white" />
-            </div>
-            <div>
-              <p className="text-sm text-indigo-700 font-semibold">Active Workflows</p>
-              <p className="text-2xl font-bold text-indigo-900">{systemMetrics.activeWorkflows}</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Token Usage Section */}
+      {/* Audit Logs List */}
       <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl p-6">
-        <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-3">
-          <div className="p-2 bg-gradient-to-br from-purple-500/20 to-pink-500/20 rounded-xl">
-            <Zap className="w-6 h-6 text-purple-600" />
+        {loading ? (
+          <div className="text-center py-12">
+            <RefreshCw className="w-8 h-8 text-gray-400 animate-spin mx-auto mb-4" />
+            <p className="text-gray-600 font-medium">Loading audit logs...</p>
           </div>
-          AI Token Analytics
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-          <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-4 rounded-2xl shadow-sm">
-            <div className="flex items-center justify-between mb-2">
-              <Zap className="w-5 h-5 text-purple-600" />
-              <span className="text-xs px-2 py-1 rounded-full bg-purple-100 text-purple-600 font-semibold">
-                +{Math.floor(Math.random() * 50) + 10}
-              </span>
-            </div>
-            <p className="text-2xl font-bold text-purple-900">{(systemMetrics.llmCalls / 1000).toFixed(1)}k</p>
-            <p className="text-sm text-purple-700 font-medium">Total LLM Calls</p>
+        ) : logs.length === 0 ? (
+          <div className="text-center py-12">
+            <Shield className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+            <p className="text-gray-600 font-medium">No audit logs found</p>
+            <p className="text-sm text-gray-500 mt-2">Your activity will appear here</p>
           </div>
-
-          <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 p-4 rounded-2xl shadow-sm">
-            <div className="flex items-center justify-between mb-2">
-              <Activity className="w-5 h-5 text-indigo-600" />
-              <span className="text-xs px-2 py-1 rounded-full bg-indigo-100 text-indigo-600 font-semibold">
-                +{(Math.random() * 5000).toFixed(0)}
-              </span>
-            </div>
-            <p className="text-2xl font-bold text-indigo-900">{(systemMetrics.tokensUsed / 1000).toFixed(1)}k</p>
-            <p className="text-sm text-indigo-700 font-medium">Tokens Used</p>
-          </div>
-
-          <div className="bg-gradient-to-br from-purple-50 to-violet-100 p-4 rounded-2xl shadow-sm">
-            <div className="flex items-center justify-between mb-2">
-              <CheckCircle className="w-5 h-5 text-purple-600" />
-              <span className="text-xs px-2 py-1 rounded-full bg-purple-100 text-purple-600 font-semibold">
-                {((systemMetrics.tokensRemaining / (systemMetrics.tokensUsed + systemMetrics.tokensRemaining)) * 100).toFixed(1)}%
-              </span>
-            </div>
-            <p className="text-2xl font-bold text-purple-900">{(systemMetrics.tokensRemaining / 1000000).toFixed(1)}M</p>
-            <p className="text-sm text-purple-700 font-medium">Tokens Remaining</p>
-          </div>
-
-          <div className="bg-gradient-to-br from-indigo-50 to-purple-100 p-4 rounded-2xl shadow-sm">
-            <div className="flex items-center justify-between mb-2">
-              <Clock className="w-5 h-5 text-indigo-600" />
-              <span className={`text-xs px-2 py-1 rounded-full font-semibold ${
-                systemMetrics.averageResponseTime < 1.5 ? 'bg-purple-100 text-purple-600' : 'bg-red-100 text-red-600'
-              }`}>
-                {systemMetrics.averageResponseTime < 1.5 ? 'Good' : 'Fair'}
-              </span>
-            </div>
-            <p className="text-2xl font-bold text-indigo-900">{systemMetrics.averageResponseTime.toFixed(1)}s</p>
-            <p className="text-sm text-indigo-700 font-medium">Avg Response</p>
-          </div>
-        </div>
-
-        {/* Token Progress Bar */}
-        <div className="space-y-3">
-          <div className="flex justify-between text-sm text-gray-600 font-medium">
-            <span>Token Usage Progress</span>
-            <span>{((systemMetrics.tokensUsed / (systemMetrics.tokensUsed + systemMetrics.tokensRemaining)) * 100).toFixed(1)}% used</span>
-          </div>
-          <div className="bg-gray-200 rounded-full h-4 overflow-hidden shadow-inner">
-            <div 
-              className="bg-gradient-to-r from-purple-500 to-indigo-500 h-4 rounded-full transition-all duration-500 shadow-lg"
-              style={{ width: `${(systemMetrics.tokensUsed / (systemMetrics.tokensUsed + systemMetrics.tokensRemaining)) * 100}%` }}
-            ></div>
-          </div>
-        </div>
-      </div>
-
-      {/* Orchestration Metrics */}
-      <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl p-6">
-        <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-3">
-          <div className="p-2 bg-gradient-to-br from-indigo-500/20 to-purple-500/20 rounded-xl">
-            <GitBranch className="w-6 h-6 text-indigo-600" />
-          </div>
-          Process Orchestration
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {orchestrationMetrics.map((metric, index) => {
-            const IconComponent = metric.icon;
-            return (
-              <div key={index} className="bg-gradient-to-br from-gray-50 to-slate-50 p-4 rounded-2xl shadow-sm hover:shadow-md transition-all duration-300">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="p-2 bg-gradient-to-br from-purple-100 to-indigo-100 rounded-xl">
-                    <IconComponent className="w-5 h-5 text-purple-600" />
-                  </div>
-                  <span className={`text-xs px-2 py-1 rounded-full font-semibold ${
-                    metric.trend === 'up' ? 'bg-purple-100 text-purple-600' : 'bg-indigo-100 text-indigo-600'
-                  }`}>
-                    {metric.change}
-                  </span>
-                </div>
-                <p className="text-2xl font-bold text-gray-900">{metric.value}</p>
-                <p className="text-sm text-gray-600 font-medium">{metric.label}</p>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Main Content Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Workflows */}
-        <div className="lg:col-span-2">
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl p-6">
-            <h3 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-3">
-              <div className="p-2 bg-gradient-to-br from-indigo-500/20 to-purple-500/20 rounded-xl">
-                <Workflow className="w-6 h-6 text-indigo-600" />
-              </div>
-              Active Workflows
-            </h3>
-            <div className="space-y-4">
-              {workflows.map((workflow) => {
-                const StatusIcon = getWorkflowIcon(workflow.status);
-                return (
-                  <div key={workflow.id} className={`p-5 rounded-2xl ${getWorkflowStatusBg(workflow.status)} shadow-sm`}>
-                    <div className="flex items-start justify-between mb-4">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 bg-white rounded-xl shadow-sm">
-                          <StatusIcon className={`w-5 h-5 ${getWorkflowStatusColor(workflow.status)}`} />
-                        </div>
-                        <div>
-                          <p className="font-bold text-gray-900">{workflow.name}</p>
-                          <p className="text-sm text-gray-600 font-medium">{workflow.id}</p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className={`text-sm font-bold ${getWorkflowStatusColor(workflow.status)}`}>
-                          {workflow.status.toUpperCase()}
-                        </p>
-                        <p className="text-xs text-gray-600 font-medium">{workflow.duration}</p>
-                      </div>
-                    </div>
-                    
-                    <div className="mb-4">
-                      <div className="flex justify-between text-sm text-gray-700 mb-2 font-medium">
-                        <span>{workflow.currentStep}</span>
-                        <span>{workflow.completedSteps}/{workflow.totalSteps} steps</span>
-                      </div>
-                      <div className="bg-white/50 rounded-full h-3 shadow-inner">
-                        <div 
-                          className={`h-3 rounded-full transition-all duration-500 shadow-sm ${
-                            workflow.status === 'completed' ? 'bg-gradient-to-r from-purple-500 to-violet-500' :
-                            workflow.status === 'failed' ? 'bg-gradient-to-r from-red-500 to-rose-500' :
-                            workflow.status === 'paused' ? 'bg-gradient-to-r from-indigo-500 to-purple-500' :
-                            'bg-gradient-to-r from-purple-500 to-indigo-500'
-                          }`}
-                          style={{ width: `${workflow.progress}%` }}
-                        ></div>
-                      </div>
-                    </div>
-                    
-                    <div className="flex flex-wrap gap-2">
-                      {workflow.agents.map((agent, idx) => (
-                        <span key={idx} className="text-xs bg-white/70 text-gray-800 px-3 py-1.5 rounded-full font-medium shadow-sm">
-                          {agent}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
-        {/* Alerts Sidebar */}
-        <div>
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl p-6">
-            <h3 className="text-lg font-bold text-gray-900 mb-6 flex items-center gap-3">
-              <div className="p-2 bg-gradient-to-br from-purple-500/20 to-pink-500/20 rounded-xl">
-                <AlertTriangle className="w-5 h-5 text-purple-600" />
-              </div>
-              Recent Alerts
-            </h3>
-            <div className="space-y-3">
-              {alerts.slice(0, 4).map((alert) => (
-                <div key={alert.id} className={`p-4 rounded-2xl border-l-4 shadow-sm ${
-                  alert.type === 'error' ? 'border-red-500 bg-gradient-to-r from-red-50 to-rose-50' :
-                  alert.type === 'warning' ? 'border-purple-500 bg-gradient-to-r from-purple-50 to-indigo-50' :
-                  'border-indigo-500 bg-gradient-to-r from-indigo-50 to-purple-50'
-                }`}>
-                  <p className="text-sm font-medium text-gray-900 mb-1">{alert.message}</p>
-                  <p className="text-xs text-gray-600 font-medium">{alert.time}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Agents Status Grid */}
-      <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl p-6">
-        <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-3">
-          <div className="p-2 bg-gradient-to-br from-purple-500/20 to-indigo-500/20 rounded-xl">
-            <Activity className="w-6 h-6 text-purple-600" />
-          </div>
-          Agent Status Overview
-        </h2>
-        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
-          {agents.map((agent) => (
-            <div key={agent.id} className={`p-5 rounded-2xl ${getStatusBg(agent.status)} shadow-sm`}>
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className={`w-4 h-4 rounded-full ${
-                    agent.status === 'active' ? 'bg-purple-500 animate-pulse' : 
-                    agent.status === 'warning' ? 'bg-indigo-500' : 'bg-red-500'
-                  } shadow-lg`}></div>
-                  <div>
-                    <p className="font-bold text-gray-900">{agent.name}</p>
-                    <p className="text-sm text-gray-600 font-medium">{agent.id}</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className={`text-sm font-bold ${getStatusColor(agent.status)}`}>
-                    {agent.status.toUpperCase()}
-                  </p>
-                  <p className="text-xs text-gray-600 font-medium">Success: {agent.successRate}%</p>
-                </div>
-              </div>
-
-              <div className="mb-4 p-3 bg-white/60 rounded-xl">
-                <p className="text-xs text-gray-500 font-medium mb-1">Current Activity:</p>
-                <p className="text-sm text-gray-800 font-medium">{agent.currentTask}</p>
-              </div>
-
-              <div className="flex justify-between text-sm text-gray-600 mb-4 font-medium">
-                <span>Uptime: {agent.uptime}</span>
-                <span>Tasks: {agent.tasksCompleted.toLocaleString()}</span>
-              </div>
-              
-              <div className="space-y-2">
-                <div className="flex justify-between text-xs text-gray-500 font-medium">
-                  <span>Success Rate</span>
-                  <span>{agent.successRate}%</span>
-                </div>
-                <div className="bg-white/50 rounded-full h-2 shadow-inner">
-                  <div 
-                    className={`h-2 rounded-full transition-all duration-500 shadow-sm ${
-                      agent.successRate >= 95 ? 'bg-gradient-to-r from-purple-500 to-indigo-500' :
-                      agent.successRate >= 85 ? 'bg-gradient-to-r from-indigo-500 to-purple-500' : 
-                      'bg-gradient-to-r from-red-500 to-rose-500'
-                    }`}
-                    style={{ width: `${agent.successRate}%` }}
-                  ></div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* API Health Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl p-6">
-          <h3 className="text-lg font-bold text-gray-900 mb-6 flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-purple-500/20 to-pink-500/20 rounded-xl">
-              <Zap className="w-5 h-5 text-purple-600" />
-            </div>
-            API Health Status
-          </h3>
+        ) : (
           <div className="space-y-3">
-            {apiEndpoints.map((api, index) => (
-              <div key={index} className="flex items-center justify-between p-4 bg-gradient-to-r from-gray-50 to-slate-50 rounded-2xl shadow-sm hover:shadow-md transition-all">
-                <div>
-                  <p className="font-bold text-sm text-gray-900">{api.endpoint}</p>
-                  <p className="text-xs text-gray-600 font-medium">{api.requests} requests</p>
-                </div>
-                <div className="text-right">
-                  <div className="flex items-center gap-2 mb-1">
-                    <CheckCircle className={`w-4 h-4 ${getStatusColor(api.status)}`} />
-                    <span className={`text-xs font-bold ${getStatusColor(api.status)}`}>
-                      {api.status.toUpperCase()}
-                    </span>
+            {logs.map((log) => (
+              <div
+                key={log.id}
+                className={`p-4 rounded-xl border bg-gradient-to-r ${getSeverityColor(log.severity)} hover:shadow-md transition-all`}
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-3 flex-1">
+                    <div className="mt-1 p-2 bg-white rounded-lg shadow-sm">
+                      {getActionIcon(log.action)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className="font-bold text-gray-900">{formatActionName(log.action)}</h3>
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold border ${getSeverityBadge(log.severity)}`}>
+                          {log.severity.toUpperCase()}
+                        </span>
+                      </div>
+                      <div className="space-y-1 text-sm">
+                        {log.resource_name && (
+                          <p className="text-gray-700 font-medium">
+                            <span className="text-gray-500">Resource:</span> {log.resource_name}
+                          </p>
+                        )}
+                        {log.details?.changeSummary && (
+                          <p className="text-gray-600 italic">{log.details.changeSummary}</p>
+                        )}
+                        <div className="flex flex-wrap gap-3 text-xs text-gray-500 mt-2">
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {formatDate(log.created_at)}
+                          </span>
+                          {log.ip_address && (
+                            <span className="flex items-center gap-1">
+                              <MapPin className="w-3 h-3" />
+                              {log.ip_address}
+                            </span>
+                          )}
+                          {log.compliance_flags && log.compliance_flags.length > 0 && (
+                            <span className="flex items-center gap-1">
+                              <Shield className="w-3 h-3" />
+                              {log.compliance_flags.join(', ')}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <p className="text-xs text-gray-600 font-medium">{api.responseTime}</p>
+                  <div className="text-right text-xs text-gray-500 flex-shrink-0">
+                    {new Date(log.created_at).toLocaleString()}
+                  </div>
                 </div>
+
+                {/* Show changes if available */}
+                {log.changes && Object.keys(log.changes).length > 0 && (
+                  <details className="mt-3 pt-3 border-t border-gray-200">
+                    <summary className="cursor-pointer text-sm font-medium text-gray-700 hover:text-gray-900 flex items-center gap-2">
+                      <Eye className="w-4 h-4" />
+                      View Changes ({Object.keys(log.changes).length} field{Object.keys(log.changes).length > 1 ? 's' : ''})
+                    </summary>
+                    <div className="mt-3 space-y-2">
+                      {Object.entries(log.changes).map(([field, change]: [string, any]) => {
+                        const oldValue = change.from || change.before;
+                        const newValue = change.to || change.after;
+
+                        return (
+                          <div key={field} className="p-3 bg-white rounded-lg border border-gray-200 shadow-sm">
+                            <p className="font-semibold text-gray-800 mb-2 text-sm">{formatFieldLabel(field)}</p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                              <div className="bg-red-50 border border-red-200 rounded-lg p-2">
+                                <p className="text-xs text-red-600 font-medium mb-1">Previous</p>
+                                <p className="text-red-700 font-semibold">{formatFieldValue(oldValue)}</p>
+                              </div>
+                              <div className="bg-green-50 border border-green-200 rounded-lg p-2">
+                                <p className="text-xs text-green-600 font-medium mb-1">Updated</p>
+                                <p className="text-green-700 font-semibold">{formatFieldValue(newValue)}</p>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </details>
+                )}
               </div>
             ))}
           </div>
-        </div>
+        )}
 
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-xl p-6">
-          <h3 className="text-lg font-bold text-gray-900 mb-6 flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-purple-500/20 to-indigo-500/20 rounded-xl">
-              <TrendingUp className="w-5 h-5 text-purple-600" />
-            </div>
-            24H Performance
-          </h3>
-          <div className="space-y-4">
-            <div className="flex justify-between items-center p-3 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-2xl shadow-sm">
-              <span className="text-sm text-gray-700 font-medium">API Calls</span>
-              <span className="font-bold text-purple-600 text-lg">{systemMetrics.apiCalls.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-2xl shadow-sm">
-              <span className="text-sm text-gray-700 font-medium">LLM Calls</span>
-              <span className="font-bold text-indigo-600 text-lg">{(systemMetrics.llmCalls / 1000).toFixed(1)}k</span>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-gradient-to-r from-purple-50 to-violet-50 rounded-2xl shadow-sm">
-              <span className="text-sm text-gray-700 font-medium">Tokens Used</span>
-              <span className="font-bold text-purple-600 text-lg">{(systemMetrics.tokensUsed / 1000).toFixed(1)}k</span>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-2xl shadow-sm">
-              <span className="text-sm text-gray-700 font-medium">Response Time</span>
-              <span className="font-bold text-indigo-600 text-lg">{systemMetrics.averageResponseTime.toFixed(1)}s</span>
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between mt-6 pt-6 border-t border-gray-200">
+            <p className="text-sm text-gray-600 font-medium">
+              Showing {((currentPage - 1) * logsPerPage) + 1} to {Math.min(currentPage * logsPerPage, totalLogs)} of {totalLogs} entries
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              >
+                Previous
+              </button>
+              <button
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              >
+                Next
+              </button>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
-};
-
-export default AgentPilotMonitoring;
+}

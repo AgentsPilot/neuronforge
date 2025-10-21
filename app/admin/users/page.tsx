@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Search,
@@ -22,7 +22,15 @@ import {
   UserCheck,
   Database,
   Trash2,
-  AlertTriangle
+  AlertTriangle,
+  MapPin,
+  XCircle,
+  LogIn,
+  Settings,
+  Lock,
+  FileText,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 
 interface User {
@@ -39,6 +47,27 @@ interface User {
   role: string;
 }
 
+interface UserLoginStats {
+  total_logins: number;
+  failed_logins: number;
+  last_login_ip?: string;
+  last_login_at?: string;
+  unique_ips: number;
+}
+
+interface AuditLogEntry {
+  id: string;
+  action: string;
+  entity_type: string;
+  resource_name: string | null;
+  changes: any;
+  details: any;
+  ip_address: string | null;
+  severity: 'info' | 'warning' | 'critical';
+  compliance_flags: string[];
+  created_at: string;
+}
+
 interface UserStats {
   totalUsers: number;
   activeUsers: number;
@@ -50,7 +79,10 @@ export default function UsersPage() {
   const [stats, setStats] = useState<UserStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
+  const [userLoginStats, setUserLoginStats] = useState<Record<string, UserLoginStats>>({});
+  const [userAuditLogs, setUserAuditLogs] = useState<Record<string, AuditLogEntry[]>>({});
+  const [loadingUserDetails, setLoadingUserDetails] = useState<Record<string, boolean>>({});
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
@@ -58,6 +90,7 @@ export default function UsersPage() {
   const [userToTerminate, setUserToTerminate] = useState<User | null>(null);
   const [terminateReason, setTerminateReason] = useState('');
   const [isTerminating, setIsTerminating] = useState(false);
+  const [auditFilters, setAuditFilters] = useState<Record<string, 'all' | 'login' | 'security' | 'settings'>>({});
 
   useEffect(() => {
     fetchUsers();
@@ -179,8 +212,85 @@ export default function UsersPage() {
     return new Date(user.last_sign_in_at) > thirtyDaysAgo;
   };
 
-  const handleViewUserDetails = (user: User) => {
-    setSelectedUser(user);
+  const handleViewUserDetails = async (user: User) => {
+    // Toggle expansion
+    if (expandedUserId === user.id) {
+      setExpandedUserId(null);
+      return;
+    }
+
+    setExpandedUserId(user.id);
+
+    // Don't fetch if already loaded
+    if (userLoginStats[user.id] && userAuditLogs[user.id]) {
+      return;
+    }
+
+    setLoadingUserDetails(prev => ({ ...prev, [user.id]: true }));
+
+    try {
+      // Fetch login statistics
+      const statsResponse = await fetch(`/api/admin/users/${user.id}/login-stats`);
+      if (statsResponse.ok) {
+        const statsData = await statsResponse.json();
+        setUserLoginStats(prev => ({ ...prev, [user.id]: statsData.data }));
+      }
+
+      // Fetch audit logs
+      const auditResponse = await fetch(`/api/admin/users/${user.id}/audit-logs`);
+      if (auditResponse.ok) {
+        const auditData = await auditResponse.json();
+        setUserAuditLogs(prev => ({ ...prev, [user.id]: auditData.data || [] }));
+      }
+
+      // Initialize audit filter for this user
+      if (!auditFilters[user.id]) {
+        setAuditFilters(prev => ({ ...prev, [user.id]: 'all' }));
+      }
+    } catch (error) {
+      console.error('Error fetching user details:', error);
+    } finally {
+      setLoadingUserDetails(prev => ({ ...prev, [user.id]: false }));
+    }
+  };
+
+  const getFilteredAuditLogs = (userId: string) => {
+    const logs = userAuditLogs[userId] || [];
+    const filter = auditFilters[userId] || 'all';
+
+    if (filter === 'all') return logs;
+
+    if (filter === 'login') {
+      return logs.filter(log =>
+        log.action.includes('LOGIN') || log.action.includes('LOGOUT')
+      );
+    }
+
+    if (filter === 'security') {
+      return logs.filter(log =>
+        log.action.includes('PASSWORD') || log.action.includes('SECURITY') || log.action.includes('2FA')
+      );
+    }
+
+    if (filter === 'settings') {
+      return logs.filter(log =>
+        log.action.includes('SETTINGS') || log.action.includes('PROFILE')
+      );
+    }
+
+    return logs;
+  };
+
+  const formatActionName = (action: string) => {
+    return action.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, l => l.toUpperCase());
+  };
+
+  const getSeverityColor = (severity: string) => {
+    switch (severity) {
+      case 'critical': return 'bg-red-500/20 text-red-300 border-red-500/30';
+      case 'warning': return 'bg-orange-500/20 text-orange-300 border-orange-500/30';
+      default: return 'bg-blue-500/20 text-blue-300 border-blue-500/30';
+    }
   };
 
   const handleTerminateUser = async () => {
@@ -380,7 +490,9 @@ export default function UsersPage() {
             <thead className="bg-slate-700/50">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">User</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">Contact</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">Status</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">Login Activity</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">Last Sign In</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">Joined</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">Actions</th>
@@ -389,94 +501,396 @@ export default function UsersPage() {
             <tbody className="divide-y divide-slate-700/50">
               {filteredUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-slate-400">
+                  <td colSpan={7} className="px-6 py-12 text-center text-slate-400">
                     <Database className="w-12 h-12 mx-auto mb-4 text-slate-600" />
                     <p className="text-lg font-medium">No users found</p>
                     <p className="text-sm">Try adjusting your search or filter criteria</p>
                   </td>
                 </tr>
               ) : (
-                filteredUsers.slice(0, 100).map((user) => (
-                  <tr key={user.id} className="hover:bg-slate-700/30 transition-colors">
-                    <td className="px-6 py-4">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-medium text-white">
-                            {user.full_name || 'No name'}
-                          </p>
-                          {user.email_confirmed && (
-                            <CheckCircle className="w-3 h-3 text-green-400" title="Email verified" />
-                          )}
-                        </div>
-                        <p className="text-xs text-slate-400">{user.email}</p>
-                        {user.company && (
-                          <p className="text-xs text-slate-500 flex items-center gap-1 mt-1">
-                            <Building className="w-3 h-3" />
-                            {user.company}
-                          </p>
-                        )}
-                        <p className="text-xs text-slate-500 font-mono">{user.id.slice(0, 8)}...</p>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-col gap-1">
-                        <span className={`px-2 py-1 text-xs font-medium rounded-full w-fit ${
-                          isActiveUser(user)
-                            ? 'bg-green-500/20 text-green-300'
-                            : 'bg-slate-500/20 text-slate-300'
-                        }`}>
-                          {isActiveUser(user) ? (
-                            <span className="flex items-center gap-1">
-                              <UserCheck className="w-3 h-3" />
-                              Active
+                filteredUsers.slice(0, 100).map((user) => {
+                  const isExpanded = expandedUserId === user.id;
+                  const stats = userLoginStats[user.id];
+                  const isLoading = loadingUserDetails[user.id];
+
+                  return (
+                    <React.Fragment key={user.id}>
+                      {/* Main User Row */}
+                      <tr
+                        className={`hover:bg-slate-700/30 transition-all cursor-pointer ${
+                          isExpanded ? 'bg-slate-700/20' : ''
+                        }`}
+                        onClick={() => handleViewUserDetails(user)}
+                      >
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            {isExpanded ? (
+                              <ChevronDown className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                            ) : (
+                              <ChevronUp className="w-4 h-4 text-slate-500 flex-shrink-0 rotate-180" />
+                            )}
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <p className="text-sm font-medium text-white">
+                                  {user.full_name || 'No name'}
+                                </p>
+                                {user.email_confirmed && (
+                                  <CheckCircle className="w-3 h-3 text-green-400" title="Email verified" />
+                                )}
+                              </div>
+                              <p className="text-xs text-slate-400">{user.email}</p>
+                              <p className="text-xs text-slate-500 font-mono mt-1">{user.id.slice(0, 8)}...</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="space-y-1">
+                            {user.company && (
+                              <p className="text-xs text-slate-400 flex items-center gap-1">
+                                <Building className="w-3 h-3" />
+                                {user.company}
+                              </p>
+                            )}
+                            {user.phone && (
+                              <p className="text-xs text-slate-400 flex items-center gap-1">
+                                <Phone className="w-3 h-3" />
+                                {user.phone}
+                              </p>
+                            )}
+                            {!user.company && !user.phone && (
+                              <p className="text-xs text-slate-500">No contact info</p>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex flex-col gap-1">
+                            <span className={`px-2 py-1 text-xs font-medium rounded-full w-fit ${
+                              isActiveUser(user)
+                                ? 'bg-green-500/20 text-green-300'
+                                : 'bg-slate-500/20 text-slate-300'
+                            }`}>
+                              {isActiveUser(user) ? (
+                                <span className="flex items-center gap-1">
+                                  <UserCheck className="w-3 h-3" />
+                                  Active
+                                </span>
+                              ) : (
+                                <span className="flex items-center gap-1">
+                                  <Ban className="w-3 h-3" />
+                                  Inactive
+                                </span>
+                              )}
                             </span>
+                            {user.role && (
+                              <span className="px-2 py-1 text-xs font-medium bg-blue-500/20 text-blue-300 rounded-full w-fit flex items-center gap-1">
+                                <Shield className="w-3 h-3" />
+                                {user.role}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          {stats ? (
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2 text-xs">
+                                <CheckCircle className="w-3 h-3 text-green-400" />
+                                <span className="text-green-300 font-medium">{stats.total_logins}</span>
+                                <span className="text-slate-500">logins</span>
+                              </div>
+                              {stats.failed_logins > 0 && (
+                                <div className="flex items-center gap-2 text-xs">
+                                  <XCircle className="w-3 h-3 text-red-400" />
+                                  <span className="text-red-300 font-medium">{stats.failed_logins}</span>
+                                  <span className="text-slate-500">failed</span>
+                                </div>
+                              )}
+                            </div>
                           ) : (
-                            <span className="flex items-center gap-1">
-                              <Ban className="w-3 h-3" />
-                              Inactive
-                            </span>
+                            <div className="flex items-center gap-2 text-xs">
+                              <span className="text-slate-400">Click to load</span>
+                            </div>
                           )}
-                        </span>
-                        {user.role && (
-                          <span className="px-2 py-1 text-xs font-medium bg-blue-500/20 text-blue-300 rounded-full w-fit flex items-center gap-1">
-                            <Shield className="w-3 h-3" />
-                            {user.role}
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-slate-400">
-                      <div className="flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        {formatDate(user.last_sign_in_at || '')}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-slate-400">
-                      <div className="flex items-center gap-1">
-                        <Calendar className="w-3 h-3" />
-                        {formatDate(user.created_at)}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleViewUserDetails(user)}
-                          className="text-blue-400 hover:text-blue-300 p-1 rounded hover:bg-blue-500/20 transition-colors"
-                          title="View details"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => openTerminateModal(user)}
-                          className="text-red-400 hover:text-red-300 p-1 rounded hover:bg-red-500/20 transition-colors"
-                          title="Terminate user"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                        </td>
+                        <td className="px-6 py-4 text-sm text-slate-400">
+                          <div className="flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {formatDate(user.last_sign_in_at || '')}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-slate-400">
+                          <div className="flex items-center gap-1">
+                            <Calendar className="w-3 h-3" />
+                            {formatDate(user.created_at)}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleViewUserDetails(user);
+                              }}
+                              className="text-blue-400 hover:text-blue-300 p-1 rounded hover:bg-blue-500/20 transition-colors"
+                              title="Toggle details"
+                            >
+                              {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openTerminateModal(user);
+                              }}
+                              className="text-red-400 hover:text-red-300 p-1 rounded hover:bg-red-500/20 transition-colors"
+                              title="Terminate user"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+
+                      {/* Expanded Details Row */}
+                      {isExpanded && (
+                        <tr className="bg-slate-900/50">
+                          <td colSpan={7} className="px-6 py-6">
+                            {isLoading ? (
+                              <div className="text-center py-12">
+                                <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+                                <p className="text-slate-400 text-sm">Loading user details...</p>
+                              </div>
+                            ) : (
+                              <motion.div
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: 'auto' }}
+                                exit={{ opacity: 0, height: 0 }}
+                                transition={{ duration: 0.2 }}
+                                className="space-y-6"
+                              >
+                                {/* User Information Grid */}
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                  <div className="bg-gradient-to-br from-slate-700/40 to-slate-700/20 p-5 rounded-xl border border-white/5">
+                                    <h3 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+                                      <UsersIcon className="w-4 h-4" />
+                                      User Information
+                                    </h3>
+                                    <div className="space-y-3 text-sm">
+                                      <div>
+                                        <span className="text-slate-400 text-xs">Full Name:</span>
+                                        <p className="text-white font-medium">{user.full_name || 'N/A'}</p>
+                                      </div>
+                                      {user.company && (
+                                        <div>
+                                          <span className="text-slate-400 text-xs">Company:</span>
+                                          <p className="text-white font-medium flex items-center gap-1">
+                                            <Building className="w-3 h-3" />
+                                            {user.company}
+                                          </p>
+                                        </div>
+                                      )}
+                                      {user.phone && (
+                                        <div>
+                                          <span className="text-slate-400 text-xs">Phone:</span>
+                                          <p className="text-white font-medium flex items-center gap-1">
+                                            <Phone className="w-3 h-3" />
+                                            {user.phone}
+                                          </p>
+                                        </div>
+                                      )}
+                                      <div>
+                                        <span className="text-slate-400 text-xs">User ID:</span>
+                                        <p className="text-white font-mono text-xs break-all">{user.id}</p>
+                                      </div>
+                                      <div>
+                                        <span className="text-slate-400 text-xs">Role:</span>
+                                        <p className="text-white font-medium flex items-center gap-1">
+                                          <Shield className="w-3 h-3" />
+                                          {user.role}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="bg-gradient-to-br from-slate-700/40 to-slate-700/20 p-5 rounded-xl border border-white/5">
+                                    <h3 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+                                      <Clock className="w-4 h-4" />
+                                      Account Timeline
+                                    </h3>
+                                    <div className="space-y-3 text-sm">
+                                      <div>
+                                        <span className="text-slate-400 text-xs">Created:</span>
+                                        <p className="text-white font-medium">{new Date(user.created_at).toLocaleDateString()}</p>
+                                        <p className="text-slate-500 text-xs">{formatDate(user.created_at)}</p>
+                                      </div>
+                                      <div>
+                                        <span className="text-slate-400 text-xs">Last Sign In:</span>
+                                        <p className="text-white font-medium">
+                                          {user.last_sign_in_at
+                                            ? new Date(user.last_sign_in_at).toLocaleDateString()
+                                            : 'Never'
+                                          }
+                                        </p>
+                                        {user.last_sign_in_at && (
+                                          <p className="text-slate-500 text-xs">{formatDate(user.last_sign_in_at)}</p>
+                                        )}
+                                      </div>
+                                      {user.updated_at && (
+                                        <div>
+                                          <span className="text-slate-400 text-xs">Last Updated:</span>
+                                          <p className="text-white font-medium">{new Date(user.updated_at).toLocaleDateString()}</p>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="bg-gradient-to-br from-slate-700/40 to-slate-700/20 p-5 rounded-xl border border-white/5">
+                                    <h3 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+                                      <Shield className="w-4 h-4" />
+                                      Security
+                                    </h3>
+                                    <div className="space-y-3 text-sm">
+                                      <div>
+                                        <span className="text-slate-400 text-xs">Email Verified:</span>
+                                        <p className="text-white font-medium">
+                                          {user.email_confirmed ? '✓ Yes' : '✗ No'}
+                                        </p>
+                                      </div>
+                                      <div>
+                                        <span className="text-slate-400 text-xs">Auth Providers:</span>
+                                        <div className="flex flex-wrap gap-1 mt-1">
+                                          {user.providers && user.providers.length > 0 ? (
+                                            user.providers.map(provider => (
+                                              <span key={provider} className="px-2 py-0.5 text-xs font-medium bg-purple-500/20 text-purple-300 rounded">
+                                                {provider}
+                                              </span>
+                                            ))
+                                          ) : (
+                                            <span className="text-slate-500">None</span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Login Statistics */}
+                                {stats && (
+                                  <div className="bg-gradient-to-br from-blue-500/10 to-purple-500/10 p-6 rounded-xl border border-blue-500/20">
+                                    <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                                      <LogIn className="w-5 h-5 text-blue-400" />
+                                      Login Activity
+                                    </h3>
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                      <div className="bg-slate-800/50 p-4 rounded-lg">
+                                        <div className="flex items-center gap-2 mb-1">
+                                          <CheckCircle className="w-4 h-4 text-green-400" />
+                                          <span className="text-xs text-slate-400">Total Logins</span>
+                                        </div>
+                                        <p className="text-2xl font-bold text-white">{stats.total_logins || 0}</p>
+                                      </div>
+                                      <div className="bg-slate-800/50 p-4 rounded-lg">
+                                        <div className="flex items-center gap-2 mb-1">
+                                          <XCircle className="w-4 h-4 text-red-400" />
+                                          <span className="text-xs text-slate-400">Failed Logins</span>
+                                        </div>
+                                        <p className="text-2xl font-bold text-white">{stats.failed_logins || 0}</p>
+                                      </div>
+                                      <div className="bg-slate-800/50 p-4 rounded-lg">
+                                        <div className="flex items-center gap-2 mb-1">
+                                          <MapPin className="w-4 h-4 text-blue-400" />
+                                          <span className="text-xs text-slate-400">Unique IPs</span>
+                                        </div>
+                                        <p className="text-2xl font-bold text-white">{stats.unique_ips || 0}</p>
+                                      </div>
+                                      <div className="bg-slate-800/50 p-4 rounded-lg">
+                                        <div className="flex items-center gap-2 mb-1">
+                                          <MapPin className="w-4 h-4 text-purple-400" />
+                                          <span className="text-xs text-slate-400">Last Login IP</span>
+                                        </div>
+                                        <p className="text-sm font-mono text-white">{stats.last_login_ip || 'N/A'}</p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Audit Trail */}
+                                <div className="bg-slate-700/30 p-6 rounded-xl border border-white/5">
+                                  <div className="flex items-center justify-between mb-4">
+                                    <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                      <FileText className="w-5 h-5 text-indigo-400" />
+                                      Audit Trail
+                                    </h3>
+                                    <select
+                                      value={auditFilters[user.id] || 'all'}
+                                      onChange={(e) => setAuditFilters(prev => ({ ...prev, [user.id]: e.target.value as any }))}
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="px-3 py-1 bg-slate-600/50 border border-slate-500 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    >
+                                      <option value="all">All Events</option>
+                                      <option value="login">Login Events</option>
+                                      <option value="security">Security Events</option>
+                                      <option value="settings">Settings Changes</option>
+                                    </select>
+                                  </div>
+
+                                  {getFilteredAuditLogs(user.id).length === 0 ? (
+                                    <div className="text-center py-12">
+                                      <FileText className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+                                      <p className="text-slate-400">No audit logs found</p>
+                                      <p className="text-slate-500 text-sm">User activity will appear here</p>
+                                    </div>
+                                  ) : (
+                                    <div className="space-y-2 max-h-96 overflow-y-auto">
+                                      {getFilteredAuditLogs(user.id).slice(0, 50).map((log) => (
+                                        <div
+                                          key={log.id}
+                                          className="bg-slate-800/50 p-4 rounded-lg border border-slate-700/50 hover:border-slate-600 transition-all"
+                                        >
+                                          <div className="flex items-start justify-between gap-4">
+                                            <div className="flex-1">
+                                              <div className="flex items-center gap-2 mb-2">
+                                                <h4 className="font-semibold text-white text-sm">{formatActionName(log.action)}</h4>
+                                                <span className={`px-2 py-0.5 text-xs font-semibold rounded-full border ${getSeverityColor(log.severity)}`}>
+                                                  {log.severity.toUpperCase()}
+                                                </span>
+                                              </div>
+                                              {log.resource_name && (
+                                                <p className="text-xs text-slate-400 mb-1">
+                                                  <span className="text-slate-500">Resource:</span> {log.resource_name}
+                                                </p>
+                                              )}
+                                              <div className="flex flex-wrap gap-3 text-xs text-slate-500 mt-2">
+                                                <span className="flex items-center gap-1">
+                                                  <Clock className="w-3 h-3" />
+                                                  {new Date(log.created_at).toLocaleString()}
+                                                </span>
+                                                {log.ip_address && (
+                                                  <span className="flex items-center gap-1">
+                                                    <MapPin className="w-3 h-3" />
+                                                    {log.ip_address}
+                                                  </span>
+                                                )}
+                                                {log.compliance_flags && log.compliance_flags.length > 0 && (
+                                                  <span className="flex items-center gap-1">
+                                                    <Shield className="w-3 h-3" />
+                                                    {log.compliance_flags.join(', ')}
+                                                  </span>
+                                                )}
+                                              </div>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </motion.div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -491,171 +905,6 @@ export default function UsersPage() {
         )}
       </div>
 
-      {/* User Detail Modal */}
-      {selectedUser && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-slate-800/95 backdrop-blur-xl rounded-xl border border-white/10 max-w-4xl w-full max-h-[90vh] overflow-y-auto"
-          >
-            <div className="p-6 border-b border-white/10 flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <h2 className="text-xl font-semibold text-white">User Details</h2>
-                <div className="flex gap-2">
-                  <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                    isActiveUser(selectedUser)
-                      ? 'bg-green-500/20 text-green-300'
-                      : 'bg-slate-500/20 text-slate-300'
-                  }`}>
-                    {isActiveUser(selectedUser) ? 'Active' : 'Inactive'}
-                  </span>
-                  {selectedUser.email_confirmed && (
-                    <span className="px-2 py-1 text-xs font-medium bg-blue-500/20 text-blue-300 rounded-full">
-                      Verified
-                    </span>
-                  )}
-                </div>
-              </div>
-              <button
-                onClick={() => setSelectedUser(null)}
-                className="text-slate-400 hover:text-white p-1"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-6">
-              {/* User Information */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="bg-slate-700/30 p-4 rounded-lg">
-                  <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
-                    <UsersIcon className="w-5 h-5" />
-                    User Information
-                  </h3>
-                  <div className="space-y-2">
-                    <div>
-                      <span className="text-slate-400 text-sm">Name:</span>
-                      <p className="text-white font-medium">{selectedUser.full_name || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <span className="text-slate-400 text-sm">Email:</span>
-                      <p className="text-white flex items-center gap-2">
-                        {selectedUser.email}
-                        {selectedUser.email_confirmed && (
-                          <CheckCircle className="w-4 h-4 text-green-400" />
-                        )}
-                      </p>
-                    </div>
-                    {selectedUser.phone && (
-                      <div>
-                        <span className="text-slate-400 text-sm">Phone:</span>
-                        <p className="text-white flex items-center gap-1">
-                          <Phone className="w-3 h-3" />
-                          {selectedUser.phone}
-                        </p>
-                      </div>
-                    )}
-                    {selectedUser.company && (
-                      <div>
-                        <span className="text-slate-400 text-sm">Company:</span>
-                        <p className="text-white flex items-center gap-1">
-                          <Building className="w-3 h-3" />
-                          {selectedUser.company}
-                        </p>
-                      </div>
-                    )}
-                    <div>
-                      <span className="text-slate-400 text-sm">User ID:</span>
-                      <p className="text-white font-mono text-xs">{selectedUser.id}</p>
-                    </div>
-                    <div>
-                      <span className="text-slate-400 text-sm">Role:</span>
-                      <p className="text-white flex items-center gap-1">
-                        <Shield className="w-3 h-3" />
-                        {selectedUser.role}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-slate-700/30 p-4 rounded-lg">
-                  <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
-                    <Shield className="w-5 h-5" />
-                    Account Settings
-                  </h3>
-                  <div className="space-y-2">
-                    <div>
-                      <span className="text-slate-400 text-sm">Account Status:</span>
-                      <p className="text-white font-medium">
-                        {isActiveUser(selectedUser) ? 'Active' : 'Inactive'}
-                      </p>
-                    </div>
-                    <div>
-                      <span className="text-slate-400 text-sm">Email Verified:</span>
-                      <p className="text-white font-medium">
-                        {selectedUser.email_confirmed ? 'Yes' : 'No'}
-                      </p>
-                    </div>
-                    <div>
-                      <span className="text-slate-400 text-sm">Auth Providers:</span>
-                      <p className="text-white font-medium">
-                        {selectedUser.providers.length || 'None'}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Activity Timeline */}
-              <div className="bg-slate-700/30 p-4 rounded-lg">
-                <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
-                  <Clock className="w-5 h-5" />
-                  Activity Timeline
-                </h3>
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-400 text-sm">Account Created:</span>
-                    <p className="text-white">{new Date(selectedUser.created_at).toLocaleString()}</p>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-400 text-sm">Last Sign In:</span>
-                    <p className="text-white">
-                      {selectedUser.last_sign_in_at
-                        ? new Date(selectedUser.last_sign_in_at).toLocaleString()
-                        : 'Never'
-                      }
-                    </p>
-                  </div>
-                  {selectedUser.updated_at && (
-                    <div className="flex justify-between items-center">
-                      <span className="text-slate-400 text-sm">Last Updated:</span>
-                      <p className="text-white">{new Date(selectedUser.updated_at).toLocaleString()}</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Auth Providers */}
-              {selectedUser.providers && selectedUser.providers.length > 0 && (
-                <div className="bg-slate-700/30 p-4 rounded-lg">
-                  <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
-                    <Shield className="w-5 h-5" />
-                    Authentication Methods
-                  </h3>
-                  <div className="flex gap-2">
-                    {selectedUser.providers.map(provider => (
-                      <span key={provider} className="px-3 py-1 text-xs font-medium bg-purple-500/20 text-purple-300 rounded-full">
-                        {provider}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </motion.div>
-        </div>
-      )}
 
       {/* Terminate User Confirmation Modal */}
       {showTerminateModal && userToTerminate && (

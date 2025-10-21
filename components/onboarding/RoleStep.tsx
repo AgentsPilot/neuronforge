@@ -23,13 +23,39 @@ const RoleStep: React.FC<RoleStepProps> = ({ data, onChange }) => {
   const { user } = useAuth();
   const [isUpdating, setIsUpdating] = React.useState(false);
 
+  const getIconSvg = (iconType: string) => {
+    switch(iconType) {
+      case 'admin':
+        return (
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+          </svg>
+        );
+      case 'user':
+        return (
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+          </svg>
+        );
+      case 'viewer':
+        return (
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+          </svg>
+        );
+      default:
+        return null;
+    }
+  };
+
   const roleOptions: RoleOption[] = [
     {
       value: 'admin',
       title: 'Administrator',
       description: 'Full platform access with management capabilities',
       recommended: true,
-      icon: '🔑',
+      icon: 'admin',
       permissions: [
         'Manage all users and roles',
         'Access all data and analytics',
@@ -41,7 +67,7 @@ const RoleStep: React.FC<RoleStepProps> = ({ data, onChange }) => {
       value: 'user',
       title: 'User',
       description: 'Standard access for everyday workflow management',
-      icon: '👤',
+      icon: 'user',
       permissions: [
         'Access personal dashboard',
         'Create and manage workflows',
@@ -53,7 +79,7 @@ const RoleStep: React.FC<RoleStepProps> = ({ data, onChange }) => {
       value: 'viewer',
       title: 'Viewer',
       description: 'Read-only access for monitoring and reporting',
-      icon: '👁️',
+      icon: 'viewer',
       permissions: [
         'View dashboards and reports',
         'Monitor workflow progress',
@@ -115,23 +141,27 @@ const RoleStep: React.FC<RoleStepProps> = ({ data, onChange }) => {
               key={role.value}
               onClick={() => handleRoleChange(role.value)}
               disabled={isUpdating}
-              className={`group relative px-4 py-2.5 border rounded-lg text-sm font-medium transition-all duration-200 hover:scale-105 ${
+              className={`group relative px-4 py-2.5 border rounded-xl text-sm font-medium transition-all duration-200 hover:scale-105 ${
                 data === role.value
-                  ? 'bg-blue-500/20 border-blue-400/50 text-blue-300 ring-2 ring-blue-400/30'
-                  : 'bg-gray-700/50 border-gray-600/30 text-gray-300 hover:bg-blue-500/10 hover:border-blue-500/30 hover:text-blue-300'
+                  ? 'bg-purple-500/20 border-purple-400/50 text-purple-300 ring-2 ring-purple-400/30 shadow-lg shadow-purple-500/25'
+                  : 'bg-white/5 border-white/10 text-slate-300 hover:bg-purple-500/10 hover:border-purple-500/30 hover:text-purple-300'
               } ${isUpdating ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <div className="flex items-center space-x-2">
-                <span className="text-base">{role.icon}</span>
+                <span className={data === role.value ? 'text-purple-400' : 'text-slate-400 group-hover:text-purple-400'}>
+                  {getIconSvg(role.icon)}
+                </span>
                 <span>{role.title}</span>
                 {role.recommended && (
-                  <div className="w-1.5 h-1.5 bg-purple-400 rounded-full"></div>
+                  <span className="px-1.5 py-0.5 bg-gradient-to-r from-blue-500/20 to-purple-500/20 border border-purple-400/30 rounded-full text-[10px] text-purple-300 font-semibold">
+                    RECOMMENDED
+                  </span>
                 )}
                 {data === role.value && !isUpdating && (
-                  <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
+                  <div className="w-2 h-2 bg-purple-400 rounded-full animate-pulse"></div>
                 )}
                 {isUpdating && data === role.value && (
-                  <div className="w-3 h-3 border-2 border-blue-300 border-t-transparent rounded-full animate-spin"></div>
+                  <div className="w-3 h-3 border-2 border-purple-300 border-t-transparent rounded-full animate-spin"></div>
                 )}
               </div>
             </button>
@@ -141,37 +171,39 @@ const RoleStep: React.FC<RoleStepProps> = ({ data, onChange }) => {
 
       {/* Selected Role Details */}
       {selectedRole && (
-        <div className="mt-5 p-4 bg-blue-500/10 border border-blue-500/30 rounded-xl">
-          <div className="flex items-start space-x-3">
-            <div className="text-2xl">{selectedRole.icon}</div>
+        <div className="mt-5 p-5 bg-gradient-to-br from-purple-500/10 to-blue-500/10 border border-purple-500/30 rounded-xl shadow-lg">
+          <div className="flex items-start space-x-4">
+            <div className="w-12 h-12 bg-purple-500/20 rounded-xl flex items-center justify-center text-purple-400 shadow-lg">
+              {getIconSvg(selectedRole.icon)}
+            </div>
             <div className="flex-1">
               <div className="flex items-center space-x-2 mb-2">
-                <h4 className="font-medium text-blue-200">
+                <h4 className="font-bold text-purple-200">
                   {selectedRole.title} Selected
                 </h4>
                 {selectedRole.recommended && (
-                  <span className="px-2 py-0.5 bg-purple-500/20 border border-purple-400/30 rounded-full text-xs text-purple-300">
+                  <span className="px-2 py-0.5 bg-gradient-to-r from-blue-500/20 to-purple-500/20 border border-purple-400/30 rounded-full text-xs text-purple-300 font-semibold">
                     Recommended
                   </span>
                 )}
-                <div className="w-1.5 h-1.5 bg-green-400 rounded-full"></div>
+                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse shadow-lg shadow-green-400/50"></div>
               </div>
-              <p className="text-sm text-blue-300/80 mb-3">
+              <p className="text-sm text-slate-300 mb-3">
                 {selectedRole.description}
               </p>
-              
+
               {/* Permissions as compact badges */}
               <div className="space-y-2">
-                <div className="text-xs font-medium text-blue-200">
+                <div className="text-xs font-semibold text-purple-300">
                   Key permissions:
                 </div>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="flex flex-wrap gap-2">
                   {selectedRole.permissions.map((permission, index) => (
                     <span
                       key={index}
-                      className="inline-flex items-center px-2 py-1 bg-blue-500/20 border border-blue-400/30 rounded-md text-xs text-blue-300"
+                      className="inline-flex items-center px-2.5 py-1 bg-purple-500/20 border border-purple-400/30 rounded-lg text-xs text-purple-300 font-medium"
                     >
-                      <svg className="w-2.5 h-2.5 mr-1.5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                      <svg className="w-3 h-3 mr-1.5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
                         <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                       </svg>
                       {permission}
