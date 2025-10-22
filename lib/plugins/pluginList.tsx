@@ -76,31 +76,7 @@ export const pluginList: PluginDefinition[] = [
     category: 'ai',
     isPopular: true,
   },
-  {
-    pluginKey: 'anthropic-claude',
-    name: 'Anthropic Claude',
-    description: 'Optional future support',
-    detailedDescription: 'Advanced AI assistant for complex reasoning, analysis, and coding tasks. Offers enhanced safety features and nuanced conversation capabilities with strong performance on technical content.',
-    icon: <Bot className="w-5 h-5 text-purple-600" />,
-    category: 'ai',
-  },
-  {
-    pluginKey: 'serpapi',
-    name: 'SerpAPI',
-    description: 'Real-time web search support',
-    detailedDescription: 'Real-time web search engine results scraping. Provides structured access to Google, Bing, and other search engines with parsed results, images, news, and shopping data.',
-    icon: <Search className="w-5 h-5 text-blue-600" />,
-    category: 'ai',
-  },
-  {
-    pluginKey: 'brave-search',
-    name: 'Brave Search API',
-    description: 'Real-time web search support',
-    detailedDescription: 'Privacy-focused web search with real-time results. Delivers independent search results without tracking, including web pages, news, and image search capabilities.',
-    icon: <Search className="w-5 h-5 text-orange-600" />,
-    category: 'ai',
-  },
-
+  
   // 📧 Communication & Collaboration
   {
     pluginKey: 'google-mail',
@@ -138,54 +114,13 @@ export const pluginList: PluginDefinition[] = [
     category: 'communication',
     isPopular: true,
   },
-  {
-    pluginKey: 'microsoft-teams',
-    name: 'Microsoft Teams',
-    description: 'Notifications, summaries, meeting links',
-    detailedDescription: 'Enterprise collaboration platform for chat, meetings, and file sharing. Enables message sending, meeting scheduling, channel management, and integration with Microsoft 365 applications.',
-    icon: <Users className="w-5 h-5 text-blue-700" />,
-    category: 'communication',
-    isPopular: true,
-  },
-  {
-    pluginKey: 'zoom',
-    name: 'Zoom',
-    description: 'Create meetings, fetch recordings, auto-schedule',
-    detailedDescription: 'Video conferencing platform integration for creating meetings, managing recordings, and scheduling calls. Provides meeting links, participant management, and automated scheduling capabilities.',
-    icon: <Video className="w-5 h-5 text-blue-600" />,
-    category: 'communication',
-    isPopular: true,
-  },
-  {
-    pluginKey: 'google-meet',
-    name: 'Google Meet',
-    description: 'Scheduling, links, meeting context',
-    detailedDescription: 'Google\'s video conferencing solution integrated with Calendar. Enables automatic meeting link generation, scheduling integration, and participant management for virtual meetings.',
-    icon: <Video className="w-5 h-5 text-green-600" />,
-    category: 'communication',
-  },
-  {
-    pluginKey: 'twilio',
-    name: 'Twilio',
-    description: 'Send SMS, make voice calls, manage call logs and responses',
-    detailedDescription: 'Communications platform for SMS, voice calls, and messaging. Supports sending text messages, making phone calls, managing call logs, and automating communication workflows via API.',
-    icon: <Phone className="w-5 h-5 text-red-500" />,
-    category: 'communication',
-  },
+  
   {
     pluginKey: 'whatsapp-business',
     name: 'WhatsApp Business API',
     description: 'Send/receive templated messages, manage customer chats, automate responses',
     detailedDescription: 'Business messaging platform for customer communication. Enables sending templated messages, managing customer chats, automating responses, and handling media attachments through WhatsApp.',
     icon: <MessageCircle className="w-5 h-5 text-green-600" />,
-    category: 'communication',
-  },
-  {
-    pluginKey: 'discord',
-    name: 'Discord',
-    description: 'Post messages to channels, fetch conversation threads, manage server notifications',
-    detailedDescription: 'Community communication platform for servers and channels. Supports posting messages, fetching conversation threads, managing server notifications, and integrating with Discord bots and webhooks.',
-    icon: <MessageCircle className="w-5 h-5 text-indigo-600" />,
     category: 'communication',
   },
 
@@ -207,14 +142,6 @@ export const pluginList: PluginDefinition[] = [
     icon: <FileText className="w-5 h-5 text-gray-800" />,
     category: 'productivity',
     isPopular: true,
-  },
-  {
-    pluginKey: 'evernote',
-    name: 'Evernote',
-    description: 'Fetch notes, add content',
-    detailedDescription: 'Note-taking application for capturing, organizing, and searching notes. Supports creating notebooks, adding tags, searching content, and syncing notes across devices with rich media attachments.',
-    icon: <BookOpen className="w-5 h-5 text-green-600" />,
-    category: 'productivity',
   },
   {
     pluginKey: 'dropbox',
@@ -286,22 +213,6 @@ export const pluginList: PluginDefinition[] = [
     category: 'crm',
     isPopular: true,
   },
-  {
-    pluginKey: 'pipedrive',
-    name: 'Pipedrive',
-    description: 'Pipeline and deal management',
-    detailedDescription: 'Sales-focused CRM with visual pipeline management. Provides deal tracking, sales activity logging, pipeline customization, sales reporting, and integration with communication tools for sales teams.',
-    icon: <Target className="w-5 h-5 text-green-600" />,
-    category: 'crm',
-  },
-  {
-    pluginKey: 'zoho-crm',
-    name: 'Zoho CRM',
-    description: 'Customer tracking, lead enrichment',
-    detailedDescription: 'Comprehensive CRM solution for lead management and customer tracking. Offers contact management, sales automation, marketing campaigns, customer support ticketing, and business analytics.',
-    icon: <User className="w-5 h-5 text-red-600" />,
-    category: 'crm',
-  },
 
   // 📈 Marketing & Ads
   {
@@ -322,40 +233,8 @@ export const pluginList: PluginDefinition[] = [
     category: 'marketing',
     isPopular: true,
   },
-  {
-    pluginKey: 'mailchimp',
-    name: 'Mailchimp',
-    description: 'Fetch campaigns, contact performance',
-    detailedDescription: 'Email marketing platform for automated campaigns and audience management. Supports email template creation, list management, campaign analytics, automation workflows, and A/B testing capabilities.',
-    icon: <Send className="w-5 h-5 text-yellow-600" />,
-    category: 'marketing',
-  },
-  {
-    pluginKey: 'activecampaign',
-    name: 'ActiveCampaign',
-    description: 'Email sequences, performance',
-    detailedDescription: 'Marketing automation platform combining email marketing, CRM, and sales automation. Provides advanced segmentation, behavioral triggers, lead scoring, and multichannel campaign management.',
-    icon: <Activity className="w-5 h-5 text-blue-600" />,
-    category: 'marketing',
-  },
 
   // 📂 Project & Task Management
-  {
-    pluginKey: 'trello',
-    name: 'Trello',
-    description: 'Read/update board status',
-    detailedDescription: 'Kanban-style project management tool for organizing tasks and workflows. Supports board creation, card management, list organization, team collaboration, and progress tracking with customizable workflows.',
-    icon: <Grid3X3 className="w-5 h-5 text-blue-600" />,
-    category: 'project',
-  },
-  {
-    pluginKey: 'asana',
-    name: 'Asana',
-    description: 'Task tracking and summaries',
-    detailedDescription: 'Project management platform for team collaboration and task tracking. Provides project organization, task assignment, timeline management, team communication, and progress reporting with multiple view options.',
-    icon: <CheckSquare className="w-5 h-5 text-red-600" />,
-    category: 'project',
-  },
   {
     pluginKey: 'clickup-project',
     name: 'ClickUp',
@@ -364,15 +243,6 @@ export const pluginList: PluginDefinition[] = [
     icon: <ClipboardList className="w-5 h-5 text-purple-600" />,
     category: 'project',
   },
-  {
-    pluginKey: 'jira',
-    name: 'Jira',
-    description: 'Ticket summaries, project status (technical + business use)',
-    detailedDescription: 'Issue and project tracking software for agile development teams. Provides bug tracking, sprint planning, workflow customization, reporting dashboards, and integration with development tools.',
-    icon: <Settings className="w-5 h-5 text-blue-600" />,
-    category: 'project',
-  },
-
   // 💰 Finance & Billing
   {
     pluginKey: 'quickbooks',
@@ -410,31 +280,6 @@ export const pluginList: PluginDefinition[] = [
   },
 
   // 🔄 Integration Platforms
-  {
-    pluginKey: 'zapier',
-    name: 'Zapier',
-    description: 'Trigger or observe workflows',
-    detailedDescription: 'Workflow automation platform connecting apps and services. Enables trigger-based automation, multi-step workflows, data transformation, and integration between thousands of applications without coding.',
-    icon: <Zap className="w-5 h-5 text-orange-600" />,
-    category: 'integration',
-    isPopular: true,
-  },
-  {
-    pluginKey: 'make',
-    name: 'Make (Integromat)',
-    description: 'Basic support to connect to broader automations',
-    detailedDescription: 'Advanced automation platform for complex workflow creation. Provides visual workflow builder, data manipulation, conditional logic, error handling, and real-time monitoring for sophisticated integrations.',
-    icon: <Settings className="w-5 h-5 text-purple-600" />,
-    category: 'integration',
-  },
-  {
-    pluginKey: 'calendly',
-    name: 'Calendly',
-    description: 'Meeting scheduling automation',
-    detailedDescription: 'Meeting scheduling tool for automated appointment booking. Handles calendar integration, availability management, meeting confirmations, timezone handling, and customizable booking workflows with team coordination.',
-    icon: <Calendar className="w-5 h-5 text-blue-600" />,
-    category: 'integration',
-  },
 ]
 
 // Helper functions for organizing plugins

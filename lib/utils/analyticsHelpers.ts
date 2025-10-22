@@ -28,6 +28,58 @@ export const getTimeFilterLabel = (timeFilter: TimeFilter): string => {
 };
 
 /**
+ * Convert activity_type to human-friendly display name
+ */
+export const getActivityTypeDisplayName = (activityType: string): string => {
+  const displayNames: { [key: string]: string } = {
+    // Agent operations
+    'agent_execution': 'Agent Executions',
+    'agent_creation': 'Agent Creation',
+    'agent_enhancement': 'Agent Enhancement',
+    'agent_generation': 'Agent Generation',
+    'agent_update': 'Agent Updates',
+
+    // Chat and conversation
+    'chat': 'AI Chat',
+    'conversation': 'Conversations',
+    'chat_completion': 'Chat Responses',
+
+    // Research and analysis
+    'research': 'Research & Analysis',
+    'analysis': 'Data Analysis',
+    'web_search': 'Web Research',
+    'summarization': 'Summarization',
+
+    // Plugin operations
+    'plugin_execution': 'Plugin Operations',
+    'gmail': 'Gmail Integration',
+    'notion': 'Notion Integration',
+    'slack': 'Slack Integration',
+    'drive': 'Google Drive',
+
+    // Prompt operations
+    'prompt_analysis': 'Prompt Analysis',
+    'prompt_enhancement': 'Prompt Enhancement',
+    'prompt_generation': 'Prompt Generation',
+
+    // General
+    'other': 'Other Operations',
+    'unknown': 'Miscellaneous'
+  };
+
+  // Try exact match first
+  if (displayNames[activityType.toLowerCase()]) {
+    return displayNames[activityType.toLowerCase()];
+  }
+
+  // Try to make it readable by capitalizing and replacing underscores
+  return activityType
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+};
+
+/**
  * Format cost with appropriate currency symbol and decimals
  * FIXED: Handle undefined/null values
  */
@@ -436,9 +488,9 @@ export const processAnalyticsData = (
       !agent.agentName.startsWith('Agent ')
     );
 
-  // Add inactive agents (agents with no usage data)
+  // Add agents with no usage data (they're still "Active" unless archived)
   const activeAgentIds = new Set(activeAgents.map(a => a.agentId));
-  const inactiveAgents: AgentData[] = (allAgents || [])
+  const unusedAgents: AgentData[] = (allAgents || [])
     .filter(agent => !activeAgentIds.has(agent.id))
     .map(agent => ({
       id: agent.id,
@@ -455,12 +507,12 @@ export const processAnalyticsData = (
       status: 'needs_attention' as const,
       lastUsed: agent.created_at,
       efficiency: 0,
-      isActive: false,
+      isActive: !agent.is_archived, // Active unless explicitly archived
       isArchived: agent.is_archived || false
     }));
 
-  // Combine active and inactive agents, sort by: active > inactive > archived
-  const agents: AgentData[] = [...activeAgents, ...inactiveAgents]
+  // Combine active and unused agents, sort by: active > inactive > archived
+  const agents: AgentData[] = [...activeAgents, ...unusedAgents]
     .sort((a, b) => {
       // Priority: active (not archived) > inactive (not archived) > archived
       const aPriority = a.isArchived ? 2 : (a.isActive ? 0 : 1);
@@ -535,7 +587,9 @@ export const processAnalyticsData = (
     activity_type: item.activity_type || null,
     feature: item.feature || null,
     endpoint: item.endpoint || null,
-    session_id: item.session_id || null
+    session_id: item.session_id || null,
+    workflow_step: item.workflow_step || null,
+    metadata: item.metadata || null
   })).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()); // Most recent first
 
   // Process daily usage
@@ -568,32 +622,34 @@ export const processAnalyticsData = (
   const averageLatency = totalActivities > 0 ? rawData.reduce((sum, r) => sum + (r.latency_ms || 0), 0) / totalActivities : 0;
   const costSavings = totalTokens * 0.00005; // Rough estimate of cost savings
 
-  // Process cost breakdown by activity_name (AFTER totalCost is calculated)
+  // Process cost breakdown by activity_type (AFTER totalCost is calculated)
   const costBreakdownGroups = new Map<string, number>();
-  
+
   rawData.forEach(item => {
     let category = 'Other';
-    
-    // Use activity_name from token_usage table
-    if (item.activity_name && 
-        item.activity_name !== 'unknown' && 
-        item.activity_name.trim() !== '') {
-      category = item.activity_name.trim();
+
+    // Group by activity_type for high-level categorization
+    if (item.activity_type &&
+        item.activity_type !== 'unknown' &&
+        item.activity_type.trim() !== '') {
+      category = item.activity_type.trim();
+    } else if (item.category && item.category !== 'other') {
+      category = item.category;
     } else {
-      category = 'Unnamed Activity';
+      category = 'Other Operations';
     }
-    
+
     const current = costBreakdownGroups.get(category) || 0;
     costBreakdownGroups.set(category, current + (item.cost_usd || 0));
   });
 
   const costBreakdown = Array.from(costBreakdownGroups.entries())
-    .map(([name, cost]) => ({
-      name,
+    .map(([activityType, cost]) => ({
+      name: getActivityTypeDisplayName(activityType), // Convert to human-friendly name
       cost,
       percentage: totalCost > 0 ? (cost / totalCost) * 100 : 0,
-      color: getColorForCategory(name),
-      bgColor: getBgColorForCategory(name)
+      color: getColorForCategory(activityType),
+      bgColor: getBgColorForCategory(activityType)
     }))
     .sort((a, b) => b.cost - a.cost)
     .slice(0, 8); // Top 8 cost categories

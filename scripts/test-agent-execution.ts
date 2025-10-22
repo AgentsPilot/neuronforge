@@ -3,7 +3,7 @@
 
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
-import { addManualExecution } from '../lib/queues/agentQueue';
+import { addManualExecution } from '../lib/queues/qstashQueue';
 
 // Load environment variables
 dotenv.config({ path: '.env.local' });

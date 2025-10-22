@@ -963,22 +963,23 @@ export function useAgentSandbox({
         return true
       }
 
-      // Handle regular execution via execute-workflow route
+      // Handle regular execution via AgentKit (unified execution path)
       const startTime = Date.now()
-      
+
       const requestBody = {
-        inputVariables: formData,
-        testMode: executionContext === 'test',
-        useConfiguration: true // Always try to use saved configuration as defaults
+        agent_id: agentId,
+        input_variables: formData,
+        use_agentkit: true, // Use OpenAI AgentKit for consistent execution
+        execution_type: executionContext === 'test' ? 'manual' : 'manual' // Both are manual, just tracking context
       }
 
-      console.log('Sending request to execute-workflow:', {
+      console.log('Sending request to run-agent (AgentKit):', {
         agentId,
         executionContext,
         requestBody
       })
-      
-      const response = await fetch(`/api/agents/${agentId}/execute-workflow`, {
+
+      const response = await fetch('/api/run-agent', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -995,66 +996,48 @@ export function useAgentSandbox({
       const endTime = Date.now()
       setExecutionTime(endTime - startTime)
 
-      console.log('Execute-workflow response:', res)
-      
-      // Handle configuration save response (configure mode)
-      if (res.configurationSaved) {
-        setSavedConfiguration(res.savedConfiguration || formData)
-        setIsConfigurationSaved(true)
-        setSendStatus('✅ Configuration saved successfully! Your agent is now activated and ready to use.')
-        setResult({ message: 'Agent configuration saved successfully' })
-        
-        // Notify parent component about configuration completion
-        if (onExecutionComplete) {
-          onExecutionComplete(res.executionId)
+      console.log('AgentKit response:', res)
+
+      // Handle AgentKit execution results
+      if (res.success) {
+        // Build result object compatible with existing sandbox UI
+        const result = {
+          message: res.message,
+          agentkit: true,
+          data: res.data,
+          send_status: res.success ? '✅ Agent execution completed successfully' : '❌ Execution failed'
         }
-        
-        return true
-      }
-      
-      // Handle execution results (test mode)
-      if (res.success && res.result) {
-        setResult(res.result)
-        
+
+        setResult(result)
+
         // Set appropriate success message based on output type
-        if (res.result?.send_status) {
-          setSendStatus(res.result.send_status)
+        const hasEmailOutput = safeOutputSchema.some(f =>
+          f.type === 'EmailDraft' || f.name.toLowerCase().includes('email')
+        )
+        const hasReportOutput = safeOutputSchema.some(f =>
+          f.type === 'SummaryBlock' || f.name.toLowerCase().includes('report')
+        )
+
+        if (hasEmailOutput) {
+          setSendStatus('✅ Email draft generated successfully')
+        } else if (hasReportOutput) {
+          setSendStatus('✅ Report generated successfully')
         } else {
-          const hasEmailOutput = safeOutputSchema.some(f => 
-            f.type === 'EmailDraft' || f.name.toLowerCase().includes('email')
-          )
-          const hasReportOutput = safeOutputSchema.some(f => 
-            f.type === 'SummaryBlock' || f.name.toLowerCase().includes('report')
-          )
-          
-          if (hasEmailOutput) {
-            setSendStatus('✅ Email draft generated successfully')
-          } else if (hasReportOutput) {
-            setSendStatus('✅ Report generated successfully')
-          } else {
-            setSendStatus('✅ Agent execution completed successfully')
-          }
+          setSendStatus('✅ Agent execution completed successfully')
         }
-        
+
         // Notify parent component about execution completion
         if (onExecutionComplete) {
-          onExecutionComplete(res.executionId)
+          onExecutionComplete(res.data?.agent_id || agentId)
         }
-        
+
         return true
-      }
-      
-      // Handle errors
-      if (res.error) {
-        setResult({ error: res.error })
-        setSendStatus(`❌ Execution failed: ${res.error}`)
+      } else {
+        // Handle execution failure
+        setResult({ error: res.error || 'Execution failed' })
+        setSendStatus(`❌ Execution failed: ${res.error || 'Unknown error'}`)
         return false
       }
-      
-      // Fallback for unexpected response format
-      setResult(res)
-      setSendStatus('Agent execution completed')
-      return true
 
     } catch (err: any) {
       console.error('handleRun error:', err)

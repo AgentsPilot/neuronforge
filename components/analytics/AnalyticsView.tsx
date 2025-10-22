@@ -199,64 +199,326 @@ export const AnalyticsViews: React.FC<AnalyticsViewsProps> = ({ selectedView, da
     );
   }
 
-  // Activities View
-  // Activities View - FIXED to show individual records
+  // Activities View - Grouped by session with iteration details
 if (selectedView === 'activities') {
+  // Group activities by session_id
+  const groupedActivities = data.rawActivities.reduce((acc, activity) => {
+    const sessionKey = activity.session_id || activity.id;
+    if (!acc[sessionKey]) {
+      acc[sessionKey] = [];
+    }
+    acc[sessionKey].push(activity);
+    return acc;
+  }, {} as Record<string, typeof data.rawActivities>);
+
+  // Convert to array and sort by most recent
+  const allSessionGroups = Object.entries(groupedActivities)
+    .map(([sessionId, activities]) => {
+      const sortedActivities = activities.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+      // Extract agent name and create summary of operations
+      const firstActivity = sortedActivities[0].activity_name;
+      const agentNameMatch = firstActivity.match(/^(.+?)\s*-\s*/);
+      const agentName = agentNameMatch ? agentNameMatch[1] : firstActivity;
+
+      // Collect unique operations (extract everything after " - ")
+      const operations = sortedActivities
+        .map(a => {
+          const match = a.activity_name.match(/\s*-\s*(.+)$/);
+          return match ? match[1] : null;
+        })
+        .filter((op, idx, arr) => op && op !== 'Final response' && arr.indexOf(op) === idx);
+
+      // Create display name
+      let displayName = agentName;
+      if (operations.length > 0) {
+        displayName = `${agentName} - ${operations.join(' → ')}`;
+      }
+
+      return {
+        sessionId,
+        activities: sortedActivities,
+        totalCost: activities.reduce((sum, a) => sum + a.cost_usd, 0),
+        totalTokens: activities.reduce((sum, a) => sum + a.total_tokens, 0),
+        totalLatency: activities.reduce((sum, a) => sum + a.latency_ms, 0),
+        startTime: sortedActivities[0].created_at,
+        allSuccess: activities.every(a => a.success),
+        activityName: displayName,
+        model: sortedActivities[0].model_name,
+        provider: sortedActivities[0].provider
+      };
+    })
+    .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = React.useState(1);
+  const itemsPerPage = 10;
+  const totalPages = Math.ceil(allSessionGroups.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const sessionGroups = allSessionGroups.slice(startIndex, endIndex);
+
   return (
-    <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg p-6">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-lg flex items-center justify-center">
-          <Activity className="w-5 h-5 text-white" />
-        </div>
-        <div>
-          <h3 className="text-xl font-bold text-gray-900">AI Activities</h3>
-          <p className="text-gray-600">Complete history of AI operations</p>
+    <div className="space-y-4">
+      {/* Sticky Header */}
+      <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg p-6 sticky top-0 z-10">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-lg flex items-center justify-center">
+              <Activity className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-gray-900">AI Activities</h3>
+              <p className="text-gray-600">Complete history of AI operations</p>
+            </div>
+          </div>
+          {allSessionGroups.length > 0 && (
+            <div className="text-sm text-gray-600">
+              Showing {startIndex + 1}-{Math.min(endIndex, allSessionGroups.length)} of {allSessionGroups.length}
+            </div>
+          )}
         </div>
       </div>
-      
-      {data.rawActivities.length === 0 ? (
-        <div className="text-center py-12">
-          <Activity className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <h4 className="text-lg font-bold text-gray-900 mb-2">No Activities Yet</h4>
-          <p className="text-gray-600">Start using AI features to see activity log</p>
+
+      {/* Activities List */}
+      {sessionGroups.length === 0 ? (
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg p-6">
+          <div className="text-center py-12">
+            <Activity className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+            <h4 className="text-lg font-bold text-gray-900 mb-2">No Activities Yet</h4>
+            <p className="text-gray-600">Start using AI features to see activity log</p>
+          </div>
         </div>
       ) : (
-        <div className="space-y-3 max-h-96 overflow-y-auto">
-          {data.rawActivities.map((activity, index) => (
-            <div key={activity.id} className="border border-gray-200/50 rounded-xl p-4 hover:shadow-md transition-all duration-200">
-              <div className="flex items-start justify-between mb-2">
-                <div className="flex-1">
-                  <h4 className="font-medium text-gray-900">{activity.activity_name}</h4>
-                  <p className="text-sm text-gray-500">
-                    {new Date(activity.created_at).toLocaleString()}
-                  </p>
+        <>
+          <div className="space-y-4">
+          {sessionGroups.map((group) => {
+            const agentNameMatch = group.activityName.match(/^(.+?)\s*-\s*/);
+            const agentName = agentNameMatch ? agentNameMatch[1] : group.activityName;
+            const operationsMatch = group.activityName.match(/\s*-\s*(.+)$/);
+            const operations = operationsMatch ? operationsMatch[1] : null;
+
+            return (
+            <div key={group.sessionId} className="group/card bg-white rounded-2xl border border-gray-200/60 hover:border-purple-300/60 shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden">
+              {/* Main execution summary */}
+              <div className="p-6 bg-gradient-to-br from-white via-purple-50/30 to-pink-50/20">
+                {/* Header Row */}
+                <div className="flex items-start justify-between mb-4">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center shadow-lg shadow-purple-500/30">
+                        <Bot className="w-5 h-5 text-white" />
+                      </div>
+                      <div>
+                        <h4 className="text-lg font-bold text-gray-900">{agentName}</h4>
+                        <p className="text-xs text-gray-500">
+                          {new Date(group.startTime).toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Operations Flow */}
+                    {operations && (
+                      <div className="ml-13 mt-3">
+                        <div className="inline-flex items-center gap-2 bg-white/80 backdrop-blur-sm px-4 py-2 rounded-xl border border-purple-200/50 shadow-sm">
+                          <Zap className="w-4 h-4 text-purple-500 flex-shrink-0" />
+                          <div className="flex items-center gap-2 text-xs font-mono">
+                            {operations.split('→').map((op, i, arr) => (
+                              <span key={i} className="flex items-center gap-2">
+                                <span className="px-2 py-1 bg-purple-100 text-purple-700 rounded-md font-semibold">
+                                  {op.trim()}
+                                </span>
+                                {i < arr.length - 1 && (
+                                  <span className="text-gray-400">→</span>
+                                )}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Cost Summary Card */}
+                  <div className="ml-4 bg-white/80 backdrop-blur-sm rounded-xl px-4 py-3 border border-gray-200/50 shadow-sm min-w-[120px]">
+                    <p className="text-xs text-gray-500 mb-1">Total Cost</p>
+                    <p className="text-2xl font-bold text-gray-900">{formatCost(group.totalCost)}</p>
+                    <p className="text-xs text-gray-600 mt-1">{formatTokens(group.totalTokens)} tokens</p>
+                  </div>
                 </div>
-                <div className="text-right ml-4">
-                  <p className="font-bold text-gray-900">{formatCost(activity.cost_usd)}</p>
-                  <p className="text-sm text-gray-500">{formatTokens(activity.total_tokens)} tokens</p>
+
+                {/* Metrics Row */}
+                <div className="flex items-center gap-6 ml-13 mt-4 pt-4 border-t border-gray-200/50">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center">
+                      <PlayCircle className="w-4 h-4 text-blue-600" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-500">Duration</p>
+                      <p className="text-sm font-semibold text-gray-900">{formatTime(group.totalLatency)}</p>
+                    </div>
+                  </div>
+
+                  {group.activities.length > 1 && (
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-purple-100 flex items-center justify-center">
+                        <Zap className="w-4 h-4 text-purple-600" />
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-500">Steps</p>
+                        <p className="text-sm font-semibold text-gray-900">{group.activities.length}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                      group.allSuccess ? 'bg-green-100' : 'bg-amber-100'
+                    }`}>
+                      {group.allSuccess ? (
+                        <CheckCircle className="w-4 h-4 text-green-600" />
+                      ) : (
+                        <AlertTriangle className="w-4 h-4 text-amber-600" />
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-500">Status</p>
+                      <p className={`text-sm font-semibold ${
+                        group.allSuccess ? 'text-green-600' : 'text-amber-600'
+                      }`}>
+                        {group.allSuccess ? 'Completed' : 'Partial'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="ml-auto flex items-center gap-2">
+                    <span className="text-xs font-medium text-gray-600">{group.model}</span>
+                    <span className="px-2 py-1 text-xs font-medium bg-gray-100 text-gray-700 rounded-md">
+                      {group.provider}
+                    </span>
+                  </div>
                 </div>
               </div>
-              
-              <div className="flex items-center gap-4 text-sm text-gray-600">
-                <span className="flex items-center gap-1">
-                  <span>{formatTime(activity.latency_ms)}</span>
-                </span>
-                <span className={`flex items-center gap-1 ${activity.success ? 'text-green-600' : 'text-red-600'}`}>
-                  {activity.success ? (
-                    <CheckCircle className="w-4 h-4" />
-                  ) : (
-                    <XCircle className="w-4 h-4" />
-                  )}
-                  {activity.success ? 'Success' : 'Failed'}
-                </span>
-                <span>{activity.model_name}</span>
-                <span className="text-xs bg-gray-100 px-2 py-1 rounded">
-                  {activity.provider}
-                </span>
+
+              {/* Step breakdown (only show if multiple steps) */}
+              {group.activities.length > 1 && (
+                <div className="px-6 py-4 bg-gradient-to-b from-gray-50/80 to-white border-t border-gray-200/50">
+                  <details className="group/details">
+                    <summary className="cursor-pointer flex items-center justify-between p-3 rounded-lg hover:bg-purple-50/50 transition-colors">
+                      <div className="flex items-center gap-3">
+                        <div className="w-6 h-6 rounded-lg bg-purple-100 flex items-center justify-center group-open/details:bg-purple-200 transition-colors">
+                          <Zap className="w-3.5 h-3.5 text-purple-600" />
+                        </div>
+                        <span className="text-sm font-semibold text-gray-900">
+                          Step-by-step breakdown
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          ({group.activities.length} steps)
+                        </span>
+                      </div>
+                      <span className="text-xs text-purple-600 group-open/details:rotate-180 transition-transform">▼</span>
+                    </summary>
+
+                    <div className="mt-4 space-y-2">
+                      {group.activities.map((activity, idx) => {
+                        // Extract the actual operation from activity_name (everything after " - ")
+                        let stepDescription = `Step ${idx + 1}`;
+                        const operationMatch = activity.activity_name.match(/\s*-\s*(.+)$/);
+                        if (operationMatch && operationMatch[1]) {
+                          stepDescription = operationMatch[1];
+                        }
+
+                        return (
+                          <div key={activity.id} className="group/step relative bg-white rounded-xl border border-gray-200/60 hover:border-purple-200 hover:shadow-md transition-all duration-200 overflow-hidden">
+                            {/* Step number badge */}
+                            <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-purple-500 to-pink-600"></div>
+
+                            <div className="flex items-center justify-between p-4 pl-5">
+                              <div className="flex items-center gap-4 flex-1">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-7 h-7 rounded-lg bg-purple-100 flex items-center justify-center text-purple-700 font-bold text-xs">
+                                    {idx + 1}
+                                  </div>
+                                  <div className={`w-6 h-6 rounded-full flex items-center justify-center ${
+                                    activity.success ? 'bg-green-100' : 'bg-red-100'
+                                  }`}>
+                                    {activity.success ? (
+                                      <CheckCircle className="w-4 h-4 text-green-600" />
+                                    ) : (
+                                      <XCircle className="w-4 h-4 text-red-600" />
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="flex-1">
+                                  <p className="font-mono text-sm font-semibold text-gray-900">{stepDescription}</p>
+                                  <div className="flex items-center gap-4 mt-1">
+                                    <span className="text-xs text-gray-500 flex items-center gap-1">
+                                      <PlayCircle className="w-3 h-3" />
+                                      {formatTime(activity.latency_ms)}
+                                    </span>
+                                    <span className="text-xs text-gray-500">
+                                      {formatTokens(activity.total_tokens)} tokens
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="text-right">
+                                <p className="text-lg font-bold text-gray-900">{formatCost(activity.cost_usd)}</p>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </details>
+                </div>
+              )}
+            </div>
+            );
+          })}
+          </div>
+
+          {/* Pagination Controls */}
+          {totalPages > 1 && (
+            <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg p-4">
+              <div className="flex items-center justify-between">
+                <button
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  ← Previous
+                </button>
+
+                <div className="flex items-center gap-2">
+                  {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                    <button
+                      key={page}
+                      onClick={() => setCurrentPage(page)}
+                      className={`px-3 py-1 text-sm font-medium rounded-lg transition-colors ${
+                        page === currentPage
+                          ? 'bg-purple-600 text-white'
+                          : 'text-gray-700 hover:bg-gray-100'
+                      }`}
+                    >
+                      {page}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                  disabled={currentPage === totalPages}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Next →
+                </button>
               </div>
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
     </div>
   );

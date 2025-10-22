@@ -310,10 +310,13 @@ async function processAgentJob(jobData: AgentJobData) {
     // 7. Update agent's last_run and next_run times
     await updateAgentRunTimes(agent_id, endTime, cron_expression, timezone);
 
-    // 8. Update stats
-    const success = executionResult?.send_status?.startsWith('✅') ||
-                   executionResult?.send_status?.startsWith('📧') ||
-                   executionResult?.send_status?.startsWith('🚨');
+    // 8. Update stats with proper success detection
+    // Use AgentKit's success field if available, otherwise fall back to send_status
+    const success = executionResult?.success !== undefined
+      ? executionResult.success
+      : (executionResult?.send_status?.startsWith('✅') ||
+         executionResult?.send_status?.startsWith('📧') ||
+         executionResult?.send_status?.startsWith('🚨'));
 
     await updateAgentStats(agent_id, user_id, success);
 

@@ -39,6 +39,11 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
         return
       }
 
+      // Only show loading on initial load to prevent flicker
+      if (stats.length === 0) {
+        setLoading(true)
+      }
+
       let query = supabase
         .from('agent_stats')
         .select(`
@@ -81,7 +86,11 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
     }
 
     fetchStats()
-  }, [agentId, user?.id])
+
+    // Auto-refresh every 30 seconds without flickering
+    const interval = setInterval(fetchStats, 30000)
+    return () => clearInterval(interval)
+  }, [agentId, user?.id, stats.length])
 
   const calculateSuccessRate = (successCount: number, runCount: number) => {
     if (runCount === 0) return 0

@@ -185,6 +185,19 @@ export async function POST(req: Request) {
         console.log('✅ AgentKit log inserted successfully')
       }
 
+      // Update agent_stats with accurate success tracking
+      const { error: statsError } = await supabase.rpc('increment_agent_stats', {
+        agent_id_input: agent.id,
+        user_id_input: user.id,
+        success: result.success, // Use AgentKit's clean success boolean
+      })
+
+      if (statsError) {
+        console.error('❌ Failed to update agent_stats:', statsError)
+      } else {
+        console.log('✅ agent_stats updated successfully')
+      }
+
       return NextResponse.json({
         success: result.success,
         message: result.response,

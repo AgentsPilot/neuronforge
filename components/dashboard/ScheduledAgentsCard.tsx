@@ -74,7 +74,10 @@ const ScheduledAgentsCard = () => {
     const fetchScheduledAgents = async () => {
       if (!user) return
 
-      setLoading(true)
+      // Only show loading on initial load to prevent flicker
+      if (scheduledAgents.length === 0) {
+        setLoading(true)
+      }
       const { data, error } = await supabase
         .from('agents')
         .select('id, agent_name, schedule_cron, next_run, timezone, status')
@@ -93,7 +96,11 @@ const ScheduledAgentsCard = () => {
     }
 
     fetchScheduledAgents()
-  }, [user])
+
+    // Auto-refresh every 30 seconds without flickering
+    const interval = setInterval(fetchScheduledAgents, 30000)
+    return () => clearInterval(interval)
+  }, [user, scheduledAgents.length])
 
   return (
     <div className="p-6 border-b border-gray-200/50 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-t-2xl">

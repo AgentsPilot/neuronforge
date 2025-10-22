@@ -126,7 +126,7 @@ export interface ProcessedAnalyticsData {
     feature: string | null;
     endpoint: string | null;
     session_id: string | null;
+    workflow_step: string | null;
+    metadata: any | null;
   }>;
 }
-
-export type TimeFilter = 'last_7d' | 'last_30d' | 'last_90d' | 'last_year' | 'all';

@@ -89,7 +89,10 @@ export default function AlertFeed() {
       return
     }
 
-    setLoading(true)
+    // Only show loading on initial load to prevent flicker
+    if (alerts.length === 0) {
+      setLoading(true)
+    }
     setError(null)
 
     try {

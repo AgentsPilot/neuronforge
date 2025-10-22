@@ -35,23 +35,52 @@ import {
 type ChartMetric = 'runs' | 'success_rate' | 'activity'
 type ChartType = 'bar' | 'area' | 'pie'
 
+type ChartData = {
+  name: string
+  shortName: string
+  runs: number
+  successes: number
+  failures: number
+  successRate: number
+  activity: string
+}
+
+type PieData = {
+  name: string
+  value: number
+  color: string
+}
+
 export default function AgentStatsChart() {
   const { user } = useAuth()
-  const [chartData, setChartData] = useState([])
-  const [pieData, setPieData] = useState([])
+  const [chartData, setChartData] = useState<ChartData[]>([])
+  const [pieData, setPieData] = useState<PieData[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedMetric, setSelectedMetric] = useState<ChartMetric>('runs')
   const [chartType, setChartType] = useState<ChartType>('bar')
 
   useEffect(() => {
     const fetchChartData = async () => {
-      if (!user) return
-      
-      setLoading(true)
+      if (!user) {
+        return
+      }
 
+      // Only show loading on initial load to prevent flicker
+      if (chartData.length === 0) {
+        setLoading(true)
+      }
+
+      // Query agent_stats table (summary table that persists across data cleanups)
       const { data, error } = await supabase
         .from('agent_stats')
-        .select('agent_id, run_count, success_count, agents(agent_name)')
+        .select(`
+          agent_id,
+          run_count,
+          success_count,
+          agents (
+            agent_name
+          )
+        `)
         .eq('user_id', user.id)
         .order('run_count', { ascending: false })
 
@@ -60,6 +89,14 @@ export default function AgentStatsChart() {
         setLoading(false)
         return
       }
+
+      // Log the raw data for verification
+      console.log('📊 Agent Stats Data:', data?.map(row => ({
+        agent: row.agents?.agent_name,
+        runs: row.run_count,
+        successes: row.success_count,
+        failures: row.run_count - row.success_count
+      })))
 
       const formatted = data.map((row) => {
         const runCount = row.run_count ?? 0
@@ -95,7 +132,11 @@ export default function AgentStatsChart() {
     }
 
     fetchChartData()
-  }, [user])
+
+    // Auto-refresh every 30 seconds without flickering
+    const interval = setInterval(fetchChartData, 30000)
+    return () => clearInterval(interval)
+  }, [user, chartData.length])
 
   const getChartConfig = () => {
     switch (selectedMetric) {
@@ -141,7 +182,8 @@ export default function AgentStatsChart() {
   const config = getChartConfig()
   const IconComponent = config.icon
 
-  const CustomTooltip = ({ active, payload, label }) => {
+  const CustomTooltip = (props: any) => {
+    const { active, payload } = props
     if (active && payload && payload.length) {
       const data = payload[0].payload
       return (
@@ -181,7 +223,7 @@ export default function AgentStatsChart() {
               cx="50%"
               cy="50%"
               labelLine={false}
-              label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+              label={(entry: any) => `${entry.name}: ${((entry.percent || 0) * 100).toFixed(0)}%`}
               outerRadius={80}
               fill="#8884d8"
               dataKey="value"
@@ -219,7 +261,7 @@ export default function AgentStatsChart() {
               allowDecimals={false}
               tick={{ fontSize: 12 }}
             />
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip content={CustomTooltip as any} />
             <Area
               type="monotone"
               dataKey={config.dataKey}
@@ -247,7 +289,7 @@ export default function AgentStatsChart() {
               height={80}
             />
             <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip content={CustomTooltip as any} />
             <Bar dataKey="successes" fill="#10B981" name="Successes" />
             <Bar dataKey="failures" fill="#EF4444" name="Failures" />
           </ComposedChart>

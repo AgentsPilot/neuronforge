@@ -656,10 +656,10 @@ const useAgentExecutionStatus = (agentId: string, agentStatus: string, forceRefr
           const runningExecutions = data.executions?.filter(
             (ex: ExecutionHistoryItem) => ex.status === 'running' || ex.status === 'queued'
           ) || [];
-          
+
           const isRunning = runningExecutions.length > 0;
           setHasRunningExecution(isRunning);
-          
+
           setExecutionStatus({
             isRunning: isRunning,
             latestExecution: data.executions?.[0],
@@ -715,38 +715,45 @@ const ExecutionStatusBadge = ({ agent, forceRefresh }: { agent: Agent; forceRefr
   }
 
   const statusConfig = {
-    completed: { 
-      icon: CheckCircle, 
-      text: 'Completed', 
-      bg: 'bg-emerald-50', 
+    completed: {
+      icon: CheckCircle,
+      text: 'Completed',
+      bg: 'bg-emerald-50',
       text_color: 'text-emerald-700',
       border: 'border-emerald-200'
     },
-    failed: { 
-      icon: AlertCircle, 
-      text: 'Failed', 
-      bg: 'bg-red-50', 
+    failed: {
+      icon: AlertCircle,
+      text: 'Failed',
+      bg: 'bg-red-50',
       text_color: 'text-red-700',
       border: 'border-red-200'
     },
-    queued: { 
-      icon: Clock, 
-      text: 'Queued', 
-      bg: 'bg-amber-50', 
+    running: {
+      icon: Loader2,
+      text: 'Running',
+      bg: 'bg-blue-50',
+      text_color: 'text-blue-700',
+      border: 'border-blue-200'
+    },
+    queued: {
+      icon: Clock,
+      text: 'Queued',
+      bg: 'bg-amber-50',
       text_color: 'text-amber-700',
       border: 'border-amber-200'
     },
-    pending: { 
-      icon: Clock, 
-      text: 'Pending', 
-      bg: 'bg-gray-50', 
+    pending: {
+      icon: Clock,
+      text: 'Pending',
+      bg: 'bg-gray-50',
       text_color: 'text-gray-700',
       border: 'border-gray-200'
     }
   }[latestExecution.status] || {
-    icon: Clock, 
-    text: 'Pending', 
-    bg: 'bg-gray-50', 
+    icon: Clock,
+    text: 'Pending',
+    bg: 'bg-gray-50',
     text_color: 'text-gray-700',
     border: 'border-gray-200'
   };
@@ -1198,13 +1205,13 @@ export default function AgentList() {
     const nextRunInfo = getNextRunInfo();
 
     return (
-      <div className="group relative">
+      <div className="group relative h-full">
         {isRunning && (
           <div className="absolute -inset-0.5 bg-gradient-to-r from-emerald-400 via-blue-400 to-purple-400 rounded-lg blur opacity-25 group-hover:opacity-40 transition duration-1000 animate-pulse" />
         )}
-        
-        <div className="relative bg-white/95 backdrop-blur-sm rounded-lg border border-gray-200/80 hover:border-purple-300/60 transition-all duration-300 overflow-hidden hover:shadow-lg hover:-translate-y-1">
-          
+
+        <div className="relative bg-white/95 backdrop-blur-sm rounded-lg border border-gray-200/80 hover:border-purple-300/60 transition-all duration-300 overflow-hidden hover:shadow-lg hover:-translate-y-1 h-full flex flex-col">
+
           <div className="h-0.5 bg-gradient-to-r from-violet-500 via-purple-500 to-blue-500 opacity-60 group-hover:opacity-100 transition-opacity duration-300" />
 
           <div className="relative p-4">
@@ -1212,8 +1219,8 @@ export default function AgentList() {
             <div className="flex items-start gap-3 mb-3">
               <div className="relative flex-shrink-0">
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm transition-all duration-300 group-hover:scale-105 ${
-                  isRunning 
-                    ? 'bg-gradient-to-br from-emerald-500 via-blue-500 to-purple-500 animate-pulse' 
+                  isRunning
+                    ? 'bg-gradient-to-br from-emerald-500 via-blue-500 to-purple-500 animate-pulse'
                     : 'bg-gradient-to-br from-violet-600 via-purple-600 to-blue-600'
                 }`}>
                   <Bot className="h-5 w-5 text-white" />
@@ -1222,12 +1229,12 @@ export default function AgentList() {
                   <div className={`absolute -bottom-1 -right-1 w-3 h-3 ${statusConfig.dot} rounded-full border-2 border-white shadow-sm`} />
                 )}
               </div>
-              
+
               <div className="min-w-0 flex-1">
                 <h3 className="text-base font-semibold text-gray-900 mb-1.5 group-hover:text-purple-700 transition-colors truncate">
                   {agent.agent_name}
                 </h3>
-                
+
                 {/* Status line */}
                 <div className="flex items-center gap-2 flex-wrap">
                   {isRunning ? (
@@ -1259,17 +1266,24 @@ export default function AgentList() {
               </p>
             )}
 
-            {/* Schedule info */}
-            {agent.mode === 'scheduled' && agent.schedule_cron && (
-              <div className="mb-3">
-                <div className="flex items-center gap-2 p-2 bg-blue-50/50 rounded-lg">
+            {/* Schedule info or mode indicator */}
+            <div className="mb-3 min-h-[40px] flex items-center">
+              {agent.mode === 'scheduled' && agent.schedule_cron ? (
+                <div className="flex items-center gap-2 p-2 bg-blue-50/50 rounded-lg w-full">
                   <Calendar className="w-4 h-4 text-blue-600 flex-shrink-0" />
                   <span className="text-sm text-blue-700 font-medium">
                     {formatScheduleDisplay(agent.mode, agent.schedule_cron)}
                   </span>
                 </div>
-              </div>
-            )}
+              ) : (
+                <div className="flex items-center gap-2 p-2 bg-gray-50/50 rounded-lg w-full">
+                  <PlayCircle className="w-4 h-4 text-gray-600 flex-shrink-0" />
+                  <span className="text-sm text-gray-700 font-medium">
+                    Manual execution only
+                  </span>
+                </div>
+              )}
+            </div>
 
             {/* Action Buttons */}
             <div className="mb-3">
@@ -1400,7 +1414,7 @@ export default function AgentList() {
                   onClick={() => setViewType('grid')}
                   className={`flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium transition-all duration-300 ${
                     viewType === 'grid'
-                      ? 'bg-white text-purple-600 shadow-sm'
+                      ? 'bg-white text-blue-600 shadow-sm'
                       : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
                   }`}
                 >
@@ -1411,7 +1425,7 @@ export default function AgentList() {
                   onClick={() => setViewType('list')}
                   className={`flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium transition-all duration-300 ${
                     viewType === 'list'
-                      ? 'bg-white text-purple-600 shadow-sm'
+                      ? 'bg-white text-blue-600 shadow-sm'
                       : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
                   }`}
                 >
@@ -1430,14 +1444,14 @@ export default function AgentList() {
                     onClick={() => setStatusFilter(filter.value as FilterType)}
                     className={`px-3 py-2 rounded-md text-sm font-medium transition-all duration-300 flex items-center gap-1.5 ${
                       statusFilter === filter.value
-                        ? 'bg-white text-purple-600 shadow-sm'
+                        ? 'bg-white text-blue-600 shadow-sm'
                         : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
                     }`}
                   >
                     <span>{filter.label}</span>
                     <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${
                       statusFilter === filter.value
-                        ? 'bg-purple-100 text-purple-600'
+                        ? 'bg-blue-100 text-blue-600'
                         : 'bg-gray-200 text-gray-600'
                     }`}>
                       {filter.count}
@@ -1453,7 +1467,7 @@ export default function AgentList() {
                     onClick={() => setSortBy(option.value as SortType)}
                     className={`px-3 py-2 rounded-md text-sm font-medium transition-all duration-300 flex items-center gap-1.5 ${
                       sortBy === option.value
-                        ? 'bg-white text-purple-600 shadow-sm'
+                        ? 'bg-white text-blue-600 shadow-sm'
                         : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
                     }`}
                   >

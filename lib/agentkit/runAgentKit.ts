@@ -88,8 +88,8 @@ export async function runAgentKit(
   console.log(`📦 Required plugins: ${agent.plugins_required.join(', ')}`);
   console.log(`👤 User: ${userId}`);
 
-  // Initialize OpenAI Provider with analytics tracking
-  const openaiProvider = new OpenAIProvider(process.env.OPENAI_API_KEY!, aiAnalytics);
+  // Initialize OpenAI Provider WITHOUT analytics (we'll track manually with tool call details)
+  const openaiProvider = new OpenAIProvider(process.env.OPENAI_API_KEY!);
 
   // Log execution start to audit trail
   await auditTrail.log({
@@ -219,6 +219,8 @@ Please use these input values when executing the task.`;
       });
 
       // Call OpenAI with function calling enabled + analytics tracking
+      // Note: We'll update activity_name after we see what tools were called
+      const iterationStartTime = Date.now();
       const completion = await openaiProvider.chatCompletion(
         {
           model: AGENTKIT_CONFIG.model,
@@ -235,7 +237,7 @@ Please use these input values when executing the task.`;
           workflow_step: `iteration_${iteration}`,
           category: 'agent_execution',
           activity_type: 'agent_execution',
-          activity_name: `Executing agent: ${agent.agent_name}`,
+          activity_name: `${agent.agent_name} - Iteration ${iteration}`, // Temporary, will be enhanced below
           agent_id: agent.id,
           activity_step: `iteration_${iteration}_of_${AGENTKIT_CONFIG.maxIterations}`
         }
@@ -264,6 +266,32 @@ Please use these input values when executing the task.`;
         console.log(`✅ AgentKit: Completed in ${iteration} iterations`);
         console.log(`💰 Tokens used: ${totalTokens.total} (${totalTokens.prompt} prompt + ${totalTokens.completion} completion)`);
         console.log('\n📊 AGENTKIT DEBUG - FINAL RESPONSE:\n', message.content);
+
+        // Track final iteration (generating response)
+        await aiAnalytics.trackAICall({
+          call_id: `agentkit_iter_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          user_id: userId,
+          session_id: sessionId,
+          provider: 'openai',
+          model_name: AGENTKIT_CONFIG.model,
+          endpoint: 'chat/completions',
+          feature: 'agentkit_execution',
+          component: 'run-agentkit',
+          workflow_step: `iteration_${iteration}`,
+          category: 'agent_execution',
+          input_tokens: completion.usage?.prompt_tokens || 0,
+          output_tokens: completion.usage?.completion_tokens || 0,
+          cost_usd: ((completion.usage?.prompt_tokens || 0) * 0.0025 / 1000) +
+                    ((completion.usage?.completion_tokens || 0) * 0.01 / 1000),
+          latency_ms: Date.now() - iterationStartTime,
+          response_size_bytes: JSON.stringify(completion).length,
+          success: true,
+          request_type: 'chat',
+          activity_type: 'agent_execution',
+          activity_name: `${agent.agent_name} - Final response`,
+          agent_id: agent.id,
+          activity_step: `iteration_${iteration}_of_${AGENTKIT_CONFIG.maxIterations}`
+        });
 
         // Log successful completion to audit trail
         await auditTrail.log({
@@ -297,7 +325,45 @@ Please use these input values when executing the task.`;
       // Add assistant's message with tool calls to conversation history
       messages.push(message);
 
-      // STEP 5: Execute tool calls using V2 Plugin System
+      // STEP 5: Create descriptive activity name based on tool calls
+      const toolCallDescriptions = message.tool_calls.map(tc => {
+        if (tc.type === 'function') {
+          const [pluginKey, actionName] = tc.function.name.split('__');
+          return `${pluginKey}.${actionName}`;
+        }
+        return 'unknown';
+      });
+      const iterationActivity = toolCallDescriptions.length > 0
+        ? toolCallDescriptions.join(' + ')
+        : 'Processing';
+
+      // Track this iteration with descriptive activity name
+      await aiAnalytics.trackAICall({
+        call_id: `agentkit_iter_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        user_id: userId,
+        session_id: sessionId,
+        provider: 'openai',
+        model_name: AGENTKIT_CONFIG.model,
+        endpoint: 'chat/completions',
+        feature: 'agentkit_execution',
+        component: 'run-agentkit',
+        workflow_step: `iteration_${iteration}`,
+        category: 'agent_execution',
+        input_tokens: completion.usage?.prompt_tokens || 0,
+        output_tokens: completion.usage?.completion_tokens || 0,
+        cost_usd: ((completion.usage?.prompt_tokens || 0) * 0.0025 / 1000) +
+                  ((completion.usage?.completion_tokens || 0) * 0.01 / 1000),
+        latency_ms: Date.now() - iterationStartTime,
+        response_size_bytes: JSON.stringify(completion).length,
+        success: true,
+        request_type: 'chat',
+        activity_type: 'agent_execution',
+        activity_name: `${agent.agent_name} - ${iterationActivity}`,
+        agent_id: agent.id,
+        activity_step: `iteration_${iteration}_of_${AGENTKIT_CONFIG.maxIterations}`
+      });
+
+      // STEP 6: Execute tool calls using V2 Plugin System
       console.log(`🔌 AgentKit: Executing ${message.tool_calls.length} tool call(s)...`);
 
       for (const toolCall of message.tool_calls) {
