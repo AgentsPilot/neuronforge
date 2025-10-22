@@ -1,52 +1,34 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { 
-  CheckCircle, Clock, Loader2, AlertCircle, RefreshCw, BarChart3, 
-  TrendingUp, Zap, Eye, Download, Filter, Search, Calendar,
-  Server, Database, Activity, Settings, FileText, Terminal,
-  Pause, Play, SkipForward, Trash2, RotateCcw, Users, 
-  Cpu, HardDrive, Wifi, AlertTriangle, ChevronDown, 
-  ChevronRight, Copy, ExternalLink, Archive
+import {
+  CheckCircle, Clock, Loader2, AlertCircle, RefreshCw, BarChart3,
+  TrendingUp, Zap, Eye, Filter, Search, Calendar, Database, Activity,
+  ChevronDown, Copy, Pause, Play
 } from 'lucide-react';
 
-interface JobData {
+interface AgentExecution {
   id: string;
-  name: string;
-  data: {
-    agentId?: string;
-    userId?: string;
-    executionId?: string;
-    inputVariables?: any;
-    agentName?: string;
-    userEmail?: string;
-  };
-  createdAt?: number;
-  processedOn?: number;
-  finishedOn?: number;
-  failedReason?: string;
-  progress?: number;
-  returnvalue?: any;
-  stacktrace?: string[];
-  logs?: string[];
-  delay?: number;
-  attempts?: number;
-  attemptsMade?: number;
-  priority?: number;
-  opts?: {
-    priority?: number;
-    delay?: number;
-    repeat?: any;
-  };
+  agent_id: string;
+  user_id: string;
+  execution_type: 'manual' | 'scheduled';
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  progress: number;
+  scheduled_at: string;
+  started_at?: string;
+  completed_at?: string;
+  execution_duration_ms?: number;
+  error_message?: string;
+  result?: any;
+  agent_name?: string;
+  user_email?: string;
 }
 
-interface QueueStats {
-  waiting: { count: number; jobs: JobData[] };
-  active: { count: number; jobs: JobData[] };
-  completed: { count: number; jobs: JobData[] };
-  failed: { count: number; jobs: JobData[] };
-  delayed: { count: number; jobs: JobData[] };
-  paused: { count: number; jobs: JobData[] };
+interface ExecutionStats {
+  pending: { count: number; executions: AgentExecution[] };
+  running: { count: number; executions: AgentExecution[] };
+  completed: { count: number; executions: AgentExecution[] };
+  failed: { count: number; executions: AgentExecution[] };
 }
 
 interface SystemMetrics {
@@ -54,92 +36,39 @@ interface SystemMetrics {
   avgProcessingTime: number;
   successRate: number;
   throughputPerHour: number;
-  memoryUsage: string;
-  redisConnections: number;
-  cpuUsage: number;
   queueHealth: 'excellent' | 'good' | 'warning' | 'critical';
   errorRate: number;
-  activeConcurrency: number;
+  activeExecutions: number;
 }
 
-export default function EnhancedQueueManager() {
-  const [stats, setStats] = useState<QueueStats | null>(null);
+export default function QueueManagerV2() {
+  const [stats, setStats] = useState<ExecutionStats | null>(null);
   const [metrics, setMetrics] = useState<SystemMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
-  const [selectedJob, setSelectedJob] = useState<JobData | null>(null);
-  const [filter, setFilter] = useState<'all' | 'waiting' | 'active' | 'completed' | 'failed' | 'delayed' | 'paused'>('all');
+  const [selectedExecution, setSelectedExecution] = useState<AgentExecution | null>(null);
+  const [filter, setFilter] = useState<'all' | 'pending' | 'running' | 'completed' | 'failed'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [refreshInterval, setRefreshInterval] = useState(3000);
-  const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
-  const [dateRange, setDateRange] = useState({ from: '', to: '' });
-  const [priorityFilter, setPriorityFilter] = useState<'all' | 'high' | 'normal' | 'low'>('all');
+  const [refreshInterval, setRefreshInterval] = useState(5000);
 
   const fetchStats = async () => {
     try {
-      const response = await fetch('/api/queue-status');
+      const response = await fetch('/api/agent-executions/stats');
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       const data = await response.json();
-      setStats(data);
-      
-      // Calculate enhanced system metrics
-      const allJobs = [...data.completed.jobs, ...data.failed.jobs, ...data.active.jobs];
-      const completed = data.completed.jobs;
-      const failed = data.failed.jobs;
-      const active = data.active.jobs;
-      
-      const totalProcessed = completed.length + failed.length;
-      const successRate = totalProcessed > 0 ? (completed.length / totalProcessed) * 100 : 100;
-      const errorRate = totalProcessed > 0 ? (failed.length / totalProcessed) * 100 : 0;
-      
-      const avgProcessingTime = completed.length > 0 
-        ? completed.reduce((sum: number, job: JobData) => {
-            if (job.processedOn && job.finishedOn) {
-              return sum + (job.finishedOn - job.processedOn);
-            }
-            return sum;
-          }, 0) / completed.length / 1000
-        : 0;
-
-      // Queue health assessment
-      let queueHealth: 'excellent' | 'good' | 'warning' | 'critical' = 'excellent';
-      if (errorRate > 15) queueHealth = 'critical';
-      else if (errorRate > 10) queueHealth = 'warning';
-      else if (errorRate > 5) queueHealth = 'good';
-
-      setMetrics({
-        totalProcessed,
-        avgProcessingTime,
-        successRate,
-        throughputPerHour: calculateThroughput(allJobs),
-        memoryUsage: '245MB',
-        redisConnections: 12,
-        cpuUsage: Math.floor(Math.random() * 30 + 20),
-        queueHealth,
-        errorRate,
-        activeConcurrency: active.length,
-      });
-      
+      setStats(data.stats);
+      setMetrics(data.metrics);
       setLastUpdate(new Date());
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch queue stats');
+      setError(err instanceof Error ? err.message : 'Failed to fetch execution stats');
     } finally {
       setLoading(false);
     }
-  };
-
-  const calculateThroughput = (jobs: JobData[]) => {
-    const oneHourAgo = Date.now() - (60 * 60 * 1000);
-    const recentJobs = jobs.filter(job => 
-      job.finishedOn && job.finishedOn > oneHourAgo
-    );
-    return recentJobs.length;
   };
 
   useEffect(() => {
@@ -150,7 +79,7 @@ export default function EnhancedQueueManager() {
     }
   }, [autoRefresh, refreshInterval]);
 
-  const formatTime = (timestamp: number) => {
+  const formatTime = (timestamp: string) => {
     return new Date(timestamp).toLocaleTimeString();
   };
 
@@ -162,122 +91,70 @@ export default function EnhancedQueueManager() {
     return `${minutes}m ${seconds % 60}s`;
   };
 
-  const getJobsByFilter = () => {
+  const getExecutionsByFilter = () => {
     if (!stats) return [];
-    
-    let jobs: JobData[] = [];
+
+    let executions: AgentExecution[] = [];
     switch (filter) {
-      case 'waiting': jobs = stats.waiting.jobs; break;
-      case 'active': jobs = stats.active.jobs; break;
-      case 'completed': jobs = stats.completed.jobs; break;
-      case 'failed': jobs = stats.failed.jobs; break;
-      case 'delayed': jobs = stats.delayed?.jobs || []; break;
-      case 'paused': jobs = stats.paused?.jobs || []; break;
-      default: 
-        jobs = [
-          ...stats.waiting.jobs, 
-          ...stats.active.jobs, 
-          ...stats.completed.jobs, 
-          ...stats.failed.jobs,
-          ...(stats.delayed?.jobs || []),
-          ...(stats.paused?.jobs || [])
+      case 'pending': executions = stats.pending.executions; break;
+      case 'running': executions = stats.running.executions; break;
+      case 'completed': executions = stats.completed.executions; break;
+      case 'failed': executions = stats.failed.executions; break;
+      default:
+        executions = [
+          ...stats.pending.executions,
+          ...stats.running.executions,
+          ...stats.completed.executions,
+          ...stats.failed.executions
         ];
     }
 
     // Apply search filter
     if (searchTerm) {
-      jobs = jobs.filter(job => 
-        job.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        job.data?.agentId?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        job.data?.executionId?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        job.data?.agentName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        job.data?.userEmail?.toLowerCase().includes(searchTerm.toLowerCase())
+      executions = executions.filter(exec =>
+        exec.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        exec.agent_id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        exec.agent_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        exec.user_email?.toLowerCase().includes(searchTerm.toLowerCase())
       );
     }
 
-    // Apply priority filter
-    if (priorityFilter !== 'all') {
-      jobs = jobs.filter(job => {
-        const priority = job.opts?.priority || 0;
-        switch (priorityFilter) {
-          case 'high': return priority > 50;
-          case 'normal': return priority >= 0 && priority <= 50;
-          case 'low': return priority < 0;
-          default: return true;
-        }
-      });
-    }
-
-    // Apply date range filter
-    if (dateRange.from && dateRange.to) {
-      const from = new Date(dateRange.from).getTime();
-      const to = new Date(dateRange.to).getTime();
-      jobs = jobs.filter(job => 
-        job.createdAt && job.createdAt >= from && job.createdAt <= to
-      );
-    }
-
-    return jobs.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  };
-
-  const handleBulkAction = async (action: 'retry' | 'remove' | 'promote') => {
-    if (selectedJobs.size === 0) return;
-    
-    try {
-      const response = await fetch('/api/queue-management', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action,
-          jobIds: Array.from(selectedJobs)
-        })
-      });
-      
-      if (response.ok) {
-        setSelectedJobs(new Set());
-        fetchStats();
-      }
-    } catch (err) {
-      console.error('Bulk action failed:', err);
-    }
+    return executions.sort((a, b) =>
+      new Date(b.scheduled_at).getTime() - new Date(a.scheduled_at).getTime()
+    );
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'active': return 'bg-blue-500/20 text-blue-300 border-blue-500/20';
-      case 'waiting': return 'bg-yellow-500/20 text-yellow-300 border-yellow-500/20';
+      case 'running': return 'bg-blue-500/20 text-blue-300 border-blue-500/20';
+      case 'pending': return 'bg-yellow-500/20 text-yellow-300 border-yellow-500/20';
       case 'completed': return 'bg-green-500/20 text-green-300 border-green-500/20';
       case 'failed': return 'bg-red-500/20 text-red-300 border-red-500/20';
-      case 'delayed': return 'bg-purple-500/20 text-purple-300 border-purple-500/20';
-      case 'paused': return 'bg-slate-500/20 text-slate-300 border-slate-500/20';
       default: return 'bg-slate-500/20 text-slate-300 border-slate-500/20';
     }
   };
 
   const getHealthColor = (health: string) => {
     switch (health) {
-      case 'excellent': 
-      case 'healthy': return 'text-green-400';
-      case 'good': 
-      case 'degraded': return 'text-yellow-400';
+      case 'excellent': return 'text-green-400';
+      case 'good': return 'text-yellow-400';
       case 'warning': return 'text-orange-400';
-      case 'critical': 
-      case 'failing': return 'text-red-400';
+      case 'critical': return 'text-red-400';
       default: return 'text-slate-400';
     }
   };
 
-  const JobDetailsModal = ({ job, onClose }: { job: JobData; onClose: () => void }) => (
+  const ExecutionDetailsModal = ({ execution, onClose }: { execution: AgentExecution; onClose: () => void }) => (
     <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-800/95 backdrop-blur-xl rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-y-auto border border-white/10">
-        <div className="sticky top-0 bg-slate-800/95 backdrop-blur-xl px-6 py-4 border-b border-white/10 flex justify-between items-center rounded-t-xl">
+      <div className="bg-slate-800/95 backdrop-blur-xl rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto border border-white/10">
+        <div className="sticky top-0 bg-slate-800/95 backdrop-blur-xl px-6 py-4 border-b border-white/10 flex justify-between items-center">
           <div>
-            <h2 className="text-xl font-semibold text-white">Job Details</h2>
-            <p className="text-sm text-slate-400 font-mono">#{job.id}</p>
+            <h2 className="text-xl font-semibold text-white">Execution Details</h2>
+            <p className="text-sm text-slate-400 font-mono">#{execution.id}</p>
           </div>
           <div className="flex items-center gap-3">
-            <button 
-              onClick={() => navigator.clipboard.writeText(job.id)}
+            <button
+              onClick={() => navigator.clipboard.writeText(execution.id)}
               className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-700/50"
             >
               <Copy className="w-4 h-4" />
@@ -289,139 +166,78 @@ export default function EnhancedQueueManager() {
             </button>
           </div>
         </div>
-        
+
         <div className="p-6 space-y-6">
-          {/* Job Overview */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {/* Execution Overview */}
+          <div className="grid grid-cols-2 gap-4">
             <div className="bg-gradient-to-br from-blue-500/20 to-blue-600/20 p-4 rounded-lg border border-blue-500/20">
-              <p className="text-sm font-medium text-blue-300">Job ID</p>
-              <p className="font-mono text-sm text-white">{job.id}</p>
+              <p className="text-sm font-medium text-blue-300">Status</p>
+              <p className="font-mono text-lg text-white">{execution.status}</p>
             </div>
             <div className="bg-gradient-to-br from-green-500/20 to-green-600/20 p-4 rounded-lg border border-green-500/20">
-              <p className="text-sm font-medium text-green-300">Agent</p>
-              <p className="font-mono text-sm text-white truncate">{job.data?.agentName || job.data?.agentId || 'N/A'}</p>
+              <p className="text-sm font-medium text-green-300">Progress</p>
+              <p className="font-mono text-lg text-white">{execution.progress}%</p>
             </div>
             <div className="bg-gradient-to-br from-purple-500/20 to-purple-600/20 p-4 rounded-lg border border-purple-500/20">
-              <p className="text-sm font-medium text-purple-300">User</p>
-              <p className="font-mono text-sm text-white truncate">{job.data?.userEmail || job.data?.userId || 'N/A'}</p>
+              <p className="text-sm font-medium text-purple-300">Type</p>
+              <p className="font-mono text-lg text-white">{execution.execution_type}</p>
             </div>
             <div className="bg-gradient-to-br from-orange-500/20 to-orange-600/20 p-4 rounded-lg border border-orange-500/20">
-              <p className="text-sm font-medium text-orange-300">Attempts</p>
-              <p className="font-mono text-sm text-white">{job.attemptsMade || 0}/{job.attempts || 1}</p>
+              <p className="text-sm font-medium text-orange-300">Duration</p>
+              <p className="font-mono text-lg text-white">
+                {execution.execution_duration_ms ? formatDuration(execution.execution_duration_ms) : 'N/A'}
+              </p>
             </div>
           </div>
 
-          {/* Timing Information */}
+          {/* Timing */}
           <div>
             <h3 className="text-lg font-semibold mb-4 flex items-center gap-2 text-white">
               <Clock className="w-5 h-5" />
-              Execution Timeline
+              Timeline
             </h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {job.createdAt && (
-                <div className="bg-blue-500/20 p-4 rounded-lg border border-blue-500/20">
-                  <p className="text-sm text-blue-300 font-medium flex items-center gap-2">
-                    <Calendar className="w-4 h-4" />
-                    Created
-                  </p>
-                  <p className="text-sm text-white mt-1">{new Date(job.createdAt).toLocaleString()}</p>
-                </div>
-              )}
-              {job.processedOn && (
-                <div className="bg-green-500/20 p-4 rounded-lg border border-green-500/20">
-                  <p className="text-sm text-green-300 font-medium flex items-center gap-2">
-                    <Play className="w-4 h-4" />
-                    Started
-                  </p>
-                  <p className="text-sm text-white mt-1">{new Date(job.processedOn).toLocaleString()}</p>
-                </div>
-              )}
-              {job.finishedOn && (
-                <div className="bg-purple-500/20 p-4 rounded-lg border border-purple-500/20">
-                  <p className="text-sm text-purple-300 font-medium flex items-center gap-2">
-                    <CheckCircle className="w-4 h-4" />
-                    Finished
-                  </p>
-                  <p className="text-sm text-white mt-1">{new Date(job.finishedOn).toLocaleString()}</p>
-                  {job.processedOn && (
-                    <p className="text-xs text-purple-300 mt-1 font-medium">
-                      Duration: {formatDuration(job.finishedOn - job.processedOn)}
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Job Configuration */}
-          <div>
-            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2 text-white">
-              <Settings className="w-5 h-5" />
-              Configuration & Input Data
-            </h3>
-            <div className="bg-slate-900 text-green-400 p-4 rounded-lg font-mono text-sm overflow-x-auto border border-slate-700">
-              <pre>{JSON.stringify(job.data, null, 2)}</pre>
-            </div>
-          </div>
-
-          {/* Results */}
-          {job.returnvalue && (
-            <div>
-              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2 text-green-400">
-                <CheckCircle className="w-5 h-5" />
-                Execution Results
-              </h3>
-              <div className="bg-green-900/50 text-green-100 p-4 rounded-lg font-mono text-sm overflow-x-auto border border-green-500/30">
-                <pre>{JSON.stringify(job.returnvalue, null, 2)}</pre>
+            <div className="space-y-2">
+              <div className="flex justify-between items-center p-3 bg-slate-700/50 rounded">
+                <span className="text-slate-300">Scheduled</span>
+                <span className="text-white font-mono text-sm">{new Date(execution.scheduled_at).toLocaleString()}</span>
               </div>
+              {execution.started_at && (
+                <div className="flex justify-between items-center p-3 bg-slate-700/50 rounded">
+                  <span className="text-slate-300">Started</span>
+                  <span className="text-white font-mono text-sm">{new Date(execution.started_at).toLocaleString()}</span>
+                </div>
+              )}
+              {execution.completed_at && (
+                <div className="flex justify-between items-center p-3 bg-slate-700/50 rounded">
+                  <span className="text-slate-300">Completed</span>
+                  <span className="text-white font-mono text-sm">{new Date(execution.completed_at).toLocaleString()}</span>
+                </div>
+              )}
             </div>
-          )}
+          </div>
 
-          {/* Error Information */}
-          {job.failedReason && (
+          {/* Error */}
+          {execution.error_message && (
             <div>
               <h3 className="text-lg font-semibold mb-4 flex items-center gap-2 text-red-400">
                 <AlertCircle className="w-5 h-5" />
-                Error Analysis
+                Error
               </h3>
               <div className="bg-red-500/20 border border-red-500/20 p-4 rounded-lg">
-                <div className="flex items-start gap-3">
-                  <AlertTriangle className="w-5 h-5 text-red-400 mt-0.5 flex-shrink-0" />
-                  <div>
-                    <p className="text-red-300 font-medium">Error Message:</p>
-                    <p className="text-red-200 mt-1">{job.failedReason}</p>
-                  </div>
-                </div>
+                <p className="text-red-200 font-mono text-sm">{execution.error_message}</p>
               </div>
-              
-              {job.stacktrace && job.stacktrace.length > 0 && (
-                <div className="mt-4">
-                  <p className="text-red-300 font-medium mb-2 flex items-center gap-2">
-                    <Terminal className="w-4 h-4" />
-                    Stack Trace
-                  </p>
-                  <div className="bg-red-900/50 text-red-100 p-4 rounded-lg font-mono text-sm overflow-x-auto max-h-64 overflow-y-auto border border-red-500/30">
-                    <pre>{job.stacktrace.join('\n')}</pre>
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
-          {/* Execution Logs */}
-          {job.logs && job.logs.length > 0 && (
+          {/* Result */}
+          {execution.result && (
             <div>
-              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2 text-white">
-                <Terminal className="w-5 h-5" />
-                Execution Logs
+              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2 text-green-400">
+                <CheckCircle className="w-5 h-5" />
+                Result
               </h3>
-              <div className="bg-slate-900 text-slate-100 p-4 rounded-lg font-mono text-sm max-h-64 overflow-y-auto border border-slate-700">
-                {job.logs.map((log, index) => (
-                  <div key={index} className="mb-1 flex">
-                    <span className="text-slate-500 mr-3 select-none">[{String(index + 1).padStart(3, '0')}]</span>
-                    <span className="flex-1">{log}</span>
-                  </div>
-                ))}
+              <div className="bg-slate-900 text-green-400 p-4 rounded-lg font-mono text-sm overflow-x-auto border border-slate-700">
+                <pre>{JSON.stringify(execution.result, null, 2)}</pre>
               </div>
             </div>
           )}
@@ -435,7 +251,7 @@ export default function EnhancedQueueManager() {
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
         <div className="text-center">
           <Loader2 className="w-12 h-12 animate-spin mx-auto mb-4 text-indigo-400" />
-          <p className="text-lg text-slate-400">Loading queue management dashboard...</p>
+          <p className="text-lg text-slate-400">Loading execution stats...</p>
         </div>
       </div>
     );
@@ -446,83 +262,68 @@ export default function EnhancedQueueManager() {
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
         <div className="text-center max-w-md">
           <AlertCircle className="w-12 h-12 mx-auto mb-4 text-red-400" />
-          <h2 className="text-xl font-semibold text-white mb-2">Dashboard Connection Error</h2>
+          <h2 className="text-xl font-semibold text-white mb-2">Connection Error</h2>
           <p className="text-red-400 mb-6">{error}</p>
           <button
             onClick={fetchStats}
             className="px-6 py-2 bg-indigo-500/20 text-indigo-300 rounded-lg hover:bg-indigo-500/30 flex items-center gap-2 mx-auto transition-colors border border-indigo-500/20"
           >
             <RefreshCw className="w-4 h-4" />
-            Retry Connection
+            Retry
           </button>
         </div>
       </div>
     );
   }
 
-  const filteredJobs = getJobsByFilter();
+  const filteredExecutions = getExecutionsByFilter();
 
   return (
     <div className="min-h-screen bg-slate-900">
-      {/* Enhanced Header */}
-      <div className="bg-slate-800/50 backdrop-blur-xl border-b border-white/10 shadow-sm">
+      {/* Header */}
+      <div className="bg-slate-800/50 backdrop-blur-xl border-b border-white/10">
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="p-2 bg-indigo-500/20 rounded-lg">
-                <Server className="w-8 h-8 text-indigo-400" />
+                <Activity className="w-8 h-8 text-indigo-400" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-white">Queue Management Center</h1>
-                <p className="text-slate-400 mt-1">Advanced monitoring and control for workflow agents</p>
+                <h1 className="text-2xl font-bold text-white">Agent Execution Monitor</h1>
+                <p className="text-slate-400 mt-1">QStash-powered execution tracking</p>
               </div>
             </div>
-            
+
             <div className="flex items-center gap-4">
-              {/* Status Indicator */}
               <div className="flex items-center gap-2 px-3 py-1 bg-green-500/20 border border-green-500/20 rounded-lg">
                 <div className={`w-2 h-2 rounded-full ${autoRefresh ? 'bg-green-400 animate-pulse' : 'bg-slate-400'}`} />
                 <span className="text-sm font-medium text-green-300">
-                  {autoRefresh ? 'Live Updates' : 'Paused'}
+                  {autoRefresh ? 'Live' : 'Paused'}
                 </span>
               </div>
-              
-              {/* Refresh Controls */}
-              <div className="flex items-center gap-2">
-                <select
-                  value={refreshInterval}
-                  onChange={(e) => setRefreshInterval(Number(e.target.value))}
-                  className="text-sm border border-slate-600 bg-slate-700/50 text-white rounded px-2 py-1"
-                >
-                  <option value={1000}>1s</option>
-                  <option value={3000}>3s</option>
-                  <option value={5000}>5s</option>
-                  <option value={10000}>10s</option>
-                </select>
-                
-                <button
-                  onClick={() => setAutoRefresh(!autoRefresh)}
-                  className={`px-3 py-1 text-sm rounded border transition-colors ${
-                    autoRefresh 
-                      ? 'bg-green-500/20 text-green-300 border-green-500/20 hover:bg-green-500/30' 
-                      : 'bg-slate-700/50 text-slate-300 border-slate-600 hover:bg-slate-600/50'
-                  }`}
-                >
-                  {autoRefresh ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                </button>
-                
-                <button
-                  onClick={fetchStats}
-                  className="flex items-center gap-2 px-4 py-2 bg-indigo-500/20 text-indigo-300 rounded-lg hover:bg-indigo-500/30 transition-colors shadow-sm border border-indigo-500/20"
-                >
-                  <RefreshCw className="w-4 h-4" />
-                  Refresh
-                </button>
-              </div>
-              
+
+              <button
+                onClick={() => setAutoRefresh(!autoRefresh)}
+                className={`px-3 py-1 text-sm rounded border transition-colors ${
+                  autoRefresh
+                    ? 'bg-green-500/20 text-green-300 border-green-500/20'
+                    : 'bg-slate-700/50 text-slate-300 border-slate-600'
+                }`}
+              >
+                {autoRefresh ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+              </button>
+
+              <button
+                onClick={fetchStats}
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-500/20 text-indigo-300 rounded-lg hover:bg-indigo-500/30 border border-indigo-500/20"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Refresh
+              </button>
+
               {lastUpdate && (
                 <div className="text-sm text-slate-400 bg-slate-700/50 px-3 py-1 rounded border border-slate-600">
-                  Updated: {lastUpdate.toLocaleTimeString()}
+                  {lastUpdate.toLocaleTimeString()}
                 </div>
               )}
             </div>
@@ -531,424 +332,209 @@ export default function EnhancedQueueManager() {
       </div>
 
       <div className="max-w-7xl mx-auto p-6 space-y-6">
-        {/* System Health Overview */}
+        {/* Metrics */}
         {metrics && (
-          <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl shadow-lg border border-white/10 overflow-hidden">
-            <div className="px-6 py-4 border-b border-white/10">
-              <h2 className="text-lg font-semibold flex items-center gap-2 text-white">
-                <Activity className="w-5 h-5" />
-                System Health Overview
-              </h2>
-            </div>
-            
-            <div className="p-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                <div className="bg-gradient-to-br from-indigo-500/20 to-indigo-600/20 p-4 rounded-lg border border-indigo-500/20">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-indigo-500/30 rounded-lg">
-                      <BarChart3 className="w-5 h-5 text-indigo-300" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-indigo-300">Total Processed</p>
-                      <p className="text-xl font-bold text-white">{metrics.totalProcessed.toLocaleString()}</p>
-                    </div>
-                  </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-4 border border-white/10">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-indigo-500/30 rounded-lg">
+                  <BarChart3 className="w-5 h-5 text-indigo-300" />
                 </div>
-
-                <div className="bg-gradient-to-br from-green-500/20 to-green-600/20 p-4 rounded-lg border border-green-500/20">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-green-500/30 rounded-lg">
-                      <TrendingUp className="w-5 h-5 text-green-300" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-green-300">Success Rate</p>
-                      <p className="text-xl font-bold text-white">{metrics.successRate.toFixed(1)}%</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-gradient-to-br from-blue-500/20 to-blue-600/20 p-4 rounded-lg border border-blue-500/20">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-blue-500/30 rounded-lg">
-                      <Zap className="w-5 h-5 text-blue-300" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-blue-300">Avg Processing</p>
-                      <p className="text-xl font-bold text-white">{metrics.avgProcessingTime.toFixed(1)}s</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-gradient-to-br from-purple-500/20 to-purple-600/20 p-4 rounded-lg border border-purple-500/20">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-purple-500/30 rounded-lg">
-                      <Activity className="w-5 h-5 text-purple-300" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-purple-300">Queue Health</p>
-                      <p className={`text-xl font-bold ${getHealthColor(metrics.queueHealth)}`}>
-                        {metrics.queueHealth.charAt(0).toUpperCase() + metrics.queueHealth.slice(1)}
-                      </p>
-                    </div>
-                  </div>
+                <div>
+                  <p className="text-sm text-slate-400">Total Processed</p>
+                  <p className="text-2xl font-bold text-white">{metrics.totalProcessed}</p>
                 </div>
               </div>
+            </div>
 
-              {/* Additional Metrics */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="text-center p-3 bg-slate-700/50 rounded-lg border border-slate-600">
-                  <Cpu className="w-6 h-6 mx-auto mb-1 text-slate-400" />
-                  <p className="text-xs text-slate-400">CPU Usage</p>
-                  <p className="font-semibold text-white">{metrics.cpuUsage}%</p>
+            <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-4 border border-white/10">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-green-500/30 rounded-lg">
+                  <TrendingUp className="w-5 h-5 text-green-300" />
                 </div>
-                <div className="text-center p-3 bg-slate-700/50 rounded-lg border border-slate-600">
-                  <HardDrive className="w-6 h-6 mx-auto mb-1 text-slate-400" />
-                  <p className="text-xs text-slate-400">Memory</p>
-                  <p className="font-semibold text-white">{metrics.memoryUsage}</p>
+                <div>
+                  <p className="text-sm text-slate-400">Success Rate</p>
+                  <p className="text-2xl font-bold text-white">{metrics.successRate.toFixed(1)}%</p>
                 </div>
-                <div className="text-center p-3 bg-slate-700/50 rounded-lg border border-slate-600">
-                  <Wifi className="w-6 h-6 mx-auto mb-1 text-slate-400" />
-                  <p className="text-xs text-slate-400">Redis Connections</p>
-                  <p className="font-semibold text-white">{metrics.redisConnections}</p>
+              </div>
+            </div>
+
+            <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-4 border border-white/10">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-500/30 rounded-lg">
+                  <Zap className="w-5 h-5 text-blue-300" />
                 </div>
-                <div className="text-center p-3 bg-slate-700/50 rounded-lg border border-slate-600">
-                  <TrendingUp className="w-6 h-6 mx-auto mb-1 text-slate-400" />
-                  <p className="text-xs text-slate-400">Throughput/Hr</p>
-                  <p className="font-semibold text-white">{metrics.throughputPerHour}</p>
+                <div>
+                  <p className="text-sm text-slate-400">Avg Time</p>
+                  <p className="text-2xl font-bold text-white">{metrics.avgProcessingTime.toFixed(1)}s</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-4 border border-white/10">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-purple-500/30 rounded-lg">
+                  <Activity className="w-5 h-5 text-purple-300" />
+                </div>
+                <div>
+                  <p className="text-sm text-slate-400">Health</p>
+                  <p className={`text-2xl font-bold ${getHealthColor(metrics.queueHealth)}`}>
+                    {metrics.queueHealth.charAt(0).toUpperCase() + metrics.queueHealth.slice(1)}
+                  </p>
                 </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* Queue Status Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        {/* Status Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
-            { key: 'waiting', label: 'Waiting', icon: Clock, color: 'yellow' },
-            { key: 'active', label: 'Active', icon: Loader2, color: 'blue' },
+            { key: 'pending', label: 'Pending', icon: Clock, color: 'yellow' },
+            { key: 'running', label: 'Running', icon: Loader2, color: 'blue' },
             { key: 'completed', label: 'Completed', icon: CheckCircle, color: 'green' },
             { key: 'failed', label: 'Failed', icon: AlertCircle, color: 'red' },
-            { key: 'delayed', label: 'Delayed', icon: Calendar, color: 'purple' },
-            { key: 'paused', label: 'Paused', icon: Pause, color: 'gray' },
           ].map(({ key, label, icon: Icon, color }) => (
             <div
               key={key}
               onClick={() => setFilter(key as any)}
-              className={`bg-slate-800/50 backdrop-blur-xl rounded-xl shadow-sm p-4 border-l-4 cursor-pointer transition-all hover:shadow-lg hover:scale-[1.02] border border-white/10 ${
+              className={`bg-slate-800/50 rounded-xl p-4 border cursor-pointer transition-all hover:shadow-lg ${
                 filter === key ? 'ring-2 ring-indigo-400/50' : ''
-              } border-l-${color}-400`}
+              } border-white/10 border-l-4 border-l-${color}-400`}
             >
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-slate-400">{label}</p>
+                  <p className="text-sm text-slate-400">{label}</p>
                   <p className="text-2xl font-bold text-white">
-                    {stats?.[key as keyof QueueStats]?.count || 0}
+                    {stats?.[key as keyof ExecutionStats]?.count || 0}
                   </p>
                 </div>
-                <Icon className={`w-6 h-6 text-${color}-400 ${key === 'active' ? 'animate-spin' : ''}`} />
+                <Icon className={`w-6 h-6 text-${color}-400 ${key === 'running' ? 'animate-spin' : ''}`} />
               </div>
             </div>
           ))}
         </div>
 
-        {/* Advanced Job Management */}
-        <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl shadow-lg border border-white/10">
+        {/* Executions Table */}
+        <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl border border-white/10">
           <div className="px-6 py-4 border-b border-white/10">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold text-white flex items-center gap-2">
                 <Database className="w-5 h-5" />
-                Job Management Center
+                Recent Executions
               </h2>
-              
-              <button
-                onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
-                className="px-3 py-1 text-sm bg-slate-700/50 text-slate-300 rounded border border-slate-600 hover:bg-slate-600/50 transition-colors"
-              >
-                <Filter className="w-4 h-4 inline mr-1" />
-                {showAdvancedFilters ? 'Hide Filters' : 'Advanced Filters'}
-              </button>
             </div>
-            
-            {/* Basic Controls */}
-            <div className="flex flex-wrap items-center gap-4">
-              <div className="flex items-center gap-2 bg-slate-700/50 rounded-lg px-3 py-2 min-w-[250px]">
+
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2 bg-slate-700/50 rounded-lg px-3 py-2 flex-1 max-w-md">
                 <Search className="w-4 h-4 text-slate-400" />
                 <input
                   type="text"
-                  placeholder="Search jobs, agents, users..."
+                  placeholder="Search executions..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="bg-transparent text-white placeholder-slate-400 text-sm focus:outline-none flex-1"
                 />
               </div>
-              
+
               <select
                 value={filter}
                 onChange={(e) => setFilter(e.target.value as any)}
-                className="bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm"
               >
-                <option value="all">All Jobs</option>
-                <option value="waiting">Waiting</option>
-                <option value="active">Active</option>
+                <option value="all">All Status</option>
+                <option value="pending">Pending</option>
+                <option value="running">Running</option>
                 <option value="completed">Completed</option>
                 <option value="failed">Failed</option>
-                <option value="delayed">Delayed</option>
-                <option value="paused">Paused</option>
-              </select>
-
-              <select
-                value={priorityFilter}
-                onChange={(e) => setPriorityFilter(e.target.value as any)}
-                className="bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              >
-                <option value="all">All Priorities</option>
-                <option value="high">High Priority</option>
-                <option value="normal">Normal Priority</option>
-                <option value="low">Low Priority</option>
               </select>
             </div>
-
-            {/* Advanced Filters */}
-            {showAdvancedFilters && (
-              <div className="mt-4 p-4 bg-slate-700/30 rounded-lg border border-slate-600">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">Date Range</label>
-                    <div className="flex gap-2">
-                      <input
-                        type="datetime-local"
-                        value={dateRange.from}
-                        onChange={(e) => setDateRange(prev => ({ ...prev, from: e.target.value }))}
-                        className="bg-slate-700/50 border border-slate-600 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 px-3 py-2"
-                      />
-                      <input
-                        type="datetime-local"
-                        value={dateRange.to}
-                        onChange={(e) => setDateRange(prev => ({ ...prev, to: e.target.value }))}
-                        className="bg-slate-700/50 border border-slate-600 rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 px-3 py-2"
-                      />
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">Quick Actions</label>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => {
-                          setDateRange({ from: '', to: '' });
-                          setSearchTerm('');
-                          setPriorityFilter('all');
-                          setFilter('all');
-                        }}
-                        className="px-3 py-2 bg-slate-600/50 text-slate-300 rounded text-sm hover:bg-slate-500/50 transition-colors"
-                      >
-                        Clear All
-                      </button>
-                      <button
-                        onClick={() => {
-                          const today = new Date();
-                          const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
-                          setDateRange({
-                            from: yesterday.toISOString().slice(0, 16),
-                            to: today.toISOString().slice(0, 16)
-                          });
-                        }}
-                        className="px-3 py-2 bg-blue-500/20 text-blue-300 rounded text-sm hover:bg-blue-500/30 transition-colors border border-blue-500/20"
-                      >
-                        Last 24h
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Bulk Actions */}
-            {selectedJobs.size > 0 && (
-              <div className="mt-4 p-3 bg-indigo-500/20 border border-indigo-500/20 rounded-lg">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-indigo-300">
-                    {selectedJobs.size} job{selectedJobs.size !== 1 ? 's' : ''} selected
-                  </span>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleBulkAction('retry')}
-                      className="px-3 py-1 bg-green-500/20 text-green-300 rounded text-sm hover:bg-green-500/30 transition-colors border border-green-500/20"
-                    >
-                      <RotateCcw className="w-4 h-4 inline mr-1" />
-                      Retry
-                    </button>
-                    <button
-                      onClick={() => handleBulkAction('promote')}
-                      className="px-3 py-1 bg-blue-500/20 text-blue-300 rounded text-sm hover:bg-blue-500/30 transition-colors border border-blue-500/20"
-                    >
-                      <SkipForward className="w-4 h-4 inline mr-1" />
-                      Promote
-                    </button>
-                    <button
-                      onClick={() => handleBulkAction('remove')}
-                      className="px-3 py-1 bg-red-500/20 text-red-300 rounded text-sm hover:bg-red-500/30 transition-colors border border-red-500/20"
-                    >
-                      <Trash2 className="w-4 h-4 inline mr-1" />
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
 
-          {/* Jobs Table */}
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="bg-slate-700/50">
                 <tr>
-                  <th className="px-6 py-3 text-left">
-                    <input
-                      type="checkbox"
-                      checked={selectedJobs.size > 0 && selectedJobs.size === filteredJobs.length}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setSelectedJobs(new Set(filteredJobs.map(job => job.id)));
-                        } else {
-                          setSelectedJobs(new Set());
-                        }
-                      }}
-                      className="rounded border-slate-600 text-indigo-500 focus:ring-indigo-500 bg-slate-700"
-                    />
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Job Details</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Agent & User</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Status</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Timing</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Actions</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">ID</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">Agent</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">Type</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">Status</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">Progress</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">Duration</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">Actions</th>
                 </tr>
               </thead>
-              <tbody className="bg-slate-800/30 divide-y divide-slate-700/50">
-                {filteredJobs.length === 0 ? (
+              <tbody className="divide-y divide-slate-700/50">
+                {filteredExecutions.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
+                    <td colSpan={7} className="px-6 py-12 text-center text-slate-400">
                       <Database className="w-12 h-12 mx-auto mb-4 text-slate-600" />
-                      <p className="text-lg font-medium">No jobs found</p>
-                      <p className="text-sm">Try adjusting your filters or search criteria</p>
+                      <p className="text-lg font-medium">No executions found</p>
                     </td>
                   </tr>
                 ) : (
-                  filteredJobs.slice(0, 100).map((job) => {
-                    const getJobStatus = () => {
-                      if (stats?.active.jobs.some(j => j.id === job.id)) return 'active';
-                      if (stats?.waiting.jobs.some(j => j.id === job.id)) return 'waiting';
-                      if (stats?.completed.jobs.some(j => j.id === job.id)) return 'completed';
-                      if (stats?.failed.jobs.some(j => j.id === job.id)) return 'failed';
-                      if (stats?.delayed?.jobs.some(j => j.id === job.id)) return 'delayed';
-                      if (stats?.paused?.jobs.some(j => j.id === job.id)) return 'paused';
-                      return 'unknown';
-                    };
-
-                    const status = getJobStatus();
-
-                    return (
-                      <tr key={job.id} className="hover:bg-slate-700/30 transition-colors">
-                        <td className="px-6 py-4">
-                          <input
-                            type="checkbox"
-                            checked={selectedJobs.has(job.id)}
-                            onChange={(e) => {
-                              const newSelected = new Set(selectedJobs);
-                              if (e.target.checked) {
-                                newSelected.add(job.id);
-                              } else {
-                                newSelected.delete(job.id);
-                              }
-                              setSelectedJobs(newSelected);
-                            }}
-                            className="rounded border-slate-600 text-indigo-500 focus:ring-indigo-500 bg-slate-700"
-                          />
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div>
-                            <p className="font-mono text-sm font-medium text-white">#{job.id}</p>
-                            <p className="text-xs text-slate-400">{job.data?.executionId && `Exec: ${job.data.executionId.slice(0, 8)}...`}</p>
+                  filteredExecutions.slice(0, 50).map((exec) => (
+                    <tr key={exec.id} className="hover:bg-slate-700/30 transition-colors">
+                      <td className="px-6 py-4">
+                        <p className="font-mono text-sm text-white">{exec.id.slice(0, 8)}...</p>
+                      </td>
+                      <td className="px-6 py-4">
+                        <p className="text-sm text-white truncate max-w-xs">
+                          {exec.agent_name || exec.agent_id}
+                        </p>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="text-sm text-slate-300">{exec.execution_type}</span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium border ${getStatusColor(exec.status)}`}>
+                          {exec.status}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-16 bg-slate-700 rounded-full h-2">
+                            <div
+                              className="bg-indigo-500 h-2 rounded-full transition-all"
+                              style={{ width: `${exec.progress}%` }}
+                            />
                           </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="max-w-xs">
-                            <p className="text-sm font-medium text-white truncate">
-                              {job.data?.agentName || job.data?.agentId || 'Unknown Agent'}
-                            </p>
-                            <p className="text-xs text-slate-400 truncate">
-                              {job.data?.userEmail || job.data?.userId || 'Unknown User'}
-                            </p>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${getStatusColor(status)}`}>
-                            {status.charAt(0).toUpperCase() + status.slice(1)}
-                          </span>
-                          {job.priority && job.priority > 0 && (
-                            <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-orange-500/20 text-orange-300 border border-orange-500/20">
-                              Priority: {job.priority}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-400">
-                          <div>
-                            {job.createdAt && (
-                              <p>Created: {formatTime(job.createdAt)}</p>
-                            )}
-                            {job.processedOn && job.finishedOn ? (
-                              <p className="text-green-400 font-medium">
-                                {formatDuration(job.finishedOn - job.processedOn)}
-                              </p>
-                            ) : job.processedOn && !job.finishedOn ? (
-                              <p className="text-blue-400 font-medium">Running...</p>
-                            ) : (
-                              <p className="text-slate-500">Pending</p>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => setSelectedJob(job)}
-                              className="text-indigo-400 hover:text-indigo-300 flex items-center gap-1 px-2 py-1 rounded hover:bg-indigo-500/20 transition-colors"
-                            >
-                              <Eye className="w-4 h-4" />
-                              View
-                            </button>
-                            {status === 'failed' && (
-                              <button
-                                onClick={() => handleBulkAction('retry')}
-                                className="text-green-400 hover:text-green-300 flex items-center gap-1 px-2 py-1 rounded hover:bg-green-500/20 transition-colors"
-                              >
-                                <RotateCcw className="w-4 h-4" />
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
+                          <span className="text-xs text-slate-400">{exec.progress}%</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-slate-400">
+                        {exec.execution_duration_ms ? formatDuration(exec.execution_duration_ms) : '-'}
+                      </td>
+                      <td className="px-6 py-4">
+                        <button
+                          onClick={() => setSelectedExecution(exec)}
+                          className="text-indigo-400 hover:text-indigo-300 flex items-center gap-1 px-2 py-1 rounded hover:bg-indigo-500/20"
+                        >
+                          <Eye className="w-4 h-4" />
+                          View
+                        </button>
+                      </td>
+                    </tr>
+                  ))
                 )}
               </tbody>
             </table>
           </div>
 
-          {filteredJobs.length > 100 && (
+          {filteredExecutions.length > 50 && (
             <div className="px-6 py-3 bg-slate-700/30 border-t border-slate-600">
               <p className="text-sm text-slate-400">
-                Showing first 100 of {filteredJobs.length} jobs. Use filters to narrow results.
+                Showing first 50 of {filteredExecutions.length} executions
               </p>
             </div>
           )}
         </div>
       </div>
 
-      {/* Job Details Modal */}
-      {selectedJob && (
-        <JobDetailsModal 
-          job={selectedJob} 
-          onClose={() => setSelectedJob(null)} 
+      {selectedExecution && (
+        <ExecutionDetailsModal
+          execution={selectedExecution}
+          onClose={() => setSelectedExecution(null)}
         />
       )}
     </div>

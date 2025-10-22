@@ -69,6 +69,29 @@ export async function POST(request: NextRequest) {
 
     if (debug) console.log(`DEBUG: API - Additional config saved successfully for ${pluginKey}`);
 
+    // Audit trail logging
+    try {
+      const { AuditTrail } = await import('@/lib/services/AuditTrailService');
+      await AuditTrail.log({
+        action: 'PLUGIN_PERMISSION_GRANTED',
+        entityType: 'connection',
+        resourceName: pluginKey,
+        userId: userId,
+        request: request,
+        details: {
+          plugin_key: pluginKey,
+          additional_config_fields: Object.keys(additionalData),
+          config_data: additionalData, // Store the actual config for audit purposes
+        },
+        severity: 'warning',
+        complianceFlags: ['SOC2'],
+      });
+      if (debug) console.log(`DEBUG: Audit trail logged for ${pluginKey} additional config`);
+    } catch (auditError) {
+      console.error('DEBUG: Failed to log audit trail:', auditError);
+      // Don't fail the request if audit logging fails
+    }
+
     return NextResponse.json({
       success: true,
       data: additionalData

@@ -89,7 +89,8 @@ export async function GET(
     const connection = await userConnections.handleOAuthCallback(
       code,
       state,
-      pluginDefinition.plugin.auth_config
+      pluginDefinition.plugin.auth_config,
+      request // Pass request for audit trail IP/user-agent extraction
     );
 
     // Extract and save plugin-specific additional profile data

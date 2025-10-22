@@ -6,7 +6,7 @@ import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
 import { runAgentWithContext } from '@/lib/utils/runAgentWithContext'
 import { extractPdfTextFromBase64 } from '@/lib/utils/extractPdfTextFromBase64'
-import { addManualExecution } from '@/lib/queues/agentQueue'
+import { addManualExecution } from '@/lib/queues/qstashQueue'
 
 export const runtime = 'nodejs'
 
@@ -535,7 +535,7 @@ export async function GET(request: Request) {
 
     let query = supabase
       .from('agent_executions')
-      .select('id, agent_id, execution_type, status, progress, scheduled_at, started_at, completed_at, error_message, execution_duration_ms')
+      .select('id, agent_id, execution_type, status, progress, scheduled_at, started_at, completed_at, error_message, execution_duration_ms, retry_count')
       .order('created_at', { ascending: false });
 
     if (execution_id) {

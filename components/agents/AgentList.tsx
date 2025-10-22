@@ -63,6 +63,9 @@ interface ExecutionHistoryItem {
   execution_duration_ms?: number;
   error_message?: string;
   progress?: number;
+  retry_count?: number;
+  execution_type?: 'manual' | 'scheduled';
+  scheduled_at?: string;
 }
 
 interface AgentExecutionStatus {
@@ -120,7 +123,23 @@ const formatNextRun = (nextRunString: string, timezone?: string) => {
 
     // Relative time formatting
     if (diffInMinutes < 0) {
-      return { text: 'Overdue', time: timeString, isOverdue: true };
+      // Calculate how long overdue
+      const overdueMins = Math.abs(diffInMinutes);
+      const overdueHours = Math.abs(diffInHours);
+      const overdueDays = Math.abs(diffInDays);
+
+      let overdueText = 'Overdue';
+      if (overdueMins < 60) {
+        overdueText = `${overdueMins}m overdue`;
+      } else if (overdueHours < 24) {
+        overdueText = `${overdueHours}h overdue`;
+      } else if (overdueDays < 7) {
+        overdueText = `${overdueDays}d overdue`;
+      } else {
+        overdueText = 'Long overdue';
+      }
+
+      return { text: overdueText, time: null, isOverdue: true };
     } else if (diffInMinutes < 5) {
       return { text: 'In < 5min', time: timeString, isImmediate: true };
     } else if (diffInMinutes < 60) {
@@ -346,12 +365,50 @@ const AgentExecutionHistory = ({ agent }: { agent: Agent }) => {
     return `${minutes}m`;
   };
 
-  const formatTimeAgo = (dateString: string) => {
-    const diffInSeconds = Math.floor((new Date().getTime() - new Date(dateString).getTime()) / 1000);
+  const formatTimeAgo = (dateString: string | null | undefined) => {
+    if (!dateString) return 'N/A';
+
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return 'Invalid date';
+
+    const diffInSeconds = Math.floor((new Date().getTime() - date.getTime()) / 1000);
+    if (diffInSeconds < 0) return 'scheduled';
     if (diffInSeconds < 60) return 'now';
     if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m`;
     if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h`;
-    return `${Math.floor(diffInSeconds / 86400)}d`;
+    if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d`;
+
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+
+  const getUserFriendlyError = (errorMessage: string) => {
+    if (!errorMessage) return { message: 'Something went wrong', action: null, icon: AlertCircle, color: 'red' };
+
+    const lowerError = errorMessage.toLowerCase();
+
+    if (lowerError.includes('invalid destination url') || lowerError.includes('destination url')) {
+      return { message: 'Setup incomplete', action: 'Your agent needs configuration. Please check Settings.', icon: Settings, color: 'orange' };
+    }
+    if (lowerError.includes('authenticate') || lowerError.includes('auth') || lowerError.includes('token')) {
+      return { message: 'Connection issue', action: 'Please reconnect your integrations in Settings → Integrations.', icon: Shield, color: 'red' };
+    }
+    if (lowerError.includes('rate limit') || lowerError.includes('429')) {
+      return { message: 'Rate limit reached', action: 'Too many requests. We\'ll retry automatically.', icon: Clock, color: 'amber' };
+    }
+    if (lowerError.includes('timeout') || lowerError.includes('timed out')) {
+      return { message: 'Took too long', action: 'Try breaking this into smaller steps.', icon: Timer, color: 'orange' };
+    }
+    if (lowerError.includes('not found') || lowerError.includes('404')) {
+      return { message: 'Resource not found', action: 'Check if the item still exists and you have access.', icon: Search, color: 'gray' };
+    }
+    if (lowerError.includes('permission') || lowerError.includes('forbidden') || lowerError.includes('403')) {
+      return { message: 'Permission denied', action: 'You may need to grant additional permissions.', icon: Shield, color: 'red' };
+    }
+    if (lowerError.includes('network') || lowerError.includes('connection')) {
+      return { message: 'Connection problem', action: 'Check your internet connection and try again.', icon: Globe, color: 'blue' };
+    }
+
+    return { message: 'Execution failed', action: 'Please try running the agent again.', icon: AlertCircle, color: 'red' };
   };
 
   const getStatusConfig = (status: string) => {
@@ -448,49 +505,131 @@ const AgentExecutionHistory = ({ agent }: { agent: Agent }) => {
                 {history.map((execution) => {
                   const statusConfig = getStatusConfig(execution.status);
                   const StatusIcon = statusConfig.icon;
-                  
+                  const hasRetries = execution.retry_count && execution.retry_count > 0;
+                  const isRetrying = execution.status === 'running' && hasRetries;
+
                   return (
-                    <div key={execution.id} className="flex items-center gap-2 p-1.5 bg-white border border-gray-200 rounded text-xs hover:border-gray-300 transition-colors">
-                      <div className={`p-1 rounded ${statusConfig.bg}`}>
-                        <StatusIcon className={`w-2.5 h-2.5 ${statusConfig.color} ${statusConfig.pulse ? 'animate-spin' : ''}`} />
+                    <div key={execution.id} className="flex flex-col gap-1 p-1.5 bg-white border border-gray-200 rounded text-xs hover:border-gray-300 transition-colors">
+                      <div className="flex items-center gap-2">
+                        <div className={`p-1 rounded ${statusConfig.bg}`}>
+                          <StatusIcon className={`w-2.5 h-2.5 ${statusConfig.color} ${statusConfig.pulse ? 'animate-spin' : ''}`} />
+                        </div>
+
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className={`font-medium ${statusConfig.color}`}>{statusConfig.label}</span>
+
+                            {/* Retry Badge */}
+                            {isRetrying && (
+                              <span className="flex items-center gap-1 px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded-full text-xs font-medium border border-orange-200">
+                                <div className="w-1 h-1 bg-orange-500 rounded-full animate-pulse" />
+                                Retry {execution.retry_count}/3
+                              </span>
+                            )}
+
+                            {/* Type Badge */}
+                            {execution.execution_type && (
+                              <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-medium ${
+                                execution.execution_type === 'scheduled'
+                                  ? 'bg-blue-100 text-blue-700 border border-blue-200'
+                                  : 'bg-purple-100 text-purple-700 border border-purple-200'
+                              }`}>
+                                {execution.execution_type === 'scheduled' ? (
+                                  <>
+                                    <Calendar className="w-2.5 h-2.5" />
+                                    Auto
+                                  </>
+                                ) : (
+                                  <>
+                                    <Play className="w-2.5 h-2.5" />
+                                    Manual
+                                  </>
+                                )}
+                              </span>
+                            )}
+
+                            {execution.status === 'running' && execution.progress && (
+                              <span className="text-blue-600 font-medium">{execution.progress}%</span>
+                            )}
+                          </div>
+
+                          <div className="text-gray-500 truncate text-xs mt-0.5">
+                            {formatTimeAgo(execution.started_at)}
+                            {execution.execution_duration_ms && ` • ${formatDuration(execution.execution_duration_ms)}`}
+                          </div>
+                        </div>
+
+                        {execution.status === 'running' && execution.progress && (
+                          <div className="w-6 h-1 bg-gray-200 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-blue-500 rounded-full transition-all"
+                              style={{ width: `${execution.progress}%` }}
+                            />
+                          </div>
+                        )}
                       </div>
 
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className={`font-medium ${statusConfig.color}`}>{statusConfig.label}</span>
-                          {execution.status === 'running' && execution.progress && (
-                            <span className="text-blue-600">{execution.progress}%</span>
-                          )}
-                        </div>
-                        <div className="text-gray-500 truncate">
-                          {formatTimeAgo(execution.started_at)}
-                          {execution.execution_duration_ms && ` • ${formatDuration(execution.execution_duration_ms)}`}
-                        </div>
-                      </div>
+                      {/* Failed Execution Details */}
+                      {execution.status === 'failed' && (() => {
+                        const friendlyError = getUserFriendlyError(execution.error_message || '');
+                        const ErrorIcon = friendlyError.icon;
 
-                      {execution.status === 'running' && execution.progress && (
-                        <div className="w-6 h-1 bg-gray-200 rounded-full overflow-hidden">
-                          <div 
-                            className="h-full bg-blue-500 rounded-full transition-all"
-                            style={{ width: `${execution.progress}%` }}
-                          />
-                        </div>
-                      )}
+                        const getColorClasses = (color: string) => {
+                          const colors = {
+                            red: { bg: 'bg-red-50', border: 'border-red-200', iconBg: 'bg-red-100', iconColor: 'text-red-600', titleColor: 'text-red-900', textColor: 'text-red-700', dotFilled: 'bg-red-500', dotEmpty: 'bg-red-200' },
+                            orange: { bg: 'bg-orange-50', border: 'border-orange-200', iconBg: 'bg-orange-100', iconColor: 'text-orange-600', titleColor: 'text-orange-900', textColor: 'text-orange-700', dotFilled: 'bg-orange-500', dotEmpty: 'bg-orange-200' },
+                            amber: { bg: 'bg-amber-50', border: 'border-amber-200', iconBg: 'bg-amber-100', iconColor: 'text-amber-600', titleColor: 'text-amber-900', textColor: 'text-amber-700', dotFilled: 'bg-amber-500', dotEmpty: 'bg-amber-200' },
+                            gray: { bg: 'bg-gray-50', border: 'border-gray-200', iconBg: 'bg-gray-100', iconColor: 'text-gray-600', titleColor: 'text-gray-900', textColor: 'text-gray-700', dotFilled: 'bg-gray-500', dotEmpty: 'bg-gray-200' },
+                            blue: { bg: 'bg-blue-50', border: 'border-blue-200', iconBg: 'bg-blue-100', iconColor: 'text-blue-600', titleColor: 'text-blue-900', textColor: 'text-blue-700', dotFilled: 'bg-blue-500', dotEmpty: 'bg-blue-200' }
+                          };
+                          return colors[color as keyof typeof colors] || colors.red;
+                        };
+
+                        const colorClasses = getColorClasses(friendlyError.color);
+
+                        return (
+                          <div className={`ml-7 p-2 ${colorClasses.bg} border ${colorClasses.border} rounded-lg`}>
+                            <div className="flex items-start gap-2">
+                              <div className={`flex-shrink-0 p-1.5 ${colorClasses.iconBg} rounded-lg`}>
+                                <ErrorIcon className={`w-3.5 h-3.5 ${colorClasses.iconColor}`} />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className={`${colorClasses.titleColor} text-xs font-semibold leading-tight`}>
+                                  {friendlyError.message}
+                                </p>
+                                {friendlyError.action && (
+                                  <p className={`${colorClasses.textColor} text-xs mt-1 leading-snug`}>
+                                    {friendlyError.action}
+                                  </p>
+                                )}
+                                {hasRetries && (
+                                  <div className="flex items-center gap-2 mt-2">
+                                    <div className="flex gap-1">
+                                      {[1, 2, 3].map((attempt) => (
+                                        <div
+                                          key={attempt}
+                                          className={`w-2 h-2 rounded-full transition-all ${
+                                            attempt <= (execution.retry_count || 0)
+                                              ? colorClasses.dotFilled
+                                              : colorClasses.dotEmpty
+                                          }`}
+                                        />
+                                      ))}
+                                    </div>
+                                    <span className={`text-xs ${colorClasses.textColor} font-medium`}>
+                                      {execution.retry_count || 0}/3 attempts
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })}
               </div>
-
-              {history.length >= 5 && (
-                <div className="text-center pt-1">
-                  <Link 
-                    href={`/agents/${agent.id}/executions`}
-                    className="text-xs text-purple-600 hover:text-purple-800 font-medium"
-                  >
-                    View all →
-                  </Link>
-                </div>
-              )}
             </>
           )}
         </div>
@@ -1101,7 +1240,7 @@ export default function AgentList() {
                       {statusConfig.label}
                     </div>
                   )}
-                  
+
                   {agent.mode === 'scheduled' && nextRunInfo && (
                     <div className="flex items-center gap-1 text-xs text-gray-500">
                       <Timer className="w-3 h-3" />
@@ -1148,64 +1287,69 @@ export default function AgentList() {
     const statusConfig = getStatusConfig(agent.status)
 
     return (
-      <div className="group bg-white rounded-xl border border-gray-200 hover:border-gray-300 shadow-sm hover:shadow-lg transition-all duration-300 p-4 hover:-translate-y-0.5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4 flex-1 min-w-0">
-            <div className="relative">
-              <div className="w-12 h-12 bg-gradient-to-br from-violet-500 via-purple-500 to-blue-500 rounded-xl flex items-center justify-center shadow-lg">
-                <Bot className="h-6 w-6 text-white" />
-              </div>
-              <div className={`absolute -bottom-1 -right-1 w-4 h-4 ${statusConfig.dot} rounded-full border-2 border-white shadow-lg`} />
-            </div>
-            
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-3 mb-1 flex-wrap">
-                <h3 className="font-bold text-gray-900 truncate text-lg group-hover:text-purple-600 transition-colors">
-                  {agent.agent_name}
-                </h3>
-                <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${statusConfig.bg} ${statusConfig.color} ${statusConfig.border} border`}>
-                  <div className={`w-1.5 h-1.5 ${statusConfig.dot} rounded-full`} />
-                  {statusConfig.label}
+      <div className="group bg-white rounded-xl border border-gray-200 hover:border-gray-300 shadow-sm hover:shadow-lg transition-all duration-300 hover:-translate-y-0.5">
+        <div className="p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4 flex-1 min-w-0">
+              <div className="relative">
+                <div className="w-12 h-12 bg-gradient-to-br from-violet-500 via-purple-500 to-blue-500 rounded-xl flex items-center justify-center shadow-lg">
+                  <Bot className="h-6 w-6 text-white" />
                 </div>
-                <ExecutionStatusBadge agent={agent} forceRefresh={refreshTrigger[agent.id]} />
+                <div className={`absolute -bottom-1 -right-1 w-4 h-4 ${statusConfig.dot} rounded-full border-2 border-white shadow-lg`} />
               </div>
-              <p className="text-sm text-gray-600 truncate mb-1">
-                {agent.description || 'An intelligent assistant ready to automate workflows'}
-              </p>
-              <div className="flex items-center gap-3 flex-wrap">
-                {agent.mode === 'scheduled' && agent.schedule_cron && (
-                  <div className="flex items-center gap-1.5">
-                    <Calendar className="w-3 h-3 text-blue-600" />
-                    <p className="text-xs text-blue-600 font-medium">
-                      {formatScheduleDisplay(agent.mode, agent.schedule_cron)}
-                    </p>
+
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-3 mb-1 flex-wrap">
+                  <h3 className="font-bold text-gray-900 truncate text-lg group-hover:text-purple-600 transition-colors">
+                    {agent.agent_name}
+                  </h3>
+                  <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${statusConfig.bg} ${statusConfig.color} ${statusConfig.border} border`}>
+                    <div className={`w-1.5 h-1.5 ${statusConfig.dot} rounded-full`} />
+                    {statusConfig.label}
                   </div>
-                )}
-                <NextRunBadge agent={agent} />
+                  <ExecutionStatusBadge agent={agent} forceRefresh={refreshTrigger[agent.id]} />
+                </div>
+                <p className="text-sm text-gray-600 truncate mb-1">
+                  {agent.description || 'An intelligent assistant ready to automate workflows'}
+                </p>
+                <div className="flex items-center gap-3 flex-wrap">
+                  {agent.mode === 'scheduled' && agent.schedule_cron && (
+                    <div className="flex items-center gap-1.5">
+                      <Calendar className="w-3 h-3 text-blue-600" />
+                      <p className="text-xs text-blue-600 font-medium">
+                        {formatScheduleDisplay(agent.mode, agent.schedule_cron)}
+                      </p>
+                    </div>
+                  )}
+                  <NextRunBadge agent={agent} />
+                </div>
               </div>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <div className="text-right hidden lg:block">
+                <p className="text-xs text-gray-500 font-medium">Created</p>
+                <p className="text-sm text-gray-700 font-semibold">
+                  {agent.created_at ? formatTimeAgo(agent.created_at) : 'Recently'}
+                </p>
+              </div>
+
+              <AgentActionButtons agent={agent} />
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            <div className="text-right hidden lg:block">
-              <p className="text-xs text-gray-500 font-medium">Created</p>
-              <p className="text-sm text-gray-700 font-semibold">
-                {agent.created_at ? formatTimeAgo(agent.created_at) : 'Recently'}
-              </p>
+          {agent.status === 'inactive' && agent.deactivation_reason && (
+            <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 text-red-600 mt-0.5 flex-shrink-0" />
+                <p className="text-sm text-red-700 leading-snug">{agent.deactivation_reason}</p>
+              </div>
             </div>
-            
-            <AgentActionButtons agent={agent} />
-          </div>
+          )}
         </div>
 
-        {agent.status === 'inactive' && agent.deactivation_reason && (
-          <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
-            <div className="flex items-start gap-2">
-              <AlertCircle className="h-4 w-4 text-red-600 mt-0.5 flex-shrink-0" />
-              <p className="text-sm text-red-700 leading-snug">{agent.deactivation_reason}</p>
-            </div>
-          </div>
-        )}
+        {/* Execution History Section */}
+        <AgentExecutionHistory agent={agent} />
       </div>
     )
   }

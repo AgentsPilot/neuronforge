@@ -4,7 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { addManualExecution } from '@/lib/queues/agentQueue';
+import { addManualExecution } from '@/lib/queues/qstashQueue';
 import parser from 'cron-parser';
 
 // Required exports for Vercel function detection

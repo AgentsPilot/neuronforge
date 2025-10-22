@@ -64,10 +64,10 @@ export class ApplicationInitializer {
       result.steps.cleanup = true
       console.log('✅ Execution cleanup completed')
 
-      // Step 3: BullMQ worker system (handled separately by worker process)
-      console.log('⏰ Step 3: BullMQ worker system active (external process)...')
-      result.steps.scheduler = true // Mark as true since worker handles scheduling
-      console.log('✅ Scheduling system confirmed (BullMQ worker)')
+      // Step 3: QStash scheduling system (handled by Vercel Cron + QStash)
+      console.log('⏰ Step 3: QStash scheduling system active...')
+      result.steps.scheduler = true // Mark as true since QStash handles scheduling
+      console.log('✅ Scheduling system confirmed (QStash)')
 
       this.isInitialized = true
       globalThis.__NEURONFORGE_INITIALIZED__ = true // Persist across Fast Refresh
@@ -96,7 +96,7 @@ export class ApplicationInitializer {
       }
 
       // Test basic database connectivity
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from('agents')
         .select('id')
         .limit(1)

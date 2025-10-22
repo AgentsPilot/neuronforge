@@ -1,15 +1,15 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabaseClient'
+import { useAuth } from '@/components/UserProvider'
 import {
   PlugZap,
   Search,
   Filter,
   Plus,
-  Settings,
-  Trash2,
   CheckCircle,
   XCircle,
   AlertTriangle,
@@ -21,21 +21,51 @@ import {
   Cloud,
   MessageCircle,
   Phone,
-  Activity
+  Activity,
+  Unplug,
+  FileText,
+  Table,
+  HardDrive,
+  Briefcase
 } from 'lucide-react'
 import { PluginConnection } from '@/types/settings'
+import Image from 'next/image'
 
-// Plugin icons mapping
+// Plugin icons mapping with real brand icons
 const pluginIcons: Record<string, React.ReactNode> = {
-  'google-mail': <Mail className="w-5 h-5" />,
-  'gmail': <Mail className="w-5 h-5" />,
-  'github': <Github className="w-5 h-5" />,
-  'slack': <Slack className="w-5 h-5" />,
-  'google-calendar': <Calendar className="w-5 h-5" />,
-  'outlook': <Mail className="w-5 h-5" />,
-  'whatsapp': <MessageCircle className="w-5 h-5" />,
-  'twilio': <Phone className="w-5 h-5" />,
-  'aws': <Cloud className="w-5 h-5" />,
+  'google-mail': <Mail className="w-5 h-5 text-white" />,
+  'gmail': <Mail className="w-5 h-5 text-white" />,
+  'google-calendar': <Calendar className="w-5 h-5 text-white" />,
+  'google-drive': <HardDrive className="w-5 h-5 text-white" />,
+  'google-docs': <FileText className="w-5 h-5 text-white" />,
+  'google-sheets': <Table className="w-5 h-5 text-white" />,
+  'github': <Github className="w-5 h-5 text-white" />,
+  'slack': <Slack className="w-5 h-5 text-white" />,
+  'hubspot': <Briefcase className="w-5 h-5 text-white" />,
+  'outlook': <Mail className="w-5 h-5 text-white" />,
+  'whatsapp': <MessageCircle className="w-5 h-5 text-white" />,
+  'twilio': <Phone className="w-5 h-5 text-white" />,
+  'aws': <Cloud className="w-5 h-5 text-white" />,
+  'chatgpt-research': <Activity className="w-5 h-5 text-white" />,
+}
+
+// Plugin icon background colors for brand consistency
+const pluginIconColors: Record<string, string> = {
+  'google-mail': 'from-red-500 to-red-600',
+  'gmail': 'from-red-500 to-red-600',
+  'google-calendar': 'from-blue-500 to-blue-600',
+  'google-drive': 'from-green-500 to-green-600',
+  'google-docs': 'from-blue-500 to-indigo-600',
+  'google-sheets': 'from-green-500 to-emerald-600',
+  'github': 'from-gray-700 to-gray-900',
+  'slack': 'from-purple-500 to-purple-600',
+  'hubspot': 'from-orange-500 to-orange-600',
+  'outlook': 'from-blue-600 to-blue-700',
+  'whatsapp': 'from-green-500 to-green-600',
+  'twilio': 'from-red-600 to-red-700',
+  'aws': 'from-orange-500 to-yellow-600',
+  'chatgpt-research': 'from-emerald-500 to-teal-600',
+  'default': 'from-purple-500 to-pink-600'
 }
 
 interface PluginsTabProps {
@@ -44,10 +74,19 @@ interface PluginsTabProps {
 }
 
 export default function PluginsTab({ connections, setConnections }: PluginsTabProps) {
+  const { user } = useAuth()
   const [searchQuery, setSearchQuery] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
   const [successMessage, setSuccessMessage] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
+  const [showDisconnectModal, setShowDisconnectModal] = useState(false)
+  const [selectedConnection, setSelectedConnection] = useState<PluginConnection | null>(null)
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+    return () => setMounted(false)
+  }, [])
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
@@ -80,29 +119,72 @@ export default function PluginsTab({ connections, setConnections }: PluginsTabPr
     )
   }
 
-  const handleDisconnectPlugin = async (connectionId: string) => {
-    if (!confirm('Are you sure you want to disconnect this plugin? Any agents using this plugin may be affected.')) {
-      return
-    }
+  const openDisconnectModal = (connection: PluginConnection) => {
+    setSelectedConnection(connection)
+    setShowDisconnectModal(true)
+  }
+
+  const handleDisconnectPlugin = async () => {
+    if (!selectedConnection || !user) return
 
     try {
       setSuccessMessage('')
       setErrorMessage('')
+      setShowDisconnectModal(false)
+
+      // Calculate connection duration for audit trail
+      const connectedAt = selectedConnection.connected_at ? new Date(selectedConnection.connected_at) : null
+      const connectionDurationDays = connectedAt
+        ? Math.floor((Date.now() - connectedAt.getTime()) / (1000 * 60 * 60 * 24))
+        : null
 
       const { error } = await supabase
         .from('plugin_connections')
-        .delete()
-        .eq('id', connectionId)
+        .update({ status: 'disconnected', disconnected_at: new Date().toISOString() })
+        .eq('id', selectedConnection.id)
 
       if (!error) {
-        setConnections(prev => prev.filter(conn => conn.id !== connectionId))
+        setConnections(prev => prev.filter(conn => conn.id !== selectedConnection.id))
         setSuccessMessage('Plugin disconnected successfully!')
         setTimeout(() => setSuccessMessage(''), 3000)
+
+        // Log to audit trail
+        try {
+          await fetch('/api/audit-trail', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'PLUGIN_DISCONNECTED',
+              entityType: 'connection',
+              entityId: selectedConnection.id,
+              resourceName: selectedConnection.plugin_name,
+              userId: user.id,
+              details: {
+                plugin_key: selectedConnection.plugin_key,
+                plugin_name: selectedConnection.plugin_name,
+                provider_email: selectedConnection.email,
+                username: selectedConnection.username,
+                connection_duration_days: connectionDurationDays,
+                disconnected_from: 'settings_page'
+              },
+              severity: 'warning',
+              complianceFlags: ['SOC2']
+            })
+          })
+        } catch (auditError) {
+          console.error('Failed to log audit trail:', auditError)
+          // Don't fail the disconnect if audit logging fails
+        }
+      } else {
+        setErrorMessage('Failed to disconnect plugin. Please try again.')
+        setTimeout(() => setErrorMessage(''), 5000)
       }
     } catch (error) {
       console.error('Error disconnecting plugin:', error)
       setErrorMessage('Failed to disconnect plugin. Please try again.')
       setTimeout(() => setErrorMessage(''), 5000)
+    } finally {
+      setSelectedConnection(null)
     }
   }
 
@@ -264,7 +346,7 @@ export default function PluginsTab({ connections, setConnections }: PluginsTabPr
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex items-start gap-3 flex-1">
-                      <div className="p-2.5 rounded-lg bg-gradient-to-br from-purple-500 to-pink-600 shadow-md">
+                      <div className={`p-2.5 rounded-lg bg-gradient-to-br ${pluginIconColors[connection.plugin_key] || pluginIconColors.default} shadow-md`}>
                         {pluginIcons[connection.plugin_key] || <PlugZap className="w-5 h-5 text-white" />}
                       </div>
 
@@ -290,17 +372,14 @@ export default function PluginsTab({ connections, setConnections }: PluginsTabPr
 
                     <div className="flex items-center gap-2 ml-4">
                       <button
-                        className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                        title="Settings"
+                        onClick={() => openDisconnectModal(connection)}
+                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors group relative"
+                        aria-label="Disconnect plugin"
                       >
-                        <Settings className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => handleDisconnectPlugin(connection.id)}
-                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                        title="Disconnect"
-                      >
-                        <Trash2 className="w-4 h-4" />
+                        <Unplug className="w-4 h-4" />
+                        <span className="absolute bottom-full right-0 mb-2 hidden group-hover:block bg-gray-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-10">
+                          Disconnect Plugin
+                        </span>
                       </button>
                     </div>
                   </div>
@@ -329,6 +408,91 @@ export default function PluginsTab({ connections, setConnections }: PluginsTabPr
           </div>
         )}
       </div>
+
+      {/* Disconnect Confirmation Modal */}
+      {mounted && showDisconnectModal && selectedConnection && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-md"
+            onClick={() => {
+              setShowDisconnectModal(false)
+              setSelectedConnection(null)
+            }}
+          />
+          <div className="relative bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden transform transition-all">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-red-500 to-pink-600 p-6">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-white/20 rounded-xl backdrop-blur-sm">
+                  <Unplug className="w-6 h-6 text-white" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-lg font-bold text-white">Disconnect Plugin</h3>
+                  <p className="text-sm text-white/90">This action cannot be undone</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-4">
+              <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-amber-900 mb-1">
+                    Warning: This may affect your agents
+                  </p>
+                  <p className="text-xs text-amber-800">
+                    Any agents currently using this plugin may stop working properly after disconnection.
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <p className="text-sm text-gray-700">
+                  You are about to disconnect:
+                </p>
+                <div className="flex items-center gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                  <div className={`p-2 rounded-lg bg-gradient-to-br ${pluginIconColors[selectedConnection.plugin_key] || pluginIconColors.default} shadow-md`}>
+                    {pluginIcons[selectedConnection.plugin_key] || <PlugZap className="w-4 h-4 text-white" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-sm font-semibold text-gray-900">
+                      {selectedConnection.plugin_name}
+                    </h4>
+                    <p className="text-xs text-gray-600 truncate">
+                      {selectedConnection.username || selectedConnection.email}
+                    </p>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-600">
+                  You can reconnect this plugin anytime from the connections page.
+                </p>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="bg-gray-50 px-6 py-4 flex items-center justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowDisconnectModal(false)
+                  setSelectedConnection(null)
+                }}
+                className="px-4 py-2 text-sm font-semibold text-gray-700 hover:text-gray-900 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDisconnectPlugin}
+                className="px-4 py-2 text-sm font-semibold text-white bg-gradient-to-r from-red-600 to-pink-600 hover:from-red-700 hover:to-pink-700 rounded-lg shadow-md transition-all duration-300 flex items-center gap-2"
+              >
+                <Unplug className="w-4 h-4" />
+                Disconnect Plugin
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   )
 }

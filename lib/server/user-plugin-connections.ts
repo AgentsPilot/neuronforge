@@ -148,7 +148,7 @@ export class UserPluginConnections {
   }
 
   // Handle OAuth callback (called from API route)
-  async handleOAuthCallback(code: string, state: string, authConfig: PluginAuthConfig): Promise<UserConnection> {
+  async handleOAuthCallback(code: string, state: string, authConfig: PluginAuthConfig, request?: any): Promise<UserConnection> {
     if (this.debug) console.log('DEBUG: Handling OAuth callback server-side');
     
     try {
@@ -231,13 +231,90 @@ export class UserPluginConnections {
 
       if (this.debug) console.log(`DEBUG: Saving connection for ${plugin_key}`);
 
+      // Check if connection already exists to determine if this is new or reconnection
+      const existingConnection = await this.supabase
+        .from('plugin_connections')
+        .select('id')
+        .eq('user_id', user_id)
+        .eq('plugin_key', plugin_key)
+        .single();
+
+      const isNewConnection = !existingConnection.data;
+
       const data = await savePluginConnection(connectionData);
 
       if (this.debug) console.log(`DEBUG: Connection saved successfully for ${plugin_key}`);
 
+      // Audit trail logging
+      try {
+        const { AuditTrail } = await import('@/lib/services/AuditTrailService');
+        await AuditTrail.log({
+          action: isNewConnection ? 'PLUGIN_CONNECTED' : 'PLUGIN_RECONNECTED',
+          entityType: 'connection',
+          entityId: data.id,
+          resourceName: this.getPluginDisplayName(plugin_key),
+          userId: user_id,
+          request: request, // Pass request for IP/user-agent extraction
+          details: {
+            plugin_key,
+            plugin_name: this.getPluginDisplayName(plugin_key),
+            scopes: connectionData.scope,
+            provider_email: profile.email,
+            auth_type: authConfig.auth_type,
+            username: connectionData.username,
+          },
+          severity: 'info',
+          complianceFlags: ['SOC2'],
+        });
+        if (this.debug) console.log(`DEBUG: Audit trail logged for ${plugin_key} connection`);
+      } catch (auditError) {
+        console.error('DEBUG: Failed to log audit trail:', auditError);
+        // Don't fail the connection if audit logging fails
+      }
+
       return data;
     } catch (error) {
       console.error('DEBUG: OAuth callback error:', error);
+
+      // Audit trail for OAuth failures
+      try {
+        const { AuditTrail } = await import('@/lib/services/AuditTrailService');
+
+        // Try to extract state if available
+        let userId = 'unknown';
+        let pluginKey = 'unknown';
+        try {
+          if (state) {
+            const parsedState = JSON.parse(decodeURIComponent(state));
+            userId = parsedState.user_id;
+            pluginKey = parsedState.plugin_key;
+          }
+        } catch (stateError) {
+          console.error('DEBUG: Failed to parse state:', stateError);
+        }
+
+        await AuditTrail.log({
+          action: 'PLUGIN_AUTH_FAILED',
+          entityType: 'connection',
+          resourceName: pluginKey !== 'unknown' ? this.getPluginDisplayName(pluginKey) : pluginKey,
+          userId: userId !== 'unknown' ? userId : null,
+          request: request,
+          details: {
+            plugin_key: pluginKey,
+            error_message: error instanceof Error ? error.message : 'Unknown error',
+            auth_type: authConfig?.auth_type,
+            has_code: !!code,
+            has_state: !!state,
+          },
+          severity: 'warning',
+          complianceFlags: ['SOC2'],
+        });
+        if (this.debug) console.log(`DEBUG: Audit trail logged for OAuth failure`);
+      } catch (auditError) {
+        console.error('DEBUG: Failed to log audit trail for OAuth failure:', auditError);
+        // Don't block the error throw
+      }
+
       throw error;
     }
   }
@@ -293,6 +370,33 @@ export class UserPluginConnections {
       const data = await savePluginConnection(updatedConnectionData);
 
       if (this.debug) console.log(`DEBUG: Token refreshed successfully for ${connection.plugin_key}`);
+
+      // Audit trail logging for token refresh
+      try {
+        const { AuditTrail } = await import('@/lib/services/AuditTrailService');
+        await AuditTrail.log({
+          action: 'PLUGIN_RECONNECTED',
+          entityType: 'connection',
+          entityId: data.id,
+          resourceName: this.getPluginDisplayName(connection.plugin_key),
+          userId: connection.user_id,
+          details: {
+            plugin_key: connection.plugin_key,
+            plugin_name: this.getPluginDisplayName(connection.plugin_key),
+            trigger: 'token_refresh',
+            previous_expiry: connection.expires_at,
+            new_expiry: expiresAt,
+            provider_email: connection.email,
+          },
+          severity: 'info',
+          complianceFlags: ['SOC2'],
+        });
+        if (this.debug) console.log(`DEBUG: Audit trail logged for ${connection.plugin_key} token refresh`);
+      } catch (auditError) {
+        console.error('DEBUG: Failed to log audit trail:', auditError);
+        // Don't fail the refresh if audit logging fails
+      }
+
       return data;
     } catch (error) {
       console.error('DEBUG: Token refresh error:', error);
@@ -301,19 +405,63 @@ export class UserPluginConnections {
   }
 
   // Disconnect plugin
-  async disconnectPlugin(userId: string, pluginKey: string): Promise<boolean> {
+  async disconnectPlugin(userId: string, pluginKey: string, request?: any): Promise<boolean> {
     if (this.debug) console.log(`DEBUG: Disconnecting plugin ${pluginKey} for user ${userId}`);
-    
+
     try {
+      // Fetch connection details BEFORE disconnecting for audit trail
+      const { data: connection } = await this.supabase
+        .from('plugin_connections')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('plugin_key', pluginKey)
+        .single();
+
       const { error } = await this.supabase
         .from('plugin_connections')
-        .update({ status: 'disconnected' })
+        .update({ status: 'disconnected', disconnected_at: new Date().toISOString() })
         .eq('user_id', userId)
         .eq('plugin_key', pluginKey);
 
       if (error) {
         console.error('DEBUG: Failed to disconnect plugin:', error);
         return false;
+      }
+
+      // Audit trail logging
+      if (connection) {
+        try {
+          const { AuditTrail } = await import('@/lib/services/AuditTrailService');
+
+          // Calculate connection duration
+          const connectedAt = connection.connected_at ? new Date(connection.connected_at) : null;
+          const connectionDurationDays = connectedAt
+            ? Math.floor((Date.now() - connectedAt.getTime()) / (1000 * 60 * 60 * 24))
+            : null;
+
+          await AuditTrail.log({
+            action: 'PLUGIN_DISCONNECTED',
+            entityType: 'connection',
+            entityId: connection.id,
+            resourceName: this.getPluginDisplayName(pluginKey),
+            userId: userId,
+            request: request, // Pass request for IP/user-agent extraction
+            details: {
+              plugin_key: pluginKey,
+              plugin_name: this.getPluginDisplayName(pluginKey),
+              provider_email: connection.email,
+              username: connection.username,
+              connection_duration_days: connectionDurationDays,
+              scopes: connection.scope,
+            },
+            severity: 'warning',
+            complianceFlags: ['SOC2'],
+          });
+          if (this.debug) console.log(`DEBUG: Audit trail logged for ${pluginKey} disconnection`);
+        } catch (auditError) {
+          console.error('DEBUG: Failed to log audit trail:', auditError);
+          // Don't fail the disconnect if audit logging fails
+        }
       }
 
       if (this.debug) console.log(`DEBUG: Plugin ${pluginKey} disconnected successfully`);

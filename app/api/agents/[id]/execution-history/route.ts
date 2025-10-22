@@ -1,6 +1,5 @@
 // /app/api/agents/[id]/execution-history/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { getLatestExecution, getRunningExecutions } from '@/lib/database/executionHelpers';
 
 // Mark as dynamic since it uses request.url and searchParams
 export const dynamic = 'force-dynamic';
@@ -23,7 +22,7 @@ export async function GET(
     // Get execution history
     const { data: history, error } = await supabase
       .from('agent_executions')
-      .select('id, status, started_at, completed_at, execution_duration_ms, error_message, result, progress')
+      .select('id, status, started_at, completed_at, execution_duration_ms, error_message, result, progress, retry_count, execution_type, scheduled_at')
       .eq('agent_id', agentId)
       .order('started_at', { ascending: false })
       .limit(limit);

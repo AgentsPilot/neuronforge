@@ -24,9 +24,9 @@ export async function POST(request: NextRequest) {
 
     // Get user connections instance
     const userConnections = UserPluginConnections.getInstance();
-    
-    // Disconnect the plugin
-    const success = await userConnections.disconnectPlugin(userId, pluginKey);
+
+    // Disconnect the plugin (pass request for audit trail)
+    const success = await userConnections.disconnectPlugin(userId, pluginKey, request);
     
     if (success) {
       console.log(`DEBUG: API - Successfully disconnected ${pluginKey} for user ${userId}`);
