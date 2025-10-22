@@ -1,13 +1,13 @@
 // components/analytics/AnalyticsView.tsx
 
 import React from 'react';
-import { 
-  Bot, 
-  TrendingUp, 
-  Calendar, 
-  PieChart, 
-  DollarSign, 
-  Activity, 
+import {
+  Bot,
+  TrendingUp,
+  Calendar,
+  PieChart,
+  DollarSign,
+  Activity,
   Brain,
   CheckCircle,
   XCircle,
@@ -19,7 +19,12 @@ import {
   MessageSquare,
   Zap,
   Award,
-  Star
+  Star,
+  Archive,
+  PauseCircle,
+  PlayCircle,
+  Power,
+  Pause
 } from 'lucide-react';
 import { formatCost, formatTokens, formatTime } from '@/lib/utils/analyticsHelpers';
 import type { 
@@ -261,13 +266,29 @@ if (selectedView === 'activities') {
   if (selectedView === 'agents') {
     return (
       <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg p-6">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center">
-            <Bot className="w-5 h-5 text-white" />
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center">
+              <Bot className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-gray-900">Workflow Agents</h3>
+              <p className="text-gray-600">Performance analytics for your AI agents</p>
+            </div>
           </div>
-          <div>
-            <h3 className="text-xl font-bold text-gray-900">Workflow Agents</h3>
-            <p className="text-gray-600">Performance analytics for your AI agents</p>
+          <div className="flex items-center gap-4 text-sm">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-green-500"></div>
+              <span className="text-gray-600">Active ({agents.filter(a => a.isActive && !a.isArchived).length})</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-gray-400"></div>
+              <span className="text-gray-600">Inactive ({agents.filter(a => !a.isActive && !a.isArchived).length})</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-amber-500"></div>
+              <span className="text-gray-600">Archived ({agents.filter(a => a.isArchived).length})</span>
+            </div>
           </div>
         </div>
         
@@ -280,28 +301,55 @@ if (selectedView === 'activities') {
         ) : (
           <div className="space-y-4">
             {agents.map((agent, index) => (
-              <div key={agent.id || index} className="border border-gray-200/50 rounded-xl p-4 hover:shadow-md transition-all duration-200">
+              <div key={agent.id || index} className={`border rounded-xl p-4 hover:shadow-md transition-all duration-200 ${
+                agent.isArchived ? 'border-amber-200/50 bg-amber-50/30' :
+                agent.isActive ? 'border-gray-200/50 bg-white' : 'border-gray-300/50 bg-gray-50/50'
+              }`}>
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-3">
-                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center shadow-lg ${
-                      agent.status === 'excellent' ? 'bg-gradient-to-br from-green-500 to-emerald-600' :
-                      agent.status === 'good' ? 'bg-gradient-to-br from-blue-500 to-indigo-600' :
-                      'bg-gradient-to-br from-orange-500 to-red-600'
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center shadow-lg relative ${
+                      agent.isArchived
+                        ? 'bg-gradient-to-br from-amber-400 to-amber-600'
+                        : agent.isActive
+                        ? 'bg-gradient-to-br from-green-500 to-emerald-600'
+                        : 'bg-gradient-to-br from-gray-400 to-gray-500'
                     }`}>
                       <Bot className="w-6 h-6 text-white" />
+                      {/* Active/Inactive/Archived indicator dot */}
+                      <div className={`absolute -top-1 -right-1 w-4 h-4 rounded-full border-2 border-white ${
+                        agent.isArchived ? 'bg-amber-500' : (agent.isActive ? 'bg-green-500' : 'bg-gray-400')
+                      }`}></div>
                     </div>
                     <div>
-                      <h4 className="font-bold text-gray-900">{agent.name}</h4>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-bold text-gray-900">{agent.name}</h4>
+                        {/* Status Badge */}
+                        {agent.isArchived ? (
+                          <span className="px-2 py-0.5 bg-amber-200 text-amber-700 text-xs font-medium rounded">
+                            Archived
+                          </span>
+                        ) : agent.isActive ? (
+                          <span className="px-2 py-0.5 bg-green-200 text-green-700 text-xs font-medium rounded">
+                            Active
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 bg-gray-200 text-gray-600 text-xs font-medium rounded">
+                            Inactive
+                          </span>
+                        )}
+                      </div>
                       <div className="flex items-center gap-2">
                         <span className="text-sm text-gray-500">ID: {agent.id.slice(0, 8)}...</span>
-                        <div className={`px-2 py-1 rounded-lg text-xs font-bold ${
-                          agent.status === 'excellent' ? 'bg-green-100 text-green-700' :
-                          agent.status === 'good' ? 'bg-blue-100 text-blue-700' :
-                          'bg-orange-100 text-orange-700'
-                        }`}>
-                          {agent.status === 'excellent' ? 'Excellent' :
-                           agent.status === 'good' ? 'Good' : 'Needs Attention'}
-                        </div>
+                        {agent.isActive && !agent.isArchived && (
+                          <div className={`px-2 py-1 rounded-lg text-xs font-bold ${
+                            agent.status === 'excellent' ? 'bg-green-100 text-green-700' :
+                            agent.status === 'good' ? 'bg-blue-100 text-blue-700' :
+                            'bg-orange-100 text-orange-700'
+                          }`}>
+                            {agent.status === 'excellent' ? 'Excellent' :
+                             agent.status === 'good' ? 'Good' : 'Needs Attention'}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -345,11 +393,13 @@ if (selectedView === 'activities') {
                   </div>
                   <div className="text-center">
                     <p className="text-xs text-gray-500 mb-1">Efficiency</p>
-                    <p className="font-bold text-gray-900">{agent.efficiency.toFixed(0)}%</p>
+                    <p className="font-bold text-gray-900">{agent.efficiency?.toFixed(0) ?? '0'}%</p>
                   </div>
                   <div className="text-center">
-                    <p className="text-xs text-gray-500 mb-1">Last Used</p>
-                    <p className="font-bold text-gray-900">{new Date(agent.lastUsed).toLocaleDateString()}</p>
+                    <p className="text-xs text-gray-500 mb-1">{agent.isActive ? 'Last Used' : 'Created'}</p>
+                    <p className="font-bold text-gray-900">
+                      {agent.lastUsed ? new Date(agent.lastUsed).toLocaleDateString() : 'N/A'}
+                    </p>
                   </div>
                 </div>
               </div>

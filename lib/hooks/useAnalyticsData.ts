@@ -81,39 +81,33 @@ export const useAnalyticsData = (timeFilter: TimeFilter) => {
 
       const usageData = data || [];
 
-      // Fetch agent names for records that have agent_id
-      const agentIds = [...new Set(
-        usageData
-          .filter(item => item.agent_id && item.agent_id !== 'unknown')
-          .map(item => item.agent_id)
-      )];
+      // Fetch ALL user's agents (including archived) to show active/inactive/archived status
+      console.log('Fetching all agents for user:', user.id);
+
+      const { data: allAgents, error: agentError } = await supabase
+        .from('agents')
+        .select('id, agent_name, created_at, is_archived')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
 
       let agentNameMap: Record<string, string> = {};
+      let allAgentsList: Array<{ id: string; agent_name: string; created_at: string; is_archived?: boolean }> = [];
 
-      if (agentIds.length > 0) {
-        console.log('Fetching agent names for IDs:', agentIds);
-        
-        const { data: agents, error: agentError } = await supabase
-          .from('agents')
-          .select('id, agent_name')
-          .in('id', agentIds);
+      if (agentError) {
+        console.error('Error fetching agents:', agentError);
+      } else if (allAgents) {
+        allAgentsList = allAgents;
+        agentNameMap = allAgents.reduce((map, agent) => {
+          if (agent.agent_name) {
+            map[agent.id] = agent.agent_name;
+          }
+          return map;
+        }, {} as Record<string, string>);
 
-        if (agentError) {
-          console.error('Error fetching agent names:', agentError);
-        } else if (agents) {
-          agentNameMap = agents.reduce((map, agent) => {
-            if (agent.agent_name) {
-              map[agent.id] = agent.agent_name;
-            }
-            return map;
-          }, {} as Record<string, string>);
-          
-          console.log('Agent names fetched:', {
-            agentIds: agentIds,
-            agentsFound: agents.length,
-            agentNameMap: agentNameMap
-          });
-        }
+        console.log('All agents fetched:', {
+          totalAgents: allAgents.length,
+          agentsWithUsage: usageData.filter(item => item.agent_id && agentNameMap[item.agent_id]).length
+        });
       }
 
       // Merge agent names into usage data
@@ -144,8 +138,8 @@ export const useAnalyticsData = (timeFilter: TimeFilter) => {
         })));
       }
 
-      // Process the data
-      const processed = processAnalyticsData(enrichedUsageData);
+      // Process the data with all agents list
+      const processed = processAnalyticsData(enrichedUsageData, allAgentsList);
       setProcessedData(processed);
 
     } catch (error) {

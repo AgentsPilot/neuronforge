@@ -58,6 +58,7 @@ export interface AgentData {
   agentName: string;
   name: string; // Added alias for UI compatibility
   totalCalls: number;
+  totalRuns: number; // Total execution runs
   totalCost: number;
   creationCost: number; // Added for UI breakdown
   usageCost: number;    // Added for UI breakdown
@@ -66,6 +67,8 @@ export interface AgentData {
   status?: 'excellent' | 'good' | 'needs_attention'; // Added for UI display
   lastUsed?: string; // Added for UI display
   efficiency?: number; // Added for UI display
+  isActive?: boolean; // Whether the agent has been executed (has token usage data)
+  isArchived?: boolean; // Whether the agent has been archived
 }
 
 export interface ProcessedAnalyticsData {

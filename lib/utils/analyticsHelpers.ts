@@ -325,9 +325,34 @@ const generateInsights = (
 
 /**
  * Process analytics data into structured format
+ * @param rawData - Token usage data from database
+ * @param allAgents - ALL user's agents (optional, for showing inactive agents)
  */
-export const processAnalyticsData = (rawData: AIUsageData[]): ProcessedAnalyticsData => {
+export const processAnalyticsData = (
+  rawData: AIUsageData[],
+  allAgents?: Array<{ id: string; agent_name: string; created_at: string; is_archived?: boolean }>
+): ProcessedAnalyticsData => {
   if (!rawData || rawData.length === 0) {
+    // If no usage data but we have agents, show them all as inactive
+    const inactiveAgents: AgentData[] = (allAgents || []).map(agent => ({
+      id: agent.id,
+      agentId: agent.id,
+      agentName: agent.agent_name,
+      name: agent.agent_name,
+      totalCalls: 0,
+      totalRuns: 0,
+      totalCost: 0,
+      creationCost: 0,
+      usageCost: 0,
+      successRate: 0,
+      avgLatency: 0,
+      status: 'needs_attention' as const,
+      lastUsed: agent.created_at,
+      efficiency: 0,
+      isActive: false,
+      isArchived: agent.is_archived || false
+    }));
+
     return {
       metrics: {
         totalActivities: 0,
@@ -340,10 +365,11 @@ export const processAnalyticsData = (rawData: AIUsageData[]): ProcessedAnalytics
         avgResponseTime: 0
       },
       activities: [],
-      agents: [],
+      agents: inactiveAgents,
       dailyUsage: [],
       costBreakdown: [],
-      insights: []
+      insights: [],
+      rawActivities: []
     };
   }
 
@@ -364,22 +390,25 @@ export const processAnalyticsData = (rawData: AIUsageData[]): ProcessedAnalytics
     agentGroups.get(agentInfo.agentId)!.records.push(item);
   });
 
-  // Process agents data - FILTER to show only real agents from database
-  const agents: AgentData[] = Array.from(agentGroups.entries())
+  // Process agents data - Show BOTH active (with usage) and inactive (without usage)
+  const activeAgents: AgentData[] = Array.from(agentGroups.entries())
     .map(([agentId, group]) => {
       const { agentInfo, records } = group;
       const totalCalls = records.length;
       const totalCost = records.reduce((sum, r) => sum + (r.cost_usd || 0), 0);
-      
+
       // Separate creation vs usage costs
       const creationCost = records
         .filter(r => r.activity_name && r.activity_name.includes('specification'))
         .reduce((sum, r) => sum + (r.cost_usd || 0), 0);
       const usageCost = totalCost - creationCost;
-      
+
       const successCount = records.filter(r => r.success !== false).length;
       const successRate = totalCalls > 0 ? (successCount / totalCalls) * 100 : 0;
       const avgLatency = totalCalls > 0 ? records.reduce((sum, r) => sum + (r.latency_ms || 0), 0) / totalCalls : 0;
+
+      // Find the agent in allAgents to get is_archived status
+      const agentRecord = (allAgents || []).find(a => a.id === agentId);
 
       return {
         id: agentId,
@@ -387,23 +416,64 @@ export const processAnalyticsData = (rawData: AIUsageData[]): ProcessedAnalytics
         agentName: agentInfo.agentName,
         name: agentInfo.agentName,
         totalCalls,
+        totalRuns: totalCalls,
         totalCost,
-        creationCost, // Added
-        usageCost,    // Added
+        creationCost,
+        usageCost,
         successRate,
         avgLatency,
         status: getAgentStatus(successRate, avgLatency, totalCost),
         lastUsed: records[0]?.created_at || new Date().toISOString(),
-        efficiency: calculateEfficiency(totalCost, totalCalls)
+        efficiency: calculateEfficiency(totalCost, totalCalls),
+        isActive: true,
+        isArchived: agentRecord?.is_archived || false
       };
     })
-    .filter(agent => 
+    .filter(agent =>
       // ONLY show real agents from database - exclude fallback agents
-      agent.agentName && 
+      agent.agentName &&
       agent.agentName !== 'System Operation' &&
-      !agent.agentName.startsWith('Agent ') // Exclude "Agent e311fca9" style names
-    )
-    .sort((a, b) => b.totalCost - a.totalCost);
+      !agent.agentName.startsWith('Agent ')
+    );
+
+  // Add inactive agents (agents with no usage data)
+  const activeAgentIds = new Set(activeAgents.map(a => a.agentId));
+  const inactiveAgents: AgentData[] = (allAgents || [])
+    .filter(agent => !activeAgentIds.has(agent.id))
+    .map(agent => ({
+      id: agent.id,
+      agentId: agent.id,
+      agentName: agent.agent_name,
+      name: agent.agent_name,
+      totalCalls: 0,
+      totalRuns: 0,
+      totalCost: 0,
+      creationCost: 0,
+      usageCost: 0,
+      successRate: 0,
+      avgLatency: 0,
+      status: 'needs_attention' as const,
+      lastUsed: agent.created_at,
+      efficiency: 0,
+      isActive: false,
+      isArchived: agent.is_archived || false
+    }));
+
+  // Combine active and inactive agents, sort by: active > inactive > archived
+  const agents: AgentData[] = [...activeAgents, ...inactiveAgents]
+    .sort((a, b) => {
+      // Priority: active (not archived) > inactive (not archived) > archived
+      const aPriority = a.isArchived ? 2 : (a.isActive ? 0 : 1);
+      const bPriority = b.isArchived ? 2 : (b.isActive ? 0 : 1);
+
+      if (aPriority !== bPriority) return aPriority - bPriority;
+
+      // Within same priority, active agents sort by cost (descending)
+      if (a.isActive && b.isActive) return b.totalCost - a.totalCost;
+
+      // Inactive/archived agents sort by creation date (newest first)
+      return new Date(b.lastUsed || 0).getTime() - new Date(a.lastUsed || 0).getTime();
+    });
 
   // Group by activities (for activities view) - CHANGED: Show individual token_usage records
   const activityGroups = new Map<string, AIUsageData[]>();
