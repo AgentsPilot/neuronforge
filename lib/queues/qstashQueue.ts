@@ -39,6 +39,7 @@ export interface AgentJobData {
   user_id: string;
   execution_id: string;
   execution_type: 'manual' | 'scheduled';
+  use_agentkit?: boolean; // NEW: Use OpenAI AgentKit for execution
   cron_expression?: string;
   timezone?: string;
   input_variables?: Record<string, any>;
@@ -71,7 +72,8 @@ export async function addManualExecution(
   userId: string,
   executionId?: string,
   inputVariables?: Record<string, any>,
-  overrideUserPrompt?: string
+  overrideUserPrompt?: string,
+  useAgentKit?: boolean // NEW: Optional AgentKit flag
 ): Promise<{ jobId: string; executionId: string }> {
   const finalExecutionId = executionId || uuidv4();
 
@@ -80,6 +82,7 @@ export async function addManualExecution(
     user_id: userId,
     execution_id: finalExecutionId,
     execution_type: 'manual',
+    use_agentkit: useAgentKit, // NEW: Pass through to worker
     input_variables: inputVariables,
     override_user_prompt: overrideUserPrompt,
   };

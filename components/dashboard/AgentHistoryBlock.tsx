@@ -16,7 +16,8 @@ import {
   RefreshCw,
   Copy,
   Activity,
-  FileText
+  FileText,
+  Sparkles
 } from 'lucide-react'
 
 type LogEntry = {
@@ -96,12 +97,62 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
     const now = new Date()
     const date = new Date(dateString)
     const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000)
-    
+
     if (diffInSeconds < 60) return 'Just now'
     if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`
     if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`
     if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d ago`
     return date.toLocaleDateString()
+  }
+
+  const formatSummaryText = (runOutput: string) => {
+    // Try to parse as JSON first
+    try {
+      const parsed = JSON.parse(runOutput)
+
+      // Check if it's AgentKit output - show execution summary instead of message
+      if (parsed.agentkit === true) {
+        const parts = []
+
+        // Success/failure
+        if (parsed.success !== undefined) {
+          parts.push(parsed.success ? 'Completed successfully' : 'Failed')
+        }
+
+        // Actions performed
+        if (parsed.toolCallsCount) {
+          parts.push(`${parsed.toolCallsCount} action${parsed.toolCallsCount !== 1 ? 's' : ''}`)
+        }
+
+        // Iterations
+        if (parsed.iterations) {
+          parts.push(`${parsed.iterations} step${parsed.iterations !== 1 ? 's' : ''}`)
+        }
+
+        // Duration
+        if (parsed.executionTimeMs) {
+          parts.push(`${(parsed.executionTimeMs / 1000).toFixed(1)}s`)
+        }
+
+        return parts.join(' • ')
+      }
+
+      // Check if it has a summary field
+      if (parsed.summary) {
+        return parsed.summary
+      }
+
+      // Check if it has a message field
+      if (parsed.message) {
+        return parsed.message
+      }
+
+      // Return truncated JSON
+      return runOutput.substring(0, 100) + (runOutput.length > 100 ? '...' : '')
+    } catch {
+      // Not JSON, return as-is
+      return runOutput || 'No output summary'
+    }
   }
 
   const copyToClipboard = (text: string) => {
@@ -179,6 +230,256 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
     }).join('')
   }
 
+  const renderAgentKitOutput = (output: any) => {
+    // Check if this is an AgentKit execution (check both full_output and run_output)
+    const isAgentKit = output?.agentkit_metadata || (typeof output === 'object' && output?.agentkit === true);
+    if (!isAgentKit) return null;
+
+    // Extract data from either full_output or run_output format
+    let message, iterations, toolCalls, tokensUsed, model, executionTimeMs, toolCallsCount, success;
+
+    if (output?.agentkit_metadata) {
+      // Full output format
+      ({ message, agentkit_metadata: { model, iterations, toolCalls, tokensUsed } } = output);
+    } else if (output?.agentkit === true) {
+      // Run output format (simplified)
+      ({ response: message, iterations, toolCallsCount, tokensUsed, executionTimeMs, success } = output);
+      model = 'gpt-4o'; // Default model
+      toolCalls = []; // Not available in run_output
+    }
+
+    return (
+      <div className="space-y-3">
+        {/* Main Result Message - Compact */}
+        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-3 py-1.5 border-b border-gray-200 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <CheckCircle className="h-3.5 w-3.5 text-blue-600" />
+              <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Result</span>
+            </div>
+            {success !== undefined && (
+              <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${success ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                {success ? '✓' : '✗'}
+              </span>
+            )}
+          </div>
+          <div className="p-2.5">
+            <div
+              className="prose prose-sm max-w-none text-gray-700 text-xs leading-relaxed"
+              dangerouslySetInnerHTML={{ __html: formatText(message || 'No message available') }}
+            />
+          </div>
+        </div>
+
+        {/* Execution Summary - Compact */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+          {model && (
+            <div className="bg-white border border-gray-200 rounded p-2">
+              <div className="text-xs text-gray-500 mb-0.5">Model</div>
+              <div className="text-xs font-semibold text-gray-900">{model}</div>
+            </div>
+          )}
+          {iterations !== undefined && (
+            <div className="bg-white border border-gray-200 rounded p-2">
+              <div className="text-xs text-gray-500 mb-0.5">Steps</div>
+              <div className="text-xs font-semibold text-gray-900">{iterations}</div>
+            </div>
+          )}
+          {(toolCalls?.length !== undefined || toolCallsCount !== undefined) && (
+            <div className="bg-white border border-gray-200 rounded p-2">
+              <div className="text-xs text-gray-500 mb-0.5">Actions</div>
+              <div className="text-xs font-semibold text-gray-900">
+                {toolCallsCount || toolCalls?.length || 0}
+              </div>
+            </div>
+          )}
+          {tokensUsed !== undefined && (
+            <div className="bg-white border border-gray-200 rounded p-2">
+              <div className="text-xs text-gray-500 mb-0.5">Tokens</div>
+              <div className="text-xs font-semibold text-gray-900">
+                {typeof tokensUsed === 'number' ? tokensUsed.toLocaleString() : tokensUsed?.total?.toLocaleString() || 0}
+              </div>
+            </div>
+          )}
+          {executionTimeMs !== undefined && (
+            <div className="bg-white border border-gray-200 rounded p-2">
+              <div className="text-xs text-gray-500 mb-0.5">Duration</div>
+              <div className="text-xs font-semibold text-gray-900">
+                {(executionTimeMs / 1000).toFixed(1)}s
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Tool Calls Timeline - Compact Design with Full Details */}
+        {toolCalls && toolCalls.length > 0 && (
+          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+            <div className="bg-gradient-to-r from-gray-50 to-gray-100 px-3 py-2 border-b border-gray-200">
+              <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Execution Steps</span>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {toolCalls.map((call: any, idx: number) => {
+                const isSuccess = call.success;
+                const Icon = isSuccess ? CheckCircle : XCircle;
+                const iconColor = isSuccess ? 'text-green-500' : 'text-red-500';
+                const accentColor = isSuccess ? 'border-l-green-500' : 'border-l-red-500';
+
+                return (
+                  <div key={idx} className={`flex flex-col gap-2 p-3 hover:bg-gray-50 transition-colors border-l-2 ${accentColor}`}>
+                    {/* Header Row */}
+                    <div className="flex items-start gap-3">
+                      {/* Step number */}
+                      <div className="flex-shrink-0 w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center">
+                        <span className="text-xs font-medium text-gray-600">{idx + 1}</span>
+                      </div>
+
+                      {/* Status icon */}
+                      <Icon className={`h-4 w-4 ${iconColor} flex-shrink-0 mt-0.5`} />
+
+                      {/* Content */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-baseline gap-2 mb-0.5">
+                          <span className="text-xs font-semibold text-gray-900 capitalize">
+                            {call.plugin.replace(/-/g, ' ')}
+                          </span>
+                          <span className="text-xs text-gray-400">→</span>
+                          <span className="text-xs text-gray-600">
+                            {call.action.replace(/_/g, ' ')}
+                          </span>
+                        </div>
+                        <p className={`text-xs ${isSuccess ? 'text-gray-600' : 'text-red-600'}`}>
+                          {isSuccess
+                            ? (call.result?.message || 'Completed successfully')
+                            : (call.result?.message || call.result?.error || 'Failed')}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Parameters Section */}
+                    {call.parameters && Object.keys(call.parameters).length > 0 && (
+                      <div className="ml-11 bg-gray-50 border border-gray-200 rounded p-2">
+                        <div className="text-xs font-semibold text-gray-600 mb-1">Parameters:</div>
+                        <div className="space-y-1.5">
+                          {Object.entries(call.parameters).map(([key, value]) => {
+                            // Special handling for different value types
+                            if (value === null || value === undefined || value === '') {
+                              return (
+                                <div key={key} className="flex gap-2 text-xs">
+                                  <span className="font-medium text-gray-700">{key}:</span>
+                                  <span className="text-gray-400 italic">(empty)</span>
+                                </div>
+                              )
+                            }
+
+                            // Handle objects
+                            if (typeof value === 'object') {
+                              return (
+                                <div key={key} className="text-xs">
+                                  <div className="font-medium text-gray-700 mb-1">{key}:</div>
+                                  <div className="ml-3 space-y-0.5">
+                                    {Object.entries(value).map(([subKey, subValue]) => {
+                                      // Handle nested content (like email body)
+                                      if (typeof subValue === 'string' && subValue.length > 100) {
+                                        return (
+                                          <div key={subKey} className="space-y-0.5">
+                                            <div className="font-medium text-gray-600">{subKey}:</div>
+                                            <div className="ml-2 text-gray-600 whitespace-pre-wrap bg-white border border-gray-200 rounded p-2 max-h-32 overflow-y-auto">
+                                              {subValue}
+                                            </div>
+                                          </div>
+                                        )
+                                      }
+
+                                      // Handle arrays
+                                      if (Array.isArray(subValue)) {
+                                        return (
+                                          <div key={subKey}>
+                                            <span className="font-medium text-gray-600">{subKey}: </span>
+                                            <span className="text-gray-600">{subValue.join(', ')}</span>
+                                          </div>
+                                        )
+                                      }
+
+                                      // Handle nested objects
+                                      if (typeof subValue === 'object') {
+                                        return (
+                                          <div key={subKey}>
+                                            <span className="font-medium text-gray-600">{subKey}: </span>
+                                            <span className="text-gray-600">{JSON.stringify(subValue)}</span>
+                                          </div>
+                                        )
+                                      }
+
+                                      // Simple values
+                                      return (
+                                        <div key={subKey}>
+                                          <span className="font-medium text-gray-600">{subKey}: </span>
+                                          <span className="text-gray-600">{String(subValue)}</span>
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
+                              )
+                            }
+
+                            // Simple string/number values
+                            return (
+                              <div key={key} className="flex gap-2 text-xs">
+                                <span className="font-medium text-gray-700">{key}:</span>
+                                <span className="text-gray-600">{String(value)}</span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Result Data Section */}
+                    {call.result?.data && Object.keys(call.result.data).length > 0 && (
+                      <div className="ml-11 bg-blue-50 border border-blue-200 rounded p-2">
+                        <div className="text-xs font-semibold text-blue-700 mb-1">Response Data:</div>
+                        <div className="space-y-1">
+                          {Object.entries(call.result.data).map(([key, value]) => {
+                            // Skip large arrays/objects for display
+                            if (Array.isArray(value) && value.length > 0) {
+                              return (
+                                <div key={key} className="flex gap-2 text-xs">
+                                  <span className="font-medium text-blue-700">{key}:</span>
+                                  <span className="text-blue-600">
+                                    {value.length} items (click to expand)
+                                  </span>
+                                </div>
+                              )
+                            }
+                            if (typeof value === 'object' && value !== null) {
+                              return (
+                                <div key={key} className="flex gap-2 text-xs">
+                                  <span className="font-medium text-blue-700">{key}:</span>
+                                  <span className="text-blue-600">{JSON.stringify(value).substring(0, 50)}...</span>
+                                </div>
+                              )
+                            }
+                            return (
+                              <div key={key} className="flex gap-2 text-xs">
+                                <span className="font-medium text-blue-700">{key}:</span>
+                                <span className="text-blue-600">{String(value)}</span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderOutput = (output: any) => {
     if (!output) {
       return (
@@ -186,6 +487,12 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
           No output data available
         </div>
       )
+    }
+
+    // Check if this is AgentKit output
+    const agentkitOutput = renderAgentKitOutput(output);
+    if (agentkitOutput) {
+      return agentkitOutput;
     }
 
     if (typeof output === 'string') {
@@ -418,57 +725,60 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
               const isExpanded = expandedLogId === log.id
 
               return (
-                <div key={log.id} className="bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors overflow-hidden">
-                  {/* Log Header */}
-                  <div className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <StatusIcon className={`h-5 w-5 ${statusInfo.color}`} />
-                          <span className="text-sm font-medium text-gray-900">
-                            #{(currentPage - 1) * logsPerPage + index + 1}
-                          </span>
-                        </div>
+                <div key={log.id} className="bg-white border border-gray-200 rounded-lg hover:shadow-sm transition-all overflow-hidden">
+                  {/* Compact Log Header */}
+                  <div className="px-4 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      {/* Left side: Status, Number, Summary */}
+                      <div className="flex items-start gap-3 flex-1 min-w-0">
+                        <StatusIcon className={`h-4 w-4 ${statusInfo.color} flex-shrink-0 mt-0.5`} />
 
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm text-gray-900 truncate" title={log.run_output}>
-                            {log.run_output || 'No output summary'}
-                          </p>
-                          <div className="flex items-center gap-4 mt-1 text-xs text-gray-500">
-                            <span className="flex items-center gap-1">
-                              <Calendar className="h-3 w-3" />
-                              {formatTimeAgo(log.created_at)}
+                          {/* Main summary line */}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-medium text-gray-500">
+                              #{(currentPage - 1) * logsPerPage + index + 1}
                             </span>
+                            <span className="text-sm font-medium text-gray-900">
+                              {formatSummaryText(log.run_output)}
+                            </span>
+                          </div>
+
+                          {/* Metadata line */}
+                          <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
                             <span className="flex items-center gap-1">
                               <Clock className="h-3 w-3" />
-                              {new Date(log.created_at).toLocaleString()}
+                              {formatTimeAgo(log.created_at)}
                             </span>
+                            <span>•</span>
+                            <span>{new Date(log.created_at).toLocaleTimeString()}</span>
                           </div>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      {/* Right side: Actions */}
+                      <div className="flex items-center gap-1 flex-shrink-0">
                         <button
                           onClick={() => copyToClipboard(log.id)}
-                          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                          title="Copy execution ID"
+                          className="p-1.5 hover:bg-gray-100 rounded transition-colors"
+                          title="Copy ID"
                         >
-                          <Copy className="h-4 w-4 text-gray-500" />
+                          <Copy className="h-3.5 w-3.5 text-gray-400" />
                         </button>
-                        
+
                         <button
                           onClick={() => toggleDetails(log.id)}
-                          className="flex items-center gap-1 px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          className="flex items-center gap-1 px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded transition-colors"
                         >
                           {isExpanded ? (
                             <>
-                              <ChevronDown className="h-4 w-4" />
-                              Hide Details
+                              <ChevronDown className="h-3.5 w-3.5" />
+                              Hide
                             </>
                           ) : (
                             <>
-                              <ChevronRight className="h-4 w-4" />
-                              View Details
+                              <ChevronRight className="h-3.5 w-3.5" />
+                              Details
                             </>
                           )}
                         </button>
@@ -478,44 +788,9 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
 
                   {/* Expanded Details */}
                   {isExpanded && (
-                    <div className="border-t border-gray-200 bg-gray-50">
-                      <div className="p-4 space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                          <div>
-                            <label className="font-medium text-gray-700">Execution ID</label>
-                            <div className="mt-1 flex items-center gap-2">
-                              <code className="text-xs bg-white px-2 py-1 rounded border font-mono">
-                                {log.id}
-                              </code>
-                              <button
-                                onClick={() => copyToClipboard(log.id)}
-                                className="p-1 hover:bg-gray-200 rounded"
-                              >
-                                <Copy className="h-3 w-3 text-gray-500" />
-                              </button>
-                            </div>
-                          </div>
-                          
-                          <div>
-                            <label className="font-medium text-gray-700">Status</label>
-                            <div className="mt-1 flex items-center gap-2">
-                              <StatusIcon className={`h-4 w-4 ${statusInfo.color}`} />
-                              <span className="capitalize">{statusInfo.status}</span>
-                            </div>
-                          </div>
-                          
-                          <div>
-                            <label className="font-medium text-gray-700">Timestamp</label>
-                            <p className="mt-1 text-gray-600">{new Date(log.created_at).toLocaleString()}</p>
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="font-medium text-gray-700 mb-2 block">
-                            Full Output
-                          </label>
-                          {renderOutput(log.full_output)}
-                        </div>
+                    <div className="border-t border-gray-100 bg-gray-50">
+                      <div className="p-4">
+                        {renderOutput(log.full_output)}
                       </div>
                     </div>
                   )}

@@ -148,11 +148,14 @@
       "usage_context": "When user wants to find specific emails or conversations in their Gmail",
       "parameters": {
         "type": "object",
-        "required": ["query"],
+        "required": [],
+        "_comment_required_change": "AGENTKIT_OPTIMIZATION: Removed 'query' from required to allow OpenAI AgentKit to call search_emails() without parameters. The gmail-plugin-executor.ts already handles empty queries by defaulting to 'in:inbox'. This reduces validation failures and improves AgentKit reliability.",
         "properties": {
           "query": {
             "type": "string",
-            "description": "Search query (supports Gmail search operators like 'from:', 'subject:', 'in:', etc.)"
+            "default": "",
+            "_comment_default_added": "AGENTKIT_OPTIMIZATION: Added default empty string. When omitted, executor defaults to 'in:inbox' search.",
+            "description": "Search query (supports Gmail search operators like 'from:', 'subject:', 'in:', etc.). Leave empty or omit to search all inbox emails."
           },
           "max_results": {
             "type": "number",

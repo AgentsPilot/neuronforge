@@ -831,6 +831,7 @@ export default function AgentList() {
           agent_id: agentId,
           input_variables: {},
           use_queue: true,
+          use_agentkit: true, // Enable OpenAI AgentKit execution
           execution_type: 'manual'
         }),
       });

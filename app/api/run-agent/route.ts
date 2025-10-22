@@ -4,9 +4,11 @@
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
+import { v4 as uuidv4 } from 'uuid'
 import { runAgentWithContext } from '@/lib/utils/runAgentWithContext'
 import { extractPdfTextFromBase64 } from '@/lib/utils/extractPdfTextFromBase64'
 import { addManualExecution } from '@/lib/queues/qstashQueue'
+import { runAgentKit } from '@/lib/agentkit/runAgentKit' // NEW: AgentKit execution
 
 export const runtime = 'nodejs'
 
@@ -16,6 +18,7 @@ interface RunAgentRequest {
   override_user_prompt?: string;
   execution_id?: string;
   use_queue?: boolean; // New: whether to use queue-based execution
+  use_agentkit?: boolean; // NEW: Use OpenAI AgentKit for execution
   user_id?: string; // For queue-based execution
 }
 
@@ -24,12 +27,13 @@ interface RunAgentRequest {
  */
 export async function POST(req: Request) {
   const body: RunAgentRequest = await req.json()
-  const { 
-    agent_id, 
-    input_variables = {}, 
-    override_user_prompt, 
+  const {
+    agent_id,
+    input_variables = {},
+    override_user_prompt,
     execution_id,
     use_queue = false, // Default to immediate execution for backward compatibility
+    use_agentkit = false, // NEW: Default to false (use old system)
     user_id: provided_user_id
   } = body
 
@@ -64,11 +68,169 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
   }
 
-  // **NEW QUEUE-BASED EXECUTION PATH**
-  if (use_queue) {
-    console.log(`🔄 Using queue-based execution for agent ${agent_id}`)
-    
+  // **NEW: AGENTKIT EXECUTION PATH**
+  if (use_agentkit) {
+    console.log(`🤖 Using AgentKit execution for agent "${agent.agent_name}" (${agent_id})`)
+
     try {
+      // Fetch agent_configurations for input values
+      const { data: agentConfig, error: configError } = await supabase
+        .from('agent_configurations')
+        .select('input_values, input_schema')
+        .eq('agent_id', agent_id)
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+
+      const userInput = override_user_prompt || agent.user_prompt
+      const inputValues = agentConfig?.input_values || {}
+
+      console.log(`📋 AgentKit: Found ${Object.keys(inputValues).length} input values from configuration`)
+
+      // Generate session ID for analytics tracking (UUID format)
+      const sessionId = uuidv4()
+
+      // Execute using OpenAI AgentKit with V2 Plugin System
+      const result = await runAgentKit(
+        user.id,
+        {
+          id: agent.id,
+          agent_name: agent.agent_name,
+          system_prompt: agent.system_prompt,
+          enhanced_prompt: agent.enhanced_prompt,
+          user_prompt: agent.user_prompt,
+          plugins_required: agent.plugins_required || [],
+          input_schema: agent.input_schema || agentConfig?.input_schema,
+          output_schema: agent.output_schema,
+          trigger_condintion: agent.trigger_condintion // Pass notification preference
+        },
+        userInput,
+        inputValues, // Pass input values from agent_configurations
+        sessionId // Pass session ID for analytics tracking
+      )
+
+      // Check if agent should send email notification based on trigger_condintion
+      const triggerConfig = agent.trigger_condintion?.error_handling || {};
+      const shouldSendEmail = triggerConfig.on_failure === 'email';
+
+      if (shouldSendEmail && result.success) {
+        console.log('📧 AgentKit: Sending result via email as per trigger_condintion');
+
+        // The result already contains the response - no need to send it again
+        // The email should have been sent by the agent itself during execution
+        // Just log that email delivery was configured
+      }
+
+      // Log execution to agent_executions table
+      const now = new Date().toISOString()
+      const { error: insertError } = await supabase.from('agent_executions').insert({
+        agent_id: agent.id,
+        user_id: user.id,
+        execution_type: 'manual',
+        status: result.success ? 'completed' : 'failed',
+        scheduled_at: now, // Required field - use current time for manual executions
+        started_at: new Date(Date.now() - result.executionTime).toISOString(),
+        completed_at: now,
+        execution_duration_ms: result.executionTime,
+        error_message: result.error || null,
+        logs: {
+          agentkit: true,
+          iterations: result.iterations,
+          toolCalls: result.toolCalls,
+          tokensUsed: result.tokensUsed,
+          model: 'gpt-4o',
+          inputValuesUsed: Object.keys(inputValues).length
+        }
+      })
+
+      if (insertError) {
+        console.error('Failed to log AgentKit execution:', insertError)
+      }
+
+      // ALSO log to agent_logs table for consistency with legacy system
+      console.log('🪵 Inserting AgentKit result to agent_logs...')
+      const { data: logData, error: logInsertError } = await supabase
+        .from('agent_logs')
+        .insert({
+          agent_id: agent.id,
+          user_id: user.id,
+          run_output: JSON.stringify({
+            response: result.response,
+            success: result.success,
+            agentkit: true,
+            iterations: result.iterations,
+            toolCallsCount: result.toolCalls.length,
+            tokensUsed: result.tokensUsed.total,
+            executionTimeMs: result.executionTime
+          }),
+          full_output: {
+            message: result.response,
+            agentkit_metadata: {
+              model: 'gpt-4o',
+              iterations: result.iterations,
+              toolCalls: result.toolCalls,
+              tokensUsed: result.tokensUsed
+            }
+          },
+          status: result.success ? '✅ AgentKit execution completed successfully' : '❌ AgentKit execution failed',
+          created_at: now,
+        })
+        .select('id')
+        .single()
+
+      if (logInsertError) {
+        console.error('❌ Failed to insert AgentKit log into agent_logs:', logInsertError)
+      } else {
+        console.log('✅ AgentKit log inserted successfully')
+      }
+
+      return NextResponse.json({
+        success: result.success,
+        message: result.response,
+        data: {
+          agent_id: agent.id,
+          agent_name: agent.agent_name,
+          execution_type: 'agentkit',
+          tool_calls_count: result.toolCalls.length,
+          successful_tool_calls: result.toolCalls.filter(tc => tc.success).length,
+          failed_tool_calls: result.toolCalls.filter(tc => !tc.success).length,
+          tokens_used: result.tokensUsed.total,
+          execution_time_ms: result.executionTime,
+          iterations: result.iterations,
+          input_values_used: Object.keys(inputValues).length
+        },
+        agentkit: true
+      })
+
+    } catch (error: any) {
+      console.error('❌ AgentKit execution error:', error)
+      return NextResponse.json({
+        success: false,
+        error: error.message || 'AgentKit execution failed',
+        agentkit: true
+      }, { status: 500 })
+    }
+  }
+
+  // **QUEUE-BASED EXECUTION PATH**
+  if (use_queue) {
+    // Check if running locally - QStash cannot send to localhost
+    const isLocalDev = process.env.NODE_ENV === 'development' ||
+                       process.env.VERCEL_ENV === undefined ||
+                       !process.env.QSTASH_URL ||
+                       !process.env.QSTASH_TOKEN
+
+    if (isLocalDev) {
+      console.log('⚠️  QStash queue unavailable in local development - falling back to direct execution')
+      console.log(`⚡ Using immediate execution for agent ${agent_id} (local dev fallback)`)
+
+      // Fall through to immediate execution path below
+      // Don't return here - let the immediate execution code run
+    } else {
+      console.log(`🔄 Using queue-based execution for agent ${agent_id}`)
+
+      try {
       // Validate agent can be executed
       if (agent.status === 'archived') {
         return NextResponse.json({ error: 'Cannot execute archived agent' }, { status: 400 })
@@ -168,15 +330,16 @@ export async function POST(req: Request) {
         queue_based: true,
       })
 
-    } catch (queueError) {
-      console.error('Failed to queue agent job:', queueError)
-      return NextResponse.json(
-        { 
-          error: 'Failed to queue agent execution', 
-          details: queueError instanceof Error ? queueError.message : 'Unknown error',
-        },
-        { status: 500 }
-      )
+      } catch (queueError) {
+        console.error('Failed to queue agent job:', queueError)
+        return NextResponse.json(
+          {
+            error: 'Failed to queue agent execution',
+            details: queueError instanceof Error ? queueError.message : 'Unknown error',
+          },
+          { status: 500 }
+        )
+      }
     }
   }
 

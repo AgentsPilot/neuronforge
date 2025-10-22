@@ -34,6 +34,16 @@ export const AUDIT_EVENTS = {
   AGENT_RUN_FAILED: 'AGENT_RUN_FAILED',
   AGENT_SCHEMA_UPDATED: 'AGENT_SCHEMA_UPDATED', // input/output schema changes
 
+  // AgentKit-specific events
+  AGENTKIT_EXECUTION_STARTED: 'AGENTKIT_EXECUTION_STARTED',
+  AGENTKIT_EXECUTION_COMPLETED: 'AGENTKIT_EXECUTION_COMPLETED',
+  AGENTKIT_EXECUTION_FAILED: 'AGENTKIT_EXECUTION_FAILED',
+  AGENTKIT_PLUGIN_CALLED: 'AGENTKIT_PLUGIN_CALLED',
+  AGENTKIT_PLUGIN_SUCCESS: 'AGENTKIT_PLUGIN_SUCCESS',
+  AGENTKIT_PLUGIN_FAILED: 'AGENTKIT_PLUGIN_FAILED',
+  AGENTKIT_ITERATION_COMPLETED: 'AGENTKIT_ITERATION_COMPLETED',
+  AGENTKIT_MAX_ITERATIONS_REACHED: 'AGENTKIT_MAX_ITERATIONS_REACHED',
+
   // ==========================================
   // USER / PROFILE EVENTS
   // ==========================================
@@ -129,6 +139,62 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'Agent schedule modified',
+  },
+  [AUDIT_EVENTS.AGENT_RUN_STARTED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Agent execution started',
+  },
+  [AUDIT_EVENTS.AGENT_RUN_COMPLETED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Agent execution completed successfully',
+  },
+  [AUDIT_EVENTS.AGENT_RUN_FAILED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'Agent execution failed',
+  },
+
+  // AgentKit events
+  [AUDIT_EVENTS.AGENTKIT_EXECUTION_STARTED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'AgentKit execution started',
+  },
+  [AUDIT_EVENTS.AGENTKIT_EXECUTION_COMPLETED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'AgentKit execution completed successfully',
+  },
+  [AUDIT_EVENTS.AGENTKIT_EXECUTION_FAILED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'AgentKit execution failed',
+  },
+  [AUDIT_EVENTS.AGENTKIT_PLUGIN_CALLED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'AgentKit called a plugin action',
+  },
+  [AUDIT_EVENTS.AGENTKIT_PLUGIN_SUCCESS]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'AgentKit plugin action succeeded',
+  },
+  [AUDIT_EVENTS.AGENTKIT_PLUGIN_FAILED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'AgentKit plugin action failed',
+  },
+  [AUDIT_EVENTS.AGENTKIT_ITERATION_COMPLETED]: {
+    severity: 'info',
+    description: 'AgentKit completed one iteration',
+  },
+  [AUDIT_EVENTS.AGENTKIT_MAX_ITERATIONS_REACHED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'AgentKit reached maximum iteration limit',
   },
 
   // User events - critical for security

@@ -4,7 +4,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifySignatureAppRouter } from '@upstash/qstash/nextjs';
 import { createServerClient } from '@supabase/ssr';
+import { v4 as uuidv4 } from 'uuid';
 import { runAgentWithContext } from '@/lib/utils/runAgentWithContext';
+import { runAgentKit } from '@/lib/agentkit/runAgentKit'; // NEW: AgentKit execution
 import { AgentJobData } from '@/lib/queues/qstashQueue';
 import parser from 'cron-parser';
 
@@ -211,19 +213,74 @@ async function processAgentJob(jobData: AgentJobData) {
       'execution'
     );
 
-    // 4. Execute the agent using the core logic
-    console.log(`🤖 Executing agent: ${agent.agent_name}`);
+    // 4. Execute the agent using AgentKit or legacy system
+    const useAgentKit = jobData.use_agentkit || false;
+    console.log(`🤖 Executing agent: ${agent.agent_name} ${useAgentKit ? '(AgentKit)' : '(Legacy)'}`);
 
     // Update progress before execution
     await updateExecution(execution_id, { progress: 25 });
 
-    const executionResult = await runAgentWithContext({
-      supabase,
-      agent,
-      userId: user_id,
-      input_variables: jobData.input_variables || {},
-      override_user_prompt: jobData.override_user_prompt,
-    });
+    let executionResult: any;
+
+    if (useAgentKit) {
+      // NEW: Execute with OpenAI AgentKit
+
+      // Fetch agent_configurations for input values
+      const { data: agentConfig } = await supabase
+        .from('agent_configurations')
+        .select('input_values, input_schema')
+        .eq('agent_id', agent_id)
+        .eq('user_id', user_id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const userInput = jobData.override_user_prompt || agent.user_prompt;
+      const inputValues = agentConfig?.input_values || {};
+
+      console.log(`📋 AgentKit: Found ${Object.keys(inputValues).length} input values from configuration`);
+
+      // Generate session ID for analytics tracking (UUID format)
+      const sessionId = uuidv4()
+
+      const agentkitResult = await runAgentKit(
+        user_id,
+        {
+          id: agent.id,
+          agent_name: agent.agent_name,
+          system_prompt: agent.system_prompt,
+          enhanced_prompt: agent.enhanced_prompt,
+          user_prompt: agent.user_prompt,
+          plugins_required: agent.plugins_required || [],
+          input_schema: agent.input_schema || agentConfig?.input_schema,
+          output_schema: agent.output_schema,
+          trigger_condintion: agent.trigger_condintion // Pass notification preference
+        },
+        userInput,
+        inputValues, // Pass input values from agent_configurations
+        sessionId // Pass session ID for analytics tracking
+      );
+
+      // Convert AgentKit result to legacy format for compatibility
+      executionResult = {
+        success: agentkitResult.success,
+        message: agentkitResult.response,
+        agentkit: true,
+        iterations: agentkitResult.iterations,
+        toolCalls: agentkitResult.toolCalls,
+        tokensUsed: agentkitResult.tokensUsed,
+        send_status: agentkitResult.success ? '✅ Completed' : '❌ Failed'
+      };
+    } else {
+      // Legacy execution with runAgentWithContext
+      executionResult = await runAgentWithContext({
+        supabase,
+        agent,
+        userId: user_id,
+        input_variables: jobData.input_variables || {},
+        override_user_prompt: jobData.override_user_prompt,
+      });
+    }
 
     // Update progress after execution
     await updateExecution(execution_id, { progress: 75 });
