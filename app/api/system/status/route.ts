@@ -35,90 +35,61 @@ export async function GET() {
       failed: recentExecutions?.filter(e => e.status === 'failed').length || 0
     }
 
-    // Queue status monitoring
-    let queueStatus = {
-      isAvailable: false,
+    // QStash Queue Status - using agent_executions table
+    // QStash handles scheduling via Vercel Cron, so we check execution status instead
+    let queueStatus: {
+      isAvailable: boolean;
+      waiting: number;
+      active: number;
+      completed: number;
+      failed: number;
+      jobs: any[];
+      error: string | null;
+      queueType: string;
+    } = {
+      isAvailable: true,
       waiting: 0,
       active: 0,
       completed: 0,
       failed: 0,
       jobs: [],
-      error: null
+      error: null,
+      queueType: 'QStash + Vercel Cron'
     };
 
     try {
-      // Try to get queue status - FIXED: correct import path
-      const { agentQueue } = await import('@/lib/queues/agentQueue')
-      const queue = agentQueue
-      
-      // Get job counts and recent jobs
-      const [waiting, active, completed, failed] = await Promise.all([
-        queue.getWaiting(),
-        queue.getActive(), 
-        queue.getCompleted(0, 10), // Last 10 completed
-        queue.getFailed(0, 5)      // Last 5 failed
-      ])
+      // Get scheduled agents that are pending execution
+      const { data: scheduledAgents } = await supabaseServer
+        .from('agents')
+        .select('id, agent_name, next_run, schedule_enabled')
+        .eq('schedule_enabled', true)
+        .not('next_run', 'is', null)
+        .order('next_run', { ascending: true })
+        .limit(10)
+
+      // Count agents waiting to run (next_run is in the past)
+      const now = new Date().toISOString()
+      const waitingAgents = scheduledAgents?.filter(a => a.next_run && a.next_run < now) || []
 
       queueStatus = {
         isAvailable: true,
-        waiting: waiting.length,
-        active: active.length,
-        completed: completed.length,
-        failed: failed.length,
-        jobs: [
-          // Current active jobs with progress and details
-          ...active.map(job => ({
-            id: job.id,
-            agentId: job.data.agent_id,
-            executionId: job.data.execution_id,
-            status: 'active',
-            progress: job.progress || 0,
-            startedAt: job.processedOn ? new Date(job.processedOn).toISOString() : null,
-            createdAt: new Date(job.timestamp).toISOString(),
-            attempts: job.attemptsMade,
-            data: {
-              execution_type: job.data.execution_type,
-              input_variables: job.data.input_variables
-            }
-          })),
-          // Waiting jobs (queued) with position
-          ...waiting.slice(0, 10).map((job, index) => ({
-            id: job.id,
-            agentId: job.data.agent_id,
-            executionId: job.data.execution_id,
-            status: 'waiting',
-            queuePosition: index + 1,
-            createdAt: new Date(job.timestamp).toISOString(),
-            data: {
-              execution_type: job.data.execution_type,
-              input_variables: job.data.input_variables
-            }
-          })),
-          // Recent completed jobs
-          ...completed.slice(0, 5).map(job => ({
-            id: job.id,
-            agentId: job.data.agent_id,
-            executionId: job.data.execution_id,
-            status: 'completed',
-            completedAt: job.finishedOn ? new Date(job.finishedOn).toISOString() : null,
-            duration: job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : null,
-            returnValue: job.returnvalue ? 'Available' : 'None'
-          })),
-          // Recent failed jobs
-          ...failed.slice(0, 3).map(job => ({
-            id: job.id,
-            agentId: job.data.agent_id,
-            executionId: job.data.execution_id,
-            status: 'failed',
-            failedAt: job.failedReason ? new Date(job.timestamp).toISOString() : null,
-            error: job.failedReason || 'Unknown error',
-            attempts: job.attemptsMade
-          }))
-        ],
-        error: null
+        waiting: waitingAgents.length,
+        active: executionStats.running,
+        completed: executionStats.completed,
+        failed: executionStats.failed,
+        jobs: scheduledAgents?.map((agent, index) => ({
+          id: agent.id,
+          agentId: agent.id,
+          agentName: agent.agent_name,
+          status: agent.next_run && agent.next_run < now ? 'waiting' : 'scheduled',
+          scheduledFor: agent.next_run,
+          queuePosition: agent.next_run && agent.next_run < now ? waitingAgents.findIndex(a => a.id === agent.id) + 1 : null
+        })) || [],
+        error: null,
+        queueType: 'QStash + Vercel Cron'
       }
-    } catch (queueError) {
-      console.warn('Could not connect to queue:', queueError.message)
+    } catch (queueError: any) {
+      console.warn('Could not get queue status:', queueError.message)
       queueStatus.error = queueError.message
     }
 
@@ -133,8 +104,7 @@ export async function GET() {
         queue: queueStatus,
         cleanup: {
           stuckExecutions: cleanupStats.stuckExecutions,
-          totalExecutions: cleanupStats.totalExecutions,
-          lastCleanup: cleanupStats.lastCleanup
+          totalExecutions: cleanupStats.totalExecutions
         },
         timestamp: new Date().toISOString()
       }
@@ -152,11 +122,11 @@ export async function GET() {
   }
 }
 
-// Optional: Add a specific agent queue check endpoint
+// Check specific agent execution status
 export async function POST(request: Request) {
   try {
     const { agentId } = await request.json()
-    
+
     if (!agentId) {
       return Response.json({
         success: false,
@@ -164,38 +134,58 @@ export async function POST(request: Request) {
       }, { status: 400 })
     }
 
-    const { agentQueue } = await import('@/lib/queues/agentQueue')
-    const queue = agentQueue
-    
-    const [waiting, active] = await Promise.all([
-      queue.getWaiting(),
-      queue.getActive()
-    ])
+    const { supabaseServer } = await import('@/lib/supabaseServer')
 
-    // Find specific agent in queue
-    const agentInWaiting = waiting.find(job => job.data.agent_id === agentId)
-    const agentInActive = active.find(job => job.data.agent_id === agentId)
-    
-    const queuePosition = agentInWaiting ? 
-      waiting.findIndex(job => job.data.agent_id === agentId) + 1 : null
+    // Get agent details
+    const { data: agent } = await supabaseServer
+      .from('agents')
+      .select('id, agent_name, next_run, schedule_enabled, schedule_interval')
+      .eq('id', agentId)
+      .single()
+
+    if (!agent) {
+      return Response.json({
+        success: false,
+        error: 'Agent not found'
+      }, { status: 404 })
+    }
+
+    // Get latest execution
+    const { data: latestExecution } = await supabaseServer
+      .from('agent_executions')
+      .select('id, status, progress, started_at, completed_at')
+      .eq('agent_id', agentId)
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .single()
+
+    const now = new Date().toISOString()
+    const isWaitingToRun = agent.schedule_enabled && agent.next_run && agent.next_run < now
+    const isRunning = latestExecution?.status === 'running'
 
     return Response.json({
       success: true,
       agent: {
         id: agentId,
-        inQueue: !!(agentInWaiting || agentInActive),
-        status: agentInActive ? 'active' : agentInWaiting ? 'waiting' : 'not_queued',
-        queuePosition: queuePosition,
-        jobId: (agentInWaiting || agentInActive)?.id || null,
-        progress: agentInActive?.progress || 0,
-        executionId: (agentInWaiting || agentInActive)?.data?.execution_id || null
+        name: agent.agent_name,
+        inQueue: isWaitingToRun,
+        status: isRunning ? 'active' : isWaitingToRun ? 'waiting' : 'idle',
+        scheduledFor: agent.next_run,
+        scheduleEnabled: agent.schedule_enabled,
+        currentExecution: latestExecution ? {
+          id: latestExecution.id,
+          status: latestExecution.status,
+          progress: latestExecution.progress || 0,
+          startedAt: latestExecution.started_at,
+          completedAt: latestExecution.completed_at
+        } : null
       }
     })
 
   } catch (error) {
     return Response.json({
       success: false,
-      error: error instanceof Error ? error.message : 'Queue check failed'
+      error: error instanceof Error ? error.message : 'Status check failed'
     }, { status: 500 })
   }
 }

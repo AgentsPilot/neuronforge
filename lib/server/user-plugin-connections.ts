@@ -371,31 +371,10 @@ export class UserPluginConnections {
 
       if (this.debug) console.log(`DEBUG: Token refreshed successfully for ${connection.plugin_key}`);
 
-      // Audit trail logging for token refresh
-      try {
-        const { AuditTrail } = await import('@/lib/services/AuditTrailService');
-        await AuditTrail.log({
-          action: 'PLUGIN_RECONNECTED',
-          entityType: 'connection',
-          entityId: data.id,
-          resourceName: this.getPluginDisplayName(connection.plugin_key),
-          userId: connection.user_id,
-          details: {
-            plugin_key: connection.plugin_key,
-            plugin_name: this.getPluginDisplayName(connection.plugin_key),
-            trigger: 'token_refresh',
-            previous_expiry: connection.expires_at,
-            new_expiry: expiresAt,
-            provider_email: connection.email,
-          },
-          severity: 'info',
-          complianceFlags: ['SOC2'],
-        });
-        if (this.debug) console.log(`DEBUG: Audit trail logged for ${connection.plugin_key} token refresh`);
-      } catch (auditError) {
-        console.error('DEBUG: Failed to log audit trail:', auditError);
-        // Don't fail the refresh if audit logging fails
-      }
+      // NOTE: We deliberately do NOT log token refreshes to audit trail
+      // Token refreshes are automatic background operations, not user actions
+      // Logging them would flood the audit trail with routine maintenance events
+      // Only user-initiated actions (connect, disconnect, permission changes) are logged
 
       return data;
     } catch (error) {
