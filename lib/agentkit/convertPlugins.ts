@@ -41,17 +41,28 @@ export async function convertPluginsToTools(
 ): Promise<ChatCompletionTool[]> {
   const pluginManager = await PluginManagerV2.getInstance();
   const userPlugins = await pluginManager.getUserActionablePlugins(userId);
+  const allPlugins = pluginManager.getAvailablePlugins();
 
   const tools: ChatCompletionTool[] = [];
   const skippedPlugins: string[] = [];
 
   for (const pluginKey of pluginKeys) {
-    const actionablePlugin = userPlugins[pluginKey];
+    let actionablePlugin = userPlugins[pluginKey];
 
+    // If plugin not connected, check if it's a platform plugin (doesn't need user connection)
     if (!actionablePlugin) {
-      console.warn(`⚠️ AgentKit: Plugin "${pluginKey}" not connected for user ${userId}`);
-      skippedPlugins.push(pluginKey);
-      continue;
+      const pluginDef = allPlugins[pluginKey];
+      if (pluginDef && pluginDef.plugin.auth_config.auth_type === 'platform_key') {
+        console.log(`✅ AgentKit: Auto-including platform plugin "${pluginKey}" (no connection required)`);
+        actionablePlugin = {
+          definition: pluginDef,
+          connection: { access_token: 'platform-key' } as any
+        };
+      } else {
+        console.warn(`⚠️ AgentKit: Plugin "${pluginKey}" not connected for user ${userId}`);
+        skippedPlugins.push(pluginKey);
+        continue;
+      }
     }
 
     const { definition } = actionablePlugin;

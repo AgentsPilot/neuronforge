@@ -2,65 +2,21 @@
 
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
+import {
+  Mail,
+  TrendingUp,
+  FileText,
+  Calendar,
+  Brain,
+  Heart,
+  Users,
+  DollarSign,
+  ArrowRight,
+  CheckCircle
+} from 'lucide-react';
 
 const UseCasesPage = () => {
-  const [hoveredCard, setHoveredCard] = useState(null);
-
-  // Icon components for visual appeal
-  const EnvelopeIcon = () => (
-    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" className="fill-blue-400"/>
-      <path d="m22 6-10 7L2 6" stroke="white" strokeWidth="2" fill="none"/>
-    </svg>
-  );
-
-  const ChartIcon = () => (
-    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-      <path d="M3 3v18h18" stroke="currentColor" strokeWidth="2" fill="none"/>
-      <path d="M18 17l-5-5-3 3-4-4" stroke="currentColor" strokeWidth="2" fill="none" className="text-purple-400"/>
-    </svg>
-  );
-
-  const DocumentIcon = () => (
-    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" className="fill-green-400"/>
-      <polyline points="14,2 14,8 20,8" stroke="white" strokeWidth="2" fill="none"/>
-    </svg>
-  );
-
-  const CalendarIcon = () => (
-    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-      <path d="M8 2v4m8-4v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" className="fill-blue-400"/>
-    </svg>
-  );
-
-  const BrainIcon = () => (
-    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-      <path d="M12 3C8.5 3 6 5.5 6 8.5c0 1.5-.7 2.8-1.8 3.5C3.5 12.5 3 13.7 3 15c0 2.8 2.2 5 5 5h8c2.8 0 5-2.2 5-5 0-1.3-.5-2.5-1.2-3-.5-.3-1.1-.7-1.4-1.2-.6-.9-1.4-1.8-1.4-2.8 0-3-2.5-5.5-6-5.5z" className="fill-purple-400"/>
-      <circle cx="9" cy="12" r="1.5" className="fill-white"/>
-      <circle cx="15" cy="12" r="1.5" className="fill-white"/>
-    </svg>
-  );
-
-  const HeartIcon = () => (
-    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" className="fill-pink-400"/>
-    </svg>
-  );
-
-  const UserIcon = () => (
-    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" stroke="currentColor" strokeWidth="2" fill="none" className="text-blue-400"/>
-      <circle cx="12" cy="7" r="4" className="fill-blue-400"/>
-    </svg>
-  );
-
-  const MoneyIcon = () => (
-    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-      <circle cx="12" cy="12" r="10" className="fill-green-400"/>
-      <path d="M12 6v12M15 9a3 3 0 1 0 0 6" stroke="white" strokeWidth="2" fill="none"/>
-    </svg>
-  );
+  const [hoveredCard, setHoveredCard] = useState<string | null>(null);
 
   const useCaseSections = [
     {
@@ -72,14 +28,14 @@ const UseCasesPage = () => {
           description: "Automatically posts your content across platforms and tracks engagement.",
           prompt: "Post my blog articles to LinkedIn and Twitter, then send me weekly engagement reports.",
           timeToCreate: "2 minutes",
-          icon: <ChartIcon />
+          icon: <TrendingUp className="w-8 h-8 text-blue-400" />
         },
         {
           name: "Campaign Performance Tracker",
           description: "Monitors ad spend and performance, sending alerts when targets are hit.",
           prompt: "Track my Google Ads spend daily and alert me if any campaign exceeds $500.",
           timeToCreate: "1 minute 30 seconds",
-          icon: <ChartIcon />
+          icon: <TrendingUp className="w-8 h-8 text-purple-400" />
         }
       ]
     },
@@ -92,14 +48,14 @@ const UseCasesPage = () => {
           description: "Sends weekly summaries of unread client emails and drafts personalized follow-ups.",
           prompt: "Summarize my unread client emails and draft polite follow-up replies.",
           timeToCreate: "1 minute 45 seconds",
-          icon: <EnvelopeIcon />
+          icon: <Mail className="w-8 h-8 text-blue-400" />
         },
         {
           name: "Lead Qualification Bot",
           description: "Automatically scores new leads and adds qualified prospects to your CRM.",
           prompt: "When new leads fill out my contact form, score them and add high-quality ones to Salesforce.",
           timeToCreate: "2 minutes 15 seconds",
-          icon: <UserIcon />
+          icon: <Users className="w-8 h-8 text-green-400" />
         }
       ]
     },
@@ -112,14 +68,14 @@ const UseCasesPage = () => {
           description: "Scans contracts for key terms and flags potential issues for review.",
           prompt: "Review new contracts for standard clauses and highlight any unusual terms.",
           timeToCreate: "2 minutes 30 seconds",
-          icon: <DocumentIcon />
+          icon: <FileText className="w-8 h-8 text-purple-400" />
         },
         {
           name: "Compliance Alert System",
           description: "Monitors regulatory updates and sends relevant changes to your team.",
           prompt: "Watch for SEC filing updates relevant to our industry and email the legal team.",
           timeToCreate: "1 minute 50 seconds",
-          icon: <DocumentIcon />
+          icon: <FileText className="w-8 h-8 text-pink-400" />
         }
       ]
     },
@@ -132,14 +88,14 @@ const UseCasesPage = () => {
           description: "Automatically categorizes receipts and creates monthly expense reports.",
           prompt: "Organize my email receipts by category and create monthly expense summaries in Google Sheets.",
           timeToCreate: "1 minute 20 seconds",
-          icon: <MoneyIcon />
+          icon: <DollarSign className="w-8 h-8 text-green-400" />
         },
         {
           name: "Invoice Payment Tracker",
           description: "Monitors outstanding invoices and sends gentle payment reminders.",
           prompt: "Track overdue invoices and send friendly payment reminders after 30 days.",
           timeToCreate: "2 minutes",
-          icon: <MoneyIcon />
+          icon: <DollarSign className="w-8 h-8 text-emerald-400" />
         }
       ]
     },
@@ -152,14 +108,14 @@ const UseCasesPage = () => {
           description: "Schedules follow-up appointments and sends treatment reminders to patients.",
           prompt: "Schedule follow-up appointments for discharged patients and send medication reminders.",
           timeToCreate: "2 minutes 10 seconds",
-          icon: <HeartIcon />
+          icon: <Heart className="w-8 h-8 text-pink-400" />
         },
         {
           name: "Wellness Check-in Assistant",
           description: "Sends weekly wellness surveys and compiles results for health tracking.",
           prompt: "Send weekly wellness check-ins to patients and summarize responses for review.",
           timeToCreate: "1 minute 40 seconds",
-          icon: <HeartIcon />
+          icon: <Heart className="w-8 h-8 text-red-400" />
         }
       ]
     },
@@ -172,14 +128,14 @@ const UseCasesPage = () => {
           description: "Tracks assignment submissions and sends progress reports to parents.",
           prompt: "Monitor student assignment submissions and email parents weekly progress updates.",
           timeToCreate: "1 minute 55 seconds",
-          icon: <BrainIcon />
+          icon: <Brain className="w-8 h-8 text-blue-400" />
         },
         {
           name: "Course Content Organizer",
           description: "Automatically organizes lecture notes and creates study guides for students.",
           prompt: "Organize my lecture recordings into study guides and share them with students.",
           timeToCreate: "2 minutes 5 seconds",
-          icon: <BrainIcon />
+          icon: <Brain className="w-8 h-8 text-indigo-400" />
         }
       ]
     },
@@ -192,14 +148,14 @@ const UseCasesPage = () => {
           description: "Collects team updates and creates formatted standup reports for stakeholders.",
           prompt: "Collect daily team updates from Slack and create formatted reports for management.",
           timeToCreate: "1 minute 30 seconds",
-          icon: <CalendarIcon />
+          icon: <Calendar className="w-8 h-8 text-purple-400" />
         },
         {
           name: "Deadline Alert System",
           description: "Monitors project timelines and sends proactive deadline reminders.",
           prompt: "Track project deadlines in Asana and send team reminders 3 days before due dates.",
           timeToCreate: "1 minute 45 seconds",
-          icon: <CalendarIcon />
+          icon: <Calendar className="w-8 h-8 text-blue-400" />
         }
       ]
     }
@@ -397,28 +353,20 @@ const UseCasesPage = () => {
               
               <button className="px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl font-bold text-lg hover:shadow-2xl hover:shadow-purple-500/50 transition flex items-center gap-2 mx-auto">
                 Start Building Now
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none">
-                  <path d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
+                <ArrowRight className="w-5 h-5" />
               </button>
-              
+
               <div className="flex items-center justify-center gap-6 mt-8 text-sm text-slate-400">
                 <div className="flex items-center gap-2">
-                  <svg className="w-4 h-4 text-green-400" viewBox="0 0 24 24" fill="none">
-                    <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" strokeWidth="2" fill="none"/>
-                  </svg>
+                  <CheckCircle className="w-4 h-4 text-green-400" />
                   <span>Free during beta</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <svg className="w-4 h-4 text-green-400" viewBox="0 0 24 24" fill="none">
-                    <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" strokeWidth="2" fill="none"/>
-                  </svg>
+                  <CheckCircle className="w-4 h-4 text-green-400" />
                   <span>No credit card required</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <svg className="w-4 h-4 text-green-400" viewBox="0 0 24 24" fill="none">
-                    <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" strokeWidth="2" fill="none"/>
-                  </svg>
+                  <CheckCircle className="w-4 h-4 text-green-400" />
                   <span>Ready in minutes</span>
                 </div>
               </div>

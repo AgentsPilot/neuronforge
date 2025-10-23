@@ -1,0 +1,198 @@
+{
+  "plugin": {
+    "name": "chatgpt-research",
+    "version": "1.0.0",
+    "description": "AI-powered web research and content analysis using ChatGPT with Google Search",
+    "context": "Use for researching topics, analyzing information, searching the web, generating summaries, and answering questions that require current information or web search",
+    "icon": "<Brain className='w-5 h-5 text-purple-600'/>",
+    "category": "ai_research",
+    "isPopular": true,
+    "auth_config": {
+      "auth_type": "platform_key",
+      "client_id": "platform",
+      "client_secret": "platform",
+      "redirect_uri": "",
+      "auth_url": "",
+      "token_url": "",
+      "refresh_url": "",
+      "profile_url": "",
+      "required_scopes": []
+    }
+  },
+  "actions": {
+    "research_topic": {
+      "description": "Research a topic using web search and AI analysis",
+      "usage_context": "When user wants to research a topic, find current information, or get comprehensive analysis of a subject using web search and AI",
+      "parameters": {
+        "type": "object",
+        "required": ["topic"],
+        "properties": {
+          "topic": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "The topic, question, or subject to research. Can be a keyword, phrase, or detailed question."
+          },
+          "depth": {
+            "type": "string",
+            "enum": ["quick", "standard", "comprehensive", "deep_dive"],
+            "default": "standard",
+            "description": "Research depth: quick (3 sources), standard (5 sources), comprehensive (8 sources), deep_dive (10 sources)"
+          },
+          "focus": {
+            "type": "string",
+            "enum": ["general", "recent", "technical", "academic", "news"],
+            "default": "general",
+            "description": "Research focus: general (all sources), recent (latest news), technical (technical docs), academic (scholarly), news (current events)"
+          },
+          "output_format": {
+            "type": "string",
+            "enum": ["summary", "detailed", "bullet_points", "report"],
+            "default": "detailed",
+            "description": "Output format: summary (brief), detailed (comprehensive), bullet_points (structured), report (formal)"
+          },
+          "max_length": {
+            "type": "number",
+            "minimum": 500,
+            "maximum": 10000,
+            "default": 3000,
+            "description": "Maximum length of the response in characters"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "topic_length": {
+            "condition": "topic_length > 500",
+            "action": "block",
+            "message": "Topic description cannot exceed 500 characters. Please summarize your research request."
+          },
+          "output_length": {
+            "condition": "max_length > 10000",
+            "action": "block",
+            "message": "Maximum output length is 10,000 characters."
+          }
+        },
+        "confirmations": {
+          "comprehensive_research": {
+            "condition": "depth == 'comprehensive' || depth == 'deep_dive'",
+            "action": "confirm",
+            "message": "Comprehensive research may take longer and use more tokens. Continue?"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Research completed successfully with {source_count} sources analyzed",
+        "common_errors": {
+          "api_key_missing": "Google Search API key is not configured. Please contact support to enable web research.",
+          "rate_limit_exceeded": "Research rate limit exceeded. Please wait a moment and try again.",
+          "no_results_found": "No relevant information found for this topic. Try different keywords or a broader search.",
+          "api_error": "Web search API encountered an error. Please try again or contact support.",
+          "timeout": "Research request timed out. Try a simpler query or quick depth setting."
+        }
+      }
+    },
+    "summarize_content": {
+      "description": "Summarize provided content using AI",
+      "usage_context": "When user wants to summarize existing content, text, articles, or documents without web search",
+      "parameters": {
+        "type": "object",
+        "required": ["content"],
+        "properties": {
+          "content": {
+            "type": "string",
+            "minLength": 50,
+            "maxLength": 50000,
+            "description": "The content to summarize (text, article, document)"
+          },
+          "length": {
+            "type": "string",
+            "enum": ["brief", "standard", "detailed"],
+            "default": "standard",
+            "description": "Summary length: brief (1-2 sentences), standard (1 paragraph), detailed (multiple paragraphs)"
+          },
+          "style": {
+            "type": "string",
+            "enum": ["professional", "casual", "technical", "academic"],
+            "default": "professional",
+            "description": "Writing style for the summary"
+          },
+          "focus_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Specific aspects or keywords to focus on in the summary"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "content_length": {
+            "condition": "content_length > 50000",
+            "action": "block",
+            "message": "Content cannot exceed 50,000 characters. Please provide a shorter text."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Content summarized successfully ({original_length} → {summary_length} characters)",
+        "common_errors": {
+          "content_too_short": "Content is too short to summarize meaningfully. Minimum 50 characters required.",
+          "api_error": "AI summarization failed. Please try again or contact support.",
+          "timeout": "Summarization timed out. Try summarizing a shorter text."
+        }
+      }
+    },
+    "answer_question": {
+      "description": "Answer questions using AI with optional web research",
+      "usage_context": "When user asks a question that may require current information, facts, or analysis",
+      "parameters": {
+        "type": "object",
+        "required": ["question"],
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 1000,
+            "description": "The question to answer"
+          },
+          "use_web_search": {
+            "type": "boolean",
+            "default": true,
+            "description": "Whether to use web search for current information"
+          },
+          "detail_level": {
+            "type": "string",
+            "enum": ["concise", "standard", "detailed"],
+            "default": "standard",
+            "description": "Level of detail in the answer"
+          },
+          "include_sources": {
+            "type": "boolean",
+            "default": true,
+            "description": "Include source citations in the answer"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "question_length": {
+            "condition": "question_length > 1000",
+            "action": "block",
+            "message": "Question cannot exceed 1000 characters."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Question answered successfully{with_sources}",
+        "common_errors": {
+          "unclear_question": "The question is unclear or too vague. Please provide more context.",
+          "no_information": "Unable to find reliable information to answer this question.",
+          "api_error": "AI service encountered an error. Please try rephrasing your question.",
+          "timeout": "Question answering timed out. Try a simpler question."
+        }
+      }
+    }
+  }
+}

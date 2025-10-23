@@ -2,39 +2,22 @@
 
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
+import {
+  Brain,
+  Lightbulb,
+  Heart,
+  Rocket,
+  ArrowRight,
+  CheckCircle,
+  Bot,
+  Link2,
+  Music,
+  AlertCircle,
+  Sparkles
+} from 'lucide-react';
 
 const AboutPage = () => {
-  const [hoveredSection, setHoveredSection] = useState(null);
-
-  // Icon components
-  const BrainIcon = () => (
-    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-      <path d="M12 3C8.5 3 6 5.5 6 8.5c0 1.5-.7 2.8-1.8 3.5C3.5 12.5 3 13.7 3 15c0 2.8 2.2 5 5 5h8c2.8 0 5-2.2 5-5 0-1.3-.5-2.5-1.2-3-.5-.3-1.1-.7-1.4-1.2-.6-.9-1.4-1.8-1.4-2.8 0-3-2.5-5.5-6-5.5z" className="fill-purple-400"/>
-      <circle cx="9" cy="12" r="1.5" className="fill-white"/>
-      <circle cx="15" cy="12" r="1.5" className="fill-white"/>
-      <path d="M10 16h4" stroke="white" strokeWidth="2" strokeLinecap="round"/>
-    </svg>
-  );
-
-  const LightbulbIcon = () => (
-    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-      <path d="M9 21h6m-6-4h6m-6-4h6m-6-4h6M9 3a5 5 0 0 1 5 5v3a5 5 0 0 1-5 5 5 5 0 0 1-5-5V8a5 5 0 0 1 5-5z" className="fill-blue-400"/>
-      <path d="M12 2v2M12 18v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" stroke="white" strokeWidth="2"/>
-    </svg>
-  );
-
-  const HeartIcon = () => (
-    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" className="fill-pink-400"/>
-    </svg>
-  );
-
-  const RocketIcon = () => (
-    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-      <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09zM12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z" className="fill-green-400"/>
-      <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" stroke="white" strokeWidth="2" fill="none"/>
-    </svg>
-  );
+  const [hoveredSection, setHoveredSection] = useState<number | null>(null);
 
   return (
     <div className="min-h-screen bg-black text-white overflow-hidden">
@@ -127,9 +110,7 @@ const AboutPage = () => {
             >
               <button className="group px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl font-bold text-lg hover:shadow-2xl hover:shadow-purple-500/50 transition flex items-center gap-2">
                 See It In Action
-                <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" viewBox="0 0 24 24" fill="none">
-                  <path d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
+                <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </button>
             </motion.div>
           </motion.div>
@@ -137,7 +118,7 @@ const AboutPage = () => {
       </section>
 
       {/* The Vision Section */}
-      <section className="relative z-10 py-32">
+      <section className="relative z-10 py-16">
         <div className="max-w-7xl mx-auto px-6">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -156,21 +137,25 @@ const AboutPage = () => {
             </p>
           </motion.div>
 
-          <div className="grid md:grid-cols-2 gap-16 items-center">
+          <div className="grid md:grid-cols-2 gap-16 items-stretch">
             <motion.div
               initial={{ opacity: 0, x: -40 }}
               whileInView={{ opacity: 1, x: 0 }}
               viewport={{ once: true }}
               transition={{ duration: 0.8 }}
+              className="flex flex-col"
             >
-              <h3 className="text-3xl font-bold mb-6 text-white">The Problem</h3>
+              <h3 className="text-3xl font-bold mb-6 text-white flex items-center gap-3">
+                <AlertCircle className="w-8 h-8 text-red-400" />
+                The Problem
+              </h3>
               <div className="space-y-4 text-slate-300">
                 <p>
-                  Professionals spend hours on repetitive digital tasks — copying data between tools, 
+                  Professionals spend hours on repetitive digital tasks — copying data between tools,
                   sending routine emails, organizing files, tracking deadlines.
                 </p>
                 <p>
-                  Existing automation requires technical setup, complex workflows, and constant maintenance. 
+                  Existing automation requires technical setup, complex workflows, and constant maintenance.
                   Most people want outcomes, not setup screens.
                 </p>
                 <p>
@@ -184,8 +169,12 @@ const AboutPage = () => {
               whileInView={{ opacity: 1, x: 0 }}
               viewport={{ once: true }}
               transition={{ duration: 0.8, delay: 0.2 }}
+              className="flex flex-col"
             >
-              <h3 className="text-3xl font-bold mb-6 text-white">Our Solution</h3>
+              <h3 className="text-3xl font-bold mb-6 text-white flex items-center gap-3">
+                <Sparkles className="w-8 h-8 text-purple-400" />
+                Our Solution
+              </h3>
               <div className="space-y-4 text-slate-300">
                 <p>
                   AgentPilot transforms natural language into intelligent agents. Simply describe your goal,
@@ -198,6 +187,11 @@ const AboutPage = () => {
                   Just human ideas becoming automated reality in seconds.
                 </p>
               </div>
+              <a href="/signup" className="mt-6 px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 hover:shadow-lg hover:shadow-purple-500/50 rounded-lg font-semibold text-white transition flex items-center gap-2 w-fit">
+                <Sparkles className="w-5 h-5" />
+                Sign Up Free
+                <ArrowRight className="w-4 h-4" />
+              </a>
             </motion.div>
           </div>
         </div>
@@ -229,28 +223,28 @@ const AboutPage = () => {
                 step: "01",
                 title: "Type Your Goal",
                 description: "Describe what you want in plain English. No technical knowledge needed.",
-                icon: <LightbulbIcon />,
+                icon: <Lightbulb className="w-8 h-8 text-blue-400" />,
                 color: "blue"
               },
               {
-                step: "02", 
+                step: "02",
                 title: "AI Clarifies Intent",
                 description: "Our intelligent system asks clarifying questions to understand exactly what you need.",
-                icon: <BrainIcon />,
+                icon: <Brain className="w-8 h-8 text-purple-400" />,
                 color: "purple"
               },
               {
                 step: "03",
                 title: "Instant Build",
                 description: "AgentPilot designs the workflow, connects tools, and configures everything automatically.",
-                icon: <RocketIcon />,
+                icon: <Rocket className="w-8 h-8 text-green-400" />,
                 color: "pink"
               },
               {
                 step: "04",
                 title: "Your AI Pilot Runs It",
                 description: "Your personal agent executes tasks on demand, on schedule, or triggered by events.",
-                icon: <HeartIcon />,
+                icon: <Heart className="w-8 h-8 text-pink-400" />,
                 color: "green"
               }
             ].map((item, index) => (
@@ -396,17 +390,17 @@ const AboutPage = () => {
               {
                 title: "Personal AI Workforce",
                 description: "Every professional will have intelligent agents handling routine tasks, freeing humans for creative and strategic work.",
-                icon: "🤖"
+                icon: <Bot className="w-12 h-12 text-blue-400" />
               },
               {
-                title: "Cross-Tool Collaboration", 
+                title: "Cross-Tool Collaboration",
                 description: "Agents will seamlessly coordinate across all your tools — Gmail, Slack, Notion, CRM — creating unified workflows.",
-                icon: "🔗"
+                icon: <Link2 className="w-12 h-12 text-purple-400" />
               },
               {
                 title: "Human + AI Orchestration",
                 description: "The best outcomes come from humans setting the vision and AI handling execution, creating perfect collaboration.",
-                icon: "🎼"
+                icon: <Music className="w-12 h-12 text-pink-400" />
               }
             ].map((item, index) => (
               <motion.div
@@ -417,7 +411,7 @@ const AboutPage = () => {
                 transition={{ duration: 0.6, delay: index * 0.2 }}
                 className="bg-gradient-to-br from-slate-900/50 to-slate-800/50 backdrop-blur-xl rounded-2xl p-8 border border-white/10 hover:border-white/20 transition text-center"
               >
-                <div className="text-4xl mb-6">{item.icon}</div>
+                <div className="flex justify-center mb-6">{item.icon}</div>
                 <h3 className="text-xl font-bold mb-4 text-white">{item.title}</h3>
                 <p className="text-slate-400 leading-relaxed">{item.description}</p>
               </motion.div>
@@ -478,28 +472,20 @@ const AboutPage = () => {
               
               <button className="px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl font-bold text-lg hover:shadow-2xl hover:shadow-purple-500/50 transition flex items-center gap-2 mx-auto">
                 Create Your First Agent
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none">
-                  <path d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
+                <ArrowRight className="w-5 h-5" />
               </button>
-              
+
               <div className="flex items-center justify-center gap-6 mt-8 text-sm text-slate-400">
                 <div className="flex items-center gap-2">
-                  <svg className="w-4 h-4 text-green-400" viewBox="0 0 24 24" fill="none">
-                    <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" strokeWidth="2" fill="none"/>
-                  </svg>
+                  <CheckCircle className="w-4 h-4 text-green-400" />
                   <span>Free to start</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <svg className="w-4 h-4 text-green-400" viewBox="0 0 24 24" fill="none">
-                    <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" strokeWidth="2" fill="none"/>
-                  </svg>
+                  <CheckCircle className="w-4 h-4 text-green-400" />
                   <span>No technical skills required</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <svg className="w-4 h-4 text-green-400" viewBox="0 0 24 24" fill="none">
-                    <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" strokeWidth="2" fill="none"/>
-                  </svg>
+                  <CheckCircle className="w-4 h-4 text-green-400" />
                   <span>Ready in minutes</span>
                 </div>
               </div>

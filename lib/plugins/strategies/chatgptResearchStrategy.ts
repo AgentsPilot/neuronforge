@@ -1,33 +1,33 @@
 // lib/plugins/strategies/chatgptResearchStrategy.ts
 import { PluginStrategy } from '../pluginRegistry'
 
-// Generic function to safely stringify any data with aggressive size limits
-function safeStringify(data: any, maxLength: number = 15000): string {
+// Generic function to safely stringify any data with increased size limits
+function safeStringify(data: any, maxLength: number = 50000): string {
   try {
     if (data === null || data === undefined) {
       return 'null'
     }
-    
+
     if (typeof data === 'string') {
       return data.length > maxLength ? data.substring(0, maxLength) + '\n[Content truncated]' : data
     }
-    
+
     if (typeof data === 'number' || typeof data === 'boolean') {
       return String(data)
     }
-    
+
     // For objects and arrays, convert to JSON with limited depth
     const jsonString = JSON.stringify(data, (key, value) => {
-      if (typeof value === 'string' && value.length > 500) {
-        return value.substring(0, 500) + '...[truncated]'
+      if (typeof value === 'string' && value.length > 5000) {
+        return value.substring(0, 5000) + '...[truncated]'
       }
       return value
     }, 2)
-    
-    return jsonString.length > maxLength 
-      ? jsonString.substring(0, maxLength) + '\n[Data truncated]' 
+
+    return jsonString.length > maxLength
+      ? jsonString.substring(0, maxLength) + '\n[Data truncated]'
       : jsonString
-      
+
   } catch (error) {
     return `[Unable to process data: ${error.message}]`
   }
@@ -41,11 +41,11 @@ function estimateTokens(text: string): number {
 // Choose appropriate model based on content size
 function selectModel(estimatedTokens: number): { model: string, maxTokens: number } {
   if (estimatedTokens > 6000) {
-    return { model: 'gpt-4-turbo-preview', maxTokens: 2000 } // Has 128k context
+    return { model: 'gpt-4-turbo-preview', maxTokens: 4000 } // Has 128k context - increased response length
   } else if (estimatedTokens > 4000) {
-    return { model: 'gpt-4-1106-preview', maxTokens: 2000 } // Has 128k context
+    return { model: 'gpt-4-1106-preview', maxTokens: 4000 } // Has 128k context - increased response length
   } else {
-    return { model: 'gpt-4', maxTokens: 3000 } // Standard 8k context
+    return { model: 'gpt-4', maxTokens: 4000 } // Standard 8k context - increased response length
   }
 }
 
@@ -61,32 +61,80 @@ function extractResearchTopics(userPrompt: string): string[] {
   return [...quotedTopics, ...extractedTopics].filter(topic => topic && topic.length > 2)
 }
 
-// Web search functionality
-async function searchWithGoogle(query: string): Promise<string> {
+// Fetch full content from a web page
+async function fetchPageContent(url: string): Promise<string> {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; AgentPilot/1.0; +https://agentpilot.com)'
+      },
+      signal: AbortSignal.timeout(10000) // 10 second timeout
+    })
+
+    if (!response.ok) {
+      return ''
+    }
+
+    const html = await response.text()
+
+    // Basic HTML to text conversion - remove scripts, styles, and extract text
+    let text = html
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+      .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    // Limit to first 10000 characters for processing
+    return text.substring(0, 10000)
+
+  } catch (error) {
+    console.error('Error fetching page content:', error)
+    return ''
+  }
+}
+
+// Web search functionality with full page content fetching
+async function searchWithGoogle(query: string, fetchFullContent: boolean = true): Promise<string> {
   try {
     const cx = process.env.GOOGLE_SEARCH_ENGINE_ID
     const apiKey = process.env.GOOGLE_SEARCH_API_KEY
-    
+
     if (!cx || !apiKey) {
       return 'Web search temporarily unavailable.'
     }
-    
-    const searchUrl = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${cx}&q=${encodeURIComponent(query.trim())}&num=5`
+
+    const searchUrl = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${cx}&q=${encodeURIComponent(query.trim())}&num=10`
     const response = await fetch(searchUrl)
-    
+
     if (!response.ok) {
       return 'Web search temporarily unavailable.'
     }
-    
+
     const data = await response.json()
-    
+
     if (data.items && data.items.length > 0) {
-      const results = data.items.map((item: any) => `**${item.title}**\n${item.snippet}\nSource: ${item.link}`)
+      const results = []
+
+      for (const item of data.items) {
+        let resultText = `**${item.title}**\n${item.snippet}\nSource: ${item.link}`
+
+        // Fetch full content if enabled
+        if (fetchFullContent) {
+          const fullContent = await fetchPageContent(item.link)
+          if (fullContent) {
+            resultText += `\n\nFull Content Preview:\n${fullContent}`
+          }
+        }
+
+        results.push(resultText)
+      }
+
       return results.join('\n\n---\n\n')
     }
-    
+
     return 'No search results found.'
-    
+
   } catch (error) {
     console.error('Search error:', error)
     return 'Web search temporarily unavailable.'
@@ -96,16 +144,16 @@ async function searchWithGoogle(query: string): Promise<string> {
 // Perform web research if needed
 async function performWebResearch(topics: string[]): Promise<string> {
   if (topics.length === 0) return ''
-  
+
   const searchResults = []
-  
-  for (const topic of topics.slice(0, 3)) { // Limit to 3 searches to manage API costs
+
+  for (const topic of topics.slice(0, 5)) { // Increased to 5 searches for more comprehensive results
     const result = await searchWithGoogle(topic)
     if (result && !result.includes('temporarily unavailable') && !result.includes('No search results')) {
       searchResults.push(`**Research results for "${topic}":**\n\n${result}`)
     }
   }
-  
+
   return searchResults.length > 0 ? searchResults.join('\n\n=== === ===\n\n') : ''
 }
 
@@ -160,7 +208,7 @@ function generateContextualSystemPrompt(userPrompt: string, dataToAnalyze: any, 
 // ADDED: Build contextual prompt with intelligent context management
 function buildContextualPrompt(userPrompt: string, dataToAnalyze: any, webResearchData: string): string {
   let finalPrompt = userPrompt
-  const maxTokens = 6000 // Leave room for system prompt and response
+  const maxTokens = 20000 // Increased context window - leave room for system prompt and response
   
   // Start with base prompt tokens
   let currentTokens = estimateTokens(finalPrompt)
@@ -177,12 +225,12 @@ function buildContextualPrompt(userPrompt: string, dataToAnalyze: any, webResear
     })
     
     let dataSection = "\n\nAvailable data to analyze:\n"
-    
+
     for (const [key, value] of dataEntries) {
-      const valueStr = safeStringify(value, 2000) // Smaller chunks
+      const valueStr = safeStringify(value, 10000) // Increased chunk size for more data
       const sectionTokens = estimateTokens(`${key}: ${valueStr}\n`)
-      
-      if (currentTokens + sectionTokens < maxTokens - 1000) { // Reserve space for web data
+
+      if (currentTokens + sectionTokens < maxTokens - 2000) { // Reserve more space for web data
         dataSection += `${key}: ${valueStr}\n`
         currentTokens += sectionTokens
       } else {

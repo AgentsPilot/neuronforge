@@ -2,6 +2,23 @@
 
 import React, { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import {
+  MessageSquare,
+  Sparkles,
+  Link as LinkIcon,
+  BarChart3,
+  Lock,
+  Zap,
+  Paintbrush,
+  Brain,
+  Users,
+  Code,
+  TrendingUp,
+  FileCheck,
+  Grid3x3,
+  Calendar
+} from 'lucide-react'
+import { SiSlack, SiGmail, SiNotion, SiGoogledrive, SiGooglecalendar, SiHubspot, SiSalesforce, SiZoom, SiZapier, SiAmazon, SiStripe } from 'react-icons/si'
 
 interface Feature {
   id: string
@@ -12,84 +29,6 @@ interface Feature {
   benefits: string[]
   technical: boolean
 }
-
-// SVG Icon Components
-const MessageIcon = () => (
-  <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-    <path d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" className="fill-blue-400"/>
-  </svg>
-)
-
-const WorkflowIcon = () => (
-  <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-    <path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" className="fill-purple-400"/>
-    <path d="M18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" className="fill-purple-300"/>
-  </svg>
-)
-
-const IntegrationIcon = () => (
-  <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-    <path d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-green-400"/>
-  </svg>
-)
-
-const MonitorIcon = () => (
-  <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-    <path d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" className="fill-cyan-400"/>
-  </svg>
-)
-
-const SecurityIcon = () => (
-  <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-    <path d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" className="fill-red-400"/>
-  </svg>
-)
-
-const ScalingIcon = () => (
-  <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-    <path d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" className="fill-yellow-400"/>
-  </svg>
-)
-
-const VisualIcon = () => (
-  <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-    <path d="M9.53 16.122a3 3 0 00-5.78 1.128 2.25 2.25 0 01-2.4 2.245 4.5 4.5 0 008.4-2.245c0-.399-.078-.78-.22-1.128zm0 0a15.998 15.998 0 003.388-1.62m-5.043-.025a15.994 15.994 0 011.622-3.395m3.42 3.42a15.995 15.995 0 004.764-4.648l3.876-5.814a1.151 1.151 0 00-1.597-1.597L14.146 6.32a15.996 15.996 0 00-4.649 4.763m3.42 3.42a6.776 6.776 0 00-3.42-3.42" className="fill-pink-400"/>
-  </svg>
-)
-
-const BrainIcon = () => (
-  <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-    <path d="M12 3C8.5 3 6 5.5 6 8.5c0 1.5-.7 2.8-1.8 3.5C3.5 12.5 3 13.7 3 15c0 2.8 2.2 5 5 5h8c2.8 0 5-2.2 5-5 0-1.3-.5-2.5-1.2-3-.5-.3-1.1-.7-1.4-1.2-.6-.9-1.4-1.8-1.4-2.8 0-3-2.5-5.5-6-5.5z" className="fill-purple-500"/>
-    <circle cx="9" cy="12" r="1.5" className="fill-white"/>
-    <circle cx="15" cy="12" r="1.5" className="fill-white"/>
-    <path d="M10 16h4" stroke="white" strokeWidth="2" strokeLinecap="round"/>
-  </svg>
-)
-
-const TeamIcon = () => (
-  <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-    <path d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" className="fill-green-400"/>
-  </svg>
-)
-
-const APIIcon = () => (
-  <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-    <path d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400"/>
-  </svg>
-)
-
-const AnalyticsIcon = () => (
-  <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-    <path d="M3 3v18h18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-green-400"/>
-    <path d="M18 17l-5-5-3 3-4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-green-400"/>
-  </svg>
-)
-
-const ComplianceIcon = () => (
-  <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-    <path d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25zM6.75 12h.008v.008H6.75V12zm0 3h.008v.008H6.75V15zm0 3h.008v.008H6.75V18z" className="fill-orange-400"/>
-  </svg>
-)
 
 export default function FeaturesPage() {
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 })
@@ -112,7 +51,7 @@ export default function FeaturesPage() {
       id: 'natural-language',
       title: 'Natural Language Processing',
       description: 'Describe your automation needs in plain English. Our advanced NLP understands context, intent, and business requirements.',
-      icon: <MessageIcon />,
+      icon: <MessageSquare className="w-8 h-8 text-blue-400" />,
       category: 'AI Core',
       benefits: [
         'No coding required - use everyday language',
@@ -126,7 +65,7 @@ export default function FeaturesPage() {
       id: 'intelligent-workflows',
       title: 'Intelligent Workflow Generation',
       description: 'AI automatically designs and optimizes workflows based on your descriptions, learning from patterns and best practices.',
-      icon: <WorkflowIcon />,
+      icon: <Sparkles className="w-8 h-8 text-purple-400" />,
       category: 'AI Core',
       benefits: [
         'Automatic workflow optimization',
@@ -140,7 +79,7 @@ export default function FeaturesPage() {
       id: 'enterprise-integrations',
       title: 'Enterprise Integrations',
       description: 'Connect to 500+ business applications including CRM, ERP, communication tools, and databases with pre-built connectors.',
-      icon: <IntegrationIcon />,
+      icon: <LinkIcon className="w-8 h-8 text-green-400" />,
       category: 'Integrations',
       benefits: [
         'Pre-built connectors for popular platforms',
@@ -154,7 +93,7 @@ export default function FeaturesPage() {
       id: 'real-time-monitoring',
       title: 'Real-time Monitoring',
       description: 'Track agent performance, execution metrics, and system health with comprehensive dashboards and alerting.',
-      icon: <MonitorIcon />,
+      icon: <BarChart3 className="w-8 h-8 text-cyan-400" />,
       category: 'Operations',
       benefits: [
         'Live performance metrics',
@@ -168,7 +107,7 @@ export default function FeaturesPage() {
       id: 'enterprise-security',
       title: 'Enterprise Security',
       description: 'Bank-grade security with end-to-end encryption, SOC 2 compliance, and granular access controls.',
-      icon: <SecurityIcon />,
+      icon: <Lock className="w-8 h-8 text-red-400" />,
       category: 'Security',
       benefits: [
         'End-to-end encryption',
@@ -182,7 +121,7 @@ export default function FeaturesPage() {
       id: 'scalable-architecture',
       title: 'Auto-scaling Infrastructure',
       description: 'Cloud-native architecture that automatically scales to handle millions of operations with 99.9% uptime guarantee.',
-      icon: <ScalingIcon />,
+      icon: <Zap className="w-8 h-8 text-yellow-400" />,
       category: 'Infrastructure',
       benefits: [
         'Automatic scaling based on demand',
@@ -196,7 +135,7 @@ export default function FeaturesPage() {
       id: 'visual-builder',
       title: 'Visual Workflow Builder',
       description: 'Drag-and-drop interface for complex workflows with real-time preview and testing capabilities.',
-      icon: <VisualIcon />,
+      icon: <Paintbrush className="w-8 h-8 text-pink-400" />,
       category: 'User Experience',
       benefits: [
         'Intuitive drag-and-drop interface',
@@ -210,7 +149,7 @@ export default function FeaturesPage() {
       id: 'intelligent-routing',
       title: 'Smart Decision Routing',
       description: 'AI-powered decision trees that route tasks based on content, priority, sentiment, and business rules.',
-      icon: <BrainIcon />,
+      icon: <Brain className="w-8 h-8 text-purple-500" />,
       category: 'AI Core',
       benefits: [
         'Intelligent content analysis',
@@ -224,7 +163,7 @@ export default function FeaturesPage() {
       id: 'collaboration-tools',
       title: 'Team Collaboration',
       description: 'Built-in collaboration features with shared workspaces, role management, and approval workflows.',
-      icon: <TeamIcon />,
+      icon: <Users className="w-8 h-8 text-green-400" />,
       category: 'User Experience',
       benefits: [
         'Shared team workspaces',
@@ -238,7 +177,7 @@ export default function FeaturesPage() {
       id: 'api-platform',
       title: 'Developer API Platform',
       description: 'Comprehensive REST APIs with SDKs, webhooks, and extensive documentation for custom integrations.',
-      icon: <APIIcon />,
+      icon: <Code className="w-8 h-8 text-blue-400" />,
       category: 'Integrations',
       benefits: [
         'RESTful API with full documentation',
@@ -252,7 +191,7 @@ export default function FeaturesPage() {
       id: 'analytics-insights',
       title: 'Advanced Analytics',
       description: 'Deep insights into automation performance, cost savings, and efficiency gains with predictive analytics.',
-      icon: <AnalyticsIcon />,
+      icon: <TrendingUp className="w-8 h-8 text-green-400" />,
       category: 'Operations',
       benefits: [
         'ROI and cost savings tracking',
@@ -266,7 +205,7 @@ export default function FeaturesPage() {
       id: 'compliance-framework',
       title: 'Compliance Framework',
       description: 'Built-in compliance tools for GDPR, HIPAA, SOX, and other regulatory requirements with automated reporting.',
-      icon: <ComplianceIcon />,
+      icon: <FileCheck className="w-8 h-8 text-orange-400" />,
       category: 'Security',
       benefits: [
         'GDPR, HIPAA, SOX compliance tools',
@@ -275,6 +214,20 @@ export default function FeaturesPage() {
         'Audit trail generation'
       ],
       technical: true
+    },
+    {
+      id: 'scheduling-automation',
+      title: 'Smart Scheduling',
+      description: 'Advanced scheduling capabilities with timezone support, recurring tasks, and intelligent time optimization.',
+      icon: <Calendar className="w-8 h-8 text-teal-400" />,
+      category: 'Operations',
+      benefits: [
+        'Flexible scheduling with cron support',
+        'Automatic timezone conversion',
+        'Recurring workflows and tasks',
+        'Peak time optimization'
+      ],
+      technical: false
     }
   ]
 
@@ -284,7 +237,21 @@ export default function FeaturesPage() {
     activeCategory === 'all' || feature.category === activeCategory
   )
 
-  const coreFeatures = features.filter(f => f.category === 'AI Core')
+  const coreFeatures = [
+    ...features.filter(f => f.category === 'AI Core'),
+    {
+      id: 'flexible-scheduling',
+      title: 'Flexible Execution',
+      description: 'Agents can be triggered on demand for immediate execution or scheduled to run automatically at specified times.',
+      icon: <Calendar className="w-8 h-8 text-teal-400" />,
+      category: 'AI Core',
+      benefits: [
+        'On-demand execution for instant results',
+        'Schedule agents to run at specific times'
+      ],
+      technical: false
+    }
+  ]
   const integrationFeatures = features.filter(f => f.category === 'Integrations')
 
   return (
@@ -407,7 +374,7 @@ export default function FeaturesPage() {
         </section>
 
         {/* Core AI Features Highlight */}
-        <section className="py-20 relative">
+        <section className="py-8 relative">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
@@ -435,13 +402,13 @@ export default function FeaturesPage() {
                   className="relative group"
                 >
                   <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-2xl opacity-50 group-hover:opacity-75 blur-lg transition duration-500" />
-                  <div className="relative bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-xl rounded-2xl p-8 border border-white/10 hover:scale-105 transition-all duration-300 shadow-lg hover:shadow-purple-500/25">
-                    <div className="flex items-start space-x-4">
+                  <div className="relative bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-xl rounded-2xl p-8 border border-white/10 hover:scale-105 transition-all duration-300 shadow-lg hover:shadow-purple-500/25 h-full flex flex-col">
+                    <div className="flex items-start space-x-4 flex-1">
                       <div className="flex-shrink-0">{feature.icon}</div>
-                      <div className="flex-1">
+                      <div className="flex-1 flex flex-col">
                         <h3 className="text-2xl font-bold text-white mb-3">{feature.title}</h3>
-                        <p className="text-gray-200 mb-6 leading-relaxed">{feature.description}</p>
-                        
+                        <p className="text-gray-200 mb-6 leading-relaxed flex-grow">{feature.description}</p>
+
                         <div className="space-y-2">
                           {feature.benefits.slice(0, 2).map((benefit, idx) => (
                             <div key={idx} className="flex items-center text-sm">
@@ -893,9 +860,9 @@ export default function FeaturesPage() {
                       : 'bg-gradient-to-r from-purple-500/50 to-blue-500/50 opacity-0 group-hover:opacity-50'
                   }`} />
                   
-                  <div className={`relative bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-xl rounded-xl p-6 border transition-all duration-300 shadow-lg ${
-                    selectedFeature === feature.id 
-                      ? 'border-blue-400/50 shadow-blue-500/25 scale-105' 
+                  <div className={`relative bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-xl rounded-xl p-6 border transition-all duration-300 shadow-lg h-full flex flex-col ${
+                    selectedFeature === feature.id
+                      ? 'border-blue-400/50 shadow-blue-500/25 scale-105'
                       : 'border-white/10 hover:border-purple-500/30 hover:scale-105 hover:shadow-purple-500/25'
                   }`}>
                     <div className="flex items-start justify-between mb-4">
@@ -915,7 +882,7 @@ export default function FeaturesPage() {
                       )}
                     </div>
 
-                    <p className="text-gray-200 mb-4 text-sm leading-relaxed">
+                    <p className="text-gray-200 mb-4 text-sm leading-relaxed flex-grow">
                       {feature.description}
                     </p>
 
@@ -975,114 +942,53 @@ export default function FeaturesPage() {
 
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6 mb-12">
               {[
-                { 
-                  name: 'Slack', 
-                  icon: (
-                    <svg className="w-8 h-8" viewBox="0 0 54 54" fill="none">
-                      <path d="M19.715 34.542a4.5 4.5 0 0 1-4.5 4.5 4.5 4.5 0 0 1-4.5-4.5 4.5 4.5 0 0 1 4.5-4.5h4.5v4.5z" className="fill-green-400"/>
-                      <path d="M21.965 34.542a4.5 4.5 0 0 1 4.5-4.5 4.5 4.5 0 0 1 4.5 4.5v11.25a4.5 4.5 0 0 1-4.5 4.5 4.5 4.5 0 0 1-4.5-4.5V34.542z" className="fill-green-400"/>
-                      <path d="M26.465 19.5a4.5 4.5 0 0 1-4.5-4.5 4.5 4.5 0 0 1 4.5-4.5 4.5 4.5 0 0 1 4.5 4.5v4.5h-4.5z" className="fill-blue-400"/>
-                      <path d="M26.465 21.75a4.5 4.5 0 0 1 4.5 4.5 4.5 4.5 0 0 1-4.5 4.5H15.215a4.5 4.5 0 0 1-4.5-4.5 4.5 4.5 0 0 1 4.5-4.5h11.25z" className="fill-blue-400"/>
-                      <path d="M41.535 26.25a4.5 4.5 0 0 1 4.5 4.5 4.5 4.5 0 0 1-4.5 4.5 4.5 4.5 0 0 1-4.5-4.5v-4.5h4.5z" className="fill-yellow-400"/>
-                      <path d="M39.285 26.25a4.5 4.5 0 0 1-4.5-4.5 4.5 4.5 0 0 1 4.5-4.5 4.5 4.5 0 0 1 4.5 4.5v11.25a4.5 4.5 0 0 1-4.5 4.5 4.5 4.5 0 0 1-4.5-4.5V26.25z" className="fill-yellow-400"/>
-                      <path d="M34.785 41.5a4.5 4.5 0 0 1 4.5 4.5 4.5 4.5 0 0 1-4.5 4.5 4.5 4.5 0 0 1-4.5-4.5v-4.5h4.5z" className="fill-pink-400"/>
-                      <path d="M34.785 39.25a4.5 4.5 0 0 1-4.5-4.5 4.5 4.5 0 0 1 4.5-4.5h11.25a4.5 4.5 0 0 1 4.5 4.5 4.5 4.5 0 0 1-4.5 4.5H34.785z" className="fill-pink-400"/>
-                    </svg>
-                  )
+                {
+                  name: 'Slack',
+                  icon: <SiSlack className="w-8 h-8 text-[#4A154B]" />
                 },
-                { 
-                  name: 'Gmail', 
-                  icon: (
-                    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-                      <path d="M24 5.457v13.909c0 .904-.732 1.636-1.636 1.636h-3.819V11.73L12 16.64l-6.545-4.91v9.273H1.636A1.636 1.636 0 0 1 0 19.366V5.457c0-.904.732-1.636 1.636-1.636a1.636 1.636 0 0 1 .909.273L12 9.375l9.455-5.281a1.636 1.636 0 0 1 .909-.273C23.268 3.821 24 4.553 24 5.457z" className="fill-red-500"/>
-                    </svg>
-                  )
+                {
+                  name: 'Gmail',
+                  icon: <SiGmail className="w-8 h-8 text-red-500" />
                 },
-                { 
-                  name: 'Notion', 
-                  icon: (
-                    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-                      <path d="M4.459 4.208c.746.606 1.026.56 2.428.465l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466l1.823 1.447zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.934zm14.337-.653c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.139c-.093-.514.28-.887.747-.933l3.269-.186z" className="fill-slate-300"/>
-                    </svg>
-                  )
+                {
+                  name: 'Notion',
+                  icon: <SiNotion className="w-8 h-8 text-white" />
                 },
-                { 
-                  name: 'Google Drive', 
-                  icon: (
-                    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-                      <path d="M8.203 5.3L4.09 12.837h8.226L16.428 5.3H8.203z" className="fill-yellow-500"/>
-                      <path d="M15.3 6.428l-4.113 7.538L15.3 21.504l8.226-7.538L15.3 6.428z" className="fill-blue-500"/>
-                      <path d="M8.203 18.201L0 18.201l4.113-7.538 8.204 7.538z" className="fill-green-500"/>
-                    </svg>
-                  )
+                {
+                  name: 'Google Drive',
+                  icon: <SiGoogledrive className="w-8 h-8 text-[#4285F4]" />
                 },
-                { 
-                  name: 'Google Calendar', 
-                  icon: (
-                    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-                      <path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z" className="fill-blue-500"/>
-                    </svg>
-                  )
+                {
+                  name: 'Google Calendar',
+                  icon: <SiGooglecalendar className="w-8 h-8 text-[#4285F4]" />
                 },
-                { 
-                  name: 'HubSpot', 
-                  icon: (
-                    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-                      <path d="M18.164 7.93V5.084a1.71 1.71 0 1 0-1.113 0v2.846L15.133 9.6l-.063.051c-.604.495-1.386.767-2.201.767-.815 0-1.597-.272-2.201-.767L8.746 7.93V5.084a1.71 1.71 0 1 0-1.113 0V7.93L5.715 9.6l-.063.051c-.604.495-1.386.767-2.201.767-.815 0-1.597-.272-2.201-.767L0 8.336v8.58c0 .632.512 1.144 1.144 1.144h2.287c.632 0 1.144-.512 1.144-1.144V11.82l1.92 1.534c.604.495 1.386.767 2.201.767.815 0 1.597-.272 2.201-.767l1.92-1.534v5.096c0 .632.512 1.144 1.144 1.144h2.287c.632 0 1.144-.512 1.144-1.144V8.336l-1.25 1.315c-.604.495-1.386.767-2.201.767-.815 0-1.597-.272-2.201-.767l-1.92-1.534V11.82l1.92 1.534c.604.495 1.386.767 2.201.767.815 0 1.597-.272 2.201-.767z" className="fill-orange-500"/>
-                    </svg>
-                  )
+                {
+                  name: 'HubSpot',
+                  icon: <SiHubspot className="w-8 h-8 text-[#FF7A59]" />
                 },
-                { 
-                  name: 'Salesforce', 
-                  icon: (
-                    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-                      <path d="M12.5 2.5a5.5 5.5 0 015.379 6.543A3.5 3.5 0 0118.5 15.5h-13a2.5 2.5 0 01-.049-4.993A4.5 4.5 0 0112.5 2.5z" stroke="currentColor" strokeWidth="2" fill="none" className="text-blue-500"/>
-                      <circle cx="12" cy="12" r="2" className="fill-blue-500"/>
-                    </svg>
-                  )
+                {
+                  name: 'Salesforce',
+                  icon: <SiSalesforce className="w-8 h-8 text-[#00A1E0]" />
                 },
-                { 
-                  name: 'Microsoft 365', 
-                  icon: (
-                    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-                      <path d="M2 2v20h20V2H2zm18 18H4V4h16v16z" className="fill-blue-600"/>
-                      <path d="M6 6h12v12H6V6zm2 2v8h8V8H8z" className="fill-orange-500"/>
-                    </svg>
-                  )
+                {
+                  name: 'Microsoft 365',
+                  icon: <Grid3x3 className="w-8 h-8 text-[#00A4EF]" />
                 },
-                { 
-                  name: 'Zoom', 
-                  icon: (
-                    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" className="fill-blue-500"/>
-                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="none" className="text-blue-500"/>
-                    </svg>
-                  )
+                {
+                  name: 'Zoom',
+                  icon: <SiZoom className="w-8 h-8 text-[#2D8CFF]" />
                 },
-                { 
-                  name: 'Zapier', 
-                  icon: (
-                    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-                      <path d="M12 2l3.09 6.26L22 9l-5.91 4.74L18.18 22 12 18.77 5.82 22l2.09-8.26L2 9l6.91-.74L12 2z" className="fill-orange-500"/>
-                    </svg>
-                  )
+                {
+                  name: 'Zapier',
+                  icon: <SiZapier className="w-8 h-8 text-[#FF4A00]" />
                 },
-                { 
-                  name: 'AWS', 
-                  icon: (
-                    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-                      <path d="M6.8 9.7c0 .7.1 1.2.3 1.6.2.4.5.6 1 .6.4 0 .8-.2 1.1-.5.3-.3.5-.8.5-1.4 0-.6-.2-1.1-.5-1.4-.3-.3-.7-.5-1.1-.5-.5 0-.8.2-1 .6-.2.4-.3.9-.3 1zm6.3-1.8c-.3-.3-.7-.5-1.1-.5-.5 0-.8.2-1 .6-.2.4-.3.9-.3 1.6 0 .7.1 1.2.3 1.6.2.4.5.6 1 .6.4 0 .8-.2 1.1-.5V7.9z" className="fill-orange-400"/>
-                      <path d="M18.9 17.2c-1.1.8-2.7 1.2-4.1 1.2-1.9 0-3.7-.7-5-2-1.3-1.3-2-3.1-2-5s.7-3.7 2-5c1.3-1.3 3.1-2 5-2 1.4 0 3 .4 4.1 1.2.2.2.2.5 0 .7l-.7.7c-.2.2-.5.2-.7 0-.8-.6-1.8-.9-2.7-.9-1.3 0-2.5.5-3.4 1.4-.9.9-1.4 2.1-1.4 3.4s.5 2.5 1.4 3.4c.9.9 2.1 1.4 3.4 1.4.9 0 1.9-.3 2.7-.9.2-.2.5-.2.7 0l.7.7c.2.2.2.5 0 .7z" className="fill-orange-400"/>
-                    </svg>
-                  )
+                {
+                  name: 'AWS',
+                  icon: <SiAmazon className="w-8 h-8 text-[#FF9900]" />
                 },
-                { 
-                  name: 'Stripe', 
-                  icon: (
-                    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
-                      <path d="M13.976 9.15c-2.172-.806-3.356-1.426-3.356-2.409 0-.831.683-1.305 1.901-1.305 2.227 0 4.515.858 6.09 1.631l.89-5.494C18.252.975 15.697 0 12.165 0 9.667 0 7.589.654 6.104 1.872 4.56 3.147 3.757 4.992 3.757 7.218c0 4.039 2.467 5.76 6.476 7.219 2.585.92 3.445 1.574 3.445 2.583 0 .98-.84 1.545-2.354 1.545-1.875 0-4.965-.921-6.99-2.109l-.9 5.555C5.175 22.99 8.385 24 11.714 24c2.641 0 4.843-.624 6.328-1.813 1.664-1.305 2.525-3.236 2.525-5.732 0-4.128-2.524-5.851-6.591-7.305z" className="fill-purple-500"/>
-                    </svg>
-                  )
+                {
+                  name: 'Stripe',
+                  icon: <SiStripe className="w-8 h-8 text-[#635BFF]" />
                 }
               ].map((integration, index) => (
                 <motion.div 
@@ -1102,17 +1008,14 @@ export default function FeaturesPage() {
               ))}
             </div>
 
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, y: 20 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ duration: 0.8 }}
               className="text-center"
             >
-              <p className="text-gray-200 mb-6">And 500+ more integrations available</p>
-              <button className="bg-gradient-to-r from-cyan-500 to-blue-600 text-white px-8 py-4 rounded-xl font-semibold hover:scale-105 transition-transform shadow-lg hover:shadow-cyan-500/25">
-                View All Integrations
-              </button>
+              <p className="text-gray-200">And 500+ more integrations available</p>
             </motion.div>
           </div>
         </section>
@@ -1135,13 +1038,10 @@ export default function FeaturesPage() {
                 <p className="text-xl text-gray-200 mb-8 max-w-2xl mx-auto">
                   Start with our free trial and discover how AI automation can transform your workflows.
                 </p>
-                
-                <div className="flex flex-col sm:flex-row gap-4 justify-center">
+
+                <div className="flex justify-center">
                   <button className="bg-gradient-to-r from-cyan-500 to-blue-600 text-white px-8 py-4 rounded-xl font-semibold hover:scale-105 transition-transform shadow-lg hover:shadow-cyan-500/25">
                     Start Free Trial
-                  </button>
-                  <button className="border-2 border-purple-400/50 text-purple-200 hover:bg-purple-800/30 px-8 py-4 rounded-xl font-semibold hover:scale-105 transition-transform backdrop-blur-sm">
-                    Schedule Demo
                   </button>
                 </div>
               </div>

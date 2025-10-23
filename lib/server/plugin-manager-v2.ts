@@ -15,6 +15,7 @@ const corePluginFiles = [
       'slack-plugin-v2.json',
       'whatsapp-plugin-v2.json',
       'hubspot-plugin-v2.json',
+      'chatgpt-research-plugin-v2.json',
       // Add other plugin files here as you create them
     ];
 console.log('Plugin-Manager-v2 Loaded:', {

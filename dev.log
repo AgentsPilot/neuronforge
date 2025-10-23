@@ -16974,3 +16974,1927 @@ Built user plugins object with 4 connected plugins
 [2m[17.20ms][22m  [2m ↳ [22mUpdate PostCSS AST
 
  ✓ Compiled in 352ms (771 modules)
+
+[2m[1176.41ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[   0.76ms][22m  [2m ↳ [22mQuick bail check
+[2m[   0.19ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[  99.03ms][22m  [2m ↳ [22mScan for candidates
+[2m[  27.43ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 980.21ms][22m  [2m ↳ [22mBuild utilities
+[2m[  62.47ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[   3.18ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 4.4s (771 modules)
+
+[2m[472.29ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.23ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 56.80ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 13.86ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[377.71ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 16.92ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[  6.42ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1607ms (771 modules)
+
+[2m[596.98ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.05ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.16ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 55.30ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 29.96ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[303.43ms][22m  [2m ↳ [22mBuild utilities
+[2m[136.04ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[ 70.92ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.5s (771 modules)
+
+[2m[564.95ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.10ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 57.24ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 18.03ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[454.62ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 22.21ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[ 10.14ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.6s (771 modules)
+
+[2m[323.79ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.06ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 34.97ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 10.94ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[211.75ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 41.97ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[ 23.73ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1278ms (771 modules)
+
+[2m[536.94ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.06ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.87ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[213.79ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 34.18ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 87.86ms][22m  [2m ↳ [22mBuild utilities
+[2m[196.39ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 4.8s (771 modules)
+
+[2m[525.80ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.49ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 46.02ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 10.95ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[415.32ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 36.22ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[ 16.25ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2.2s (771 modules)
+
+[2m[648.72ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.67ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.41ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 61.68ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 18.89ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[476.76ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 53.37ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[ 34.66ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.9s (771 modules)
+
+[2m[248.72ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.04ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.08ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 84.43ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 27.33ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 28.91ms][22m  [2m ↳ [22mBuild utilities
+[2m[107.11ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2.1s (771 modules)
+
+[2m[175.67ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.21ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 39.94ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 17.36ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 19.22ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 98.67ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1746ms (771 modules)
+
+[2m[426.88ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.11ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 60.25ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 18.18ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[297.08ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 33.38ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[ 17.32ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2.6s (771 modules)
+
+[2m[911.76ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.05ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.32ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 51.45ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 18.08ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[706.65ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 86.12ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[ 47.65ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2.7s (771 modules)
+
+[2m[617.53ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.50ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.08ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 53.70ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 16.02ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[458.07ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 58.53ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[ 30.22ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2.1s (771 modules)
+
+[2m[654.82ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.27ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.61ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 52.94ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 24.60ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[476.85ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 50.24ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[ 48.55ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 4.2s (771 modules)
+
+[2m[1410.79ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[   0.08ms][22m  [2m ↳ [22mQuick bail check
+[2m[   0.57ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 106.71ms][22m  [2m ↳ [22mScan for candidates
+[2m[  50.53ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[1184.20ms][22m  [2m ↳ [22mBuild utilities
+[2m[  40.13ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[  26.20ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 6.4s (771 modules)
+
+[2m[1076.84ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[   0.05ms][22m  [2m ↳ [22mQuick bail check
+[2m[   0.79ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[  96.57ms][22m  [2m ↳ [22mScan for candidates
+[2m[  41.09ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 872.23ms][22m  [2m ↳ [22mBuild utilities
+[2m[  49.10ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[  15.42ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 4s (771 modules)
+
+[2m[760.53ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.14ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 67.30ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 43.22ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[523.14ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 93.67ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[ 32.65ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 3.9s (771 modules)
+
+[2m[950.65ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.13ms][22m  [2m ↳ [22mQuick bail check
+[2m[  5.61ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[703.53ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 67.64ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 64.77ms][22m  [2m ↳ [22mBuild utilities
+[2m[106.42ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 4.4s (771 modules)
+
+[2m[640.88ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.23ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[138.83ms][22m  [2m ↳ [22mScan for candidates
+[2m[124.81ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 84.62ms][22m  [2m ↳ [22mBuild utilities
+[2m[291.37ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 4.1s (771 modules)
+
+[2m[208.81ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.06ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.54ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 78.14ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 90.70ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[  7.87ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 28.37ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 3.8s (771 modules)
+
+[2m[1127.28ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[   0.05ms][22m  [2m ↳ [22mQuick bail check
+[2m[   0.27ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[  70.37ms][22m  [2m ↳ [22mScan for candidates
+[2m[  26.27ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 465.06ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 501.70ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[  62.52ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 5.4s (771 modules)
+
+[2m[1083.02ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[   0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[   0.09ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[  77.27ms][22m  [2m ↳ [22mScan for candidates
+[2m[  39.33ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 668.97ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 276.03ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[  20.62ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 4.5s (771 modules)
+
+[2m[8621.56ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[   0.65ms][22m  [2m ↳ [22mQuick bail check
+[2m[   3.00ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 461.38ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 108.47ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[5438.91ms][22m  [2m ↳ [22mBuild utilities
+[2m[1601.93ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[ 982.82ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 33.1s (771 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename '/Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development/0.pack.gz_' -> '/Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development/0.pack.gz'
+
+[2m[332.80ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.04ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.34ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[155.42ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 34.19ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 29.38ms][22m  [2m ↳ [22mBuild utilities
+[2m[110.99ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 4s (771 modules)
+
+[2m[755.23ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.06ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.63ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[153.65ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 50.18ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[461.67ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 44.84ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[ 43.38ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 3.1s (771 modules)
+
+[2m[2298.19ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[   0.05ms][22m  [2m ↳ [22mQuick bail check
+[2m[   0.35ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 123.73ms][22m  [2m ↳ [22mScan for candidates
+[2m[  56.04ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[1925.64ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 110.86ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[  79.77ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 5.3s (771 modules)
+
+[2m[826.13ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.29ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 49.86ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 24.40ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[632.58ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 74.77ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[ 43.60ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 4.4s (771 modules)
+
+[2m[734.39ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.37ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.26ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[115.27ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 31.06ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[358.58ms][22m  [2m ↳ [22mBuild utilities
+[2m[177.94ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[ 50.68ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 4s (771 modules)
+
+[2m[1158.31ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[   0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[   0.44ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[  73.73ms][22m  [2m ↳ [22mScan for candidates
+[2m[  38.87ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 579.35ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 146.24ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[ 318.79ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 7.5s (771 modules)
+
+[2m[1242.16ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[   0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[   0.08ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 984.88ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 194.72ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[   9.48ms][22m  [2m ↳ [22mBuild utilities
+[2m[  47.76ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 4.8s (771 modules)
+
+[2m[149.21ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.51ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 55.39ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 28.80ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 20.70ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 43.42ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 3.1s (771 modules)
+
+[2m[255.62ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.04ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.41ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 72.91ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 29.83ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 19.72ms][22m  [2m ↳ [22mBuild utilities
+[2m[131.48ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 7.8s (771 modules)
+
+[2m[289.10ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.06ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.46ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[126.31ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 49.33ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 27.93ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 82.74ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 4.9s (771 modules)
+
+[2m[501.20ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.20ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.11ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[159.45ms][22m  [2m ↳ [22mScan for candidates
+[2m[132.10ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 69.43ms][22m  [2m ↳ [22mBuild utilities
+[2m[137.15ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 6.1s (771 modules)
+
+[2m[138.84ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.10ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 59.02ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 25.87ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 17.12ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 36.35ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2.5s (771 modules)
+
+[2m[151.64ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.09ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 38.11ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 40.92ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 22.19ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 50.08ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.7s (771 modules)
+
+[2m[384.22ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.19ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[219.94ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 39.40ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 30.64ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 93.31ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 8s (771 modules)
+
+[2m[109.26ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.16ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 51.19ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 27.90ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[  9.40ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 20.22ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2.2s (771 modules)
+
+[2m[167.54ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.08ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 57.21ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 43.08ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[  8.79ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 58.22ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.6s (771 modules)
+
+[2m[357.12ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.35ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.64ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[130.28ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 28.52ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 57.31ms][22m  [2m ↳ [22mBuild utilities
+[2m[138.76ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2.7s (771 modules)
+
+[2m[191.39ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.07ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 47.73ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 21.65ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 12.37ms][22m  [2m ↳ [22mBuild utilities
+[2m[109.15ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1329ms (771 modules)
+
+[2m[117.61ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.11ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 45.41ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 28.29ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 16.58ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 26.60ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1002ms (771 modules)
+
+[2m[514.42ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.46ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[113.66ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 47.42ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 78.34ms][22m  [2m ↳ [22mBuild utilities
+[2m[272.67ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 7.1s (771 modules)
+
+[2m[418.25ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.21ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.60ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 91.68ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 36.05ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[100.40ms][22m  [2m ↳ [22mBuild utilities
+[2m[187.10ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 4.1s (771 modules)
+
+[2m[225.50ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  6.10ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.38ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 94.78ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 26.83ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 23.56ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 73.56ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 4.2s (771 modules)
+
+[2m[357.72ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.19ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.42ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 86.42ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 30.83ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 68.47ms][22m  [2m ↳ [22mBuild utilities
+[2m[170.72ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 3.9s (771 modules)
+
+[2m[788.47ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.18ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[228.29ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 57.61ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 64.83ms][22m  [2m ↳ [22mBuild utilities
+[2m[431.08ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 4.6s (771 modules)
+
+[2m[647.97ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.26ms][22m  [2m ↳ [22mQuick bail check
+[2m[  5.54ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[318.55ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 49.16ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 58.81ms][22m  [2m ↳ [22mBuild utilities
+[2m[214.08ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 6.6s (771 modules)
+
+[2m[442.72ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.37ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.90ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[177.89ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 75.58ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 86.80ms][22m  [2m ↳ [22mBuild utilities
+[2m[100.47ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 3.6s (771 modules)
+
+[2m[342.24ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.04ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.87ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 69.67ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 81.11ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 58.44ms][22m  [2m ↳ [22mBuild utilities
+[2m[131.09ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 4.9s (771 modules)
+
+[2m[341.21ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.23ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.40ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 98.14ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 34.84ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[159.03ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 47.89ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.2s (771 modules)
+
+[2m[164.77ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.07ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 51.53ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 45.78ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 12.59ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 53.97ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 3.5s (771 modules)
+
+[2m[266.79ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.31ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.51ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[107.30ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 43.80ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 34.45ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 78.23ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.4s (771 modules)
+
+[2m[163.12ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.20ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 61.40ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 37.82ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[  7.73ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 55.80ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.1s (771 modules)
+
+[2m[147.35ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.25ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.45ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 39.70ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 21.23ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 26.74ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 57.88ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 3.2s (771 modules)
+
+[2m[294.39ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.82ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.73ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[115.59ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 28.31ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 32.54ms][22m  [2m ↳ [22mBuild utilities
+[2m[112.46ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 4.3s (771 modules)
+
+[2m[112.01ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.26ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.16ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 41.23ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 23.57ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[  7.27ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 39.35ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1248ms (771 modules)
+
+[2m[211.52ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.32ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 83.04ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 15.13ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[  6.26ms][22m  [2m ↳ [22mBuild utilities
+[2m[106.53ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1826ms (771 modules)
+
+[2m[479.57ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.15ms][22m  [2m ↳ [22mQuick bail check
+[2m[  1.86ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[217.30ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 28.36ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 31.07ms][22m  [2m ↳ [22mBuild utilities
+[2m[195.52ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2s (771 modules)
+
+[2m[296.89ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.39ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 88.11ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 21.00ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 59.72ms][22m  [2m ↳ [22mBuild utilities
+[2m[125.95ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1796ms (771 modules)
+
+[2m[262.89ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.29ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[103.49ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 34.94ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 35.66ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 87.87ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1746ms (771 modules)
+
+[2m[166.75ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.06ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.19ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 68.69ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 31.84ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 11.05ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 54.39ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2.2s (771 modules)
+
+[2m[257.95ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.10ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[116.43ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 39.82ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 20.91ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 80.01ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 6.9s (771 modules)
+
+[2m[184.81ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.07ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.16ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 50.42ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 39.84ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 27.46ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 66.55ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2.9s (771 modules)
+
+[2m[274.93ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.30ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.36ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[147.30ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 30.79ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 20.36ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 75.41ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 3.4s (771 modules)
+
+[2m[300.63ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.70ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 87.44ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 44.03ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 44.21ms][22m  [2m ↳ [22mBuild utilities
+[2m[123.43ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2.9s (771 modules)
+
+[2m[201.70ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.59ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.82ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 84.10ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 26.82ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 19.81ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 67.96ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.7s (771 modules)
+
+[2m[167.47ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.19ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 87.82ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 24.39ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 15.73ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 38.69ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1932ms (771 modules)
+
+[2m[500.41ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.10ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.16ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 74.46ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 53.05ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 54.49ms][22m  [2m ↳ [22mBuild utilities
+[2m[317.87ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 5.2s (771 modules)
+
+[2m[317.00ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.07ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.59ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[143.12ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 52.05ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 15.87ms][22m  [2m ↳ [22mBuild utilities
+[2m[104.57ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 3.2s (771 modules)
+
+[2m[578.12ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.05ms][22m  [2m ↳ [22mQuick bail check
+[2m[  2.76ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[258.41ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 36.66ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[103.45ms][22m  [2m ↳ [22mBuild utilities
+[2m[172.68ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 4s (771 modules)
+
+[2m[442.69ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.44ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[129.05ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 50.75ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 68.30ms][22m  [2m ↳ [22mBuild utilities
+[2m[192.27ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 5.1s (771 modules)
+
+[2m[188.08ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.04ms][22m  [2m ↳ [22mQuick bail check
+[2m[  1.41ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 55.23ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 37.03ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 19.12ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 74.53ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 3.4s (771 modules)
+
+[2m[121.33ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.06ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.65ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 51.58ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 20.90ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[  8.13ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 39.60ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 3.1s (771 modules)
+
+[2m[262.90ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.31ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.19ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[139.18ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 43.22ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 24.68ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 53.51ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1804ms (771 modules)
+
+[2m[281.41ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.09ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 99.70ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 46.42ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 40.49ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 94.08ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 3.4s (771 modules)
+
+[2m[340.24ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.07ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.20ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[148.48ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 27.86ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 38.99ms][22m  [2m ↳ [22mBuild utilities
+[2m[123.46ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.5s (771 modules)
+
+[2m[318.28ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.63ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 79.45ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 29.18ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 68.76ms][22m  [2m ↳ [22mBuild utilities
+[2m[139.18ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 7.6s (771 modules)
+
+[2m[453.14ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.09ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.89ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[207.53ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 39.27ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 46.48ms][22m  [2m ↳ [22mBuild utilities
+[2m[155.87ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 5.1s (771 modules)
+
+[2m[523.07ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.06ms][22m  [2m ↳ [22mQuick bail check
+[2m[  1.49ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 59.88ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 26.90ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[285.69ms][22m  [2m ↳ [22mBuild utilities
+[2m[147.34ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 4s (771 modules)
+
+[2m[401.40ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.11ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[103.12ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 55.95ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[195.30ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 46.61ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 4.3s (771 modules)
+
+[2m[1041.29ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[   0.12ms][22m  [2m ↳ [22mQuick bail check
+[2m[   0.76ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 139.39ms][22m  [2m ↳ [22mScan for candidates
+[2m[  88.69ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 594.94ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 156.90ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[  59.10ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 5.5s (771 modules)
+
+[2m[747.37ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.33ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[270.08ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 79.66ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 83.55ms][22m  [2m ↳ [22mBuild utilities
+[2m[312.17ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 6.1s (771 modules)
+
+[2m[1140.54ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[   0.39ms][22m  [2m ↳ [22mQuick bail check
+[2m[   0.45ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 100.01ms][22m  [2m ↳ [22mScan for candidates
+[2m[  25.60ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 957.95ms][22m  [2m ↳ [22mBuild utilities
+[2m[  38.98ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[  16.15ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 8.6s (771 modules)
+
+[2m[347.87ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.04ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.22ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[190.37ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 32.37ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 29.42ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 91.79ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 8.4s (771 modules)
+
+[2m[1128.09ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[   0.08ms][22m  [2m ↳ [22mQuick bail check
+[2m[   0.37ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 410.13ms][22m  [2m ↳ [22mScan for candidates
+[2m[  62.85ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[  98.85ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 527.32ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 16.3s (771 modules)
+
+[2m[328.96ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.41ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 90.12ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 40.97ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 31.53ms][22m  [2m ↳ [22mBuild utilities
+[2m[164.93ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 4.6s (771 modules)
+
+[2m[316.59ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.86ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.29ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 67.25ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 49.28ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 91.61ms][22m  [2m ↳ [22mBuild utilities
+[2m[106.33ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 3.2s (771 modules)
+
+[2m[720.47ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.22ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 85.07ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 65.05ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[440.93ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 81.72ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[ 47.17ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 9.8s (771 modules)
+
+[2m[324.81ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.16ms][22m  [2m ↳ [22mQuick bail check
+[2m[  1.02ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 94.26ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 20.90ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 25.98ms][22m  [2m ↳ [22mBuild utilities
+[2m[179.65ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 4.3s (771 modules)
+
+[2m[218.64ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.06ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.14ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 90.02ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 25.07ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 23.29ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 79.27ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.4s (771 modules)
+
+[2m[309.56ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.22ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[182.30ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 61.24ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 10.22ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 54.97ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1516ms (771 modules)
+
+[2m[205.40ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.12ms][22m  [2m ↳ [22mQuick bail check
+[2m[  1.79ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 33.36ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 31.02ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 20.28ms][22m  [2m ↳ [22mBuild utilities
+[2m[118.14ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 3s (771 modules)
+
+[2m[430.90ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.10ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[190.60ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 25.87ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 40.22ms][22m  [2m ↳ [22mBuild utilities
+[2m[172.38ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 4.9s (771 modules)
+
+[2m[1234.89ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[   2.43ms][22m  [2m ↳ [22mQuick bail check
+[2m[   2.26ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 152.80ms][22m  [2m ↳ [22mScan for candidates
+[2m[  39.89ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 998.70ms][22m  [2m ↳ [22mBuild utilities
+[2m[  27.56ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[   3.08ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 5s (771 modules)
+
+[2m[478.48ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.13ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 65.69ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 29.52ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 24.92ms][22m  [2m ↳ [22mBuild utilities
+[2m[356.71ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 3.8s (771 modules)
+
+[2m[258.60ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.22ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.33ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 89.96ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 21.38ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 31.07ms][22m  [2m ↳ [22mBuild utilities
+[2m[115.19ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 3s (771 modules)
+
+[2m[625.89ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.78ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.40ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[245.30ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 51.80ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 69.36ms][22m  [2m ↳ [22mBuild utilities
+[2m[251.36ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 7.4s (771 modules)
+
+[2m[289.09ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.05ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.35ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 61.49ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 49.61ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 24.70ms][22m  [2m ↳ [22mBuild utilities
+[2m[151.95ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2.9s (771 modules)
+
+[2m[575.72ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.14ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.98ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 96.12ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 88.80ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[327.99ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 60.39ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 5.5s (771 modules)
+
+[2m[198.58ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.51ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 61.67ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 25.73ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 26.14ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 84.29ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 5.2s (771 modules)
+
+[2m[500.54ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.22ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.22ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[181.08ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 42.13ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 43.34ms][22m  [2m ↳ [22mBuild utilities
+[2m[229.70ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 4.6s (771 modules)
+
+[2m[639.77ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.09ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.35ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[211.51ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 35.90ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 82.89ms][22m  [2m ↳ [22mBuild utilities
+[2m[305.20ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 7.8s (771 modules)
+
+[2m[342.39ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.10ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 65.82ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 35.10ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[216.72ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 24.19ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 7.2s (771 modules)
+
+[2m[495.10ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.08ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[145.79ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 38.72ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 88.54ms][22m  [2m ↳ [22mBuild utilities
+[2m[221.74ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 5.2s (771 modules)
+
+[2m[536.52ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  2.00ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[210.79ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 57.53ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 92.45ms][22m  [2m ↳ [22mBuild utilities
+[2m[171.37ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 8.8s (771 modules)
+
+[2m[367.73ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  1.06ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.92ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 75.72ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 65.47ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 91.01ms][22m  [2m ↳ [22mBuild utilities
+[2m[130.44ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 4s (771 modules)
+
+[2m[134.69ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.15ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.48ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 44.71ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 15.19ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 17.39ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 56.34ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 4.6s (771 modules)
+
+[2m[95.15ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[ 0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[ 0.33ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[28.46ms][22m  [2m ↳ [22mScan for candidates
+[2m[17.32ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 9.64ms][22m  [2m ↳ [22mBuild utilities
+[2m[38.64ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2.2s (771 modules)
+
+[2m[131.41ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.08ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.35ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 44.42ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 28.30ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 19.06ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 38.29ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1644ms (771 modules)
+
+[2m[199.68ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.11ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[144.85ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 32.63ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[  4.69ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 17.22ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2s (771 modules)
+
+[2m[103.87ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.35ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 41.83ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 18.01ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[  8.68ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 34.61ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1997ms (771 modules)
+
+[2m[250.69ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.11ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.39ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 93.30ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 23.64ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 29.86ms][22m  [2m ↳ [22mBuild utilities
+[2m[100.33ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 3.2s (771 modules)
+
+[2m[312.13ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.09ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[160.23ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 35.51ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 29.39ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 86.42ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 3.2s (771 modules)
+
+[2m[294.93ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.50ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.31ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 87.74ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 48.70ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 38.86ms][22m  [2m ↳ [22mBuild utilities
+[2m[117.02ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 4.3s (771 modules)
+
+[2m[423.33ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  1.20ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[107.29ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 38.66ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 78.63ms][22m  [2m ↳ [22mBuild utilities
+[2m[193.53ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 8.3s (771 modules)
+
+[2m[303.48ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.13ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.18ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[122.78ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 45.65ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 22.08ms][22m  [2m ↳ [22mBuild utilities
+[2m[111.24ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 3.4s (771 modules)
+
+[2m[224.88ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.74ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[115.38ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 27.42ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[  9.08ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 72.09ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1387ms (771 modules)
+
+[2m[183.88ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.04ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.26ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 50.24ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 15.57ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 17.99ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 99.27ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1517ms (771 modules)
+
+[2m[136.65ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.12ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 50.40ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 21.85ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 10.97ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 53.01ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 880ms (771 modules)
+
+[2m[248.54ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.30ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.74ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[104.09ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 27.32ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 19.40ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 95.04ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1511ms (771 modules)
+
+[2m[133.22ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.06ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 60.06ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 14.17ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 10.05ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 48.64ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1514ms (771 modules)
+
+[2m[70.31ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[ 0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[ 0.13ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[28.57ms][22m  [2m ↳ [22mScan for candidates
+[2m[16.03ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 3.05ms][22m  [2m ↳ [22mBuild utilities
+[2m[22.31ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 591ms (771 modules)
+
+[2m[139.99ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.10ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 64.81ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 19.78ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 18.05ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 36.43ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1554ms (771 modules)
+
+[2m[1261.70ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[   0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[   0.68ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[  76.76ms][22m  [2m ↳ [22mScan for candidates
+[2m[  20.67ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[1097.51ms][22m  [2m ↳ [22mBuild utilities
+[2m[  46.56ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[  17.88ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.7s (771 modules)
+
+[2m[165.12ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  2.39ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.15ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 78.00ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 25.62ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 10.08ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 48.64ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2s (771 modules)
+
+[2m[330.45ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.56ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.11ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[173.63ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 50.81ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 40.09ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 63.46ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.5s (771 modules)
+
+[2m[108.27ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.52ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 37.96ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 16.17ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[  9.44ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 43.10ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1540ms (771 modules)
+
+[2m[85.83ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[ 0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[ 0.17ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[33.04ms][22m  [2m ↳ [22mScan for candidates
+[2m[19.59ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[11.22ms][22m  [2m ↳ [22mBuild utilities
+[2m[21.13ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1110ms (771 modules)
+
+[2m[261.33ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.36ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 68.30ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 68.46ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 18.72ms][22m  [2m ↳ [22mBuild utilities
+[2m[105.01ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1952ms (771 modules)
+
+[2m[202.66ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.08ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 73.15ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 19.08ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 30.00ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 79.96ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1779ms (771 modules)
+
+[2m[200.25ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.08ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 50.19ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 31.35ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 42.30ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 76.17ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 985ms (771 modules)
+
+[2m[168.17ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.20ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 63.50ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 22.65ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 11.75ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 69.83ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1365ms (771 modules)
+
+[2m[162.42ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.04ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.17ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 95.03ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 21.96ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 13.43ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 31.53ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2s (771 modules)
+
+[2m[401.18ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.04ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.53ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 61.96ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 25.88ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[274.05ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 36.74ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 3s (771 modules)
+
+[2m[728.27ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.28ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 65.78ms][22m  [2m ↳ [22mScan for candidates
+[2m[101.03ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[472.52ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 86.62ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.4s (771 modules)
+
+[2m[111.81ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.45ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 38.70ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 19.98ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 16.73ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 35.64ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1776ms (771 modules)
+
+[2m[194.85ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.36ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.45ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 71.16ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 18.28ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 17.09ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 86.10ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1447ms (771 modules)
+
+[2m[204.57ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.18ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 62.23ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 22.83ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 29.82ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 87.52ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.8s (771 modules)
+
+[2m[131.29ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.05ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.86ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 77.78ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 27.23ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[  8.74ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 16.35ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1156ms (771 modules)
+
+[2m[200.29ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.88ms][22m  [2m ↳ [22mQuick bail check
+[2m[  1.32ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 94.40ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 27.18ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 11.61ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 63.49ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 3.9s (771 modules)
+
+[2m[600.53ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.48ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 75.22ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 50.47ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[453.05ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 10.06ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[ 10.56ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 3.5s (771 modules)
+
+[2m[548.77ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.48ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[177.83ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 43.42ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 48.66ms][22m  [2m ↳ [22mBuild utilities
+[2m[277.23ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 4.3s (771 modules)
+
+[2m[366.33ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.22ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.47ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[114.35ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 20.81ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[179.27ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 50.44ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1903ms (771 modules)
+
+[2m[194.80ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.09ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 99.51ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 17.35ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 66.55ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 11.07ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1329ms (771 modules)
+
+[2m[72.26ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[ 0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[ 0.08ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[28.45ms][22m  [2m ↳ [22mScan for candidates
+[2m[22.10ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 7.29ms][22m  [2m ↳ [22mBuild utilities
+[2m[14.18ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 640ms (771 modules)
+
+[2m[216.79ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.20ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.09ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 84.13ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 11.88ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 27.82ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 92.23ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.3s (771 modules)
+
+[2m[154.70ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.60ms][22m  [2m ↳ [22mQuick bail check
+[2m[  1.48ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 62.41ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 20.58ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 19.46ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 50.01ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.3s (771 modules)
+
+[2m[338.21ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.12ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.52ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[106.56ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 46.28ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 50.28ms][22m  [2m ↳ [22mBuild utilities
+[2m[131.26ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.7s (771 modules)
+
+[2m[785.50ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.08ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.64ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[162.78ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 31.10ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[437.16ms][22m  [2m ↳ [22mBuild utilities
+[2m[151.53ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 3.2s (771 modules)
+
+[2m[255.17ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.16ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.10ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 74.51ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 21.47ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[114.24ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 44.12ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2000ms (1553 modules)
+
+[2m[157.93ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.48ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 40.03ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 37.39ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 15.29ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 64.30ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.1s (771 modules)
+
+[2m[273.73ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.08ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 44.20ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 16.56ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[168.71ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 43.75ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.9s (771 modules)
+
+[2m[139.05ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.27ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.07ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 31.38ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 14.57ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 67.94ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 24.64ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1667ms (771 modules)
+
+[2m[250.23ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.77ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[123.71ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 19.45ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 30.21ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 75.08ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.6s (771 modules)
+
+[2m[332.63ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.09ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 99.84ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 41.81ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[170.04ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 20.03ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1835ms (771 modules)
+
+[2m[157.99ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.24ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 52.87ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 28.16ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 55.27ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 21.04ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 4.9s (1553 modules)
+
+[2m[261.39ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.08ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 63.18ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 20.05ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[137.77ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 39.44ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1736ms (771 modules)
+
+[2m[110.76ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.14ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.24ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 43.22ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 23.09ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 12.88ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 30.59ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1274ms (771 modules)
+
+[2m[261.50ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.07ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 65.97ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 14.22ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[142.52ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 38.55ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1358ms (771 modules)
+
+[2m[201.46ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.07ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 55.75ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 18.20ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[107.36ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 19.76ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 3s (771 modules)
+
+[2m[186.76ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.27ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 49.51ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 18.03ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[108.34ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 10.33ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1139ms (771 modules)
+
+[2m[190.62ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.09ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.08ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 59.16ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 24.47ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 11.16ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 93.00ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1551ms (771 modules)
+
+[2m[108.90ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.14ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 54.60ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 15.56ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[  9.85ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 28.37ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 992ms (771 modules)
+
+[2m[593.57ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.23ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 37.74ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 40.07ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[457.93ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 56.58ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1819ms (771 modules)
+
+[2m[403.45ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.11ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 73.94ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 40.07ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[247.63ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 38.79ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2.5s (771 modules)
+
+[2m[213.73ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.11ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.22ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 37.97ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 26.16ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 29.46ms][22m  [2m ↳ [22mBuild utilities
+[2m[119.41ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1341ms (771 modules)
+
+[2m[83.52ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[ 0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[ 0.39ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[32.89ms][22m  [2m ↳ [22mScan for candidates
+[2m[14.72ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 9.57ms][22m  [2m ↳ [22mBuild utilities
+[2m[25.41ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.7s (771 modules)
+
+[2m[276.73ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  1.23ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[104.79ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 28.46ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 42.72ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 98.68ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2.5s (771 modules)
+
+[2m[245.32ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.69ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 50.75ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 34.42ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 36.62ms][22m  [2m ↳ [22mBuild utilities
+[2m[120.10ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.5s (771 modules)
+
+[2m[227.97ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.53ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.55ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 54.03ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 17.88ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 25.80ms][22m  [2m ↳ [22mBuild utilities
+[2m[128.75ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2.2s (771 modules)
+
+[2m[337.28ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.45ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 89.26ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 32.93ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 77.40ms][22m  [2m ↳ [22mBuild utilities
+[2m[134.05ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2.7s (771 modules)
+
+[2m[253.38ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.17ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.16ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 49.76ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 40.51ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[150.84ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 11.30ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.9s (771 modules)
+
+[2m[184.92ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.30ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.76ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 53.74ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 17.96ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 28.18ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 82.97ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 3.4s (771 modules)
+
+[2m[262.24ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.22ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.34ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 60.24ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 16.87ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[164.06ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 19.41ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1473ms (771 modules)
+
+[2m[401.77ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  1.67ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[161.40ms][22m  [2m ↳ [22mScan for candidates
+[2m[103.75ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 41.32ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 85.32ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2s (771 modules)
+
+[2m[339.84ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.21ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.29ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 71.57ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 44.85ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 28.04ms][22m  [2m ↳ [22mBuild utilities
+[2m[194.08ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1420ms (771 modules)
+
+[2m[253.12ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.40ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.10ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 75.48ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 24.57ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 35.98ms][22m  [2m ↳ [22mBuild utilities
+[2m[115.66ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.7s (771 modules)
+
+[2m[185.44ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.21ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.51ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 32.02ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 16.48ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[104.17ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 31.44ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1928ms (771 modules)
+
+[2m[233.80ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.85ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 61.23ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 15.28ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[119.14ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 37.14ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1855ms (771 modules)
+
+[2m[420.90ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.33ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 88.51ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 28.12ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[210.29ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 92.08ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1779ms (771 modules)
+
+[2m[193.08ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.49ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.08ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 63.63ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 19.68ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 20.89ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 88.02ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1641ms (771 modules)

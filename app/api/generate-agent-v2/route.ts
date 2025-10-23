@@ -1,0 +1,312 @@
+// app/api/generate-agent-v2/route.ts
+// NEW: AgentKit-powered intelligent agent generation
+// This replaces blind GPT guessing with AgentKit's execution intelligence
+
+import { NextResponse } from 'next/server'
+import { cookies } from 'next/headers'
+import { createServerClient } from '@supabase/ssr'
+import { createClient } from '@supabase/supabase-js'
+import { v4 as uuidv4 } from 'uuid'
+import { analyzePromptDirectAgentKit } from '@/lib/agentkit/analyzePrompt-v3-direct'
+import { enhanceOutputInference } from '@/lib/outputInference'
+import { AuditTrailService } from '@/lib/services/AuditTrailService'
+import { AUDIT_EVENTS } from '@/lib/audit/events'
+import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics'
+
+export const runtime = 'nodejs'
+
+// Initialize Supabase service client for analytics
+const supabaseServiceRole = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+)
+
+// Initialize services
+const auditTrail = AuditTrailService.getInstance()
+const aiAnalytics = new AIAnalyticsService(supabaseServiceRole, {
+  enableRealtime: true,
+  enableCostTracking: true,
+  enablePerformanceMetrics: true
+})
+
+export async function POST(req: Request) {
+  try {
+    const {
+      prompt,
+      clarificationAnswers,
+      agentId: providedAgentId,
+      sessionId: providedSessionId
+    } = await req.json()
+
+    const cookieStore = await cookies()
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          get: (name) => cookieStore.get(name)?.value,
+          set: async () => {},
+          remove: async () => {},
+        }
+      }
+    )
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const sessionId = providedSessionId ||
+                      clarificationAnswers?.sessionId ||
+                      req.headers.get('x-session-id') ||
+                      uuidv4()
+
+    const agentId = providedAgentId ||
+                    clarificationAnswers?.agentId ||
+                    req.headers.get('x-agent-id') ||
+                    uuidv4()
+
+    console.log('🤖 AGENT GENERATION V2 (AgentKit-Powered) - Using IDs:', {
+      agentId,
+      sessionId
+    })
+
+    const startTime = Date.now()
+
+    // Log generation start to audit trail
+    await auditTrail.log({
+      action: AUDIT_EVENTS.AGENT_GENERATION_STARTED,
+      entityType: 'agent',
+      entityId: agentId,
+      userId: user.id,
+      resourceName: 'Agent Generation V2',
+      details: {
+        sessionId: sessionId,
+        generation_method: 'agentkit_direct_v3',
+        prompt_length: prompt?.length || 0,
+        has_clarifications: !!(clarificationAnswers && Object.keys(clarificationAnswers).length > 0)
+      },
+      severity: 'info'
+    })
+
+    // Get user's connected plugins
+    const { data: pluginRows } = await supabase
+      .from('plugin_connections')
+      .select('plugin_key')
+      .eq('user_id', user.id)
+
+    const connectedPluginKeys = pluginRows?.map(p => p.plugin_key) || []
+
+    // Add platform plugins (like chatgpt-research) that don't need connection
+    const platformPlugins = ['chatgpt-research'];
+    const allAvailablePlugins = [...new Set([...connectedPluginKeys, ...platformPlugins])];
+
+    console.log('📦 Available plugins for analysis:', allAvailablePlugins)
+
+    // ========================================
+    // 🧠 AGENTKIT INTELLIGENT ANALYSIS
+    // ========================================
+    // Instead of letting GPT-4o blindly guess plugins,
+    // we use AgentKit's execution intelligence to analyze what's ACTUALLY needed
+
+    const analysisStartTime = Date.now()
+    const analysis = await analyzePromptDirectAgentKit(
+      user.id,
+      prompt,
+      allAvailablePlugins
+    )
+    const analysisEndTime = Date.now()
+
+    console.log('✅ AgentKit Analysis Complete:', {
+      agent_name: analysis.agent_name,
+      workflow_type: analysis.workflow_type,
+      suggested_plugins: analysis.suggested_plugins,
+      confidence: analysis.confidence
+    })
+
+    // Track AI analytics for the analysis call
+    if (analysis.tokensUsed) {
+      await aiAnalytics.trackAICall({
+        call_id: `agent_gen_v2_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        user_id: user.id,
+        session_id: sessionId,
+        provider: 'openai',
+        model_name: 'gpt-4o',
+        endpoint: 'chat/completions',
+        feature: 'agent_generation',
+        component: 'generate-agent-v2',
+        workflow_step: 'agentkit_analysis',
+        category: 'agent_creation',
+        input_tokens: analysis.tokensUsed.prompt,
+        output_tokens: analysis.tokensUsed.completion,
+        cost_usd: (analysis.tokensUsed.prompt * 0.0025 / 1000) +
+                  (analysis.tokensUsed.completion * 0.01 / 1000),
+        latency_ms: analysisEndTime - analysisStartTime,
+        response_size_bytes: JSON.stringify(analysis).length,
+        success: true,
+        request_type: 'chat',
+        activity_type: 'agent_generation',
+        activity_name: `Generate Agent: ${analysis.agent_name}`,
+        agent_id: agentId,
+        activity_step: 'analysis'
+      })
+    }
+
+    // Generate enhanced outputs based on AgentKit's analysis
+    const outputInference = enhanceOutputInference(
+      prompt,
+      clarificationAnswers || {},
+      analysis.suggested_plugins,
+      analysis.workflow_steps
+    )
+
+    // Build agent data from AgentKit's intelligent analysis
+    const agentData = {
+      user_id: user.id,
+      agent_name: analysis.agent_name,
+      user_prompt: prompt,
+      system_prompt: `You are an agent that accomplishes: ${analysis.workflow_type.replace('_', ' ')}`,
+      description: analysis.description,
+      plugins_required: analysis.suggested_plugins,
+      connected_plugins: analysis.suggested_plugins,
+      input_schema: analysis.required_inputs.map(input => ({
+        name: input.name,
+        type: input.type,
+        required: input.required,
+        description: input.description,
+        placeholder: input.placeholder || ''
+      })),
+      output_schema: outputInference.outputs,
+      status: 'draft',
+      mode: 'on_demand', // Can be enhanced based on prompt analysis
+      schedule_cron: null,
+      created_from_prompt: prompt,
+      ai_reasoning: `AgentKit Direct Analysis (v3): ${analysis.reasoning}. Confidence: ${Math.round(analysis.confidence * 100)}%`,
+      ai_confidence: Math.round(analysis.confidence * 100),
+      ai_generated_at: new Date().toISOString(),
+      workflow_steps: analysis.workflow_steps.map(step => ({
+        operation: step.operation,
+        plugin: step.plugin,
+        plugin_action: step.plugin_action,
+        validated: true,
+        type: step.plugin === 'ai_processing' ? 'ai_processing' : 'plugin_action'
+      })),
+      trigger_conditions: {
+        error_handling: {
+          on_failure: 'email',
+          retry_on_fail: true
+        }
+      },
+      detected_categories: analysis.suggested_plugins.map(plugin => ({
+        plugin,
+        detected: true
+      })),
+      agent_config: {
+        mode: 'on_demand',
+        metadata: {
+          version: '3.0',
+          generation_method: 'agentkit_direct',
+          agent_id: agentId,
+          session_id: sessionId,
+          prompt_type: 'agentkit_v3',
+          ai_generated_at: new Date().toISOString(),
+          platform_version: 'v2.0',
+          analysis_confidence: analysis.confidence,
+          workflow_type: analysis.workflow_type
+        },
+        timezone: 'America/New_York',
+        agent_name: analysis.agent_name,
+        description: analysis.description,
+        user_prompt: prompt,
+        input_schema: analysis.required_inputs,
+        output_schema: outputInference.outputs,
+        workflow_steps: analysis.workflow_steps,
+        plugins_required: analysis.suggested_plugins,
+        connected_plugins: analysis.suggested_plugins,
+        system_prompt: `You are an agent that accomplishes: ${analysis.workflow_type.replace('_', ' ')}`,
+        ai_context: {
+          reasoning: analysis.reasoning,
+          confidence: Math.round(analysis.confidence * 100),
+          workflow_type: analysis.workflow_type,
+          generation_method: 'agentkit_direct_v3'
+        }
+      }
+    }
+
+    console.log('✅ AgentKit agent generation completed (not saved yet - user will confirm):', {
+      agent_name: agentData.agent_name,
+      plugins_count: agentData.plugins_required.length,
+      plugins: agentData.plugins_required,
+      inputs_count: agentData.input_schema.length,
+      steps_count: agentData.workflow_steps.length
+    })
+
+    // Log successful generation to audit trail
+    await auditTrail.log({
+      action: AUDIT_EVENTS.AGENT_CREATED,
+      entityType: 'agent',
+      entityId: agentId,
+      userId: user.id,
+      resourceName: agentData.agent_name,
+      details: {
+        sessionId: sessionId,
+        generation_method: 'agentkit_direct_v3',
+        plugins_detected: agentData.plugins_required,
+        inputs_detected: agentData.input_schema.length,
+        workflow_steps: agentData.workflow_steps.length,
+        confidence: Math.round(analysis.confidence * 100),
+        execution_time_ms: Date.now() - startTime,
+        tokens_used: analysis.tokensUsed?.total || 0,
+        status: 'generated_not_saved'
+      },
+      severity: 'info'
+    })
+
+    // DON'T save to database yet - return agent data for user review
+    // User will save it through the wizard when they click "Save Agent"
+    return NextResponse.json({
+      success: true,
+      agent: agentData,
+      agentId: agentId,
+      sessionId: sessionId,
+      extraction_details: {
+        analysis: {
+          method: 'agentkit_direct_v3',
+          confidence: analysis.confidence,
+          workflow_type: analysis.workflow_type,
+          reasoning: analysis.reasoning,
+          suggested_plugins: analysis.suggested_plugins
+        },
+        workflow_steps: analysis.workflow_steps,
+        activity_tracked: true,
+        agentId: agentId,
+        sessionId: sessionId
+      }
+    })
+
+  } catch (error: any) {
+    console.error('❌ AgentKit Agent Generation V2 Error:', error)
+
+    // Log error to audit trail
+    await auditTrail.log({
+      action: 'AGENT_GENERATION_FAILED',
+      entityType: 'agent',
+      entityId: agentId,
+      userId: user?.id || 'unknown',
+      resourceName: 'Agent Generation V2',
+      details: {
+        sessionId: sessionId,
+        generation_method: 'agentkit_direct_v3',
+        error_message: error.message,
+        error_stack: error.stack?.substring(0, 500),
+        execution_time_ms: Date.now() - startTime
+      },
+      severity: 'error'
+    })
+
+    return NextResponse.json({
+      error: 'Agent generation failed',
+      message: error.message
+    }, { status: 500 })
+  }
+}

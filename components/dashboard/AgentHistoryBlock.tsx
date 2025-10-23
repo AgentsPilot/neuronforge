@@ -676,7 +676,7 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
       </div>
 
       {/* Controls */}
-      <div className="flex flex-col sm:flex-row gap-3 items-center">
+      <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
           <input
@@ -688,18 +688,27 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
           />
         </div>
 
-        <div className="flex items-center gap-2">
-          <Filter className="h-4 w-4 text-gray-500" />
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as FilterType)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="all">All Status</option>
-            <option value="success">Success</option>
-            <option value="error">Error</option>
-            <option value="warning">Warning</option>
-          </select>
+        {/* Status Filter Tabs */}
+        <div className="flex bg-gray-100/80 rounded-xl p-1">
+          {[
+            { value: 'all', label: 'All', icon: Activity },
+            { value: 'success', label: 'Success', icon: CheckCircle },
+            { value: 'error', label: 'Error', icon: XCircle },
+            { value: 'warning', label: 'Warning', icon: AlertTriangle }
+          ].map(({ value, label, icon: Icon }) => (
+            <button
+              key={value}
+              onClick={() => setStatusFilter(value as FilterType)}
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                statusFilter === value
+                  ? 'bg-white text-blue-600 shadow-sm'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 

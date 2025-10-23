@@ -174,8 +174,32 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error('DEBUG: Sheets append failed:', errorData);
-      throw new Error(`Sheets API error: ${response.status} - ${errorData}`);
+      console.error('❌ Google Sheets append_rows failed:', {
+        status: response.status,
+        statusText: response.statusText,
+        spreadsheet_id,
+        range,
+        error: errorData
+      });
+
+      // Parse error for better messaging
+      let errorMessage = `Google Sheets API error (${response.status})`;
+      try {
+        const parsedError = JSON.parse(errorData);
+        errorMessage = parsedError.error?.message || errorMessage;
+      } catch (e) {
+        errorMessage = errorData || errorMessage;
+      }
+
+      // Provide helpful context for common errors
+      if (response.status === 403) {
+        throw new Error(`Permission denied: Cannot edit spreadsheet "${spreadsheet_id}". Make sure:\n1. The spreadsheet exists and you own it\n2. Your OAuth connection has edit permissions\n3. The spreadsheet ID is correct\n\nGoogle's error: ${errorMessage}`);
+      }
+      if (response.status === 404) {
+        throw new Error(`Spreadsheet not found: "${spreadsheet_id}" doesn't exist or you don't have access. Please verify the spreadsheet ID from the URL.`);
+      }
+
+      throw new Error(`Sheets API error: ${errorMessage}`);
     }
 
     const data = await response.json();

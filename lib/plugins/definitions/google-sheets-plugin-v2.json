@@ -101,7 +101,10 @@
             "type": "array",
             "description": "2D array of values to write (array of rows, each row is an array of cell values)",
             "items": {
-              "type": "array"
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "input_option": {
@@ -170,7 +173,10 @@
             "type": "array",
             "description": "Array of rows to append (each row is an array of cell values)",
             "items": {
-              "type": "array"
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "input_option": {
@@ -245,7 +251,13 @@
               },
               "values": {
                 "type": "array",
-                "description": "2D array of initial values"
+                "description": "2D array of initial values",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
               }
             }
           }

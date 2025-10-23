@@ -14,6 +14,7 @@ import { GoogleCalendarPluginExecutor } from './google-calendar-plugin-executor'
 import { SlackPluginExecutor } from './slack-plugin-executor';
 import { WhatsAppPluginExecutor } from './whatsapp-plugin-executor';
 import { HubSpotPluginExecutor } from './hubspot-plugin-executor';
+import { ChatGPTResearchPluginExecutor } from './chatgpt-research-plugin-executor';
 
 let pluginExecuterInstance: PluginExecuterV2 | null = null;
 
@@ -34,6 +35,7 @@ export class PluginExecuterV2 {
     'slack': SlackPluginExecutor,
     'whatsapp': WhatsAppPluginExecutor,
     'hubspot': HubSpotPluginExecutor,
+    'chatgpt-research': ChatGPTResearchPluginExecutor,
     // Add new plugin executors here
   };
 
