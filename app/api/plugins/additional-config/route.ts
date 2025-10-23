@@ -10,6 +10,9 @@ const debug = process.env.NODE_ENV === 'development';
 
 // POST /api/plugins/additional-config
 // Save additional configuration data for a plugin connection
+// Force dynamic rendering
+export const dynamic = 'force-dynamic'
+
 export async function POST(request: NextRequest) {
   try {
     const { userId, pluginKey, additionalData } = await request.json();

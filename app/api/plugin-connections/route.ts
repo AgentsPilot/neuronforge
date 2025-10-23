@@ -3,8 +3,11 @@ import { NextRequest } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabaseServer'
 import { encryptCredentials, decryptCredentials } from '@/lib/encryptCredentials'
 
+// Force dynamic rendering
+export const dynamic = 'force-dynamic'
+
 export async function POST(req: NextRequest) {
-  const supabase = await createServerSupabaseClient()
+  const supabase = createServerSupabaseClient()
 
   try {
     const body = await req.json()
@@ -43,7 +46,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const supabase = await createServerSupabaseClient()
+  const supabase = createServerSupabaseClient()
 
   try {
     const { searchParams } = new URL(req.url)
@@ -73,7 +76,7 @@ export async function DELETE(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  const supabase = await createServerSupabaseClient()
+  const supabase = createServerSupabaseClient()
 
   try {
     const { searchParams } = new URL(req.url)

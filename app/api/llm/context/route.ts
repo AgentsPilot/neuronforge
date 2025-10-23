@@ -3,6 +3,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 
+// Force dynamic rendering
+export const dynamic = 'force-dynamic';
+
 // GET /api/llm/context?userId={userId}
 // Returns LLM context with connected and available plugins for the user
 export async function GET(request: NextRequest) {

@@ -1,10 +1,10 @@
 // /app/api/plugin-connections/save/route.ts
 
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabaseServer' // matches Option 2 renaming
+import { createServerSupabaseClient } from '@/lib/supabaseServer'
 
 export async function POST(req: NextRequest) {
-  const supabase = await createClient()
+  const supabase = createServerSupabaseClient()
   const body = await req.json()
 
   const {

@@ -5,6 +5,9 @@ import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 
 // GET /api/plugins/user-status?userId={userId}
 // Returns user's plugin connection status (connected vs available)
+// Force dynamic rendering
+export const dynamic = 'force-dynamic'
+
 export async function GET(request: NextRequest) {
   try {
     // Get userId from query parameters

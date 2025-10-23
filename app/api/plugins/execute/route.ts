@@ -6,6 +6,9 @@ import { PluginExecuterV2 } from '@/lib/server/plugin-executer-v2';
 
 // POST /api/plugins/execute
 // Executes a plugin action with parameters
+// Force dynamic rendering
+export const dynamic = 'force-dynamic'
+
 export async function POST(request: NextRequest) {
   try {
     // Parse request body

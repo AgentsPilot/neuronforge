@@ -6,6 +6,9 @@ import { AuditTrail } from '@/lib/services/AuditTrailService';
 
 // POST /api/audit-trail
 // Log an audit trail event from client-side
+// Force dynamic rendering
+export const dynamic = 'force-dynamic'
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();

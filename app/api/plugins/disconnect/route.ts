@@ -5,6 +5,9 @@ import { UserPluginConnections } from '@/lib/server/user-plugin-connections';
 
 // POST /api/plugins/disconnect
 // Disconnects a plugin for a user
+// Force dynamic rendering
+export const dynamic = 'force-dynamic'
+
 export async function POST(request: NextRequest) {
   try {
     // Parse request body
