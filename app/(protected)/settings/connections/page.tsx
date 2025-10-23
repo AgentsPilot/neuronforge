@@ -51,22 +51,18 @@ export default function ConnectionsPage() {
 
       try {
         console.log('[Connections] Fetching plugin data...')
-        // Fetch both available plugins and user status in parallel with timeout
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Request timeout')), 10000)
-        )
 
-        const [available, status] = await Promise.race([
-          Promise.all([
-            apiClient.getAvailablePlugins(),
-            apiClient.getUserPluginStatus(user.id)
-          ]),
-          timeoutPromise
-        ]) as [PluginInfo[], UserPluginStatus]
+        // Fetch both available plugins and user status in parallel (no timeout)
+        // Let requests complete naturally - better to wait than show nothing
+        const [available, status] = await Promise.all([
+          apiClient.getAvailablePlugins(),
+          apiClient.getUserPluginStatus(user.id)
+        ])
 
         console.log('[Connections] Data fetched successfully', {
           availableCount: available.length,
-          connectedCount: status?.connected?.length || 0
+          connectedCount: status?.connected?.length || 0,
+          disconnectedCount: status?.disconnected?.length || 0
         })
 
         if (mounted) {
@@ -244,8 +240,14 @@ export default function ConnectionsPage() {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-xs text-blue-600 font-semibold mb-0.5">Connected</p>
-              <p className="text-2xl font-bold text-blue-900 leading-none">{connectedPlugins.length}</p>
-              <p className="text-xs text-blue-600/70 font-medium mt-1">Active</p>
+              <p className="text-2xl font-bold text-blue-900 leading-none">
+                {loading ? (
+                  <span className="inline-block w-8 h-8 border-2 border-blue-300 border-t-blue-600 rounded-full animate-spin"></span>
+                ) : (
+                  connectedPlugins.length
+                )}
+              </p>
+              <p className="text-xs text-blue-600/70 font-medium mt-1">{loading ? 'Loading...' : 'Active'}</p>
             </div>
           </div>
         </div>

@@ -140,43 +140,52 @@ export class PluginManagerV2 {
   }
   
   // Get user's actionable plugins (connected with valid tokens)
-  async getUserActionablePlugins(userId: string): Promise<Record<string, ActionablePlugin>> {
-    if (this.debug) console.log(`DEBUG: Getting actionable plugins for user ${userId}`);
-    
+  async getUserActionablePlugins(userId: string, options = { skipTokenRefresh: false }): Promise<Record<string, ActionablePlugin>> {
+    if (this.debug) console.log(`DEBUG: Getting actionable plugins for user ${userId} (skipTokenRefresh: ${options.skipTokenRefresh})`);
+
     // Get all user connections with full details
     const allConnections = await this.userConnections.getAllUserConnections(userId);
     if (this.debug) console.log(`DEBUG: Found ${allConnections.length} total connections for user ${userId}`);
-    
+
     // Filter for active connections and attempt to refresh expired tokens
     const actionableConnections: UserConnection[] = [];
-    
+
     for (const conn of allConnections) {
       // Skip non-active connections
       if (conn.status !== 'active') {
         if (this.debug) console.log(`DEBUG: Skipping ${conn.plugin_key} - status is ${conn.status}`);
         continue;
       }
-      
+
       // Check if token is expired
       if (conn.expires_at) {
         const isExpired = this.userConnections.isTokenValid(conn.expires_at) === false;
-        
+
         if (isExpired) {
+          // OPTIMIZATION: Skip expensive token refresh for status checks (UI display)
+          // Token refresh will happen automatically on actual plugin execution
+          if (options.skipTokenRefresh) {
+            if (this.debug) console.log(`DEBUG: Token expired for ${conn.plugin_key}, skipping refresh (status check only)`);
+            // Still include the connection - UI will show it as connected but may prompt reconnect on use
+            actionableConnections.push(conn);
+            continue;
+          }
+
           if (this.debug) console.log(`DEBUG: Token expired for ${conn.plugin_key}, attempting auto-refresh`);
-                    
+
           // Get plugin definition to access auth config
           const definition = this.plugins.get(conn.plugin_key);
-          
+
           if (!definition) {
             if (this.debug) console.log(`DEBUG: Cannot refresh ${conn.plugin_key} - plugin definition not found in registry`);
             continue;
           }
-          
+
           // Extract auth config from plugin definition
           const authConfig = definition.plugin.auth_config;
-          
+
           // Attempt to refresh the token with auth config
-          const refreshedConnection = await this.userConnections.refreshToken(conn, authConfig);  
+          const refreshedConnection = await this.userConnections.refreshToken(conn, authConfig);
 
           if (refreshedConnection) {
             if (this.debug) console.log(`DEBUG: Successfully refreshed token for ${conn.plugin_key}`);
@@ -188,7 +197,7 @@ export class PluginManagerV2 {
           continue;
         }
       }
-      
+
       // Token is still valid
       actionableConnections.push(conn);
     }

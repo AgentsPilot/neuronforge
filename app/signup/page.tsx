@@ -30,10 +30,15 @@ export default function SignupPage() {
     }
 
     try {
-      // 1. Sign up the user
+      // 1. Sign up the user with metadata (full_name stored in auth.users metadata)
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
+        options: {
+          data: {
+            full_name: fullName,
+          },
+        },
       });
 
       if (error) {
@@ -51,28 +56,28 @@ export default function SignupPage() {
         return;
       }
 
-      // 2. Upsert profile (handles both manual creation and auto-trigger cases)
-      const { error: profileError } = await supabase.from('profiles').upsert([
-        {
-          id: user.id,
-          full_name: fullName,
-          onboarding_completed: false,
-        },
-      ], {
-        onConflict: 'id'
-      });
+      // 2. If session exists (email confirmation disabled), create/update profile
+      if (session) {
+        const { error: profileError } = await supabase.from('profiles').upsert([
+          {
+            id: user.id,
+            full_name: fullName,
+            onboarding_completed: false,
+          },
+        ], {
+          onConflict: 'id'
+        });
 
-      if (profileError) {
-        console.error('Profile creation failed:', profileError.message, profileError);
-        setErrorMessage('Account created, but failed to save profile. Please try logging in.');
-        setIsLoading(false);
-        return;
+        if (profileError) {
+          console.error('Profile creation failed:', profileError.message, profileError);
+          // Don't block signup if profile fails - trigger will handle it
+        }
       }
 
       // 3. Handle session & redirect
       if (!session) {
         setSuccessMessage(
-          'Signup successful! Please check your email to confirm your account.'
+          'Signup successful! Please check your email to confirm your account. Your profile will be created when you confirm.'
         );
       } else {
         setSuccessMessage('Account created successfully! Setting up your profile...');
