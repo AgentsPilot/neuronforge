@@ -3,7 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 
-// Force dynamic rendering
+// Force dynamic rendering for this route
 export const dynamic = 'force-dynamic';
 
 // GET /api/llm/context?userId={userId}
