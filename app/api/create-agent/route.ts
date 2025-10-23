@@ -113,7 +113,7 @@ export async function POST(request: NextRequest) {
     const agentData = {
       // CRITICAL FIX: Use the provided agent ID to maintain consistency with token tracking
       ...(finalAgentId && { id: finalAgentId }),
-      
+
       agent_name: agent.agent_name,
       user_prompt: agent.user_prompt,
       user_id: agentUserIdToUse, // Use the authenticated user's ID
@@ -125,6 +125,7 @@ export async function POST(request: NextRequest) {
       status: agent.status || 'draft',
       mode: agent.mode || 'on_demand',
       schedule_cron: agent.schedule_cron || null,
+      timezone: agent.timezone || 'UTC', // FIXED: Add timezone field for scheduled agents
       trigger_conditions: agent.trigger_conditions || null,
       plugins_required: agent.plugins_required || null,
       workflow_steps: agent.workflow_steps || null,
@@ -134,7 +135,7 @@ export async function POST(request: NextRequest) {
       ai_confidence: agent.ai_confidence || null,
       created_from_prompt: agent.created_from_prompt || null,
       ai_generated_at: agent.ai_generated_at ? new Date(agent.ai_generated_at).toISOString() : null,
-      
+
       // CRITICAL FIX: Add the agent_config JSONB field
       agent_config: agent.agent_config || null
     };
@@ -143,6 +144,11 @@ export async function POST(request: NextRequest) {
     console.log('💾 Agent name:', agentData.agent_name);
     console.log('💾 Agent ID being used:', finalAgentId || 'database_generated');
     console.log('💾 Agent config being saved:', !!agentData.agent_config);
+    console.log('💾 Schedule configuration:', {
+      mode: agentData.mode,
+      schedule_cron: agentData.schedule_cron,
+      timezone: agentData.timezone
+    });
 
     // Test Supabase connection first
     try {
@@ -207,6 +213,11 @@ export async function POST(request: NextRequest) {
     });
     console.log('✅ Saved agent_config present:', !!data.agent_config);
     console.log('✅ Saved agent_config size:', data.agent_config ? JSON.stringify(data.agent_config).length : 0);
+    console.log('✅ Saved schedule configuration:', {
+      mode: data.mode,
+      schedule_cron: data.schedule_cron,
+      timezone: data.timezone
+    });
 
     // Return the structure your frontend expects (consistent with your other API)
     return NextResponse.json(

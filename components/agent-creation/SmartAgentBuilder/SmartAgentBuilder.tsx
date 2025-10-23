@@ -273,6 +273,17 @@ export default function SmartAgentBuilder({
     }
   }, [isEditing]);
 
+  // DEBUG: Log agent state changes
+  useEffect(() => {
+    console.log('🔍 AGENT STATE CHANGED:', {
+      hasAgent: !!agent,
+      mode: agent?.mode,
+      schedule_cron: agent?.schedule_cron,
+      timezone: agent?.timezone,
+      agentName: agent?.agent_name
+    });
+  }, [agent]);
+
   // Skip generation in edit mode
   useEffect(() => {
     console.log('SmartAgentBuilder useEffect triggered:', {
@@ -415,13 +426,21 @@ export default function SmartAgentBuilder({
 
   // NEW: Handle schedule updates that work outside of edit mode
   const updateAgentSchedule = (updates: Partial<Agent>) => {
+    console.log('📅 updateAgentSchedule called with:', updates);
+    console.log('📅 Current state:', { isEditing, hasAgent: !!agent });
+
     // Update the main agent if not in editing mode
     if (!isEditing && agent) {
-      setAgent(prev => prev ? { ...prev, ...updates } : prev);
+      setAgent(prev => {
+        const updated = prev ? { ...prev, ...updates } : prev;
+        console.log('📅 Updated main agent:', { mode: updated?.mode, schedule_cron: updated?.schedule_cron, timezone: updated?.timezone });
+        return updated;
+      });
     }
-    
+
     // Also update the edited agent if in editing mode
     if (isEditing) {
+      console.log('📅 Updating edited agent');
       updateEditedAgent(updates);
     }
   };
@@ -429,7 +448,12 @@ export default function SmartAgentBuilder({
   const handleCreateAgent = async () => {
     const finalAgent = isEditing ? editedAgent : agent;
     console.log('Creating agent:', finalAgent?.agent_name);
-    
+    console.log('📅 Final agent schedule config before API call:', {
+      mode: finalAgent?.mode,
+      schedule_cron: finalAgent?.schedule_cron,
+      timezone: finalAgent?.timezone
+    });
+
     if (!finalAgent) {
       console.error('No agent to create');
       setCreationError('No agent data available to create');
@@ -463,6 +487,14 @@ export default function SmartAgentBuilder({
     try {
       setIsCreating(true);
       setCreationError(null);
+
+      console.log('📦 Preparing agentData - finalAgent values:', {
+        mode: finalAgent.mode,
+        schedule_cron: finalAgent.schedule_cron,
+        timezone: finalAgent.timezone,
+        willFallbackMode: !finalAgent.mode,
+        willFallbackTimezone: !finalAgent.timezone
+      });
 
       // Enhanced agent data preparation with plugin security and timezone support
       const agentData = {

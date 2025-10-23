@@ -62,6 +62,20 @@ export interface Agent {
   created_at?: string;
   updated_at?: string;
   extraction_details?: ExtractionDetails;
+
+  // Scheduling fields
+  mode?: 'on_demand' | 'scheduled';
+  schedule_cron?: string | null;
+  timezone?: string;
+
+  // Additional agent fields
+  connected_plugins?: string[];
+  workflow_steps?: any[];
+  trigger_conditions?: any;
+  generated_plan?: any;
+  detected_categories?: string[];
+  ai_reasoning?: string;
+  ai_confidence?: number;
 }
 
 export interface TestResult {
@@ -77,6 +91,7 @@ export interface SmartAgentBuilderProps {
   clarificationAnswers?: Record<string, string>;
   onAgentCreated: (agent: Agent) => void;
   onBack: () => void;
+  onCancel?: () => void;
 }
 
 export interface AgentPreviewProps {

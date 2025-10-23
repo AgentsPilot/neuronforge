@@ -7,7 +7,7 @@ interface ScheduleEditorProps {
   scheduleCron?: string | null;
   timezone?: string;
   isEditing: boolean;
-  onUpdate: (updates: { mode?: string; schedule_cron?: string | null; timezone?: string }) => void;
+  onUpdate: (updates: { mode?: 'on_demand' | 'scheduled'; schedule_cron?: string | null; timezone?: string }) => void;
 }
 
 export default function ScheduleEditor({
@@ -128,6 +128,13 @@ export default function ScheduleEditor({
       setSelectedTimezone(timezone);
     }
   }, [timezone]);
+
+  // Update mode when prop changes (CRITICAL FIX for mode not persisting)
+  useEffect(() => {
+    if (mode) {
+      setCurrentMode(mode);
+    }
+  }, [mode]);
 
   const generateCron = () => {
     const [hour, minute] = selectedTime.split(':');

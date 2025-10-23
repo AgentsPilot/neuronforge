@@ -19,6 +19,7 @@ interface RunAgentRequest {
   execution_id?: string;
   use_queue?: boolean; // New: whether to use queue-based execution
   use_agentkit?: boolean; // NEW: Use OpenAI AgentKit for execution
+  execution_type?: string; // NEW: 'manual' (test mode) vs other types
   user_id?: string; // For queue-based execution
 }
 
@@ -34,6 +35,7 @@ export async function POST(req: Request) {
     execution_id,
     use_queue = false, // Default to immediate execution for backward compatibility
     use_agentkit = false, // NEW: Default to false (use old system)
+    execution_type, // NEW: Track if this is test mode from AgentSandbox
     user_id: provided_user_id
   } = body
 
@@ -73,20 +75,36 @@ export async function POST(req: Request) {
     console.log(`🤖 Using AgentKit execution for agent "${agent.agent_name}" (${agent_id})`)
 
     try {
-      // Fetch agent_configurations for input values
-      const { data: agentConfig, error: configError } = await supabase
-        .from('agent_configurations')
-        .select('input_values, input_schema')
-        .eq('agent_id', agent_id)
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single()
-
       const userInput = override_user_prompt || agent.user_prompt
-      const inputValues = agentConfig?.input_values || {}
+      let inputValues = {}
+      let inputSchema = null
 
-      console.log(`📋 AgentKit: Found ${Object.keys(inputValues).length} input values from configuration`)
+      // CRITICAL FIX: Determine input source based on execution type
+      //
+      // execution_type='test': AgentSandbox Test Mode - use input_variables from UI
+      // execution_type='run': AgentSandbox Run Mode / AgentList - fetch from agent_configurations
+      // execution_type=undefined/other: Scheduled/API - fetch from agent_configurations
+      //
+      if (execution_type === 'test') {
+        // TEST MODE (AgentSandbox): Use values entered in UI form (temporary, not saved)
+        inputValues = input_variables || {}
+        inputSchema = agent.input_schema
+        console.log(`📋 AgentKit TEST MODE: Using ${Object.keys(inputValues).length} input values from UI (not saved)`, inputValues)
+      } else {
+        // RUN MODE (AgentSandbox Run / AgentList / Scheduled): Fetch saved configuration
+        const { data: agentConfig, error: configError } = await supabase
+          .from('agent_configurations')
+          .select('input_values, input_schema')
+          .eq('agent_id', agent_id)
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single()
+
+        inputValues = agentConfig?.input_values || {}
+        inputSchema = agent.input_schema || agentConfig?.input_schema
+        console.log(`📋 AgentKit RUN MODE (${execution_type || 'scheduled'}): Using ${Object.keys(inputValues).length} input values from saved configuration`, inputValues)
+      }
 
       // Generate session ID for analytics tracking (UUID format)
       const sessionId = uuidv4()
@@ -101,12 +119,12 @@ export async function POST(req: Request) {
           enhanced_prompt: agent.enhanced_prompt,
           user_prompt: agent.user_prompt,
           plugins_required: agent.plugins_required || [],
-          input_schema: agent.input_schema || agentConfig?.input_schema,
+          input_schema: inputSchema || agent.input_schema,
           output_schema: agent.output_schema,
           trigger_condintion: agent.trigger_condintion // Pass notification preference
         },
         userInput,
-        inputValues, // Pass input values from agent_configurations
+        inputValues, // Pass input values from UI (test mode) or saved config
         sessionId // Pass session ID for analytics tracking
       )
 

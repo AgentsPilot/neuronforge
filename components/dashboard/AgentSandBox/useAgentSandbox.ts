@@ -968,9 +968,9 @@ export function useAgentSandbox({
 
       const requestBody = {
         agent_id: agentId,
-        input_variables: formData,
+        input_variables: executionContext === 'test' ? formData : undefined, // Only send UI values in test mode
         use_agentkit: true, // Use OpenAI AgentKit for consistent execution
-        execution_type: executionContext === 'test' ? 'manual' : 'manual' // Both are manual, just tracking context
+        execution_type: executionContext === 'test' ? 'test' : 'run' // Distinguish test vs configured run
       }
 
       console.log('Sending request to run-agent (AgentKit):', {

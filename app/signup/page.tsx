@@ -51,18 +51,20 @@ export default function SignupPage() {
         return;
       }
 
-      // 2. Insert profile
-      const { error: profileError } = await supabase.from('profiles').insert([
+      // 2. Upsert profile (handles both manual creation and auto-trigger cases)
+      const { error: profileError } = await supabase.from('profiles').upsert([
         {
           id: user.id,
           full_name: fullName,
           onboarding_completed: false,
         },
-      ]);
+      ], {
+        onConflict: 'id'
+      });
 
       if (profileError) {
-        console.error('Profile creation failed:', profileError.message);
-        setErrorMessage('Account created, but failed to save profile.');
+        console.error('Profile creation failed:', profileError.message, profileError);
+        setErrorMessage('Account created, but failed to save profile. Please try logging in.');
         setIsLoading(false);
         return;
       }

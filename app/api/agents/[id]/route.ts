@@ -229,7 +229,7 @@ export async function PUT(
     }
 
     // Prepare update data for non-schedule fields
-    const updateData = {
+    const updateData: any = {
       agent_name: agentData.agent_name,
       description: agentData.description,
       system_prompt: agentData.system_prompt,
@@ -250,9 +250,14 @@ export async function PUT(
       agent_config: agentData.agent_config || null
     };
 
-    // Only include schedule fields if we didn't use the safe function
-    if (!hasScheduleChanges || agentData.mode !== 'scheduled') {
-      updateData.mode = agentData.mode || 'on_demand';
+    // CRITICAL FIX: Always include mode field in updates
+    // The timezone-safe function only updates schedule_cron, timezone, and next_run
+    // We must separately update the mode field
+    updateData.mode = agentData.mode || 'on_demand';
+
+    // Only include schedule_cron and timezone if we didn't use the safe function
+    // (because the safe function already updated those fields)
+    if (!scheduleUpdateResult) {
       updateData.schedule_cron = agentData.schedule_cron || null;
       updateData.timezone = agentData.timezone || 'UTC';
     }
