@@ -138,6 +138,7 @@ export interface UserConnection {
   settings?: any;
   last_used?: string;
   updated_at?: string;
+  last_refreshed_at?: string; // Track when token was last refreshed for rate limiting
 }
 
 // Connection status information
