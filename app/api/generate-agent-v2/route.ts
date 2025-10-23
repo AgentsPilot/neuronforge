@@ -157,7 +157,9 @@ export async function POST(req: Request) {
       prompt,
       clarificationAnswers || {},
       analysis.suggested_plugins,
-      analysis.workflow_steps
+      analysis.workflow_steps,
+      analysis.suggested_outputs || [],  // NEW: Pass SDK outputs
+      user.email  // NEW: Pass user email for notifications
     )
 
     // Build agent data from AgentKit's intelligent analysis

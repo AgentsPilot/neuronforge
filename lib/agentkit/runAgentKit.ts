@@ -47,6 +47,74 @@ export interface AgentKitExecutionResult {
 }
 
 /**
+ * Generate output instructions from output_schema
+ * If output_schema is missing or empty, fallback to legacy trigger_condintion logic
+ */
+function generateOutputInstructions(outputSchema: any[], triggerCondition?: any): string {
+  // Backward compatibility: If no output_schema, use legacy logic
+  if (!outputSchema || outputSchema.length === 0) {
+    console.log('⚠️ No output_schema found, using legacy trigger_condintion logic');
+    const triggerConfig = triggerCondition?.error_handling || {};
+    const deliveryMethod = triggerConfig.on_failure || 'alert';
+
+    if (deliveryMethod === 'email') {
+      return `\n\n## IMPORTANT: Result Delivery
+- After completing the task, you MUST send the results via email using the google-mail send_email function
+- Send the email to the user with a clear summary of what was accomplished
+- Include all relevant details, results, and next steps in the email body
+- The email subject should clearly describe the task completed`;
+    } else {
+      return `\n\n## IMPORTANT: Result Delivery
+- Complete the task and return a clear summary
+- Do NOT send emails unless explicitly requested in the task
+- Return results directly for dashboard display`;
+    }
+  }
+
+  // NEW: Schema-driven output instructions
+  // Filter out error-only outputs (they trigger only on failure)
+  const activeOutputs = outputSchema.filter(o => !o.config?.trigger || o.config.trigger !== 'on_error');
+
+  if (activeOutputs.length === 0) {
+    return `\n\n## Output Instructions:\n- Return results for dashboard display`;
+  }
+
+  const instructions = activeOutputs.map(output => {
+    switch (output.type) {
+      case 'EmailDraft':
+        return `- Send results via email${output.config?.recipient ? ` to ${output.config.recipient}` : ''}`;
+
+      case 'SummaryBlock':
+        const format = output.format || 'text';
+        if (format === 'table') {
+          return `- Format results as an HTML table with clear columns and rows`;
+        } else if (format === 'list') {
+          return `- Format results as a bulleted or numbered list`;
+        } else if (format === 'markdown') {
+          return `- Format results using markdown formatting`;
+        } else if (format === 'json') {
+          return `- Format results as JSON data structure`;
+        } else if (format === 'html') {
+          return `- Format results as HTML content`;
+        } else {
+          return `- Provide a clear summary of results`;
+        }
+
+      case 'PluginAction':
+        return `- Save/send results using ${output.plugin || 'the appropriate plugin'}`;
+
+      case 'Alert':
+        return `- Return results for dashboard display`;
+
+      default:
+        return `- ${output.description || 'Provide results'}`;
+    }
+  }).join('\n');
+
+  return `\n\n## Output Requirements:\n${instructions}`;
+}
+
+/**
  * Main AgentKit execution function
  *
  * Orchestrates agent execution using OpenAI's function calling with the V2 Plugin System.
@@ -133,24 +201,8 @@ export async function runAgentKit(
     // STEP 2: Build enhanced system prompt with plugin context
     const pluginContext = await getPluginContextPrompt(userId, agent.plugins_required);
 
-    // Check notification delivery preference from trigger_condintion
-    const triggerConfig = agent.trigger_condintion?.error_handling || {};
-    const deliveryMethod = triggerConfig.on_failure || 'alert'; // 'email' or 'alert'
-
-    // Add delivery instructions based on trigger_condintion
-    let deliveryInstructions = '';
-    if (deliveryMethod === 'email') {
-      deliveryInstructions = `\n\n## IMPORTANT: Result Delivery
-- After completing the task, you MUST send the results via email using the google-mail send_email function
-- Send the email to the user with a clear summary of what was accomplished
-- Include all relevant details, results, and next steps in the email body
-- The email subject should clearly describe the task completed`;
-    } else {
-      deliveryInstructions = `\n\n## IMPORTANT: Result Delivery
-- Complete the task and return a clear summary
-- Do NOT send emails unless explicitly requested in the task
-- Return results directly for dashboard display`;
-    }
+    // NEW: Generate output instructions from output_schema (or fallback to legacy)
+    const outputInstructions = generateOutputInstructions(agent.output_schema, agent.trigger_condintion);
 
     const systemPrompt = `${agent.system_prompt || agent.enhanced_prompt || agent.user_prompt}
 
@@ -161,9 +213,9 @@ ${pluginContext}
 - Do NOT provide generic advice or suggestions - execute actual actions using the connected services
 - If an action fails, try an alternative approach or inform the user clearly about what went wrong
 - Provide specific results based on the actual data returned from function calls
-- Always use the most appropriate function for the task${deliveryInstructions}`;
+- Always use the most appropriate function for the task${outputInstructions}`;
 
-    console.log(`📬 AgentKit: Delivery method set to "${deliveryMethod}"`);
+    console.log(`📬 AgentKit: Output instructions generated from schema`);
     console.log('\n📊 AGENTKIT DEBUG - SYSTEM PROMPT:\n', systemPrompt);
 
     // STEP 3: Build user message with input values context

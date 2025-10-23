@@ -23,6 +23,39 @@ export default function SignupPage() {
     setSuccessMessage('');
     setIsLoading(true);
 
+    // Custom validation with friendly messages
+    if (!fullName.trim()) {
+      setErrorMessage('Please enter your full name to continue');
+      setIsLoading(false);
+      return;
+    }
+
+    if (!email.trim()) {
+      setErrorMessage('Please enter your email address to continue');
+      setIsLoading(false);
+      return;
+    }
+
+    // Email format validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      setErrorMessage('Please enter a valid email address');
+      setIsLoading(false);
+      return;
+    }
+
+    if (!password) {
+      setErrorMessage('Please create a password to secure your account');
+      setIsLoading(false);
+      return;
+    }
+
+    if (!confirmPassword) {
+      setErrorMessage('Please confirm your password');
+      setIsLoading(false);
+      return;
+    }
+
     if (password !== confirmPassword) {
       setErrorMessage('Passwords do not match');
       setIsLoading(false);
@@ -30,19 +63,28 @@ export default function SignupPage() {
     }
 
     try {
-      // 1. Sign up the user with metadata (full_name stored in auth.users metadata)
+      // Sign up the user with metadata only (no profile creation yet)
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
           data: {
             full_name: fullName,
+            onboarding_completed: false, // Track onboarding status in metadata
           },
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
         },
       });
 
+      console.log('Signup response:', { data, error });
+
       if (error) {
-        setErrorMessage(error.message);
+        // Check if user already exists
+        if (error.message.includes('already registered') || error.message.includes('already been registered')) {
+          setErrorMessage('This email is already registered. Please login instead.');
+        } else {
+          setErrorMessage(error.message);
+        }
         setIsLoading(false);
         return;
       }
@@ -50,37 +92,46 @@ export default function SignupPage() {
       const user = data?.user;
       const session = data?.session;
 
+      // Supabase returns user even for existing emails when confirmation is required
+      // Check if this is actually a new signup or existing user
       if (!user) {
         setErrorMessage('Signup failed. Please try again.');
         setIsLoading(false);
         return;
       }
 
-      // 2. If session exists (email confirmation disabled), create/update profile
-      if (session) {
-        const { error: profileError } = await supabase.from('profiles').upsert([
-          {
-            id: user.id,
-            full_name: fullName,
-            onboarding_completed: false,
-          },
-        ], {
-          onConflict: 'id'
-        });
+      console.log('User data:', {
+        id: user.id,
+        email: user.email,
+        created_at: user.created_at,
+        identities: user.identities,
+        session: !!session
+      });
 
-        if (profileError) {
-          console.error('Profile creation failed:', profileError.message, profileError);
-          // Don't block signup if profile fails - trigger will handle it
-        }
+      // When email confirmation is enabled and user already exists:
+      // - Supabase returns the user object
+      // - But identities array will be empty (no new identity was created)
+      // - And there's no session
+      const hasIdentities = user.identities && user.identities.length > 0;
+
+      if (!hasIdentities && !session) {
+        // Existing user trying to sign up again (no new identity created)
+        console.log('Detected existing user - no identities created');
+        setErrorMessage('This email is already registered. Please login instead.');
+        setIsLoading(false);
+        return;
       }
 
-      // 3. Handle session & redirect
+      // Handle success based on whether email confirmation is required
       if (!session) {
+        // Email confirmation required - redirect to home page
         setSuccessMessage(
-          'Signup successful! Please check your email to confirm your account. Your profile will be created when you confirm.'
+          'Signup successful! Please check your email to confirm your account.'
         );
+        setTimeout(() => router.push('/'), 2000);
       } else {
-        setSuccessMessage('Account created successfully! Setting up your profile...');
+        // Email confirmation disabled - redirect to onboarding
+        setSuccessMessage('Account created successfully! Redirecting to setup...');
         setTimeout(() => router.push('/onboarding'), 1500);
       }
     } catch (error) {
@@ -168,6 +219,16 @@ export default function SignupPage() {
             <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-2xl opacity-50 group-hover:opacity-75 blur-lg transition duration-500"></div>
             <div className="relative bg-gradient-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-2xl rounded-2xl shadow-2xl border border-white/20 p-8">
               <form onSubmit={handleSignup} className="space-y-6">
+                {/* Required Fields Notice */}
+                <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-3">
+                  <p className="text-blue-300 text-sm flex items-center gap-2">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    All fields are mandatory
+                  </p>
+                </div>
+
                 {errorMessage && (
                   <motion.div
                     initial={{ opacity: 0, y: -10 }}
@@ -190,7 +251,7 @@ export default function SignupPage() {
                 {/* Full Name */}
                 <div className="space-y-2">
                   <label htmlFor="fullName" className="text-sm font-bold text-slate-200 block">
-                    Full Name
+                    Full Name <span className="text-red-400">*</span>
                   </label>
                   <input
                     id="fullName"
@@ -199,7 +260,6 @@ export default function SignupPage() {
                     className="w-full px-4 py-3.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all duration-200"
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
-                    required
                     disabled={isLoading}
                   />
                 </div>
@@ -207,7 +267,7 @@ export default function SignupPage() {
                 {/* Email */}
                 <div className="space-y-2">
                   <label htmlFor="email" className="text-sm font-bold text-slate-200 block">
-                    Email Address
+                    Email Address <span className="text-red-400">*</span>
                   </label>
                   <input
                     id="email"
@@ -216,7 +276,6 @@ export default function SignupPage() {
                     className="w-full px-4 py-3.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all duration-200"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    required
                     disabled={isLoading}
                   />
                 </div>
@@ -224,7 +283,7 @@ export default function SignupPage() {
                 {/* Password */}
                 <div className="space-y-2">
                   <label htmlFor="password" className="text-sm font-bold text-slate-200 block">
-                    Password
+                    Password <span className="text-red-400">*</span>
                   </label>
                   <div className="relative">
                     <input
@@ -234,7 +293,6 @@ export default function SignupPage() {
                       className="w-full px-4 py-3.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all duration-200 pr-12"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      required
                       disabled={isLoading}
                     />
                     <button
@@ -280,7 +338,7 @@ export default function SignupPage() {
                 {/* Confirm Password */}
                 <div className="space-y-2">
                   <label htmlFor="confirmPassword" className="text-sm font-bold text-slate-200 block">
-                    Confirm Password
+                    Confirm Password <span className="text-red-400">*</span>
                   </label>
                   <input
                     id="confirmPassword"
@@ -289,7 +347,6 @@ export default function SignupPage() {
                     className="w-full px-4 py-3.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all duration-200"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
-                    required
                     disabled={isLoading}
                   />
                 </div>

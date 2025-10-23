@@ -88,7 +88,19 @@ export default function LoginPage() {
           console.error('Audit logging failed (non-critical):', auditError);
         }
 
-        router.push('/dashboard');
+        // Check onboarding status and redirect accordingly
+        const user = data.user;
+        const onboardingCompleted = user?.user_metadata?.onboarding_completed;
+
+        if (onboardingCompleted === false || onboardingCompleted === undefined) {
+          // User hasn't completed onboarding
+          console.log('User needs to complete onboarding, redirecting...');
+          router.push('/onboarding');
+        } else {
+          // Onboarding complete - go to dashboard
+          console.log('Login successful, redirecting to dashboard...');
+          router.push('/dashboard');
+        }
       }
     } catch (error) {
       setErrorMessage('An unexpected error occurred. Please try again.');

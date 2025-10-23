@@ -20,6 +20,16 @@ export interface AnalyzedInput {
   reasoning: string;
 }
 
+export interface AnalyzedOutput {
+  name: string;
+  type: 'SummaryBlock' | 'EmailDraft' | 'PluginAction' | 'Alert';
+  category: 'human-facing' | 'machine-facing';
+  description: string;
+  format?: 'table' | 'list' | 'markdown' | 'html' | 'json' | 'text';
+  plugin?: string;  // For PluginAction outputs
+  reasoning: string;
+}
+
 export interface PromptAnalysisResult {
   agent_name: string;
   description: string;
@@ -27,6 +37,7 @@ export interface PromptAnalysisResult {
   suggested_plugins: string[];
   required_inputs: AnalyzedInput[];
   workflow_steps: AnalyzedWorkflowStep[];
+  suggested_outputs: AnalyzedOutput[];  // NEW: Output suggestions from SDK
   reasoning: string;
   confidence: number;
   tokensUsed?: {
@@ -115,9 +126,52 @@ Return a JSON object with:
       "reasoning": "User wants to send to sheet"
     }
   ],
+  "suggested_outputs": [
+    {
+      "name": "Research Report",
+      "type": "SummaryBlock",
+      "category": "human-facing",
+      "description": "AI research results",
+      "format": "table",
+      "reasoning": "User mentioned 'table' in prompt"
+    },
+    {
+      "name": "Email Delivery",
+      "type": "PluginAction",
+      "category": "human-facing",
+      "plugin": "google-mail",
+      "description": "Send results via email",
+      "reasoning": "User wants to email the results"
+    }
+  ],
   "reasoning": "Explain your analysis",
   "confidence": 0.95
 }
+
+# ⚡ CRITICAL - ALWAYS DETECT OUTPUT FORMAT ⚡
+EVERY SummaryBlock output MUST have a "format" field. Analyze the user's prompt and detect their desired format:
+
+**SCAN THE PROMPT FOR THESE KEYWORDS:**
+- "table", "spreadsheet", "rows", "columns" → ADD: "format": "table"
+- "list", "bullet points", "numbered", "bullets" → ADD: "format": "list"
+- "markdown", "formatted text" → ADD: "format": "markdown"
+- "JSON", "data structure", "API" → ADD: "format": "json"
+- "HTML", "web page" → ADD: "format": "html"
+- NO keywords → ADD: "format": "text"
+
+**EXAMPLE:**
+User says: "Create a detailed table with results"
+→ You MUST add: "format": "table" to the SummaryBlock output
+
+**EXAMPLE:**
+User says: "Send me bullet points"
+→ You MUST add: "format": "list" to the SummaryBlock output
+
+# Output Type Rules:
+- If workflow generates content for user → type: "SummaryBlock" with REQUIRED format field
+- If workflow saves/sends to a plugin → type: "PluginAction" with plugin name
+- DO NOT create error notification outputs - these are added automatically by the system
+- Focus on the main deliverable outputs only
 
 # IMPORTANT - Input Detection:
 For each plugin action in workflow_steps:
@@ -177,6 +231,7 @@ For each plugin action in workflow_steps:
         plugin_action: 'process',
         reasoning: 'Default AI processing'
       }],
+      suggested_outputs: analysis.suggested_outputs || [],  // NEW: Parse outputs from SDK
       reasoning: analysis.reasoning || 'Direct AgentKit analysis',
       confidence: analysis.confidence || 0.85,
       tokensUsed: tokensUsed
@@ -188,6 +243,7 @@ For each plugin action in workflow_steps:
       suggested_plugins: result.suggested_plugins,
       input_count: result.required_inputs.length,
       step_count: result.workflow_steps.length,
+      output_count: result.suggested_outputs.length,  // NEW: Log output count
       confidence: result.confidence
     });
 
@@ -209,6 +265,7 @@ For each plugin action in workflow_steps:
         plugin_action: 'process',
         reasoning: 'Fallback due to analysis error'
       }],
+      suggested_outputs: [],  // NEW: Empty outputs for fallback
       reasoning: `Analysis failed: ${error.message}. Using fallback.`,
       confidence: 0.5
     };

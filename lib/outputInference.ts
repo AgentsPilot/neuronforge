@@ -19,54 +19,84 @@ export function enhanceOutputInference(
   prompt: string,
   clarificationAnswers: Record<string, any>,
   connectedPluginKeys: string[],
-  workflowSteps?: any[]
+  workflowSteps?: any[],
+  sdkSuggestedOutputs?: any[],  // NEW: Outputs from AgentKit SDK
+  userEmail?: string  // NEW: For notification recipient
 ): OutputInference {
   try {
-    console.log('🎯 Starting registry-driven output inference...')
-    
-    // Use plugin registry to dynamically generate outputs
-    const outputs = generateOutputsFromRegistry(prompt, workflowSteps, connectedPluginKeys)
-    
-    const confidence = calculateConfidence(workflowSteps, connectedPluginKeys, outputs)
-    
-    const reasoning = `Generated ${outputs.length} outputs using plugin registry analysis of ${workflowSteps?.length || 0} workflow steps across ${new Set(workflowSteps?.map(s => s.plugin)).size || 0} plugins`
-    
-    console.log('✅ Registry-driven output inference completed:', {
+    console.log('🎯 Building output schema from SDK + smart defaults...')
+
+    const outputs: OutputSchema[] = []
+
+    // 1. START WITH SDK-SUGGESTED OUTPUTS (filtering out error notifications)
+    if (sdkSuggestedOutputs && sdkSuggestedOutputs.length > 0) {
+      console.log(`📦 Adding ${sdkSuggestedOutputs.length} outputs from AgentKit SDK`)
+
+      // Filter out error/notification outputs from SDK (we add these via smart defaults)
+      const mainOutputs = sdkSuggestedOutputs.filter(o => {
+        const isErrorOutput =
+          o.name?.toLowerCase().includes('error') ||
+          o.name?.toLowerCase().includes('notification') ||
+          o.description?.toLowerCase().includes('error notification') ||
+          o.description?.toLowerCase().includes('notify user of');
+
+        if (isErrorOutput) {
+          console.log(`⏭️  Skipping SDK error output: "${o.name}" (will use smart default instead)`)
+        }
+
+        return !isErrorOutput;
+      });
+
+      outputs.push(...mainOutputs.map(o => ({
+        name: o.name,
+        type: o.type,
+        category: o.category,
+        description: o.description,
+        format: o.format, // Preserve format from SDK
+        plugin: o.plugin, // Preserve plugin from SDK
+        examples: o.examples || []
+      })))
+
+      console.log(`✅ Added ${mainOutputs.length} main outputs (filtered ${sdkSuggestedOutputs.length - mainOutputs.length} error outputs)`)
+    } else {
+      // Fallback: Generate from plugins if SDK didn't provide outputs
+      console.log('📦 SDK provided no outputs, generating from plugins...')
+      const pluginOutputs = generateOutputsFromRegistry(prompt, workflowSteps || [], connectedPluginKeys)
+      outputs.push(...pluginOutputs)
+    }
+
+    // 2. ADD SMART DEFAULTS (respecting clarifications)
+    const defaults = buildSmartDefaults(clarificationAnswers, userEmail || 'user@email.com')
+    console.log(`📋 Adding ${defaults.length} smart defaults (clarification: ${clarificationAnswers?.error_handling_standard || 'none'})`)
+    outputs.push(...defaults)
+
+    const confidence = calculateConfidence(workflowSteps || [], connectedPluginKeys, outputs)
+
+    const reasoning = `Generated ${outputs.length} outputs: ${sdkSuggestedOutputs?.length || 0} from SDK + ${defaults.length} defaults`
+
+    console.log('✅ Output inference completed:', {
       outputCount: outputs.length,
+      sdkOutputs: sdkSuggestedOutputs?.length || 0,
+      smartDefaults: defaults.length,
       confidence,
       humanFacing: outputs.filter(o => o.category === 'human-facing').length,
       machineFacing: outputs.filter(o => o.category === 'machine-facing').length
     })
-    
+
     return {
       outputs,
       confidence,
       reasoning
     }
-    
+
   } catch (error) {
-    console.error('❌ Registry-driven output inference failed:', error)
-    
-    // Fallback to simple but improved outputs
+    console.error('❌ Output inference failed:', error)
+
+    // Safe fallback with smart defaults
     return {
-      outputs: [
-        {
-          name: 'Workflow Results',
-          type: 'object',
-          description: 'Complete results from your automated workflow including all processed data and actions taken',
-          category: 'human-facing',
-          examples: ['Processed data', 'Generated content', 'Completed actions']
-        },
-        {
-          name: 'Execution Status',
-          type: 'string',
-          description: 'Success or failure status with detailed information about any issues encountered',
-          category: 'human-facing',
-          examples: ['Success with details', 'Error with explanation', 'Partial completion with notes']
-        }
-      ],
-      confidence: 0.6,
-      reasoning: 'Using improved fallback outputs due to analysis error'
+      outputs: buildSmartDefaults(clarificationAnswers, userEmail || 'user@email.com'),
+      confidence: 0.5,
+      reasoning: 'Using fallback defaults due to error'
     }
   }
 }
@@ -425,17 +455,78 @@ function generateFallbackOutputs(prompt: string): OutputSchema[] {
 
 function calculateConfidence(workflowSteps: any[], connectedPluginKeys: string[], outputs: OutputSchema[]): number {
   let confidence = 0.5 // Base confidence
-  
+
   // Higher confidence with more workflow steps
   if (workflowSteps && workflowSteps.length > 0) {
     confidence += Math.min(workflowSteps.length * 0.1, 0.3)
   }
-  
+
   // Higher confidence with more connected plugins
   if (connectedPluginKeys.length > 0) {
     confidence += Math.min(connectedPluginKeys.length * 0.05, 0.2)
   }
-  
+
   // Cap at 1.0
   return Math.min(confidence, 1.0)
+}
+
+// NEW: Build smart default outputs based on clarification answers
+function buildSmartDefaults(
+  clarificationAnswers: Record<string, any>,
+  userEmail: string
+): OutputSchema[] {
+  const defaults: OutputSchema[] = [];
+
+  // 1. Notification based on clarification answer
+  const errorHandling = clarificationAnswers?.error_handling_standard;
+
+  if (errorHandling === 'email_me') {
+    defaults.push({
+      name: 'Error Notification',
+      type: 'EmailDraft',
+      category: 'human-facing',
+      description: 'Email notification when execution fails',
+      examples: ['Error details sent to your email']
+    });
+  } else if (errorHandling === 'alert_me') {
+    defaults.push({
+      name: 'Error Alert',
+      type: 'Alert',
+      category: 'human-facing',
+      description: 'Dashboard alert when execution fails',
+      examples: ['Alert shown in dashboard']
+    });
+  } else {
+    // Default if no clarification answer (backward compatibility)
+    defaults.push({
+      name: 'Error Notification',
+      type: 'EmailDraft',
+      category: 'human-facing',
+      description: 'Email notification when execution fails',
+      examples: ['Error details sent to your email']
+    });
+  }
+
+  // 2. Always add Execution Summary
+  defaults.push({
+    name: 'Execution Summary',
+    type: 'string',
+    category: 'human-facing',
+    description: 'Complete status of your automation with success/failure details and any important notes',
+    examples: [
+      'Successfully completed all tasks',
+      'Completed with 1 warning',
+      'Failed at step 3 - check configuration'
+    ]
+  });
+
+  // 3. Always add Process Metadata
+  defaults.push({
+    name: 'Process Metadata',
+    type: 'object',
+    category: 'machine-facing',
+    description: 'Technical details about execution including timing, counts, and performance data'
+  });
+
+  return defaults;
 }

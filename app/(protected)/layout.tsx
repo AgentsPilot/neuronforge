@@ -432,6 +432,16 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     return null
   }
 
+  // Check onboarding status - redirect to onboarding if not completed
+  // Skip this check if already on onboarding page to avoid redirect loop
+  const isOnOnboardingPage = pathname === '/onboarding'
+  const onboardingCompleted = user.user_metadata?.onboarding_completed
+
+  if (!isOnOnboardingPage && (onboardingCompleted === false || onboardingCompleted === undefined)) {
+    redirect('/onboarding')
+    return null
+  }
+
   const sidebarContent = (
     <>
       {/* Header */}

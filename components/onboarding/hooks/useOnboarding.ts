@@ -106,7 +106,8 @@ export const useOnboarding = () => {
             ...prev.data,
             profile: {
               ...prev.data.profile,
-              fullName: profile?.full_name || '',
+              // Try profile first, then user metadata, then empty string
+              fullName: profile?.full_name || user.user_metadata?.full_name || '',
               email: user.email || '',
             },
             domain: (profile?.domain as any) || 'other',
@@ -205,7 +206,7 @@ export const useOnboarding = () => {
       case 0: // Profile step
         return isProfileValid();
       case 1: // Domain step
-        return state.data.domain !== null && state.data.domain !== '';
+        return state.data.domain !== null;
       case 2: // Plugins step (optional)
         return true;
       case 3: // Role step
@@ -232,6 +233,7 @@ export const useOnboarding = () => {
       let { error: profileError } = await supabase
         .from('profiles')
         .update({
+          full_name: state.data.profile.fullName,
           company: state.data.profile.company || null,
           job_title: state.data.profile.jobTitle || null,
           timezone: state.data.profile.timezone,
@@ -247,6 +249,7 @@ export const useOnboarding = () => {
         const { error: fallbackError } = await supabase
           .from('profiles')
           .update({
+            full_name: state.data.profile.fullName,
             company: state.data.profile.company || null,
             job_title: state.data.profile.jobTitle || null,
             timezone: state.data.profile.timezone,
@@ -254,7 +257,7 @@ export const useOnboarding = () => {
             updated_at: new Date().toISOString(),
           })
           .eq('id', user.id);
-        
+
         profileError = fallbackError;
         
         // Store domain in localStorage as backup
@@ -295,7 +298,23 @@ export const useOnboarding = () => {
 
   const completeOnboarding = useCallback(async () => {
     try {
+      // Save onboarding data (creates/updates profile)
       await saveOnboardingData();
+
+      // Update auth metadata to mark onboarding as complete
+      const { error: metadataError } = await supabase.auth.updateUser({
+        data: {
+          onboarding_completed: true
+        }
+      });
+
+      if (metadataError) {
+        console.error('Failed to update onboarding status in metadata:', metadataError);
+        // Don't fail - profile was created successfully, just log the error
+      } else {
+        console.log('Onboarding completed successfully - metadata updated');
+      }
+
       return true;
     } catch (error) {
       console.error('Failed to complete onboarding:', error);

@@ -299,6 +299,7 @@ export const DebugPanel = ({
     { id: 'agent', label: 'Agent Data', icon: Brain },
     { id: 'config', label: 'Agent Config', icon: Database },
     { id: 'input', label: 'Input Schema', icon: Settings },
+    { id: 'output', label: 'Output Schema', icon: Send },
     { id: 'plugins', label: 'Plugins', icon: Zap },
     { id: 'prompts', label: 'Prompts', icon: MessageSquare },
     { id: 'full', label: 'Full JSON', icon: Code2 }
@@ -420,7 +421,7 @@ export const DebugPanel = ({
                   <pre className="text-xs text-purple-400 whitespace-pre-wrap overflow-x-auto">
                     {JSON.stringify(agent?.plugins_required || [], null, 2)}
                   </pre>
-                  
+
                   {pluginsLocked && originalPlugins && (
                     <div className="mt-4 pt-4 border-t border-gray-700">
                       <h5 className="text-amber-400 font-medium mb-2">Original Plugins (Protected)</h5>
@@ -430,15 +431,64 @@ export const DebugPanel = ({
                     </div>
                   )}
                 </div>
+              </div>
+            )}
 
+            {activeTab === 'output' && (
+              <div className="space-y-4">
                 <div className="bg-gray-800/50 rounded-lg p-4">
                   <h4 className="text-white font-medium mb-2 flex items-center gap-2">
-                    <Network className="h-4 w-4 text-pink-400" />
-                    Output Schema
+                    <Send className="h-4 w-4 text-pink-400" />
+                    Output Schema (from AgentKit SDK)
                   </h4>
+                  <div className="mb-3 bg-blue-900/30 border border-blue-600/30 rounded-lg p-3">
+                    <p className="text-xs text-blue-300">
+                      This schema defines how the agent delivers results. The <code className="bg-blue-800/50 px-1 rounded">format</code> field (table, list, markdown, etc.) is detected from your prompt and controls output formatting.
+                    </p>
+                  </div>
                   <pre className="text-xs text-pink-400 whitespace-pre-wrap overflow-x-auto">
                     {JSON.stringify(agent?.output_schema || [], null, 2)}
                   </pre>
+
+                  {agent?.output_schema && agent.output_schema.length > 0 && (
+                    <div className="mt-4 pt-4 border-t border-gray-700">
+                      <h5 className="text-green-400 font-medium mb-2 flex items-center gap-2">
+                        <CheckCircle2 className="h-4 w-4" />
+                        Output Breakdown
+                      </h5>
+                      <div className="space-y-2">
+                        {agent.output_schema.map((output: any, idx: number) => (
+                          <div key={idx} className="bg-gray-900/50 rounded-lg p-3 border border-gray-700/50">
+                            <div className="flex items-start justify-between mb-2">
+                              <span className="text-white font-medium">{output.name}</span>
+                              <span className={`text-xs px-2 py-1 rounded-full ${
+                                output.type === 'EmailDraft' ? 'bg-blue-900/50 text-blue-300' :
+                                output.type === 'SummaryBlock' ? 'bg-green-900/50 text-green-300' :
+                                output.type === 'PluginAction' ? 'bg-purple-900/50 text-purple-300' :
+                                output.type === 'Alert' ? 'bg-orange-900/50 text-orange-300' :
+                                'bg-gray-700 text-gray-300'
+                              }`}>
+                                {output.type}
+                              </span>
+                            </div>
+                            {output.format && (
+                              <div className="mb-2">
+                                <span className="text-xs text-cyan-400 bg-cyan-900/30 px-2 py-1 rounded">
+                                  Format: {output.format}
+                                </span>
+                              </div>
+                            )}
+                            <p className="text-xs text-gray-400">{output.description}</p>
+                            {output.plugin && (
+                              <div className="mt-2">
+                                <span className="text-xs text-purple-400">Plugin: {output.plugin}</span>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
