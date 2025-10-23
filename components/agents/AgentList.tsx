@@ -1259,15 +1259,15 @@ export default function AgentList() {
               </div>
             </div>
 
-            {/* Description */}
-            {agent.description && agent.description.length < 80 && (
+            {/* Description - always show if available */}
+            {agent.description && (
               <p className="text-sm text-gray-600 mb-3 line-clamp-2">
                 {agent.description}
               </p>
             )}
 
-            {/* Schedule info or mode indicator */}
-            <div className="mb-3 min-h-[40px] flex items-center">
+            {/* Schedule info or mode indicator - always show */}
+            <div className="mb-3">
               {agent.mode === 'scheduled' && agent.schedule_cron ? (
                 <div className="flex items-center gap-2 p-2 bg-blue-50/50 rounded-lg w-full">
                   <Calendar className="w-4 h-4 text-blue-600 flex-shrink-0" />
@@ -1279,7 +1279,7 @@ export default function AgentList() {
                 <div className="flex items-center gap-2 p-2 bg-gray-50/50 rounded-lg w-full">
                   <PlayCircle className="w-4 h-4 text-gray-600 flex-shrink-0" />
                   <span className="text-sm text-gray-700 font-medium">
-                    Manual execution only
+                    On demand
                   </span>
                 </div>
               )}

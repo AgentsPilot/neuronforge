@@ -11,6 +11,13 @@ const nextConfig = {
     NANGO_SECRET_KEY: process.env.NANGO_SECRET_KEY,
   },
   poweredByHeader: false,
+
+  // Suppress verbose request logs in development
+  logging: {
+    fetches: {
+      fullUrl: false,
+    },
+  },
 }
 
 module.exports = nextConfig

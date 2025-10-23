@@ -21,7 +21,7 @@ export class ChatGPTResearchPluginExecutor extends BasePluginExecutor {
 
   // Execute ChatGPT Research action
   protected async executeSpecificAction(
-    connection: any,
+    _connection: any,
     actionName: string,
     parameters: any
   ): Promise<any> {
@@ -50,7 +50,7 @@ export class ChatGPTResearchPluginExecutor extends BasePluginExecutor {
     }
 
     // Determine number of searches based on depth
-    const searchCounts = {
+    const searchCounts: Record<string, number> = {
       quick: 3,
       standard: 5,
       comprehensive: 8,
@@ -105,18 +105,20 @@ export class ChatGPTResearchPluginExecutor extends BasePluginExecutor {
     }
 
     // Determine summary length
-    const lengthInstructions = {
+    const lengthInstructions: Record<string, string> = {
       brief: '1-2 sentences',
       standard: 'one concise paragraph (3-5 sentences)',
       detailed: 'multiple paragraphs with key details'
     };
+
+    const lengthInstruction = lengthInstructions[length] || lengthInstructions['standard'];
 
     const focusInstruction = focus_on.length > 0
       ? `\n\nFocus specifically on these aspects: ${focus_on.join(', ')}`
       : '';
 
     const systemPrompt = `You are a professional content summarizer. Create ${style} summaries that capture the essential information.`;
-    const userPrompt = `Summarize the following content in ${lengthInstructions[length]}:${focusInstruction}\n\n${content}`;
+    const userPrompt = `Summarize the following content in ${lengthInstruction}:${focusInstruction}\n\n${content}`;
 
     try {
       const completion = await openai.chat.completions.create({
@@ -126,7 +128,7 @@ export class ChatGPTResearchPluginExecutor extends BasePluginExecutor {
           { role: 'user', content: userPrompt }
         ],
         temperature: 0.3,
-        max_tokens: 4000
+        max_tokens: 2000 // Optimized for cost
       });
 
       const summaryText = completion.choices[0].message.content || 'Unable to generate summary';
@@ -178,14 +180,16 @@ export class ChatGPTResearchPluginExecutor extends BasePluginExecutor {
       }
     }
 
-    const detailInstructions = {
+    const detailInstructions: Record<string, string> = {
       concise: 'Provide a brief, direct answer in 1-2 sentences.',
       standard: 'Provide a clear, informative answer in a paragraph.',
       detailed: 'Provide a comprehensive answer with explanation and examples.'
     };
 
+    const detailInstruction = detailInstructions[detail_level] || detailInstructions['standard'];
+
     const systemPrompt = `You are a knowledgeable AI assistant. Answer questions accurately and clearly.${use_web_search ? ' Use the provided web search results for current information.' : ''}`;
-    const userPrompt = `${detailInstructions[detail_level]}\n\nQuestion: ${question}${contextData}`;
+    const userPrompt = `${detailInstruction}\n\nQuestion: ${question}${contextData}`;
 
     try {
       const completion = await openai.chat.completions.create({
@@ -195,7 +199,7 @@ export class ChatGPTResearchPluginExecutor extends BasePluginExecutor {
           { role: 'user', content: userPrompt }
         ],
         temperature: 0.5,
-        max_tokens: 4000
+        max_tokens: 2000 // Optimized for cost
       });
 
       const answer = completion.choices[0].message.content || 'Unable to answer the question';
@@ -305,8 +309,8 @@ export class ChatGPTResearchPluginExecutor extends BasePluginExecutor {
         .replace(/\s+/g, ' ')
         .trim();
 
-      // Limit to first 10000 characters
-      return text.substring(0, 10000);
+      // Limit to first 2500 characters - OPTIMIZED for token usage
+      return text.substring(0, 2500);
     } catch (error) {
       return '';
     }
@@ -325,30 +329,51 @@ export class ChatGPTResearchPluginExecutor extends BasePluginExecutor {
       throw new Error('OpenAI API key not configured');
     }
 
-    const formatInstructions = {
+    const formatInstructions: Record<string, string> = {
       summary: 'a brief summary (2-3 paragraphs)',
-      detailed: 'a comprehensive analysis with multiple paragraphs and specific details',
-      bullet_points: 'organized bullet points with clear headings',
-      report: 'a formal report structure with introduction, findings, and conclusion'
+      detailed: 'a comprehensive analysis with multiple detailed paragraphs, specific examples, and thorough coverage of all important aspects. Provide substantial depth and detail.',
+      bullet_points: 'organized bullet points with clear headings and detailed explanations for each point',
+      report: 'a formal report structure with executive summary, detailed findings (multiple paragraphs), specific examples and data, analysis, and actionable recommendations'
     };
 
     const sourceContext = searchResults
       .map((r, i) => `[Source ${i + 1}] ${r.title}\n${r.content}`)
       .join('\n\n---\n\n');
 
-    const systemPrompt = `You are a professional researcher. Create ${formatInstructions[outputFormat]} based on the provided sources. Always cite sources when making claims.`;
+    const formatInstruction = formatInstructions[outputFormat] || formatInstructions['detailed'];
 
-    const userPrompt = `Research Topic: ${topic}\n\nProvided Sources:\n${sourceContext}\n\nCreate ${formatInstructions[outputFormat]} about "${topic}" using these sources. Maximum length: ${maxLength} characters.`;
+    const systemPrompt = `You are a professional researcher. Create ${formatInstruction} based on the provided sources. Always cite sources when making claims.
+
+IMPORTANT OUTPUT REQUIREMENTS:
+- Provide comprehensive, detailed responses with substantial content
+- DO NOT create brief or superficial summaries
+- Include specific examples, data points, and evidence from sources
+- For detailed/report formats: aim for AT LEAST 400-600 words with multiple paragraphs
+- Use clear structure with headings and organized sections`;
+
+    const userPrompt = `Research Topic: ${topic}\n\nProvided Sources:\n${sourceContext}\n\nCreate ${formatInstruction} about "${topic}" using these sources.
+
+REQUIREMENTS:
+- Target length: ${maxLength} characters (use most of this space for quality content)
+- Provide thorough, detailed coverage of the topic
+- Include specific facts, examples, and insights from the research
+- Structure with clear sections and comprehensive analysis`;
 
     try {
+      // Determine token limit based on output format - research needs more tokens
+      const isDetailedFormat = ['detailed', 'report'].includes(outputFormat);
+      const tokenLimit = isDetailedFormat
+        ? Math.min(Math.floor(maxLength / 3), 4000) // Detailed: allow up to 4000 tokens
+        : Math.min(Math.floor(maxLength / 3), 2500); // Standard: 2500 tokens max
+
       const completion = await openai.chat.completions.create({
         model: 'gpt-4o',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        temperature: 0.3,
-        max_tokens: Math.min(Math.floor(maxLength / 2), 4000)
+        temperature: 0.5, // Balanced for quality research
+        max_tokens: tokenLimit
       });
 
       const summaryText = completion.choices[0].message.content || 'Unable to generate research summary';

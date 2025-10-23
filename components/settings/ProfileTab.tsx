@@ -29,6 +29,9 @@ export default function ProfileTab({
   const [timezoneSearch, setTimezoneSearch] = useState('')
   const [isTimezoneDropdownOpen, setIsTimezoneDropdownOpen] = useState(false)
 
+  // Role dropdown state
+  const [isRoleDropdownOpen, setIsRoleDropdownOpen] = useState(false)
+
   // Role options
   const roleOptions = [
     {
@@ -451,28 +454,86 @@ export default function ProfileTab({
               </div>
             </div>
 
-            {/* Role Selection */}
-            <div className="space-y-1">
+            {/* Role Selection - Modern Dropdown */}
+            <div className="space-y-1 relative">
               <label className="block text-xs font-semibold text-gray-700">Role</label>
-              <div className="relative">
-                <currentRoleConfig.icon className="w-3.5 h-3.5 absolute left-2.5 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                <select
-                  value={profileForm.role || profile?.role || 'user'}
-                  onChange={(e) => setProfileForm(prev => ({ ...prev, role: e.target.value }))}
-                  className="w-full pl-8 pr-8 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-300 focus:border-gray-300 bg-white text-gray-900 appearance-none cursor-pointer"
-                >
-                  {roleOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <div className="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
-                  <svg className="h-3.5 w-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+
+              {/* Selected role display button */}
+              <button
+                type="button"
+                onClick={() => setIsRoleDropdownOpen(!isRoleDropdownOpen)}
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-300 focus:border-gray-300 bg-white text-gray-900 hover:bg-gray-50 transition-colors text-left"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-6 h-6 rounded-lg bg-gradient-to-br ${currentRoleConfig.color} flex items-center justify-center shadow-sm`}>
+                      <currentRoleConfig.icon className="w-3 h-3 text-white" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold text-gray-900">{currentRoleConfig.label}</div>
+                    </div>
+                  </div>
+                  <svg
+                    className={`h-3.5 w-3.5 text-gray-400 transition-transform ${isRoleDropdownOpen ? 'rotate-180' : ''}`}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                   </svg>
                 </div>
-              </div>
+              </button>
+
+              {/* Dropdown menu */}
+              {isRoleDropdownOpen && (
+                <>
+                  {/* Backdrop to close dropdown */}
+                  <div
+                    className="fixed inset-0 z-10"
+                    onClick={() => setIsRoleDropdownOpen(false)}
+                  />
+
+                  {/* Dropdown options */}
+                  <div className="absolute z-20 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden">
+                    {roleOptions.map((option) => {
+                      const isSelected = (profileForm.role || profile?.role || 'user') === option.value;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => {
+                            setProfileForm(prev => ({ ...prev, role: option.value }));
+                            setIsRoleDropdownOpen(false);
+                          }}
+                          className={`w-full px-3 py-2.5 text-left hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-b-0 ${
+                            isSelected ? 'bg-blue-50' : ''
+                          }`}
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${option.color} flex items-center justify-center shadow-md flex-shrink-0`}>
+                              <option.icon className="w-4 h-4 text-white" />
+                            </div>
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className={`text-xs font-semibold ${option.textColor}`}>
+                                  {option.label}
+                                </span>
+                                {isSelected && (
+                                  <CheckCircle className="w-3.5 h-3.5 text-blue-600" />
+                                )}
+                              </div>
+                              <p className="text-xs text-gray-500 mt-0.5">
+                                {option.description}
+                              </p>
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+
               <p className="text-xs text-gray-500">{currentRoleConfig.description}</p>
             </div>
             

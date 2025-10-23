@@ -18898,3 +18898,3656 @@ Built user plugins object with 4 connected plugins
 
 <w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
  ✓ Compiled in 1641ms (771 modules)
+
+[2m[132.58ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.17ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.51ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 36.47ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 13.86ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 17.72ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 63.46ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1404ms (771 modules)
+
+[2m[513.03ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.11ms][22m  [2m ↳ [22mQuick bail check
+[2m[  1.11ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[264.01ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 37.58ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[179.52ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 29.54ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.5s (771 modules)
+
+[2m[528.59ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  8.22ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 78.63ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 38.69ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[344.40ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 57.67ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.8s (771 modules)
+
+[2m[62.08ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[ 0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[ 0.06ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[25.72ms][22m  [2m ↳ [22mScan for candidates
+[2m[12.72ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 4.11ms][22m  [2m ↳ [22mBuild utilities
+[2m[19.02ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 871ms (771 modules)
+
+[2m[95.08ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[ 0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[ 0.07ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[37.00ms][22m  [2m ↳ [22mScan for candidates
+[2m[18.47ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 7.36ms][22m  [2m ↳ [22mBuild utilities
+[2m[31.80ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1484ms (771 modules)
+
+[2m[175.72ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.08ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 44.53ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 19.76ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 15.22ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 95.64ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1289ms (771 modules)
+
+[2m[161.02ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.04ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.24ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[102.01ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 20.25ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[  4.58ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 33.54ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1341ms (771 modules)
+
+[2m[160.99ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.17ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.19ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 53.49ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 25.50ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 64.92ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 16.26ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 949ms (771 modules)
+
+[2m[184.89ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.45ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.41ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 61.03ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 31.20ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 16.75ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 73.10ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.6s (771 modules)
+
+[2m[192.25ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.45ms][22m  [2m ↳ [22mQuick bail check
+[2m[  1.91ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 54.11ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 15.42ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 26.37ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 91.60ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1466ms (771 modules)
+
+[2m[592.65ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.32ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.26ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[151.51ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 42.13ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[313.31ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 82.65ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 4s (771 modules)
+
+[2m[301.47ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.04ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.36ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 45.97ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 16.60ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[180.88ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 57.03ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 2.9s (771 modules)
+
+[2m[154.91ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.24ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.27ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 57.07ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 18.84ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 17.93ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 59.89ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1331ms (771 modules)
+
+[2m[277.12ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.04ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.14ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 51.73ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 25.99ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[167.01ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 31.95ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.3s (771 modules)
+
+[2m[613.93ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.04ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.88ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 99.38ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 14.98ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[468.75ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 19.53ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[ 10.14ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1953ms (771 modules)
+
+[2m[226.96ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.65ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 72.13ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 22.81ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 34.52ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 95.99ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 3.1s (771 modules)
+
+[2m[283.31ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.06ms][22m  [2m ↳ [22mQuick bail check
+[2m[  2.47ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[108.12ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 21.73ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[108.39ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 41.08ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1415ms (771 modules)
+
+[2m[126.75ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.55ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 56.46ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 29.04ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 11.27ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 28.56ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1320ms (771 modules)
+
+[2m[236.79ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.44ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 76.94ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 56.46ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 16.54ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 85.73ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1400ms (771 modules)
+
+[2m[232.35ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.74ms][22m  [2m ↳ [22mQuick bail check
+[2m[  4.78ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 92.55ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 42.82ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 16.43ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 73.35ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1947ms (771 modules)
+
+[2m[195.00ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.31ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 69.06ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 17.58ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 84.79ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 22.44ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1086ms (771 modules)
+
+[2m[383.58ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.54ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[222.51ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 48.98ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 16.50ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 94.35ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1451ms (771 modules)
+
+[2m[151.57ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.47ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 74.92ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 20.52ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 10.70ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 44.06ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1375ms (771 modules)
+
+[2m[453.63ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.05ms][22m  [2m ↳ [22mQuick bail check
+[2m[  4.21ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[184.64ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 60.04ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 39.86ms][22m  [2m ↳ [22mBuild utilities
+[2m[156.63ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 4.2s (771 modules)
+
+[2m[139.92ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.08ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[100.98ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 13.59ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[  7.04ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 17.85ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1795ms (771 modules)
+
+[2m[111.56ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.06ms][22m  [2m ↳ [22mQuick bail check
+[2m[  2.11ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 54.46ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 20.49ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 12.34ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 21.79ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1231ms (771 modules)
+
+[2m[461.02ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.04ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.93ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[138.84ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 27.87ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[206.31ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 83.02ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.8s (771 modules)
+
+[2m[314.55ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  2.30ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.06ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[180.04ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 64.96ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 17.50ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 49.49ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1974ms (1553 modules)
+
+[2m[165.37ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.04ms][22m  [2m ↳ [22mQuick bail check
+[2m[  1.47ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 72.87ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 24.14ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 16.74ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 49.52ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.5s (771 modules)
+
+[2m[105.50ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.07ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 26.50ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 14.72ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 39.85ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 24.18ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 842ms (771 modules)
+
+[2m[114.72ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.07ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 23.14ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 18.13ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 59.86ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 13.36ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 760ms (771 modules)
+
+[2m[94.20ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[ 0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[ 0.25ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[38.65ms][22m  [2m ↳ [22mScan for candidates
+[2m[17.71ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[27.09ms][22m  [2m ↳ [22mBuild utilities
+[2m[10.32ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 774ms (771 modules)
+
+[2m[100.68ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.06ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.14ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 50.40ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 29.74ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[  5.21ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 14.86ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 1033ms (771 modules)
+
+[2m[187.35ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.11ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 41.34ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 28.37ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 94.13ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 23.07ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 980ms (771 modules)
+
+[2m[85.57ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[ 0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[ 0.07ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[42.89ms][22m  [2m ↳ [22mScan for candidates
+[2m[21.87ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 5.74ms][22m  [2m ↳ [22mBuild utilities
+[2m[14.81ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 722ms (771 modules)
+
+[2m[110.91ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.11ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 60.44ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 20.47ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[  9.31ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 20.38ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 773ms (771 modules)
+
+[2m[146.50ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.11ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 51.87ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 23.15ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 13.16ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 57.79ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1214ms (771 modules)
+
+[2m[123.84ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.08ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 53.76ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 36.45ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 10.21ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 23.11ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 952ms (771 modules)
+
+[2m[85.36ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[ 0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[ 0.08ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[29.15ms][22m  [2m ↳ [22mScan for candidates
+[2m[20.30ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 6.83ms][22m  [2m ↳ [22mBuild utilities
+[2m[28.82ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 876ms (771 modules)
+
+[2m[127.58ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.06ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 41.11ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 20.45ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 54.32ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 11.47ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.6s (771 modules)
+
+[2m[106.04ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.08ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 54.54ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 16.13ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[  9.88ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 24.97ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 782ms (771 modules)
+
+[2m[184.02ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.05ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.11ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 44.00ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 16.02ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[105.92ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 17.20ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 858ms (771 modules)
+
+[2m[117.43ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.04ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.18ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 55.32ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 21.62ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 11.69ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 28.20ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 941ms (771 modules)
+
+[2m[156.04ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.54ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 49.33ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 25.02ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 56.12ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 24.76ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1275ms (771 modules)
+
+[2m[180.95ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.37ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 64.10ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 36.23ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[  8.08ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 71.65ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 894ms (771 modules)
+
+[2m[86.74ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[ 0.00ms][22m  [2m ↳ [22mQuick bail check
+[2m[ 0.04ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[23.97ms][22m  [2m ↳ [22mScan for candidates
+[2m[18.11ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 1.59ms][22m  [2m ↳ [22mBuild utilities
+[2m[42.80ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 923ms (771 modules)
+
+[2m[205.29ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.02ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.17ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 81.01ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 25.62ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 68.44ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 29.44ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Compiled in 874ms (771 modules)
+
+[2m[275.34ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.24ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.08ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 63.54ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 29.00ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[145.14ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 36.61ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1232ms (771 modules)
+
+[2m[192.09ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.20ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.27ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 57.78ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 32.41ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 19.87ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 81.21ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 2.9s (771 modules)
+
+[2m[184.35ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.14ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.17ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 88.09ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 39.93ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 15.54ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 39.72ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1001ms (771 modules)
+
+[2m[243.04ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.10ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.09ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 55.39ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 21.05ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[133.18ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 32.09ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1703ms (771 modules)
+
+[2m[92.21ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[ 0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[ 0.27ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[37.90ms][22m  [2m ↳ [22mScan for candidates
+[2m[15.42ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[26.16ms][22m  [2m ↳ [22mBuild utilities
+[2m[12.27ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 550ms (771 modules)
+
+[2m[75.38ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[ 0.04ms][22m  [2m ↳ [22mQuick bail check
+[2m[ 0.10ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[40.44ms][22m  [2m ↳ [22mScan for candidates
+[2m[16.32ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 3.19ms][22m  [2m ↳ [22mBuild utilities
+[2m[15.10ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 798ms (771 modules)
+
+[2m[263.04ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.01ms][22m  [2m ↳ [22mQuick bail check
+[2m[  0.18ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[158.84ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 24.20ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 64.65ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 15.01ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ✓ Compiled in 1278ms (771 modules)
+ ⚠ Found a change in next.config.js. Restarting the server to apply the changes...
+  ▲ Next.js 14.2.33
+  - Local:        http://localhost:3000
+  - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 1625ms
+ ⨯ ./app/api/run-agent/route.ts
+Error: 
+  [31mx[0m the name `runtime` is defined multiple times
+     ,-[[36;1;4m/Users/yaelomer/Documents/neuronforge/app/api/run-agent/route.ts[0m:10:1]
+ [2m 10[0m | import { addManualExecution } from '@/lib/queues/qstashQueue'
+ [2m 11[0m | import { runAgentKit } from '@/lib/agentkit/runAgentKit' // NEW: AgentKit execution
+ [2m 12[0m | 
+ [2m 13[0m | export const runtime = 'nodejs'
+     : [31;1m             ^^^|^^^[0m
+     :                 [31;1m`-- [31;1mprevious definition of `runtime` here[0m[0m
+ [2m 14[0m | 
+ [2m 15[0m | interface RunAgentRequest {
+ [2m 16[0m |   agent_id: string;
+ [2m 17[0m |   input_variables?: Record<string, any>;
+ [2m 18[0m |   override_user_prompt?: string;
+ [2m 19[0m |   execution_id?: string;
+ [2m 20[0m |   use_queue?: boolean; // New: whether to use queue-based execution
+ [2m 21[0m |   use_agentkit?: boolean; // NEW: Use OpenAI AgentKit for execution
+ [2m 22[0m |   user_id?: string; // For queue-based execution
+ [2m 23[0m | }
+ [2m 24[0m | 
+ [2m 25[0m | /**
+ [2m 26[0m |  * Enhanced POST handler supporting both immediate and queue-based execution
+ [2m 27[0m |  */
+ [2m 28[0m | export async function POST(req: Request) {
+ [2m 29[0m |   const body: RunAgentRequest = await req.json()
+ [2m 30[0m |   const {
+ [2m 31[0m |     agent_id,
+ [2m 32[0m |     input_variables = {},
+ [2m 33[0m |     override_user_prompt,
+ [2m 34[0m |     execution_id,
+ [2m 35[0m |     use_queue = false, // Default to immediate execution for backward compatibility
+ [2m 36[0m |     use_agentkit = false, // NEW: Default to false (use old system)
+ [2m 37[0m |     user_id: provided_user_id
+ [2m 38[0m |   } = body
+ [2m 39[0m | 
+ [2m 40[0m |   const cookieStore = await cookies()
+ [2m 41[0m |   const supabase = createServerClient(
+ [2m 42[0m |     process.env.NEXT_PUBLIC_SUPABASE_URL!,
+ [2m 43[0m |     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+ [2m 44[0m |     {
+ [2m 45[0m |       cookies: {
+ [2m 46[0m |         get: (name) => cookieStore.get(name)?.value,
+ [2m 47[0m |         set: async () => {},
+ [2m 48[0m |         remove: async () => {},
+ [2m 49[0m |       },
+ [2m 50[0m |     }
+ [2m 51[0m |   )
+ [2m 52[0m | 
+ [2m 53[0m |   // Get authenticated user
+ [2m 54[0m |   const { data: { user }, error: authError } = await supabase.auth.getUser()
+ [2m 55[0m |   if (authError || !user) {
+ [2m 56[0m |     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+ [2m 57[0m |   }
+ [2m 58[0m | 
+ [2m 59[0m |   // Fetch agent
+ [2m 60[0m |   const { data: agent, error: agentError } = await supabase
+ [2m 61[0m |     .from('agents')
+ [2m 62[0m |     .select('*')
+ [2m 63[0m |     .eq('id', agent_id)
+ [2m 64[0m |     .single()
+ [2m 65[0m | 
+ [2m 66[0m |   if (agentError || !agent) {
+ [2m 67[0m |     console.error('❌ Agent fetch error:', agentError)
+ [2m 68[0m |     return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
+ [2m 69[0m |   }
+ [2m 70[0m | 
+ [2m 71[0m |   // **NEW: AGENTKIT EXECUTION PATH**
+ [2m 72[0m |   if (use_agentkit) {
+ [2m 73[0m |     console.log(`🤖 Using AgentKit execution for agent "${agent.agent_name}" (${agent_id})`)
+ [2m 74[0m | 
+ [2m 75[0m |     try {
+ [2m 76[0m |       // Fetch agent_configurations for input values
+ [2m 77[0m |       const { data: agentConfig, error: configError } = await supabase
+ [2m 78[0m |         .from('agent_configurations')
+ [2m 79[0m |         .select('input_values, input_schema')
+ [2m 80[0m |         .eq('agent_id', agent_id)
+ [2m 81[0m |         .eq('user_id', user.id)
+ [2m 82[0m |         .order('created_at', { ascending: false })
+ [2m 83[0m |         .limit(1)
+ [2m 84[0m |         .single()
+ [2m 85[0m | 
+ [2m 86[0m |       const userInput = override_user_prompt || agent.user_prompt
+ [2m 87[0m |       const inputValues = agentConfig?.input_values || {}
+ [2m 88[0m | 
+ [2m 89[0m |       console.log(`📋 AgentKit: Found ${Object.keys(inputValues).length} input values from configuration`)
+ [2m 90[0m | 
+ [2m 91[0m |       // Generate session ID for analytics tracking (UUID format)
+ [2m 92[0m |       const sessionId = uuidv4()
+ [2m 93[0m | 
+ [2m 94[0m |       // Execute using OpenAI AgentKit with V2 Plugin System
+ [2m 95[0m |       const result = await runAgentKit(
+ [2m 96[0m |         user.id,
+ [2m 97[0m |         {
+ [2m 98[0m |           id: agent.id,
+ [2m 99[0m |           agent_name: agent.agent_name,
+ [2m100[0m |           system_prompt: agent.system_prompt,
+ [2m101[0m |           enhanced_prompt: agent.enhanced_prompt,
+ [2m102[0m |           user_prompt: agent.user_prompt,
+ [2m103[0m |           plugins_required: agent.plugins_required || [],
+ [2m104[0m |           input_schema: agent.input_schema || agentConfig?.input_schema,
+ [2m105[0m |           output_schema: agent.output_schema,
+ [2m106[0m |           trigger_condintion: agent.trigger_condintion // Pass notification preference
+ [2m107[0m |         },
+ [2m108[0m |         userInput,
+ [2m109[0m |         inputValues, // Pass input values from agent_configurations
+ [2m110[0m |         sessionId // Pass session ID for analytics tracking
+ [2m111[0m |       )
+ [2m112[0m | 
+ [2m113[0m |       // Check if agent should send email notification based on trigger_condintion
+ [2m114[0m |       const triggerConfig = agent.trigger_condintion?.error_handling || {};
+ [2m115[0m |       const shouldSendEmail = triggerConfig.on_failure === 'email';
+ [2m116[0m | 
+ [2m117[0m |       if (shouldSendEmail && result.success) {
+ [2m118[0m |         console.log('📧 AgentKit: Sending result via email as per trigger_condintion');
+ [2m119[0m | 
+ [2m120[0m |         // The result already contains the response - no need to send it again
+ [2m121[0m |         // The email should have been sent by the agent itself during execution
+ [2m122[0m |         // Just log that email delivery was configured
+ [2m123[0m |       }
+ [2m124[0m | 
+ [2m125[0m |       // Log execution to agent_executions table
+ [2m126[0m |       const now = new Date().toISOString()
+ [2m127[0m |       const { error: insertError } = await supabase.from('agent_executions').insert({
+ [2m128[0m |         agent_id: agent.id,
+ [2m129[0m |         user_id: user.id,
+ [2m130[0m |         execution_type: 'manual',
+ [2m131[0m |         status: result.success ? 'completed' : 'failed',
+ [2m132[0m |         scheduled_at: now, // Required field - use current time for manual executions
+ [2m133[0m |         started_at: new Date(Date.now() - result.executionTime).toISOString(),
+ [2m134[0m |         completed_at: now,
+ [2m135[0m |         execution_duration_ms: result.executionTime,
+ [2m136[0m |         error_message: result.error || null,
+ [2m137[0m |         logs: {
+ [2m138[0m |           agentkit: true,
+ [2m139[0m |           iterations: result.iterations,
+ [2m140[0m |           toolCalls: result.toolCalls,
+ [2m141[0m |           tokensUsed: result.tokensUsed,
+ [2m142[0m |           model: 'gpt-4o',
+ [2m143[0m |           inputValuesUsed: Object.keys(inputValues).length
+ [2m144[0m |         }
+ [2m145[0m |       })
+ [2m146[0m | 
+ [2m147[0m |       if (insertError) {
+ [2m148[0m |         console.error('Failed to log AgentKit execution:', insertError)
+ [2m149[0m |       }
+ [2m150[0m | 
+ [2m151[0m |       // ALSO log to agent_logs table for consistency with legacy system
+ [2m152[0m |       console.log('🪵 Inserting AgentKit result to agent_logs...')
+ [2m153[0m |       const { data: logData, error: logInsertError } = await supabase
+ [2m154[0m |         .from('agent_logs')
+ [2m155[0m |         .insert({
+ [2m156[0m |           agent_id: agent.id,
+ [2m157[0m |           user_id: user.id,
+ [2m158[0m |           run_output: JSON.stringify({
+ [2m159[0m |             response: result.response,
+ [2m160[0m |             success: result.success,
+ [2m161[0m |             agentkit: true,
+ [2m162[0m |             iterations: result.iterations,
+ [2m163[0m |             toolCallsCount: result.toolCalls.length,
+ [2m164[0m |             tokensUsed: result.tokensUsed.total,
+ [2m165[0m |             executionTimeMs: result.executionTime
+ [2m166[0m |           }),
+ [2m167[0m |           full_output: {
+ [2m168[0m |             message: result.response,
+ [2m169[0m |             agentkit_metadata: {
+ [2m170[0m |               model: 'gpt-4o',
+ [2m171[0m |               iterations: result.iterations,
+ [2m172[0m |               toolCalls: result.toolCalls,
+ [2m173[0m |               tokensUsed: result.tokensUsed
+ [2m174[0m |             }
+ [2m175[0m |           },
+ [2m176[0m |           status: result.success ? '✅ AgentKit execution completed successfully' : '❌ AgentKit execution failed',
+ [2m177[0m |           created_at: now,
+ [2m178[0m |         })
+ [2m179[0m |         .select('id')
+ [2m180[0m |         .single()
+ [2m181[0m | 
+ [2m182[0m |       if (logInsertError) {
+ [2m183[0m |         console.error('❌ Failed to insert AgentKit log into agent_logs:', logInsertError)
+ [2m184[0m |       } else {
+ [2m185[0m |         console.log('✅ AgentKit log inserted successfully')
+ [2m186[0m |       }
+ [2m187[0m | 
+ [2m188[0m |       // Update agent_stats with accurate success tracking
+ [2m189[0m |       const { error: statsError } = await supabase.rpc('increment_agent_stats', {
+ [2m190[0m |         agent_id_input: agent.id,
+ [2m191[0m |         user_id_input: user.id,
+ [2m192[0m |         success: result.success, // Use AgentKit's clean success boolean
+ [2m193[0m |       })
+ [2m194[0m | 
+ [2m195[0m |       if (statsError) {
+ [2m196[0m |         console.error('❌ Failed to update agent_stats:', statsError)
+ [2m197[0m |       } else {
+ [2m198[0m |         console.log('✅ agent_stats updated successfully')
+ [2m199[0m |       }
+ [2m200[0m | 
+ [2m201[0m |       return NextResponse.json({
+ [2m202[0m |         success: result.success,
+ [2m203[0m |         message: result.response,
+ [2m204[0m |         data: {
+ [2m205[0m |           agent_id: agent.id,
+ [2m206[0m |           agent_name: agent.agent_name,
+ [2m207[0m |           execution_type: 'agentkit',
+ [2m208[0m |           tool_calls_count: result.toolCalls.length,
+ [2m209[0m |           successful_tool_calls: result.toolCalls.filter(tc => tc.success).length,
+ [2m210[0m |           failed_tool_calls: result.toolCalls.filter(tc => !tc.success).length,
+ [2m211[0m |           tokens_used: result.tokensUsed.total,
+ [2m212[0m |           execution_time_ms: result.executionTime,
+ [2m213[0m |           iterations: result.iterations,
+ [2m214[0m |           input_values_used: Object.keys(inputValues).length
+ [2m215[0m |         },
+ [2m216[0m |         agentkit: true
+ [2m217[0m |       })
+ [2m218[0m | 
+ [2m219[0m |     } catch (error: any) {
+ [2m220[0m |       console.error('❌ AgentKit execution error:', error)
+ [2m221[0m |       return NextResponse.json({
+ [2m222[0m |         success: false,
+ [2m223[0m |         error: error.message || 'AgentKit execution failed',
+ [2m224[0m |         agentkit: true
+ [2m225[0m |       }, { status: 500 })
+ [2m226[0m |     }
+ [2m227[0m |   }
+ [2m228[0m | 
+ [2m229[0m |   // **QUEUE-BASED EXECUTION PATH**
+ [2m230[0m |   if (use_queue) {
+ [2m231[0m |     // Check if running locally - QStash cannot send to localhost
+ [2m232[0m |     const isLocalDev = process.env.NODE_ENV === 'development' ||
+ [2m233[0m |                        process.env.VERCEL_ENV === undefined ||
+ [2m234[0m |                        !process.env.QSTASH_URL ||
+ [2m235[0m |                        !process.env.QSTASH_TOKEN
+ [2m236[0m | 
+ [2m237[0m |     if (isLocalDev) {
+ [2m238[0m |       console.log('⚠️  QStash queue unavailable in local development - falling back to direct execution')
+ [2m239[0m |       console.log(`⚡ Using immediate execution for agent ${agent_id} (local dev fallback)`)
+ [2m240[0m | 
+ [2m241[0m |       // Fall through to immediate execution path below
+ [2m242[0m |       // Don't return here - let the immediate execution code run
+ [2m243[0m |     } else {
+ [2m244[0m |       console.log(`🔄 Using queue-based execution for agent ${agent_id}`)
+ [2m245[0m | 
+ [2m246[0m |       try {
+ [2m247[0m |       // Validate agent can be executed
+ [2m248[0m |       if (agent.status === 'archived') {
+ [2m249[0m |         return NextResponse.json({ error: 'Cannot execute archived agent' }, { status: 400 })
+ [2m250[0m |       }
+ [2m251[0m |       if (agent.status === 'inactive') {
+ [2m252[0m |         return NextResponse.json({ error: 'Cannot execute inactive agent' }, { status: 400 })
+ [2m253[0m |       }
+ [2m254[0m | 
+ [2m255[0m |       const executionUserId = provided_user_id || user.id
+ [2m256[0m | 
+ [2m257[0m |       // Check if agent is already running
+ [2m258[0m |       const { data: runningExecutions, error: runningError } = await supabase
+ [2m259[0m |         .from('agent_executions')
+ [2m260[0m |         .select('id')
+ [2m261[0m |         .eq('agent_id', agent_id)
+ [2m262[0m |         .in('status', ['pending', 'running'])
+ [2m263[0m |         .limit(1)
+ [2m264[0m | 
+ [2m265[0m |       if (runningError) {
+ [2m266[0m |         console.error('Error checking running executions:', runningError)
+ [2m267[0m |         return NextResponse.json(
+ [2m268[0m |           { error: 'Failed to check agent status', details: runningError.message },
+ [2m269[0m |           { status: 500 }
+ [2m270[0m |         )
+ [2m271[0m |       }
+ [2m272[0m | 
+ [2m273[0m |       if (runningExecutions && runningExecutions.length > 0) {
+ [2m274[0m |         return NextResponse.json(
+ [2m275[0m |           { 
+ [2m276[0m |             error: 'Agent is already running',
+ [2m277[0m |             message: 'Please wait for the current execution to complete before starting a new one',
+ [2m278[0m |             currentExecutionId: runningExecutions[0].id
+ [2m279[0m |           },
+ [2m280[0m |           { status: 409 }
+ [2m281[0m |         )
+ [2m282[0m |       }
+ [2m283[0m | 
+ [2m284[0m |       // Create execution record in new table
+ [2m285[0m |       const scheduledAt = new Date().toISOString()
+ [2m286[0m |       const { data: execution, error: executionError } = await supabase
+ [2m287[0m |         .from('agent_executions')
+ [2m288[0m |         .insert({
+ [2m289[0m |           agent_id: agent.id,
+ [2m290[0m |           user_id: executionUserId,
+ [2m291[0m |           execution_type: 'manual',
+ [2m292[0m |           scheduled_at: scheduledAt,
+ [2m293[0m |           status: 'pending',
+ [2m294[0m |           cron_expression: agent.schedule_cron,
+ [2m295[0m |           progress: 0,
+ [2m296[0m |           logs: {
+ [2m297[0m |             created_via: 'manual_api_queue',
+ [2m298[0m |             requested_at: scheduledAt,
+ [2m299[0m |             ip_address: req.headers.get('x-forwarded-for') || 'unknown',
+ [2m300[0m |             input_variables: Object.keys(input_variables).length > 0 ? input_variables : null,
+ [2m301[0m |             override_user_prompt: override_user_prompt || null,
+ [2m302[0m |           }
+ [2m303[0m |         })
+ [2m304[0m |         .select('id')
+ [2m305[0m |         .single()
+ [2m306[0m | 
+ [2m307[0m |       if (executionError || !execution) {
+ [2m308[0m |         console.error('Failed to create execution record:', executionError)
+ [2m309[0m |         return NextResponse.json(
+ [2m310[0m |           { error: 'Failed to create execution record', details: executionError?.message },
+ [2m311[0m |           { status: 500 }
+ [2m312[0m |         )
+ [2m313[0m |       }
+ [2m314[0m | 
+ [2m315[0m |       // Add job to queue - FIXED: Use correct function name and parameters
+ [2m316[0m |       const { jobId, executionId } = await addManualExecution(
+ [2m317[0m |         agent.id,          // agentId
+ [2m318[0m |         executionUserId,   // userId  
+ [2m319[0m |         execution.id,      // executionId
+ [2m320[0m |         input_variables,   // inputVariables
+ [2m321[0m |         override_user_prompt // overrideUserPrompt
+ [2m322[0m |       )
+ [2m323[0m | 
+ [2m324[0m |       console.log(`✅ Queued manual execution for agent ${agent.agent_name}`, {
+ [2m325[0m |         agentId: agent.id,
+ [2m326[0m |         executionId: execution.id,
+ [2m327[0m |         jobId,
+ [2m328[0m |       })
+ [2m329[0m | 
+ [2m330[0m |       return NextResponse.json({
+ [2m331[0m |         success: true,
+ [2m332[0m |         message: 'Agent execution queued successfully',
+ [2m333[0m |         data: {
+ [2m334[0m |           agent_id: agent.id,
+ [2m335[0m |           agent_name: agent.agent_name,
+ [2m336[0m |           execution_id: execution.id,
+ [2m337[0m |           job_id: jobId,
+ [2m338[0m |           execution_type: 'manual',
+ [2m339[0m |           status: 'pending',
+ [2m340[0m |           scheduled_at: scheduledAt,
+ [2m341[0m |           estimated_duration: '1-5 minutes',
+ [2m342[0m |         },
+ [2m343[0m |         queue_based: true,
+ [2m344[0m |       })
+ [2m345[0m | 
+ [2m346[0m |       } catch (queueError) {
+ [2m347[0m |         console.error('Failed to queue agent job:', queueError)
+ [2m348[0m |         return NextResponse.json(
+ [2m349[0m |           {
+ [2m350[0m |             error: 'Failed to queue agent execution',
+ [2m351[0m |             details: queueError instanceof Error ? queueError.message : 'Unknown error',
+ [2m352[0m |           },
+ [2m353[0m |           { status: 500 }
+ [2m354[0m |         )
+ [2m355[0m |       }
+ [2m356[0m |     }
+ [2m357[0m |   }
+ [2m358[0m | 
+ [2m359[0m |   // **EXISTING IMMEDIATE EXECUTION PATH** (preserves backward compatibility)
+ [2m360[0m |   console.log(`⚡ Using immediate execution for agent ${agent_id}`)
+ [2m361[0m | 
+ [2m362[0m |   // Initialize execution tracking if execution_id provided
+ [2m363[0m |   if (execution_id) {
+ [2m364[0m |     console.log(`🚀 Starting execution tracking for: ${execution_id}`)
+ [2m365[0m |     
+ [2m366[0m |     // Update execution record to running status
+ [2m367[0m |     const { error: execError } = await supabase
+ [2m368[0m |       .from('agent_configurations')
+ [2m369[0m |       .update({
+ [2m370[0m |         status: 'running',
+ [2m371[0m |         created_at: new Date().toISOString()
+ [2m372[0m |       })
+ [2m373[0m |       .eq('id', execution_id)
+ [2m374[0m | 
+ [2m375[0m |     if (execError) {
+ [2m376[0m |       console.error('❌ Failed to update execution record:', execError)
+ [2m377[0m |     } else {
+ [2m378[0m |       console.log('✅ Execution record updated to running status')
+ [2m379[0m |     }
+ [2m380[0m |   }
+ [2m381[0m | 
+ [2m382[0m |   // Extract text from uploaded PDF (if exists)
+ [2m383[0m |   try {
+ [2m384[0m |     for (const key in input_variables) {
+ [2m385[0m |       const value = input_variables[key]
+ [2m386[0m |       if (
+ [2m387[0m |         typeof value === 'string' &&
+ [2m388[0m |         value.startsWith('data:application/pdf;base64,')
+ [2m389[0m |       ) {
+ [2m390[0m |         console.log('📄 Detected PDF upload, extracting text...')
+ [2m391[0m |         
+ [2m392[0m |         if (execution_id) {
+ [2m393[0m |           const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m394[0m |             execution_id,
+ [2m395[0m |             agent_id: agent_id,
+ [2m396[0m |             user_id: user.id,
+ [2m397[0m |             timestamp: new Date().toISOString(),
+ [2m398[0m |             level: 'info',
+ [2m399[0m |             message: 'PDF upload detected, extracting text content',
+ [2m400[0m |             phase: 'documents'
+ [2m401[0m |           })
+ [2m402[0m |           
+ [2m403[0m |           if (logError) {
+ [2m404[0m |             console.error('Failed to insert PDF detection log:', logError)
+ [2m405[0m |           }
+ [2m406[0m |         }
+ [2m407[0m |         
+ [2m408[0m |         const text = await extractPdfTextFromBase64(value)
+ [2m409[0m |         input_variables.__uploaded_file_text = text
+ [2m410[0m |         
+ [2m411[0m |         if (execution_id) {
+ [2m412[0m |           const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m413[0m |             execution_id,
+ [2m414[0m |             agent_id: agent_id,
+ [2m415[0m |             user_id: user.id,
+ [2m416[0m |             timestamp: new Date().toISOString(),
+ [2m417[0m |             level: 'info',
+ [2m418[0m |             message: `PDF text extraction completed. Extracted ${text.length} characters`,
+ [2m419[0m |             phase: 'documents'
+ [2m420[0m |           })
+ [2m421[0m |           
+ [2m422[0m |           if (logError) {
+ [2m423[0m |             console.error('Failed to insert PDF completion log:', logError)
+ [2m424[0m |           }
+ [2m425[0m |         }
+ [2m426[0m |         break // Only process the first PDF for now
+ [2m427[0m |       }
+ [2m428[0m |     }
+ [2m429[0m |   } catch (err: any) {
+ [2m430[0m |     console.error('❌ Failed to extract PDF text:', err)
+ [2m431[0m |     if (execution_id) {
+ [2m432[0m |       const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m433[0m |         execution_id,
+ [2m434[0m |         agent_id: agent_id,
+ [2m435[0m |         user_id: user.id,
+ [2m436[0m |         timestamp: new Date().toISOString(),
+ [2m437[0m |         level: 'error',
+ [2m438[0m |         message: `PDF text extraction failed: ${err.message}`,
+ [2m439[0m |         phase: 'documents'
+ [2m440[0m |       })
+ [2m441[0m |       
+ [2m442[0m |       if (logError) {
+ [2m443[0m |         console.error('Failed to insert PDF error log:', logError)
+ [2m444[0m |       }
+ [2m445[0m |     }
+ [2m446[0m |   }
+ [2m447[0m | 
+ [2m448[0m |   try {
+ [2m449[0m |     const startTime = Date.now()
+ [2m450[0m | 
+ [2m451[0m |     if (execution_id) {
+ [2m452[0m |       const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m453[0m |         execution_id,
+ [2m454[0m |         agent_id: agent_id,
+ [2m455[0m |         user_id: user.id,
+ [2m456[0m |         timestamp: new Date().toISOString(),
+ [2m457[0m |         level: 'info',
+ [2m458[0m |         message: 'Starting agent execution with interpolated prompt',
+ [2m459[0m |         phase: 'prompt'
+ [2m460[0m |       })
+ [2m461[0m |       
+ [2m462[0m |       if (logError) {
+ [2m463[0m |         console.error('Failed to insert start execution log:', logError)
+ [2m464[0m |       }
+ [2m465[0m |     }
+ [2m466[0m | 
+ [2m467[0m |     const { message, parsed_output, pluginContext, send_status } = await runAgentWithContext({
+ [2m468[0m |       supabase,
+ [2m469[0m |       agent,
+ [2m470[0m |       userId: user.id,
+ [2m471[0m |       input_variables,
+ [2m472[0m |       override_user_prompt,
+ [2m473[0m |     })
+ [2m474[0m | 
+ [2m475[0m |     const endTime = Date.now()
+ [2m476[0m |     const executionDuration = endTime - startTime
+ [2m477[0m | 
+ [2m478[0m |     if (execution_id) {
+ [2m479[0m |       const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m480[0m |         execution_id,
+ [2m481[0m |         agent_id: agent_id,
+ [2m482[0m |         user_id: user.id,
+ [2m483[0m |         timestamp: new Date().toISOString(),
+ [2m484[0m |         level: 'info',
+ [2m485[0m |         message: `Agent execution completed successfully in ${executionDuration}ms`,
+ [2m486[0m |         phase: 'validation'
+ [2m487[0m |       })
+ [2m488[0m |       
+ [2m489[0m |       if (logError) {
+ [2m490[0m |         console.error('Failed to insert completion log:', logError)
+ [2m491[0m |       }
+ [2m492[0m | 
+ [2m493[0m |       // Update execution record with final metrics
+ [2m494[0m |       const { error: updateError } = await supabase.from('agent_configurations').update({
+ [2m495[0m |         status: 'completed',
+ [2m496[0m |         duration_ms: executionDuration,
+ [2m497[0m |         completed_at: new Date().toISOString()
+ [2m498[0m |       }).eq('id', execution_id)
+ [2m499[0m |       
+ [2m500[0m |       if (updateError) {
+ [2m501[0m |         console.error('Failed to update execution completion:', updateError)
+ [2m502[0m |       }
+ [2m503[0m |     }
+ [2m504[0m | 
+ [2m505[0m |     console.log('🪵 Inserting agent log...')
+ [2m506[0m |     const { data: logData, error: logInsertError } = await supabase
+ [2m507[0m |       .from('agent_logs')
+ [2m508[0m |       .insert({
+ [2m509[0m |         agent_id,
+ [2m510[0m |         user_id: user.id,
+ [2m511[0m |         run_output: parsed_output ? JSON.stringify(parsed_output) : null,
+ [2m512[0m |         full_output: message ? { message } : null,
+ [2m513[0m |         status: send_status,
+ [2m514[0m |         created_at: new Date().toISOString(),
+ [2m515[0m |       })
+ [2m516[0m |       .select('id')
+ [2m517[0m |       .single()
+ [2m518[0m | 
+ [2m519[0m |     if (logInsertError) {
+ [2m520[0m |       console.error('❌ Failed to insert log into agent_logs:', logInsertError)
+ [2m521[0m |     } else {
+ [2m522[0m |       console.log('✅ Agent log inserted successfully')
+ [2m523[0m | 
+ [2m524[0m |       // Insert output context if we have a log ID and output data
+ [2m525[0m |       if (logData?.id && (message || parsed_output || pluginContext)) {
+ [2m526[0m |         console.log('📝 Inserting agent output context...')
+ [2m527[0m |         
+ [2m528[0m |         const contextEntries = []
+ [2m529[0m |         
+ [2m530[0m |         // Add message as context if it exists
+ [2m531[0m |         if (message) {
+ [2m532[0m |           contextEntries.push({
+ [2m533[0m |             user_id: user.id,
+ [2m534[0m |             source_agent_id: agent_id,
+ [2m535[0m |             run_id: logData.id,
+ [2m536[0m |             context_key: 'agent_message',
+ [2m537[0m |             context_data: { message }
+ [2m538[0m |           })
+ [2m539[0m |         }
+ [2m540[0m |         
+ [2m541[0m |         // Add parsed output as context if it exists
+ [2m542[0m |         if (parsed_output) {
+ [2m543[0m |           contextEntries.push({
+ [2m544[0m |             user_id: user.id,
+ [2m545[0m |             source_agent_id: agent_id,
+ [2m546[0m |             run_id: logData.id,
+ [2m547[0m |             context_key: 'parsed_output',
+ [2m548[0m |             context_data: parsed_output
+ [2m549[0m |           })
+ [2m550[0m |         }
+ [2m551[0m |         
+ [2m552[0m |         // Add plugin context if it exists
+ [2m553[0m |         if (pluginContext && Object.keys(pluginContext).length > 0) {
+ [2m554[0m |           contextEntries.push({
+ [2m555[0m |             user_id: user.id,
+ [2m556[0m |             source_agent_id: agent_id,
+ [2m557[0m |             run_id: logData.id,
+ [2m558[0m |             context_key: 'plugin_context',
+ [2m559[0m |             context_data: pluginContext
+ [2m560[0m |           })
+ [2m561[0m |         }
+ [2m562[0m |         
+ [2m563[0m |         // Add input variables as context for future reference
+ [2m564[0m |         if (input_variables && Object.keys(input_variables).length > 0) {
+ [2m565[0m |           contextEntries.push({
+ [2m566[0m |             user_id: user.id,
+ [2m567[0m |             source_agent_id: agent_id,
+ [2m568[0m |             run_id: logData.id,
+ [2m569[0m |             context_key: 'input_variables',
+ [2m570[0m |             context_data: input_variables
+ [2m571[0m |           })
+ [2m572[0m |         }
+ [2m573[0m | 
+ [2m574[0m |         if (contextEntries.length > 0) {
+ [2m575[0m |           const { error: contextInsertError } = await supabase
+ [2m576[0m |             .from('agent_output_context')
+ [2m577[0m |             .insert(contextEntries)
+ [2m578[0m | 
+ [2m579[0m |           if (contextInsertError) {
+ [2m580[0m |             console.error('❌ Failed to insert agent output context:', contextInsertError)
+ [2m581[0m |           } else {
+ [2m582[0m |             console.log('✅ Agent output context inserted successfully')
+ [2m583[0m |           }
+ [2m584[0m |         }
+ [2m585[0m |       }
+ [2m586[0m |     }
+ [2m587[0m | 
+ [2m588[0m |     console.log('📊 Updating agent_stats...')
+ [2m589[0m |     const { error: statsError } = await supabase.rpc('increment_agent_stats', {
+ [2m590[0m |       agent_id_input: agent_id,
+ [2m591[0m |       user_id_input: user.id,
+ [2m592[0m |       success: send_status?.startsWith('✅') || send_status?.startsWith('📧') || send_status?.startsWith('🚨'),
+ [2m593[0m |     })
+ [2m594[0m | 
+ [2m595[0m |     if (statsError) {
+ [2m596[0m |       console.error('❌ Failed to update agent_stats:', statsError)
+ [2m597[0m |     } else {
+ [2m598[0m |       console.log('✅ agent_stats updated')
+ [2m599[0m |     }
+ [2m600[0m | 
+ [2m601[0m |     return NextResponse.json({
+ [2m602[0m |       result: {
+ [2m603[0m |         message,
+ [2m604[0m |         parsed_output,
+ [2m605[0m |         pluginContext,
+ [2m606[0m |         send_status,
+ [2m607[0m |       },
+ [2m608[0m |       execution_id: execution_id || null,
+ [2m609[0m |       queue_based: false,
+ [2m610[0m |     })
+ [2m611[0m | 
+ [2m612[0m |   } catch (err: any) {
+ [2m613[0m |     console.error('❌ runAgentWithContext error:', err)
+ [2m614[0m |     
+ [2m615[0m |     if (execution_id) {
+ [2m616[0m |       const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m617[0m |         execution_id,
+ [2m618[0m |         agent_id: agent_id,
+ [2m619[0m |         user_id: user.id,
+ [2m620[0m |         timestamp: new Date().toISOString(),
+ [2m621[0m |         level: 'error',
+ [2m622[0m |         message: `Critical error: ${err.message}`,
+ [2m623[0m |         phase: 'validation'
+ [2m624[0m |       })
+ [2m625[0m |       
+ [2m626[0m |       if (logError) {
+ [2m627[0m |         console.error('Failed to insert error log:', logError)
+ [2m628[0m |       }
+ [2m629[0m | 
+ [2m630[0m |       // Update execution record as failed
+ [2m631[0m |       const { error: updateError } = await supabase.from('agent_configurations').update({
+ [2m632[0m |         status: 'failed',
+ [2m633[0m |         completed_at: new Date().toISOString()
+ [2m634[0m |       }).eq('id', execution_id)
+ [2m635[0m |       
+ [2m636[0m |       if (updateError) {
+ [2m637[0m |         console.error('Failed to update execution as failed:', updateError)
+ [2m638[0m |       }
+ [2m639[0m |     }
+ [2m640[0m |     
+ [2m641[0m |     return NextResponse.json(
+ [2m642[0m |       { error: 'Failed to run agent using OpenAI' },
+ [2m643[0m |       { status: 500 }
+ [2m644[0m |     )
+ [2m645[0m |   }
+ [2m646[0m | }
+ [2m647[0m | 
+ [2m648[0m | /**
+ [2m649[0m |  * Get execution status for agents
+ [2m650[0m |  */
+ [2m651[0m | export async function GET(request: Request) {
+ [2m652[0m |   try {
+ [2m653[0m |     const { searchParams } = new URL(request.url);
+ [2m654[0m |     const agent_id = searchParams.get('agent_id');
+ [2m655[0m |     const execution_id = searchParams.get('execution_id');
+ [2m656[0m |     const status_only = searchParams.get('status_only');
+ [2m657[0m | 
+ [2m658[0m |     // If status_only is present but no agent_id or execution_id, return a valid JSON error
+ [2m659[0m |     if ((status_only === 'true' || status_only === '1') && !agent_id && !execution_id) {
+ [2m660[0m |       return NextResponse.json(
+ [2m661[0m |         { error: 'Must provide agent_id or execution_id for status query.' },
+ [2m662[0m |         { status: 400 }
+ [2m663[0m |       );
+ [2m664[0m |     }
+ [2m665[0m | 
+ [2m666[0m |     if (!agent_id && !execution_id) {
+ [2m667[0m |       return NextResponse.json(
+ [2m668[0m |         { error: 'Must provide either agent_id or execution_id' },
+ [2m669[0m |         { status: 400 }
+ [2m670[0m |       );
+ [2m671[0m |     }
+ [2m672[0m | 
+ [2m673[0m |     // Check required env vars
+ [2m674[0m |     if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+ [2m675[0m |       return NextResponse.json(
+ [2m676[0m |         { error: 'Supabase environment variables missing' },
+ [2m677[0m |         { status: 500 }
+ [2m678[0m |       );
+ [2m679[0m |     }
+ [2m680[0m | 
+ [2m681[0m |     let cookieStore;
+ [2m682[0m |     try {
+ [2m683[0m |       cookieStore = await cookies();
+ [2m684[0m |     } catch (cookieError) {
+ [2m685[0m |       return NextResponse.json(
+ [2m686[0m |         { error: 'Failed to get cookies', details: cookieError instanceof Error ? cookieError.message : String(cookieError) },
+ [2m687[0m |         { status: 500 }
+ [2m688[0m |       );
+ [2m689[0m |     }
+ [2m690[0m | 
+ [2m691[0m |     let supabase;
+ [2m692[0m |     try {
+ [2m693[0m |       supabase = createServerClient(
+ [2m694[0m |         process.env.NEXT_PUBLIC_SUPABASE_URL!,
+ [2m695[0m |         process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+ [2m696[0m |         {
+ [2m697[0m |           cookies: {
+ [2m698[0m |             get: (name) => cookieStore.get(name)?.value,
+ [2m699[0m |             set: async () => {},
+ [2m700[0m |             remove: async () => {},
+ [2m701[0m |           },
+ [2m702[0m |         }
+ [2m703[0m |       );
+ [2m704[0m |     } catch (supabaseError) {
+ [2m705[0m |       return NextResponse.json(
+ [2m706[0m |         { error: 'Failed to create Supabase client', details: supabaseError instanceof Error ? supabaseError.message : String(supabaseError) },
+ [2m707[0m |         { status: 500 }
+ [2m708[0m |       );
+ [2m709[0m |     }
+ [2m710[0m | 
+ [2m711[0m |     let query = supabase
+ [2m712[0m |       .from('agent_executions')
+ [2m713[0m |       .select('id, agent_id, execution_type, status, progress, scheduled_at, started_at, completed_at, error_message, execution_duration_ms, retry_count')
+ [2m714[0m |       .order('created_at', { ascending: false });
+ [2m715[0m | 
+ [2m716[0m |     if (execution_id) {
+ [2m717[0m |       query = query.eq('id', execution_id);
+ [2m718[0m |     } else if (agent_id) {
+ [2m719[0m |       query = query.eq('agent_id', agent_id).limit(5); // Last 5 executions
+ [2m720[0m |     }
+ [2m721[0m | 
+ [2m722[0m |     const { data: executions, error } = await query;
+ [2m723[0m | 
+ [2m724[0m |     if (error) {
+ [2m725[0m |       return NextResponse.json(
+ [2m726[0m |         { error: 'Failed to fetch execution status', details: error.message },
+ [2m727[0m |         { status: 500 }
+ [2m728[0m |       );
+ [2m729[0m |     }
+ [2m730[0m | 
+ [2m731[0m |     return NextResponse.json({
+ [2m732[0m |       success: true,
+ [2m733[0m |       executions: executions || [],
+ [2m734[0m |       count: executions?.length || 0,
+ [2m735[0m |     });
+ [2m736[0m | 
+ [2m737[0m |   } catch (error) {
+ [2m738[0m |     // Always return valid JSON, never HTML
+ [2m739[0m |     return NextResponse.json(
+ [2m740[0m |       { error: 'Internal server error', message: error instanceof Error ? error.message : String(error) },
+ [2m741[0m |       { status: 500 }
+ [2m742[0m |     );
+ [2m743[0m |   }
+ [2m744[0m | }
+ [2m745[0m | 
+ [2m746[0m | // Prevent caching
+ [2m747[0m | export const dynamic = 'force-dynamic';
+ [2m748[0m | 
+ [2m749[0m | // Suppress request logs for status polling (reduces console noise)
+ [2m750[0m | export const runtime = 'nodejs';
+     : [33;1m             ^^^|^^^[0m
+     :                 [33;1m`-- [33;1m`runtime` redefined here[0m[0m
+ [2m751[0m | export const preferredRegion = 'auto';
+     `----
+
+Import trace for requested module:
+./app/api/run-agent/route.ts
+ ○ Compiling /_not-found ...
+
+[2m[158.61ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[  0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[ 21.62ms][22m  [2m ↳ [22mSetup compiler
+[2m[  0.15ms][22m    [2m ↳ [22mPostCSS AST -> Tailwind CSS AST
+[2m[ 21.46ms][22m    [2m ↳ [22mCreate compiler
+[2m[  0.06ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[  2.05ms][22m  [2m ↳ [22mSetup scanner
+[2m[ 54.36ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 18.85ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 53.89ms][22m  [2m ↳ [22mBuild utilities
+[2m[  4.83ms][22m  [2m ↳ [22mTransform Tailwind CSS AST into PostCSS AST
+[2m[  2.66ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ⨯ ./app/api/run-agent/route.ts
+Error: 
+  [31mx[0m the name `runtime` is defined multiple times
+     ,-[[36;1;4m/Users/yaelomer/Documents/neuronforge/app/api/run-agent/route.ts[0m:10:1]
+ [2m 10[0m | import { addManualExecution } from '@/lib/queues/qstashQueue'
+ [2m 11[0m | import { runAgentKit } from '@/lib/agentkit/runAgentKit' // NEW: AgentKit execution
+ [2m 12[0m | 
+ [2m 13[0m | export const runtime = 'nodejs'
+     : [31;1m             ^^^|^^^[0m
+     :                 [31;1m`-- [31;1mprevious definition of `runtime` here[0m[0m
+ [2m 14[0m | 
+ [2m 15[0m | interface RunAgentRequest {
+ [2m 16[0m |   agent_id: string;
+ [2m 17[0m |   input_variables?: Record<string, any>;
+ [2m 18[0m |   override_user_prompt?: string;
+ [2m 19[0m |   execution_id?: string;
+ [2m 20[0m |   use_queue?: boolean; // New: whether to use queue-based execution
+ [2m 21[0m |   use_agentkit?: boolean; // NEW: Use OpenAI AgentKit for execution
+ [2m 22[0m |   user_id?: string; // For queue-based execution
+ [2m 23[0m | }
+ [2m 24[0m | 
+ [2m 25[0m | /**
+ [2m 26[0m |  * Enhanced POST handler supporting both immediate and queue-based execution
+ [2m 27[0m |  */
+ [2m 28[0m | export async function POST(req: Request) {
+ [2m 29[0m |   const body: RunAgentRequest = await req.json()
+ [2m 30[0m |   const {
+ [2m 31[0m |     agent_id,
+ [2m 32[0m |     input_variables = {},
+ [2m 33[0m |     override_user_prompt,
+ [2m 34[0m |     execution_id,
+ [2m 35[0m |     use_queue = false, // Default to immediate execution for backward compatibility
+ [2m 36[0m |     use_agentkit = false, // NEW: Default to false (use old system)
+ [2m 37[0m |     user_id: provided_user_id
+ [2m 38[0m |   } = body
+ [2m 39[0m | 
+ [2m 40[0m |   const cookieStore = await cookies()
+ [2m 41[0m |   const supabase = createServerClient(
+ [2m 42[0m |     process.env.NEXT_PUBLIC_SUPABASE_URL!,
+ [2m 43[0m |     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+ [2m 44[0m |     {
+ [2m 45[0m |       cookies: {
+ [2m 46[0m |         get: (name) => cookieStore.get(name)?.value,
+ [2m 47[0m |         set: async () => {},
+ [2m 48[0m |         remove: async () => {},
+ [2m 49[0m |       },
+ [2m 50[0m |     }
+ [2m 51[0m |   )
+ [2m 52[0m | 
+ [2m 53[0m |   // Get authenticated user
+ [2m 54[0m |   const { data: { user }, error: authError } = await supabase.auth.getUser()
+ [2m 55[0m |   if (authError || !user) {
+ [2m 56[0m |     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+ [2m 57[0m |   }
+ [2m 58[0m | 
+ [2m 59[0m |   // Fetch agent
+ [2m 60[0m |   const { data: agent, error: agentError } = await supabase
+ [2m 61[0m |     .from('agents')
+ [2m 62[0m |     .select('*')
+ [2m 63[0m |     .eq('id', agent_id)
+ [2m 64[0m |     .single()
+ [2m 65[0m | 
+ [2m 66[0m |   if (agentError || !agent) {
+ [2m 67[0m |     console.error('❌ Agent fetch error:', agentError)
+ [2m 68[0m |     return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
+ [2m 69[0m |   }
+ [2m 70[0m | 
+ [2m 71[0m |   // **NEW: AGENTKIT EXECUTION PATH**
+ [2m 72[0m |   if (use_agentkit) {
+ [2m 73[0m |     console.log(`🤖 Using AgentKit execution for agent "${agent.agent_name}" (${agent_id})`)
+ [2m 74[0m | 
+ [2m 75[0m |     try {
+ [2m 76[0m |       // Fetch agent_configurations for input values
+ [2m 77[0m |       const { data: agentConfig, error: configError } = await supabase
+ [2m 78[0m |         .from('agent_configurations')
+ [2m 79[0m |         .select('input_values, input_schema')
+ [2m 80[0m |         .eq('agent_id', agent_id)
+ [2m 81[0m |         .eq('user_id', user.id)
+ [2m 82[0m |         .order('created_at', { ascending: false })
+ [2m 83[0m |         .limit(1)
+ [2m 84[0m |         .single()
+ [2m 85[0m | 
+ [2m 86[0m |       const userInput = override_user_prompt || agent.user_prompt
+ [2m 87[0m |       const inputValues = agentConfig?.input_values || {}
+ [2m 88[0m | 
+ [2m 89[0m |       console.log(`📋 AgentKit: Found ${Object.keys(inputValues).length} input values from configuration`)
+ [2m 90[0m | 
+ [2m 91[0m |       // Generate session ID for analytics tracking (UUID format)
+ [2m 92[0m |       const sessionId = uuidv4()
+ [2m 93[0m | 
+ [2m 94[0m |       // Execute using OpenAI AgentKit with V2 Plugin System
+ [2m 95[0m |       const result = await runAgentKit(
+ [2m 96[0m |         user.id,
+ [2m 97[0m |         {
+ [2m 98[0m |           id: agent.id,
+ [2m 99[0m |           agent_name: agent.agent_name,
+ [2m100[0m |           system_prompt: agent.system_prompt,
+ [2m101[0m |           enhanced_prompt: agent.enhanced_prompt,
+ [2m102[0m |           user_prompt: agent.user_prompt,
+ [2m103[0m |           plugins_required: agent.plugins_required || [],
+ [2m104[0m |           input_schema: agent.input_schema || agentConfig?.input_schema,
+ [2m105[0m |           output_schema: agent.output_schema,
+ [2m106[0m |           trigger_condintion: agent.trigger_condintion // Pass notification preference
+ [2m107[0m |         },
+ [2m108[0m |         userInput,
+ [2m109[0m |         inputValues, // Pass input values from agent_configurations
+ [2m110[0m |         sessionId // Pass session ID for analytics tracking
+ [2m111[0m |       )
+ [2m112[0m | 
+ [2m113[0m |       // Check if agent should send email notification based on trigger_condintion
+ [2m114[0m |       const triggerConfig = agent.trigger_condintion?.error_handling || {};
+ [2m115[0m |       const shouldSendEmail = triggerConfig.on_failure === 'email';
+ [2m116[0m | 
+ [2m117[0m |       if (shouldSendEmail && result.success) {
+ [2m118[0m |         console.log('📧 AgentKit: Sending result via email as per trigger_condintion');
+ [2m119[0m | 
+ [2m120[0m |         // The result already contains the response - no need to send it again
+ [2m121[0m |         // The email should have been sent by the agent itself during execution
+ [2m122[0m |         // Just log that email delivery was configured
+ [2m123[0m |       }
+ [2m124[0m | 
+ [2m125[0m |       // Log execution to agent_executions table
+ [2m126[0m |       const now = new Date().toISOString()
+ [2m127[0m |       const { error: insertError } = await supabase.from('agent_executions').insert({
+ [2m128[0m |         agent_id: agent.id,
+ [2m129[0m |         user_id: user.id,
+ [2m130[0m |         execution_type: 'manual',
+ [2m131[0m |         status: result.success ? 'completed' : 'failed',
+ [2m132[0m |         scheduled_at: now, // Required field - use current time for manual executions
+ [2m133[0m |         started_at: new Date(Date.now() - result.executionTime).toISOString(),
+ [2m134[0m |         completed_at: now,
+ [2m135[0m |         execution_duration_ms: result.executionTime,
+ [2m136[0m |         error_message: result.error || null,
+ [2m137[0m |         logs: {
+ [2m138[0m |           agentkit: true,
+ [2m139[0m |           iterations: result.iterations,
+ [2m140[0m |           toolCalls: result.toolCalls,
+ [2m141[0m |           tokensUsed: result.tokensUsed,
+ [2m142[0m |           model: 'gpt-4o',
+ [2m143[0m |           inputValuesUsed: Object.keys(inputValues).length
+ [2m144[0m |         }
+ [2m145[0m |       })
+ [2m146[0m | 
+ [2m147[0m |       if (insertError) {
+ [2m148[0m |         console.error('Failed to log AgentKit execution:', insertError)
+ [2m149[0m |       }
+ [2m150[0m | 
+ [2m151[0m |       // ALSO log to agent_logs table for consistency with legacy system
+ [2m152[0m |       console.log('🪵 Inserting AgentKit result to agent_logs...')
+ [2m153[0m |       const { data: logData, error: logInsertError } = await supabase
+ [2m154[0m |         .from('agent_logs')
+ [2m155[0m |         .insert({
+ [2m156[0m |           agent_id: agent.id,
+ [2m157[0m |           user_id: user.id,
+ [2m158[0m |           run_output: JSON.stringify({
+ [2m159[0m |             response: result.response,
+ [2m160[0m |             success: result.success,
+ [2m161[0m |             agentkit: true,
+ [2m162[0m |             iterations: result.iterations,
+ [2m163[0m |             toolCallsCount: result.toolCalls.length,
+ [2m164[0m |             tokensUsed: result.tokensUsed.total,
+ [2m165[0m |             executionTimeMs: result.executionTime
+ [2m166[0m |           }),
+ [2m167[0m |           full_output: {
+ [2m168[0m |             message: result.response,
+ [2m169[0m |             agentkit_metadata: {
+ [2m170[0m |               model: 'gpt-4o',
+ [2m171[0m |               iterations: result.iterations,
+ [2m172[0m |               toolCalls: result.toolCalls,
+ [2m173[0m |               tokensUsed: result.tokensUsed
+ [2m174[0m |             }
+ [2m175[0m |           },
+ [2m176[0m |           status: result.success ? '✅ AgentKit execution completed successfully' : '❌ AgentKit execution failed',
+ [2m177[0m |           created_at: now,
+ [2m178[0m |         })
+ [2m179[0m |         .select('id')
+ [2m180[0m |         .single()
+ [2m181[0m | 
+ [2m182[0m |       if (logInsertError) {
+ [2m183[0m |         console.error('❌ Failed to insert AgentKit log into agent_logs:', logInsertError)
+ [2m184[0m |       } else {
+ [2m185[0m |         console.log('✅ AgentKit log inserted successfully')
+ [2m186[0m |       }
+ [2m187[0m | 
+ [2m188[0m |       // Update agent_stats with accurate success tracking
+ [2m189[0m |       const { error: statsError } = await supabase.rpc('increment_agent_stats', {
+ [2m190[0m |         agent_id_input: agent.id,
+ [2m191[0m |         user_id_input: user.id,
+ [2m192[0m |         success: result.success, // Use AgentKit's clean success boolean
+ [2m193[0m |       })
+ [2m194[0m | 
+ [2m195[0m |       if (statsError) {
+ [2m196[0m |         console.error('❌ Failed to update agent_stats:', statsError)
+ [2m197[0m |       } else {
+ [2m198[0m |         console.log('✅ agent_stats updated successfully')
+ [2m199[0m |       }
+ [2m200[0m | 
+ [2m201[0m |       return NextResponse.json({
+ [2m202[0m |         success: result.success,
+ [2m203[0m |         message: result.response,
+ [2m204[0m |         data: {
+ [2m205[0m |           agent_id: agent.id,
+ [2m206[0m |           agent_name: agent.agent_name,
+ [2m207[0m |           execution_type: 'agentkit',
+ [2m208[0m |           tool_calls_count: result.toolCalls.length,
+ [2m209[0m |           successful_tool_calls: result.toolCalls.filter(tc => tc.success).length,
+ [2m210[0m |           failed_tool_calls: result.toolCalls.filter(tc => !tc.success).length,
+ [2m211[0m |           tokens_used: result.tokensUsed.total,
+ [2m212[0m |           execution_time_ms: result.executionTime,
+ [2m213[0m |           iterations: result.iterations,
+ [2m214[0m |           input_values_used: Object.keys(inputValues).length
+ [2m215[0m |         },
+ [2m216[0m |         agentkit: true
+ [2m217[0m |       })
+ [2m218[0m | 
+ [2m219[0m |     } catch (error: any) {
+ [2m220[0m |       console.error('❌ AgentKit execution error:', error)
+ [2m221[0m |       return NextResponse.json({
+ [2m222[0m |         success: false,
+ [2m223[0m |         error: error.message || 'AgentKit execution failed',
+ [2m224[0m |         agentkit: true
+ [2m225[0m |       }, { status: 500 })
+ [2m226[0m |     }
+ [2m227[0m |   }
+ [2m228[0m | 
+ [2m229[0m |   // **QUEUE-BASED EXECUTION PATH**
+ [2m230[0m |   if (use_queue) {
+ [2m231[0m |     // Check if running locally - QStash cannot send to localhost
+ [2m232[0m |     const isLocalDev = process.env.NODE_ENV === 'development' ||
+ [2m233[0m |                        process.env.VERCEL_ENV === undefined ||
+ [2m234[0m |                        !process.env.QSTASH_URL ||
+ [2m235[0m |                        !process.env.QSTASH_TOKEN
+ [2m236[0m | 
+ [2m237[0m |     if (isLocalDev) {
+ [2m238[0m |       console.log('⚠️  QStash queue unavailable in local development - falling back to direct execution')
+ [2m239[0m |       console.log(`⚡ Using immediate execution for agent ${agent_id} (local dev fallback)`)
+ [2m240[0m | 
+ [2m241[0m |       // Fall through to immediate execution path below
+ [2m242[0m |       // Don't return here - let the immediate execution code run
+ [2m243[0m |     } else {
+ [2m244[0m |       console.log(`🔄 Using queue-based execution for agent ${agent_id}`)
+ [2m245[0m | 
+ [2m246[0m |       try {
+ [2m247[0m |       // Validate agent can be executed
+ [2m248[0m |       if (agent.status === 'archived') {
+ [2m249[0m |         return NextResponse.json({ error: 'Cannot execute archived agent' }, { status: 400 })
+ [2m250[0m |       }
+ [2m251[0m |       if (agent.status === 'inactive') {
+ [2m252[0m |         return NextResponse.json({ error: 'Cannot execute inactive agent' }, { status: 400 })
+ [2m253[0m |       }
+ [2m254[0m | 
+ [2m255[0m |       const executionUserId = provided_user_id || user.id
+ [2m256[0m | 
+ [2m257[0m |       // Check if agent is already running
+ [2m258[0m |       const { data: runningExecutions, error: runningError } = await supabase
+ [2m259[0m |         .from('agent_executions')
+ [2m260[0m |         .select('id')
+ [2m261[0m |         .eq('agent_id', agent_id)
+ [2m262[0m |         .in('status', ['pending', 'running'])
+ [2m263[0m |         .limit(1)
+ [2m264[0m | 
+ [2m265[0m |       if (runningError) {
+ [2m266[0m |         console.error('Error checking running executions:', runningError)
+ [2m267[0m |         return NextResponse.json(
+ [2m268[0m |           { error: 'Failed to check agent status', details: runningError.message },
+ [2m269[0m |           { status: 500 }
+ [2m270[0m |         )
+ [2m271[0m |       }
+ [2m272[0m | 
+ [2m273[0m |       if (runningExecutions && runningExecutions.length > 0) {
+ [2m274[0m |         return NextResponse.json(
+ [2m275[0m |           { 
+ [2m276[0m |             error: 'Agent is already running',
+ [2m277[0m |             message: 'Please wait for the current execution to complete before starting a new one',
+ [2m278[0m |             currentExecutionId: runningExecutions[0].id
+ [2m279[0m |           },
+ [2m280[0m |           { status: 409 }
+ [2m281[0m |         )
+ [2m282[0m |       }
+ [2m283[0m | 
+ [2m284[0m |       // Create execution record in new table
+ [2m285[0m |       const scheduledAt = new Date().toISOString()
+ [2m286[0m |       const { data: execution, error: executionError } = await supabase
+ [2m287[0m |         .from('agent_executions')
+ [2m288[0m |         .insert({
+ [2m289[0m |           agent_id: agent.id,
+ [2m290[0m |           user_id: executionUserId,
+ [2m291[0m |           execution_type: 'manual',
+ [2m292[0m |           scheduled_at: scheduledAt,
+ [2m293[0m |           status: 'pending',
+ [2m294[0m |           cron_expression: agent.schedule_cron,
+ [2m295[0m |           progress: 0,
+ [2m296[0m |           logs: {
+ [2m297[0m |             created_via: 'manual_api_queue',
+ [2m298[0m |             requested_at: scheduledAt,
+ [2m299[0m |             ip_address: req.headers.get('x-forwarded-for') || 'unknown',
+ [2m300[0m |             input_variables: Object.keys(input_variables).length > 0 ? input_variables : null,
+ [2m301[0m |             override_user_prompt: override_user_prompt || null,
+ [2m302[0m |           }
+ [2m303[0m |         })
+ [2m304[0m |         .select('id')
+ [2m305[0m |         .single()
+ [2m306[0m | 
+ [2m307[0m |       if (executionError || !execution) {
+ [2m308[0m |         console.error('Failed to create execution record:', executionError)
+ [2m309[0m |         return NextResponse.json(
+ [2m310[0m |           { error: 'Failed to create execution record', details: executionError?.message },
+ [2m311[0m |           { status: 500 }
+ [2m312[0m |         )
+ [2m313[0m |       }
+ [2m314[0m | 
+ [2m315[0m |       // Add job to queue - FIXED: Use correct function name and parameters
+ [2m316[0m |       const { jobId, executionId } = await addManualExecution(
+ [2m317[0m |         agent.id,          // agentId
+ [2m318[0m |         executionUserId,   // userId  
+ [2m319[0m |         execution.id,      // executionId
+ [2m320[0m |         input_variables,   // inputVariables
+ [2m321[0m |         override_user_prompt // overrideUserPrompt
+ [2m322[0m |       )
+ [2m323[0m | 
+ [2m324[0m |       console.log(`✅ Queued manual execution for agent ${agent.agent_name}`, {
+ [2m325[0m |         agentId: agent.id,
+ [2m326[0m |         executionId: execution.id,
+ [2m327[0m |         jobId,
+ [2m328[0m |       })
+ [2m329[0m | 
+ [2m330[0m |       return NextResponse.json({
+ [2m331[0m |         success: true,
+ [2m332[0m |         message: 'Agent execution queued successfully',
+ [2m333[0m |         data: {
+ [2m334[0m |           agent_id: agent.id,
+ [2m335[0m |           agent_name: agent.agent_name,
+ [2m336[0m |           execution_id: execution.id,
+ [2m337[0m |           job_id: jobId,
+ [2m338[0m |           execution_type: 'manual',
+ [2m339[0m |           status: 'pending',
+ [2m340[0m |           scheduled_at: scheduledAt,
+ [2m341[0m |           estimated_duration: '1-5 minutes',
+ [2m342[0m |         },
+ [2m343[0m |         queue_based: true,
+ [2m344[0m |       })
+ [2m345[0m | 
+ [2m346[0m |       } catch (queueError) {
+ [2m347[0m |         console.error('Failed to queue agent job:', queueError)
+ [2m348[0m |         return NextResponse.json(
+ [2m349[0m |           {
+ [2m350[0m |             error: 'Failed to queue agent execution',
+ [2m351[0m |             details: queueError instanceof Error ? queueError.message : 'Unknown error',
+ [2m352[0m |           },
+ [2m353[0m |           { status: 500 }
+ [2m354[0m |         )
+ [2m355[0m |       }
+ [2m356[0m |     }
+ [2m357[0m |   }
+ [2m358[0m | 
+ [2m359[0m |   // **EXISTING IMMEDIATE EXECUTION PATH** (preserves backward compatibility)
+ [2m360[0m |   console.log(`⚡ Using immediate execution for agent ${agent_id}`)
+ [2m361[0m | 
+ [2m362[0m |   // Initialize execution tracking if execution_id provided
+ [2m363[0m |   if (execution_id) {
+ [2m364[0m |     console.log(`🚀 Starting execution tracking for: ${execution_id}`)
+ [2m365[0m |     
+ [2m366[0m |     // Update execution record to running status
+ [2m367[0m |     const { error: execError } = await supabase
+ [2m368[0m |       .from('agent_configurations')
+ [2m369[0m |       .update({
+ [2m370[0m |         status: 'running',
+ [2m371[0m |         created_at: new Date().toISOString()
+ [2m372[0m |       })
+ [2m373[0m |       .eq('id', execution_id)
+ [2m374[0m | 
+ [2m375[0m |     if (execError) {
+ [2m376[0m |       console.error('❌ Failed to update execution record:', execError)
+ [2m377[0m |     } else {
+ [2m378[0m |       console.log('✅ Execution record updated to running status')
+ [2m379[0m |     }
+ [2m380[0m |   }
+ [2m381[0m | 
+ [2m382[0m |   // Extract text from uploaded PDF (if exists)
+ [2m383[0m |   try {
+ [2m384[0m |     for (const key in input_variables) {
+ [2m385[0m |       const value = input_variables[key]
+ [2m386[0m |       if (
+ [2m387[0m |         typeof value === 'string' &&
+ [2m388[0m |         value.startsWith('data:application/pdf;base64,')
+ [2m389[0m |       ) {
+ [2m390[0m |         console.log('📄 Detected PDF upload, extracting text...')
+ [2m391[0m |         
+ [2m392[0m |         if (execution_id) {
+ [2m393[0m |           const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m394[0m |             execution_id,
+ [2m395[0m |             agent_id: agent_id,
+ [2m396[0m |             user_id: user.id,
+ [2m397[0m |             timestamp: new Date().toISOString(),
+ [2m398[0m |             level: 'info',
+ [2m399[0m |             message: 'PDF upload detected, extracting text content',
+ [2m400[0m |             phase: 'documents'
+ [2m401[0m |           })
+ [2m402[0m |           
+ [2m403[0m |           if (logError) {
+ [2m404[0m |             console.error('Failed to insert PDF detection log:', logError)
+ [2m405[0m |           }
+ [2m406[0m |         }
+ [2m407[0m |         
+ [2m408[0m |         const text = await extractPdfTextFromBase64(value)
+ [2m409[0m |         input_variables.__uploaded_file_text = text
+ [2m410[0m |         
+ [2m411[0m |         if (execution_id) {
+ [2m412[0m |           const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m413[0m |             execution_id,
+ [2m414[0m |             agent_id: agent_id,
+ [2m415[0m |             user_id: user.id,
+ [2m416[0m |             timestamp: new Date().toISOString(),
+ [2m417[0m |             level: 'info',
+ [2m418[0m |             message: `PDF text extraction completed. Extracted ${text.length} characters`,
+ [2m419[0m |             phase: 'documents'
+ [2m420[0m |           })
+ [2m421[0m |           
+ [2m422[0m |           if (logError) {
+ [2m423[0m |             console.error('Failed to insert PDF completion log:', logError)
+ [2m424[0m |           }
+ [2m425[0m |         }
+ [2m426[0m |         break // Only process the first PDF for now
+ [2m427[0m |       }
+ [2m428[0m |     }
+ [2m429[0m |   } catch (err: any) {
+ [2m430[0m |     console.error('❌ Failed to extract PDF text:', err)
+ [2m431[0m |     if (execution_id) {
+ [2m432[0m |       const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m433[0m |         execution_id,
+ [2m434[0m |         agent_id: agent_id,
+ [2m435[0m |         user_id: user.id,
+ [2m436[0m |         timestamp: new Date().toISOString(),
+ [2m437[0m |         level: 'error',
+ [2m438[0m |         message: `PDF text extraction failed: ${err.message}`,
+ [2m439[0m |         phase: 'documents'
+ [2m440[0m |       })
+ [2m441[0m |       
+ [2m442[0m |       if (logError) {
+ [2m443[0m |         console.error('Failed to insert PDF error log:', logError)
+ [2m444[0m |       }
+ [2m445[0m |     }
+ [2m446[0m |   }
+ [2m447[0m | 
+ [2m448[0m |   try {
+ [2m449[0m |     const startTime = Date.now()
+ [2m450[0m | 
+ [2m451[0m |     if (execution_id) {
+ [2m452[0m |       const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m453[0m |         execution_id,
+ [2m454[0m |         agent_id: agent_id,
+ [2m455[0m |         user_id: user.id,
+ [2m456[0m |         timestamp: new Date().toISOString(),
+ [2m457[0m |         level: 'info',
+ [2m458[0m |         message: 'Starting agent execution with interpolated prompt',
+ [2m459[0m |         phase: 'prompt'
+ [2m460[0m |       })
+ [2m461[0m |       
+ [2m462[0m |       if (logError) {
+ [2m463[0m |         console.error('Failed to insert start execution log:', logError)
+ [2m464[0m |       }
+ [2m465[0m |     }
+ [2m466[0m | 
+ [2m467[0m |     const { message, parsed_output, pluginContext, send_status } = await runAgentWithContext({
+ [2m468[0m |       supabase,
+ [2m469[0m |       agent,
+ [2m470[0m |       userId: user.id,
+ [2m471[0m |       input_variables,
+ [2m472[0m |       override_user_prompt,
+ [2m473[0m |     })
+ [2m474[0m | 
+ [2m475[0m |     const endTime = Date.now()
+ [2m476[0m |     const executionDuration = endTime - startTime
+ [2m477[0m | 
+ [2m478[0m |     if (execution_id) {
+ [2m479[0m |       const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m480[0m |         execution_id,
+ [2m481[0m |         agent_id: agent_id,
+ [2m482[0m |         user_id: user.id,
+ [2m483[0m |         timestamp: new Date().toISOString(),
+ [2m484[0m |         level: 'info',
+ [2m485[0m |         message: `Agent execution completed successfully in ${executionDuration}ms`,
+ [2m486[0m |         phase: 'validation'
+ [2m487[0m |       })
+ [2m488[0m |       
+ [2m489[0m |       if (logError) {
+ [2m490[0m |         console.error('Failed to insert completion log:', logError)
+ [2m491[0m |       }
+ [2m492[0m | 
+ [2m493[0m |       // Update execution record with final metrics
+ [2m494[0m |       const { error: updateError } = await supabase.from('agent_configurations').update({
+ [2m495[0m |         status: 'completed',
+ [2m496[0m |         duration_ms: executionDuration,
+ [2m497[0m |         completed_at: new Date().toISOString()
+ [2m498[0m |       }).eq('id', execution_id)
+ [2m499[0m |       
+ [2m500[0m |       if (updateError) {
+ [2m501[0m |         console.error('Failed to update execution completion:', updateError)
+ [2m502[0m |       }
+ [2m503[0m |     }
+ [2m504[0m | 
+ [2m505[0m |     console.log('🪵 Inserting agent log...')
+ [2m506[0m |     const { data: logData, error: logInsertError } = await supabase
+ [2m507[0m |       .from('agent_logs')
+ [2m508[0m |       .insert({
+ [2m509[0m |         agent_id,
+ [2m510[0m |         user_id: user.id,
+ [2m511[0m |         run_output: parsed_output ? JSON.stringify(parsed_output) : null,
+ [2m512[0m |         full_output: message ? { message } : null,
+ [2m513[0m |         status: send_status,
+ [2m514[0m |         created_at: new Date().toISOString(),
+ [2m515[0m |       })
+ [2m516[0m |       .select('id')
+ [2m517[0m |       .single()
+ [2m518[0m | 
+ [2m519[0m |     if (logInsertError) {
+ [2m520[0m |       console.error('❌ Failed to insert log into agent_logs:', logInsertError)
+ [2m521[0m |     } else {
+ [2m522[0m |       console.log('✅ Agent log inserted successfully')
+ [2m523[0m | 
+ [2m524[0m |       // Insert output context if we have a log ID and output data
+ [2m525[0m |       if (logData?.id && (message || parsed_output || pluginContext)) {
+ [2m526[0m |         console.log('📝 Inserting agent output context...')
+ [2m527[0m |         
+ [2m528[0m |         const contextEntries = []
+ [2m529[0m |         
+ [2m530[0m |         // Add message as context if it exists
+ [2m531[0m |         if (message) {
+ [2m532[0m |           contextEntries.push({
+ [2m533[0m |             user_id: user.id,
+ [2m534[0m |             source_agent_id: agent_id,
+ [2m535[0m |             run_id: logData.id,
+ [2m536[0m |             context_key: 'agent_message',
+ [2m537[0m |             context_data: { message }
+ [2m538[0m |           })
+ [2m539[0m |         }
+ [2m540[0m |         
+ [2m541[0m |         // Add parsed output as context if it exists
+ [2m542[0m |         if (parsed_output) {
+ [2m543[0m |           contextEntries.push({
+ [2m544[0m |             user_id: user.id,
+ [2m545[0m |             source_agent_id: agent_id,
+ [2m546[0m |             run_id: logData.id,
+ [2m547[0m |             context_key: 'parsed_output',
+ [2m548[0m |             context_data: parsed_output
+ [2m549[0m |           })
+ [2m550[0m |         }
+ [2m551[0m |         
+ [2m552[0m |         // Add plugin context if it exists
+ [2m553[0m |         if (pluginContext && Object.keys(pluginContext).length > 0) {
+ [2m554[0m |           contextEntries.push({
+ [2m555[0m |             user_id: user.id,
+ [2m556[0m |             source_agent_id: agent_id,
+ [2m557[0m |             run_id: logData.id,
+ [2m558[0m |             context_key: 'plugin_context',
+ [2m559[0m |             context_data: pluginContext
+ [2m560[0m |           })
+ [2m561[0m |         }
+ [2m562[0m |         
+ [2m563[0m |         // Add input variables as context for future reference
+ [2m564[0m |         if (input_variables && Object.keys(input_variables).length > 0) {
+ [2m565[0m |           contextEntries.push({
+ [2m566[0m |             user_id: user.id,
+ [2m567[0m |             source_agent_id: agent_id,
+ [2m568[0m |             run_id: logData.id,
+ [2m569[0m |             context_key: 'input_variables',
+ [2m570[0m |             context_data: input_variables
+ [2m571[0m |           })
+ [2m572[0m |         }
+ [2m573[0m | 
+ [2m574[0m |         if (contextEntries.length > 0) {
+ [2m575[0m |           const { error: contextInsertError } = await supabase
+ [2m576[0m |             .from('agent_output_context')
+ [2m577[0m |             .insert(contextEntries)
+ [2m578[0m | 
+ [2m579[0m |           if (contextInsertError) {
+ [2m580[0m |             console.error('❌ Failed to insert agent output context:', contextInsertError)
+ [2m581[0m |           } else {
+ [2m582[0m |             console.log('✅ Agent output context inserted successfully')
+ [2m583[0m |           }
+ [2m584[0m |         }
+ [2m585[0m |       }
+ [2m586[0m |     }
+ [2m587[0m | 
+ [2m588[0m |     console.log('📊 Updating agent_stats...')
+ [2m589[0m |     const { error: statsError } = await supabase.rpc('increment_agent_stats', {
+ [2m590[0m |       agent_id_input: agent_id,
+ [2m591[0m |       user_id_input: user.id,
+ [2m592[0m |       success: send_status?.startsWith('✅') || send_status?.startsWith('📧') || send_status?.startsWith('🚨'),
+ [2m593[0m |     })
+ [2m594[0m | 
+ [2m595[0m |     if (statsError) {
+ [2m596[0m |       console.error('❌ Failed to update agent_stats:', statsError)
+ [2m597[0m |     } else {
+ [2m598[0m |       console.log('✅ agent_stats updated')
+ [2m599[0m |     }
+ [2m600[0m | 
+ [2m601[0m |     return NextResponse.json({
+ [2m602[0m |       result: {
+ [2m603[0m |         message,
+ [2m604[0m |         parsed_output,
+ [2m605[0m |         pluginContext,
+ [2m606[0m |         send_status,
+ [2m607[0m |       },
+ [2m608[0m |       execution_id: execution_id || null,
+ [2m609[0m |       queue_based: false,
+ [2m610[0m |     })
+ [2m611[0m | 
+ [2m612[0m |   } catch (err: any) {
+ [2m613[0m |     console.error('❌ runAgentWithContext error:', err)
+ [2m614[0m |     
+ [2m615[0m |     if (execution_id) {
+ [2m616[0m |       const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m617[0m |         execution_id,
+ [2m618[0m |         agent_id: agent_id,
+ [2m619[0m |         user_id: user.id,
+ [2m620[0m |         timestamp: new Date().toISOString(),
+ [2m621[0m |         level: 'error',
+ [2m622[0m |         message: `Critical error: ${err.message}`,
+ [2m623[0m |         phase: 'validation'
+ [2m624[0m |       })
+ [2m625[0m |       
+ [2m626[0m |       if (logError) {
+ [2m627[0m |         console.error('Failed to insert error log:', logError)
+ [2m628[0m |       }
+ [2m629[0m | 
+ [2m630[0m |       // Update execution record as failed
+ [2m631[0m |       const { error: updateError } = await supabase.from('agent_configurations').update({
+ [2m632[0m |         status: 'failed',
+ [2m633[0m |         completed_at: new Date().toISOString()
+ [2m634[0m |       }).eq('id', execution_id)
+ [2m635[0m |       
+ [2m636[0m |       if (updateError) {
+ [2m637[0m |         console.error('Failed to update execution as failed:', updateError)
+ [2m638[0m |       }
+ [2m639[0m |     }
+ [2m640[0m |     
+ [2m641[0m |     return NextResponse.json(
+ [2m642[0m |       { error: 'Failed to run agent using OpenAI' },
+ [2m643[0m |       { status: 500 }
+ [2m644[0m |     )
+ [2m645[0m |   }
+ [2m646[0m | }
+ [2m647[0m | 
+ [2m648[0m | /**
+ [2m649[0m |  * Get execution status for agents
+ [2m650[0m |  */
+ [2m651[0m | export async function GET(request: Request) {
+ [2m652[0m |   try {
+ [2m653[0m |     const { searchParams } = new URL(request.url);
+ [2m654[0m |     const agent_id = searchParams.get('agent_id');
+ [2m655[0m |     const execution_id = searchParams.get('execution_id');
+ [2m656[0m |     const status_only = searchParams.get('status_only');
+ [2m657[0m | 
+ [2m658[0m |     // If status_only is present but no agent_id or execution_id, return a valid JSON error
+ [2m659[0m |     if ((status_only === 'true' || status_only === '1') && !agent_id && !execution_id) {
+ [2m660[0m |       return NextResponse.json(
+ [2m661[0m |         { error: 'Must provide agent_id or execution_id for status query.' },
+ [2m662[0m |         { status: 400 }
+ [2m663[0m |       );
+ [2m664[0m |     }
+ [2m665[0m | 
+ [2m666[0m |     if (!agent_id && !execution_id) {
+ [2m667[0m |       return NextResponse.json(
+ [2m668[0m |         { error: 'Must provide either agent_id or execution_id' },
+ [2m669[0m |         { status: 400 }
+ [2m670[0m |       );
+ [2m671[0m |     }
+ [2m672[0m | 
+ [2m673[0m |     // Check required env vars
+ [2m674[0m |     if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+ [2m675[0m |       return NextResponse.json(
+ [2m676[0m |         { error: 'Supabase environment variables missing' },
+ [2m677[0m |         { status: 500 }
+ [2m678[0m |       );
+ [2m679[0m |     }
+ [2m680[0m | 
+ [2m681[0m |     let cookieStore;
+ [2m682[0m |     try {
+ [2m683[0m |       cookieStore = await cookies();
+ [2m684[0m |     } catch (cookieError) {
+ [2m685[0m |       return NextResponse.json(
+ [2m686[0m |         { error: 'Failed to get cookies', details: cookieError instanceof Error ? cookieError.message : String(cookieError) },
+ [2m687[0m |         { status: 500 }
+ [2m688[0m |       );
+ [2m689[0m |     }
+ [2m690[0m | 
+ [2m691[0m |     let supabase;
+ [2m692[0m |     try {
+ [2m693[0m |       supabase = createServerClient(
+ [2m694[0m |         process.env.NEXT_PUBLIC_SUPABASE_URL!,
+ [2m695[0m |         process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+ [2m696[0m |         {
+ [2m697[0m |           cookies: {
+ [2m698[0m |             get: (name) => cookieStore.get(name)?.value,
+ [2m699[0m |             set: async () => {},
+ [2m700[0m |             remove: async () => {},
+ [2m701[0m |           },
+ [2m702[0m |         }
+ [2m703[0m |       );
+ [2m704[0m |     } catch (supabaseError) {
+ [2m705[0m |       return NextResponse.json(
+ [2m706[0m |         { error: 'Failed to create Supabase client', details: supabaseError instanceof Error ? supabaseError.message : String(supabaseError) },
+ [2m707[0m |         { status: 500 }
+ [2m708[0m |       );
+ [2m709[0m |     }
+ [2m710[0m | 
+ [2m711[0m |     let query = supabase
+ [2m712[0m |       .from('agent_executions')
+ [2m713[0m |       .select('id, agent_id, execution_type, status, progress, scheduled_at, started_at, completed_at, error_message, execution_duration_ms, retry_count')
+ [2m714[0m |       .order('created_at', { ascending: false });
+ [2m715[0m | 
+ [2m716[0m |     if (execution_id) {
+ [2m717[0m |       query = query.eq('id', execution_id);
+ [2m718[0m |     } else if (agent_id) {
+ [2m719[0m |       query = query.eq('agent_id', agent_id).limit(5); // Last 5 executions
+ [2m720[0m |     }
+ [2m721[0m | 
+ [2m722[0m |     const { data: executions, error } = await query;
+ [2m723[0m | 
+ [2m724[0m |     if (error) {
+ [2m725[0m |       return NextResponse.json(
+ [2m726[0m |         { error: 'Failed to fetch execution status', details: error.message },
+ [2m727[0m |         { status: 500 }
+ [2m728[0m |       );
+ [2m729[0m |     }
+ [2m730[0m | 
+ [2m731[0m |     return NextResponse.json({
+ [2m732[0m |       success: true,
+ [2m733[0m |       executions: executions || [],
+ [2m734[0m |       count: executions?.length || 0,
+ [2m735[0m |     });
+ [2m736[0m | 
+ [2m737[0m |   } catch (error) {
+ [2m738[0m |     // Always return valid JSON, never HTML
+ [2m739[0m |     return NextResponse.json(
+ [2m740[0m |       { error: 'Internal server error', message: error instanceof Error ? error.message : String(error) },
+ [2m741[0m |       { status: 500 }
+ [2m742[0m |     );
+ [2m743[0m |   }
+ [2m744[0m | }
+ [2m745[0m | 
+ [2m746[0m | // Prevent caching
+ [2m747[0m | export const dynamic = 'force-dynamic';
+ [2m748[0m | 
+ [2m749[0m | // Suppress request logs for status polling (reduces console noise)
+ [2m750[0m | export const runtime = 'nodejs';
+     : [33;1m             ^^^|^^^[0m
+     :                 [33;1m`-- [33;1m`runtime` redefined here[0m[0m
+ [2m751[0m | export const preferredRegion = 'auto';
+     `----
+
+Import trace for requested module:
+./app/api/run-agent/route.ts
+
+[2m[20.73ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[ 0.00ms][22m  [2m ↳ [22mQuick bail check
+[2m[ 0.02ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[ 9.41ms][22m  [2m ↳ [22mScan for candidates
+[2m[ 7.02ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[ 1.16ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 3.02ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ⨯ ./app/api/run-agent/route.ts
+Error: 
+  [31mx[0m the name `runtime` is defined multiple times
+     ,-[[36;1;4m/Users/yaelomer/Documents/neuronforge/app/api/run-agent/route.ts[0m:10:1]
+ [2m 10[0m | import { addManualExecution } from '@/lib/queues/qstashQueue'
+ [2m 11[0m | import { runAgentKit } from '@/lib/agentkit/runAgentKit' // NEW: AgentKit execution
+ [2m 12[0m | 
+ [2m 13[0m | export const runtime = 'nodejs'
+     : [31;1m             ^^^|^^^[0m
+     :                 [31;1m`-- [31;1mprevious definition of `runtime` here[0m[0m
+ [2m 14[0m | 
+ [2m 15[0m | interface RunAgentRequest {
+ [2m 16[0m |   agent_id: string;
+ [2m 17[0m |   input_variables?: Record<string, any>;
+ [2m 18[0m |   override_user_prompt?: string;
+ [2m 19[0m |   execution_id?: string;
+ [2m 20[0m |   use_queue?: boolean; // New: whether to use queue-based execution
+ [2m 21[0m |   use_agentkit?: boolean; // NEW: Use OpenAI AgentKit for execution
+ [2m 22[0m |   user_id?: string; // For queue-based execution
+ [2m 23[0m | }
+ [2m 24[0m | 
+ [2m 25[0m | /**
+ [2m 26[0m |  * Enhanced POST handler supporting both immediate and queue-based execution
+ [2m 27[0m |  */
+ [2m 28[0m | export async function POST(req: Request) {
+ [2m 29[0m |   const body: RunAgentRequest = await req.json()
+ [2m 30[0m |   const {
+ [2m 31[0m |     agent_id,
+ [2m 32[0m |     input_variables = {},
+ [2m 33[0m |     override_user_prompt,
+ [2m 34[0m |     execution_id,
+ [2m 35[0m |     use_queue = false, // Default to immediate execution for backward compatibility
+ [2m 36[0m |     use_agentkit = false, // NEW: Default to false (use old system)
+ [2m 37[0m |     user_id: provided_user_id
+ [2m 38[0m |   } = body
+ [2m 39[0m | 
+ [2m 40[0m |   const cookieStore = await cookies()
+ [2m 41[0m |   const supabase = createServerClient(
+ [2m 42[0m |     process.env.NEXT_PUBLIC_SUPABASE_URL!,
+ [2m 43[0m |     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+ [2m 44[0m |     {
+ [2m 45[0m |       cookies: {
+ [2m 46[0m |         get: (name) => cookieStore.get(name)?.value,
+ [2m 47[0m |         set: async () => {},
+ [2m 48[0m |         remove: async () => {},
+ [2m 49[0m |       },
+ [2m 50[0m |     }
+ [2m 51[0m |   )
+ [2m 52[0m | 
+ [2m 53[0m |   // Get authenticated user
+ [2m 54[0m |   const { data: { user }, error: authError } = await supabase.auth.getUser()
+ [2m 55[0m |   if (authError || !user) {
+ [2m 56[0m |     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+ [2m 57[0m |   }
+ [2m 58[0m | 
+ [2m 59[0m |   // Fetch agent
+ [2m 60[0m |   const { data: agent, error: agentError } = await supabase
+ [2m 61[0m |     .from('agents')
+ [2m 62[0m |     .select('*')
+ [2m 63[0m |     .eq('id', agent_id)
+ [2m 64[0m |     .single()
+ [2m 65[0m | 
+ [2m 66[0m |   if (agentError || !agent) {
+ [2m 67[0m |     console.error('❌ Agent fetch error:', agentError)
+ [2m 68[0m |     return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
+ [2m 69[0m |   }
+ [2m 70[0m | 
+ [2m 71[0m |   // **NEW: AGENTKIT EXECUTION PATH**
+ [2m 72[0m |   if (use_agentkit) {
+ [2m 73[0m |     console.log(`🤖 Using AgentKit execution for agent "${agent.agent_name}" (${agent_id})`)
+ [2m 74[0m | 
+ [2m 75[0m |     try {
+ [2m 76[0m |       // Fetch agent_configurations for input values
+ [2m 77[0m |       const { data: agentConfig, error: configError } = await supabase
+ [2m 78[0m |         .from('agent_configurations')
+ [2m 79[0m |         .select('input_values, input_schema')
+ [2m 80[0m |         .eq('agent_id', agent_id)
+ [2m 81[0m |         .eq('user_id', user.id)
+ [2m 82[0m |         .order('created_at', { ascending: false })
+ [2m 83[0m |         .limit(1)
+ [2m 84[0m |         .single()
+ [2m 85[0m | 
+ [2m 86[0m |       const userInput = override_user_prompt || agent.user_prompt
+ [2m 87[0m |       const inputValues = agentConfig?.input_values || {}
+ [2m 88[0m | 
+ [2m 89[0m |       console.log(`📋 AgentKit: Found ${Object.keys(inputValues).length} input values from configuration`)
+ [2m 90[0m | 
+ [2m 91[0m |       // Generate session ID for analytics tracking (UUID format)
+ [2m 92[0m |       const sessionId = uuidv4()
+ [2m 93[0m | 
+ [2m 94[0m |       // Execute using OpenAI AgentKit with V2 Plugin System
+ [2m 95[0m |       const result = await runAgentKit(
+ [2m 96[0m |         user.id,
+ [2m 97[0m |         {
+ [2m 98[0m |           id: agent.id,
+ [2m 99[0m |           agent_name: agent.agent_name,
+ [2m100[0m |           system_prompt: agent.system_prompt,
+ [2m101[0m |           enhanced_prompt: agent.enhanced_prompt,
+ [2m102[0m |           user_prompt: agent.user_prompt,
+ [2m103[0m |           plugins_required: agent.plugins_required || [],
+ [2m104[0m |           input_schema: agent.input_schema || agentConfig?.input_schema,
+ [2m105[0m |           output_schema: agent.output_schema,
+ [2m106[0m |           trigger_condintion: agent.trigger_condintion // Pass notification preference
+ [2m107[0m |         },
+ [2m108[0m |         userInput,
+ [2m109[0m |         inputValues, // Pass input values from agent_configurations
+ [2m110[0m |         sessionId // Pass session ID for analytics tracking
+ [2m111[0m |       )
+ [2m112[0m | 
+ [2m113[0m |       // Check if agent should send email notification based on trigger_condintion
+ [2m114[0m |       const triggerConfig = agent.trigger_condintion?.error_handling || {};
+ [2m115[0m |       const shouldSendEmail = triggerConfig.on_failure === 'email';
+ [2m116[0m | 
+ [2m117[0m |       if (shouldSendEmail && result.success) {
+ [2m118[0m |         console.log('📧 AgentKit: Sending result via email as per trigger_condintion');
+ [2m119[0m | 
+ [2m120[0m |         // The result already contains the response - no need to send it again
+ [2m121[0m |         // The email should have been sent by the agent itself during execution
+ [2m122[0m |         // Just log that email delivery was configured
+ [2m123[0m |       }
+ [2m124[0m | 
+ [2m125[0m |       // Log execution to agent_executions table
+ [2m126[0m |       const now = new Date().toISOString()
+ [2m127[0m |       const { error: insertError } = await supabase.from('agent_executions').insert({
+ [2m128[0m |         agent_id: agent.id,
+ [2m129[0m |         user_id: user.id,
+ [2m130[0m |         execution_type: 'manual',
+ [2m131[0m |         status: result.success ? 'completed' : 'failed',
+ [2m132[0m |         scheduled_at: now, // Required field - use current time for manual executions
+ [2m133[0m |         started_at: new Date(Date.now() - result.executionTime).toISOString(),
+ [2m134[0m |         completed_at: now,
+ [2m135[0m |         execution_duration_ms: result.executionTime,
+ [2m136[0m |         error_message: result.error || null,
+ [2m137[0m |         logs: {
+ [2m138[0m |           agentkit: true,
+ [2m139[0m |           iterations: result.iterations,
+ [2m140[0m |           toolCalls: result.toolCalls,
+ [2m141[0m |           tokensUsed: result.tokensUsed,
+ [2m142[0m |           model: 'gpt-4o',
+ [2m143[0m |           inputValuesUsed: Object.keys(inputValues).length
+ [2m144[0m |         }
+ [2m145[0m |       })
+ [2m146[0m | 
+ [2m147[0m |       if (insertError) {
+ [2m148[0m |         console.error('Failed to log AgentKit execution:', insertError)
+ [2m149[0m |       }
+ [2m150[0m | 
+ [2m151[0m |       // ALSO log to agent_logs table for consistency with legacy system
+ [2m152[0m |       console.log('🪵 Inserting AgentKit result to agent_logs...')
+ [2m153[0m |       const { data: logData, error: logInsertError } = await supabase
+ [2m154[0m |         .from('agent_logs')
+ [2m155[0m |         .insert({
+ [2m156[0m |           agent_id: agent.id,
+ [2m157[0m |           user_id: user.id,
+ [2m158[0m |           run_output: JSON.stringify({
+ [2m159[0m |             response: result.response,
+ [2m160[0m |             success: result.success,
+ [2m161[0m |             agentkit: true,
+ [2m162[0m |             iterations: result.iterations,
+ [2m163[0m |             toolCallsCount: result.toolCalls.length,
+ [2m164[0m |             tokensUsed: result.tokensUsed.total,
+ [2m165[0m |             executionTimeMs: result.executionTime
+ [2m166[0m |           }),
+ [2m167[0m |           full_output: {
+ [2m168[0m |             message: result.response,
+ [2m169[0m |             agentkit_metadata: {
+ [2m170[0m |               model: 'gpt-4o',
+ [2m171[0m |               iterations: result.iterations,
+ [2m172[0m |               toolCalls: result.toolCalls,
+ [2m173[0m |               tokensUsed: result.tokensUsed
+ [2m174[0m |             }
+ [2m175[0m |           },
+ [2m176[0m |           status: result.success ? '✅ AgentKit execution completed successfully' : '❌ AgentKit execution failed',
+ [2m177[0m |           created_at: now,
+ [2m178[0m |         })
+ [2m179[0m |         .select('id')
+ [2m180[0m |         .single()
+ [2m181[0m | 
+ [2m182[0m |       if (logInsertError) {
+ [2m183[0m |         console.error('❌ Failed to insert AgentKit log into agent_logs:', logInsertError)
+ [2m184[0m |       } else {
+ [2m185[0m |         console.log('✅ AgentKit log inserted successfully')
+ [2m186[0m |       }
+ [2m187[0m | 
+ [2m188[0m |       // Update agent_stats with accurate success tracking
+ [2m189[0m |       const { error: statsError } = await supabase.rpc('increment_agent_stats', {
+ [2m190[0m |         agent_id_input: agent.id,
+ [2m191[0m |         user_id_input: user.id,
+ [2m192[0m |         success: result.success, // Use AgentKit's clean success boolean
+ [2m193[0m |       })
+ [2m194[0m | 
+ [2m195[0m |       if (statsError) {
+ [2m196[0m |         console.error('❌ Failed to update agent_stats:', statsError)
+ [2m197[0m |       } else {
+ [2m198[0m |         console.log('✅ agent_stats updated successfully')
+ [2m199[0m |       }
+ [2m200[0m | 
+ [2m201[0m |       return NextResponse.json({
+ [2m202[0m |         success: result.success,
+ [2m203[0m |         message: result.response,
+ [2m204[0m |         data: {
+ [2m205[0m |           agent_id: agent.id,
+ [2m206[0m |           agent_name: agent.agent_name,
+ [2m207[0m |           execution_type: 'agentkit',
+ [2m208[0m |           tool_calls_count: result.toolCalls.length,
+ [2m209[0m |           successful_tool_calls: result.toolCalls.filter(tc => tc.success).length,
+ [2m210[0m |           failed_tool_calls: result.toolCalls.filter(tc => !tc.success).length,
+ [2m211[0m |           tokens_used: result.tokensUsed.total,
+ [2m212[0m |           execution_time_ms: result.executionTime,
+ [2m213[0m |           iterations: result.iterations,
+ [2m214[0m |           input_values_used: Object.keys(inputValues).length
+ [2m215[0m |         },
+ [2m216[0m |         agentkit: true
+ [2m217[0m |       })
+ [2m218[0m | 
+ [2m219[0m |     } catch (error: any) {
+ [2m220[0m |       console.error('❌ AgentKit execution error:', error)
+ [2m221[0m |       return NextResponse.json({
+ [2m222[0m |         success: false,
+ [2m223[0m |         error: error.message || 'AgentKit execution failed',
+ [2m224[0m |         agentkit: true
+ [2m225[0m |       }, { status: 500 })
+ [2m226[0m |     }
+ [2m227[0m |   }
+ [2m228[0m | 
+ [2m229[0m |   // **QUEUE-BASED EXECUTION PATH**
+ [2m230[0m |   if (use_queue) {
+ [2m231[0m |     // Check if running locally - QStash cannot send to localhost
+ [2m232[0m |     const isLocalDev = process.env.NODE_ENV === 'development' ||
+ [2m233[0m |                        process.env.VERCEL_ENV === undefined ||
+ [2m234[0m |                        !process.env.QSTASH_URL ||
+ [2m235[0m |                        !process.env.QSTASH_TOKEN
+ [2m236[0m | 
+ [2m237[0m |     if (isLocalDev) {
+ [2m238[0m |       console.log('⚠️  QStash queue unavailable in local development - falling back to direct execution')
+ [2m239[0m |       console.log(`⚡ Using immediate execution for agent ${agent_id} (local dev fallback)`)
+ [2m240[0m | 
+ [2m241[0m |       // Fall through to immediate execution path below
+ [2m242[0m |       // Don't return here - let the immediate execution code run
+ [2m243[0m |     } else {
+ [2m244[0m |       console.log(`🔄 Using queue-based execution for agent ${agent_id}`)
+ [2m245[0m | 
+ [2m246[0m |       try {
+ [2m247[0m |       // Validate agent can be executed
+ [2m248[0m |       if (agent.status === 'archived') {
+ [2m249[0m |         return NextResponse.json({ error: 'Cannot execute archived agent' }, { status: 400 })
+ [2m250[0m |       }
+ [2m251[0m |       if (agent.status === 'inactive') {
+ [2m252[0m |         return NextResponse.json({ error: 'Cannot execute inactive agent' }, { status: 400 })
+ [2m253[0m |       }
+ [2m254[0m | 
+ [2m255[0m |       const executionUserId = provided_user_id || user.id
+ [2m256[0m | 
+ [2m257[0m |       // Check if agent is already running
+ [2m258[0m |       const { data: runningExecutions, error: runningError } = await supabase
+ [2m259[0m |         .from('agent_executions')
+ [2m260[0m |         .select('id')
+ [2m261[0m |         .eq('agent_id', agent_id)
+ [2m262[0m |         .in('status', ['pending', 'running'])
+ [2m263[0m |         .limit(1)
+ [2m264[0m | 
+ [2m265[0m |       if (runningError) {
+ [2m266[0m |         console.error('Error checking running executions:', runningError)
+ [2m267[0m |         return NextResponse.json(
+ [2m268[0m |           { error: 'Failed to check agent status', details: runningError.message },
+ [2m269[0m |           { status: 500 }
+ [2m270[0m |         )
+ [2m271[0m |       }
+ [2m272[0m | 
+ [2m273[0m |       if (runningExecutions && runningExecutions.length > 0) {
+ [2m274[0m |         return NextResponse.json(
+ [2m275[0m |           { 
+ [2m276[0m |             error: 'Agent is already running',
+ [2m277[0m |             message: 'Please wait for the current execution to complete before starting a new one',
+ [2m278[0m |             currentExecutionId: runningExecutions[0].id
+ [2m279[0m |           },
+ [2m280[0m |           { status: 409 }
+ [2m281[0m |         )
+ [2m282[0m |       }
+ [2m283[0m | 
+ [2m284[0m |       // Create execution record in new table
+ [2m285[0m |       const scheduledAt = new Date().toISOString()
+ [2m286[0m |       const { data: execution, error: executionError } = await supabase
+ [2m287[0m |         .from('agent_executions')
+ [2m288[0m |         .insert({
+ [2m289[0m |           agent_id: agent.id,
+ [2m290[0m |           user_id: executionUserId,
+ [2m291[0m |           execution_type: 'manual',
+ [2m292[0m |           scheduled_at: scheduledAt,
+ [2m293[0m |           status: 'pending',
+ [2m294[0m |           cron_expression: agent.schedule_cron,
+ [2m295[0m |           progress: 0,
+ [2m296[0m |           logs: {
+ [2m297[0m |             created_via: 'manual_api_queue',
+ [2m298[0m |             requested_at: scheduledAt,
+ [2m299[0m |             ip_address: req.headers.get('x-forwarded-for') || 'unknown',
+ [2m300[0m |             input_variables: Object.keys(input_variables).length > 0 ? input_variables : null,
+ [2m301[0m |             override_user_prompt: override_user_prompt || null,
+ [2m302[0m |           }
+ [2m303[0m |         })
+ [2m304[0m |         .select('id')
+ [2m305[0m |         .single()
+ [2m306[0m | 
+ [2m307[0m |       if (executionError || !execution) {
+ [2m308[0m |         console.error('Failed to create execution record:', executionError)
+ [2m309[0m |         return NextResponse.json(
+ [2m310[0m |           { error: 'Failed to create execution record', details: executionError?.message },
+ [2m311[0m |           { status: 500 }
+ [2m312[0m |         )
+ [2m313[0m |       }
+ [2m314[0m | 
+ [2m315[0m |       // Add job to queue - FIXED: Use correct function name and parameters
+ [2m316[0m |       const { jobId, executionId } = await addManualExecution(
+ [2m317[0m |         agent.id,          // agentId
+ [2m318[0m |         executionUserId,   // userId  
+ [2m319[0m |         execution.id,      // executionId
+ [2m320[0m |         input_variables,   // inputVariables
+ [2m321[0m |         override_user_prompt // overrideUserPrompt
+ [2m322[0m |       )
+ [2m323[0m | 
+ [2m324[0m |       console.log(`✅ Queued manual execution for agent ${agent.agent_name}`, {
+ [2m325[0m |         agentId: agent.id,
+ [2m326[0m |         executionId: execution.id,
+ [2m327[0m |         jobId,
+ [2m328[0m |       })
+ [2m329[0m | 
+ [2m330[0m |       return NextResponse.json({
+ [2m331[0m |         success: true,
+ [2m332[0m |         message: 'Agent execution queued successfully',
+ [2m333[0m |         data: {
+ [2m334[0m |           agent_id: agent.id,
+ [2m335[0m |           agent_name: agent.agent_name,
+ [2m336[0m |           execution_id: execution.id,
+ [2m337[0m |           job_id: jobId,
+ [2m338[0m |           execution_type: 'manual',
+ [2m339[0m |           status: 'pending',
+ [2m340[0m |           scheduled_at: scheduledAt,
+ [2m341[0m |           estimated_duration: '1-5 minutes',
+ [2m342[0m |         },
+ [2m343[0m |         queue_based: true,
+ [2m344[0m |       })
+ [2m345[0m | 
+ [2m346[0m |       } catch (queueError) {
+ [2m347[0m |         console.error('Failed to queue agent job:', queueError)
+ [2m348[0m |         return NextResponse.json(
+ [2m349[0m |           {
+ [2m350[0m |             error: 'Failed to queue agent execution',
+ [2m351[0m |             details: queueError instanceof Error ? queueError.message : 'Unknown error',
+ [2m352[0m |           },
+ [2m353[0m |           { status: 500 }
+ [2m354[0m |         )
+ [2m355[0m |       }
+ [2m356[0m |     }
+ [2m357[0m |   }
+ [2m358[0m | 
+ [2m359[0m |   // **EXISTING IMMEDIATE EXECUTION PATH** (preserves backward compatibility)
+ [2m360[0m |   console.log(`⚡ Using immediate execution for agent ${agent_id}`)
+ [2m361[0m | 
+ [2m362[0m |   // Initialize execution tracking if execution_id provided
+ [2m363[0m |   if (execution_id) {
+ [2m364[0m |     console.log(`🚀 Starting execution tracking for: ${execution_id}`)
+ [2m365[0m |     
+ [2m366[0m |     // Update execution record to running status
+ [2m367[0m |     const { error: execError } = await supabase
+ [2m368[0m |       .from('agent_configurations')
+ [2m369[0m |       .update({
+ [2m370[0m |         status: 'running',
+ [2m371[0m |         created_at: new Date().toISOString()
+ [2m372[0m |       })
+ [2m373[0m |       .eq('id', execution_id)
+ [2m374[0m | 
+ [2m375[0m |     if (execError) {
+ [2m376[0m |       console.error('❌ Failed to update execution record:', execError)
+ [2m377[0m |     } else {
+ [2m378[0m |       console.log('✅ Execution record updated to running status')
+ [2m379[0m |     }
+ [2m380[0m |   }
+ [2m381[0m | 
+ [2m382[0m |   // Extract text from uploaded PDF (if exists)
+ [2m383[0m |   try {
+ [2m384[0m |     for (const key in input_variables) {
+ [2m385[0m |       const value = input_variables[key]
+ [2m386[0m |       if (
+ [2m387[0m |         typeof value === 'string' &&
+ [2m388[0m |         value.startsWith('data:application/pdf;base64,')
+ [2m389[0m |       ) {
+ [2m390[0m |         console.log('📄 Detected PDF upload, extracting text...')
+ [2m391[0m |         
+ [2m392[0m |         if (execution_id) {
+ [2m393[0m |           const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m394[0m |             execution_id,
+ [2m395[0m |             agent_id: agent_id,
+ [2m396[0m |             user_id: user.id,
+ [2m397[0m |             timestamp: new Date().toISOString(),
+ [2m398[0m |             level: 'info',
+ [2m399[0m |             message: 'PDF upload detected, extracting text content',
+ [2m400[0m |             phase: 'documents'
+ [2m401[0m |           })
+ [2m402[0m |           
+ [2m403[0m |           if (logError) {
+ [2m404[0m |             console.error('Failed to insert PDF detection log:', logError)
+ [2m405[0m |           }
+ [2m406[0m |         }
+ [2m407[0m |         
+ [2m408[0m |         const text = await extractPdfTextFromBase64(value)
+ [2m409[0m |         input_variables.__uploaded_file_text = text
+ [2m410[0m |         
+ [2m411[0m |         if (execution_id) {
+ [2m412[0m |           const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m413[0m |             execution_id,
+ [2m414[0m |             agent_id: agent_id,
+ [2m415[0m |             user_id: user.id,
+ [2m416[0m |             timestamp: new Date().toISOString(),
+ [2m417[0m |             level: 'info',
+ [2m418[0m |             message: `PDF text extraction completed. Extracted ${text.length} characters`,
+ [2m419[0m |             phase: 'documents'
+ [2m420[0m |           })
+ [2m421[0m |           
+ [2m422[0m |           if (logError) {
+ [2m423[0m |             console.error('Failed to insert PDF completion log:', logError)
+ [2m424[0m |           }
+ [2m425[0m |         }
+ [2m426[0m |         break // Only process the first PDF for now
+ [2m427[0m |       }
+ [2m428[0m |     }
+ [2m429[0m |   } catch (err: any) {
+ [2m430[0m |     console.error('❌ Failed to extract PDF text:', err)
+ [2m431[0m |     if (execution_id) {
+ [2m432[0m |       const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m433[0m |         execution_id,
+ [2m434[0m |         agent_id: agent_id,
+ [2m435[0m |         user_id: user.id,
+ [2m436[0m |         timestamp: new Date().toISOString(),
+ [2m437[0m |         level: 'error',
+ [2m438[0m |         message: `PDF text extraction failed: ${err.message}`,
+ [2m439[0m |         phase: 'documents'
+ [2m440[0m |       })
+ [2m441[0m |       
+ [2m442[0m |       if (logError) {
+ [2m443[0m |         console.error('Failed to insert PDF error log:', logError)
+ [2m444[0m |       }
+ [2m445[0m |     }
+ [2m446[0m |   }
+ [2m447[0m | 
+ [2m448[0m |   try {
+ [2m449[0m |     const startTime = Date.now()
+ [2m450[0m | 
+ [2m451[0m |     if (execution_id) {
+ [2m452[0m |       const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m453[0m |         execution_id,
+ [2m454[0m |         agent_id: agent_id,
+ [2m455[0m |         user_id: user.id,
+ [2m456[0m |         timestamp: new Date().toISOString(),
+ [2m457[0m |         level: 'info',
+ [2m458[0m |         message: 'Starting agent execution with interpolated prompt',
+ [2m459[0m |         phase: 'prompt'
+ [2m460[0m |       })
+ [2m461[0m |       
+ [2m462[0m |       if (logError) {
+ [2m463[0m |         console.error('Failed to insert start execution log:', logError)
+ [2m464[0m |       }
+ [2m465[0m |     }
+ [2m466[0m | 
+ [2m467[0m |     const { message, parsed_output, pluginContext, send_status } = await runAgentWithContext({
+ [2m468[0m |       supabase,
+ [2m469[0m |       agent,
+ [2m470[0m |       userId: user.id,
+ [2m471[0m |       input_variables,
+ [2m472[0m |       override_user_prompt,
+ [2m473[0m |     })
+ [2m474[0m | 
+ [2m475[0m |     const endTime = Date.now()
+ [2m476[0m |     const executionDuration = endTime - startTime
+ [2m477[0m | 
+ [2m478[0m |     if (execution_id) {
+ [2m479[0m |       const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m480[0m |         execution_id,
+ [2m481[0m |         agent_id: agent_id,
+ [2m482[0m |         user_id: user.id,
+ [2m483[0m |         timestamp: new Date().toISOString(),
+ [2m484[0m |         level: 'info',
+ [2m485[0m |         message: `Agent execution completed successfully in ${executionDuration}ms`,
+ [2m486[0m |         phase: 'validation'
+ [2m487[0m |       })
+ [2m488[0m |       
+ [2m489[0m |       if (logError) {
+ [2m490[0m |         console.error('Failed to insert completion log:', logError)
+ [2m491[0m |       }
+ [2m492[0m | 
+ [2m493[0m |       // Update execution record with final metrics
+ [2m494[0m |       const { error: updateError } = await supabase.from('agent_configurations').update({
+ [2m495[0m |         status: 'completed',
+ [2m496[0m |         duration_ms: executionDuration,
+ [2m497[0m |         completed_at: new Date().toISOString()
+ [2m498[0m |       }).eq('id', execution_id)
+ [2m499[0m |       
+ [2m500[0m |       if (updateError) {
+ [2m501[0m |         console.error('Failed to update execution completion:', updateError)
+ [2m502[0m |       }
+ [2m503[0m |     }
+ [2m504[0m | 
+ [2m505[0m |     console.log('🪵 Inserting agent log...')
+ [2m506[0m |     const { data: logData, error: logInsertError } = await supabase
+ [2m507[0m |       .from('agent_logs')
+ [2m508[0m |       .insert({
+ [2m509[0m |         agent_id,
+ [2m510[0m |         user_id: user.id,
+ [2m511[0m |         run_output: parsed_output ? JSON.stringify(parsed_output) : null,
+ [2m512[0m |         full_output: message ? { message } : null,
+ [2m513[0m |         status: send_status,
+ [2m514[0m |         created_at: new Date().toISOString(),
+ [2m515[0m |       })
+ [2m516[0m |       .select('id')
+ [2m517[0m |       .single()
+ [2m518[0m | 
+ [2m519[0m |     if (logInsertError) {
+ [2m520[0m |       console.error('❌ Failed to insert log into agent_logs:', logInsertError)
+ [2m521[0m |     } else {
+ [2m522[0m |       console.log('✅ Agent log inserted successfully')
+ [2m523[0m | 
+ [2m524[0m |       // Insert output context if we have a log ID and output data
+ [2m525[0m |       if (logData?.id && (message || parsed_output || pluginContext)) {
+ [2m526[0m |         console.log('📝 Inserting agent output context...')
+ [2m527[0m |         
+ [2m528[0m |         const contextEntries = []
+ [2m529[0m |         
+ [2m530[0m |         // Add message as context if it exists
+ [2m531[0m |         if (message) {
+ [2m532[0m |           contextEntries.push({
+ [2m533[0m |             user_id: user.id,
+ [2m534[0m |             source_agent_id: agent_id,
+ [2m535[0m |             run_id: logData.id,
+ [2m536[0m |             context_key: 'agent_message',
+ [2m537[0m |             context_data: { message }
+ [2m538[0m |           })
+ [2m539[0m |         }
+ [2m540[0m |         
+ [2m541[0m |         // Add parsed output as context if it exists
+ [2m542[0m |         if (parsed_output) {
+ [2m543[0m |           contextEntries.push({
+ [2m544[0m |             user_id: user.id,
+ [2m545[0m |             source_agent_id: agent_id,
+ [2m546[0m |             run_id: logData.id,
+ [2m547[0m |             context_key: 'parsed_output',
+ [2m548[0m |             context_data: parsed_output
+ [2m549[0m |           })
+ [2m550[0m |         }
+ [2m551[0m |         
+ [2m552[0m |         // Add plugin context if it exists
+ [2m553[0m |         if (pluginContext && Object.keys(pluginContext).length > 0) {
+ [2m554[0m |           contextEntries.push({
+ [2m555[0m |             user_id: user.id,
+ [2m556[0m |             source_agent_id: agent_id,
+ [2m557[0m |             run_id: logData.id,
+ [2m558[0m |             context_key: 'plugin_context',
+ [2m559[0m |             context_data: pluginContext
+ [2m560[0m |           })
+ [2m561[0m |         }
+ [2m562[0m |         
+ [2m563[0m |         // Add input variables as context for future reference
+ [2m564[0m |         if (input_variables && Object.keys(input_variables).length > 0) {
+ [2m565[0m |           contextEntries.push({
+ [2m566[0m |             user_id: user.id,
+ [2m567[0m |             source_agent_id: agent_id,
+ [2m568[0m |             run_id: logData.id,
+ [2m569[0m |             context_key: 'input_variables',
+ [2m570[0m |             context_data: input_variables
+ [2m571[0m |           })
+ [2m572[0m |         }
+ [2m573[0m | 
+ [2m574[0m |         if (contextEntries.length > 0) {
+ [2m575[0m |           const { error: contextInsertError } = await supabase
+ [2m576[0m |             .from('agent_output_context')
+ [2m577[0m |             .insert(contextEntries)
+ [2m578[0m | 
+ [2m579[0m |           if (contextInsertError) {
+ [2m580[0m |             console.error('❌ Failed to insert agent output context:', contextInsertError)
+ [2m581[0m |           } else {
+ [2m582[0m |             console.log('✅ Agent output context inserted successfully')
+ [2m583[0m |           }
+ [2m584[0m |         }
+ [2m585[0m |       }
+ [2m586[0m |     }
+ [2m587[0m | 
+ [2m588[0m |     console.log('📊 Updating agent_stats...')
+ [2m589[0m |     const { error: statsError } = await supabase.rpc('increment_agent_stats', {
+ [2m590[0m |       agent_id_input: agent_id,
+ [2m591[0m |       user_id_input: user.id,
+ [2m592[0m |       success: send_status?.startsWith('✅') || send_status?.startsWith('📧') || send_status?.startsWith('🚨'),
+ [2m593[0m |     })
+ [2m594[0m | 
+ [2m595[0m |     if (statsError) {
+ [2m596[0m |       console.error('❌ Failed to update agent_stats:', statsError)
+ [2m597[0m |     } else {
+ [2m598[0m |       console.log('✅ agent_stats updated')
+ [2m599[0m |     }
+ [2m600[0m | 
+ [2m601[0m |     return NextResponse.json({
+ [2m602[0m |       result: {
+ [2m603[0m |         message,
+ [2m604[0m |         parsed_output,
+ [2m605[0m |         pluginContext,
+ [2m606[0m |         send_status,
+ [2m607[0m |       },
+ [2m608[0m |       execution_id: execution_id || null,
+ [2m609[0m |       queue_based: false,
+ [2m610[0m |     })
+ [2m611[0m | 
+ [2m612[0m |   } catch (err: any) {
+ [2m613[0m |     console.error('❌ runAgentWithContext error:', err)
+ [2m614[0m |     
+ [2m615[0m |     if (execution_id) {
+ [2m616[0m |       const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m617[0m |         execution_id,
+ [2m618[0m |         agent_id: agent_id,
+ [2m619[0m |         user_id: user.id,
+ [2m620[0m |         timestamp: new Date().toISOString(),
+ [2m621[0m |         level: 'error',
+ [2m622[0m |         message: `Critical error: ${err.message}`,
+ [2m623[0m |         phase: 'validation'
+ [2m624[0m |       })
+ [2m625[0m |       
+ [2m626[0m |       if (logError) {
+ [2m627[0m |         console.error('Failed to insert error log:', logError)
+ [2m628[0m |       }
+ [2m629[0m | 
+ [2m630[0m |       // Update execution record as failed
+ [2m631[0m |       const { error: updateError } = await supabase.from('agent_configurations').update({
+ [2m632[0m |         status: 'failed',
+ [2m633[0m |         completed_at: new Date().toISOString()
+ [2m634[0m |       }).eq('id', execution_id)
+ [2m635[0m |       
+ [2m636[0m |       if (updateError) {
+ [2m637[0m |         console.error('Failed to update execution as failed:', updateError)
+ [2m638[0m |       }
+ [2m639[0m |     }
+ [2m640[0m |     
+ [2m641[0m |     return NextResponse.json(
+ [2m642[0m |       { error: 'Failed to run agent using OpenAI' },
+ [2m643[0m |       { status: 500 }
+ [2m644[0m |     )
+ [2m645[0m |   }
+ [2m646[0m | }
+ [2m647[0m | 
+ [2m648[0m | /**
+ [2m649[0m |  * Get execution status for agents
+ [2m650[0m |  */
+ [2m651[0m | export async function GET(request: Request) {
+ [2m652[0m |   try {
+ [2m653[0m |     const { searchParams } = new URL(request.url);
+ [2m654[0m |     const agent_id = searchParams.get('agent_id');
+ [2m655[0m |     const execution_id = searchParams.get('execution_id');
+ [2m656[0m |     const status_only = searchParams.get('status_only');
+ [2m657[0m | 
+ [2m658[0m |     // If status_only is present but no agent_id or execution_id, return a valid JSON error
+ [2m659[0m |     if ((status_only === 'true' || status_only === '1') && !agent_id && !execution_id) {
+ [2m660[0m |       return NextResponse.json(
+ [2m661[0m |         { error: 'Must provide agent_id or execution_id for status query.' },
+ [2m662[0m |         { status: 400 }
+ [2m663[0m |       );
+ [2m664[0m |     }
+ [2m665[0m | 
+ [2m666[0m |     if (!agent_id && !execution_id) {
+ [2m667[0m |       return NextResponse.json(
+ [2m668[0m |         { error: 'Must provide either agent_id or execution_id' },
+ [2m669[0m |         { status: 400 }
+ [2m670[0m |       );
+ [2m671[0m |     }
+ [2m672[0m | 
+ [2m673[0m |     // Check required env vars
+ [2m674[0m |     if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+ [2m675[0m |       return NextResponse.json(
+ [2m676[0m |         { error: 'Supabase environment variables missing' },
+ [2m677[0m |         { status: 500 }
+ [2m678[0m |       );
+ [2m679[0m |     }
+ [2m680[0m | 
+ [2m681[0m |     let cookieStore;
+ [2m682[0m |     try {
+ [2m683[0m |       cookieStore = await cookies();
+ [2m684[0m |     } catch (cookieError) {
+ [2m685[0m |       return NextResponse.json(
+ [2m686[0m |         { error: 'Failed to get cookies', details: cookieError instanceof Error ? cookieError.message : String(cookieError) },
+ [2m687[0m |         { status: 500 }
+ [2m688[0m |       );
+ [2m689[0m |     }
+ [2m690[0m | 
+ [2m691[0m |     let supabase;
+ [2m692[0m |     try {
+ [2m693[0m |       supabase = createServerClient(
+ [2m694[0m |         process.env.NEXT_PUBLIC_SUPABASE_URL!,
+ [2m695[0m |         process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+ [2m696[0m |         {
+ [2m697[0m |           cookies: {
+ [2m698[0m |             get: (name) => cookieStore.get(name)?.value,
+ [2m699[0m |             set: async () => {},
+ [2m700[0m |             remove: async () => {},
+ [2m701[0m |           },
+ [2m702[0m |         }
+ [2m703[0m |       );
+ [2m704[0m |     } catch (supabaseError) {
+ [2m705[0m |       return NextResponse.json(
+ [2m706[0m |         { error: 'Failed to create Supabase client', details: supabaseError instanceof Error ? supabaseError.message : String(supabaseError) },
+ [2m707[0m |         { status: 500 }
+ [2m708[0m |       );
+ [2m709[0m |     }
+ [2m710[0m | 
+ [2m711[0m |     let query = supabase
+ [2m712[0m |       .from('agent_executions')
+ [2m713[0m |       .select('id, agent_id, execution_type, status, progress, scheduled_at, started_at, completed_at, error_message, execution_duration_ms, retry_count')
+ [2m714[0m |       .order('created_at', { ascending: false });
+ [2m715[0m | 
+ [2m716[0m |     if (execution_id) {
+ [2m717[0m |       query = query.eq('id', execution_id);
+ [2m718[0m |     } else if (agent_id) {
+ [2m719[0m |       query = query.eq('agent_id', agent_id).limit(5); // Last 5 executions
+ [2m720[0m |     }
+ [2m721[0m | 
+ [2m722[0m |     const { data: executions, error } = await query;
+ [2m723[0m | 
+ [2m724[0m |     if (error) {
+ [2m725[0m |       return NextResponse.json(
+ [2m726[0m |         { error: 'Failed to fetch execution status', details: error.message },
+ [2m727[0m |         { status: 500 }
+ [2m728[0m |       );
+ [2m729[0m |     }
+ [2m730[0m | 
+ [2m731[0m |     return NextResponse.json({
+ [2m732[0m |       success: true,
+ [2m733[0m |       executions: executions || [],
+ [2m734[0m |       count: executions?.length || 0,
+ [2m735[0m |     });
+ [2m736[0m | 
+ [2m737[0m |   } catch (error) {
+ [2m738[0m |     // Always return valid JSON, never HTML
+ [2m739[0m |     return NextResponse.json(
+ [2m740[0m |       { error: 'Internal server error', message: error instanceof Error ? error.message : String(error) },
+ [2m741[0m |       { status: 500 }
+ [2m742[0m |     );
+ [2m743[0m |   }
+ [2m744[0m | }
+ [2m745[0m | 
+ [2m746[0m | // Prevent caching
+ [2m747[0m | export const dynamic = 'force-dynamic';
+ [2m748[0m | 
+ [2m749[0m | // Suppress request logs for status polling (reduces console noise)
+ [2m750[0m | export const runtime = 'nodejs';
+     : [33;1m             ^^^|^^^[0m
+     :                 [33;1m`-- [33;1m`runtime` redefined here[0m[0m
+ [2m751[0m | export const preferredRegion = 'auto';
+     `----
+
+Import trace for requested module:
+./app/api/run-agent/route.ts
+ GET /api/run-agent?agent_id=e0628542-1191-43cb-a666-2a33569acf1d&status_only=true 500 in 6186ms
+ GET /api/run-agent?agent_id=d0c3cf96-23d4-44cc-a547-9cec79dff6c1&status_only=true 500 in 6187ms
+ GET /api/run-agent?agent_id=832a8039-d864-4d25-bdbb-23c02db5b810&status_only=true 500 in 6186ms
+ GET /api/run-agent?agent_id=10554107-6e25-4798-a577-986573fcfeed&status_only=true 500 in 6194ms
+ GET /api/run-agent?agent_id=e0628542-1191-43cb-a666-2a33569acf1d&status_only=true 500 in 46ms
+ GET /api/run-agent?agent_id=d0c3cf96-23d4-44cc-a547-9cec79dff6c1&status_only=true 500 in 43ms
+ GET /api/run-agent?agent_id=10554107-6e25-4798-a577-986573fcfeed&status_only=true 500 in 42ms
+ GET /api/run-agent?agent_id=832a8039-d864-4d25-bdbb-23c02db5b810&status_only=true 500 in 45ms
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename '/Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development-fallback/0.pack.gz_' -> '/Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development-fallback/0.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename '/Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development-fallback/0.pack.gz_' -> '/Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development-fallback/0.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename '/Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development-fallback/0.pack.gz_' -> '/Users/yaelomer/Documents/neuronforge/.next/cache/webpack/client-development-fallback/0.pack.gz'
+ GET /api/run-agent?agent_id=10554107-6e25-4798-a577-986573fcfeed&status_only=true 500 in 97ms
+ GET /api/run-agent?agent_id=e0628542-1191-43cb-a666-2a33569acf1d&status_only=true 500 in 503ms
+ GET /api/run-agent?agent_id=d0c3cf96-23d4-44cc-a547-9cec79dff6c1&status_only=true 500 in 508ms
+ GET /api/run-agent?agent_id=832a8039-d864-4d25-bdbb-23c02db5b810&status_only=true 500 in 521ms
+
+[2m[39.79ms][22m [@tailwindcss/postcss] app/globals.css
+[2m[ 0.03ms][22m  [2m ↳ [22mQuick bail check
+[2m[ 0.05ms][22m  [2m ↳ [22mRegister full rebuild paths
+[2m[13.64ms][22m  [2m ↳ [22mScan for candidates
+[2m[11.45ms][22m  [2m ↳ [22mRegister dependency messages
+[2m[10.73ms][22m  [2m ↳ [22mBuild utilities
+[2m[ 3.71ms][22m  [2m ↳ [22mUpdate PostCSS AST
+
+ ⨯ ./app/api/run-agent/route.ts
+Error: 
+  [31mx[0m the name `runtime` is defined multiple times
+     ,-[[36;1;4m/Users/yaelomer/Documents/neuronforge/app/api/run-agent/route.ts[0m:10:1]
+ [2m 10[0m | import { addManualExecution } from '@/lib/queues/qstashQueue'
+ [2m 11[0m | import { runAgentKit } from '@/lib/agentkit/runAgentKit' // NEW: AgentKit execution
+ [2m 12[0m | 
+ [2m 13[0m | export const runtime = 'nodejs'
+     : [31;1m             ^^^|^^^[0m
+     :                 [31;1m`-- [31;1mprevious definition of `runtime` here[0m[0m
+ [2m 14[0m | 
+ [2m 15[0m | interface RunAgentRequest {
+ [2m 16[0m |   agent_id: string;
+ [2m 17[0m |   input_variables?: Record<string, any>;
+ [2m 18[0m |   override_user_prompt?: string;
+ [2m 19[0m |   execution_id?: string;
+ [2m 20[0m |   use_queue?: boolean; // New: whether to use queue-based execution
+ [2m 21[0m |   use_agentkit?: boolean; // NEW: Use OpenAI AgentKit for execution
+ [2m 22[0m |   user_id?: string; // For queue-based execution
+ [2m 23[0m | }
+ [2m 24[0m | 
+ [2m 25[0m | /**
+ [2m 26[0m |  * Enhanced POST handler supporting both immediate and queue-based execution
+ [2m 27[0m |  */
+ [2m 28[0m | export async function POST(req: Request) {
+ [2m 29[0m |   const body: RunAgentRequest = await req.json()
+ [2m 30[0m |   const {
+ [2m 31[0m |     agent_id,
+ [2m 32[0m |     input_variables = {},
+ [2m 33[0m |     override_user_prompt,
+ [2m 34[0m |     execution_id,
+ [2m 35[0m |     use_queue = false, // Default to immediate execution for backward compatibility
+ [2m 36[0m |     use_agentkit = false, // NEW: Default to false (use old system)
+ [2m 37[0m |     user_id: provided_user_id
+ [2m 38[0m |   } = body
+ [2m 39[0m | 
+ [2m 40[0m |   const cookieStore = await cookies()
+ [2m 41[0m |   const supabase = createServerClient(
+ [2m 42[0m |     process.env.NEXT_PUBLIC_SUPABASE_URL!,
+ [2m 43[0m |     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+ [2m 44[0m |     {
+ [2m 45[0m |       cookies: {
+ [2m 46[0m |         get: (name) => cookieStore.get(name)?.value,
+ [2m 47[0m |         set: async () => {},
+ [2m 48[0m |         remove: async () => {},
+ [2m 49[0m |       },
+ [2m 50[0m |     }
+ [2m 51[0m |   )
+ [2m 52[0m | 
+ [2m 53[0m |   // Get authenticated user
+ [2m 54[0m |   const { data: { user }, error: authError } = await supabase.auth.getUser()
+ [2m 55[0m |   if (authError || !user) {
+ [2m 56[0m |     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+ [2m 57[0m |   }
+ [2m 58[0m | 
+ [2m 59[0m |   // Fetch agent
+ [2m 60[0m |   const { data: agent, error: agentError } = await supabase
+ [2m 61[0m |     .from('agents')
+ [2m 62[0m |     .select('*')
+ [2m 63[0m |     .eq('id', agent_id)
+ [2m 64[0m |     .single()
+ [2m 65[0m | 
+ [2m 66[0m |   if (agentError || !agent) {
+ [2m 67[0m |     console.error('❌ Agent fetch error:', agentError)
+ [2m 68[0m |     return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
+ [2m 69[0m |   }
+ [2m 70[0m | 
+ [2m 71[0m |   // **NEW: AGENTKIT EXECUTION PATH**
+ [2m 72[0m |   if (use_agentkit) {
+ [2m 73[0m |     console.log(`🤖 Using AgentKit execution for agent "${agent.agent_name}" (${agent_id})`)
+ [2m 74[0m | 
+ [2m 75[0m |     try {
+ [2m 76[0m |       // Fetch agent_configurations for input values
+ [2m 77[0m |       const { data: agentConfig, error: configError } = await supabase
+ [2m 78[0m |         .from('agent_configurations')
+ [2m 79[0m |         .select('input_values, input_schema')
+ [2m 80[0m |         .eq('agent_id', agent_id)
+ [2m 81[0m |         .eq('user_id', user.id)
+ [2m 82[0m |         .order('created_at', { ascending: false })
+ [2m 83[0m |         .limit(1)
+ [2m 84[0m |         .single()
+ [2m 85[0m | 
+ [2m 86[0m |       const userInput = override_user_prompt || agent.user_prompt
+ [2m 87[0m |       const inputValues = agentConfig?.input_values || {}
+ [2m 88[0m | 
+ [2m 89[0m |       console.log(`📋 AgentKit: Found ${Object.keys(inputValues).length} input values from configuration`)
+ [2m 90[0m | 
+ [2m 91[0m |       // Generate session ID for analytics tracking (UUID format)
+ [2m 92[0m |       const sessionId = uuidv4()
+ [2m 93[0m | 
+ [2m 94[0m |       // Execute using OpenAI AgentKit with V2 Plugin System
+ [2m 95[0m |       const result = await runAgentKit(
+ [2m 96[0m |         user.id,
+ [2m 97[0m |         {
+ [2m 98[0m |           id: agent.id,
+ [2m 99[0m |           agent_name: agent.agent_name,
+ [2m100[0m |           system_prompt: agent.system_prompt,
+ [2m101[0m |           enhanced_prompt: agent.enhanced_prompt,
+ [2m102[0m |           user_prompt: agent.user_prompt,
+ [2m103[0m |           plugins_required: agent.plugins_required || [],
+ [2m104[0m |           input_schema: agent.input_schema || agentConfig?.input_schema,
+ [2m105[0m |           output_schema: agent.output_schema,
+ [2m106[0m |           trigger_condintion: agent.trigger_condintion // Pass notification preference
+ [2m107[0m |         },
+ [2m108[0m |         userInput,
+ [2m109[0m |         inputValues, // Pass input values from agent_configurations
+ [2m110[0m |         sessionId // Pass session ID for analytics tracking
+ [2m111[0m |       )
+ [2m112[0m | 
+ [2m113[0m |       // Check if agent should send email notification based on trigger_condintion
+ [2m114[0m |       const triggerConfig = agent.trigger_condintion?.error_handling || {};
+ [2m115[0m |       const shouldSendEmail = triggerConfig.on_failure === 'email';
+ [2m116[0m | 
+ [2m117[0m |       if (shouldSendEmail && result.success) {
+ [2m118[0m |         console.log('📧 AgentKit: Sending result via email as per trigger_condintion');
+ [2m119[0m | 
+ [2m120[0m |         // The result already contains the response - no need to send it again
+ [2m121[0m |         // The email should have been sent by the agent itself during execution
+ [2m122[0m |         // Just log that email delivery was configured
+ [2m123[0m |       }
+ [2m124[0m | 
+ [2m125[0m |       // Log execution to agent_executions table
+ [2m126[0m |       const now = new Date().toISOString()
+ [2m127[0m |       const { error: insertError } = await supabase.from('agent_executions').insert({
+ [2m128[0m |         agent_id: agent.id,
+ [2m129[0m |         user_id: user.id,
+ [2m130[0m |         execution_type: 'manual',
+ [2m131[0m |         status: result.success ? 'completed' : 'failed',
+ [2m132[0m |         scheduled_at: now, // Required field - use current time for manual executions
+ [2m133[0m |         started_at: new Date(Date.now() - result.executionTime).toISOString(),
+ [2m134[0m |         completed_at: now,
+ [2m135[0m |         execution_duration_ms: result.executionTime,
+ [2m136[0m |         error_message: result.error || null,
+ [2m137[0m |         logs: {
+ [2m138[0m |           agentkit: true,
+ [2m139[0m |           iterations: result.iterations,
+ [2m140[0m |           toolCalls: result.toolCalls,
+ [2m141[0m |           tokensUsed: result.tokensUsed,
+ [2m142[0m |           model: 'gpt-4o',
+ [2m143[0m |           inputValuesUsed: Object.keys(inputValues).length
+ [2m144[0m |         }
+ [2m145[0m |       })
+ [2m146[0m | 
+ [2m147[0m |       if (insertError) {
+ [2m148[0m |         console.error('Failed to log AgentKit execution:', insertError)
+ [2m149[0m |       }
+ [2m150[0m | 
+ [2m151[0m |       // ALSO log to agent_logs table for consistency with legacy system
+ [2m152[0m |       console.log('🪵 Inserting AgentKit result to agent_logs...')
+ [2m153[0m |       const { data: logData, error: logInsertError } = await supabase
+ [2m154[0m |         .from('agent_logs')
+ [2m155[0m |         .insert({
+ [2m156[0m |           agent_id: agent.id,
+ [2m157[0m |           user_id: user.id,
+ [2m158[0m |           run_output: JSON.stringify({
+ [2m159[0m |             response: result.response,
+ [2m160[0m |             success: result.success,
+ [2m161[0m |             agentkit: true,
+ [2m162[0m |             iterations: result.iterations,
+ [2m163[0m |             toolCallsCount: result.toolCalls.length,
+ [2m164[0m |             tokensUsed: result.tokensUsed.total,
+ [2m165[0m |             executionTimeMs: result.executionTime
+ [2m166[0m |           }),
+ [2m167[0m |           full_output: {
+ [2m168[0m |             message: result.response,
+ [2m169[0m |             agentkit_metadata: {
+ [2m170[0m |               model: 'gpt-4o',
+ [2m171[0m |               iterations: result.iterations,
+ [2m172[0m |               toolCalls: result.toolCalls,
+ [2m173[0m |               tokensUsed: result.tokensUsed
+ [2m174[0m |             }
+ [2m175[0m |           },
+ [2m176[0m |           status: result.success ? '✅ AgentKit execution completed successfully' : '❌ AgentKit execution failed',
+ [2m177[0m |           created_at: now,
+ [2m178[0m |         })
+ [2m179[0m |         .select('id')
+ [2m180[0m |         .single()
+ [2m181[0m | 
+ [2m182[0m |       if (logInsertError) {
+ [2m183[0m |         console.error('❌ Failed to insert AgentKit log into agent_logs:', logInsertError)
+ [2m184[0m |       } else {
+ [2m185[0m |         console.log('✅ AgentKit log inserted successfully')
+ [2m186[0m |       }
+ [2m187[0m | 
+ [2m188[0m |       // Update agent_stats with accurate success tracking
+ [2m189[0m |       const { error: statsError } = await supabase.rpc('increment_agent_stats', {
+ [2m190[0m |         agent_id_input: agent.id,
+ [2m191[0m |         user_id_input: user.id,
+ [2m192[0m |         success: result.success, // Use AgentKit's clean success boolean
+ [2m193[0m |       })
+ [2m194[0m | 
+ [2m195[0m |       if (statsError) {
+ [2m196[0m |         console.error('❌ Failed to update agent_stats:', statsError)
+ [2m197[0m |       } else {
+ [2m198[0m |         console.log('✅ agent_stats updated successfully')
+ [2m199[0m |       }
+ [2m200[0m | 
+ [2m201[0m |       return NextResponse.json({
+ [2m202[0m |         success: result.success,
+ [2m203[0m |         message: result.response,
+ [2m204[0m |         data: {
+ [2m205[0m |           agent_id: agent.id,
+ [2m206[0m |           agent_name: agent.agent_name,
+ [2m207[0m |           execution_type: 'agentkit',
+ [2m208[0m |           tool_calls_count: result.toolCalls.length,
+ [2m209[0m |           successful_tool_calls: result.toolCalls.filter(tc => tc.success).length,
+ [2m210[0m |           failed_tool_calls: result.toolCalls.filter(tc => !tc.success).length,
+ [2m211[0m |           tokens_used: result.tokensUsed.total,
+ [2m212[0m |           execution_time_ms: result.executionTime,
+ [2m213[0m |           iterations: result.iterations,
+ [2m214[0m |           input_values_used: Object.keys(inputValues).length
+ [2m215[0m |         },
+ [2m216[0m |         agentkit: true
+ [2m217[0m |       })
+ [2m218[0m | 
+ [2m219[0m |     } catch (error: any) {
+ [2m220[0m |       console.error('❌ AgentKit execution error:', error)
+ [2m221[0m |       return NextResponse.json({
+ [2m222[0m |         success: false,
+ [2m223[0m |         error: error.message || 'AgentKit execution failed',
+ [2m224[0m |         agentkit: true
+ [2m225[0m |       }, { status: 500 })
+ [2m226[0m |     }
+ [2m227[0m |   }
+ [2m228[0m | 
+ [2m229[0m |   // **QUEUE-BASED EXECUTION PATH**
+ [2m230[0m |   if (use_queue) {
+ [2m231[0m |     // Check if running locally - QStash cannot send to localhost
+ [2m232[0m |     const isLocalDev = process.env.NODE_ENV === 'development' ||
+ [2m233[0m |                        process.env.VERCEL_ENV === undefined ||
+ [2m234[0m |                        !process.env.QSTASH_URL ||
+ [2m235[0m |                        !process.env.QSTASH_TOKEN
+ [2m236[0m | 
+ [2m237[0m |     if (isLocalDev) {
+ [2m238[0m |       console.log('⚠️  QStash queue unavailable in local development - falling back to direct execution')
+ [2m239[0m |       console.log(`⚡ Using immediate execution for agent ${agent_id} (local dev fallback)`)
+ [2m240[0m | 
+ [2m241[0m |       // Fall through to immediate execution path below
+ [2m242[0m |       // Don't return here - let the immediate execution code run
+ [2m243[0m |     } else {
+ [2m244[0m |       console.log(`🔄 Using queue-based execution for agent ${agent_id}`)
+ [2m245[0m | 
+ [2m246[0m |       try {
+ [2m247[0m |       // Validate agent can be executed
+ [2m248[0m |       if (agent.status === 'archived') {
+ [2m249[0m |         return NextResponse.json({ error: 'Cannot execute archived agent' }, { status: 400 })
+ [2m250[0m |       }
+ [2m251[0m |       if (agent.status === 'inactive') {
+ [2m252[0m |         return NextResponse.json({ error: 'Cannot execute inactive agent' }, { status: 400 })
+ [2m253[0m |       }
+ [2m254[0m | 
+ [2m255[0m |       const executionUserId = provided_user_id || user.id
+ [2m256[0m | 
+ [2m257[0m |       // Check if agent is already running
+ [2m258[0m |       const { data: runningExecutions, error: runningError } = await supabase
+ [2m259[0m |         .from('agent_executions')
+ [2m260[0m |         .select('id')
+ [2m261[0m |         .eq('agent_id', agent_id)
+ [2m262[0m |         .in('status', ['pending', 'running'])
+ [2m263[0m |         .limit(1)
+ [2m264[0m | 
+ [2m265[0m |       if (runningError) {
+ [2m266[0m |         console.error('Error checking running executions:', runningError)
+ [2m267[0m |         return NextResponse.json(
+ [2m268[0m |           { error: 'Failed to check agent status', details: runningError.message },
+ [2m269[0m |           { status: 500 }
+ [2m270[0m |         )
+ [2m271[0m |       }
+ [2m272[0m | 
+ [2m273[0m |       if (runningExecutions && runningExecutions.length > 0) {
+ [2m274[0m |         return NextResponse.json(
+ [2m275[0m |           { 
+ [2m276[0m |             error: 'Agent is already running',
+ [2m277[0m |             message: 'Please wait for the current execution to complete before starting a new one',
+ [2m278[0m |             currentExecutionId: runningExecutions[0].id
+ [2m279[0m |           },
+ [2m280[0m |           { status: 409 }
+ [2m281[0m |         )
+ [2m282[0m |       }
+ [2m283[0m | 
+ [2m284[0m |       // Create execution record in new table
+ [2m285[0m |       const scheduledAt = new Date().toISOString()
+ [2m286[0m |       const { data: execution, error: executionError } = await supabase
+ [2m287[0m |         .from('agent_executions')
+ [2m288[0m |         .insert({
+ [2m289[0m |           agent_id: agent.id,
+ [2m290[0m |           user_id: executionUserId,
+ [2m291[0m |           execution_type: 'manual',
+ [2m292[0m |           scheduled_at: scheduledAt,
+ [2m293[0m |           status: 'pending',
+ [2m294[0m |           cron_expression: agent.schedule_cron,
+ [2m295[0m |           progress: 0,
+ [2m296[0m |           logs: {
+ [2m297[0m |             created_via: 'manual_api_queue',
+ [2m298[0m |             requested_at: scheduledAt,
+ [2m299[0m |             ip_address: req.headers.get('x-forwarded-for') || 'unknown',
+ [2m300[0m |             input_variables: Object.keys(input_variables).length > 0 ? input_variables : null,
+ [2m301[0m |             override_user_prompt: override_user_prompt || null,
+ [2m302[0m |           }
+ [2m303[0m |         })
+ [2m304[0m |         .select('id')
+ [2m305[0m |         .single()
+ [2m306[0m | 
+ [2m307[0m |       if (executionError || !execution) {
+ [2m308[0m |         console.error('Failed to create execution record:', executionError)
+ [2m309[0m |         return NextResponse.json(
+ [2m310[0m |           { error: 'Failed to create execution record', details: executionError?.message },
+ [2m311[0m |           { status: 500 }
+ [2m312[0m |         )
+ [2m313[0m |       }
+ [2m314[0m | 
+ [2m315[0m |       // Add job to queue - FIXED: Use correct function name and parameters
+ [2m316[0m |       const { jobId, executionId } = await addManualExecution(
+ [2m317[0m |         agent.id,          // agentId
+ [2m318[0m |         executionUserId,   // userId  
+ [2m319[0m |         execution.id,      // executionId
+ [2m320[0m |         input_variables,   // inputVariables
+ [2m321[0m |         override_user_prompt // overrideUserPrompt
+ [2m322[0m |       )
+ [2m323[0m | 
+ [2m324[0m |       console.log(`✅ Queued manual execution for agent ${agent.agent_name}`, {
+ [2m325[0m |         agentId: agent.id,
+ [2m326[0m |         executionId: execution.id,
+ [2m327[0m |         jobId,
+ [2m328[0m |       })
+ [2m329[0m | 
+ [2m330[0m |       return NextResponse.json({
+ [2m331[0m |         success: true,
+ [2m332[0m |         message: 'Agent execution queued successfully',
+ [2m333[0m |         data: {
+ [2m334[0m |           agent_id: agent.id,
+ [2m335[0m |           agent_name: agent.agent_name,
+ [2m336[0m |           execution_id: execution.id,
+ [2m337[0m |           job_id: jobId,
+ [2m338[0m |           execution_type: 'manual',
+ [2m339[0m |           status: 'pending',
+ [2m340[0m |           scheduled_at: scheduledAt,
+ [2m341[0m |           estimated_duration: '1-5 minutes',
+ [2m342[0m |         },
+ [2m343[0m |         queue_based: true,
+ [2m344[0m |       })
+ [2m345[0m | 
+ [2m346[0m |       } catch (queueError) {
+ [2m347[0m |         console.error('Failed to queue agent job:', queueError)
+ [2m348[0m |         return NextResponse.json(
+ [2m349[0m |           {
+ [2m350[0m |             error: 'Failed to queue agent execution',
+ [2m351[0m |             details: queueError instanceof Error ? queueError.message : 'Unknown error',
+ [2m352[0m |           },
+ [2m353[0m |           { status: 500 }
+ [2m354[0m |         )
+ [2m355[0m |       }
+ [2m356[0m |     }
+ [2m357[0m |   }
+ [2m358[0m | 
+ [2m359[0m |   // **EXISTING IMMEDIATE EXECUTION PATH** (preserves backward compatibility)
+ [2m360[0m |   console.log(`⚡ Using immediate execution for agent ${agent_id}`)
+ [2m361[0m | 
+ [2m362[0m |   // Initialize execution tracking if execution_id provided
+ [2m363[0m |   if (execution_id) {
+ [2m364[0m |     console.log(`🚀 Starting execution tracking for: ${execution_id}`)
+ [2m365[0m |     
+ [2m366[0m |     // Update execution record to running status
+ [2m367[0m |     const { error: execError } = await supabase
+ [2m368[0m |       .from('agent_configurations')
+ [2m369[0m |       .update({
+ [2m370[0m |         status: 'running',
+ [2m371[0m |         created_at: new Date().toISOString()
+ [2m372[0m |       })
+ [2m373[0m |       .eq('id', execution_id)
+ [2m374[0m | 
+ [2m375[0m |     if (execError) {
+ [2m376[0m |       console.error('❌ Failed to update execution record:', execError)
+ [2m377[0m |     } else {
+ [2m378[0m |       console.log('✅ Execution record updated to running status')
+ [2m379[0m |     }
+ [2m380[0m |   }
+ [2m381[0m | 
+ [2m382[0m |   // Extract text from uploaded PDF (if exists)
+ [2m383[0m |   try {
+ [2m384[0m |     for (const key in input_variables) {
+ [2m385[0m |       const value = input_variables[key]
+ [2m386[0m |       if (
+ [2m387[0m |         typeof value === 'string' &&
+ [2m388[0m |         value.startsWith('data:application/pdf;base64,')
+ [2m389[0m |       ) {
+ [2m390[0m |         console.log('📄 Detected PDF upload, extracting text...')
+ [2m391[0m |         
+ [2m392[0m |         if (execution_id) {
+ [2m393[0m |           const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m394[0m |             execution_id,
+ [2m395[0m |             agent_id: agent_id,
+ [2m396[0m |             user_id: user.id,
+ [2m397[0m |             timestamp: new Date().toISOString(),
+ [2m398[0m |             level: 'info',
+ [2m399[0m |             message: 'PDF upload detected, extracting text content',
+ [2m400[0m |             phase: 'documents'
+ [2m401[0m |           })
+ [2m402[0m |           
+ [2m403[0m |           if (logError) {
+ [2m404[0m |             console.error('Failed to insert PDF detection log:', logError)
+ [2m405[0m |           }
+ [2m406[0m |         }
+ [2m407[0m |         
+ [2m408[0m |         const text = await extractPdfTextFromBase64(value)
+ [2m409[0m |         input_variables.__uploaded_file_text = text
+ [2m410[0m |         
+ [2m411[0m |         if (execution_id) {
+ [2m412[0m |           const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m413[0m |             execution_id,
+ [2m414[0m |             agent_id: agent_id,
+ [2m415[0m |             user_id: user.id,
+ [2m416[0m |             timestamp: new Date().toISOString(),
+ [2m417[0m |             level: 'info',
+ [2m418[0m |             message: `PDF text extraction completed. Extracted ${text.length} characters`,
+ [2m419[0m |             phase: 'documents'
+ [2m420[0m |           })
+ [2m421[0m |           
+ [2m422[0m |           if (logError) {
+ [2m423[0m |             console.error('Failed to insert PDF completion log:', logError)
+ [2m424[0m |           }
+ [2m425[0m |         }
+ [2m426[0m |         break // Only process the first PDF for now
+ [2m427[0m |       }
+ [2m428[0m |     }
+ [2m429[0m |   } catch (err: any) {
+ [2m430[0m |     console.error('❌ Failed to extract PDF text:', err)
+ [2m431[0m |     if (execution_id) {
+ [2m432[0m |       const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m433[0m |         execution_id,
+ [2m434[0m |         agent_id: agent_id,
+ [2m435[0m |         user_id: user.id,
+ [2m436[0m |         timestamp: new Date().toISOString(),
+ [2m437[0m |         level: 'error',
+ [2m438[0m |         message: `PDF text extraction failed: ${err.message}`,
+ [2m439[0m |         phase: 'documents'
+ [2m440[0m |       })
+ [2m441[0m |       
+ [2m442[0m |       if (logError) {
+ [2m443[0m |         console.error('Failed to insert PDF error log:', logError)
+ [2m444[0m |       }
+ [2m445[0m |     }
+ [2m446[0m |   }
+ [2m447[0m | 
+ [2m448[0m |   try {
+ [2m449[0m |     const startTime = Date.now()
+ [2m450[0m | 
+ [2m451[0m |     if (execution_id) {
+ [2m452[0m |       const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m453[0m |         execution_id,
+ [2m454[0m |         agent_id: agent_id,
+ [2m455[0m |         user_id: user.id,
+ [2m456[0m |         timestamp: new Date().toISOString(),
+ [2m457[0m |         level: 'info',
+ [2m458[0m |         message: 'Starting agent execution with interpolated prompt',
+ [2m459[0m |         phase: 'prompt'
+ [2m460[0m |       })
+ [2m461[0m |       
+ [2m462[0m |       if (logError) {
+ [2m463[0m |         console.error('Failed to insert start execution log:', logError)
+ [2m464[0m |       }
+ [2m465[0m |     }
+ [2m466[0m | 
+ [2m467[0m |     const { message, parsed_output, pluginContext, send_status } = await runAgentWithContext({
+ [2m468[0m |       supabase,
+ [2m469[0m |       agent,
+ [2m470[0m |       userId: user.id,
+ [2m471[0m |       input_variables,
+ [2m472[0m |       override_user_prompt,
+ [2m473[0m |     })
+ [2m474[0m | 
+ [2m475[0m |     const endTime = Date.now()
+ [2m476[0m |     const executionDuration = endTime - startTime
+ [2m477[0m | 
+ [2m478[0m |     if (execution_id) {
+ [2m479[0m |       const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m480[0m |         execution_id,
+ [2m481[0m |         agent_id: agent_id,
+ [2m482[0m |         user_id: user.id,
+ [2m483[0m |         timestamp: new Date().toISOString(),
+ [2m484[0m |         level: 'info',
+ [2m485[0m |         message: `Agent execution completed successfully in ${executionDuration}ms`,
+ [2m486[0m |         phase: 'validation'
+ [2m487[0m |       })
+ [2m488[0m |       
+ [2m489[0m |       if (logError) {
+ [2m490[0m |         console.error('Failed to insert completion log:', logError)
+ [2m491[0m |       }
+ [2m492[0m | 
+ [2m493[0m |       // Update execution record with final metrics
+ [2m494[0m |       const { error: updateError } = await supabase.from('agent_configurations').update({
+ [2m495[0m |         status: 'completed',
+ [2m496[0m |         duration_ms: executionDuration,
+ [2m497[0m |         completed_at: new Date().toISOString()
+ [2m498[0m |       }).eq('id', execution_id)
+ [2m499[0m |       
+ [2m500[0m |       if (updateError) {
+ [2m501[0m |         console.error('Failed to update execution completion:', updateError)
+ [2m502[0m |       }
+ [2m503[0m |     }
+ [2m504[0m | 
+ [2m505[0m |     console.log('🪵 Inserting agent log...')
+ [2m506[0m |     const { data: logData, error: logInsertError } = await supabase
+ [2m507[0m |       .from('agent_logs')
+ [2m508[0m |       .insert({
+ [2m509[0m |         agent_id,
+ [2m510[0m |         user_id: user.id,
+ [2m511[0m |         run_output: parsed_output ? JSON.stringify(parsed_output) : null,
+ [2m512[0m |         full_output: message ? { message } : null,
+ [2m513[0m |         status: send_status,
+ [2m514[0m |         created_at: new Date().toISOString(),
+ [2m515[0m |       })
+ [2m516[0m |       .select('id')
+ [2m517[0m |       .single()
+ [2m518[0m | 
+ [2m519[0m |     if (logInsertError) {
+ [2m520[0m |       console.error('❌ Failed to insert log into agent_logs:', logInsertError)
+ [2m521[0m |     } else {
+ [2m522[0m |       console.log('✅ Agent log inserted successfully')
+ [2m523[0m | 
+ [2m524[0m |       // Insert output context if we have a log ID and output data
+ [2m525[0m |       if (logData?.id && (message || parsed_output || pluginContext)) {
+ [2m526[0m |         console.log('📝 Inserting agent output context...')
+ [2m527[0m |         
+ [2m528[0m |         const contextEntries = []
+ [2m529[0m |         
+ [2m530[0m |         // Add message as context if it exists
+ [2m531[0m |         if (message) {
+ [2m532[0m |           contextEntries.push({
+ [2m533[0m |             user_id: user.id,
+ [2m534[0m |             source_agent_id: agent_id,
+ [2m535[0m |             run_id: logData.id,
+ [2m536[0m |             context_key: 'agent_message',
+ [2m537[0m |             context_data: { message }
+ [2m538[0m |           })
+ [2m539[0m |         }
+ [2m540[0m |         
+ [2m541[0m |         // Add parsed output as context if it exists
+ [2m542[0m |         if (parsed_output) {
+ [2m543[0m |           contextEntries.push({
+ [2m544[0m |             user_id: user.id,
+ [2m545[0m |             source_agent_id: agent_id,
+ [2m546[0m |             run_id: logData.id,
+ [2m547[0m |             context_key: 'parsed_output',
+ [2m548[0m |             context_data: parsed_output
+ [2m549[0m |           })
+ [2m550[0m |         }
+ [2m551[0m |         
+ [2m552[0m |         // Add plugin context if it exists
+ [2m553[0m |         if (pluginContext && Object.keys(pluginContext).length > 0) {
+ [2m554[0m |           contextEntries.push({
+ [2m555[0m |             user_id: user.id,
+ [2m556[0m |             source_agent_id: agent_id,
+ [2m557[0m |             run_id: logData.id,
+ [2m558[0m |             context_key: 'plugin_context',
+ [2m559[0m |             context_data: pluginContext
+ [2m560[0m |           })
+ [2m561[0m |         }
+ [2m562[0m |         
+ [2m563[0m |         // Add input variables as context for future reference
+ [2m564[0m |         if (input_variables && Object.keys(input_variables).length > 0) {
+ [2m565[0m |           contextEntries.push({
+ [2m566[0m |             user_id: user.id,
+ [2m567[0m |             source_agent_id: agent_id,
+ [2m568[0m |             run_id: logData.id,
+ [2m569[0m |             context_key: 'input_variables',
+ [2m570[0m |             context_data: input_variables
+ [2m571[0m |           })
+ [2m572[0m |         }
+ [2m573[0m | 
+ [2m574[0m |         if (contextEntries.length > 0) {
+ [2m575[0m |           const { error: contextInsertError } = await supabase
+ [2m576[0m |             .from('agent_output_context')
+ [2m577[0m |             .insert(contextEntries)
+ [2m578[0m | 
+ [2m579[0m |           if (contextInsertError) {
+ [2m580[0m |             console.error('❌ Failed to insert agent output context:', contextInsertError)
+ [2m581[0m |           } else {
+ [2m582[0m |             console.log('✅ Agent output context inserted successfully')
+ [2m583[0m |           }
+ [2m584[0m |         }
+ [2m585[0m |       }
+ [2m586[0m |     }
+ [2m587[0m | 
+ [2m588[0m |     console.log('📊 Updating agent_stats...')
+ [2m589[0m |     const { error: statsError } = await supabase.rpc('increment_agent_stats', {
+ [2m590[0m |       agent_id_input: agent_id,
+ [2m591[0m |       user_id_input: user.id,
+ [2m592[0m |       success: send_status?.startsWith('✅') || send_status?.startsWith('📧') || send_status?.startsWith('🚨'),
+ [2m593[0m |     })
+ [2m594[0m | 
+ [2m595[0m |     if (statsError) {
+ [2m596[0m |       console.error('❌ Failed to update agent_stats:', statsError)
+ [2m597[0m |     } else {
+ [2m598[0m |       console.log('✅ agent_stats updated')
+ [2m599[0m |     }
+ [2m600[0m | 
+ [2m601[0m |     return NextResponse.json({
+ [2m602[0m |       result: {
+ [2m603[0m |         message,
+ [2m604[0m |         parsed_output,
+ [2m605[0m |         pluginContext,
+ [2m606[0m |         send_status,
+ [2m607[0m |       },
+ [2m608[0m |       execution_id: execution_id || null,
+ [2m609[0m |       queue_based: false,
+ [2m610[0m |     })
+ [2m611[0m | 
+ [2m612[0m |   } catch (err: any) {
+ [2m613[0m |     console.error('❌ runAgentWithContext error:', err)
+ [2m614[0m |     
+ [2m615[0m |     if (execution_id) {
+ [2m616[0m |       const { error: logError } = await supabase.from('agent_execution_logs').insert({
+ [2m617[0m |         execution_id,
+ [2m618[0m |         agent_id: agent_id,
+ [2m619[0m |         user_id: user.id,
+ [2m620[0m |         timestamp: new Date().toISOString(),
+ [2m621[0m |         level: 'error',
+ [2m622[0m |         message: `Critical error: ${err.message}`,
+ [2m623[0m |         phase: 'validation'
+ [2m624[0m |       })
+ [2m625[0m |       
+ [2m626[0m |       if (logError) {
+ [2m627[0m |         console.error('Failed to insert error log:', logError)
+ [2m628[0m |       }
+ [2m629[0m | 
+ [2m630[0m |       // Update execution record as failed
+ [2m631[0m |       const { error: updateError } = await supabase.from('agent_configurations').update({
+ [2m632[0m |         status: 'failed',
+ [2m633[0m |         completed_at: new Date().toISOString()
+ [2m634[0m |       }).eq('id', execution_id)
+ [2m635[0m |       
+ [2m636[0m |       if (updateError) {
+ [2m637[0m |         console.error('Failed to update execution as failed:', updateError)
+ [2m638[0m |       }
+ [2m639[0m |     }
+ [2m640[0m |     
+ [2m641[0m |     return NextResponse.json(
+ [2m642[0m |       { error: 'Failed to run agent using OpenAI' },
+ [2m643[0m |       { status: 500 }
+ [2m644[0m |     )
+ [2m645[0m |   }
+ [2m646[0m | }
+ [2m647[0m | 
+ [2m648[0m | /**
+ [2m649[0m |  * Get execution status for agents
+ [2m650[0m |  */
+ [2m651[0m | export async function GET(request: Request) {
+ [2m652[0m |   try {
+ [2m653[0m |     const { searchParams } = new URL(request.url);
+ [2m654[0m |     const agent_id = searchParams.get('agent_id');
+ [2m655[0m |     const execution_id = searchParams.get('execution_id');
+ [2m656[0m |     const status_only = searchParams.get('status_only');
+ [2m657[0m | 
+ [2m658[0m |     // If status_only is present but no agent_id or execution_id, return a valid JSON error
+ [2m659[0m |     if ((status_only === 'true' || status_only === '1') && !agent_id && !execution_id) {
+ [2m660[0m |       return NextResponse.json(
+ [2m661[0m |         { error: 'Must provide agent_id or execution_id for status query.' },
+ [2m662[0m |         { status: 400 }
+ [2m663[0m |       );
+ [2m664[0m |     }
+ [2m665[0m | 
+ [2m666[0m |     if (!agent_id && !execution_id) {
+ [2m667[0m |       return NextResponse.json(
+ [2m668[0m |         { error: 'Must provide either agent_id or execution_id' },
+ [2m669[0m |         { status: 400 }
+ [2m670[0m |       );
+ [2m671[0m |     }
+ [2m672[0m | 
+ [2m673[0m |     // Check required env vars
+ [2m674[0m |     if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+ [2m675[0m |       return NextResponse.json(
+ [2m676[0m |         { error: 'Supabase environment variables missing' },
+ [2m677[0m |         { status: 500 }
+ [2m678[0m |       );
+ [2m679[0m |     }
+ [2m680[0m | 
+ [2m681[0m |     let cookieStore;
+ [2m682[0m |     try {
+ [2m683[0m |       cookieStore = await cookies();
+ [2m684[0m |     } catch (cookieError) {
+ [2m685[0m |       return NextResponse.json(
+ [2m686[0m |         { error: 'Failed to get cookies', details: cookieError instanceof Error ? cookieError.message : String(cookieError) },
+ [2m687[0m |         { status: 500 }
+ [2m688[0m |       );
+ [2m689[0m |     }
+ [2m690[0m | 
+ [2m691[0m |     let supabase;
+ [2m692[0m |     try {
+ [2m693[0m |       supabase = createServerClient(
+ [2m694[0m |         process.env.NEXT_PUBLIC_SUPABASE_URL!,
+ [2m695[0m |         process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+ [2m696[0m |         {
+ [2m697[0m |           cookies: {
+ [2m698[0m |             get: (name) => cookieStore.get(name)?.value,
+ [2m699[0m |             set: async () => {},
+ [2m700[0m |             remove: async () => {},
+ [2m701[0m |           },
+ [2m702[0m |         }
+ [2m703[0m |       );
+ [2m704[0m |     } catch (supabaseError) {
+ [2m705[0m |       return NextResponse.json(
+ [2m706[0m |         { error: 'Failed to create Supabase client', details: supabaseError instanceof Error ? supabaseError.message : String(supabaseError) },
+ [2m707[0m |         { status: 500 }
+ [2m708[0m |       );
+ [2m709[0m |     }
+ [2m710[0m | 
+ [2m711[0m |     let query = supabase
+ [2m712[0m |       .from('agent_executions')
+ [2m713[0m |       .select('id, agent_id, execution_type, status, progress, scheduled_at, started_at, completed_at, error_message, execution_duration_ms, retry_count')
+ [2m714[0m |       .order('created_at', { ascending: false });
+ [2m715[0m | 
+ [2m716[0m |     if (execution_id) {
+ [2m717[0m |       query = query.eq('id', execution_id);
+ [2m718[0m |     } else if (agent_id) {
+ [2m719[0m |       query = query.eq('agent_id', agent_id).limit(5); // Last 5 executions
+ [2m720[0m |     }
+ [2m721[0m | 
+ [2m722[0m |     const { data: executions, error } = await query;
+ [2m723[0m | 
+ [2m724[0m |     if (error) {
+ [2m725[0m |       return NextResponse.json(
+ [2m726[0m |         { error: 'Failed to fetch execution status', details: error.message },
+ [2m727[0m |         { status: 500 }
+ [2m728[0m |       );
+ [2m729[0m |     }
+ [2m730[0m | 
+ [2m731[0m |     return NextResponse.json({
+ [2m732[0m |       success: true,
+ [2m733[0m |       executions: executions || [],
+ [2m734[0m |       count: executions?.length || 0,
+ [2m735[0m |     });
+ [2m736[0m | 
+ [2m737[0m |   } catch (error) {
+ [2m738[0m |     // Always return valid JSON, never HTML
+ [2m739[0m |     return NextResponse.json(
+ [2m740[0m |       { error: 'Internal server error', message: error instanceof Error ? error.message : String(error) },
+ [2m741[0m |       { status: 500 }
+ [2m742[0m |     );
+ [2m743[0m |   }
+ [2m744[0m | }
+ [2m745[0m | 
+ [2m746[0m | // Prevent caching
+ [2m747[0m | export const dynamic = 'force-dynamic';
+ [2m748[0m | 
+ [2m749[0m | // Suppress request logs for status polling (reduces console noise)
+ [2m750[0m | export const runtime = 'nodejs';
+     : [33;1m             ^^^|^^^[0m
+     :                 [33;1m`-- [33;1m`runtime` redefined here[0m[0m
+ [2m751[0m | export const preferredRegion = 'auto';
+     `----
+
+Import trace for requested module:
+./app/api/run-agent/route.ts
+ GET /api/run-agent?agent_id=10554107-6e25-4798-a577-986573fcfeed&status_only=true 500 in 1011ms
+ GET /api/run-agent?agent_id=d0c3cf96-23d4-44cc-a547-9cec79dff6c1&status_only=true 500 in 529ms
+ GET /api/run-agent?agent_id=e0628542-1191-43cb-a666-2a33569acf1d&status_only=true 500 in 529ms
+ GET /api/run-agent?agent_id=832a8039-d864-4d25-bdbb-23c02db5b810&status_only=true 500 in 531ms
+ GET /api/run-agent?agent_id=10554107-6e25-4798-a577-986573fcfeed&status_only=true 500 in 101ms
+ GET /api/run-agent?agent_id=e0628542-1191-43cb-a666-2a33569acf1d&status_only=true 500 in 88ms
+ GET /api/run-agent?agent_id=d0c3cf96-23d4-44cc-a547-9cec79dff6c1&status_only=true 500 in 90ms
+ GET /api/run-agent?agent_id=832a8039-d864-4d25-bdbb-23c02db5b810&status_only=true 500 in 87ms
+ GET /api/run-agent?agent_id=10554107-6e25-4798-a577-986573fcfeed&status_only=true 500 in 26ms
+ GET /api/run-agent?agent_id=d0c3cf96-23d4-44cc-a547-9cec79dff6c1&status_only=true 500 in 42ms
+ GET /api/run-agent?agent_id=e0628542-1191-43cb-a666-2a33569acf1d&status_only=true 500 in 42ms
+ GET /api/run-agent?agent_id=832a8039-d864-4d25-bdbb-23c02db5b810&status_only=true 500 in 44ms
+ GET /api/run-agent?agent_id=10554107-6e25-4798-a577-986573fcfeed&status_only=true 500 in 61ms
+ GET /api/run-agent?agent_id=d0c3cf96-23d4-44cc-a547-9cec79dff6c1&status_only=true 500 in 60ms
+ GET /api/run-agent?agent_id=e0628542-1191-43cb-a666-2a33569acf1d&status_only=true 500 in 59ms
+ GET /api/run-agent?agent_id=832a8039-d864-4d25-bdbb-23c02db5b810&status_only=true 500 in 55ms
+ GET /api/run-agent?agent_id=10554107-6e25-4798-a577-986573fcfeed&status_only=true 500 in 32ms
+ GET /api/run-agent?agent_id=d0c3cf96-23d4-44cc-a547-9cec79dff6c1&status_only=true 500 in 40ms
+ GET /api/run-agent?agent_id=e0628542-1191-43cb-a666-2a33569acf1d&status_only=true 500 in 40ms
+ GET /api/run-agent?agent_id=832a8039-d864-4d25-bdbb-23c02db5b810&status_only=true 500 in 43ms
+ GET /api/run-agent?agent_id=10554107-6e25-4798-a577-986573fcfeed&status_only=true 500 in 67ms
+ GET /api/run-agent?agent_id=d0c3cf96-23d4-44cc-a547-9cec79dff6c1&status_only=true 500 in 64ms
+ GET /api/run-agent?agent_id=e0628542-1191-43cb-a666-2a33569acf1d&status_only=true 500 in 63ms
+ GET /api/run-agent?agent_id=832a8039-d864-4d25-bdbb-23c02db5b810&status_only=true 500 in 63ms
+ GET /api/run-agent?agent_id=10554107-6e25-4798-a577-986573fcfeed&status_only=true 500 in 44ms
+ GET /api/run-agent?agent_id=d0c3cf96-23d4-44cc-a547-9cec79dff6c1&status_only=true 500 in 44ms
+ GET /api/run-agent?agent_id=e0628542-1191-43cb-a666-2a33569acf1d&status_only=true 500 in 46ms
+ GET /api/run-agent?agent_id=832a8039-d864-4d25-bdbb-23c02db5b810&status_only=true 500 in 48ms

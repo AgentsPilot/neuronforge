@@ -3,7 +3,7 @@
     "name": "chatgpt-research",
     "version": "1.0.0",
     "description": "AI-powered web research and content analysis using ChatGPT with Google Search",
-    "context": "Use for researching topics, analyzing information, searching the web, generating summaries, and answering questions that require current information or web search",
+    "context": "Use for researching topics, analyzing information, searching the web, and answering questions that require current information or web search. IMPORTANT: research_topic already provides comprehensive, detailed output - do NOT use summarize_content after research_topic as it will reduce quality. Use summarize_content ONLY for condensing existing external content, not for research results.",
     "icon": "<Brain className='w-5 h-5 text-purple-600'/>",
     "category": "ai_research",
     "isPopular": true,
@@ -21,8 +21,8 @@
   },
   "actions": {
     "research_topic": {
-      "description": "Research a topic using web search and AI analysis",
-      "usage_context": "When user wants to research a topic, find current information, or get comprehensive analysis of a subject using web search and AI",
+      "description": "Research a topic using web search and AI analysis - produces comprehensive, ready-to-use output",
+      "usage_context": "When user wants to research a topic, find current information, or get comprehensive analysis of a subject using web search and AI. The output is already detailed and complete - do NOT summarize it further.",
       "parameters": {
         "type": "object",
         "required": ["topic"],
@@ -49,14 +49,14 @@
             "type": "string",
             "enum": ["summary", "detailed", "bullet_points", "report"],
             "default": "detailed",
-            "description": "Output format: summary (brief), detailed (comprehensive), bullet_points (structured), report (formal)"
+            "description": "Output format: summary (brief ~200 words), detailed (comprehensive 400-600 words), bullet_points (structured points), report (formal 500-800 words)"
           },
           "max_length": {
             "type": "number",
             "minimum": 500,
-            "maximum": 10000,
-            "default": 3000,
-            "description": "Maximum length of the response in characters"
+            "maximum": 15000,
+            "default": 5000,
+            "description": "Maximum length of the response in characters (default 5000 for quality detailed output)"
           }
         }
       },
@@ -93,8 +93,8 @@
       }
     },
     "summarize_content": {
-      "description": "Summarize provided content using AI",
-      "usage_context": "When user wants to summarize existing content, text, articles, or documents without web search",
+      "description": "Summarize provided content using AI - for EXISTING external content only",
+      "usage_context": "When user wants to summarize existing content, text, articles, or documents without web search. Do NOT use this to summarize results from research_topic - those are already optimized.",
       "parameters": {
         "type": "object",
         "required": ["content"],

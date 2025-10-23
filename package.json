@@ -6,7 +6,8 @@
     "node": ">=18.17.0"
   },
   "scripts": {
-    "dev": "next dev -p 3000",
+    "dev": "next dev -p 3000 2>&1 | grep -vE 'status_only=true|agent_execution.*select=id|Cache skipped|cache skip|auto no cache' || true",
+    "dev:verbose": "next dev -p 3000",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"

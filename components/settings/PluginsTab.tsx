@@ -26,7 +26,9 @@ import {
   FileText,
   Table,
   HardDrive,
-  Briefcase
+  Briefcase,
+  Bot,
+  Loader2
 } from 'lucide-react'
 import { PluginConnection } from '@/types/settings'
 import Image from 'next/image'
@@ -82,6 +84,8 @@ export default function PluginsTab({ connections, setConnections }: PluginsTabPr
   const [showDisconnectModal, setShowDisconnectModal] = useState(false)
   const [selectedConnection, setSelectedConnection] = useState<PluginConnection | null>(null)
   const [mounted, setMounted] = useState(false)
+  const [connectedAgents, setConnectedAgents] = useState<Array<{id: string, agent_name: string}>>([])
+  const [loadingAgents, setLoadingAgents] = useState(false)
 
   useEffect(() => {
     setMounted(true)
@@ -119,9 +123,59 @@ export default function PluginsTab({ connections, setConnections }: PluginsTabPr
     )
   }
 
-  const openDisconnectModal = (connection: PluginConnection) => {
+  const fetchConnectedAgents = async (pluginKey: string) => {
+    if (!user) return
+
+    setLoadingAgents(true)
+    try {
+      console.log('🔍 Fetching agents for plugin:', pluginKey)
+
+      // Get all agents and filter in JavaScript since JSONB array querying is tricky
+      const { data: allAgents, error } = await supabase
+        .from('agents')
+        .select('id, agent_name, connected_plugins')
+        .eq('user_id', user.id)
+
+      console.log('📊 All agents for user:', allAgents)
+
+      if (error) {
+        console.error('Error fetching agents:', error)
+        setConnectedAgents([])
+      } else {
+        // Filter agents that have this plugin in their connected_plugins array
+        const filtered = (allAgents || []).filter(agent => {
+          const plugins = agent.connected_plugins
+          console.log(`Agent "${agent.agent_name}" connected_plugins:`, plugins)
+
+          // Check if connected_plugins is an array and includes the plugin
+          if (Array.isArray(plugins)) {
+            return plugins.includes(pluginKey)
+          }
+
+          // If it's an object (old format), check if the key exists and is true
+          if (plugins && typeof plugins === 'object') {
+            return plugins[pluginKey] === true
+          }
+
+          return false
+        })
+
+        console.log('🎯 Filtered agents using plugin:', filtered)
+        setConnectedAgents(filtered.map(a => ({ id: a.id, agent_name: a.agent_name })))
+      }
+    } catch (error) {
+      console.error('Error fetching connected agents:', error)
+      setConnectedAgents([])
+    } finally {
+      setLoadingAgents(false)
+    }
+  }
+
+  const openDisconnectModal = async (connection: PluginConnection) => {
     setSelectedConnection(connection)
     setShowDisconnectModal(true)
+    // Fetch agents using this plugin
+    await fetchConnectedAgents(connection.plugin_key)
   }
 
   const handleDisconnectPlugin = async () => {
@@ -464,6 +518,42 @@ export default function PluginsTab({ connections, setConnections }: PluginsTabPr
                     </p>
                   </div>
                 </div>
+
+                {/* Connected Agents List */}
+                {loadingAgents ? (
+                  <div className="flex items-center justify-center p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                    <Loader2 className="w-4 h-4 animate-spin text-gray-500 mr-2" />
+                    <span className="text-xs text-gray-600">Loading connected agents...</span>
+                  </div>
+                ) : connectedAgents.length > 0 ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Bot className="w-4 h-4 text-red-600" />
+                      <p className="text-sm font-semibold text-red-900">
+                        {connectedAgents.length} {connectedAgents.length === 1 ? 'agent is' : 'agents are'} using this plugin:
+                      </p>
+                    </div>
+                    <div className="max-h-40 overflow-y-auto space-y-1 p-3 bg-red-50 border border-red-200 rounded-lg">
+                      {connectedAgents.map((agent) => (
+                        <div key={agent.id} className="flex items-center gap-2 text-xs text-red-800">
+                          <Bot className="w-3 h-3 flex-shrink-0" />
+                          <span className="font-medium truncate">{agent.agent_name}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-red-700 font-medium">
+                      ⚠️ These agents will no longer work after disconnection
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg">
+                    <CheckCircle className="w-4 h-4 text-green-600" />
+                    <p className="text-xs text-green-800">
+                      No agents are currently using this plugin
+                    </p>
+                  </div>
+                )}
+
                 <p className="text-xs text-gray-600">
                   You can reconnect this plugin anytime from the connections page.
                 </p>

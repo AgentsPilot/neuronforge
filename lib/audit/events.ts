@@ -34,6 +34,11 @@ export const AUDIT_EVENTS = {
   AGENT_RUN_FAILED: 'AGENT_RUN_FAILED',
   AGENT_SCHEMA_UPDATED: 'AGENT_SCHEMA_UPDATED', // input/output schema changes
 
+  // Agent Generation events
+  AGENT_GENERATION_STARTED: 'AGENT_GENERATION_STARTED',
+  AGENT_GENERATION_COMPLETED: 'AGENT_GENERATION_COMPLETED',
+  AGENT_GENERATION_FAILED: 'AGENT_GENERATION_FAILED',
+
   // AgentKit-specific events
   AGENTKIT_EXECUTION_STARTED: 'AGENTKIT_EXECUTION_STARTED',
   AGENTKIT_EXECUTION_COMPLETED: 'AGENTKIT_EXECUTION_COMPLETED',
@@ -154,6 +159,23 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'Agent execution failed',
+  },
+
+  // Agent Generation events
+  [AUDIT_EVENTS.AGENT_GENERATION_STARTED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Agent generation process started',
+  },
+  [AUDIT_EVENTS.AGENT_GENERATION_COMPLETED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Agent generation completed successfully',
+  },
+  [AUDIT_EVENTS.AGENT_GENERATION_FAILED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'Agent generation failed',
   },
 
   // AgentKit events

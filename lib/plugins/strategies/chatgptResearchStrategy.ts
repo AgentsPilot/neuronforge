@@ -1,8 +1,8 @@
 // lib/plugins/strategies/chatgptResearchStrategy.ts
 import { PluginStrategy } from '../pluginRegistry'
 
-// Generic function to safely stringify any data with increased size limits
-function safeStringify(data: any, maxLength: number = 50000): string {
+// Generic function to safely stringify any data with optimized size limits
+function safeStringify(data: any, maxLength: number = 15000): string {
   try {
     if (data === null || data === undefined) {
       return 'null'
@@ -18,8 +18,8 @@ function safeStringify(data: any, maxLength: number = 50000): string {
 
     // For objects and arrays, convert to JSON with limited depth
     const jsonString = JSON.stringify(data, (key, value) => {
-      if (typeof value === 'string' && value.length > 5000) {
-        return value.substring(0, 5000) + '...[truncated]'
+      if (typeof value === 'string' && value.length > 2000) {
+        return value.substring(0, 2000) + '...[truncated]'
       }
       return value
     }, 2)
@@ -38,14 +38,26 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4)
 }
 
-// Choose appropriate model based on content size
-function selectModel(estimatedTokens: number): { model: string, maxTokens: number } {
-  if (estimatedTokens > 6000) {
-    return { model: 'gpt-4-turbo-preview', maxTokens: 4000 } // Has 128k context - increased response length
+// Choose appropriate model based on content size - BALANCED for cost and quality
+function selectModel(estimatedTokens: number, taskType: 'research' | 'standard'): { model: string, maxTokens: number } {
+  // For research tasks, use better models with higher token limits
+  if (taskType === 'research') {
+    if (estimatedTokens > 8000) {
+      return { model: 'gpt-4o', maxTokens: 4000 } // Large context research
+    } else if (estimatedTokens > 4000) {
+      return { model: 'gpt-4o', maxTokens: 3500 } // Medium context research
+    } else {
+      return { model: 'gpt-4o-mini', maxTokens: 3000 } // Small context - mini with higher tokens
+    }
+  }
+
+  // For standard tasks, balance cost and quality
+  if (estimatedTokens > 8000) {
+    return { model: 'gpt-4o-mini', maxTokens: 2500 } // Large context, use mini to save costs
   } else if (estimatedTokens > 4000) {
-    return { model: 'gpt-4-1106-preview', maxTokens: 4000 } // Has 128k context - increased response length
+    return { model: 'gpt-4o-mini', maxTokens: 2000 } // Medium context
   } else {
-    return { model: 'gpt-4', maxTokens: 4000 } // Standard 8k context - increased response length
+    return { model: 'gpt-4o-mini', maxTokens: 1500 } // Small context
   }
 }
 
@@ -85,8 +97,8 @@ async function fetchPageContent(url: string): Promise<string> {
       .replace(/\s+/g, ' ')
       .trim()
 
-    // Limit to first 10000 characters for processing
-    return text.substring(0, 10000)
+    // Limit to first 2500 characters for processing - OPTIMIZED for token usage
+    return text.substring(0, 2500)
 
   } catch (error) {
     console.error('Error fetching page content:', error)
@@ -104,7 +116,7 @@ async function searchWithGoogle(query: string, fetchFullContent: boolean = true)
       return 'Web search temporarily unavailable.'
     }
 
-    const searchUrl = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${cx}&q=${encodeURIComponent(query.trim())}&num=10`
+    const searchUrl = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${cx}&q=${encodeURIComponent(query.trim())}&num=5`
     const response = await fetch(searchUrl)
 
     if (!response.ok) {
@@ -147,7 +159,7 @@ async function performWebResearch(topics: string[]): Promise<string> {
 
   const searchResults = []
 
-  for (const topic of topics.slice(0, 5)) { // Increased to 5 searches for more comprehensive results
+  for (const topic of topics.slice(0, 3)) { // Optimized to 3 searches to reduce token usage
     const result = await searchWithGoogle(topic)
     if (result && !result.includes('temporarily unavailable') && !result.includes('No search results')) {
       searchResults.push(`**Research results for "${topic}":**\n\n${result}`)
@@ -160,55 +172,62 @@ async function performWebResearch(topics: string[]): Promise<string> {
 // ADDED: Generate contextual system prompt based on task type
 function generateContextualSystemPrompt(userPrompt: string, dataToAnalyze: any, input_variables: any): string {
   let prompt = "You are a professional AI assistant designed to help users accomplish specific tasks efficiently and accurately.\n\n"
-  
+
   // Detect task type from user prompt and add specific instructions
   const promptLower = userPrompt.toLowerCase()
-  
+
   if (promptLower.includes('summariz') || promptLower.includes('summary')) {
     prompt += "TASK: Create comprehensive summaries that capture key points, important details, and actionable insights.\n"
-    prompt += "FORMAT: Use clear headers, bullet points for key findings, and a conclusion with next steps.\n\n"
+    prompt += "FORMAT: Use clear headers, bullet points for key findings, and a conclusion with next steps.\n"
+    prompt += "LENGTH: Provide detailed summaries with at least 3-4 substantial paragraphs covering all major aspects.\n\n"
   }
-  
+
   else if (promptLower.includes('analyz') || promptLower.includes('research')) {
     prompt += "TASK: Perform thorough analysis to identify patterns, insights, and recommendations.\n"
-    prompt += "FORMAT: Structure your analysis with: Key Findings, Detailed Analysis, and Actionable Recommendations.\n\n"
+    prompt += "FORMAT: Structure your analysis with: Key Findings, Detailed Analysis, and Actionable Recommendations.\n"
+    prompt += "DEPTH: Provide comprehensive coverage with multiple paragraphs per section, detailed explanations, and specific examples from the research.\n\n"
   }
-  
+
   else if (promptLower.includes('email') && Object.keys(dataToAnalyze).length > 0) {
     prompt += "TASK: Process email data to extract meaningful insights and create useful outputs.\n"
-    prompt += "FORMAT: Organize by relevance and importance. Include sender details, key topics, and any action items.\n\n"
+    prompt += "FORMAT: Organize by relevance and importance. Include sender details, key topics, and any action items.\n"
+    prompt += "DETAIL: Provide thorough analysis of each email with context and implications.\n\n"
   }
-  
+
   else if (promptLower.includes('report') || promptLower.includes('document')) {
     prompt += "TASK: Generate professional reports with clear structure and actionable insights.\n"
-    prompt += "FORMAT: Executive Summary, Detailed Findings, Recommendations, and Conclusion.\n\n"
+    prompt += "FORMAT: Executive Summary, Detailed Findings, Recommendations, and Conclusion.\n"
+    prompt += "LENGTH: Create comprehensive reports with substantial content in each section (minimum 4-5 paragraphs total).\n\n"
   }
-  
+
   else {
-    prompt += "TASK: Follow the user's specific instructions while providing comprehensive and useful output.\n"
-    prompt += "FORMAT: Structure your response logically with clear sections and actionable information.\n\n"
+    prompt += "TASK: Follow the user's specific instructions while providing comprehensive and detailed output.\n"
+    prompt += "FORMAT: Structure your response logically with clear sections and actionable information.\n"
+    prompt += "DEPTH: Provide thorough, detailed responses with comprehensive coverage of the topic.\n\n"
   }
-  
+
   // Add data context if available
   if (Object.keys(dataToAnalyze).length > 0) {
     prompt += `DATA CONTEXT: You have access to ${Object.keys(dataToAnalyze).join(', ')} data. `
     prompt += "Reference this data directly in your response and cite specific examples.\n\n"
   }
-  
+
   prompt += "INSTRUCTIONS:\n"
-  prompt += "- Provide specific, actionable information\n"
-  prompt += "- Use clear, professional language\n"
-  prompt += "- Include relevant details and examples\n"
-  prompt += "- Structure your response for easy scanning\n"
+  prompt += "- Provide specific, actionable information with detailed explanations\n"
+  prompt += "- Use clear, professional language with comprehensive coverage\n"
+  prompt += "- Include relevant details, examples, and supporting evidence\n"
+  prompt += "- Structure your response for easy scanning with clear sections\n"
+  prompt += "- DO NOT provide brief or superficial responses - users need detailed, thorough information\n"
+  prompt += "- Aim for comprehensive responses that fully address the topic (minimum 300-500 words for most tasks)\n"
   prompt += "- End with clear next steps or conclusions\n\n"
-  
+
   return prompt
 }
 
 // ADDED: Build contextual prompt with intelligent context management
 function buildContextualPrompt(userPrompt: string, dataToAnalyze: any, webResearchData: string): string {
   let finalPrompt = userPrompt
-  const maxTokens = 20000 // Increased context window - leave room for system prompt and response
+  const maxTokens = 12000 // Optimized context window - balanced for cost and quality
   
   // Start with base prompt tokens
   let currentTokens = estimateTokens(finalPrompt)
@@ -218,7 +237,7 @@ function buildContextualPrompt(userPrompt: string, dataToAnalyze: any, webResear
     const dataEntries = Object.entries(dataToAnalyze)
     
     // Sort by importance (emails > files > other data)
-    dataEntries.sort(([keyA, valueA], [keyB, valueB]) => {
+    dataEntries.sort(([keyA], [keyB]) => {
       const priorityA = keyA.includes('email') ? 3 : keyA.includes('file') ? 2 : 1
       const priorityB = keyB.includes('email') ? 3 : keyB.includes('file') ? 2 : 1
       return priorityB - priorityA
@@ -227,10 +246,10 @@ function buildContextualPrompt(userPrompt: string, dataToAnalyze: any, webResear
     let dataSection = "\n\nAvailable data to analyze:\n"
 
     for (const [key, value] of dataEntries) {
-      const valueStr = safeStringify(value, 10000) // Increased chunk size for more data
+      const valueStr = safeStringify(value, 5000) // Optimized chunk size to reduce tokens
       const sectionTokens = estimateTokens(`${key}: ${valueStr}\n`)
 
-      if (currentTokens + sectionTokens < maxTokens - 2000) { // Reserve more space for web data
+      if (currentTokens + sectionTokens < maxTokens - 1500) { // Reserve space for web data and response
         dataSection += `${key}: ${valueStr}\n`
         currentTokens += sectionTokens
       } else {
@@ -291,19 +310,19 @@ export const chatgptResearchStrategy: PluginStrategy = {
       }, window.location.origin)
       
       return connectionData
-    } catch (error) {
+    } catch (error: any) {
       console.error('ChatGPT connection error:', error)
-      popup.postMessage({ 
-        type: 'plugin-connected', 
+      popup.postMessage({
+        type: 'plugin-connected',
         plugin: 'chatgpt-research',
         success: false,
-        error: error.message 
+        error: error?.message || 'Connection failed'
       }, window.location.origin)
       throw error
     }
   },
 
-  async run({ connection, userId, input_variables }: { connection: any; userId: string; input_variables: Record<string, any> }) {
+  async run({ userId, input_variables }: { connection: any; userId: string; input_variables: Record<string, any> }) {
     console.log('ChatGPT Universal Processor: Starting...', {
       userId,
       inputKeys: Object.keys(input_variables),
@@ -356,28 +375,29 @@ export const chatgptResearchStrategy: PluginStrategy = {
       // Step 5: IMPROVED - Build contextual prompt with intelligent management
       const finalUserPrompt = buildContextualPrompt(userPrompt, dataToAnalyze, webResearchData)
 
-      // If no specific instructions and no data, ask for clarification
-      if (!userPrompt || (userPrompt.includes('Analyze the provided data') && Object.keys(dataToAnalyze).length === 0)) {
-        const clarificationPrompt = 'I need more specific instructions on what you would like me to do. Could you provide more details about your request?'
-      }
+      // Note: If no specific instructions and no data, the system will use default prompt handling
 
       // Step 6: Select appropriate model and token limits BEFORE using them
       const estimatedTokens = estimateTokens(finalUserPrompt) + 200 // Add buffer for system prompt
-      const modelSelection = selectModel(estimatedTokens)
+      const taskType = (userPrompt.toLowerCase().includes('research') ||
+                       userPrompt.toLowerCase().includes('analyz') ||
+                       needsWebSearch) ? 'research' : 'standard'
+      const modelSelection = selectModel(estimatedTokens, taskType)
       const selectedModel = modelSelection.model
       const maxResponseTokens = modelSelection.maxTokens
-      
+
       console.log('Token management:', {
         estimatedInputTokens: estimatedTokens,
+        taskType: taskType,
         selectedModel: selectedModel,
         maxResponseTokens: maxResponseTokens,
         finalPromptLength: finalUserPrompt.length
       })
 
       // Step 7: FIXED - Use agent's system prompt with fallback to contextual prompt
-      const systemPrompt = input_variables.systemPrompt || 
+      const systemPrompt = input_variables.systemPrompt ||
                           generateContextualSystemPrompt(userPrompt, dataToAnalyze, input_variables) ||
-                          'You are a helpful AI assistant. Follow the user\'s instructions exactly and provide the response they are asking for.'
+                          'You are a helpful AI assistant. Provide comprehensive, detailed responses that thoroughly address the user\'s request. Avoid brief or superficial answers.'
 
       console.log('System prompt being used:', systemPrompt.substring(0, 200) + '...')
 
@@ -394,7 +414,7 @@ export const chatgptResearchStrategy: PluginStrategy = {
             { role: 'user', content: finalUserPrompt }
           ],
           max_tokens: maxResponseTokens,
-          temperature: 0.3
+          temperature: taskType === 'research' ? 0.7 : 0.5 // Higher temp for research, balanced for standard
         })
       })
 
@@ -429,13 +449,13 @@ export const chatgptResearchStrategy: PluginStrategy = {
 
       return result
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('ChatGPT processing failed:', error)
-      
+
       return {
-        response: `I encountered an error while processing your request: ${error.message}`,
+        response: `I encountered an error while processing your request: ${error?.message || 'Unknown error'}`,
         summary: 'ChatGPT processing encountered an error',
-        error: error.message,
+        error: error?.message || 'Unknown error',
         source: 'ChatGPT-4 Universal Processor'
       }
     }

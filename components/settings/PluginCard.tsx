@@ -3,11 +3,12 @@
 import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { CheckCircle, PlugZap, XCircle, Loader2, Clock, ChevronDown, ChevronUp, Settings } from 'lucide-react'
+import { CheckCircle, PlugZap, XCircle, Loader2, Clock, ChevronDown, ChevronUp, Settings, Bot } from 'lucide-react'
 import { useAuth } from '@/components/UserProvider'
 import { getPluginAPIClient } from '@/lib/client/plugin-api-client'
 import AdditionalConfigModal from './AdditionalConfigModal'
 import { AdditionalConfig } from '@/lib/types/plugin-additional-config'
+import { supabase } from '@/lib/supabaseClient'
 
 interface ConnectionDetails {
   key: string
@@ -54,6 +55,7 @@ export default function PluginCard({
   const [showAdditionalConfigModal, setShowAdditionalConfigModal] = useState(false)
   const [additionalConfigMode, setAdditionalConfigMode] = useState<'create' | 'view' | 'edit'>('view')
   const [existingAdditionalData, setExistingAdditionalData] = useState<Record<string, any>>({})
+  const [connectedAgents, setConnectedAgents] = useState<Array<{id: string, agent_name: string}>>([])
 
   const { user } = useAuth()
   const apiClient = getPluginAPIClient()
@@ -123,16 +125,54 @@ export default function PluginCard({
   }
 
   const handleDisconnect = async () => {
-    if (!confirm(`Are you sure you want to disconnect ${pluginName}? Agents using this plugin may be affected.`)) {
-      return
-    }
+    if (!user) return
 
+    // Fetch connected agents first
     setDisconnecting(true)
-    setError(null)
-
     try {
+      const { data: allAgents, error: fetchError } = await supabase
+        .from('agents')
+        .select('id, agent_name, connected_plugins')
+        .eq('user_id', user.id)
+
+      if (fetchError) {
+        console.error('Error fetching connected agents:', fetchError)
+      }
+
+      // Filter agents that have this plugin in their connected_plugins array
+      const agentsList = (allAgents || []).filter(agent => {
+        const plugins = agent.connected_plugins
+
+        // Check if connected_plugins is an array and includes the plugin
+        if (Array.isArray(plugins)) {
+          return plugins.includes(pluginKey)
+        }
+
+        // If it's an object (old format), check if the key exists and is true
+        if (plugins && typeof plugins === 'object') {
+          return plugins[pluginKey] === true
+        }
+
+        return false
+      })
+
+      // Build confirmation message
+      let confirmMessage = `Are you sure you want to disconnect ${pluginName}?`
+
+      if (agentsList.length > 0) {
+        const agentNames = agentsList.map(a => `  • ${a.agent_name}`).join('\n')
+        confirmMessage = `⚠️ WARNING: ${agentsList.length} agent${agentsList.length > 1 ? 's are' : ' is'} using this plugin:\n\n${agentNames}\n\nThese agents will no longer work after disconnection.\n\nAre you sure you want to disconnect ${pluginName}?`
+      }
+
+      if (!confirm(confirmMessage)) {
+        setDisconnecting(false)
+        return
+      }
+
+      setError(null)
+
       // Use API client to disconnect
-      const result = await apiClient.disconnectPlugin(user!.id, pluginKey)
+      const result = await apiClient.disconnectPlugin(user.id, pluginKey)
 
       if (result.success) {
         onConnectionChange?.(pluginKey, false)

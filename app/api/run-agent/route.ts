@@ -649,7 +649,6 @@ export async function POST(req: Request) {
  * Get execution status for agents
  */
 export async function GET(request: Request) {
-  console.log('GET /api/run-agent handler reached', { url: request.url });
   try {
     const { searchParams } = new URL(request.url);
     const agent_id = searchParams.get('agent_id');
