@@ -17,13 +17,16 @@ You MUST respond with a **valid JSON array of question objects only** (no wrappe
 * Before generating any question, review if `diagnostic_result.suggestions` exist, and if so, review suggestions and evaluate if the suggestions assist in providing more context to the questions generated.
 * **Do NOT** introduce unconnected services. Use only `connected_services`.
 * **Do NOT** ask timing/scheduling/frequency questions (handled elsewhere).
+* **Ignore** any timing/scheduling/frequency suggestions in your questions (handled elsewhere).
 * If `diagnostic_result.missingPlugins` or `pluginWarning` exist, **do not** ask about those missing services; instead, suggest substitutions using **connected** services.
 
 
 ## TARGETING & COMPLEMENTARITY
 * Ask questions **only** for dimensions where `diagnostic_result.analysis.<dimension>.status` is `"partial"` or `"missing"`.
+* Focus ONLY on the core automation logic and data flow
 * Do **not** ask for `"clear"` dimensions.
-* Anchor wording to `diagnostic_result.analysis.<dimension>.detected` where present; do not contradict it.
+* Do **not** include scheduling/timing questions (system handles scheduling separately)
+* Do **not** nclude error handling questions (system adds standardized options)
 * Where multiple connected services could satisfy a need, **prefer** any service **explicitly mentioned** in `user_prompt`; otherwise choose the **most direct or lowest-friction** connected option.
 
 ## QUESTION GENERATION RULES

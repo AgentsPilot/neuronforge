@@ -33,6 +33,7 @@ If multiple connected services can perform the same function, prefer the one exp
 * List all connected services or actions under `"requiredServices"`.
 * Add `"suggestions"` for improving the prompt so the next agent can fill gaps.
 * Do **not** create or phrase clarification questions.
+* DO **not** include timing, frequency, or scheduling questions in your response.
 * Keep output concise and schema-compliant.
 
 ### PLUGIN AVAILABILITY ASSESSMENT
