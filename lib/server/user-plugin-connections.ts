@@ -59,6 +59,40 @@ export class UserPluginConnections {
     }
   }
 
+  // Get all disconnected plugin keys for user (non-active connections)
+  async getDisconnectedPluginKeys(userId: string, availablePluginKeys: string[]): Promise<string[]> {
+    if (this.debug) console.log(`DEBUG: Getting disconnected plugin keys for user ${userId}`);
+
+    try {
+      // Get all active connections
+      const { data: activeConnections, error } = await this.supabase
+        .from('plugin_connections')
+        .select('plugin_key')
+        .eq('user_id', userId)
+        .eq('status', 'active');
+
+      if (error) {
+        console.error('DEBUG: Database error fetching active connections:', error);
+        // If error, assume all available plugins are disconnected
+        return availablePluginKeys;
+      }
+
+      // Create a set of connected plugin keys for fast lookup
+      const connectedKeys = new Set(activeConnections?.map((conn: any) => conn.plugin_key) || []);
+
+      // Filter available plugins to find disconnected ones
+      const disconnectedKeys = availablePluginKeys.filter(key => !connectedKeys.has(key));
+
+      if (this.debug) console.log(`DEBUG: Found ${disconnectedKeys.length} disconnected plugins out of ${availablePluginKeys.length} available`);
+
+      return disconnectedKeys;
+    } catch (error) {
+      console.error('DEBUG: Error getting disconnected plugin keys:', error);
+      // If error, return all available plugins as potentially disconnected
+      return availablePluginKeys;
+    }
+  }
+
   // Get connection status for specific plugin
   async getConnectionStatus(userId: string, pluginKey: string): Promise<ConnectionStatus> {
     if (this.debug) console.log(`DEBUG: Getting connection status for ${pluginKey}`);

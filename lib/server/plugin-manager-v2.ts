@@ -227,27 +227,33 @@ export class PluginManagerV2 {
   // Get disconnected plugins (available but not connected)
   async getDisconnectedPlugins(userId: string): Promise<Record<string, { plugin: PluginDefinition; reason: string; auth_url: string }>> {
     if (this.debug) console.log(`DEBUG: Getting disconnected plugins for user ${userId}`);
-    
+
     const allPlugins = this.getAvailablePlugins();
-    const actionablePlugins = await this.getUserActionablePlugins(userId);
-    
+    const availablePluginKeys = Object.keys(allPlugins);
+
+    // Get disconnected plugin keys (simple DB query, no token refresh)
+    const disconnectedKeys = await this.userConnections.getDisconnectedPluginKeys(userId, availablePluginKeys);
+
+    if (this.debug) console.log(`DEBUG: Found ${disconnectedKeys.length} disconnected plugin keys`);
+
     const disconnectedPlugins: Record<string, { plugin: PluginDefinition; reason: string; auth_url: string }> = {};
-    
-    for (const [pluginName, definition] of Object.entries(allPlugins)) {
-      if (!actionablePlugins[pluginName]) {
-        const connectionStatus = await this.userConnections.getConnectionStatus(userId, pluginName);
-        
-        disconnectedPlugins[pluginName] = {
+
+    // Build the disconnected plugins object with definitions
+    for (const pluginKey of disconnectedKeys) {
+      const definition = allPlugins[pluginKey];
+      if (definition) {
+        disconnectedPlugins[pluginKey] = {
           plugin: definition,
-          reason: connectionStatus.reason,
-          //auth_url: `/oauth/callback/${pluginName}`       //change back if needed: auth_url: `/api/oauth/callback/${pluginName}`
-          auth_url: definition.plugin.auth_config.auth_url  //changed to use auth_url from plugin definition
+          reason: 'not_connected', // Simplified reason since we're just checking active status
+          auth_url: definition.plugin.auth_config.auth_url
         };
-        
-        if (this.debug) console.log(`DEBUG: Plugin ${pluginName} is disconnected - ${connectionStatus.reason}`);
+
+        if (this.debug) console.log(`DEBUG: Plugin ${pluginKey} is disconnected`);
       }
     }
-    
+
+    if (this.debug) console.log(`DEBUG: Returning ${Object.keys(disconnectedPlugins).length} disconnected plugins`);
+
     return disconnectedPlugins;
   }
 
