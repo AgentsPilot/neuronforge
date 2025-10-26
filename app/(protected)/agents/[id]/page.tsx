@@ -65,7 +65,11 @@ import {
   Send,
   CheckCircle2,
   Lightbulb,
-  Loader2
+  Loader2,
+  Bell,
+  List,
+  FileBarChart,
+  User
 } from 'lucide-react'
 
 // Ultra-Modern Modal with Dynamic Sizing
@@ -235,6 +239,7 @@ export default function AgentPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showDeactivateConfirm, setShowDeactivateConfirm] = useState(false)
   const [showShareConfirm, setShowShareConfirm] = useState(false)
+  const [showQuickActionsMenu, setShowQuickActionsMenu] = useState(false)
   const [isEditingName, setIsEditingName] = useState(false)
   const [editedName, setEditedName] = useState('')
   const [userCredits, setUserCredits] = useState(0)
@@ -250,6 +255,7 @@ export default function AgentPage() {
   const [expandedSections, setExpandedSections] = useState({
     plugins: true,
     outputs: true,
+    'system-outputs': true,
     // Overview sections
     description: true,
     schedule: true,
@@ -258,7 +264,7 @@ export default function AgentPage() {
     // Settings sections
     basicInfo: true,
     quickActions: true,
-    // Analytics sections
+    // Analytics sections - Always expanded by default
     performanceStats: true,
     recentActivity: true
   })
@@ -490,6 +496,18 @@ export default function AgentPage() {
       setLoading(false)
     }
   }, [user, agentId])
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (showQuickActionsMenu && !(event.target as Element).closest('.relative')) {
+        setShowQuickActionsMenu(false)
+      }
+    }
+
+    document.addEventListener('click', handleClickOutside)
+    return () => document.removeEventListener('click', handleClickOutside)
+  }, [showQuickActionsMenu])
 
   const handleToggleStatus = async () => {
     if (!isOwner || isSharedAgent) return
@@ -742,7 +760,8 @@ export default function AgentPage() {
 
   // Safe schema processing
   const safePluginsRequired = Array.isArray(agent.plugins_required) ? agent.plugins_required : []
-  const safeOutputSchema = Array.isArray(agent.output_schema) ? agent.output_schema : []
+  const humanOutputs = Array.isArray(agent.output_schema) ? agent.output_schema.filter(o => !o.category || o.category === 'human-facing') : []
+  const systemOutputs = Array.isArray(agent.output_schema) ? agent.output_schema.filter(o => o.category === 'system' || o.category === 'machine-facing') : []
   const missingPlugins = safePluginsRequired.filter(plugin => !getPluginStatus(plugin))
 
   return (
@@ -867,6 +886,80 @@ export default function AgentPage() {
                     <Share2 className="h-4 w-4 group-hover:scale-110 transition-transform" />
                     {hasBeenShared ? 'View Sharing' : 'Share'}
                   </button>
+
+                  {/* Quick Actions Dropdown */}
+                  {!isSharedAgent && isOwner && (
+                    <div className="relative">
+                      <button
+                        onClick={() => setShowQuickActionsMenu(!showQuickActionsMenu)}
+                        className="group flex items-center gap-1.5 px-4 py-2 bg-white text-slate-700 rounded-lg hover:bg-slate-50 transition-all duration-200 shadow-md border border-slate-200 font-medium text-sm"
+                      >
+                        <MoreVertical className="h-4 w-4" />
+                        Actions
+                      </button>
+
+                      {showQuickActionsMenu && (
+                        <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-xl border border-slate-200 py-2 z-50">
+                          <Link
+                            href={`/agents/${agent.id}/edit`}
+                            className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 transition-colors text-slate-700"
+                          >
+                            <Edit className="h-4 w-4 text-blue-600" />
+                            <span className="text-sm font-medium">Edit Settings</span>
+                          </Link>
+
+                          <button
+                            onClick={() => {
+                              handleExportConfiguration();
+                              setShowQuickActionsMenu(false);
+                            }}
+                            disabled={actionLoading === 'export'}
+                            className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 transition-colors text-slate-700 w-full disabled:opacity-50"
+                          >
+                            {actionLoading === 'export' ? (
+                              <Loader2 className="h-4 w-4 animate-spin text-green-600" />
+                            ) : (
+                              <Download className="h-4 w-4 text-green-600" />
+                            )}
+                            <span className="text-sm font-medium">
+                              {actionLoading === 'export' ? 'Exporting...' : 'Export Configuration'}
+                            </span>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              handleDuplicateAgent();
+                              setShowQuickActionsMenu(false);
+                            }}
+                            disabled={actionLoading === 'duplicate'}
+                            className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 transition-colors text-slate-700 w-full disabled:opacity-50"
+                          >
+                            {actionLoading === 'duplicate' ? (
+                              <Loader2 className="h-4 w-4 animate-spin text-purple-600" />
+                            ) : (
+                              <Copy className="h-4 w-4 text-purple-600" />
+                            )}
+                            <span className="text-sm font-medium">
+                              {actionLoading === 'duplicate' ? 'Creating Copy...' : 'Duplicate Assistant'}
+                            </span>
+                          </button>
+
+                          <div className="border-t border-slate-200 my-2"></div>
+
+                          <button
+                            onClick={() => {
+                              setShowDeleteConfirm(true);
+                              setShowQuickActionsMenu(false);
+                            }}
+                            className="flex items-center gap-3 px-4 py-2.5 hover:bg-red-50 transition-colors text-red-600 w-full"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            <span className="text-sm font-medium">Delete Assistant</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -874,24 +967,23 @@ export default function AgentPage() {
         </div>
       </div>
 
-      {/* Modern Tab Navigation - More Compact */}
-      <div className="bg-white/50 backdrop-blur-xl">
-        <div className="max-w-7xl mx-auto px-8 pt-4 pb-2">
-          <div className="flex gap-1">
+      {/* Modern Tab Navigation */}
+      <div className="bg-white/50 backdrop-blur-xl border-b border-gray-200">
+        <div className="max-w-7xl mx-auto px-8 pt-6 pb-4">
+          <div className="inline-flex bg-gray-100/80 rounded-xl p-1.5 w-fit">
             {[
               { id: 'overview', label: 'Overview', icon: Target },
               { id: 'configuration', label: 'Configuration', icon: Settings },
               { id: 'test', label: 'Test Run', icon: Beaker },
-              { id: 'performance', label: 'Analytics', icon: BarChart3 },
-              { id: 'settings', label: 'Settings', icon: Command }
+              { id: 'performance', label: 'Analytics', icon: BarChart3 }
             ].map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setCurrentView(tab.id as any)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-200 font-medium text-sm ${
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-lg transition-all duration-200 font-medium text-sm ${
                   currentView === tab.id
-                    ? 'bg-white shadow-lg shadow-black/10 text-slate-900 border border-white/20'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                    ? 'bg-white text-blue-600 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
                 }`}
               >
                 <tab.icon className="h-4 w-4" />
@@ -912,22 +1004,22 @@ export default function AgentPage() {
             {/* Description */}
             {agent.description && (
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                <div 
+                <div
                   className="bg-gradient-to-r from-blue-50 to-purple-50 p-3 cursor-pointer hover:from-blue-100 hover:to-purple-100 transition-colors"
                   onClick={() => toggleSection('description')}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                        <MessageSquare className="h-4 w-4 text-white" />
+                      <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
+                        <MessageSquare className="h-4 w-4 text-blue-600" />
                       </div>
                       <div>
                         <h3 className="font-semibold text-slate-900 text-sm">What This Assistant Does</h3>
                         <p className="text-slate-600 text-xs">Purpose and capabilities overview</p>
                       </div>
                     </div>
-                    {expandedSections.description ? 
-                      <ChevronUp className="h-4 w-4 text-slate-600" /> : 
+                    {expandedSections.description ?
+                      <ChevronUp className="h-4 w-4 text-slate-600" /> :
                       <ChevronDown className="h-4 w-4 text-slate-600" />
                     }
                   </div>
@@ -942,86 +1034,79 @@ export default function AgentPage() {
 
             {/* Enhanced Schedule Information with Timezone */}
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-              <div 
+              <div
                 className="bg-gradient-to-r from-purple-50 to-pink-50 p-3 cursor-pointer hover:from-purple-100 hover:to-pink-100 transition-colors"
                 onClick={() => toggleSection('schedule')}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-gradient-to-br from-purple-500 to-pink-600 rounded-lg flex items-center justify-center">
-                      <Calendar className="h-4 w-4 text-white" />
+                    <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center">
+                      <Calendar className="h-4 w-4 text-purple-600" />
                     </div>
                     <div>
                       <h3 className="font-semibold text-slate-900 text-sm">Execution Schedule</h3>
                       <p className="text-slate-600 text-xs">How and when your assistant runs</p>
                     </div>
                   </div>
-                  {expandedSections.schedule ? 
-                    <ChevronUp className="h-4 w-4 text-slate-600" /> : 
+                  {expandedSections.schedule ?
+                    <ChevronUp className="h-4 w-4 text-slate-600" /> :
                     <ChevronDown className="h-4 w-4 text-slate-600" />
                   }
                 </div>
               </div>
               {expandedSections.schedule && (
-                <div className="p-4">
-                  <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-xl p-4 border border-purple-100">
-                    <div className="flex items-start gap-3">
-                      <div className="w-10 h-10 bg-gradient-to-br from-purple-400 to-blue-500 rounded-lg flex items-center justify-center">
-                        <ModeIcon className="h-5 w-5 text-white" />
+                <div className="p-4 space-y-3">
+                  {/* Mode Display */}
+                  <div>
+                    <p className="text-xs text-slate-600 mb-1">How it runs</p>
+                    <p className="text-slate-900 font-medium text-sm">
+                      {agent.mode === 'on_demand' ? 'Run manually when you need it' :
+                       agent.mode === 'scheduled' ? 'Runs automatically on schedule' :
+                       agent.mode === 'triggered' ? 'Runs when events happen' : 'Standard'}
+                    </p>
+                  </div>
+
+                  {/* Schedule Details for Scheduled Mode */}
+                  {agent.mode === 'scheduled' && agent.schedule_cron && (
+                    <>
+                      <div className="border-t border-slate-200 pt-3">
+                        <p className="text-xs text-slate-600 mb-1">Schedule</p>
+                        <p className="text-slate-900 font-medium text-sm">
+                          {formatScheduleWithTimezone(agent.mode, agent.schedule_cron, agent.timezone, getEffectiveUserTimezone())}
+                        </p>
                       </div>
-                      <div className="flex-1">
-                        <h3 className="font-semibold text-slate-900 mb-2 text-sm">
-                          {agent.mode === 'on_demand' ? 'Manual Execution' : 
-                           agent.mode === 'scheduled' ? 'Scheduled Execution' : 
-                           agent.mode === 'triggered' ? 'Event-Driven Execution' : 'Standard Mode'}
-                        </h3>
-                        <div className="space-y-2">
-                          <p className="text-slate-700 text-sm">
-                            <span className="font-medium">Mode:</span> {agent.mode || 'on_demand'}
-                          </p>
-                          {agent.mode === 'scheduled' && agent.schedule_cron && (
-                            <>
-                              <p className="text-slate-700 text-sm">
-                                <span className="font-medium">Schedule:</span> {formatScheduleWithTimezone(agent.mode, agent.schedule_cron, agent.timezone, getEffectiveUserTimezone())}
-                              </p>
-                              {/* Enhanced timezone information */}
-                              {agent.timezone && (
-                                <div className="flex items-center gap-2 mt-2">
-                                  <div className="flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 rounded-lg text-xs">
-                                    <Globe className="h-3 w-3" />
-                                    <span className="font-medium">Timezone:</span>
-                                  </div>
-                                  <span className="text-xs text-slate-600">
-                                    {getTimezoneDisplayName(agent.timezone)}
-                                  </span>
-                                  {agent.timezone !== getEffectiveUserTimezone() && (
-                                    <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-lg">
-                                      Different from your local time ({getTimezoneDisplayName(getEffectiveUserTimezone())})
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                            </>
-                          )}
-                          {agent.mode === 'scheduled' && !agent.schedule_cron && (
-                            <p className="text-amber-700 text-sm">
-                              <span className="font-medium">Status:</span> Schedule not configured
-                            </p>
-                          )}
-                          {agent.mode === 'on_demand' && (
-                            <p className="text-slate-700 text-sm">
-                              <span className="font-medium">Execution:</span> Manual trigger only
-                            </p>
-                          )}
-                          {agent.mode === 'triggered' && (
-                            <p className="text-slate-700 text-sm">
-                              <span className="font-medium">Execution:</span> Event-based triggers
-                            </p>
-                          )}
+
+                      {/* Timezone information */}
+                      {agent.timezone && (
+                        <div className="border-t border-slate-200 pt-3">
+                          <p className="text-xs text-slate-600 mb-2">Timezone</p>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-sm font-medium">
+                              <Globe className="h-3.5 w-3.5" />
+                              {getTimezoneDisplayName(agent.timezone)}
+                            </div>
+                            {agent.timezone !== getEffectiveUserTimezone() && (
+                              <span className="text-xs text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
+                                Your timezone: {getTimezoneDisplayName(getEffectiveUserTimezone())}
+                              </span>
+                            )}
+                          </div>
                         </div>
+                      )}
+                    </>
+                  )}
+
+                  {/* Schedule Not Configured Warning */}
+                  {agent.mode === 'scheduled' && !agent.schedule_cron && (
+                    <div className="border-t border-slate-200 pt-3">
+                      <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
+                        <AlertTriangle className="h-4 w-4 text-amber-600 flex-shrink-0" />
+                        <p className="text-amber-800 text-sm">
+                          Schedule not set up yet
+                        </p>
                       </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1029,55 +1114,53 @@ export default function AgentPage() {
             {/* Rest of the existing sections remain the same... */}
             {/* Assistant Instructions/Prompt */}
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-              <div 
+              <div
                 className="bg-gradient-to-r from-indigo-50 to-blue-50 p-3 cursor-pointer hover:from-indigo-100 hover:to-blue-100 transition-colors"
                 onClick={() => toggleSection('instructions')}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-blue-600 rounded-lg flex items-center justify-center">
-                      <Wand2 className="h-4 w-4 text-white" />
+                    <div className="w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center">
+                      <Wand2 className="h-4 w-4 text-indigo-600" />
                     </div>
                     <div>
                       <h3 className="font-semibold text-slate-900 text-sm">Assistant Instructions</h3>
                       <p className="text-slate-600 text-xs">The core prompt and behavior guide</p>
                     </div>
                   </div>
-                  {expandedSections.instructions ? 
-                    <ChevronUp className="h-4 w-4 text-slate-600" /> : 
+                  {expandedSections.instructions ?
+                    <ChevronUp className="h-4 w-4 text-slate-600" /> :
                     <ChevronDown className="h-4 w-4 text-slate-600" />
                   }
                 </div>
               </div>
               {expandedSections.instructions && (
                 <div className="p-4">
-                  <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl p-4 border border-indigo-100">
-                    <div className="relative">
-                      <p className="text-slate-700 leading-relaxed whitespace-pre-wrap font-mono text-sm">
-                        {expandedPrompt || (agent.user_prompt && agent.user_prompt.length <= 300)
-                          ? agent.user_prompt 
-                          : `${agent.user_prompt?.substring(0, 300)}...`
-                        }
-                      </p>
-                      {agent.user_prompt && agent.user_prompt.length > 300 && (
-                        <button
-                          onClick={() => setExpandedPrompt(!expandedPrompt)}
-                          className="mt-3 flex items-center gap-2 text-indigo-600 hover:text-indigo-700 font-medium text-sm"
-                        >
-                          {expandedPrompt ? (
-                            <>
-                              <EyeOff className="h-4 w-4" />
-                              Show Less
-                            </>
-                          ) : (
-                            <>
-                              <Eye className="h-4 w-4" />
-                              Show Full Instructions
-                            </>
-                          )}
-                        </button>
-                      )}
-                    </div>
+                  <div className="relative">
+                    <p className="text-slate-700 leading-relaxed whitespace-pre-wrap font-mono text-sm">
+                      {expandedPrompt || (agent.user_prompt && agent.user_prompt.length <= 300)
+                        ? agent.user_prompt
+                        : `${agent.user_prompt?.substring(0, 300)}...`
+                      }
+                    </p>
+                    {agent.user_prompt && agent.user_prompt.length > 300 && (
+                      <button
+                        onClick={() => setExpandedPrompt(!expandedPrompt)}
+                        className="mt-3 flex items-center gap-2 text-indigo-600 hover:text-indigo-700 font-medium text-sm"
+                      >
+                        {expandedPrompt ? (
+                          <>
+                            <EyeOff className="h-4 w-4" />
+                            Show Less
+                          </>
+                        ) : (
+                          <>
+                            <Eye className="h-4 w-4" />
+                            Show Full Instructions
+                          </>
+                        )}
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -1085,22 +1168,22 @@ export default function AgentPage() {
 
             {/* Setup Status */}
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-              <div 
+              <div
                 className="bg-gradient-to-r from-green-50 to-emerald-50 p-3 cursor-pointer hover:from-green-100 hover:to-emerald-100 transition-colors"
                 onClick={() => toggleSection('setupStatus')}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-gradient-to-br from-green-500 to-emerald-600 rounded-lg flex items-center justify-center">
-                      <Shield className="h-4 w-4 text-white" />
+                    <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center">
+                      <Shield className="h-4 w-4 text-green-600" />
                     </div>
                     <div>
                       <h3 className="font-semibold text-slate-900 text-sm">Setup Status</h3>
                       <p className="text-slate-600 text-xs">Current configuration and readiness</p>
                     </div>
                   </div>
-                  {expandedSections.setupStatus ? 
-                    <ChevronUp className="h-4 w-4 text-slate-600" /> : 
+                  {expandedSections.setupStatus ?
+                    <ChevronUp className="h-4 w-4 text-slate-600" /> :
                     <ChevronDown className="h-4 w-4 text-slate-600" />
                   }
                 </div>
@@ -1108,90 +1191,70 @@ export default function AgentPage() {
               {expandedSections.setupStatus && (
                 <div className="p-4">
                   {agent.status === 'draft' ? (
-                    <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl p-4 border border-amber-200">
-                      <div className="flex items-start gap-3">
-                        <div className="w-10 h-10 bg-gradient-to-br from-amber-400 to-orange-500 rounded-lg flex items-center justify-center">
-                          <Wand2 className="h-5 w-5 text-white" />
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-amber-900 mb-2 text-sm">Assistant in Draft Mode</h3>
-                          <p className="text-amber-800 mb-3 text-sm">
-                            Your assistant is ready but needs to be launched to start working. 
-                            {hasRequiredFields() && !isConfigured 
-                              ? ' Complete the configuration first, then launch it to make it live.'
-                              : ' Once you launch it, it will be active and ready to help you.'
-                            }
-                          </p>
-                          <div className="space-y-3">
-                            <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-lg text-xs font-medium ${
-                              isConfigured 
-                                ? 'bg-green-100 text-green-800'
-                                : 'bg-amber-100 text-amber-800'
-                            }`}>
-                              {isConfigured ? (
-                                <>
-                                  <CheckCircle className="h-3 w-3" />
-                                  Configuration Complete
-                                </>
-                              ) : (
-                                <>
-                                  <AlertTriangle className="h-3 w-3" />
-                                  Configuration Required
-                                </>
-                              )}
-                            </div>
-                            {canActivate && (
-                              <button
-                                onClick={handleToggleStatus}
-                                className="group flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-xl hover:from-green-600 hover:to-emerald-700 transition-all duration-200 shadow-lg shadow-green-500/30 hover:shadow-xl hover:shadow-green-500/40 font-semibold text-sm transform hover:-translate-y-0.5 hover:scale-105"
-                              >
-                                <Rocket className="h-4 w-4 group-hover:scale-110 transition-transform" />
-                                Launch Assistant
-                                <div className="ml-1 text-xs opacity-80">Ready to go!</div>
-                              </button>
-                            )}
-                            {!canActivate && hasRequiredFields() && !isConfigured && (
-                              <button
-                                onClick={() => setCurrentView('test')}
-                                className="group flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-xl hover:from-amber-600 hover:to-orange-700 transition-all duration-200 shadow-lg shadow-amber-500/30 hover:shadow-xl hover:shadow-amber-500/40 font-semibold text-sm transform hover:-translate-y-0.5"
-                              >
-                                <Settings className="h-4 w-4 group-hover:scale-110 transition-transform" />
-                                Complete Setup
-                                <div className="ml-1 text-xs opacity-80">Go to Test Run</div>
-                              </button>
-                            )}
-                          </div>
-                        </div>
+                    <div className="space-y-3">
+                      <div>
+                        <h3 className="font-semibold text-slate-900 mb-2 text-sm">Assistant in Draft Mode</h3>
+                        <p className="text-slate-700 text-sm">
+                          Your assistant is ready but needs to be launched to start working.
+                          {hasRequiredFields() && !isConfigured
+                            ? ' Complete the configuration first, then launch it to make it live.'
+                            : ' Once you launch it, it will be active and ready to help you.'
+                          }
+                        </p>
                       </div>
+
+                      <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium ${
+                        isConfigured
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-amber-100 text-amber-800'
+                      }`}>
+                        {isConfigured ? (
+                          <>
+                            <CheckCircle className="h-3.5 w-3.5" />
+                            Configuration Complete
+                          </>
+                        ) : (
+                          <>
+                            <AlertTriangle className="h-3.5 w-3.5" />
+                            Configuration Required
+                          </>
+                        )}
+                      </div>
+
+                      {canActivate && (
+                        <button
+                          onClick={handleToggleStatus}
+                          className="group flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-lg hover:from-green-600 hover:to-emerald-700 transition-all duration-200 shadow-md shadow-green-500/30 hover:shadow-lg font-medium text-sm"
+                        >
+                          <Rocket className="h-4 w-4" />
+                          <span>Launch Assistant</span>
+                          <span className="text-xs opacity-90">• Ready to go!</span>
+                        </button>
+                      )}
+                      {!canActivate && hasRequiredFields() && !isConfigured && (
+                        <button
+                          onClick={() => setCurrentView('test')}
+                          className="group flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-xl hover:from-amber-600 hover:to-orange-700 transition-all duration-200 shadow-lg shadow-amber-500/30 hover:shadow-xl hover:shadow-amber-500/40 font-semibold text-sm transform hover:-translate-y-0.5"
+                        >
+                          <Settings className="h-4 w-4 group-hover:scale-110 transition-transform" />
+                          Complete Setup
+                          <div className="ml-1 text-xs opacity-80">Go to Test Run</div>
+                        </button>
+                      )}
                     </div>
                   ) : (
-                    <div className={`rounded-xl p-4 border ${
-                      agent.status === 'active' 
-                        ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-200'
-                        : 'bg-gradient-to-r from-slate-50 to-gray-50 border-slate-200'
-                    }`}>
-                      <div className="flex items-start gap-3">
-                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                          agent.status === 'active' 
-                            ? 'bg-gradient-to-br from-green-400 to-emerald-500'
-                            : 'bg-gradient-to-br from-slate-400 to-gray-500'
-                        }`}>
-                          <StatusIcon className="h-5 w-5 text-white" />
-                        </div>
-                        <div>
-                          <h3 className={`font-semibold mb-2 text-sm ${
-                            agent.status === 'active' ? 'text-green-900' : 'text-slate-900'
-                          }`}>
-                            Assistant is {statusConfig.label}
-                          </h3>
-                          <p className={`text-sm ${agent.status === 'active' ? 'text-green-800' : 'text-slate-700'}`}>
-                            {agent.status === 'active' 
-                              ? 'Your assistant is live and ready to work. It will respond to requests and run on schedule if configured.'
-                              : 'Your assistant is currently paused and not responding to requests.'
-                            }
-                          </p>
-                        </div>
-                      </div>
+                    <div className="space-y-2">
+                      <h3 className={`font-semibold text-sm ${
+                        agent.status === 'active' ? 'text-green-900' : 'text-slate-900'
+                      }`}>
+                        Assistant is {statusConfig.label}
+                      </h3>
+                      <p className={`text-sm ${agent.status === 'active' ? 'text-slate-700' : 'text-slate-700'}`}>
+                        {agent.status === 'active'
+                          ? 'Your assistant is live and ready to work. It will respond to requests and run on schedule if configured.'
+                          : 'Your assistant is currently paused and not responding to requests.'
+                        }
+                      </p>
                     </div>
                   )}
                 </div>
@@ -1207,14 +1270,14 @@ export default function AgentPage() {
             {/* Plugin Requirements */}
             {safePluginsRequired.length > 0 && (
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                <div 
+                <div
                   className="bg-gradient-to-r from-indigo-50 to-blue-50 p-3 cursor-pointer hover:from-indigo-100 hover:to-blue-100 transition-colors"
                   onClick={() => toggleSection('plugins')}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-blue-600 rounded-lg flex items-center justify-center">
-                        <Puzzle className="h-4 w-4 text-white" />
+                      <div className="w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center">
+                        <Puzzle className="h-4 w-4 text-indigo-600" />
                       </div>
                       <div>
                         <h3 className="font-semibold text-slate-900 text-sm">Connected Tools</h3>
@@ -1225,8 +1288,8 @@ export default function AgentPage() {
                       <div className="text-xs text-slate-600">
                         {safePluginsRequired.filter(p => getPluginStatus(p)).length}/{safePluginsRequired.length} ready
                       </div>
-                      {expandedSections.plugins ? 
-                        <ChevronUp className="h-4 w-4 text-slate-600" /> : 
+                      {expandedSections.plugins ?
+                        <ChevronUp className="h-4 w-4 text-slate-600" /> :
                         <ChevronDown className="h-4 w-4 text-slate-600" />
                       }
                     </div>
@@ -1240,41 +1303,37 @@ export default function AgentPage() {
                       return (
                         <div
                           key={plugin}
-                          className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
-                            isConnected 
-                              ? 'bg-green-50 border-green-200' 
-                              : 'bg-red-50 border-red-200'
+                          className={`flex items-center gap-3 p-3 bg-white/80 backdrop-blur rounded-xl border transition-all duration-200 ${
+                            isConnected
+                              ? 'border-gray-200/50 hover:border-green-300 hover:shadow-md'
+                              : 'border-orange-200 hover:border-orange-300 hover:shadow-md'
                           }`}
                         >
-                          <div className="flex items-center gap-2">
-                            <div className={`w-6 h-6 rounded-lg flex items-center justify-center ${
-                              isConnected ? 'bg-green-100' : 'bg-red-100'
-                            }`}>
-                              {isConnected ? (
-                                <CheckCircle2 className="h-4 w-4 text-green-600" />
-                              ) : (
-                                <AlertTriangle className="h-4 w-4 text-red-600" />
-                              )}
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                            isConnected ? 'bg-indigo-100' : 'bg-orange-100'
+                          }`}>
+                            <Puzzle className={`h-4 w-4 ${
+                              isConnected ? 'text-indigo-600' : 'text-orange-600'
+                            }`} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium text-gray-900">
+                              {plugin}
                             </div>
-                            <div>
-                              <span className={`font-medium text-sm ${
-                                isConnected ? 'text-green-800' : 'text-red-800'
-                              }`}>
-                                {plugin}
-                              </span>
-                              <p className={`text-xs ${
-                                isConnected ? 'text-green-600' : 'text-red-600'
-                              }`}>
-                                {isConnected ? 'Ready to use' : 'Needs to be connected'}
-                              </p>
+                            <div className={`text-xs ${
+                              isConnected ? 'text-gray-500' : 'text-orange-600'
+                            }`}>
+                              {isConnected ? 'Ready to use' : 'Needs connection'}
                             </div>
                           </div>
-                          <div className={`px-2 py-1 rounded-full text-xs font-medium ${
-                            isConnected 
-                              ? 'bg-green-100 text-green-700' 
-                              : 'bg-red-100 text-red-700'
+                          <div className={`px-2 py-1 rounded-md ${
+                            isConnected
+                              ? 'bg-green-100 text-green-700'
+                              : 'bg-orange-100 text-orange-700'
                           }`}>
-                            {isConnected ? 'Connected' : 'Missing'}
+                            <span className="text-xs font-medium">
+                              {isConnected ? 'Connected' : 'Pending'}
+                            </span>
                           </div>
                         </div>
                       )
@@ -1293,71 +1352,134 @@ export default function AgentPage() {
               </div>
             )}
 
-            {/* Expected Output */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-              <div 
-                className="bg-gradient-to-r from-emerald-50 to-green-50 p-3 cursor-pointer hover:from-emerald-100 hover:to-green-100 transition-colors"
-                onClick={() => toggleSection('outputs')}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-gradient-to-br from-emerald-500 to-green-600 rounded-lg flex items-center justify-center">
-                      <Target className="h-4 w-4 text-white" />
+            {/* Expected Output - Combined */}
+            {(humanOutputs.length > 0 || systemOutputs.length > 0) && (
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div
+                  className="bg-gradient-to-r from-emerald-50 to-green-50 p-3 cursor-pointer hover:from-emerald-100 hover:to-green-100 transition-colors"
+                  onClick={() => toggleSection('outputs')}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 bg-emerald-100 rounded-lg flex items-center justify-center">
+                        <Target className="h-4 w-4 text-emerald-600" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-slate-900 text-sm">What you'll get</h3>
+                        <p className="text-slate-600 text-xs">The magic your agent will create</p>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="font-semibold text-slate-900 text-sm">What you'll get</h3>
-                      <p className="text-slate-600 text-xs">The magic your agent will create</p>
+                    <div className="flex items-center gap-2">
+                      <div className="text-xs text-slate-600">
+                        {humanOutputs.length + systemOutputs.length} output{(humanOutputs.length + systemOutputs.length) !== 1 ? 's' : ''}
+                      </div>
+                      {expandedSections.outputs ?
+                        <ChevronUp className="h-4 w-4 text-slate-600" /> :
+                        <ChevronDown className="h-4 w-4 text-slate-600" />
+                      }
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="text-xs text-slate-600">
-                      {safeOutputSchema.length} field{safeOutputSchema.length !== 1 ? 's' : ''}
-                    </div>
-                    {expandedSections.outputs ? 
-                      <ChevronUp className="h-4 w-4 text-slate-600" /> : 
-                      <ChevronDown className="h-4 w-4 text-slate-600" />
-                    }
                   </div>
                 </div>
-              </div>
 
-              {expandedSections.outputs && (
-                <div className="p-3">
-                  {safeOutputSchema.length === 0 ? (
-                    <div className="bg-gradient-to-br from-emerald-50 to-green-50 border-2 border-dashed border-emerald-300 rounded-lg p-4 text-center">
-                      <Sparkles className="h-6 w-6 text-emerald-500 mx-auto mb-2" />
-                      <h4 className="font-semibold text-emerald-900 mb-1 text-sm">Surprise Output!</h4>
-                      <p className="text-emerald-700 text-xs">
-                        Your agent will decide the best format for your results
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {safeOutputSchema.map((field, index) => (
-                        <div key={index} className="flex items-center justify-between p-2 rounded-lg border bg-emerald-50 border-emerald-200 transition-all">
-                          <div className="flex items-center gap-2">
-                            <div className="w-6 h-6 rounded-lg flex items-center justify-center bg-emerald-100">
-                              <Clock className="h-4 w-4 text-emerald-600" />
-                            </div>
-                            <div>
-                              <span className="font-medium text-emerald-800 text-sm">
-                                {field.name}
-                              </span>
-                              <p className="text-xs text-emerald-600">
-                                {field.description || 'Output field'}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="px-2 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
-                            {field.type}
-                          </div>
+                {expandedSections.outputs && (
+                  <div className="p-3 space-y-4">
+                    {/* Human Outputs */}
+                    {humanOutputs.length > 0 && (
+                      <div>
+                        <div className="text-xs font-semibold text-emerald-700 mb-2 flex items-center gap-1.5">
+                          <User className="h-3.5 w-3.5" />
+                          Human-Facing Outputs
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+                        <div className="space-y-2">
+                          {humanOutputs.map((field: any, index: number) => {
+                            // Convert technical types to user-friendly labels with Lucide icons
+                            const getUserFriendlyType = (type: string) => {
+                              const typeMap: Record<string, { label: string; Icon: any; iconColor: string; bgColor: string; badgeColor: string }> = {
+                                'EmailDraft': { label: 'Email', Icon: Mail, iconColor: 'text-blue-600', bgColor: 'bg-blue-100', badgeColor: 'bg-blue-100 text-blue-700' },
+                                'PluginAction': { label: 'Action', Icon: Zap, iconColor: 'text-purple-600', bgColor: 'bg-purple-100', badgeColor: 'bg-purple-100 text-purple-700' },
+                                'SummaryBlock': { label: 'Report', Icon: FileBarChart, iconColor: 'text-green-600', bgColor: 'bg-green-100', badgeColor: 'bg-green-100 text-green-700' },
+                                'Alert': { label: 'Notification', Icon: Bell, iconColor: 'text-orange-600', bgColor: 'bg-orange-100', badgeColor: 'bg-orange-100 text-orange-700' },
+                                'string': { label: 'Text', Icon: MessageSquare, iconColor: 'text-cyan-600', bgColor: 'bg-cyan-100', badgeColor: 'bg-cyan-100 text-cyan-700' },
+                                'object': { label: 'Data', Icon: Database, iconColor: 'text-indigo-600', bgColor: 'bg-indigo-100', badgeColor: 'bg-indigo-100 text-indigo-700' },
+                                'array': { label: 'List', Icon: List, iconColor: 'text-teal-600', bgColor: 'bg-teal-100', badgeColor: 'bg-teal-100 text-teal-700' }
+                              };
+                              return typeMap[type] || { label: 'Result', Icon: Sparkles, iconColor: 'text-amber-600', bgColor: 'bg-amber-100', badgeColor: 'bg-amber-100 text-amber-700' };
+                            };
+
+                            const typeInfo = getUserFriendlyType(field.type);
+                            const IconComponent = typeInfo.Icon;
+
+                            return (
+                              <div key={index} className="flex items-center gap-3 p-3 bg-white/80 backdrop-blur rounded-xl border border-gray-200/50 hover:border-blue-300 hover:shadow-md transition-all duration-200">
+                                <div className={`w-8 h-8 ${typeInfo.bgColor} rounded-lg flex items-center justify-center flex-shrink-0`}>
+                                  <IconComponent className={`h-4 w-4 ${typeInfo.iconColor}`} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-sm font-medium text-gray-900">{field.name}</div>
+                                  {field.description && (
+                                    <div className="text-xs text-gray-500">{field.description}</div>
+                                  )}
+                                </div>
+                                <div className={`px-2 py-1 rounded-md ${typeInfo.badgeColor}`}>
+                                  <span className="text-xs font-medium">{typeInfo.label}</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* System Outputs */}
+                    {systemOutputs.length > 0 && (
+                      <div>
+                        <div className="text-xs font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
+                          <Settings className="h-3.5 w-3.5" />
+                          System Outputs
+                        </div>
+                        <div className="space-y-2">
+                          {systemOutputs.map((field: any, index: number) => {
+                            // Convert technical types to user-friendly labels with Lucide icons
+                            const getUserFriendlyType = (type: string) => {
+                              const typeMap: Record<string, { label: string; Icon: any; iconColor: string; bgColor: string; badgeColor: string }> = {
+                                'EmailDraft': { label: 'Email', Icon: Mail, iconColor: 'text-blue-600', bgColor: 'bg-blue-100', badgeColor: 'bg-blue-100 text-blue-700' },
+                                'PluginAction': { label: 'Action', Icon: Zap, iconColor: 'text-purple-600', bgColor: 'bg-purple-100', badgeColor: 'bg-purple-100 text-purple-700' },
+                                'SummaryBlock': { label: 'Report', Icon: FileBarChart, iconColor: 'text-green-600', bgColor: 'bg-green-100', badgeColor: 'bg-green-100 text-green-700' },
+                                'Alert': { label: 'Notification', Icon: Bell, iconColor: 'text-orange-600', bgColor: 'bg-orange-100', badgeColor: 'bg-orange-100 text-orange-700' },
+                                'string': { label: 'Text', Icon: MessageSquare, iconColor: 'text-cyan-600', bgColor: 'bg-cyan-100', badgeColor: 'bg-cyan-100 text-cyan-700' },
+                                'object': { label: 'Data', Icon: Database, iconColor: 'text-indigo-600', bgColor: 'bg-indigo-100', badgeColor: 'bg-indigo-100 text-indigo-700' },
+                                'array': { label: 'List', Icon: List, iconColor: 'text-teal-600', bgColor: 'bg-teal-100', badgeColor: 'bg-teal-100 text-teal-700' }
+                              };
+                              return typeMap[type] || { label: 'Result', Icon: Sparkles, iconColor: 'text-amber-600', bgColor: 'bg-amber-100', badgeColor: 'bg-amber-100 text-amber-700' };
+                            };
+
+                            const typeInfo = getUserFriendlyType(field.type);
+                            const IconComponent = typeInfo.Icon;
+
+                            return (
+                              <div key={index} className="flex items-center gap-3 p-3 bg-white/80 backdrop-blur rounded-xl border border-gray-200/50 hover:border-slate-300 hover:shadow-md transition-all duration-200">
+                                <div className={`w-8 h-8 ${typeInfo.bgColor} rounded-lg flex items-center justify-center flex-shrink-0`}>
+                                  <IconComponent className={`h-4 w-4 ${typeInfo.iconColor}`} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-sm font-medium text-gray-900">{field.name}</div>
+                                  {field.description && (
+                                    <div className="text-xs text-gray-500">{field.description}</div>
+                                  )}
+                                </div>
+                                <div className={`px-2 py-1 rounded-md ${typeInfo.badgeColor}`}>
+                                  <span className="text-xs font-medium">{typeInfo.label}</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -1407,28 +1529,28 @@ export default function AgentPage() {
           </div>
         )}
 
-        {/* Performance Tab - Unchanged from original */}
+        {/* Performance Tab - Always show analytics */}
         {currentView === 'performance' && (
           <div className="space-y-4">
-            {!isSharedAgent && agent.status !== 'draft' ? (
+            {!isSharedAgent ? (
               <>
                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div 
+                  <div
                     className="bg-gradient-to-r from-green-50 to-emerald-50 p-3 cursor-pointer hover:from-green-100 hover:to-emerald-100 transition-colors"
                     onClick={() => toggleSection('performanceStats')}
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-gradient-to-br from-green-500 to-emerald-600 rounded-lg flex items-center justify-center">
-                          <BarChart3 className="h-4 w-4 text-white" />
+                        <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center">
+                          <BarChart3 className="h-4 w-4 text-green-600" />
                         </div>
                         <div>
                           <h3 className="font-semibold text-slate-900 text-sm">Performance Statistics</h3>
                           <p className="text-slate-600 text-xs">Key metrics and success rates</p>
                         </div>
                       </div>
-                      {expandedSections.performanceStats ? 
-                        <ChevronUp className="h-4 w-4 text-slate-600" /> : 
+                      {expandedSections.performanceStats ?
+                        <ChevronUp className="h-4 w-4 text-slate-600" /> :
                         <ChevronDown className="h-4 w-4 text-slate-600" />
                       }
                     </div>
@@ -1439,24 +1561,24 @@ export default function AgentPage() {
                     </div>
                   )}
                 </div>
-                
+
                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div 
+                  <div
                     className="bg-gradient-to-r from-purple-50 to-blue-50 p-3 cursor-pointer hover:from-purple-100 hover:to-blue-100 transition-colors"
                     onClick={() => toggleSection('recentActivity')}
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-gradient-to-br from-purple-500 to-blue-600 rounded-lg flex items-center justify-center">
-                          <Activity className="h-4 w-4 text-white" />
+                        <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center">
+                          <Activity className="h-4 w-4 text-purple-600" />
                         </div>
                         <div>
                           <h3 className="font-semibold text-slate-900 text-sm">Recent Activity</h3>
                           <p className="text-slate-600 text-xs">Latest executions and history</p>
                         </div>
                       </div>
-                      {expandedSections.recentActivity ? 
-                        <ChevronUp className="h-4 w-4 text-slate-600" /> : 
+                      {expandedSections.recentActivity ?
+                        <ChevronUp className="h-4 w-4 text-slate-600" /> :
                         <ChevronDown className="h-4 w-4 text-slate-600" />
                       }
                     </div>
@@ -1472,12 +1594,12 @@ export default function AgentPage() {
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                 <div className="bg-gradient-to-r from-slate-50 to-gray-50 p-3">
                   <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-gradient-to-br from-slate-400 to-gray-500 rounded-lg flex items-center justify-center">
-                      <TrendingUp className="h-4 w-4 text-white" />
+                    <div className="w-8 h-8 bg-slate-200 rounded-lg flex items-center justify-center">
+                      <TrendingUp className="h-4 w-4 text-slate-600" />
                     </div>
                     <div>
                       <h3 className="font-semibold text-slate-900 text-sm">No Analytics Yet</h3>
-                      <p className="text-slate-600 text-xs">Launch your assistant to start collecting data</p>
+                      <p className="text-slate-600 text-xs">Shared agents don't show analytics</p>
                     </div>
                   </div>
                 </div>
@@ -1485,9 +1607,9 @@ export default function AgentPage() {
                   <div className="w-16 h-16 bg-gradient-to-br from-slate-200 to-gray-300 rounded-xl flex items-center justify-center mx-auto mb-4">
                     <TrendingUp className="h-8 w-8 text-slate-500" />
                   </div>
-                  <h3 className="text-lg font-semibold text-slate-900 mb-2">No Analytics Yet</h3>
+                  <h3 className="text-lg font-semibold text-slate-900 mb-2">No Analytics Available</h3>
                   <p className="text-slate-600 max-w-md mx-auto text-sm">
-                    Launch your assistant to start collecting performance data and activity metrics.
+                    Analytics are only available for your own agents, not shared community agents.
                   </p>
                 </div>
               </div>
@@ -1495,146 +1617,6 @@ export default function AgentPage() {
           </div>
         )}
 
-        {/* Settings Tab - Unchanged from original */}
-        {currentView === 'settings' && (
-          <div className="space-y-4">
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-              <div 
-                className="bg-gradient-to-r from-slate-50 to-gray-50 p-3 cursor-pointer hover:from-slate-100 hover:to-gray-100 transition-colors"
-                onClick={() => toggleSection('basicInfo')}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-gradient-to-br from-slate-600 to-gray-700 rounded-lg flex items-center justify-center">
-                      <Info className="h-4 w-4 text-white" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-slate-900 text-sm">Basic Information</h3>
-                      <p className="text-slate-600 text-xs">Core details about your assistant</p>
-                    </div>
-                  </div>
-                  {expandedSections.basicInfo ? 
-                    <ChevronUp className="h-4 w-4 text-slate-600" /> : 
-                    <ChevronDown className="h-4 w-4 text-slate-600" />
-                  }
-                </div>
-              </div>
-              {expandedSections.basicInfo && (
-                <div className="p-4">
-                  <div className="space-y-4">
-                    <div>
-                      <label className="text-xs font-medium text-slate-500 uppercase tracking-wide">Assistant Name</label>
-                      <div className="text-slate-900 mt-1 text-sm">{agent.agent_name}</div>
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium text-slate-500 uppercase tracking-wide">Created</label>
-                      <div className="text-slate-900 mt-1 text-sm">
-                        {agent.created_at ? new Date(agent.created_at).toLocaleDateString() : 'Unknown'}
-                      </div>
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium text-slate-500 uppercase tracking-wide">Current Status</label>
-                      <div className="text-slate-900 mt-1 text-sm">{statusConfig.label}</div>
-                    </div>
-                    {/* Add timezone information in settings */}
-                    {agent.timezone && (
-                      <div>
-                        <label className="text-xs font-medium text-slate-500 uppercase tracking-wide">Schedule Timezone</label>
-                        <div className="text-slate-900 mt-1 text-sm flex items-center gap-2">
-                          <Globe className="h-4 w-4 text-slate-500" />
-                          {getTimezoneDisplayName(agent.timezone)}
-                          {agent.timezone !== getEffectiveUserTimezone() && (
-                            <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-lg">
-                              Different from your local time
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-              <div 
-                className="bg-gradient-to-r from-blue-50 to-purple-50 p-3 cursor-pointer hover:from-blue-100 hover:to-purple-100 transition-colors"
-                onClick={() => toggleSection('quickActions')}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                      <Command className="h-4 w-4 text-white" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-slate-900 text-sm">Quick Actions</h3>
-                      <p className="text-slate-600 text-xs">Manage and control your assistant</p>
-                    </div>
-                  </div>
-                  {expandedSections.quickActions ? 
-                    <ChevronUp className="h-4 w-4 text-slate-600" /> : 
-                    <ChevronDown className="h-4 w-4 text-slate-600" />
-                  }
-                </div>
-              </div>
-              {expandedSections.quickActions && (
-                <div className="p-4">
-                  <div className="space-y-3">
-                    {!isSharedAgent && isOwner && (
-                      <Link
-                        href={`/agents/${agent.id}/edit`}
-                        className="flex items-center gap-3 w-full px-4 py-3 bg-gradient-to-r from-blue-50 to-purple-50 hover:from-blue-100 hover:to-purple-100 rounded-lg transition-all duration-200 text-slate-700 border border-blue-100"
-                      >
-                        <Edit className="h-4 w-4" />
-                        <span className="font-medium text-sm">Edit Settings</span>
-                      </Link>
-                    )}
-                    
-                    <button 
-                      onClick={handleExportConfiguration}
-                      disabled={actionLoading === 'export'}
-                      className="flex items-center gap-3 w-full px-4 py-3 bg-gradient-to-r from-green-50 to-emerald-50 hover:from-green-100 hover:to-emerald-100 rounded-lg transition-all duration-200 text-slate-700 border border-green-100 disabled:opacity-50"
-                    >
-                      {actionLoading === 'export' ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Download className="h-4 w-4" />
-                      )}
-                      <span className="font-medium text-sm">
-                        {actionLoading === 'export' ? 'Exporting...' : 'Export Configuration'}
-                      </span>
-                    </button>
-                    
-                    <button 
-                      onClick={handleDuplicateAgent}
-                      disabled={actionLoading === 'duplicate'}
-                      className="flex items-center gap-3 w-full px-4 py-3 bg-gradient-to-r from-purple-50 to-pink-50 hover:from-purple-100 hover:to-pink-100 rounded-lg transition-all duration-200 text-slate-700 border border-purple-100 disabled:opacity-50"
-                    >
-                      {actionLoading === 'duplicate' ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Copy className="h-4 w-4" />
-                      )}
-                      <span className="font-medium text-sm">
-                        {actionLoading === 'duplicate' ? 'Creating Copy...' : 'Duplicate Assistant'}
-                      </span>
-                    </button>
-                    
-                    {!isSharedAgent && isOwner && (
-                      <button
-                        onClick={() => setShowDeleteConfirm(true)}
-                        className="flex items-center gap-3 w-full px-4 py-3 bg-gradient-to-r from-red-50 to-pink-50 hover:from-red-100 hover:to-pink-100 rounded-lg transition-all duration-200 text-red-600 border border-red-100"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        <span className="font-medium text-sm">Delete Assistant</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* All existing modals remain unchanged */}

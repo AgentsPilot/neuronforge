@@ -279,8 +279,8 @@ export default function ScheduleEditor({
     <div className="space-y-3">
       {/* Current Schedule - Enhanced with timezone display */}
       {scheduleCron && (
-        <div className="relative overflow-hidden bg-gradient-to-r from-violet-500 via-purple-500 to-indigo-500 rounded-xl px-4 py-3 text-white shadow-lg">
-          <div className="absolute inset-0 bg-white/10 backdrop-blur-sm"></div>
+        <div className="relative bg-gradient-to-r from-violet-500 via-purple-500 to-indigo-500 rounded-xl px-4 py-3 text-white shadow-lg">
+          <div className="absolute inset-0 bg-white/10 backdrop-blur-sm rounded-xl"></div>
           <div className="relative flex items-center gap-3">
             <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center backdrop-blur-sm">
               <Clock className="h-4 w-4" />

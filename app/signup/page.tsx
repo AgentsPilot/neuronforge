@@ -72,18 +72,32 @@ export default function SignupPage() {
             full_name: fullName,
             onboarding_completed: false, // Track onboarding status in metadata
           },
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL || window.location.origin}/auth/callback`,
         },
       });
 
       console.log('Signup response:', { data, error });
 
       if (error) {
+        console.error('Signup error details:', {
+          message: error.message,
+          status: error.status,
+          name: error.name,
+          code: (error as any).code
+        });
+
         // Check if user already exists
         if (error.message.includes('already registered') || error.message.includes('already been registered')) {
           setErrorMessage('This email is already registered. Please login instead.');
+        } else if (error.message.includes('Email rate limit exceeded')) {
+          setErrorMessage('Too many signup attempts. Please try again in a few minutes.');
+        } else if (error.message.includes('Invalid email')) {
+          setErrorMessage('Please enter a valid email address.');
+        } else if (error.message.toLowerCase().includes('password')) {
+          setErrorMessage('Password must be at least 6 characters long.');
         } else {
-          setErrorMessage(error.message);
+          // User-friendly generic error with actual message
+          setErrorMessage(`Signup failed: ${error.message}. Please try again or contact support.`);
         }
         setIsLoading(false);
         return;
@@ -105,7 +119,9 @@ export default function SignupPage() {
         email: user.email,
         created_at: user.created_at,
         identities: user.identities,
-        session: !!session
+        session: !!session,
+        email_confirmed_at: (user as any).email_confirmed_at,
+        confirmation_sent_at: (user as any).confirmation_sent_at
       });
 
       // When email confirmation is enabled and user already exists:
@@ -113,11 +129,19 @@ export default function SignupPage() {
       // - But identities array will be empty (no new identity was created)
       // - And there's no session
       const hasIdentities = user.identities && user.identities.length > 0;
+      const isEmailConfirmed = !!(user as any).email_confirmed_at;
 
       if (!hasIdentities && !session) {
         // Existing user trying to sign up again (no new identity created)
         console.log('Detected existing user - no identities created');
-        setErrorMessage('This email is already registered. Please login instead.');
+
+        if (isEmailConfirmed) {
+          // User exists and has confirmed email - they should login
+          setErrorMessage('This email is already registered. Please login instead.');
+        } else {
+          // User exists but hasn't confirmed email - resend confirmation
+          setErrorMessage('A confirmation email was already sent to this address. Please check your email or wait a few minutes to try again.');
+        }
         setIsLoading(false);
         return;
       }
@@ -135,8 +159,9 @@ export default function SignupPage() {
         setTimeout(() => router.push('/onboarding'), 1500);
       }
     } catch (error) {
-      console.error(error);
-      setErrorMessage('An unexpected error occurred. Please try again.');
+      console.error('Unexpected signup error:', error);
+      const errorMsg = error instanceof Error ? error.message : 'An unexpected error occurred';
+      setErrorMessage(`${errorMsg}. Please try again or contact support.`);
     } finally {
       setIsLoading(false);
     }

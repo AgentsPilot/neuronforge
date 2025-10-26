@@ -201,7 +201,7 @@ OUTPUT REQUIRED:
         "action_description": "what this step does",
         "execution_type": "ai_processing|plugin_action",
         "chosen_plugin": "plugin_key or null for AI processing",
-        "chosen_capability": "capability_name or null for AI processing", 
+        "chosen_capability": "capability_name or null for AI processing",
         "ai_processing_type": "analysis|generation|transformation|classification",
         "reasoning": "why this choice was made",
         "required_data": ["list of data this step needs"],
@@ -222,6 +222,7 @@ OUTPUT REQUIRED:
   "agent_specification": {
     "agent_name": "descriptive name based on workflow",
     "description": "clear description of what agent does",
+    "system_prompt": "execution-optimized system prompt for AgentKit",
     "input_schema": [
       {
         "name": "field_name",
@@ -245,6 +246,82 @@ OUTPUT REQUIRED:
     }
   }
 }
+
+7. SYSTEM PROMPT GENERATION FOR AGENTKIT EXECUTION:
+   Create a concise, function-calling optimized system_prompt that AgentKit will use during execution.
+   This prompt tells GPT-4o WHAT to accomplish and HOW to execute the workflow using available functions.
+
+   SYSTEM PROMPT FORMAT (keep to 5-15 lines total):
+
+   "You are executing [automation type from workflow].
+
+   OBJECTIVE: [1-2 sentence clear statement of what to accomplish based on the enhanced workflow plan]
+
+   WORKFLOW:
+   [List 3-7 numbered steps mapping to workflow_steps, each formatted as:]
+   1. Call [plugin].[action] to [purpose] (use input: [input_field_name])
+   2. Process: [what AI needs to do with the data]
+   3. Call [plugin].[action] to [deliver results] (use input: [input_field_name])
+
+   INPUTS AVAILABLE: [Comma-separated list of input_schema field names with types]
+
+   ERROR HANDLING: [Concise strategy: retry policy, fallback behavior, how to report failures]"
+
+   SYSTEM PROMPT RULES:
+   - Be CONCISE (5-15 lines max) - AgentKit adds plugin descriptions, date/time, and output instructions automatically
+   - Focus on FUNCTION CALLING: Explicitly state which plugin.action to call for each step
+   - Map workflow_steps to specific function calls: "Call google-mail.read_emails", not "retrieve emails"
+   - Include input field references: "(use input: manager_email)" so GPT knows what data is available
+   - Match the OBJECTIVE to what the enhanced workflow plan describes
+   - For pure AI workflows (no plugins): Focus on processing steps and output format
+   - DO NOT include: Plugin descriptions, date/time context, generic instructions (AgentKit adds these)
+   - DO NOT be verbose or narrative - this is for execution, not explanation
+
+   EXAMPLES:
+
+   Example 1 (Plugin-based):
+   "You are executing an email summarization automation.
+
+   OBJECTIVE: Retrieve unread Gmail messages from a specific sender, extract key information and action items, create detailed summaries, and save them to a Notion database.
+
+   WORKFLOW:
+   1. Call google-mail.read_emails to fetch unread messages (use input: manager_email as sender filter)
+   2. Process each email: extract sender, date, subject, key points, and action items
+   3. Call notion.create_page to save summary (use input: notion_database_id as target)
+
+   INPUTS AVAILABLE: manager_email (email), notion_database_id (text)
+
+   ERROR HANDLING: Retry failed function calls once. If Gmail fails, report authentication or connectivity issue. If Notion fails, verify database_id validity and permissions."
+
+   Example 2 (Pure AI):
+   "You are executing a text analysis and report generation automation.
+
+   OBJECTIVE: Analyze provided text content, identify key themes and sentiment, generate a structured report with insights and recommendations.
+
+   WORKFLOW:
+   1. Process input text: identify main themes and topics
+   2. Analyze sentiment and tone across the content
+   3. Extract key insights and actionable recommendations
+   4. Format results as a structured markdown report
+
+   INPUTS AVAILABLE: text_content (textarea), analysis_depth (select)
+
+   ERROR HANDLING: If input text is too large, process in chunks. Report any parsing errors with specific location."
+
+   Example 3 (Multi-step with AI + Plugins):
+   "You are executing a document processing and notification automation.
+
+   OBJECTIVE: Search Google Drive for specific documents, analyze their content for compliance issues, and send summary notifications via Slack.
+
+   WORKFLOW:
+   1. Call google-drive.search_files to find documents (use input: search_query, folder_id)
+   2. For each document: analyze content for compliance keywords and issues
+   3. Create summary report of findings with severity levels
+   4. Call slack.send_message to notify channel (use input: slack_channel_id)
+
+   INPUTS AVAILABLE: search_query (text), folder_id (text), slack_channel_id (text), compliance_keywords (textarea)
+
+   ERROR HANDLING: Retry Drive API calls once on timeout. If Slack fails, log error and continue processing remaining documents."
 
 ANALYZE THE WORKFLOW PLAN AND CREATE THE PERFECT AGENT SPECIFICATION.`
 
@@ -359,12 +436,20 @@ ANALYZE THE WORKFLOW PLAN AND CREATE THE PERFECT AGENT SPECIFICATION.`
     console.log('Final input schema:', validatedInputs);
     console.log('Analysis result:', analysis);
 
+    // Log system prompt source
+    if (agentSpec.system_prompt) {
+      console.log('✅ Using AI-generated system_prompt from agent specification');
+      console.log('System prompt preview:', agentSpec.system_prompt.substring(0, 150) + '...');
+    } else {
+      console.log('⚠️ No AI-generated system_prompt found, using fallback');
+    }
+
     // Maintain the exact JSON structure expected by the system
     const agentData = {
       user_id: user.id,
       agent_name: agentSpec.agent_name || 'Untitled Agent',
       user_prompt: fullPrompt,
-      system_prompt: `You are an agent that accomplishes: ${analysis?.workflow_type || agentSpec.description || 'user workflow'}`,
+      system_prompt: agentSpec.system_prompt || `You are an agent that accomplishes: ${analysis?.workflow_type || agentSpec.description || 'user workflow'}`,
       description: agentSpec.description || '',
       plugins_required: validDetectedPlugins,
       connected_plugins: validDetectedPlugins,

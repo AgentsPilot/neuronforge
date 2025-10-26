@@ -96,8 +96,22 @@ export class ChatGPTResearchPluginExecutor extends BasePluginExecutor {
 
     const { content, length = 'standard', style = 'professional', focus_on = [] } = parameters;
 
-    if (!content || content.length < 50) {
-      throw new Error('Content must be at least 50 characters to summarize');
+    // Smart handling: if content is too short, return it as-is instead of erroring
+    if (!content) {
+      throw new Error('Content is required for summarization');
+    }
+
+    if (content.length < 50) {
+      if (this.debug) console.log('DEBUG: Content too short for summarization, returning as-is');
+      return {
+        summary: content,
+        original_length: content.length,
+        summary_length: content.length,
+        length_type: 'original',
+        style: style,
+        tokens_used: 0,
+        note: 'Content was already concise enough, no summarization needed'
+      };
     }
 
     if (!openai) {

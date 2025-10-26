@@ -228,38 +228,44 @@ export const useOnboarding = () => {
         throw new Error('No authenticated user found');
       }
 
-      // Update the profiles table with onboarding data
-      // First, try to update with all fields including domain
+      // Upsert (create or update) the profiles table with onboarding data
+      // First, try to upsert with all fields including domain
       let { error: profileError } = await supabase
         .from('profiles')
-        .update({
+        .upsert({
+          id: user.id, // Required for upsert
           full_name: state.data.profile.fullName,
           company: state.data.profile.company || null,
           job_title: state.data.profile.jobTitle || null,
           timezone: state.data.profile.timezone,
           domain: state.data.domain,
           role: state.data.role,
+          created_at: new Date().toISOString(), // Will be ignored if profile exists
           updated_at: new Date().toISOString(),
-        })
-        .eq('id', user.id);
+        }, {
+          onConflict: 'id' // Update if profile with this id exists
+        });
 
       // If domain column doesn't exist, try without it (role column exists)
       if (profileError && profileError.code === '42703') {
         console.log('Domain column not found, saving without domain field');
         const { error: fallbackError } = await supabase
           .from('profiles')
-          .update({
+          .upsert({
+            id: user.id, // Required for upsert
             full_name: state.data.profile.fullName,
             company: state.data.profile.company || null,
             job_title: state.data.profile.jobTitle || null,
             timezone: state.data.profile.timezone,
             role: state.data.role, // Keep role as it exists in the table
+            created_at: new Date().toISOString(), // Will be ignored if profile exists
             updated_at: new Date().toISOString(),
-          })
-          .eq('id', user.id);
+          }, {
+            onConflict: 'id' // Update if profile with this id exists
+          });
 
         profileError = fallbackError;
-        
+
         // Store domain in localStorage as backup
         localStorage.setItem('user_domain', state.data.domain);
       }

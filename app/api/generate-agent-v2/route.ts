@@ -167,7 +167,7 @@ export async function POST(req: Request) {
       user_id: user.id,
       agent_name: analysis.agent_name,
       user_prompt: prompt,
-      system_prompt: `You are an agent that accomplishes: ${analysis.workflow_type.replace('_', ' ')}`,
+      system_prompt: analysis.system_prompt,  // Use AI-generated execution-optimized system prompt
       description: analysis.description,
       plugins_required: analysis.suggested_plugins,
       connected_plugins: analysis.suggested_plugins,
@@ -183,7 +183,7 @@ export async function POST(req: Request) {
       mode: 'on_demand', // Can be enhanced based on prompt analysis
       schedule_cron: null,
       created_from_prompt: prompt,
-      ai_reasoning: `AgentKit Direct Analysis (v3): ${analysis.reasoning}. Confidence: ${Math.round(analysis.confidence * 100)}%`,
+      ai_reasoning: `${analysis.reasoning}. Confidence: ${Math.round(analysis.confidence * 100)}%`,
       ai_confidence: Math.round(analysis.confidence * 100),
       ai_generated_at: new Date().toISOString(),
       workflow_steps: analysis.workflow_steps.map(step => ({
@@ -225,7 +225,7 @@ export async function POST(req: Request) {
         workflow_steps: analysis.workflow_steps,
         plugins_required: analysis.suggested_plugins,
         connected_plugins: analysis.suggested_plugins,
-        system_prompt: `You are an agent that accomplishes: ${analysis.workflow_type.replace('_', ' ')}`,
+        system_prompt: analysis.system_prompt,  // Use AI-generated execution-optimized system prompt
         ai_context: {
           reasoning: analysis.reasoning,
           confidence: Math.round(analysis.confidence * 100),

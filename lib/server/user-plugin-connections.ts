@@ -102,10 +102,10 @@ export class UserPluginConnections {
     }
   }
 
-  // Get connection data for plugin (for API calls)  
+  // Get connection data for plugin (for API calls)
   async getConnection(userId: string, pluginKey: string, authConfig: PluginAuthConfig): Promise<UserConnection | null> {
     if (this.debug) console.log(`DEBUG: Getting connection data for ${pluginKey}`);
-    
+
     try {
       const { data: connection, error } = await this.supabase
         .from('plugin_connections')
@@ -120,26 +120,31 @@ export class UserPluginConnections {
         return null;
       }
 
-      // Check if token needs refresh (only if it has an expiry and is expired)
-      if (!this.isTokenValid(connection.expires_at)) {
-        if (this.debug) console.log(`DEBUG: Token expired for ${pluginKey}, attempting auto-refresh`);
+      // SMART REFRESH: Check if token should be refreshed (expires within 5 minutes or already expired)
+      if (this.shouldRefreshToken(connection.expires_at, 5)) {
+        const minutesUntilExpiry = connection.expires_at
+          ? Math.floor((new Date(connection.expires_at).getTime() - Date.now()) / 60000)
+          : 0;
+
+        console.log(`🔄 Smart Refresh: ${pluginKey} token expires in ${minutesUntilExpiry} minutes, proactively refreshing before use...`);
 
         // Only attempt refresh if we have a refresh token
         if (!connection.refresh_token) {
-          if (this.debug) console.log(`DEBUG: No refresh token available for ${pluginKey} - user needs to reconnect`);
+          console.error(`❌ Smart Refresh Failed: No refresh token available for ${pluginKey} - user needs to reconnect`);
           return null;
         }
 
         const refreshedConnection = await this.refreshToken(connection, authConfig);
         if (refreshedConnection) {
+          console.log(`✅ Smart Refresh Success: ${pluginKey} token refreshed and ready for use`);
           return refreshedConnection;
         } else {
-          if (this.debug) console.log(`DEBUG: Failed to refresh token for ${pluginKey} - user needs to reconnect`);
+          console.error(`❌ Smart Refresh Failed: ${pluginKey} - user needs to reconnect in Settings`);
           return null;
         }
       }
 
-      if (this.debug) console.log(`DEBUG: Valid connection found for ${pluginKey}`);
+      if (this.debug) console.log(`DEBUG: Valid connection found for ${pluginKey} - no refresh needed`);
       return connection;
     } catch (error) {
       console.error('DEBUG: Error getting connection:', error);
@@ -321,14 +326,16 @@ export class UserPluginConnections {
   
   // Refresh expired token
   async refreshToken(connection: UserConnection, authConfig: PluginAuthConfig): Promise<UserConnection | null> {
-    if (this.debug) console.log(`DEBUG: Refreshing token for ${connection.plugin_key}`);
-    
+    console.log(`🔄 Token Refresh: Attempting to refresh token for ${connection.plugin_key} (user: ${connection.user_id})`);
+
     if (!connection.refresh_token) {
-      console.error('DEBUG: No refresh token available');
+      console.error(`❌ Token Refresh Failed: No refresh token available for ${connection.plugin_key}`);
+      console.error(`   This usually means the user needs to reconnect the plugin to get a new refresh token`);
       return null;
     }
 
     try {
+      console.log(`📤 Token Refresh: Calling refresh endpoint: ${authConfig.refresh_url}`);
       const response = await fetch(authConfig.refresh_url, {
         method: 'POST',
         headers: {
@@ -343,12 +350,19 @@ export class UserPluginConnections {
       });
 
       if (!response.ok) {
-        console.error('DEBUG: Token refresh failed:', response.status);
+        const errorText = await response.text();
+        console.error(`❌ Token Refresh Failed: ${connection.plugin_key} - Status ${response.status}`);
+        console.error(`   Response: ${errorText}`);
+        console.error(`   This usually means:`);
+        console.error(`   - The refresh token has expired (Google tokens expire after 6 months of non-use)`);
+        console.error(`   - The refresh token was revoked by the user`);
+        console.error(`   - OAuth credentials changed`);
+        console.error(`   User needs to reconnect the plugin in Settings → Connected Apps`);
         return null;
       }
 
       const tokens = await response.json();
-      
+
       const expiresAt = this.getExpiresAt(tokens.expires_in);
 
       // Update connection using existing save function
@@ -369,7 +383,7 @@ export class UserPluginConnections {
 
       const data = await savePluginConnection(updatedConnectionData);
 
-      if (this.debug) console.log(`DEBUG: Token refreshed successfully for ${connection.plugin_key}`);
+      console.log(`✅ Token Refresh Success: ${connection.plugin_key} - New token expires at ${expiresAt}`);
 
       // NOTE: We deliberately do NOT log token refreshes to audit trail
       // Token refreshes are automatic background operations, not user actions
@@ -612,14 +626,37 @@ export class UserPluginConnections {
       if (this.debug) console.log(`DEBUG: Token has no expiry, considered valid`);
       return true; // No expiry means it doesn't expire
     }
-    
+
     const expiryDate = new Date(expiresAt);
     const now = new Date();
     const isValid = expiryDate.getTime() > now.getTime();
-    
+
     if (this.debug) console.log(`DEBUG: Token valid: ${isValid}, expires: ${expiryDate.toISOString()}`);
-    
+
     return isValid;
+  }
+
+  // Check if token should be refreshed (expires within buffer time)
+  // This proactively refreshes tokens before they expire to prevent API failures
+  public shouldRefreshToken(expiresAt: string | null, bufferMinutes: number = 5): boolean {
+    if (!expiresAt) {
+      return false; // No expiry means no refresh needed
+    }
+
+    const expiryDate = new Date(expiresAt);
+    const now = new Date();
+    const bufferMs = bufferMinutes * 60 * 1000;
+    const timeUntilExpiry = expiryDate.getTime() - now.getTime();
+
+    // Refresh if token expires within buffer time or is already expired
+    const shouldRefresh = timeUntilExpiry <= bufferMs;
+
+    if (this.debug) {
+      const minutesUntilExpiry = Math.floor(timeUntilExpiry / 60000);
+      console.log(`DEBUG: Token expires in ${minutesUntilExpiry} minutes. Should refresh: ${shouldRefresh} (buffer: ${bufferMinutes} min)`);
+    }
+
+    return shouldRefresh;
   }
 
   // Fetch user profile based on provider

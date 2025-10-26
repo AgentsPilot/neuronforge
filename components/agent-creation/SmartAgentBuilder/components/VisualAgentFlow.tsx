@@ -1,15 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { 
-  Play, 
-  RotateCcw, 
-  CheckCircle, 
-  Brain, 
-  Mail, 
-  FileText, 
-  Database, 
+import {
+  Play,
+  RotateCcw,
+  CheckCircle,
+  Brain,
+  Mail,
+  FileText,
+  Database,
   Settings,
   RefreshCw,
-  ArrowRight,
   AlertTriangle
 } from 'lucide-react';
 
@@ -39,7 +38,12 @@ interface ProcessingNode {
   validated: boolean;
   isConnected: boolean; // NEW: Track if plugin is connected
   icon: any;
-  color: string;
+  color: {
+    bg: string;
+    border: string;
+    bgActive: string;
+    borderActive: string;
+  };
   position: { x: number; y: number };
   processingTime: number;
 }
@@ -72,15 +76,32 @@ const isDocumentCreationStep = (operation: string): boolean => {
 };
 
 const getPluginColor = (plugin: string, isConnected: boolean) => {
-  if (!isConnected) return 'gray'; // Gray for unconnected plugins
-  
+  if (!isConnected) {
+    return {
+      bg: 'bg-gray-400',
+      border: 'border-gray-300',
+      bgActive: 'bg-gray-500',
+      borderActive: 'border-gray-300'
+    };
+  }
+
   const hash = plugin.split('').reduce((a, b) => {
     a = ((a << 5) - a) + b.charCodeAt(0);
     return a & a;
   }, 0);
-  
-  const colors = ['blue', 'green', 'purple', 'red', 'orange', 'indigo', 'pink', 'teal'];
-  return colors[Math.abs(hash) % colors.length];
+
+  const colorSchemes = [
+    { bg: 'bg-blue-400', border: 'border-blue-300', bgActive: 'bg-blue-500', borderActive: 'border-blue-300' },
+    { bg: 'bg-green-400', border: 'border-green-300', bgActive: 'bg-green-500', borderActive: 'border-green-300' },
+    { bg: 'bg-purple-400', border: 'border-purple-300', bgActive: 'bg-purple-500', borderActive: 'border-purple-300' },
+    { bg: 'bg-red-400', border: 'border-red-300', bgActive: 'bg-red-500', borderActive: 'border-red-300' },
+    { bg: 'bg-orange-400', border: 'border-orange-300', bgActive: 'bg-orange-500', borderActive: 'border-orange-300' },
+    { bg: 'bg-indigo-400', border: 'border-indigo-300', bgActive: 'bg-indigo-500', borderActive: 'border-indigo-300' },
+    { bg: 'bg-pink-400', border: 'border-pink-300', bgActive: 'bg-pink-500', borderActive: 'border-pink-300' },
+    { bg: 'bg-teal-400', border: 'border-teal-300', bgActive: 'bg-teal-500', borderActive: 'border-teal-300' }
+  ];
+
+  return colorSchemes[Math.abs(hash) % colorSchemes.length];
 };
 
 const buildWorkflowNodes = (agent: Agent | null): ProcessingNode[] => {
@@ -331,13 +352,11 @@ export default function SimpleDynamicWorkflow({ agent }: { agent: Agent | null }
               >
                 <div
                   className={`w-16 h-16 rounded-full border-4 flex items-center justify-center transition-all duration-500 ${
-                    !node.isConnected
-                      ? 'bg-gray-400 border-gray-300' // Gray for unconnected
-                      : isActive 
-                        ? `bg-${node.color}-500 border-${node.color}-300 shadow-lg` 
-                        : isCompleted
-                          ? 'bg-green-500 border-green-300 shadow-md'
-                          : `bg-${node.color}-400 border-${node.color}-300`
+                    isCompleted
+                      ? 'bg-green-500 border-green-300 shadow-md'
+                      : isActive
+                        ? `${node.color.bgActive} ${node.color.borderActive} shadow-lg`
+                        : `${node.color.bg} ${node.color.border}`
                   }`}
                 >
                   {isCompleted ? (

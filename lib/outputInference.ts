@@ -475,58 +475,7 @@ function buildSmartDefaults(
   clarificationAnswers: Record<string, any>,
   userEmail: string
 ): OutputSchema[] {
-  const defaults: OutputSchema[] = [];
-
-  // 1. Notification based on clarification answer
-  const errorHandling = clarificationAnswers?.error_handling_standard;
-
-  if (errorHandling === 'email_me') {
-    defaults.push({
-      name: 'Error Notification',
-      type: 'EmailDraft',
-      category: 'human-facing',
-      description: 'Email notification when execution fails',
-      examples: ['Error details sent to your email']
-    });
-  } else if (errorHandling === 'alert_me') {
-    defaults.push({
-      name: 'Error Alert',
-      type: 'Alert',
-      category: 'human-facing',
-      description: 'Dashboard alert when execution fails',
-      examples: ['Alert shown in dashboard']
-    });
-  } else {
-    // Default if no clarification answer (backward compatibility)
-    defaults.push({
-      name: 'Error Notification',
-      type: 'EmailDraft',
-      category: 'human-facing',
-      description: 'Email notification when execution fails',
-      examples: ['Error details sent to your email']
-    });
-  }
-
-  // 2. Always add Execution Summary
-  defaults.push({
-    name: 'Execution Summary',
-    type: 'string',
-    category: 'human-facing',
-    description: 'Complete status of your automation with success/failure details and any important notes',
-    examples: [
-      'Successfully completed all tasks',
-      'Completed with 1 warning',
-      'Failed at step 3 - check configuration'
-    ]
-  });
-
-  // 3. Always add Process Metadata
-  defaults.push({
-    name: 'Process Metadata',
-    type: 'object',
-    category: 'machine-facing',
-    description: 'Technical details about execution including timing, counts, and performance data'
-  });
-
-  return defaults;
+  // Don't add any smart defaults - only use SDK-suggested outputs and plugin-based outputs
+  // Error handling, execution summaries, and metadata are handled by the execution engine
+  return [];
 }

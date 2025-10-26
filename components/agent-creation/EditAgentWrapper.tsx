@@ -287,7 +287,7 @@ export default function EditAgentWrapper({ agentId }: EditAgentWrapperProps) {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
+      <div className="">
         {/* Compact Header skeleton */}
         <div className="bg-white/80 backdrop-blur-sm border-b border-slate-200">
           <div className="max-w-7xl mx-auto px-6 py-4">
@@ -435,7 +435,7 @@ export default function EditAgentWrapper({ agentId }: EditAgentWrapperProps) {
 
   // Success - show collapsible protection notice and render SmartAgentBuilder in edit mode
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
+    <div className="min-h-screen bg-white">
       {/* Collapsible Protection Notice */}
       <div className="mx-6 mb-6 pt-6">
         <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl overflow-hidden shadow-sm">

@@ -1,7 +1,7 @@
 // components/agent-creation/SmartAgentBuilder/components/AgentPreview.tsx
 
 import React, { useState } from 'react';
-import { Sparkles, User, Bot, Mail, FileText, Settings, CheckCircle, Zap, ChevronDown, Play, Clock, Target, TrendingUp } from 'lucide-react';
+import { Sparkles, User, Bot, Mail, FileText, Settings, CheckCircle, Zap, ChevronDown, Play, Clock, Target, TrendingUp, Bell, List, MessageSquare, Database, FileBarChart } from 'lucide-react';
 import { AgentPreviewProps } from '../types/agent';
 
 export default function AgentPreview({
@@ -74,7 +74,8 @@ export default function AgentPreview({
 
   // Define the missing variables
   const steps = agent.workflow_steps || [];
-  const outputs = [...(agent.output_schema?.filter(o => o.category === 'human-facing') || [])];
+  const humanOutputs = [...(agent.output_schema?.filter(o => !o.category || o.category === 'human-facing') || [])];
+  const systemOutputs = [...(agent.output_schema?.filter(o => o.category === 'machine-facing') || [])];
 
   const formatPromptText = (text: string) => {
     return text
@@ -96,13 +97,7 @@ export default function AgentPreview({
   };
 
   return (
-    <div className="relative">
-      {/* Modern Card with Glassmorphism */}
-      <div className="relative bg-white/60 backdrop-blur-xl rounded-2xl border border-white/20 shadow-2xl overflow-hidden">
-        {/* Gradient Accent */}
-        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500" />
-        
-        <div className="p-6 space-y-5">
+    <div className="relative space-y-5">
           {/* Header with Avatar */}
           <div className="flex items-start gap-4">
             <div className="relative">
@@ -155,7 +150,7 @@ export default function AgentPreview({
             </div>
             <div className="px-3 py-1.5 bg-gradient-to-br from-green-50 to-green-100 rounded-full flex items-center gap-2 border border-green-200/50">
               <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-              <span className="text-xs font-semibold text-green-700">{outputs.length} Outputs</span>
+              <span className="text-xs font-semibold text-green-700">{humanOutputs.length + systemOutputs.length} Outputs</span>
             </div>
             {agent.schedule_cron && (
               <div className="px-3 py-1.5 bg-gradient-to-br from-orange-50 to-orange-100 rounded-full flex items-center gap-2 border border-orange-200/50">
@@ -185,8 +180,8 @@ export default function AgentPreview({
               </button>
 
               {expandedSection === 'prompt' && (
-                <div className="bg-white/80 backdrop-blur rounded-xl border border-gray-200/50 p-4 animate-in slide-in-from-top-2 duration-200">
-                  <div className="prose prose-sm max-w-none">
+                <div className="p-4 animate-in slide-in-from-top-2 duration-200">
+                  <div className="prose prose-sm max-w-none text-gray-700">
                     {formatPromptText(prompt).split('\n').map((line, index) => {
                       if (line.startsWith('**') && line.endsWith('**')) {
                         return (
@@ -233,38 +228,72 @@ export default function AgentPreview({
               </button>
 
               {expandedSection === 'workflow' && (
-                <div className="space-y-2 animate-in slide-in-from-top-2 duration-200">
-                  {steps.map((step, idx) => (
-                    <div key={idx} className="group relative">
-                      <div className="flex items-center gap-3 p-3 bg-white/80 backdrop-blur rounded-xl border border-gray-200/50 hover:border-orange-300 hover:shadow-md transition-all duration-200">
-                        <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-orange-400 to-pink-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
-                          {step.step}
+                <div className="relative animate-in slide-in-from-top-2 duration-200">
+                  {/* Vertical Flow Line */}
+                  <div className="absolute left-5 top-0 bottom-0 w-0.5 bg-gradient-to-b from-orange-200 via-pink-200 to-purple-200" />
+
+                  <div className="space-y-3">
+                    {steps.map((step, idx) => (
+                      <div key={idx} className="relative flex items-start gap-4 group">
+                        {/* Step Number Badge with glow effect */}
+                        <div className="relative flex-shrink-0 z-10">
+                          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-orange-400 to-pink-500 flex items-center justify-center text-white text-sm font-bold shadow-lg ring-4 ring-white">
+                            {idx + 1}
+                          </div>
+                          {step.validated && (
+                            <div className="absolute -top-1 -right-1 w-5 h-5 bg-green-500 rounded-full flex items-center justify-center shadow-sm border-2 border-white">
+                              <CheckCircle className="h-3 w-3 text-white fill-current" />
+                            </div>
+                          )}
                         </div>
+
+                        {/* Flow Card */}
                         <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium text-gray-900 mb-0.5">{step.action}</div>
-                          <div className="flex items-center gap-1.5 text-xs text-gray-500">
-                            {getPluginIcon(step.plugin)}
-                            <span>{step.plugin}</span>
-                            <span className="text-gray-400">→</span>
-                            <span>{step.plugin_action}</span>
+                          <div className="relative p-4 bg-white/90 backdrop-blur rounded-xl border border-gray-200/50 shadow-sm group-hover:shadow-md group-hover:border-orange-300 transition-all duration-200">
+                            {/* Arrow pointer to step number */}
+                            <div className="absolute left-0 top-5 -ml-2 w-0 h-0 border-t-[6px] border-t-transparent border-b-[6px] border-b-transparent border-r-[8px] border-r-white/90" />
+
+                            <div className="space-y-3">
+                              {/* Step Label and Main Action */}
+                              <div>
+                                <div className="text-xs font-medium text-orange-600 mb-1">Step {idx + 1}</div>
+                                <div className="text-sm font-semibold text-gray-900 leading-snug">
+                                  {step.action || step.operation}
+                                </div>
+                              </div>
+
+                              {/* Plugin and Action in flow format */}
+                              <div className="flex items-center gap-2 flex-wrap">
+                                {/* Plugin Badge */}
+                                <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-orange-50 to-pink-50 rounded-lg border border-orange-200/50 shadow-sm">
+                                  {getPluginIcon(step.plugin)}
+                                  <span className="text-xs font-medium text-gray-700">{step.plugin}</span>
+                                </div>
+
+                                {/* Flow Arrow */}
+                                <div className="flex items-center gap-1 text-gray-400">
+                                  <div className="w-6 h-[1px] bg-gray-300" />
+                                  <div className="w-0 h-0 border-t-[4px] border-t-transparent border-b-[4px] border-b-transparent border-l-[6px] border-l-gray-300" />
+                                </div>
+
+                                {/* Action Badge */}
+                                <div className="px-3 py-1.5 bg-gray-50 rounded-lg border border-gray-200">
+                                  <span className="text-xs text-gray-700 font-medium">{step.plugin_action}</span>
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         </div>
-                        {step.validated && (
-                          <CheckCircle className="h-4 w-4 text-green-500 flex-shrink-0" />
-                        )}
                       </div>
-                      {idx < steps.length - 1 && (
-                        <div className="w-0.5 h-3 bg-gradient-to-b from-orange-300 to-pink-300 ml-6 my-0.5" />
-                      )}
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
           )}
 
-          {/* Outputs */}
-          {outputs.length > 0 && (
+          {/* Outputs - Combined */}
+          {(humanOutputs.length > 0 || systemOutputs.length > 0) && (
             <div className="space-y-3">
               <button
                 onClick={() => setExpandedSection(expandedSection === 'outputs' ? null : 'outputs')}
@@ -280,23 +309,100 @@ export default function AgentPreview({
               </button>
 
               {expandedSection === 'outputs' && (
-                <div className="grid gap-2 animate-in slide-in-from-top-2 duration-200">
-                  {outputs.map((output, idx) => (
-                    <div key={idx} className="flex items-center gap-3 p-3 bg-white/80 backdrop-blur rounded-xl border border-gray-200/50 hover:border-blue-300 hover:shadow-md transition-all duration-200">
-                      <div className="w-8 h-8 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <User className="h-4 w-4 text-blue-600" />
+                <div className="p-3 space-y-4 animate-in slide-in-from-top-2 duration-200">
+                  {/* Human Outputs */}
+                  {humanOutputs.length > 0 && (
+                    <div>
+                      <div className="text-xs font-semibold text-emerald-700 mb-2 flex items-center gap-1.5">
+                        <User className="h-3.5 w-3.5" />
+                        Human-Facing Outputs
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-gray-900">{output.name}</div>
-                        {output.description && (
-                          <div className="text-xs text-gray-500 truncate">{output.description}</div>
-                        )}
-                      </div>
-                      <div className="px-2 py-1 bg-blue-100 rounded-md">
-                        <span className="text-xs font-medium text-blue-700">{output.type}</span>
+                      <div className="space-y-2">
+                        {humanOutputs.map((output, idx) => {
+                          // Convert technical types to user-friendly labels with Lucide icons
+                          const getUserFriendlyType = (type: string) => {
+                            const typeMap: Record<string, { label: string; Icon: any; iconColor: string; bgColor: string; badgeColor: string }> = {
+                              'EmailDraft': { label: 'Email', Icon: Mail, iconColor: 'text-blue-600', bgColor: 'bg-blue-100', badgeColor: 'bg-blue-100 text-blue-700' },
+                              'PluginAction': { label: 'Action', Icon: Zap, iconColor: 'text-purple-600', bgColor: 'bg-purple-100', badgeColor: 'bg-purple-100 text-purple-700' },
+                              'SummaryBlock': { label: 'Report', Icon: FileBarChart, iconColor: 'text-green-600', bgColor: 'bg-green-100', badgeColor: 'bg-green-100 text-green-700' },
+                              'Alert': { label: 'Notification', Icon: Bell, iconColor: 'text-orange-600', bgColor: 'bg-orange-100', badgeColor: 'bg-orange-100 text-orange-700' },
+                              'string': { label: 'Text', Icon: MessageSquare, iconColor: 'text-cyan-600', bgColor: 'bg-cyan-100', badgeColor: 'bg-cyan-100 text-cyan-700' },
+                              'object': { label: 'Data', Icon: Database, iconColor: 'text-indigo-600', bgColor: 'bg-indigo-100', badgeColor: 'bg-indigo-100 text-indigo-700' },
+                              'array': { label: 'List', Icon: List, iconColor: 'text-teal-600', bgColor: 'bg-teal-100', badgeColor: 'bg-teal-100 text-teal-700' }
+                            };
+                            return typeMap[type] || { label: 'Result', Icon: Sparkles, iconColor: 'text-amber-600', bgColor: 'bg-amber-100', badgeColor: 'bg-amber-100 text-amber-700' };
+                          };
+
+                          const typeInfo = getUserFriendlyType(output.type);
+                          const IconComponent = typeInfo.Icon;
+
+                          return (
+                            <div key={idx} className="flex items-center gap-3 p-3 bg-white/80 backdrop-blur rounded-xl border border-gray-200/50 hover:border-blue-300 hover:shadow-md transition-all duration-200">
+                              <div className={`w-8 h-8 ${typeInfo.bgColor} rounded-lg flex items-center justify-center flex-shrink-0`}>
+                                <IconComponent className={`h-4 w-4 ${typeInfo.iconColor}`} />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-sm font-medium text-gray-900">{output.name}</div>
+                                {output.description && (
+                                  <div className="text-xs text-gray-500">{output.description}</div>
+                                )}
+                              </div>
+                              <div className={`px-2 py-1 rounded-md ${typeInfo.badgeColor}`}>
+                                <span className="text-xs font-medium">{typeInfo.label}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
-                  ))}
+                  )}
+
+                  {/* System Outputs */}
+                  {systemOutputs.length > 0 && (
+                    <div>
+                      <div className="text-xs font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
+                        <Settings className="h-3.5 w-3.5" />
+                        System Outputs
+                      </div>
+                      <div className="space-y-2">
+                        {systemOutputs.map((output, idx) => {
+                          // Convert technical types to user-friendly labels with Lucide icons
+                          const getUserFriendlyType = (type: string) => {
+                            const typeMap: Record<string, { label: string; Icon: any; iconColor: string; bgColor: string; badgeColor: string }> = {
+                              'EmailDraft': { label: 'Email', Icon: Mail, iconColor: 'text-blue-600', bgColor: 'bg-blue-100', badgeColor: 'bg-blue-100 text-blue-700' },
+                              'PluginAction': { label: 'Action', Icon: Zap, iconColor: 'text-purple-600', bgColor: 'bg-purple-100', badgeColor: 'bg-purple-100 text-purple-700' },
+                              'SummaryBlock': { label: 'Report', Icon: FileBarChart, iconColor: 'text-green-600', bgColor: 'bg-green-100', badgeColor: 'bg-green-100 text-green-700' },
+                              'Alert': { label: 'Notification', Icon: Bell, iconColor: 'text-orange-600', bgColor: 'bg-orange-100', badgeColor: 'bg-orange-100 text-orange-700' },
+                              'string': { label: 'Text', Icon: MessageSquare, iconColor: 'text-cyan-600', bgColor: 'bg-cyan-100', badgeColor: 'bg-cyan-100 text-cyan-700' },
+                              'object': { label: 'Data', Icon: Database, iconColor: 'text-indigo-600', bgColor: 'bg-indigo-100', badgeColor: 'bg-indigo-100 text-indigo-700' },
+                              'array': { label: 'List', Icon: List, iconColor: 'text-teal-600', bgColor: 'bg-teal-100', badgeColor: 'bg-teal-100 text-teal-700' }
+                            };
+                            return typeMap[type] || { label: 'Result', Icon: Sparkles, iconColor: 'text-amber-600', bgColor: 'bg-amber-100', badgeColor: 'bg-amber-100 text-amber-700' };
+                          };
+
+                          const typeInfo = getUserFriendlyType(output.type);
+                          const IconComponent = typeInfo.Icon;
+
+                          return (
+                            <div key={idx} className="flex items-center gap-3 p-3 bg-white/80 backdrop-blur rounded-xl border border-gray-200/50 hover:border-slate-300 hover:shadow-md transition-all duration-200">
+                              <div className={`w-8 h-8 ${typeInfo.bgColor} rounded-lg flex items-center justify-center flex-shrink-0`}>
+                                <IconComponent className={`h-4 w-4 ${typeInfo.iconColor}`} />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-sm font-medium text-gray-900">{output.name}</div>
+                                {output.description && (
+                                  <div className="text-xs text-gray-500">{output.description}</div>
+                                )}
+                              </div>
+                              <div className={`px-2 py-1 rounded-md ${typeInfo.badgeColor}`}>
+                                <span className="text-xs font-medium">{typeInfo.label}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -314,8 +420,6 @@ export default function AgentPreview({
               </div>
             </div>
           )}
-        </div>
-      </div>
     </div>
   );
 }

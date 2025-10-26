@@ -101,66 +101,83 @@ export default function MarketingLayout({
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
-      {/* Navigation */}
-      <nav className={`fixed top-0 w-full z-50 transition-all duration-300 border-b border-white/10 ${
-        isScrolled 
-          ? 'bg-slate-900/95 backdrop-blur-md shadow-lg' 
-          : 'bg-black/20 backdrop-blur-md'
+      {/* Navigation - Ultra Futuristic Design */}
+      <nav className={`fixed top-0 w-full z-50 transition-all duration-500 ${
+        isScrolled
+          ? 'bg-gradient-to-r from-slate-950/95 via-purple-950/95 to-slate-950/95 backdrop-blur-2xl shadow-2xl shadow-purple-500/20'
+          : 'bg-gradient-to-r from-slate-950/60 via-purple-950/60 to-slate-950/60 backdrop-blur-xl'
       }`}>
+        {/* Animated border gradient */}
+        <div className="absolute bottom-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-purple-500 to-transparent opacity-50"></div>
+        <div className="absolute bottom-0 left-0 right-0 h-[1px] bg-gradient-to-r from-blue-500 via-transparent to-pink-500 opacity-30 animate-pulse"></div>
+
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            {/* Logo */}
-            <Link href="/" className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-600 rounded-lg flex items-center justify-center">
-                <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
-                  <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z"/>
-                </svg>
+            {/* Logo - Futuristic with glow */}
+            <Link href="/" className="flex items-center space-x-2.5 group relative">
+              <div className="relative">
+                {/* Pulsing glow effect */}
+                <div className="absolute inset-0 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl blur-md opacity-0 group-hover:opacity-75 transition-all duration-500 animate-pulse"></div>
+                <div className="relative w-9 h-9 bg-gradient-to-br from-blue-500 via-purple-600 to-pink-500 rounded-xl flex items-center justify-center shadow-lg shadow-purple-500/50 group-hover:scale-110 transition-all duration-300">
+                  <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z"/>
+                  </svg>
+                </div>
               </div>
-              <span className="text-xl font-bold text-white">AgentsPilot</span>
+              <div className="relative">
+                <span className="text-xl font-black bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent group-hover:from-blue-300 group-hover:via-purple-300 group-hover:to-pink-300 transition-all duration-300">
+                  AgentsPilot
+                </span>
+                {/* Underline effect */}
+                <div className="absolute -bottom-1 left-0 w-0 h-[2px] bg-gradient-to-r from-blue-500 to-purple-500 group-hover:w-full transition-all duration-300"></div>
+              </div>
             </Link>
 
-            {/* Navigation Links */}
-            <div className="hidden md:flex items-center space-x-8">
-              <Link href="/features" className="text-gray-300 hover:text-white transition-colors duration-200">
-                Features
+            {/* Navigation Links - Futuristic pill design */}
+            <div className="hidden md:flex items-center gap-1 bg-slate-900/50 backdrop-blur-md rounded-full p-1 border border-white/10">
+              <Link href="/features" className="relative px-4 py-2 text-sm text-slate-300 hover:text-white rounded-full transition-all duration-300 group overflow-hidden">
+                <span className="relative z-10">Features</span>
+                <div className="absolute inset-0 bg-gradient-to-r from-blue-500/20 to-purple-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
               </Link>
-              <Link href="/use-cases" className="text-gray-300 hover:text-white transition-colors duration-200">
-                Use Cases
+              <Link href="/use-cases" className="relative px-4 py-2 text-sm text-slate-300 hover:text-white rounded-full transition-all duration-300 group overflow-hidden">
+                <span className="relative z-10">Use Cases</span>
+                <div className="absolute inset-0 bg-gradient-to-r from-purple-500/20 to-pink-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
               </Link>
-              <Link href="/pricing" className="text-gray-300 hover:text-white transition-colors duration-200">
-                Pricing
+              <Link href="/pricing" className="relative px-4 py-2 text-sm text-slate-300 hover:text-white rounded-full transition-all duration-300 group overflow-hidden">
+                <span className="relative z-10">Pricing</span>
+                <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/20 to-blue-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
               </Link>
-              <Link href="/about" className="text-gray-300 hover:text-white transition-colors duration-200">
-                About
-              </Link>
-              <Link href="/contact" className="text-gray-300 hover:text-white transition-colors duration-200">
-                Contact Us
+              <Link href="/about" className="relative px-4 py-2 text-sm text-slate-300 hover:text-white rounded-full transition-all duration-300 group overflow-hidden">
+                <span className="relative z-10">About</span>
+                <div className="absolute inset-0 bg-gradient-to-r from-pink-500/20 to-purple-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
               </Link>
             </div>
 
-            {/* CTA Buttons - Desktop */}
-            <div className="hidden md:flex items-center space-x-4">
-              <Link href="/login" className="text-gray-300 hover:text-white transition-colors duration-200">
-                Sign In
+            {/* CTA Buttons - Futuristic glow effect */}
+            <div className="hidden md:flex items-center gap-3">
+              <Link href="/login" className="relative px-4 py-2 text-sm text-slate-300 hover:text-white transition-all duration-300 group">
+                <span className="relative z-10">Sign In</span>
+                <div className="absolute bottom-0 left-0 w-0 h-[2px] bg-gradient-to-r from-blue-500 to-purple-500 group-hover:w-full transition-all duration-300"></div>
               </Link>
               <Link
                 href="/signup"
-                className="px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg hover:from-blue-600 hover:to-purple-700 transition-all duration-200"
+                className="px-3 py-1.5 text-sm bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg hover:shadow-lg hover:shadow-purple-500/50 hover:scale-105 transition-all duration-200 font-medium"
               >
                 Get Started
               </Link>
             </div>
 
-            {/* Mobile menu button */}
+            {/* Mobile menu button - Futuristic */}
             <button
-              className="md:hidden text-gray-300 hover:text-white transition-colors duration-200 p-2"
+              className="md:hidden relative text-slate-300 hover:text-white transition-colors duration-200 p-2 hover:bg-white/5 rounded-lg group"
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
               aria-label="Toggle menu"
             >
+              <div className="absolute inset-0 bg-gradient-to-r from-blue-500/20 to-purple-500/20 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
               {isMobileMenuOpen ? (
-                <X className="w-6 h-6" />
+                <X className="w-5 h-5 relative z-10" />
               ) : (
-                <Menu className="w-6 h-6" />
+                <Menu className="w-5 h-5 relative z-10" />
               )}
             </button>
           </div>

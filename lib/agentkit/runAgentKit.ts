@@ -204,9 +204,26 @@ export async function runAgentKit(
     // NEW: Generate output instructions from output_schema (or fallback to legacy)
     const outputInstructions = generateOutputInstructions(agent.output_schema, agent.trigger_condintion);
 
+    // Add current date/time context (critical for time-based operations)
+    // AI models don't have real-time access - we must provide the current timestamp
+    const now = new Date();
+    const currentDateTime = now.toISOString();
+    const readableDate = now.toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+
     const systemPrompt = `${agent.system_prompt || agent.enhanced_prompt || agent.user_prompt}
 
 ${pluginContext}
+
+## Current Date & Time
+Today is: ${readableDate}
+Current timestamp: ${currentDateTime}
+
+IMPORTANT: When the user refers to "today", "now", "this week", etc., use the date/time above as reference.
 
 ## Instructions
 - Use the available functions to accomplish the user's request
@@ -216,6 +233,7 @@ ${pluginContext}
 - Always use the most appropriate function for the task${outputInstructions}`;
 
     console.log(`📬 AgentKit: Output instructions generated from schema`);
+    console.log(`📅 AgentKit: Current date context: ${readableDate}`);
     console.log('\n📊 AGENTKIT DEBUG - SYSTEM PROMPT:\n', systemPrompt);
 
     // STEP 3: Build user message with input values context

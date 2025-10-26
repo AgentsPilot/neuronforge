@@ -98,7 +98,7 @@ export async function POST(req: Request) {
       user_id: user.id,
       agent_name: analysis.agent_name,
       user_prompt: prompt,
-      system_prompt: `You are an agent that accomplishes: ${analysis.workflow_type.replace('_', ' ')}`,
+      system_prompt: analysis.system_prompt,
       description: analysis.description,
       plugins_required: analysis.suggested_plugins,
       connected_plugins: analysis.suggested_plugins,
@@ -156,7 +156,7 @@ export async function POST(req: Request) {
         workflow_steps: analysis.workflow_steps,
         plugins_required: analysis.suggested_plugins,
         connected_plugins: analysis.suggested_plugins,
-        system_prompt: `You are an agent that accomplishes: ${analysis.workflow_type.replace('_', ' ')}`,
+        system_prompt: analysis.system_prompt,
         ai_context: {
           reasoning: analysis.reasoning,
           confidence: Math.round(analysis.confidence * 100),

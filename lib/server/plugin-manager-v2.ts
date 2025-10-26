@@ -157,27 +157,28 @@ export class PluginManagerV2 {
         continue;
       }
 
-      // Check if token is expired
+      // Check if token needs refresh (expires within 5 minutes or already expired)
       if (conn.expires_at) {
-        const isExpired = this.userConnections.isTokenValid(conn.expires_at) === false;
+        const shouldRefresh = this.userConnections.shouldRefreshToken(conn.expires_at, 5);
 
-        if (isExpired) {
+        if (shouldRefresh) {
           // OPTIMIZATION: Skip expensive token refresh for status checks (UI display)
           // Token refresh will happen automatically on actual plugin execution
           if (options.skipTokenRefresh) {
-            if (this.debug) console.log(`DEBUG: Token expired for ${conn.plugin_key}, skipping refresh (status check only)`);
+            if (this.debug) console.log(`DEBUG: Token needs refresh for ${conn.plugin_key}, skipping (status check only)`);
             // Still include the connection - UI will show it as connected but may prompt reconnect on use
             actionableConnections.push(conn);
             continue;
           }
 
-          if (this.debug) console.log(`DEBUG: Token expired for ${conn.plugin_key}, attempting auto-refresh`);
+          const minutesUntilExpiry = Math.floor((new Date(conn.expires_at).getTime() - Date.now()) / 60000);
+          console.log(`🔄 Smart Refresh: Token for ${conn.plugin_key} expires in ${minutesUntilExpiry} minutes, proactively refreshing...`);
 
           // Get plugin definition to access auth config
           const definition = this.plugins.get(conn.plugin_key);
 
           if (!definition) {
-            if (this.debug) console.log(`DEBUG: Cannot refresh ${conn.plugin_key} - plugin definition not found in registry`);
+            console.error(`❌ Cannot refresh ${conn.plugin_key} - plugin definition not found in registry`);
             continue;
           }
 
@@ -188,10 +189,10 @@ export class PluginManagerV2 {
           const refreshedConnection = await this.userConnections.refreshToken(conn, authConfig);
 
           if (refreshedConnection) {
-            if (this.debug) console.log(`DEBUG: Successfully refreshed token for ${conn.plugin_key}`);
+            console.log(`✅ Smart Refresh Success: ${conn.plugin_key} token refreshed proactively`);
             actionableConnections.push(refreshedConnection);
           } else {
-            if (this.debug) console.log(`DEBUG: Failed to refresh token for ${conn.plugin_key} - user needs to reconnect`);
+            console.error(`❌ Smart Refresh Failed: ${conn.plugin_key} - user needs to reconnect`);
             // Skip this plugin - token refresh failed
           }
           continue;

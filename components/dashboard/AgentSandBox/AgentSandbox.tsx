@@ -2,12 +2,13 @@
 
 import React from 'react'
 import { supabase } from '@/lib/supabaseClient'
-import { 
-  Brain, Database, FileText, Cog, CheckCircle, AlertCircle, Clock, Target, 
+import {
+  Brain, Database, FileText, Cog, CheckCircle, AlertCircle, Clock, Target,
   Shield, Lightbulb, Cpu, Activity, Eye, EyeOff, ArrowRight, Play, Send,
   Download, Zap, Settings, Info, ChevronDown, ChevronUp, Loader2, Sparkles,
   Rocket, Timer, Star, Puzzle, Wand2, Coffee, Heart, Smile, PartyPopper,
-  TrendingUp, Award, CheckCircle2, AlertTriangle, Terminal, Gauge, Save
+  TrendingUp, Award, CheckCircle2, AlertTriangle, Terminal, Gauge, Save,
+  Mail, Link, Paperclip, Hash, Calendar, Lock, Phone, List, Package, Type
 } from 'lucide-react'
 
 import { AgentSandboxProps, PHASE_PATTERNS } from './types'
@@ -148,21 +149,7 @@ export default function AgentSandbox(props: AgentSandboxProps) {
               </div>
             </button>
           </div>
-          
-          {executionContext === 'test' && (
-            <button
-              onClick={() => setShowVisualizer(!showVisualizer)}
-              className={`flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-medium transition-all duration-300 ${
-                showVisualizer 
-                  ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-md transform scale-105'
-                  : 'bg-white text-slate-700 border border-slate-200 hover:border-purple-300 hover:shadow-sm'
-              }`}
-            >
-              {showVisualizer ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
-              Live Mode
-            </button>
-          )}
-          
+
           {executionTime && (
             <div className="flex items-center gap-1 px-2 py-1 bg-white rounded-lg border border-green-200 text-green-700">
               <Timer className="h-3 w-3" />
@@ -217,7 +204,7 @@ export default function AgentSandbox(props: AgentSandboxProps) {
               </div>
               <div className="flex items-center gap-2">
                 <div className="text-xs text-slate-600">
-                  {filteredInputSchema.length} field{filteredInputSchema.length !== 1 ? 's' : ''}
+                  {filteredInputSchema.length} input{filteredInputSchema.length !== 1 ? 's' : ''}
                 </div>
                 {expandedSections.inputs ? 
                   <ChevronUp className="h-4 w-4 text-slate-600" /> : 
@@ -253,8 +240,8 @@ export default function AgentSandbox(props: AgentSandboxProps) {
                   <p className={`text-xs ${
                     executionContext === 'test' ? 'text-blue-700' : 'text-green-700'
                   }`}>
-                    {executionContext === 'test' 
-                      ? 'All fields are optional for testing - fill in only what you need. Switch to Configure mode to set required fields for production.'
+                    {executionContext === 'test'
+                      ? 'Fill in the inputs your agent needs to run properly. Missing required information may cause the agent to fail or produce incorrect results.'
                       : 'Please fill out all required fields. These values will be saved and used when your agent is activated.'
                     }
                   </p>
@@ -279,44 +266,84 @@ export default function AgentSandbox(props: AgentSandboxProps) {
                 <div className="space-y-4">
                   {filteredInputSchema.map((field, index) => {
                     const isRequired = isFieldRequiredInCurrentContext(field)
-                    
+
+                    // Transform field name to Title Case
+                    const formatFieldName = (name: string): string => {
+                      return name
+                        .replace(/[_-]/g, ' ')
+                        .replace(/([A-Z])/g, ' $1')
+                        .trim()
+                        .split(' ')
+                        .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                        .join(' ')
+                    }
+
+                    // Get icon based on field type
+                    const getTypeIcon = (type: string) => {
+                      const iconClass = "h-4 w-4 text-slate-600"
+                      const typeMap: { [key: string]: JSX.Element } = {
+                        'string': <Type className={iconClass} />,
+                        'text': <Type className={iconClass} />,
+                        'textarea': <FileText className={iconClass} />,
+                        'email': <Mail className={iconClass} />,
+                        'url': <Link className={iconClass} />,
+                        'file': <Paperclip className={iconClass} />,
+                        'number': <Hash className={iconClass} />,
+                        'integer': <Hash className={iconClass} />,
+                        'boolean': <CheckCircle className={iconClass} />,
+                        'enum': <List className={iconClass} />,
+                        'select': <List className={iconClass} />,
+                        'date': <Calendar className={iconClass} />,
+                        'datetime': <Calendar className={iconClass} />,
+                        'time': <Clock className={iconClass} />,
+                        'password': <Lock className={iconClass} />,
+                        'phone': <Phone className={iconClass} />,
+                        'array': <List className={iconClass} />,
+                        'object': <Package className={iconClass} />
+                      }
+                      return typeMap[type.toLowerCase()] || <Type className={iconClass} />
+                    }
+
                     return (
-                      <div key={index} className="space-y-2">
-                        <label className="block">
-                          <div className="flex items-center gap-2 mb-2">
-                            <span className="text-sm font-medium text-slate-900">
-                              {field.name}
-                            </span>
-                            {isRequired && (
-                              <span className="text-red-500 text-sm">*</span>
-                            )}
-                            {executionContext === 'test' && field.required && (
-                              <span className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full font-medium">
-                                optional in test mode
+                      <div key={index} className="bg-white rounded-lg border border-slate-200 p-4 hover:border-slate-300 transition-all duration-200 hover:shadow-sm">
+                        <label className="block space-y-3">
+                          {/* Header with icon, name, and badges */}
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              {getTypeIcon(field.type)}
+                              <span className="text-sm font-semibold text-slate-900">
+                                {formatFieldName(field.name)}
                               </span>
-                            )}
-                            {executionContext === 'configure' && field.required && (
-                              <span className="bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded-full font-medium">
-                                required for activation
-                              </span>
-                            )}
-                            <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded-full font-medium">
-                              {field.type}
-                            </span>
-                          </div>
-                          
-                          {field.description && (
-                            <div className="mb-2 p-2 bg-blue-50 border border-blue-200 rounded-lg">
-                              <p className="text-xs text-blue-800">{field.description}</p>
+                              {isRequired && (
+                                <span className="text-red-500 text-sm font-bold">*</span>
+                              )}
                             </div>
+                            <div className="flex items-center gap-2">
+                              {executionContext === 'configure' && field.required && (
+                                <span className="bg-red-50 text-red-600 text-xs px-2 py-1 rounded-md font-medium border border-red-200">
+                                  required
+                                </span>
+                              )}
+                              <span className="bg-slate-50 text-slate-600 text-xs px-2 py-1 rounded-md font-medium border border-slate-200">
+                                {field.type}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Description */}
+                          {field.description && (
+                            <p className="text-xs text-slate-600 leading-relaxed">
+                              {field.description}
+                            </p>
                           )}
-                          
+
+                          {/* Input Field */}
                           {field.type === 'enum' || field.type === 'select' ? (
                             <select
-                              className={`w-full px-3 py-2 border rounded-lg text-sm transition-all focus:outline-none focus:ring-2 focus:border-blue-500 bg-white ${
-                                validationErrors[field.name] 
-                                  ? 'border-red-400 focus:ring-red-500 focus:border-red-500 bg-red-50' 
-                                  : 'border-slate-300 hover:border-slate-400 focus:ring-blue-500'
+                              className={`w-full px-4 py-2.5 border rounded-lg text-sm transition-all focus:outline-none focus:ring-2 bg-slate-50 ${
+                                validationErrors[field.name]
+                                  ? 'border-red-300 focus:ring-red-500 focus:border-red-500 focus:bg-red-50'
+                                  : 'border-slate-200 hover:border-blue-300 focus:ring-blue-500 focus:border-blue-500 focus:bg-white'
                               }`}
                               onChange={(e) => handleInputChange(field.name, e.target.value)}
                               value={formData[field.name] || ''}
@@ -330,68 +357,71 @@ export default function AgentSandbox(props: AgentSandboxProps) {
                             </select>
                           ) : field.type === 'file' ? (
                             <div className="space-y-2">
-                              <input
-                                type="file"
-                                accept="application/pdf,image/*,.txt,.csv"
-                                className={`w-full px-3 py-2 border rounded-lg text-sm transition-all focus:outline-none focus:ring-2 focus:border-blue-500 bg-white file:mr-3 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 ${
-                                  validationErrors[field.name] 
-                                    ? 'border-red-400 focus:ring-red-500 focus:border-red-500' 
-                                    : 'border-slate-300 hover:border-slate-400 focus:ring-blue-500'
-                                }`}
-                                onChange={(e) => handleFileUpload(e, field.name)}
-                              />
+                              <div className={`border-2 border-dashed rounded-lg p-4 transition-all ${
+                                validationErrors[field.name]
+                                  ? 'border-red-300 bg-red-50'
+                                  : 'border-slate-300 bg-slate-50 hover:border-blue-400 hover:bg-blue-50'
+                              }`}>
+                                <input
+                                  type="file"
+                                  accept="application/pdf,image/*,.txt,.csv"
+                                  className="w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-500 file:text-white hover:file:bg-blue-600 file:cursor-pointer cursor-pointer"
+                                  onChange={(e) => handleFileUpload(e, field.name)}
+                                />
+                              </div>
                               {formData[field.name] && (
-                                <div className="flex items-center gap-2 text-green-700 text-xs bg-green-50 border border-green-200 rounded-lg p-2">
-                                  <CheckCircle2 className="h-3 w-3" />
-                                  File uploaded successfully
+                                <div className="flex items-center gap-2 text-green-700 text-xs bg-green-50 border border-green-300 rounded-lg p-2.5">
+                                  <CheckCircle2 className="h-4 w-4" />
+                                  <span className="font-medium">File uploaded successfully</span>
                                 </div>
                               )}
                             </div>
                           ) : field.type === 'boolean' ? (
-                            <div className={`flex items-center gap-2 p-2 border rounded-lg ${
-                              validationErrors[field.name] 
-                                ? 'bg-red-50 border-red-300' 
-                                : 'bg-slate-50 border-slate-300'
+                            <div className={`flex items-center gap-3 p-3 border rounded-lg transition-all ${
+                              validationErrors[field.name]
+                                ? 'bg-red-50 border-red-300'
+                                : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
                             }`}>
                               <input
                                 type="checkbox"
                                 id={`field-${field.name}`}
-                                className="rounded border-slate-400 h-3 w-3 text-blue-600 focus:ring-blue-500 focus:ring-2"
+                                className="rounded border-slate-400 h-4 w-4 text-blue-600 focus:ring-blue-500 focus:ring-2"
                                 onChange={(e) => handleInputChange(field.name, e.target.checked)}
                                 checked={formData[field.name] || false}
                               />
-                              <label htmlFor={`field-${field.name}`} className="text-xs text-slate-700 cursor-pointer">
-                                {field.placeholder || `Enable ${field.name}`}
+                              <label htmlFor={`field-${field.name}`} className="text-sm text-slate-700 cursor-pointer font-medium">
+                                {field.placeholder || `Enable ${formatFieldName(field.name)}`}
                               </label>
                             </div>
                           ) : (
                             <input
                               type={
-                                field.type === 'number' ? 'number' : 
-                                field.type === 'date' ? 'date' : 
+                                field.type === 'number' ? 'number' :
+                                field.type === 'date' ? 'date' :
                                 field.type === 'email' ? 'email' :
                                 field.type === 'time' ? 'time' :
                                 'text'
                               }
-                              className={`w-full px-3 py-2 border rounded-lg text-sm transition-all focus:outline-none focus:ring-2 focus:border-blue-500 bg-white ${
-                                validationErrors[field.name] 
-                                  ? 'border-red-400 focus:ring-red-500 focus:border-red-500 bg-red-50' 
-                                  : 'border-slate-300 hover:border-slate-400 focus:ring-blue-500'
+                              className={`w-full px-4 py-2.5 border rounded-lg text-sm transition-all focus:outline-none focus:ring-2 bg-slate-50 ${
+                                validationErrors[field.name]
+                                  ? 'border-red-300 focus:ring-red-500 focus:border-red-500 focus:bg-red-50'
+                                  : 'border-slate-200 hover:border-blue-300 focus:ring-blue-500 focus:border-blue-500 focus:bg-white'
                               }`}
                               placeholder={
-                                field.type === 'time' ? 'HH:MM (e.g., 09:00)' : 
-                                field.placeholder || `Enter ${field.name.toLowerCase()}...`
+                                field.type === 'time' ? 'HH:MM (e.g., 09:00)' :
+                                field.placeholder || `Enter ${formatFieldName(field.name).toLowerCase()}...`
                               }
                               onChange={(e) => handleInputChange(field.name, e.target.value)}
                               value={formData[field.name] || ''}
                             />
                           )}
                         </label>
-                        
+
+                        {/* Validation Error */}
                         {validationErrors[field.name] && (
-                          <div className="flex items-center gap-2 text-red-600 text-xs bg-red-50 border border-red-200 rounded-lg p-2">
-                            <AlertCircle className="h-3 w-3 flex-shrink-0" />
-                            <span>{validationErrors[field.name]}</span>
+                          <div className="flex items-center gap-2 text-red-700 text-xs bg-red-50 border border-red-300 rounded-lg p-2.5 mt-2">
+                            <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                            <span className="font-medium">{validationErrors[field.name]}</span>
                           </div>
                         )}
                       </div>
@@ -404,11 +434,12 @@ export default function AgentSandbox(props: AgentSandboxProps) {
         </div>
 
         {/* Run Controls - More Compact */}
-        <div className="bg-gradient-to-r from-blue-50 via-purple-50 to-pink-50 rounded-xl border border-blue-200 p-4">
-          <div className="text-center space-y-3">
-            <div className="flex items-center justify-center gap-2 mb-3">
-              <div className={`w-8 h-8 rounded-lg flex items-center justify-center shadow-md ${
-                executionContext === 'configure' 
+        <div className="bg-gradient-to-r from-blue-50 via-purple-50 to-pink-50 rounded-xl border border-blue-200 p-3">
+          <div className="flex items-center justify-between gap-4">
+            {/* Left side - Icon and text */}
+            <div className="flex items-center gap-2.5">
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center shadow-sm flex-shrink-0 ${
+                executionContext === 'configure'
                   ? 'bg-gradient-to-br from-green-500 to-emerald-500'
                   : 'bg-gradient-to-br from-purple-500 to-pink-500'
               }`}>
@@ -419,97 +450,71 @@ export default function AgentSandbox(props: AgentSandboxProps) {
                 )}
               </div>
               <div>
-                <h3 className="text-lg font-bold text-slate-900">
-                  {executionContext === 'configure' ? 'Ready to Configure?' : 'Ready to Launch?'}
+                <h3 className="text-sm font-semibold text-slate-900">
+                  {executionContext === 'configure' ? 'Ready to Configure' : 'Ready to Launch'}
                 </h3>
-                <p className="text-slate-600 text-sm">
-                  {executionContext === 'configure' 
-                    ? 'Save your configuration to activate your agent' 
-                    : 'Your agent is waiting to show you what it can do!'
+                <p className="text-slate-600 text-xs">
+                  {executionContext === 'configure'
+                    ? 'Save configuration to activate'
+                    : 'Test your agent now'
                   }
                 </p>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center justify-center gap-3">
-              <button
-                type="submit"
-                className={`px-6 py-3 rounded-xl flex items-center gap-2 font-bold transition-all duration-300 ${
-                  canRun && !loading
-                    ? executionContext === 'configure'
-                      ? 'bg-gradient-to-r from-green-600 to-emerald-600 text-white hover:from-green-700 hover:to-emerald-700 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 hover:scale-105'
-                      : 'bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-700 hover:to-purple-700 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 hover:scale-105'
-                    : 'bg-slate-300 text-slate-500 cursor-not-allowed'
-                }`}
-                disabled={!canRun || loading}
-              >
-                {loading && !showVisualizer ? (
-                  <>
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                    {executionContext === 'test' ? 'Testing...' : 'Saving configuration...'}
-                  </>
-                ) : (
-                  <>
-                    {executionContext === 'configure' ? (
-                      <>
-                        <Save className="h-5 w-5" />
-                        Save & Configure!
-                      </>
-                    ) : (
-                      <>
-                        <Rocket className="h-5 w-5" />
-                        Test Agent!
-                      </>
-                    )}
-                  </>
-                )}
-              </button>
-
-              {showVisualizer && executionContext === 'test' && (
-                <button
-                  type="button"
-                  className={`px-6 py-3 rounded-xl flex items-center gap-2 font-bold transition-all duration-300 ${
-                    canRun && !loading
-                      ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:from-purple-700 hover:to-pink-700 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 hover:scale-105'
-                      : 'bg-slate-300 text-slate-500 cursor-not-allowed'
-                  }`}
-                  onClick={() => handleRun(true)}
-                  disabled={!canRun || loading}
-                >
-                  {loading && showVisualizer && isLiveExecution ? (
+            {/* Right side - Button */}
+            <button
+              type="submit"
+              className={`px-4 py-2 rounded-lg flex items-center gap-2 font-semibold text-sm transition-all duration-200 flex-shrink-0 ${
+                canRun && !loading
+                  ? executionContext === 'configure'
+                    ? 'bg-gradient-to-r from-green-600 to-emerald-600 text-white hover:from-green-700 hover:to-emerald-700 shadow-md hover:shadow-lg'
+                    : 'bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-700 hover:to-purple-700 shadow-md hover:shadow-lg'
+                  : 'bg-slate-300 text-slate-500 cursor-not-allowed'
+              }`}
+              disabled={!canRun || loading}
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {executionContext === 'test' ? 'Running...' : 'Saving...'}
+                </>
+              ) : (
+                <>
+                  {executionContext === 'configure' ? (
                     <>
-                      <Loader2 className="h-5 w-5 animate-spin" />
-                      Live streaming...
+                      <Save className="h-4 w-4" />
+                      Save & Configure
                     </>
                   ) : (
                     <>
-                      <Eye className="h-5 w-5" />
-                      Watch It Work!
+                      <Rocket className="h-4 w-4" />
+                      Test Agent
                     </>
                   )}
-                </button>
+                </>
               )}
-            </div>
-            
-            {!canRun && !loading && (
-              <div className="flex items-center justify-center gap-2 text-amber-700 bg-amber-100 px-3 py-2 rounded-lg border border-amber-200">
-                <AlertTriangle className="h-4 w-4" />
-                <span className="font-medium text-sm">
-                  {missingPlugins.length > 0 
-                    ? 'Connect your tools first!'
-                    : !isFormValid() 
-                    ? `Fill out the required fields above ${executionContext === 'configure' ? 'to save configuration' : ''}`
-                    : 'Unable to proceed'
-                  }
-                </span>
-              </div>
-            )}
+            </button>
           </div>
+
+          {!canRun && !loading && (
+            <div className="flex items-center justify-center gap-2 text-amber-700 bg-amber-100 px-3 py-2 rounded-lg border border-amber-200 mt-3">
+              <AlertTriangle className="h-4 w-4" />
+              <span className="font-medium text-sm">
+                {missingPlugins.length > 0
+                  ? 'Connect your tools first!'
+                  : !isFormValid()
+                  ? `Fill out the required fields above ${executionContext === 'configure' ? 'to save configuration' : ''}`
+                  : 'Unable to proceed'
+                }
+              </span>
+            </div>
+          )}
         </div>
       </form>
 
-      {/* Live Execution Visualizer - Slightly More Compact */}
-      {showVisualizer && executionContext === 'test' && (dynamicPhases.length > 0 || executionLogs.length > 0) && (
+      {/* Removed Live Execution Visualizer */}
+      {false && (
         <div className="relative overflow-hidden">
           <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-purple-900 to-indigo-900 opacity-95 rounded-xl"></div>
           <div className="relative p-4 text-white">
@@ -551,7 +556,7 @@ export default function AgentSandbox(props: AgentSandboxProps) {
               </div>
               <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3 text-center border border-white/20">
                 <div className="text-lg font-bold text-cyan-400">
-                  {executionTime ? formatDuration(executionTime) : formatDuration(executionMetrics.duration)}
+                  {executionTime ? formatDuration(executionTime) : formatDuration(executionMetrics.duration || 0)}
                 </div>
                 <div className="text-slate-300 text-xs">Time</div>
               </div>
@@ -651,8 +656,8 @@ export default function AgentSandbox(props: AgentSandboxProps) {
       {/* Status Message - More Compact */}
       {sendStatus && (
         <div className={`p-3 rounded-xl border flex items-center gap-2 ${
-          sendStatus.includes('successfully') 
-            ? 'bg-green-50 border-green-200 text-green-800' 
+          sendStatus.includes('successfully')
+            ? 'bg-green-50 border-green-200 text-green-800'
             : sendStatus.includes('failed') || sendStatus.includes('Failed')
             ? 'bg-red-50 border-red-200 text-red-800'
             : 'bg-blue-50 border-blue-200 text-blue-800'
@@ -673,11 +678,11 @@ export default function AgentSandbox(props: AgentSandboxProps) {
         </div>
       )}
 
-      {/* Results Display - More Compact */}
+      {/* Results Display */}
       {result && executionContext === 'test' && (
         <div className={`border rounded-xl overflow-hidden ${
-          result.error 
-            ? 'bg-red-50 border-red-200' 
+          result.error
+            ? 'bg-red-50 border-red-200'
             : 'bg-white border-green-200'
         }`}>
           <div className={`p-3 border-b ${
@@ -707,7 +712,7 @@ export default function AgentSandbox(props: AgentSandboxProps) {
                   </p>
                 </div>
               </div>
-              
+
               {!result.error && executionContext === 'test' && (
                 <div className="flex gap-2">
                   {(getPluginStatus('google-mail') && result?.to && result?.subject && result?.body) && (
@@ -739,35 +744,76 @@ export default function AgentSandbox(props: AgentSandboxProps) {
               <div className="bg-white border border-red-200 rounded-lg p-3">
                 <code className="text-red-700 text-xs font-mono">{result.error}</code>
               </div>
-            ) : typeof result === 'object' ? (
+            ) : result.agentkit ? (
+              // AgentKit execution - display the message directly
               <div className="space-y-3">
-                {safeOutputSchema.map((field) => (
-                  <div key={field.name} className="bg-slate-50 border border-slate-200 rounded-lg p-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="font-bold text-slate-900 text-sm">{field.name}</span>
-                      <span className="bg-slate-200 text-slate-700 text-xs px-2 py-0.5 rounded-lg">
-                        {field.type}
-                      </span>
+                <div className="bg-white border border-slate-200 rounded-lg p-4">
+                  <div className="prose prose-sm max-w-none">
+                    <div className="whitespace-pre-wrap text-slate-900 text-sm leading-relaxed">
+                      {result.message || 'Execution completed successfully'}
                     </div>
-                    <div className="text-slate-900">
-                      {result[field.name] ? (
-                        typeof result[field.name] === 'object' ? (
-                          <pre className="text-xs bg-white p-3 rounded-lg overflow-x-auto font-mono border border-slate-200">
-                            {JSON.stringify(result[field.name], null, 2)}
-                          </pre>
-                        ) : (
-                          <div className="break-words bg-white p-3 rounded-lg border border-slate-200 text-sm">
-                            {result[field.name]}
-                          </div>
-                        )
-                      ) : (
-                        <div className="text-slate-500 italic bg-white p-3 rounded-lg border-2 border-dashed border-slate-200 text-center text-sm">
-                          No data was returned for this field
+                  </div>
+                </div>
+
+                {result.data && (
+                  <div className="bg-gradient-to-r from-slate-50 to-gray-50 border border-slate-200 rounded-lg p-3">
+                    <div className="text-xs font-semibold text-slate-600 mb-2 uppercase tracking-wide">Execution Metrics</div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      {result.data.iterations !== undefined && (
+                        <div className="bg-white rounded-lg p-2 border border-slate-200">
+                          <div className="text-xs text-slate-500 mb-1">Steps</div>
+                          <div className="font-semibold text-slate-900">{result.data.iterations}</div>
+                        </div>
+                      )}
+                      {result.data.tool_calls_count !== undefined && (
+                        <div className="bg-white rounded-lg p-2 border border-slate-200">
+                          <div className="text-xs text-slate-500 mb-1">Actions</div>
+                          <div className="font-semibold text-slate-900">{result.data.tool_calls_count}</div>
+                        </div>
+                      )}
+                      {result.data.tokens_used !== undefined && (
+                        <div className="bg-white rounded-lg p-2 border border-slate-200">
+                          <div className="text-xs text-slate-500 mb-1">Tokens</div>
+                          <div className="font-semibold text-slate-900">{result.data.tokens_used.toLocaleString()}</div>
+                        </div>
+                      )}
+                      {result.data.execution_time_ms !== undefined && (
+                        <div className="bg-white rounded-lg p-2 border border-slate-200">
+                          <div className="text-xs text-slate-500 mb-1">Duration</div>
+                          <div className="font-semibold text-slate-900">{(result.data.execution_time_ms / 1000).toFixed(1)}s</div>
                         </div>
                       )}
                     </div>
                   </div>
-                ))}
+                )}
+              </div>
+            ) : typeof result === 'object' ? (
+              // Legacy execution or other structured results - show actual data fields
+              <div className="space-y-3">
+                {Object.entries(result)
+                  .filter(([key]) => key !== 'send_status' && key !== 'agentkit') // Filter out metadata
+                  .map(([key, value]) => (
+                    <div key={key} className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="font-bold text-slate-900 text-sm capitalize">{key.replace(/_/g, ' ')}</span>
+                      </div>
+                      <div className="text-slate-900">
+                        {value !== null && value !== undefined && value !== '' ? (
+                          typeof value === 'object' ? (
+                            <pre className="text-xs bg-white p-3 rounded-lg overflow-x-auto font-mono border border-slate-200">
+                              {JSON.stringify(value, null, 2)}
+                            </pre>
+                          ) : (
+                            <div className="break-words bg-white p-3 rounded-lg border border-slate-200 text-sm">
+                              {String(value)}
+                            </div>
+                          )
+                        ) : (
+                          <div className="text-slate-400 italic text-sm">No data</div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
               </div>
             ) : (
               <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
@@ -777,6 +823,7 @@ export default function AgentSandbox(props: AgentSandboxProps) {
           </div>
         </div>
       )}
+
     </div>
   )
 }

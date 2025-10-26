@@ -76,7 +76,7 @@ export const useAgentGeneration = () => {
       let result;
       let usedVersion = 'v1';
 
-      // OPTION 3: Try AgentKit Direct (simplest & best)
+      // OPTION 3: Try AgentKit Direct (v3-direct - reliable workflow steps + AI system prompt)
       try {
         console.log('🎯 Attempting V2 (AgentKit Direct) generation...');
         response = await fetch('/api/generate-agent-v2', {
@@ -97,7 +97,7 @@ export const useAgentGeneration = () => {
           throw new Error(`V2 failed with status ${response.status}`);
         }
       } catch (v2Error) {
-        console.warn('⚠️ V2 generation failed, falling back to V1:', v2Error);
+        console.warn('⚠️ V2 (AgentKit Direct) generation failed, falling back to V1:', v2Error);
 
         // ========================================
         // 📦 FALLBACK TO V1 (Original GPT-based)

@@ -33,6 +33,7 @@ export interface AnalyzedOutput {
 export interface PromptAnalysisResult {
   agent_name: string;
   description: string;
+  system_prompt: string;  // AgentKit execution system prompt
   workflow_type: 'pure_ai' | 'data_retrieval_ai' | 'ai_external_actions';
   suggested_plugins: string[];
   required_inputs: AnalyzedInput[];
@@ -45,6 +46,98 @@ export interface PromptAnalysisResult {
     completion: number;
     total: number;
   };
+}
+
+/**
+ * Generates an execution-optimized system prompt for AgentKit function calling
+ * This prompt guides the agent during actual execution with function calls
+ */
+function generateExecutionSystemPrompt(
+  userPrompt: string,
+  workflowType: string,
+  workflowSteps: AnalyzedWorkflowStep[],
+  suggestedPlugins: string[]
+): string {
+  // Extract clean objective - detect enhanced prompts and extract from steps instead
+  let objective = userPrompt.substring(0, 150);
+
+  if (userPrompt.includes('**Data Source:**') || userPrompt.includes('**Processing Steps:**')) {
+    // This is an enhanced prompt - extract clean goal from workflow steps
+    const stepDescriptions = workflowSteps
+      .filter(s => s.plugin !== 'ai_processing')
+      .map(s => s.operation)
+      .join(', then ');
+
+    if (stepDescriptions) {
+      objective = stepDescriptions;
+    }
+  }
+
+  // Build workflow overview from steps
+  const workflowOverview = workflowSteps.map((step, idx) => {
+    // Clean up redundant text in operation
+    let cleanOperation = step.operation
+      .replace(new RegExp(`using ${step.plugin}`, 'gi'), '')
+      .replace(new RegExp(`with ${step.plugin}`, 'gi'), '')
+      .replace(new RegExp(step.plugin_action, 'gi'), '')
+      .trim();
+
+    return `${idx + 1}. ${cleanOperation} (${step.plugin}.${step.plugin_action})`;
+  }).join('\n');
+
+  // Build rich system prompt for execution
+  return `You are executing ${workflowType.replace(/_/g, ' ')} automation.
+
+OBJECTIVE:
+${objective}
+
+WORKFLOW:
+${workflowOverview}
+
+AVAILABLE SERVICES:
+${suggestedPlugins.join(', ')}
+
+EXECUTION RULES:
+1. Follow the workflow steps in sequence
+2. Use function calls ONLY to retrieve or save data to external services
+3. Use your built-in AI for all data processing, analysis, and summarization
+4. Handle errors gracefully and report them
+5. Return structured results
+
+EFFICIENCY - CRITICAL:
+You are a powerful AI with built-in capabilities for:
+- Text summarization (any length, any amount)
+- Data analysis and processing
+- Information extraction and formatting
+- Content generation and transformation
+
+🚫 PROHIBITED PATTERNS (will waste resources):
+- Calling summarize/process functions in loops (e.g., for each email/item/row)
+- Making the same function call multiple times with different data
+- Using external functions for tasks you can do natively with your AI
+
+✅ REQUIRED PATTERNS (efficient execution):
+- Retrieve all data in ONE function call
+- Process/analyze/summarize ALL data using your AI brain (NO function calls)
+- Send/save final results in ONE function call
+
+EXAMPLES:
+Task: "Summarize 10 emails"
+❌ WRONG: search_emails → summarize_content (x10) → send_email (12 calls)
+✅ RIGHT: search_emails → [AI summarizes all 10] → send_email (2 calls)
+
+Task: "Analyze data from sheet and send to Slack"
+❌ WRONG: read_sheet → process_row (x100) → send_slack (102 calls)
+✅ RIGHT: read_sheet → [AI analyzes all rows] → send_slack (2 calls)
+
+Task: "Research 3 topics and create report"
+✅ RIGHT: research(topic1) → research(topic2) → research(topic3) → [AI combines] → save_report (4 calls)
+Note: Multiple research calls are OK because each retrieves DIFFERENT external data
+
+RULE OF THUMB:
+- Count of function calls should be: (# of data sources) + (# of destinations) + small constant
+- NOT proportional to number of items being processed
+- Most tasks: 2-5 function calls total, regardless of data volume`;
 }
 
 /**
@@ -82,12 +175,20 @@ ${pluginContext}
 2. **NEVER add plugins "just in case" or as defaults**
 3. **Identify ALL required inputs** - check each plugin action's parameters
 4. **If a parameter is missing, add it as a required input**
+5. **DO NOT use chatgpt-research for basic summarization - use ai_processing instead**
+6. **ONLY use chatgpt-research when user asks to "research" or "find information about" topics**
 
-# Examples:
-- "Summarize text" → NO plugins (pure AI)
+# Plugin Selection Examples:
+- "Summarize my emails" → google-mail ONLY (ai_processing handles summary)
+- "Analyze data and email results" → google-mail ONLY (ai_processing handles analysis)
 - "Email me results" → google-mail + need recipient_email input
 - "Send to my sheet" → google-sheets + need spreadsheet_id and range inputs
-- "Research AI trends" → chatgpt-research (platform plugin, always available)
+- "Research AI trends and email report" → chatgpt-research + google-mail (actual research task)
+- "Find information about quantum computing" → chatgpt-research (web research needed)
+
+# When to use ai_processing vs chatgpt-research:
+- Summarize, analyze, process existing data → ai_processing (NO plugin needed)
+- Research topics, find information online → chatgpt-research plugin
 
 # Response Format:
 Return a JSON object with:
@@ -219,18 +320,30 @@ For each plugin action in workflow_steps:
       );
     }
 
+    // Prepare workflow steps (with fallback)
+    const workflowSteps = analysis.workflow_steps || [{
+      operation: 'Process request',
+      plugin: 'ai_processing',
+      plugin_action: 'process',
+      reasoning: 'Default AI processing'
+    }];
+
+    // Generate execution-optimized system prompt
+    const executionSystemPrompt = generateExecutionSystemPrompt(
+      userPrompt,
+      analysis.workflow_type || 'pure_ai',
+      workflowSteps,
+      validPlugins
+    );
+
     const result: PromptAnalysisResult = {
       agent_name: analysis.agent_name || 'Custom Agent',
       description: analysis.description || userPrompt.substring(0, 100),
+      system_prompt: executionSystemPrompt,
       workflow_type: analysis.workflow_type || 'pure_ai',
       suggested_plugins: validPlugins,
       required_inputs: analysis.required_inputs || [],
-      workflow_steps: analysis.workflow_steps || [{
-        operation: 'Process request',
-        plugin: 'ai_processing',
-        plugin_action: 'process',
-        reasoning: 'Default AI processing'
-      }],
+      workflow_steps: workflowSteps,
       suggested_outputs: analysis.suggested_outputs || [],  // NEW: Parse outputs from SDK
       reasoning: analysis.reasoning || 'Direct AgentKit analysis',
       confidence: analysis.confidence || 0.85,
@@ -252,19 +365,31 @@ For each plugin action in workflow_steps:
   } catch (error: any) {
     console.error('❌ AgentKit Direct: Analysis failed:', error);
 
+    // Fallback workflow steps
+    const fallbackSteps = [{
+      operation: 'Process user request',
+      plugin: 'ai_processing',
+      plugin_action: 'process',
+      reasoning: 'Fallback due to analysis error'
+    }];
+
+    // Generate fallback system prompt
+    const fallbackSystemPrompt = generateExecutionSystemPrompt(
+      userPrompt,
+      'pure_ai',
+      fallbackSteps,
+      []
+    );
+
     // Fallback
     return {
       agent_name: 'Custom Agent',
       description: 'AI-powered automation agent',
+      system_prompt: fallbackSystemPrompt,
       workflow_type: 'pure_ai',
       suggested_plugins: [],
       required_inputs: [],
-      workflow_steps: [{
-        operation: 'Process user request',
-        plugin: 'ai_processing',
-        plugin_action: 'process',
-        reasoning: 'Fallback due to analysis error'
-      }],
+      workflow_steps: fallbackSteps,
       suggested_outputs: [],  // NEW: Empty outputs for fallback
       reasoning: `Analysis failed: ${error.message}. Using fallback.`,
       confidence: 0.5

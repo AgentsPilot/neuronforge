@@ -886,16 +886,16 @@ export function useAgentSandbox({
           setSavedConfiguration(formData)
           setIsConfigurationSaved(true)
           setSendStatus('✅ Configuration saved successfully! Your agent is now activated and ready to use.')
-          setResult({ message: 'Agent configuration saved successfully' })
-          
+          // Don't set result for configuration saves - only for actual executions
+
           // Notify parent component about configuration completion
           if (onExecutionComplete) {
             onExecutionComplete(configId)
           }
-          
+
           return true
         } catch (configError: any) {
-          setResult({ error: configError.message })
+          // Don't set result for configuration errors either - use sendStatus
           setSendStatus(`❌ Failed to save configuration: ${configError.message}`)
           return false
         }
@@ -1064,7 +1064,12 @@ export function useAgentSandbox({
   const handleSendEmail = async () => {
     if (result && result.to && result.subject && result.body) {
       try {
-        await sendEmailDraft(user?.id!, result)
+        await sendEmailDraft({
+          userId: user?.id!,
+          to: result.to,
+          subject: result.subject,
+          body: result.body
+        })
         setSendStatus('Email sent successfully via Gmail.')
       } catch (error) {
         setSendStatus('Failed to send email.')

@@ -24,12 +24,101 @@ export interface AnalyzedInput {
 export interface PromptAnalysisResult {
   agent_name: string;
   description: string;
+  system_prompt: string;  // AgentKit execution system prompt
   workflow_type: 'pure_ai' | 'data_retrieval_ai' | 'ai_external_actions';
   suggested_plugins: string[];
   required_inputs: AnalyzedInput[];
   workflow_steps: AnalyzedWorkflowStep[];
   reasoning: string;
   confidence: number;
+}
+
+/**
+ * Generate execution-optimized system prompt for AgentKit
+ */
+function generateExecutionSystemPrompt(
+  userPrompt: string,
+  workflowType: 'pure_ai' | 'data_retrieval_ai' | 'ai_external_actions',
+  workflowSteps: AnalyzedWorkflowStep[],
+  requiredInputs: AnalyzedInput[]
+): string {
+  // Extract automation type from user prompt or workflow type
+  const automationType = workflowType === 'pure_ai'
+    ? 'AI processing automation'
+    : workflowType === 'data_retrieval_ai'
+    ? 'data retrieval automation'
+    : 'workflow automation';
+
+  // Extract clean objective from user prompt
+  // If it's an enhanced prompt (contains **Data Source:**), extract from workflow steps
+  // Otherwise use the user prompt as-is
+  let objective: string;
+  if (userPrompt.includes('**Data Source:**') || userPrompt.includes('**Processing Steps:**')) {
+    // Enhanced prompt - extract objective from workflow steps
+    const stepDescriptions = workflowSteps
+      .filter(s => s.plugin !== 'ai_processing')
+      .map(s => s.operation)
+      .join(', then ');
+    objective = stepDescriptions || userPrompt.substring(0, 100);
+  } else {
+    // Simple user prompt - use as-is (truncate if too long)
+    objective = userPrompt.length > 150
+      ? userPrompt.substring(0, 147) + '...'
+      : userPrompt;
+  }
+
+  // Build workflow section with cleaner descriptions
+  const workflowSection = workflowSteps
+    .map((step, idx) => {
+      if (step.plugin === 'ai_processing') {
+        return `${idx + 1}. Process: ${step.operation}`;
+      } else {
+        // Find input fields referenced in this step
+        const stepInputs = requiredInputs
+          .filter(input => step.operation.toLowerCase().includes(input.name.toLowerCase()))
+          .map(input => `use input: ${input.name}`)
+          .join(', ');
+
+        const inputRef = stepInputs ? ` (${stepInputs})` : '';
+
+        // Clean up the operation description - remove redundant plugin mentions
+        let cleanOperation = step.operation
+          .replace(new RegExp(`using ${step.plugin}`, 'gi'), '')
+          .replace(new RegExp(`with ${step.plugin}`, 'gi'), '')
+          .replace(new RegExp(step.plugin_action, 'gi'), '')
+          .trim();
+
+        // If operation is now empty or just the action name, create a better description
+        if (!cleanOperation || cleanOperation === step.plugin_action) {
+          cleanOperation = step.plugin_action.replace(/_/g, ' ');
+        }
+
+        return `${idx + 1}. Call ${step.plugin}.${step.plugin_action} to ${cleanOperation}${inputRef}`;
+      }
+    })
+    .join('\n');
+
+  // Build inputs section
+  const inputsSection = requiredInputs.length > 0
+    ? requiredInputs.map(input => `${input.name} (${input.type})`).join(', ')
+    : 'None required';
+
+  // Build error handling based on workflow type
+  const errorHandling = workflowType === 'pure_ai'
+    ? 'If processing fails, report the specific error. For large inputs, process in chunks.'
+    : 'Retry failed function calls once with exponential backoff. Report authentication or connectivity issues clearly. Log errors with context.';
+
+  // Construct the system prompt
+  return `You are executing ${automationType}.
+
+OBJECTIVE: ${objective}
+
+WORKFLOW:
+${workflowSection}
+
+INPUTS AVAILABLE: ${inputsSection}
+
+ERROR HANDLING: ${errorHandling}`;
 }
 
 /**
@@ -61,36 +150,35 @@ export async function analyzePromptWithAgentKitSDK(
     console.log(`🔧 AgentKit SDK: Loaded ${tools.length} available actions`);
 
     // STEP 2: Create planning prompt
-    // Ask OpenAI to PLAN the workflow, not execute it
-    const planningPrompt = `You are a workflow planning assistant. Your job is to analyze the user's request and create a detailed execution plan.
+    // Ask OpenAI to demonstrate what tool calls would be needed
+    const planningPrompt = `Analyze this automation request and demonstrate the complete workflow by making the necessary function calls.
 
 USER REQUEST:
 """
 ${userPrompt}
 """
 
-YOUR TASK:
-1. **Analyze** what the user wants to accomplish
-2. **Identify** which available functions/tools are needed
-3. **Plan** the step-by-step workflow (DO NOT execute - just plan!)
-4. **Determine** what inputs are missing that we'd need to ask the user for
+INSTRUCTIONS:
+1. Identify ALL the steps needed to complete this request from start to finish
+2. For EACH step, make the corresponding function call with placeholder values
+3. Make ALL the calls in sequence - don't skip any steps
 
-IMPORTANT PLANNING RULES:
-- ONLY suggest tools that are explicitly needed for this request
-- If the request can be done with pure AI (no external data/actions), say so
-- Be specific about which tools to use and in what order
-- Identify any missing information we'd need from the user
+EXAMPLES:
+- "Read emails and send summary" → Call search_emails, then call send_email
+- "Get data and save to sheet" → Call to retrieve data, then call to append to sheet
+- "Summarize text" → No function calls needed (pure AI)
 
-Please describe your plan in detail, including:
-- What tools you would use (if any)
-- What order to use them in
-- What information is missing that we'd need from the user
-- Your confidence level (0-1) in this plan`;
+IMPORTANT:
+- Use placeholder values like "{{recipient}}" for missing information
+- Make function calls in the correct order
+- Include ALL steps - both reading/getting data AND sending/saving results
+
+Now demonstrate the complete workflow for the user's request by making all necessary function calls:`;
 
     const messages: ChatCompletionMessageParam[] = [
       {
         role: "system",
-        content: "You are a precise workflow planning assistant. You analyze requests and create detailed execution plans using available tools. You PLAN workflows but don't execute them."
+        content: "You are a workflow execution planner. When given a user request, you demonstrate the workflow by making the exact function calls that would be needed, in the correct order. Use placeholder values for missing information."
       },
       { role: "user", content: planningPrompt }
     ];
@@ -200,18 +288,31 @@ Please describe your plan in detail, including:
     // Generate agent name from prompt (simple extraction)
     const agentName = generateAgentName(userPrompt);
 
+    // STEP 6: Generate execution system prompt for AgentKit
+    const workflowStepsToUse = workflowSteps.length > 0 ? workflowSteps : [{
+      operation: 'Process with AI',
+      plugin: 'ai_processing',
+      plugin_action: 'process',
+      reasoning: 'No external tools needed - pure AI processing'
+    }];
+
+    const requiredInputsArray = Array.from(requiredInputsMap.values());
+
+    const systemPrompt = generateExecutionSystemPrompt(
+      userPrompt,
+      workflowType,
+      workflowStepsToUse,
+      requiredInputsArray
+    );
+
     const result: PromptAnalysisResult = {
       agent_name: agentName,
       description: userPrompt.length > 100 ? userPrompt.substring(0, 97) + '...' : userPrompt,
+      system_prompt: systemPrompt,
       workflow_type: workflowType,
       suggested_plugins: suggestedPlugins,
-      required_inputs: Array.from(requiredInputsMap.values()),
-      workflow_steps: workflowSteps.length > 0 ? workflowSteps : [{
-        operation: 'Process with AI',
-        plugin: 'ai_processing',
-        plugin_action: 'process',
-        reasoning: 'No external tools needed - pure AI processing'
-      }],
+      required_inputs: requiredInputsArray,
+      workflow_steps: workflowStepsToUse,
       reasoning: `AgentKit SDK Planning: ${suggestedPlugins.length > 0 ? `Identified ${suggestedPlugins.length} plugin(s) needed` : 'Pure AI processing, no plugins required'}`,
       confidence: 0.9
     };
@@ -222,8 +323,13 @@ Please describe your plan in detail, including:
       suggested_plugins: result.suggested_plugins,
       input_count: result.required_inputs.length,
       step_count: result.workflow_steps.length,
-      confidence: result.confidence
+      confidence: result.confidence,
+      has_system_prompt: !!result.system_prompt
     });
+
+    console.log('\n📝 Generated System Prompt:');
+    console.log(result.system_prompt);
+    console.log('---');
 
     return result;
 
@@ -231,18 +337,28 @@ Please describe your plan in detail, including:
     console.error('❌ AgentKit SDK: Planning failed:', error);
 
     // Fallback to minimal analysis
+    const fallbackSteps = [{
+      operation: 'Process user request',
+      plugin: 'ai_processing',
+      plugin_action: 'process',
+      reasoning: 'Fallback to AI processing due to planning error'
+    }];
+
+    const fallbackSystemPrompt = generateExecutionSystemPrompt(
+      userPrompt,
+      'pure_ai',
+      fallbackSteps,
+      []
+    );
+
     return {
       agent_name: 'Custom Agent',
       description: 'AI-powered automation agent',
+      system_prompt: fallbackSystemPrompt,
       workflow_type: 'pure_ai',
       suggested_plugins: [],
       required_inputs: [],
-      workflow_steps: [{
-        operation: 'Process user request',
-        plugin: 'ai_processing',
-        plugin_action: 'process',
-        reasoning: 'Fallback to AI processing due to planning error'
-      }],
+      workflow_steps: fallbackSteps,
       reasoning: `Planning failed: ${error.message}. Using fallback configuration.`,
       confidence: 0.5
     };

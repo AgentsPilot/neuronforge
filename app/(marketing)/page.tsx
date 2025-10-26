@@ -25,7 +25,10 @@ import {
   FileSearch,
   Link,
   BarChart3,
-  Rocket
+  Rocket,
+  Workflow,
+  Repeat,
+  Network
 } from 'lucide-react';
 import { SiGmail, SiSlack, SiNotion, SiGoogledrive, SiGooglecalendar, SiHubspot } from 'react-icons/si';
 
@@ -338,72 +341,46 @@ const HeroAnimation = () => {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.4 }}
-              className="flex flex-col items-center gap-4 md:gap-8 w-full max-w-4xl mx-auto"
+              className="flex flex-col items-center gap-3 md:gap-5 w-full max-w-2xl mx-auto"
             >
               <motion.h2
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="text-xl md:text-3xl text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400 font-bold mb-2 md:mb-4 flex items-center justify-center gap-2 md:gap-3 text-center"
+                className="text-lg md:text-2xl text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400 font-bold flex items-center justify-center gap-2 text-center"
               >
                 <motion.div
                   animate={{ rotate: [0, 360] }}
                   transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
                 >
-                  <Settings className="w-6 h-6 md:w-8 md:h-8 text-blue-400 flex-shrink-0" />
+                  <Settings className="w-5 h-5 md:w-6 md:h-6 text-blue-400 flex-shrink-0" />
                 </motion.div>
                 Building Your Workflow
               </motion.h2>
 
-              {/* Workflow Builder Visualization */}
-              <div className="relative w-full bg-gradient-to-br from-slate-900 to-slate-800 rounded-xl md:rounded-2xl p-3 md:p-5 border border-blue-500/30 shadow-2xl">
+              {/* Workflow Builder Visualization - Compact Modern Design */}
+              <div className="relative w-full bg-slate-900/50 backdrop-blur-sm rounded-lg md:rounded-xl p-4 md:p-5 border border-blue-500/20 shadow-xl">
                 <div className="relative">
-                  {/* AI Brain Building Animation */}
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.8 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="flex justify-center mb-3 md:mb-4"
-                  >
-                    <div className="relative">
-                      <motion.div
-                        animate={{
-                          scale: [1, 1.2, 1],
-                          opacity: [0.5, 0.8, 0.5]
-                        }}
-                        transition={{
-                          duration: 2,
-                          repeat: Infinity,
-                          ease: "easeInOut"
-                        }}
-                        className="absolute inset-0 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full blur-xl"
-                      />
-                      <div className="relative w-10 h-10 md:w-14 md:h-14 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center">
-                        <Brain className="w-6 h-6 md:w-8 md:h-8 text-white" />
-                      </div>
-                    </div>
-                  </motion.div>
-
-                  {/* Building Steps - Staggered appearance */}
-                  <div className="space-y-1.5 md:space-y-2">
+                  {/* Building Steps - Compact grid layout */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3">
                     {[
-                      { icon: <FileSearch className="w-5 h-5 md:w-6 md:h-6 text-blue-400" />, text: 'Analyzing your prompt...', delay: 0 },
-                      { icon: <Link className="w-5 h-5 md:w-6 md:h-6 text-purple-400" />, text: 'Detecting plugins (Gmail, Slack)', delay: 0.4 },
-                      { icon: <Settings className="w-5 h-5 md:w-6 md:h-6 text-cyan-400" />, text: 'Generating workflow logic', delay: 0.8 },
-                      { icon: <BarChart3 className="w-5 h-5 md:w-6 md:h-6 text-green-400" />, text: 'Creating schemas', delay: 1.2 },
-                      { icon: <Rocket className="w-5 h-5 md:w-6 md:h-6 text-pink-400" />, text: 'Optimizing flow', delay: 1.6 }
+                      { icon: <FileSearch className="w-4 h-4 text-blue-400" />, text: 'Analyzing prompt', delay: 0 },
+                      { icon: <Link className="w-4 h-4 text-purple-400" />, text: 'Detecting plugins', delay: 0.3 },
+                      { icon: <Settings className="w-4 h-4 text-cyan-400" />, text: 'Building logic', delay: 0.6 },
+                      { icon: <BarChart3 className="w-4 h-4 text-green-400" />, text: 'Creating schemas', delay: 0.9 }
                     ].map((step, index) => (
                       <motion.div
                         key={index}
-                        initial={{ opacity: 0, x: -30 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: step.delay, duration: 0.5 }}
-                        className="flex items-center gap-2 md:gap-3 bg-slate-800 rounded-lg md:rounded-xl p-2.5 md:p-3 border border-white/10 relative z-10"
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ delay: step.delay, duration: 0.4 }}
+                        className="flex items-center gap-2 bg-slate-800/50 rounded-lg p-2 border border-white/5 relative overflow-hidden"
                       >
                         <motion.div
-                          initial={{ scale: 0, rotate: -180 }}
-                          animate={{ scale: 1, rotate: 0 }}
+                          initial={{ scale: 0 }}
+                          animate={{ scale: 1 }}
                           transition={{
                             delay: step.delay,
-                            duration: 0.5,
+                            duration: 0.3,
                             type: "spring",
                             stiffness: 200
                           }}
@@ -411,65 +388,63 @@ const HeroAnimation = () => {
                         >
                           {step.icon}
                         </motion.div>
-                        <div className="flex-1">
-                          <p className="text-white font-medium text-xs md:text-sm">{step.text}</p>
-                          <motion.div
-                            initial={{ width: '0%' }}
-                            animate={{ width: '100%' }}
-                            transition={{ delay: step.delay + 0.2, duration: 0.8 }}
-                            className="h-0.5 md:h-1 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full mt-1.5 md:mt-2"
-                          />
-                        </div>
+                        <p className="text-white font-medium text-xs flex-1">{step.text}</p>
                         <motion.div
                           initial={{ scale: 0 }}
                           animate={{ scale: 1 }}
                           transition={{
-                            delay: step.delay + 1,
+                            delay: step.delay + 0.6,
                             type: "spring",
                             stiffness: 200
                           }}
                           className="flex-shrink-0"
                         >
-                          <CheckCircle className="w-5 h-5 md:w-6 md:h-6 text-green-400" />
+                          <CheckCircle className="w-4 h-4 text-green-400" />
                         </motion.div>
+                        {/* Progress bar */}
+                        <motion.div
+                          initial={{ scaleX: 0 }}
+                          animate={{ scaleX: 1 }}
+                          transition={{ delay: step.delay + 0.2, duration: 0.6 }}
+                          className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-blue-500 to-purple-500 origin-left"
+                        />
                       </motion.div>
                     ))}
                   </div>
 
-                  {/* Final Workflow Preview */}
+                  {/* Final Workflow Preview - Compact */}
                   <motion.div
-                    initial={{ opacity: 0, y: 20 }}
+                    initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 2.2, duration: 0.5 }}
-                    className="mt-4 md:mt-6 pt-4 md:pt-6 border-t border-blue-500/30"
+                    transition={{ delay: 1.5, duration: 0.4 }}
+                    className="mt-4 pt-4 border-t border-blue-500/20"
                   >
-                    <p className="text-center text-xs md:text-sm text-slate-400 mb-3 md:mb-4">Your workflow is ready:</p>
-                    <div className="flex items-center justify-center gap-2 md:gap-3 flex-wrap">
-                      <div className="flex items-center gap-1.5 md:gap-2 bg-slate-800 px-2 md:px-3 py-1.5 md:py-2 rounded-lg border border-white/10 relative z-10">
-                        <SiGmail className="w-5 h-5 md:w-6 md:h-6 text-red-500" />
-                        <span className="text-white font-medium text-xs md:text-sm">Gmail</span>
+                    <div className="flex items-center justify-center gap-2 flex-wrap">
+                      <div className="flex items-center gap-1.5 bg-slate-800/50 px-2 py-1.5 rounded-md border border-white/5">
+                        <SiGmail className="w-4 h-4 text-red-500" />
+                        <span className="text-white font-medium text-xs">Gmail</span>
                       </div>
                       <motion.div
-                        animate={{ x: [0, 5, 0] }}
+                        animate={{ x: [0, 3, 0] }}
                         transition={{ duration: 1.5, repeat: Infinity }}
-                        className="text-blue-400 text-sm md:text-base"
+                        className="text-blue-400 text-sm"
                       >
                         →
                       </motion.div>
-                      <div className="flex items-center gap-1.5 md:gap-2 bg-slate-800 px-2 md:px-3 py-1.5 md:py-2 rounded-lg border border-white/10 relative z-10">
-                        <Brain className="w-5 h-5 md:w-6 md:h-6 text-purple-500" />
-                        <span className="text-white font-medium text-xs md:text-sm">AI Agent</span>
+                      <div className="flex items-center gap-1.5 bg-slate-800/50 px-2 py-1.5 rounded-md border border-white/5">
+                        <Brain className="w-4 h-4 text-purple-500" />
+                        <span className="text-white font-medium text-xs">AI Agent</span>
                       </div>
                       <motion.div
-                        animate={{ x: [0, 5, 0] }}
+                        animate={{ x: [0, 3, 0] }}
                         transition={{ duration: 1.5, repeat: Infinity, delay: 0.3 }}
-                        className="text-purple-400 text-sm md:text-base"
+                        className="text-purple-400 text-sm"
                       >
                         →
                       </motion.div>
-                      <div className="flex items-center gap-1.5 md:gap-2 bg-slate-800 px-2 md:px-3 py-1.5 md:py-2 rounded-lg border border-white/10 relative z-10">
-                        <SiSlack className="w-5 h-5 md:w-6 md:h-6 text-[#4A154B]" />
-                        <span className="text-white font-medium text-xs md:text-sm">Slack</span>
+                      <div className="flex items-center gap-1.5 bg-slate-800/50 px-2 py-1.5 rounded-md border border-white/5">
+                        <SiSlack className="w-4 h-4 text-[#4A154B]" />
+                        <span className="text-white font-medium text-xs">Slack</span>
                       </div>
                     </div>
                   </motion.div>
@@ -702,52 +677,288 @@ export default function AgentPilotLanding() {
         />
       </div>
 
-      {/* Hero Section */}
-      <section className="relative z-10 pt-12 md:pt-20 pb-12 md:pb-20">
-        <div className="max-w-7xl mx-auto px-6">
-          {/* Hero Text */}
+      {/* AI Intelligence Hero Banner - Full Width Top Section */}
+      <section className="relative z-10 w-full overflow-hidden">
+        {/* Animated gradient background */}
+        <div className="absolute inset-0 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8 }}
-            className="text-center mb-8 md:mb-12"
-          >
-            <motion.h1 
-              className="text-5xl md:text-7xl font-black mb-6 leading-tight"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.8, delay: 0.2 }}
-            >
-              <span className="bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
-                Your Personal AI Workforce
-              </span>
-              <br />
-              <span className="text-white">Ready in Minutes</span>
-            </motion.h1>
-            
-            <motion.p
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.8, delay: 0.4 }}
-              className="text-xl md:text-2xl text-slate-300 max-w-4xl mx-auto mb-8 leading-relaxed"
-            >
-              AgentPilot turns natural language into real, working AI automations — no code, no setup.
-              <br />
-              Just describe what you want, connect your tools once, and your personal AI pilot does the rest.
-            </motion.p>
-            
+            animate={{
+              backgroundPosition: ['0% 0%', '100% 100%'],
+            }}
+            transition={{ duration: 20, repeat: Infinity, repeatType: "reverse", ease: "linear" }}
+            className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-blue-900/20 via-transparent to-purple-900/20 bg-[length:200%_200%]"
+          />
+        </div>
+
+        {/* Subtle circuit board pattern */}
+        <div className="absolute inset-0 opacity-5">
+          <svg className="w-full h-full" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <pattern id="circuit-hero" x="0" y="0" width="120" height="120" patternUnits="userSpaceOnUse">
+                <path d="M10 10h30v30M40 40v30h30M90 10h-30v30M60 40v30h-30"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      fill="none"
+                      className="text-blue-400" />
+                <circle cx="10" cy="10" r="2" fill="currentColor" className="text-blue-400" />
+                <circle cx="40" cy="40" r="2" fill="currentColor" className="text-purple-400" />
+                <circle cx="70" cy="70" r="2" fill="currentColor" className="text-pink-400" />
+                <circle cx="90" cy="10" r="2" fill="currentColor" className="text-cyan-400" />
+              </pattern>
+            </defs>
+            <rect width="100%" height="100%" fill="url(#circuit-hero)" />
+          </svg>
+        </div>
+
+        <div className="relative max-w-7xl mx-auto px-6 lg:px-8 py-12 md:py-16 lg:py-20">
+          <div className="grid lg:grid-cols-2 gap-12 items-center">
+
+            {/* Left side - Text content - Reorganized */}
             <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.8, delay: 0.6 }}
-              className="flex flex-col sm:flex-row items-center justify-center gap-4"
+              initial={{ opacity: 0, x: -40 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 1, delay: 0.2 }}
+              className="space-y-8 max-w-xl"
             >
-              <button className="group px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl font-bold text-lg hover:shadow-2xl hover:shadow-purple-500/50 transition flex items-center gap-2">
-                Create Your First Agent
-                <ArrowRight className="w-5 h-5" />
-              </button>
+              {/* Main heading - Split across lines */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.8, delay: 0.3 }}
+                className="space-y-2"
+              >
+                <h1 className="text-4xl md:text-5xl lg:text-6xl font-black leading-tight">
+                  <span className="bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent block">
+                    Your Personal
+                  </span>
+                  <span className="bg-gradient-to-r from-purple-400 via-pink-400 to-blue-400 bg-clip-text text-transparent block">
+                    AI Workforce
+                  </span>
+                </h1>
+                <p className="text-xl md:text-2xl text-slate-400 font-medium">
+                  Ready in Minutes
+                </p>
+              </motion.div>
+
+              {/* Description */}
+              <motion.p
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.8, delay: 0.4 }}
+                className="text-base md:text-lg text-slate-300 leading-relaxed"
+              >
+                AgentPilot turns natural language into real, working AI automations. No code, no setup. Just describe what you want, connect your tools once, and your personal AI pilot does the rest.
+              </motion.p>
+
+              {/* CTA Button */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.8, delay: 0.5 }}
+              >
+                <a href="/signup">
+                  <button className="group relative px-8 py-3 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-xl font-bold text-base text-white hover:shadow-2xl hover:shadow-purple-500/50 transition-all duration-300 hover:scale-105 overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-r from-pink-500 via-purple-500 to-blue-500 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                    <span className="relative flex items-center justify-center gap-2">
+                      Create Your First Agent
+                      <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                    </span>
+                  </button>
+                </a>
+              </motion.div>
+
+              {/* Trust indicators - Single horizontal line */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.8, delay: 0.6 }}
+                className="flex flex-wrap items-center gap-4 pt-4 border-t border-white/10 text-sm text-slate-400"
+              >
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-green-400" />
+                  <span>No credit card required</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-green-400" />
+                  <span>Free beta access</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-green-400" />
+                  <span>Setup in under 2 minutes</span>
+                </div>
+              </motion.div>
             </motion.div>
-          </motion.div>
+
+            {/* Right side - Futuristic AI visual */}
+            <motion.div
+              initial={{ opacity: 0, x: 40, scale: 0.9 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              transition={{ duration: 1, delay: 0.4 }}
+              className="relative flex items-center justify-center lg:justify-end"
+            >
+              {/* Animated circuit connections - Top corners */}
+              <svg className="absolute top-0 right-0 w-64 h-64 opacity-30" xmlns="http://www.w3.org/2000/svg">
+                <motion.path
+                  d="M 20 20 L 100 20 L 100 80 L 180 80"
+                  stroke="url(#grad-top)"
+                  strokeWidth="2"
+                  fill="none"
+                  initial={{ pathLength: 0, opacity: 0 }}
+                  animate={{ pathLength: 1, opacity: 0.6 }}
+                  transition={{ duration: 2, repeat: Infinity, repeatType: "reverse" }}
+                />
+                <motion.circle cx="100" cy="20" r="5" fill="#60A5FA" animate={{ scale: [1, 1.3, 1], opacity: [0.5, 1, 0.5] }} transition={{ duration: 2, repeat: Infinity }} />
+                <motion.circle cx="180" cy="80" r="5" fill="#A78BFA" animate={{ scale: [1, 1.3, 1], opacity: [0.5, 1, 0.5] }} transition={{ duration: 2, repeat: Infinity, delay: 0.5 }} />
+                <defs>
+                  <linearGradient id="grad-top" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stopColor="#60A5FA" stopOpacity="0.8" />
+                    <stop offset="100%" stopColor="#A78BFA" stopOpacity="0.8" />
+                  </linearGradient>
+                </defs>
+              </svg>
+
+              <svg className="absolute bottom-0 left-0 w-64 h-64 opacity-30" xmlns="http://www.w3.org/2000/svg">
+                <motion.path
+                  d="M 20 240 L 100 240 L 100 180 L 180 180"
+                  stroke="url(#grad-bottom)"
+                  strokeWidth="2"
+                  fill="none"
+                  initial={{ pathLength: 0, opacity: 0 }}
+                  animate={{ pathLength: 1, opacity: 0.6 }}
+                  transition={{ duration: 2, repeat: Infinity, repeatType: "reverse", delay: 1 }}
+                />
+                <motion.circle cx="20" cy="240" r="5" fill="#06B6D4" animate={{ scale: [1, 1.3, 1], opacity: [0.5, 1, 0.5] }} transition={{ duration: 2, repeat: Infinity, delay: 1 }} />
+                <motion.circle cx="180" cy="180" r="5" fill="#EC4899" animate={{ scale: [1, 1.3, 1], opacity: [0.5, 1, 0.5] }} transition={{ duration: 2, repeat: Infinity, delay: 1.5 }} />
+                <defs>
+                  <linearGradient id="grad-bottom" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stopColor="#06B6D4" stopOpacity="0.8" />
+                    <stop offset="100%" stopColor="#EC4899" stopOpacity="0.8" />
+                  </linearGradient>
+                </defs>
+              </svg>
+
+              {/* Central AI visualization */}
+              <div className="relative">
+                <motion.div
+                  animate={{ y: [0, -15, 0] }}
+                  transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+                  className="relative"
+                >
+                  {/* Outer glow ring */}
+                  <motion.div
+                    animate={{
+                      scale: [1, 1.15, 1],
+                      opacity: [0.3, 0.6, 0.3]
+                    }}
+                    transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+                    className="absolute inset-0 bg-gradient-to-r from-blue-500/40 via-purple-500/40 to-pink-500/40 blur-3xl rounded-full"
+                  />
+
+                  {/* Main sphere */}
+                  <div className="relative w-80 h-80 md:w-96 md:h-96 rounded-full bg-gradient-to-br from-slate-800/80 via-slate-900/80 to-slate-800/80 backdrop-blur-xl border border-white/10 shadow-2xl flex items-center justify-center overflow-visible">
+
+                    {/* Inner gradient orb */}
+                    <div className="absolute inset-12 rounded-full bg-gradient-to-br from-blue-500/20 via-purple-500/20 to-pink-500/20 blur-2xl" />
+
+                    {/* Bot Icon */}
+                    <Bot className="w-40 h-40 md:w-48 md:h-48 text-blue-400 relative z-10" />
+
+                    {/* Rotating orbital rings with icons */}
+                    {/* Outer ring - 7 icons evenly spaced ON the ring */}
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
+                      className="absolute inset-[-20px] overflow-visible"
+                    >
+                      <div className="absolute inset-[20px] border-2 border-blue-400/20 rounded-full" style={{ borderStyle: 'dashed', borderSpacing: '10px' }} />
+
+                      {/* Gmail - 0deg */}
+                      <div className="absolute top-[20px] left-1/2 -translate-x-1/2 -translate-y-1/2 w-10 h-10 bg-slate-800/90 backdrop-blur-sm border border-blue-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                        <SiGmail className="w-5 h-5 text-red-400" />
+                      </div>
+                      {/* Slack - 51.4deg */}
+                      <div className="absolute top-1/2 right-[20px] translate-x-1/2 -translate-y-1/2 w-10 h-10 bg-slate-800/90 backdrop-blur-sm border border-blue-400/30 rounded-lg flex items-center justify-center shadow-lg" style={{ transform: 'rotate(-51.4deg) translateX(170px) rotate(51.4deg) translate(-50%, -50%)' }}>
+                        <SiSlack className="w-5 h-5 text-purple-300" />
+                      </div>
+                      {/* Drive - 102.8deg */}
+                      <div className="absolute right-[20px] top-1/2 translate-x-1/2 -translate-y-1/2 w-10 h-10 bg-slate-800/90 backdrop-blur-sm border border-blue-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                        <SiGoogledrive className="w-5 h-5 text-blue-400" />
+                      </div>
+                      {/* Notion - 154.2deg */}
+                      <div className="absolute bottom-[20px] right-[20px] translate-x-1/2 translate-y-1/2 w-10 h-10 bg-slate-800/90 backdrop-blur-sm border border-blue-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                        <SiNotion className="w-5 h-5 text-white" />
+                      </div>
+                      {/* Calendar - 205.7deg */}
+                      <div className="absolute bottom-[20px] left-1/2 -translate-x-1/2 translate-y-1/2 w-10 h-10 bg-slate-800/90 backdrop-blur-sm border border-blue-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                        <SiGooglecalendar className="w-5 h-5 text-cyan-400" />
+                      </div>
+                      {/* HubSpot - 257.1deg */}
+                      <div className="absolute bottom-[20px] left-[20px] -translate-x-1/2 translate-y-1/2 w-10 h-10 bg-slate-800/90 backdrop-blur-sm border border-blue-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                        <SiHubspot className="w-5 h-5 text-orange-400" />
+                      </div>
+                      {/* Brain - 308.5deg */}
+                      <div className="absolute left-[20px] top-1/2 -translate-x-1/2 -translate-y-1/2 w-10 h-10 bg-slate-800/90 backdrop-blur-sm border border-blue-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                        <Brain className="w-4 h-4 text-cyan-300" />
+                      </div>
+                    </motion.div>
+
+                    {/* Middle ring - 7 icons evenly spaced ON the ring */}
+                    <motion.div
+                      animate={{ rotate: -360 }}
+                      transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
+                      className="absolute inset-[-12px] overflow-visible"
+                    >
+                      <div className="absolute inset-[20px] border-2 border-purple-400/20 rounded-full" style={{ borderStyle: 'dashed' }} />
+
+                      {/* Zap - 0deg */}
+                      <div className="absolute top-[20px] left-1/2 -translate-x-1/2 -translate-y-1/2 w-9 h-9 bg-slate-800/90 backdrop-blur-sm border border-purple-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                        <Zap className="w-4 h-4 text-yellow-400" />
+                      </div>
+                      {/* Workflow - 51.4deg */}
+                      <div className="absolute top-[20px] right-[20px] translate-x-1/2 -translate-y-1/2 w-9 h-9 bg-slate-800/90 backdrop-blur-sm border border-purple-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                        <Workflow className="w-4 h-4 text-cyan-400" />
+                      </div>
+                      {/* Lock - 102.8deg */}
+                      <div className="absolute right-[20px] top-1/2 translate-x-1/2 -translate-y-1/2 w-9 h-9 bg-slate-800/90 backdrop-blur-sm border border-purple-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                        <Lock className="w-4 h-4 text-green-400" />
+                      </div>
+                      {/* Repeat - 154.2deg */}
+                      <div className="absolute bottom-[20px] right-[20px] translate-x-1/2 translate-y-1/2 w-9 h-9 bg-slate-800/90 backdrop-blur-sm border border-purple-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                        <Repeat className="w-4 h-4 text-purple-400" />
+                      </div>
+                      {/* Network - 205.7deg */}
+                      <div className="absolute bottom-[20px] left-1/2 -translate-x-1/2 translate-y-1/2 w-9 h-9 bg-slate-800/90 backdrop-blur-sm border border-purple-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                        <Network className="w-4 h-4 text-purple-300" />
+                      </div>
+                      {/* Sparkles - 257.1deg */}
+                      <div className="absolute bottom-[20px] left-[20px] -translate-x-1/2 translate-y-1/2 w-9 h-9 bg-slate-800/90 backdrop-blur-sm border border-purple-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                        <Sparkles className="w-4 h-4 text-pink-400" />
+                      </div>
+                      {/* Agent Bot - 308.5deg */}
+                      <div className="absolute left-[20px] top-1/2 -translate-x-1/2 -translate-y-1/2 w-9 h-9 bg-slate-800/90 backdrop-blur-sm border border-purple-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                        <Bot className="w-4 h-4 text-blue-300" />
+                      </div>
+                    </motion.div>
+
+                    {/* Inner ring - Just the ring, no icons */}
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 30, repeat: Infinity, ease: "linear" }}
+                      className="absolute inset-[44px] overflow-visible"
+                    >
+                      <div className="absolute inset-0 border-2 border-pink-400/20 rounded-full" style={{ borderStyle: 'dashed' }} />
+                    </motion.div>
+                  </div>
+                </motion.div>
+              </div>
+            </motion.div>
+          </div>
+        </div>
+      </section>
+
+      {/* Workflow Animation Section */}
+      <section className="relative z-10 pt-4 pb-0 md:pt-6 md:pb-0 lg:pt-8 lg:pb-0">
+        <div className="max-w-7xl mx-auto px-6">
 
           {/* Hero Animation */}
           <motion.div
@@ -757,50 +968,6 @@ export default function AgentPilotLanding() {
           >
             <HeroAnimation />
           </motion.div>
-        </div>
-      </section>
-
-      {/* Plugin Integrations */}
-      <section className="relative z-10 py-12 border-y border-white/5">
-        <div className="max-w-7xl mx-auto px-6">
-          <p className="text-center text-slate-400 mb-8">Works with your favorite tools</p>
-          <div className="flex flex-wrap items-center justify-center gap-12 opacity-70">
-            {/* Gmail */}
-            <div className="flex items-center gap-3 group hover:opacity-100 transition">
-              <SiGmail className="w-8 h-8 text-red-500" />
-              <span className="text-slate-300 font-medium">Gmail</span>
-            </div>
-
-            {/* Slack */}
-            <div className="flex items-center gap-3 group hover:opacity-100 transition">
-              <SiSlack className="w-8 h-8 text-[#4A154B]" />
-              <span className="text-slate-300 font-medium">Slack</span>
-            </div>
-
-            {/* Notion */}
-            <div className="flex items-center gap-3 group hover:opacity-100 transition">
-              <SiNotion className="w-8 h-8 text-white" />
-              <span className="text-slate-300 font-medium">Notion</span>
-            </div>
-
-            {/* Google Drive */}
-            <div className="flex items-center gap-3 group hover:opacity-100 transition">
-              <SiGoogledrive className="w-8 h-8 text-[#4285F4]" />
-              <span className="text-slate-300 font-medium">Google Drive</span>
-            </div>
-
-            {/* Google Calendar */}
-            <div className="flex items-center gap-3 group hover:opacity-100 transition">
-              <SiGooglecalendar className="w-8 h-8 text-[#4285F4]" />
-              <span className="text-slate-300 font-medium">Calendar</span>
-            </div>
-
-            {/* And more indicator */}
-            <div className="flex items-center gap-2 text-slate-500">
-              <span className="text-2xl">+</span>
-              <span className="text-sm font-medium">15 more</span>
-            </div>
-          </div>
         </div>
       </section>
 
@@ -865,6 +1032,50 @@ export default function AgentPilotLanding() {
                 </div>
               </motion.div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Plugin Integrations */}
+      <section className="relative z-10 py-12 border-y border-white/5">
+        <div className="max-w-7xl mx-auto px-6">
+          <p className="text-center text-slate-400 mb-8">Works with your favorite tools</p>
+          <div className="flex flex-wrap items-center justify-center gap-12 opacity-70">
+            {/* Gmail */}
+            <div className="flex items-center gap-3 group hover:opacity-100 transition">
+              <SiGmail className="w-8 h-8 text-red-500" />
+              <span className="text-slate-300 font-medium">Gmail</span>
+            </div>
+
+            {/* Slack */}
+            <div className="flex items-center gap-3 group hover:opacity-100 transition">
+              <SiSlack className="w-8 h-8 text-[#4A154B]" />
+              <span className="text-slate-300 font-medium">Slack</span>
+            </div>
+
+            {/* Notion */}
+            <div className="flex items-center gap-3 group hover:opacity-100 transition">
+              <SiNotion className="w-8 h-8 text-white" />
+              <span className="text-slate-300 font-medium">Notion</span>
+            </div>
+
+            {/* Google Drive */}
+            <div className="flex items-center gap-3 group hover:opacity-100 transition">
+              <SiGoogledrive className="w-8 h-8 text-[#4285F4]" />
+              <span className="text-slate-300 font-medium">Google Drive</span>
+            </div>
+
+            {/* Google Calendar */}
+            <div className="flex items-center gap-3 group hover:opacity-100 transition">
+              <SiGooglecalendar className="w-8 h-8 text-[#4285F4]" />
+              <span className="text-slate-300 font-medium">Calendar</span>
+            </div>
+
+            {/* And more indicator */}
+            <div className="flex items-center gap-2 text-slate-500">
+              <span className="text-2xl">+</span>
+              <span className="text-sm font-medium">15 more</span>
+            </div>
           </div>
         </div>
       </section>

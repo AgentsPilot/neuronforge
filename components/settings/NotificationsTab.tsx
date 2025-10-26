@@ -98,13 +98,6 @@ export default function NotificationsTab({
       icon: Mail
     },
     {
-      key: 'email_agent_updates',
-      label: 'Agent Updates',
-      desc: 'Get notified when your agents complete tasks',
-      default: true,
-      icon: Bell
-    },
-    {
       key: 'email_system_alerts',
       label: 'System Alerts',
       desc: 'Important system notifications and updates',
@@ -123,7 +116,7 @@ export default function NotificationsTab({
   return (
     <div className="space-y-4">
       {/* Notification Stats - Horizontal Compact Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
         <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200/50 rounded-xl p-3 hover:shadow-md transition-all duration-300">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-lg">
@@ -132,18 +125,6 @@ export default function NotificationsTab({
             <div>
               <p className="text-xs text-blue-700 font-medium">Email</p>
               <p className="text-xl font-bold text-blue-900">{notificationsForm.email_enabled ? 'On' : 'Off'}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-gradient-to-br from-purple-50 to-pink-50 border border-purple-200/50 rounded-xl p-3 hover:shadow-md transition-all duration-300">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-lg">
-              <Bell className="h-5 w-5 text-white" />
-            </div>
-            <div>
-              <p className="text-xs text-purple-700 font-medium">Agents</p>
-              <p className="text-xl font-bold text-purple-900">{notificationsForm.email_agent_updates ? 'On' : 'Off'}</p>
             </div>
           </div>
         </div>

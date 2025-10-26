@@ -201,8 +201,53 @@ export const AnalyticsViews: React.FC<AnalyticsViewsProps> = ({ selectedView, da
 
   // Activities View - Grouped by session with iteration details
 if (selectedView === 'activities') {
+  // Category filter state
+  const [selectedCategory, setSelectedCategory] = React.useState<string>('all');
+
+  // Extract unique categories from activities
+  const uniqueCategories = React.useMemo(() => {
+    const categories = new Set<string>();
+    data.rawActivities.forEach(activity => {
+      if (activity.category) {
+        categories.add(activity.category);
+      }
+    });
+    return Array.from(categories).sort();
+  }, [data.rawActivities]);
+
+  // Convert category to user-friendly name
+  const getCategoryLabel = (category: string): string => {
+    const labelMap: Record<string, string> = {
+      'agent_creation': 'Agent Creation',
+      'agent_execution': 'Agent Execution',
+      'agent_enhancement': 'Agent Enhancement',
+      'plugin_operation': 'Plugin Operations',
+      'research': 'Research',
+      'analysis': 'Analysis',
+      'generation': 'Generation',
+      'chat': 'Chat',
+      'system': 'System',
+      'workflow': 'Workflow',
+      'api': 'API Calls',
+      'database': 'Database',
+      'authentication': 'Authentication'
+    };
+
+    return labelMap[category] || category.split('_').map(word =>
+      word.charAt(0).toUpperCase() + word.slice(1)
+    ).join(' ');
+  };
+
+  // Filter activities by category
+  const filteredActivities = React.useMemo(() => {
+    if (selectedCategory === 'all') {
+      return data.rawActivities;
+    }
+    return data.rawActivities.filter(activity => activity.category === selectedCategory);
+  }, [data.rawActivities, selectedCategory]);
+
   // Group activities by session_id
-  const groupedActivities = data.rawActivities.reduce((acc, activity) => {
+  const groupedActivities = filteredActivities.reduce((acc, activity) => {
     const sessionKey = activity.session_id || activity.id;
     if (!acc[sessionKey]) {
       acc[sessionKey] = [];
@@ -253,6 +298,11 @@ if (selectedView === 'activities') {
   // Pagination state
   const [currentPage, setCurrentPage] = React.useState(1);
   const itemsPerPage = 10;
+
+  // Reset pagination when category filter changes
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedCategory]);
   const totalPages = Math.ceil(allSessionGroups.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
@@ -262,19 +312,50 @@ if (selectedView === 'activities') {
     <div className="space-y-4">
       {/* Sticky Header */}
       <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg p-6 sticky top-0 z-10">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-lg flex items-center justify-center">
-              <Activity className="w-5 h-5 text-white" />
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-lg flex items-center justify-center">
+                <Activity className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-gray-900">AI Activities</h3>
+                <p className="text-gray-600">Complete history of AI operations</p>
+              </div>
             </div>
-            <div>
-              <h3 className="text-xl font-bold text-gray-900">AI Activities</h3>
-              <p className="text-gray-600">Complete history of AI operations</p>
-            </div>
+            {allSessionGroups.length > 0 && (
+              <div className="text-sm text-gray-600">
+                Showing {startIndex + 1}-{Math.min(endIndex, allSessionGroups.length)} of {allSessionGroups.length}
+              </div>
+            )}
           </div>
-          {allSessionGroups.length > 0 && (
-            <div className="text-sm text-gray-600">
-              Showing {startIndex + 1}-{Math.min(endIndex, allSessionGroups.length)} of {allSessionGroups.length}
+
+          {/* Category Filter Tabs */}
+          {uniqueCategories.length > 0 && (
+            <div className="inline-flex bg-gray-100/80 rounded-xl p-1 w-fit">
+              <button
+                onClick={() => setSelectedCategory('all')}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                  selectedCategory === 'all'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                All
+              </button>
+              {uniqueCategories.map((category) => (
+                <button
+                  key={category}
+                  onClick={() => setSelectedCategory(category)}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                    selectedCategory === category
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  {getCategoryLabel(category)}
+                </button>
+              ))}
             </div>
           )}
         </div>
