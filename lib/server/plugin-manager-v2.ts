@@ -131,12 +131,51 @@ export class PluginManagerV2 {
   // Get all available plugins in registry (static)
   getAvailablePlugins(): Record<string, PluginDefinition> {
     if (this.debug) console.log(`DEBUG: Getting available plugins, total: ${this.plugins.size}`);
-    
+
     const result: Record<string, PluginDefinition> = {};
     for (const [name, definition] of this.plugins) {
       result[name] = definition;
     }
     return result;
+  }
+
+  // Get actionable system plugins (no OAuth required, auto-available for all users)
+  getActionableSystemPlugins(userId: string): Record<string, ActionablePlugin> {
+    if (this.debug) console.log(`DEBUG: Getting actionable system plugins for user ${userId}`);
+
+    const systemPlugins: Record<string, ActionablePlugin> = {};
+
+    for (const [pluginKey, definition] of this.plugins.entries()) {
+      // Check if this is a system plugin
+      if (definition.plugin.isSystem) {
+        if (this.debug) console.log(`DEBUG: Found system plugin: ${pluginKey}`);
+
+        // Create a virtual connection for system plugins (no database record needed)
+        systemPlugins[pluginKey] = {
+          definition,
+          connection: {
+            user_id: userId,
+            plugin_key: pluginKey,
+            plugin_name: definition.plugin.displayName || definition.plugin.name,
+            access_token: 'system', // Placeholder - not used by system plugins
+            refresh_token: null,
+            expires_at: null, // System plugins don't expire
+            scope: null,
+            username: 'System',
+            email: null,
+            profile_data: { isSystem: true },
+            settings: {},
+            status: 'active',
+            id: `system-${userId}-${pluginKey}`,
+            connected_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }
+        };
+      }
+    }
+
+    if (this.debug) console.log(`DEBUG: Found ${Object.keys(systemPlugins).length} system plugins`);
+    return systemPlugins;
   }
   
   // Get user's actionable plugins (connected with valid tokens)
@@ -207,6 +246,7 @@ export class PluginManagerV2 {
 
     const actionablePlugins: Record<string, ActionablePlugin> = {};
 
+    // Add OAuth-based plugins (from database connections)
     for (const connection of actionableConnections) {
       const definition = this.plugins.get(connection.plugin_key);
       if (definition) {
@@ -220,7 +260,17 @@ export class PluginManagerV2 {
       }
     }
 
-    if (this.debug) console.log(`DEBUG: Returning ${Object.keys(actionablePlugins).length} actionable plugins`);
+    // Add system plugins (no database connection required)
+    const systemPlugins = this.getActionableSystemPlugins(userId);
+    for (const [pluginKey, systemPlugin] of Object.entries(systemPlugins)) {
+      // Only add if not already present (OAuth connection takes precedence)
+      if (!actionablePlugins[pluginKey]) {
+        actionablePlugins[pluginKey] = systemPlugin;
+        if (this.debug) console.log(`DEBUG: Added system plugin ${pluginKey} to actionable plugins`);
+      }
+    }
+
+    if (this.debug) console.log(`DEBUG: Returning ${Object.keys(actionablePlugins).length} actionable plugins (${actionableConnections.length} OAuth + ${Object.keys(systemPlugins).length} system)`);
     return actionablePlugins;
   }
 
@@ -242,6 +292,12 @@ export class PluginManagerV2 {
     for (const pluginKey of disconnectedKeys) {
       const definition = allPlugins[pluginKey];
       if (definition) {
+        // Skip system plugins (they're never "disconnected" - always available)
+        if (definition.plugin.isSystem) {
+          if (this.debug) console.log(`DEBUG: Skipping system plugin ${pluginKey} from disconnected list`);
+          continue;
+        }
+
         disconnectedPlugins[pluginKey] = {
           plugin: definition,
           reason: 'not_connected', // Simplified reason since we're just checking active status

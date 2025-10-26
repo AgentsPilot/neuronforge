@@ -140,6 +140,31 @@ export class UserPluginConnections {
   async getConnection(userId: string, pluginKey: string, authConfig: PluginAuthConfig): Promise<UserConnection | null> {
     if (this.debug) console.log(`DEBUG: Getting connection data for ${pluginKey}`);
 
+    // Check if this is a system plugin (no database connection required)
+    if (authConfig.auth_type === 'platform_key') {
+      if (this.debug) console.log(`DEBUG: ${pluginKey} is a system plugin, returning virtual connection`);
+
+      // Return a virtual connection for system plugins (no DB record needed)
+      return {
+        user_id: userId,
+        plugin_key: pluginKey,
+        plugin_name: this.getPluginDisplayName(pluginKey),
+        access_token: 'system', // Placeholder - not used by system plugins
+        refresh_token: null,
+        expires_at: null, // System plugins don't expire
+        scope: null,
+        username: 'System',
+        email: null,
+        profile_data: { isSystem: true },
+        settings: {},
+        status: 'active',
+        id: `system-${userId}-${pluginKey}`,
+        connected_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+    }
+
+    // OAuth plugins: query database for connection
     try {
       const { data: connection, error } = await this.supabase
         .from('plugin_connections')

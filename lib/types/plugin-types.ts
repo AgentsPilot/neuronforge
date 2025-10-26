@@ -42,6 +42,7 @@ export interface PluginDefinition {
     icon?: React.ReactNode;
     category: PluginCategory;  // Optional category for grouping
     isPopular?: boolean; // Optional flag for popular plugins
+    isSystem?: boolean; // Optional flag for system plugins (no user OAuth required)
     auth_config: PluginAuthConfig;
   };
   actions: Record<string, ActionDefinition>;
@@ -128,17 +129,18 @@ export interface UserConnection {
   plugin_name: string;
   access_token: string;
   refresh_token: string | null;
-  expires_at: string;
+  expires_at: string | null; // Nullable for system plugins that don't expire
   status: string;
   connected_at: string;
   username?: string;
-  email?: string;
+  email?: string | null; // Nullable for system plugins
   profile_data?: any;
-  scope?: string;
+  scope?: string | null; // Nullable for system plugins
   settings?: any;
   last_used?: string;
   updated_at?: string;
   last_refreshed_at?: string; // Track when token was last refreshed for rate limiting
+  id?: string; // Optional ID field for database records
 }
 
 // Connection status information

@@ -59,7 +59,12 @@ export abstract class BasePluginExecutor {
 
       const authConfig = pluginDefinition.plugin.auth_config;
       const connection = await this.userConnections.getConnection(userId, this.pluginName, authConfig);
-      if (!connection) {
+
+      // For system plugins, connection will be a virtual connection
+      // For OAuth plugins, connection must exist or we fail
+      const isSystemPlugin = pluginDefinition.plugin.isSystem;
+
+      if (!connection && !isSystemPlugin) {
         return {
           success: false,
           error: 'auth_failed',
