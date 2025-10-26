@@ -61,6 +61,8 @@ export const AUDIT_EVENTS = {
   USER_TERMINATED: 'USER_TERMINATED',
   USER_SUSPENDED: 'USER_SUSPENDED',
   USER_REACTIVATED: 'USER_REACTIVATED',
+  USER_ONBOARDING_COMPLETED: 'USER_ONBOARDING_COMPLETED',
+  USER_ONBOARDING_FAILED: 'USER_ONBOARDING_FAILED',
 
   PROFILE_UPDATED: 'PROFILE_UPDATED', // name, avatar, company, etc.
   PROFILE_VIEWED: 'PROFILE_VIEWED', // Who viewed whose profile
@@ -244,6 +246,16 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'critical',
     complianceFlags: ['SOC2', 'GDPR'],
     description: 'User account terminated',
+  },
+  [AUDIT_EVENTS.USER_ONBOARDING_COMPLETED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'User completed onboarding process',
+  },
+  [AUDIT_EVENTS.USER_ONBOARDING_FAILED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'User failed to complete onboarding',
   },
 
   // Settings events - Phase 1 focus

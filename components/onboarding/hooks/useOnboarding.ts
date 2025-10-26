@@ -229,7 +229,7 @@ export const useOnboarding = () => {
       }
 
       // Upsert (create or update) the profiles table with onboarding data
-      // First, try to upsert with all fields including domain
+      // First, try to upsert with all fields including domain and onboarding flag
       let { error: profileError } = await supabase
         .from('profiles')
         .upsert({
@@ -240,15 +240,16 @@ export const useOnboarding = () => {
           timezone: state.data.profile.timezone,
           domain: state.data.domain,
           role: state.data.role,
+          onboarding: true, // Mark onboarding as completed
           created_at: new Date().toISOString(), // Will be ignored if profile exists
           updated_at: new Date().toISOString(),
         }, {
           onConflict: 'id' // Update if profile with this id exists
         });
 
-      // If domain column doesn't exist, try without it (role column exists)
+      // If domain or onboarding column doesn't exist, try without it (role column exists)
       if (profileError && profileError.code === '42703') {
-        console.log('Domain column not found, saving without domain field');
+        console.log('Domain or onboarding column not found, saving without those fields');
         const { error: fallbackError } = await supabase
           .from('profiles')
           .upsert({
@@ -304,6 +305,12 @@ export const useOnboarding = () => {
 
   const completeOnboarding = useCallback(async () => {
     try {
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        throw new Error('No authenticated user found');
+      }
+
       // Save onboarding data (creates/updates profile)
       await saveOnboardingData();
 
@@ -321,12 +328,71 @@ export const useOnboarding = () => {
         console.log('Onboarding completed successfully - metadata updated');
       }
 
+      // Log onboarding completion to audit trail via API
+      try {
+        await fetch('/api/audit/log', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-id': user.id
+          },
+          body: JSON.stringify({
+            action: 'USER_ONBOARDING_COMPLETED',
+            entityType: 'user',
+            entityId: user.id,
+            resourceName: state.data.profile.fullName || user.email || 'User',
+            details: {
+              email: state.data.profile.email,
+              full_name: state.data.profile.fullName,
+              company: state.data.profile.company,
+              job_title: state.data.profile.jobTitle,
+              timezone: state.data.profile.timezone,
+              domain: state.data.domain,
+              role: state.data.role,
+              onboarding_completed: true
+            },
+            severity: 'info'
+          })
+        });
+      } catch (auditError) {
+        console.error('Failed to log onboarding completion to audit trail:', auditError);
+      }
+
       return true;
     } catch (error) {
       console.error('Failed to complete onboarding:', error);
+
+      // Log onboarding failure to audit trail via API
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          await fetch('/api/audit/log', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-user-id': user.id
+            },
+            body: JSON.stringify({
+              action: 'USER_ONBOARDING_FAILED',
+              entityType: 'user',
+              entityId: user.id,
+              resourceName: state.data.profile.fullName || user.email || 'User',
+              details: {
+                error_message: error instanceof Error ? error.message : 'Unknown error',
+                step_reached: state.currentStep,
+                profile_data: state.data.profile
+              },
+              severity: 'warning'
+            })
+          });
+        }
+      } catch (auditError) {
+        console.error('Failed to log onboarding error to audit trail:', auditError);
+      }
+
       return false;
     }
-  }, [saveOnboardingData]);
+  }, [saveOnboardingData, state.data, state.currentStep]);
 
   // Utility functions
   const getStepTitle = useCallback((step?: number) => {
