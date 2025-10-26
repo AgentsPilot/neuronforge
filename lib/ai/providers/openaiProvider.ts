@@ -1,13 +1,36 @@
 // lib/ai/providers/openaiProvider.ts
 import OpenAI from 'openai';
 import { BaseAIProvider, CallContext } from './baseProvider';
+import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 
 export class OpenAIProvider extends BaseAIProvider {
   private openai: OpenAI;
-  
+
   constructor(apiKey: string, analytics?: any) {
     super(analytics);
     this.openai = new OpenAI({ apiKey });
+  }
+
+  /**
+   * Static factory method to get an OpenAIProvider instance with validation
+   *
+   * @param aiAnalytics - The AI analytics service instance
+   * @returns A configured OpenAIProvider instance
+   * @throws Error if OPENAI_API_KEY is not configured or aiAnalytics is not provided
+   */
+  static getInstance(aiAnalytics: AIAnalyticsService): OpenAIProvider {
+    if (!process.env.OPENAI_API_KEY) {
+      console.error('❌ Missing OpenAI API key');
+      throw new Error('OpenAI API key not configured', { cause: 400 } as any);
+    }
+
+    if (!aiAnalytics) {
+      console.error('❌ AI Analytics service not provided');
+      throw new Error('AI Analytics service not initialized', { cause: 500 } as any);
+    }
+
+    // Initialize OpenAI provider with analytics
+    return new OpenAIProvider(process.env.OPENAI_API_KEY!, aiAnalytics);
   }
 
   async chatCompletion(
@@ -34,6 +57,205 @@ export class OpenAIProvider extends BaseAIProvider {
         responseSize: JSON.stringify(result).length
       })
     ) as Promise<OpenAI.Chat.ChatCompletion>;
+  }
+
+  /**
+   * Creates a new OpenAI thread
+   *
+   * @param context - Optional analytics context for tracking
+   * @returns The created thread object
+   */
+  async createThread(context?: CallContext): Promise<OpenAI.Beta.Threads.Thread> {
+    const startTime = Date.now();
+
+    try {
+      const thread = await this.openai.beta.threads.create();
+
+      // Track thread creation if context provided
+      if (context && this.analytics) {
+        await this.analytics.trackAICall({
+          call_id: this.generateCallId(),
+          user_id: context.userId,
+          session_id: context.sessionId,
+          provider: 'openai',
+          model_name: 'threads-api',
+          endpoint: 'threads/create',
+          feature: context.feature,
+          component: context.component,
+          workflow_step: context.workflow_step,
+          category: context.category || 'thread_management',
+          input_tokens: 0,
+          output_tokens: 0,
+          cost_usd: 0,
+          latency_ms: Date.now() - startTime,
+          success: true,
+          request_type: 'thread_create',
+          activity_type: context.activity_type,
+          activity_name: context.activity_name,
+          agent_id: context.agent_id,
+          activity_step: context.activity_step
+        });
+      }
+
+      return thread;
+    } catch (error: any) {
+      // Track failure if context provided
+      if (context && this.analytics) {
+        await this.analytics.trackAICall({
+          call_id: this.generateCallId(),
+          user_id: context.userId,
+          session_id: context.sessionId,
+          provider: 'openai',
+          model_name: 'threads-api',
+          endpoint: 'threads/create',
+          feature: context.feature,
+          component: context.component,
+          workflow_step: context.workflow_step,
+          category: context.category || 'thread_management',
+          input_tokens: 0,
+          output_tokens: 0,
+          cost_usd: 0,
+          latency_ms: Date.now() - startTime,
+          success: false,
+          error_code: error.code || 'UNKNOWN',
+          error_message: error.message,
+          request_type: 'thread_create',
+          activity_type: context.activity_type,
+          activity_name: context.activity_name,
+          agent_id: context.agent_id,
+          activity_step: context.activity_step
+        });
+      }
+
+      throw error;
+    }
+  }
+
+  /**
+   * Adds a message to an existing OpenAI thread
+   *
+   * @param threadId - The ID of the thread to add the message to
+   * @param message - The message object with role and content
+   * @param context - Optional analytics context for tracking (currently unused but reserved for future tracking)
+   * @returns The created message object
+   */
+  async addMessageToThread(
+    threadId: string,
+    message: { role: 'user' | 'assistant', content: string },
+    context?: CallContext // eslint-disable-line @typescript-eslint/no-unused-vars
+  ): Promise<OpenAI.Beta.Threads.Messages.Message> {
+    try {
+      // @ts-ignore - Using deprecated but functional signature
+      const threadMessage = await this.openai.beta.threads.messages.create(threadId, {
+        role: message.role,
+        content: message.content
+      });
+
+      // Track message creation if context provided (optional, might be too noisy)
+      // Uncomment if needed for debugging
+      // if (context && this.analytics) {
+      //   await this.analytics.trackAICall({...});
+      // }
+
+      return threadMessage;
+    } catch (error: any) {
+      throw error;
+    }
+  }
+
+  /**
+   * Deletes an OpenAI thread
+   *
+   * @param threadId - The ID of the thread to delete
+   */
+  async deleteThread(threadId: string): Promise<void> {
+    try {
+      // @ts-ignore - Using correct delete method
+      await this.openai.beta.threads.delete(threadId);
+    } catch (error: any) {
+      console.error(`⚠️ Failed to delete thread ${threadId}:`, error.message);
+      // Don't throw - deletion failures shouldn't break the flow
+    }
+  }
+
+  /**
+   * Creates a new thread with system prompt injected as the first message.
+   * Combines createThread() and addMessageToThread() with automatic cleanup on failure.
+   *
+   * @param systemPrompt - The system prompt to inject
+   * @param context - Optional analytics context for tracking
+   * @returns The created thread object
+   * @throws Error if thread creation or prompt injection fails
+   */
+  async createThreadWithSystemPrompt(
+    systemPrompt: string,
+    context?: CallContext
+  ): Promise<OpenAI.Beta.Threads.Thread> {
+    // Step 1: Create thread
+    const thread = await this.createThread(context);
+
+    try {
+      // Step 2: Inject system prompt as first message
+      await this.addMessageToThread(
+        thread.id,
+        { role: 'assistant', content: systemPrompt },
+        context
+      );
+
+      return thread;
+    } catch (error: any) {
+      // Cleanup: delete the thread since we couldn't inject the prompt
+      console.error('❌ Failed to inject system prompt, cleaning up thread:', error.message);
+      await this.deleteThread(thread.id);
+
+      throw new Error(`Failed to inject system prompt into thread: ${error.message}`);
+    }
+  }
+
+  /**
+   * Retrieves messages from a thread
+   *
+   * @param threadId - The ID of the thread
+   * @param options - Optional parameters for filtering (order, limit)
+   * @returns Messages page object
+   */
+  async getThreadMessages(
+    threadId: string,
+    options?: { order?: 'asc' | 'desc', limit?: number }
+  ): Promise<OpenAI.Beta.Threads.Messages.MessagesPage> {
+    try {
+      // @ts-ignore - Using deprecated but functional signature
+      return await this.openai.beta.threads.messages.list(threadId, {
+        order: options?.order || 'asc',
+        ...(options?.limit && { limit: options.limit })
+      });
+    } catch (error: any) {
+      throw new Error(`Failed to retrieve thread messages: ${error.message}`);
+    }
+  }
+
+  /**
+   * Builds a conversation array from thread messages for use with Chat Completions API
+   *
+   * @param messages - Array of thread messages
+   * @returns Array of conversation messages formatted for Chat Completions
+   */
+  buildConversationFromThread(
+    messages: OpenAI.Beta.Threads.Messages.Message[]
+  ): Array<{ role: 'user' | 'assistant' | 'system', content: string }> {
+    const conversation: Array<{ role: 'user' | 'assistant' | 'system', content: string }> = [];
+
+    for (const msg of messages) {
+      const content = msg.content[0];
+      if (content.type === 'text') {
+        conversation.push({
+          role: msg.role as 'user' | 'assistant',
+          content: content.text.value
+        });
+      }
+    }
+
+    return conversation;
   }
 
   private calculateCost(model: string, usage: any): number {

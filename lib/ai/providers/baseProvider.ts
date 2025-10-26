@@ -97,7 +97,7 @@ export abstract class BaseAIProvider {
     }
   }
 
-  private generateCallId(): string {
+  protected generateCallId(): string {
     return `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 }
