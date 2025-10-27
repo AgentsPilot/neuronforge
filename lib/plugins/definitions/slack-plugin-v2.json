@@ -20,6 +20,7 @@
       "required_scopes": [
         "channels:read",
         "channels:manage",
+        "channels:join",
         "channels:history",
         "groups:read",
         "groups:write",
@@ -42,26 +43,26 @@
     "send_message": {
       "description": "Send a message to a Slack channel, direct message, or thread",
       "parameters": {
-        "channel_id": {
-          "type": "string",
-          "description": "The ID of the channel or DM to send the message to (e.g., C1234567890, D1234567890)",
-          "required": true
-        },
-        "message_text": {
-          "type": "string",
-          "description": "The text content of the message to send",
-          "required": true
-        },
-        "thread_timestamp": {
-          "type": "string",
-          "description": "Optional: timestamp of parent message to reply in a thread",
-          "required": false
-        },
-        "as_user": {
-          "type": "boolean",
-          "description": "Optional: send as the authenticated user (default: true)",
-          "required": false,
-          "default": true
+        "type": "object",
+        "required": ["channel_id", "message_text"],
+        "properties": {
+          "channel_id": {
+            "type": "string",
+            "description": "The ID of the channel or DM to send the message to (e.g., C1234567890, D1234567890)"
+          },
+          "message_text": {
+            "type": "string",
+            "description": "The text content of the message to send"
+          },
+          "thread_timestamp": {
+            "type": "string",
+            "description": "Optional: timestamp of parent message to reply in a thread"
+          },
+          "as_user": {
+            "type": "boolean",
+            "description": "Optional: send as the authenticated user (default: true)",
+            "default": true
+          }
         }
       },
       "rules": [
@@ -82,32 +83,31 @@
     "read_messages": {
       "description": "Read message history from a Slack channel or direct message",
       "parameters": {
-        "channel_id": {
-          "type": "string",
-          "description": "The ID of the channel or DM to read messages from",
-          "required": true
-        },
-        "limit": {
-          "type": "number",
-          "description": "Maximum number of messages to retrieve (default: 15, max: 100)",
-          "required": false,
-          "default": 15
-        },
-        "oldest_timestamp": {
-          "type": "string",
-          "description": "Optional: only messages after this timestamp",
-          "required": false
-        },
-        "latest_timestamp": {
-          "type": "string",
-          "description": "Optional: only messages before this timestamp",
-          "required": false
-        },
-        "include_all_metadata": {
-          "type": "boolean",
-          "description": "Include full message metadata (reactions, attachments, etc.)",
-          "required": false,
-          "default": false
+        "type": "object",
+        "required": ["channel_id"],
+        "properties": {
+          "channel_id": {
+            "type": "string",
+            "description": "The ID of the channel or DM to read messages from"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Maximum number of messages to retrieve (default: 15, max: 100)",
+            "default": 15
+          },
+          "oldest_timestamp": {
+            "type": "string",
+            "description": "Optional: only messages after this timestamp"
+          },
+          "latest_timestamp": {
+            "type": "string",
+            "description": "Optional: only messages before this timestamp"
+          },
+          "include_all_metadata": {
+            "type": "boolean",
+            "description": "Include full message metadata (reactions, attachments, etc.)",
+            "default": false
+          }
         }
       },
       "rules": [
@@ -129,20 +129,21 @@
     "update_message": {
       "description": "Update or edit a previously sent message",
       "parameters": {
-        "channel_id": {
-          "type": "string",
-          "description": "The ID of the channel containing the message",
-          "required": true
-        },
-        "message_timestamp": {
-          "type": "string",
-          "description": "The timestamp of the message to update",
-          "required": true
-        },
-        "new_message_text": {
-          "type": "string",
-          "description": "The new text content for the message",
-          "required": true
+        "type": "object",
+        "required": ["channel_id", "message_timestamp", "new_message_text"],
+        "properties": {
+          "channel_id": {
+            "type": "string",
+            "description": "The ID of the channel containing the message"
+          },
+          "message_timestamp": {
+            "type": "string",
+            "description": "The timestamp of the message to update"
+          },
+          "new_message_text": {
+            "type": "string",
+            "description": "The new text content for the message"
+          }
         }
       },
       "rules": [
@@ -164,20 +165,21 @@
     "add_reaction": {
       "description": "Add an emoji reaction to a message",
       "parameters": {
-        "channel_id": {
-          "type": "string",
-          "description": "The ID of the channel containing the message",
-          "required": true
-        },
-        "message_timestamp": {
-          "type": "string",
-          "description": "The timestamp of the message to react to",
-          "required": true
-        },
-        "emoji_name": {
-          "type": "string",
-          "description": "The name of the emoji without colons (e.g., 'thumbsup', 'heart', 'fire')",
-          "required": true
+        "type": "object",
+        "required": ["channel_id", "message_timestamp", "emoji_name"],
+        "properties": {
+          "channel_id": {
+            "type": "string",
+            "description": "The ID of the channel containing the message"
+          },
+          "message_timestamp": {
+            "type": "string",
+            "description": "The timestamp of the message to react to"
+          },
+          "emoji_name": {
+            "type": "string",
+            "description": "The name of the emoji without colons (e.g., 'thumbsup', 'heart', 'fire')"
+          }
         }
       },
       "rules": [],
@@ -191,20 +193,21 @@
     "remove_reaction": {
       "description": "Remove an emoji reaction from a message",
       "parameters": {
-        "channel_id": {
-          "type": "string",
-          "description": "The ID of the channel containing the message",
-          "required": true
-        },
-        "message_timestamp": {
-          "type": "string",
-          "description": "The timestamp of the message to remove reaction from",
-          "required": true
-        },
-        "emoji_name": {
-          "type": "string",
-          "description": "The name of the emoji without colons (e.g., 'thumbsup', 'heart')",
-          "required": true
+        "type": "object",
+        "required": ["channel_id", "message_timestamp", "emoji_name"],
+        "properties": {
+          "channel_id": {
+            "type": "string",
+            "description": "The ID of the channel containing the message"
+          },
+          "message_timestamp": {
+            "type": "string",
+            "description": "The timestamp of the message to remove reaction from"
+          },
+          "emoji_name": {
+            "type": "string",
+            "description": "The name of the emoji without colons (e.g., 'thumbsup', 'heart')"
+          }
         }
       },
       "rules": [],
@@ -218,21 +221,22 @@
     "create_channel": {
       "description": "Create a new Slack channel (public or private)",
       "parameters": {
-        "channel_name": {
-          "type": "string",
-          "description": "The name of the channel (lowercase letters, numbers, hyphens, underscores only)",
-          "required": true
-        },
-        "is_private": {
-          "type": "boolean",
-          "description": "Whether the channel should be private (default: false)",
-          "required": false,
-          "default": false
-        },
-        "description": {
-          "type": "string",
-          "description": "Optional: a description for the channel",
-          "required": false
+        "type": "object",
+        "required": ["channel_name"],
+        "properties": {
+          "channel_name": {
+            "type": "string",
+            "description": "The name of the channel (lowercase letters, numbers, hyphens, underscores only)"
+          },
+          "is_private": {
+            "type": "boolean",
+            "description": "Whether the channel should be private (default: false)",
+            "default": false
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional: a description for the channel"
+          }
         }
       },
       "rules": [
@@ -259,23 +263,23 @@
     "list_channels": {
       "description": "List all channels the bot has access to",
       "parameters": {
-        "types": {
-          "type": "string",
-          "description": "Comma-separated types: public_channel, private_channel, im, mpim (default: public_channel,private_channel)",
-          "required": false,
-          "default": "public_channel,private_channel"
-        },
-        "limit": {
-          "type": "number",
-          "description": "Maximum number of channels to retrieve (default: 100)",
-          "required": false,
-          "default": 100
-        },
-        "exclude_archived": {
-          "type": "boolean",
-          "description": "Exclude archived channels (default: true)",
-          "required": false,
-          "default": true
+        "type": "object",
+        "properties": {
+          "types": {
+            "type": "string",
+            "description": "Comma-separated types: public_channel, private_channel, im, mpim (default: public_channel,private_channel)",
+            "default": "public_channel,private_channel"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Maximum number of channels to retrieve (default: 100)",
+            "default": 100
+          },
+          "exclude_archived": {
+            "type": "boolean",
+            "description": "Exclude archived channels (default: true)",
+            "default": true
+          }
         }
       },
       "rules": [
@@ -297,17 +301,18 @@
     "list_users": {
       "description": "Get a list of all users in the Slack workspace",
       "parameters": {
-        "limit": {
-          "type": "number",
-          "description": "Maximum number of users to retrieve (default: 100)",
-          "required": false,
-          "default": 100
-        },
-        "include_deleted": {
-          "type": "boolean",
-          "description": "Include deleted/deactivated users (default: false)",
-          "required": false,
-          "default": false
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "number",
+            "description": "Maximum number of users to retrieve (default: 100)",
+            "default": 100
+          },
+          "include_deleted": {
+            "type": "boolean",
+            "description": "Include deleted/deactivated users (default: false)",
+            "default": false
+          }
         }
       },
       "rules": [
@@ -328,10 +333,13 @@
     "get_user_info": {
       "description": "Get detailed information about a specific user",
       "parameters": {
-        "user_id": {
-          "type": "string",
-          "description": "The ID of the user (e.g., U1234567890)",
-          "required": true
+        "type": "object",
+        "required": ["user_id"],
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "description": "The ID of the user (e.g., U1234567890)"
+          }
         }
       },
       "rules": [],
@@ -349,30 +357,32 @@
     "upload_file": {
       "description": "Upload and share a file to Slack channels or direct messages",
       "parameters": {
-        "filename": {
-          "type": "string",
-          "description": "The name of the file to upload",
-          "required": true
-        },
-        "file_content": {
-          "type": "string",
-          "description": "The file content (base64 encoded for binary files, or plain text)",
-          "required": true
-        },
-        "channel_ids": {
-          "type": "array",
-          "description": "Array of channel IDs where the file should be shared",
-          "required": false
-        },
-        "title": {
-          "type": "string",
-          "description": "Optional: title for the file",
-          "required": false
-        },
-        "initial_comment": {
-          "type": "string",
-          "description": "Optional: message to include with the file",
-          "required": false
+        "type": "object",
+        "required": ["filename", "file_content"],
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "The name of the file to upload"
+          },
+          "file_content": {
+            "type": "string",
+            "description": "The file content (base64 encoded for binary files, or plain text)"
+          },
+          "channel_ids": {
+            "type": "array",
+            "description": "Array of channel IDs where the file should be shared",
+            "items": {
+              "type": "string"
+            }
+          },
+          "title": {
+            "type": "string",
+            "description": "Optional: title for the file"
+          },
+          "initial_comment": {
+            "type": "string",
+            "description": "Optional: message to include with the file"
+          }
         }
       },
       "rules": [

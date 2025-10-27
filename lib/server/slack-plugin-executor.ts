@@ -78,7 +78,8 @@ export class SlackPluginExecutor extends BasePluginExecutor {
       requestBody.thread_ts = thread_timestamp;
     }
 
-    const response = await fetch('https://slack.com/api/chat.postMessage', {
+    // Try to send the message
+    let response = await fetch('https://slack.com/api/chat.postMessage', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${connection.access_token}`,
@@ -87,11 +88,64 @@ export class SlackPluginExecutor extends BasePluginExecutor {
       body: JSON.stringify(requestBody)
     });
 
-    const data = await this.handleSlackResponse(response, 'send_message');
+    let responseData = await response.json();
+
+    // If bot is not in channel, try to join it first
+    if (!responseData.ok && responseData.error === 'not_in_channel') {
+      if (this.debug) console.log('DEBUG: Bot not in channel, attempting to join...');
+
+      try {
+        // Try to join the channel
+        const joinResponse = await fetch('https://slack.com/api/conversations.join', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${connection.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ channel: channel_id })
+        });
+
+        const joinData = await joinResponse.json();
+
+        if (joinData.ok) {
+          if (this.debug) console.log('DEBUG: Successfully joined channel, retrying message send...');
+
+          // Retry sending the message
+          response = await fetch('https://slack.com/api/chat.postMessage', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${connection.access_token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(requestBody)
+          });
+
+          responseData = await response.json();
+        } else {
+          if (this.debug) console.log('DEBUG: Failed to join channel:', joinData.error);
+        }
+      } catch (joinError) {
+        if (this.debug) console.error('DEBUG: Error joining channel:', joinError);
+        // Continue to error handling below
+      }
+    }
+
+    // Handle the final response
+    if (!response.ok) {
+      const errorText = await response.text();
+      if (this.debug) console.error('DEBUG: send_message HTTP failed:', errorText);
+      throw new Error(`Slack API HTTP error: ${response.status} - ${errorText}`);
+    }
+
+    if (!responseData.ok) {
+      const errorMsg = responseData.error || 'Unknown Slack error';
+      if (this.debug) console.error('DEBUG: send_message Slack error:', errorMsg);
+      throw new Error(`Slack API error: ${errorMsg}`);
+    }
 
     return {
-      message_timestamp: data.ts,
-      channel_id: data.channel,
+      message_timestamp: responseData.ts,
+      channel_id: responseData.channel,
       success: true,
       message_text: message_text,
       is_threaded: !!thread_timestamp
@@ -559,7 +613,7 @@ export class SlackPluginExecutor extends BasePluginExecutor {
     }
 
     if (errorMsg.includes('not_in_channel')) {
-      return 'The bot is not a member of this channel.';
+      return 'The bot is not a member of this channel. If this is a private channel, please manually invite the bot to the channel first.';
     }
 
     if (errorMsg.includes('rate_limited') || errorMsg.includes('ratelimited')) {
