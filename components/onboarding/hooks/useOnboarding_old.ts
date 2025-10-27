@@ -38,7 +38,7 @@ export interface OnboardingState {
   isInitialized: boolean;
 }
 
-const TOTAL_STEPS = 3; // Profile, Domain, Role (Plugins step removed)
+const TOTAL_STEPS = 4; // Updated from 3 to 4 steps
 
 const initialState: OnboardingState = {
   currentStep: 0,

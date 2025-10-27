@@ -35,8 +35,8 @@ export const getActivityTypeDisplayName = (activityType: string): string => {
     // Agent operations
     'agent_execution': 'Agent Executions',
     'agent_creation': 'Agent Creation',
+    'agent_generation': 'Agent Creation', // Same as agent_creation - unified naming
     'agent_enhancement': 'Agent Enhancement',
-    'agent_generation': 'Agent Generation',
     'agent_update': 'Agent Updates',
 
     // Chat and conversation
@@ -637,6 +637,11 @@ export const processAnalyticsData = (
       category = item.category;
     } else {
       category = 'Other Operations';
+    }
+
+    // NORMALIZE: Merge agent_generation into agent_creation BEFORE grouping
+    if (category === 'agent_generation') {
+      category = 'agent_creation';
     }
 
     const current = costBreakdownGroups.get(category) || 0;

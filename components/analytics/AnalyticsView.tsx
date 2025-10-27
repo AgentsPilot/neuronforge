@@ -20,11 +20,8 @@ import {
   Zap,
   Award,
   Star,
-  Archive,
-  PauseCircle,
   PlayCircle,
-  Power,
-  Pause
+  Target
 } from 'lucide-react';
 import { formatCost, formatTokens, formatTime } from '@/lib/utils/analyticsHelpers';
 import type { 
@@ -54,145 +51,353 @@ const getIconComponent = (iconName: string) => {
 interface AnalyticsViewsProps {
   selectedView: AnalyticsView;
   data: ProcessedAnalyticsData;
+  activityFilter?: string; // Optional filter for activity_type (e.g., 'agent_creation', 'agent_execution')
 }
 
-export const AnalyticsViews: React.FC<AnalyticsViewsProps> = ({ selectedView, data }) => {
-  const { activities, agents, dailyUsage, costBreakdown, insights } = data;
+export const AnalyticsViews: React.FC<AnalyticsViewsProps> = ({ selectedView, data, activityFilter }) => {
+  const { agents, dailyUsage, costBreakdown, insights } = data;
 
-  // Overview View
+  // Overview View - Just show the cards (cards are rendered in parent component)
   if (selectedView === 'overview') {
+    return null; // Cards are shown by parent component
+  }
+
+  // Insights View - Show detailed analysis with all insights
+  if (selectedView === 'insights') {
+    // Calculate daily insights for decision-making
+    const last7Days = dailyUsage.slice(-7);
+    const avgDailyCost = last7Days.length > 0
+      ? last7Days.reduce((sum, d) => sum + d.cost, 0) / last7Days.length
+      : 0;
+    const maxDay = last7Days.length > 0
+      ? last7Days.reduce((max, d) => d.cost > max.cost ? d : max, last7Days[0])
+      : null;
+    const minDay = last7Days.length > 0
+      ? last7Days.reduce((min, d) => d.cost < min.cost ? d : min, last7Days[0])
+      : null;
+    const totalWeekCost = last7Days.reduce((sum, d) => sum + d.cost, 0);
+    const projectedMonthlyCost = avgDailyCost * 30;
+
+    // Calculate spending insights
+    const topSpender = costBreakdown[0];
+    const topThreePercent = costBreakdown.slice(0, 3).reduce((sum, item) => sum + item.percentage, 0);
+
     return (
-      <div className="grid lg:grid-cols-2 gap-6">
-        {/* Daily Activity */}
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg p-6">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center">
-              <TrendingUp className="w-5 h-5 text-white" />
+      <div className="space-y-6">
+        {/* Summary Cards Row */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Weekly Spending */}
+          <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200/50 rounded-xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-md">
+                <TrendingUp className="w-5 h-5 text-white" />
+              </div>
+              <span className="text-xs font-semibold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">
+                Last 7 days
+              </span>
             </div>
-            <div>
-              <h3 className="font-bold text-gray-900">Daily Activity</h3>
-              <p className="text-sm text-gray-600">AI usage trends</p>
-            </div>
+            <h3 className="text-3xl font-bold text-blue-900 mb-1">{formatCost(totalWeekCost)}</h3>
+            <p className="text-sm text-blue-700 font-medium mb-2">Weekly Spend</p>
+            <p className="text-xs text-blue-600">Avg: {formatCost(avgDailyCost)}/day</p>
           </div>
-          
-          {dailyUsage.length === 0 ? (
-            <div className="text-center py-8">
-              <Calendar className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-              <p className="text-gray-500 text-sm">No daily data available</p>
+
+          {/* Projected Monthly */}
+          <div className="bg-gradient-to-br from-purple-50 to-pink-50 border border-purple-200/50 rounded-xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-lg flex items-center justify-center shadow-md">
+                <Calendar className="w-5 h-5 text-white" />
+              </div>
+              <span className="text-xs font-semibold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full">
+                Projection
+              </span>
             </div>
-          ) : (
-            <div className="space-y-4">
-              {dailyUsage.slice(-7).map((day, index) => {
-                const maxCost = Math.max(...dailyUsage.map(d => d.cost));
-                const costWidth = maxCost > 0 ? (day.cost / maxCost) * 100 : 0;
-                
-                return (
-                  <div key={day.date} className="space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span className="font-medium text-gray-700">
-                        {new Date(day.date).toLocaleDateString('en-US', { 
-                          weekday: 'short', 
-                          month: 'short', 
-                          day: 'numeric' 
-                        })}
-                      </span>
-                      <div className="text-right">
-                        <div className="font-bold text-gray-900">{formatCost(day.cost)}</div>
-                        <div className="text-xs text-gray-500">{formatTokens(day.tokens)} tokens</div>
+            <h3 className="text-3xl font-bold text-purple-900 mb-1">{formatCost(projectedMonthlyCost)}</h3>
+            <p className="text-sm text-purple-700 font-medium mb-2">Monthly Forecast</p>
+            <p className="text-xs text-purple-600">Based on current usage</p>
+          </div>
+
+          {/* Top Cost Driver */}
+          {topSpender && (
+            <div className="bg-gradient-to-br from-emerald-50 to-green-50 border border-emerald-200/50 rounded-xl p-5">
+              <div className="flex items-center justify-between mb-3">
+                <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-green-600 rounded-lg flex items-center justify-center shadow-md">
+                  <Target className="w-5 h-5 text-white" />
+                </div>
+                <span className="text-xs font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                  {topSpender.percentage.toFixed(0)}%
+                </span>
+              </div>
+              <h3 className="text-3xl font-bold text-emerald-900 mb-1">{formatCost(topSpender.cost)}</h3>
+              <p className="text-sm text-emerald-700 font-medium mb-2">Top Spender</p>
+              <p className="text-xs text-emerald-600 truncate">{topSpender.name}</p>
+            </div>
+          )}
+        </div>
+
+        {/* Main Grid: Daily Activity & Spending Analysis */}
+        <div className="grid lg:grid-cols-2 gap-6">
+          {/* Daily Activity with Insights */}
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg overflow-hidden">
+            {/* Header */}
+            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-b border-blue-200/50 p-5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-md">
+                    <TrendingUp className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-gray-900">Daily Activity Trend</h3>
+                    <p className="text-sm text-blue-700">Last 7 days usage pattern</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="p-6">
+              {dailyUsage.length === 0 ? (
+                <div className="text-center py-8">
+                  <Calendar className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                  <p className="text-gray-500 text-sm">No daily data available</p>
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  {/* Visual Graph */}
+                  <div className="bg-gradient-to-br from-blue-50/50 to-indigo-50/30 rounded-xl p-5 border border-blue-200/30">
+                    <h4 className="text-xs font-bold text-blue-900 uppercase tracking-wider mb-4">7-Day Spending Trend</h4>
+                    <div className="flex items-end justify-between gap-2 h-40">
+                      {last7Days.map((day) => {
+                        const maxCost = Math.max(...last7Days.map(d => d.cost));
+                        const barHeight = maxCost > 0 ? (day.cost / maxCost) * 100 : 0;
+                        const isHighest = maxDay && day.date === maxDay.date;
+
+                        return (
+                          <div key={day.date} className="flex-1 flex flex-col items-center gap-2 group">
+                            {/* Cost tooltip */}
+                            <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-gray-900 text-white text-xs px-2 py-1 rounded whitespace-nowrap mb-1">
+                              {formatCost(day.cost)}
+                            </div>
+
+                            {/* Bar */}
+                            <div className="w-full flex items-end justify-center" style={{ height: '120px' }}>
+                              <div
+                                className={`w-full rounded-t-lg transition-all duration-500 ${
+                                  isHighest
+                                    ? 'bg-gradient-to-t from-blue-600 to-indigo-600 shadow-lg'
+                                    : 'bg-gradient-to-t from-blue-400 to-indigo-500'
+                                } hover:opacity-80 cursor-pointer relative group-hover:shadow-xl`}
+                                style={{ height: `${Math.max(barHeight, 5)}%` }}
+                              >
+                                {isHighest && (
+                                  <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-blue-600">
+                                    <Star className="w-4 h-4 fill-current" />
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Day label */}
+                            <div className={`text-xs font-medium ${isHighest ? 'text-blue-900' : 'text-gray-600'}`}>
+                              {new Date(day.date).toLocaleDateString('en-US', { weekday: 'short' })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Key Insights */}
+                  {maxDay && minDay && maxDay.date !== minDay.date && (
+                    <div className="bg-blue-50/50 border border-blue-200/50 rounded-xl p-4">
+                      <h4 className="text-xs font-bold text-blue-900 uppercase tracking-wider mb-2">Key Insights</h4>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex items-center justify-between">
+                          <span className="text-blue-700">Highest usage day:</span>
+                          <span className="font-bold text-blue-900">
+                            {new Date(maxDay.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                            {' '}({formatCost(maxDay.cost)})
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-blue-700">Daily average:</span>
+                          <span className="font-bold text-blue-900">{formatCost(avgDailyCost)}</span>
+                        </div>
                       </div>
                     </div>
-                    <div className="bg-gray-100 rounded-full h-2 overflow-hidden">
-                      <div 
-                        className="bg-gradient-to-r from-blue-500 to-purple-600 h-2 rounded-full transition-all duration-500"
-                        style={{ width: `${Math.max(costWidth, 2)}%` }}
-                      ></div>
+                  )}
+
+                  {/* Daily Bars */}
+                  <div className="space-y-4">
+                    {last7Days.map((day) => {
+                      const maxCost = Math.max(...last7Days.map(d => d.cost));
+                      const costWidth = maxCost > 0 ? (day.cost / maxCost) * 100 : 0;
+                      const isHighest = maxDay && day.date === maxDay.date;
+
+                      return (
+                        <div key={day.date} className={`space-y-2 ${isHighest ? 'p-3 bg-blue-50/50 rounded-xl border border-blue-200/30' : ''}`}>
+                          <div className="flex justify-between items-start text-sm">
+                            <div className="flex items-center gap-2">
+                              <span className={`font-semibold ${isHighest ? 'text-blue-900' : 'text-gray-700'}`}>
+                                {new Date(day.date).toLocaleDateString('en-US', {
+                                  weekday: 'short',
+                                  month: 'short',
+                                  day: 'numeric'
+                                })}
+                              </span>
+                              {isHighest && (
+                                <span className="text-xs font-bold text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">
+                                  Peak
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-right">
+                              <div className={`font-bold ${isHighest ? 'text-blue-900 text-base' : 'text-gray-900'}`}>
+                                {formatCost(day.cost)}
+                              </div>
+                              <div className="text-xs text-gray-500">{formatTokens(day.tokens)} tokens</div>
+                            </div>
+                          </div>
+                          <div className="bg-gray-100 rounded-full h-2.5 overflow-hidden">
+                            <div
+                              className={`h-2.5 rounded-full transition-all duration-500 ${
+                                isHighest
+                                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600'
+                                  : 'bg-gradient-to-r from-blue-400 to-purple-500'
+                              }`}
+                              style={{ width: `${Math.max(costWidth, 2)}%` }}
+                            ></div>
+                          </div>
+                          <div className="flex justify-between text-xs text-gray-600">
+                            <span className="flex items-center gap-1">
+                              <Bot className="w-3 h-3" />
+                              {day.agents_run} runs
+                            </span>
+                            <span>{day.activities} operations</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Spending Analysis with Recommendations */}
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg overflow-hidden">
+            {/* Header */}
+            <div className="bg-gradient-to-br from-emerald-50 to-green-50 border-b border-emerald-200/50 p-5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-green-600 rounded-lg flex items-center justify-center shadow-md">
+                    <PieChart className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-gray-900">Spending Breakdown</h3>
+                    <p className="text-sm text-emerald-700">Budget allocation by category</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="p-6">
+              {costBreakdown.length === 0 ? (
+                <div className="text-center py-8">
+                  <DollarSign className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                  <p className="text-gray-500 text-sm">No cost data available</p>
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  {/* Budget Concentration Insight */}
+                  <div className="bg-amber-50/50 border border-amber-200/50 rounded-xl p-4">
+                    <h4 className="text-xs font-bold text-amber-900 uppercase tracking-wider mb-2">Budget Insight</h4>
+                    <p className="text-sm text-amber-800">
+                      Top 3 categories account for <span className="font-bold">{topThreePercent.toFixed(0)}%</span> of your spending.
+                      {topThreePercent > 80 && (
+                        <span className="block mt-1 text-xs text-amber-700">
+                          💡 Consider optimizing high-cost operations for better efficiency.
+                        </span>
+                      )}
+                    </p>
+                  </div>
+
+                  {/* Category Breakdown */}
+                  <div className="space-y-3">
+                    {costBreakdown.slice(0, 6).map((item, index) => (
+                      <div key={index} className="group hover:bg-gradient-to-r hover:from-emerald-50/50 hover:to-green-50/30 rounded-xl p-3 transition-all duration-200 border border-transparent hover:border-emerald-200/30">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-2">
+                              <div className={`w-4 h-4 rounded-lg ${item.bgColor} shadow-sm`}></div>
+                              <span className="text-sm font-semibold text-gray-800">{item.name}</span>
+                            </div>
+                            {index === 0 && (
+                              <span className="text-xs font-bold text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded-full">
+                                Highest
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-right">
+                            <div className="font-bold text-gray-900">{formatCost(item.cost)}</div>
+                            <div className="text-xs font-semibold text-emerald-600">{item.percentage.toFixed(1)}%</div>
+                          </div>
+                        </div>
+                        <div className="bg-gray-100 rounded-full h-2 overflow-hidden">
+                          <div
+                            className={`h-2 rounded-full transition-all duration-500 ${item.bgColor} shadow-sm`}
+                            style={{ width: `${item.percentage}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Action Recommendation */}
+                  {topSpender && topSpender.percentage > 40 && (
+                    <div className="bg-blue-50/50 border border-blue-200/50 rounded-xl p-4">
+                      <div className="flex items-start gap-3">
+                        <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                          <Target className="w-4 h-4 text-blue-600" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-blue-900 mb-1">Optimization Opportunity</h4>
+                          <p className="text-xs text-blue-800 leading-relaxed">
+                            <strong>{topSpender.name}</strong> represents {topSpender.percentage.toFixed(0)}% of costs.
+                            Review this workflow for potential optimization—even small improvements could yield significant savings.
+                          </p>
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex justify-between text-xs text-gray-500">
-                      <span>{day.agents_created} created</span>
-                      <span>{day.agents_run} executed</span>
-                      <span>{day.activities} total</span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* AI-Generated Insights from data */}
+        {insights.length > 0 && (
+          <div className="space-y-4">
+            <h3 className="text-lg font-bold text-gray-900">AI-Powered Insights</h3>
+            <div className="grid lg:grid-cols-2 gap-4">
+              {insights.map((insight, index) => {
+                const IconComponent = getIconComponent(insight.icon);
+                return (
+                  <div key={index} className={`${insight.bgColor} backdrop-blur-sm rounded-2xl border ${insight.borderColor} shadow-lg p-6 hover:shadow-xl transition-all duration-300`}>
+                    <div className="flex items-start gap-3">
+                      <div className={`w-10 h-10 ${insight.color.replace('text-', 'bg-').replace('600', '100')} rounded-lg flex items-center justify-center ${insight.color}`}>
+                        <IconComponent className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1">
+                        <h4 className="font-bold text-gray-900 mb-1">{insight.title}</h4>
+                        <p className="text-gray-700 text-sm leading-relaxed">{insight.message}</p>
+                      </div>
                     </div>
                   </div>
                 );
               })}
             </div>
-          )}
-        </div>
-
-        {/* Cost Breakdown */}
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg p-6">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-600 rounded-lg flex items-center justify-center">
-              <PieChart className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h3 className="font-bold text-gray-900">Spending Analysis</h3>
-              <p className="text-sm text-gray-600">Where your budget goes</p>
-            </div>
-          </div>
-          
-          {costBreakdown.length === 0 ? (
-            <div className="text-center py-8">
-              <DollarSign className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-              <p className="text-gray-500 text-sm">No cost data available</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {costBreakdown.slice(0, 5).map((item, index) => (
-                <div key={index} className="group hover:bg-gray-50/50 rounded-xl p-3 transition-all duration-200">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <div className={`w-3 h-3 rounded ${item.bgColor}`}></div>
-                      <span className="text-sm font-medium text-gray-700">{item.name}</span>
-                    </div>
-                    <div className="text-right">
-                      <div className="font-bold text-gray-900">{formatCost(item.cost)}</div>
-                      <div className="text-xs text-gray-500">{item.percentage.toFixed(1)}%</div>
-                    </div>
-                  </div>
-                  <div className="bg-gray-100 rounded-full h-1.5 overflow-hidden">
-                    <div 
-                      className={`h-1.5 rounded-full transition-all duration-500 ${item.bgColor}`}
-                      style={{ width: `${item.percentage}%` }}
-                    ></div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // Insights View
-  if (selectedView === 'insights') {
-    return (
-      <div className="space-y-6">
-        {insights.length === 0 ? (
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg p-12 text-center">
-            <Brain className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-            <h3 className="text-xl font-bold text-gray-900 mb-2">Generating Insights</h3>
-            <p className="text-gray-600">Create more agents to unlock AI-powered insights</p>
-          </div>
-        ) : (
-          <div className="grid lg:grid-cols-2 gap-4">
-            {insights.map((insight, index) => {
-              const IconComponent = getIconComponent(insight.icon);
-              return (
-                <div key={index} className={`${insight.bgColor} backdrop-blur-sm rounded-2xl border ${insight.borderColor} shadow-lg p-6 hover:shadow-xl transition-all duration-300`}>
-                  <div className="flex items-start gap-3">
-                    <div className={`w-10 h-10 ${insight.color.replace('text-', 'bg-').replace('600', '100')} rounded-lg flex items-center justify-center ${insight.color}`}>
-                      <IconComponent className="w-4 h-4" />
-                    </div>
-                    <div className="flex-1">
-                      <h4 className="font-bold text-gray-900 mb-1">{insight.title}</h4>
-                      <p className="text-gray-700 text-sm leading-relaxed">{insight.message}</p>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
           </div>
         )}
       </div>
@@ -200,25 +405,37 @@ export const AnalyticsViews: React.FC<AnalyticsViewsProps> = ({ selectedView, da
   }
 
   // Activities View - Grouped by session with iteration details
-if (selectedView === 'activities') {
-  // Category filter state
-  const [selectedCategory, setSelectedCategory] = React.useState<string>('all');
+  if (selectedView === 'activities') {
+  // Activity type filter state - use activityFilter from props as initial value
+  const [selectedActivityType, setSelectedActivityType] = React.useState<string>(activityFilter || 'all');
 
-  // Extract unique categories from activities
-  const uniqueCategories = React.useMemo(() => {
-    const categories = new Set<string>();
+  // Update selected activity type when activityFilter prop changes
+  React.useEffect(() => {
+    if (activityFilter) {
+      setSelectedActivityType(activityFilter);
+    }
+  }, [activityFilter]);
+
+  // Extract unique activity types from activities (normalize agent_generation -> agent_creation)
+  const uniqueActivityTypes = React.useMemo(() => {
+    const types = new Set<string>();
     data.rawActivities.forEach(activity => {
-      if (activity.category) {
-        categories.add(activity.category);
+      if (activity.activity_type) {
+        // Normalize: treat agent_generation as agent_creation to avoid duplicates
+        const normalizedType = activity.activity_type === 'agent_generation'
+          ? 'agent_creation'
+          : activity.activity_type;
+        types.add(normalizedType);
       }
     });
-    return Array.from(categories).sort();
+    return Array.from(types).sort();
   }, [data.rawActivities]);
 
-  // Convert category to user-friendly name
-  const getCategoryLabel = (category: string): string => {
+  // Convert activity type to user-friendly name
+  const getActivityTypeLabel = (activityType: string): string => {
     const labelMap: Record<string, string> = {
       'agent_creation': 'Agent Creation',
+      'agent_generation': 'Agent Creation', // Same as agent_creation - unified naming
       'agent_execution': 'Agent Execution',
       'agent_enhancement': 'Agent Enhancement',
       'plugin_operation': 'Plugin Operations',
@@ -233,18 +450,24 @@ if (selectedView === 'activities') {
       'authentication': 'Authentication'
     };
 
-    return labelMap[category] || category.split('_').map(word =>
+    return labelMap[activityType] || activityType.split('_').map(word =>
       word.charAt(0).toUpperCase() + word.slice(1)
     ).join(' ');
   };
 
-  // Filter activities by category
+  // Filter activities by activity type
   const filteredActivities = React.useMemo(() => {
-    if (selectedCategory === 'all') {
+    if (selectedActivityType === 'all') {
       return data.rawActivities;
     }
-    return data.rawActivities.filter(activity => activity.category === selectedCategory);
-  }, [data.rawActivities, selectedCategory]);
+    // Handle unified naming: both agent_creation and agent_generation should match
+    if (selectedActivityType === 'agent_creation') {
+      return data.rawActivities.filter(activity =>
+        activity.activity_type === 'agent_creation' || activity.activity_type === 'agent_generation'
+      );
+    }
+    return data.rawActivities.filter(activity => activity.activity_type === selectedActivityType);
+  }, [data.rawActivities, selectedActivityType]);
 
   // Group activities by session_id
   const groupedActivities = filteredActivities.reduce((acc, activity) => {
@@ -299,10 +522,10 @@ if (selectedView === 'activities') {
   const [currentPage, setCurrentPage] = React.useState(1);
   const itemsPerPage = 10;
 
-  // Reset pagination when category filter changes
+  // Reset pagination when activity type filter changes
   React.useEffect(() => {
     setCurrentPage(1);
-  }, [selectedCategory]);
+  }, [selectedActivityType]);
   const totalPages = Math.ceil(allSessionGroups.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
@@ -330,30 +553,30 @@ if (selectedView === 'activities') {
             )}
           </div>
 
-          {/* Category Filter Tabs */}
-          {uniqueCategories.length > 0 && (
-            <div className="inline-flex bg-gray-100/80 rounded-xl p-1 w-fit">
+          {/* Activity Type Filter Tabs */}
+          {uniqueActivityTypes.length > 0 && (
+            <div className="inline-flex bg-gray-100/80 rounded-xl p-1 w-fit overflow-x-auto max-w-full">
               <button
-                onClick={() => setSelectedCategory('all')}
+                onClick={() => setSelectedActivityType('all')}
                 className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                  selectedCategory === 'all'
+                  selectedActivityType === 'all'
                     ? 'bg-white text-gray-900 shadow-sm'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
-                All
+                All Activities
               </button>
-              {uniqueCategories.map((category) => (
+              {uniqueActivityTypes.map((activityType) => (
                 <button
-                  key={category}
-                  onClick={() => setSelectedCategory(category)}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                    selectedCategory === category
+                  key={activityType}
+                  onClick={() => setSelectedActivityType(activityType)}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 whitespace-nowrap ${
+                    selectedActivityType === activityType
                       ? 'bg-white text-gray-900 shadow-sm'
                       : 'text-gray-600 hover:text-gray-900'
                   }`}
                 >
-                  {getCategoryLabel(category)}
+                  {getActivityTypeLabel(activityType)}
                 </button>
               ))}
             </div>

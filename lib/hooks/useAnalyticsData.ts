@@ -1,45 +1,30 @@
 // lib/hooks/useAnalyticsData.ts
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/components/UserProvider';
 import { supabase } from '@/lib/supabaseClient';
 import { processAnalyticsData } from '@/lib/utils/analyticsHelpers';
 import type { AIUsageData, TimeFilter, ProcessedAnalyticsData } from '@/types/analytics';
 
-const getTimeFilterDate = (timeFilter: TimeFilter): Date => {
-  const now = new Date();
-  switch (timeFilter) {
-    case 'last_7d':
-      return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    case 'last_30d':
-      return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    case 'last_90d':
-      return new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
-    case 'last_year':
-      return new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
-    default:
-      return new Date(0);
-  }
-};
-
 export const useAnalyticsData = (timeFilter: TimeFilter) => {
   const [loading, setLoading] = useState(true);
-  const [rawData, setRawData] = useState<AIUsageData[]>([]);
+  const [allRawData, setAllRawData] = useState<AIUsageData[]>([]); // Store ALL data
+  const [rawData, setRawData] = useState<AIUsageData[]>([]); // Filtered data
   const [processedData, setProcessedData] = useState<ProcessedAnalyticsData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
+
   const { user } = useAuth();
 
-  const loadAnalyticsData = async () => {
+  const loadAnalyticsData = useCallback(async () => {
     if (!user) return;
 
     setLoading(true);
     setError(null);
 
     try {
-      console.log(`Loading analytics data for user ${user.id} with filter ${timeFilter}`);
+      console.log(`📊 Analytics Data Load Started - Fetching ALL data for user: ${user.id}`);
 
-      // Load token_usage data first, then fetch agent names separately
+      // Load ALL token_usage data (no time filter on initial fetch)
       let query = supabase
         .from('token_usage')
         .select(`
@@ -65,11 +50,6 @@ export const useAnalyticsData = (timeFilter: TimeFilter) => {
         `)
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
-
-      if (timeFilter !== 'all') {
-        const filterDate = getTimeFilterDate(timeFilter);
-        query = query.gte('created_at', filterDate.toISOString());
-      }
 
       const { data, error: queryError } = await query;
 
@@ -111,36 +91,27 @@ export const useAnalyticsData = (timeFilter: TimeFilter) => {
       }
 
       // Merge agent names into usage data
-      const enrichedUsageData = usageData.map(item => ({
+      const enrichedUsageData: AIUsageData[] = usageData.map(item => ({
         ...item,
-        agent_name: item.agent_id && agentNameMap[item.agent_id] 
-          ? agentNameMap[item.agent_id] 
-          : null
+        agent_name: item.agent_id && agentNameMap[item.agent_id]
+          ? agentNameMap[item.agent_id]
+          : undefined
       }));
 
-      setRawData(enrichedUsageData);
-      
+      // Store ALL data (unfiltered) along with agents list
+      setAllRawData(enrichedUsageData);
+
+      // Store agents list in state for filtering
+      (window as any).__allAgentsList = allAgentsList;
+
       // Debug log to understand data structure
       if (enrichedUsageData.length > 0) {
-        console.log('Analytics data loaded:', {
+        console.log('✅ Analytics ALL data loaded:', {
           totalRecords: enrichedUsageData.length,
           recordsWithAgentNames: enrichedUsageData.filter(item => item.agent_name).length,
-          sampleAgentName: enrichedUsageData.find(item => item.agent_name)?.agent_name,
-          timeFilter: timeFilter
+          sampleAgentName: enrichedUsageData.find(item => item.agent_name)?.agent_name
         });
-        
-        console.log('Sample analytics data with agent names:', enrichedUsageData.slice(0, 3).map(item => ({
-          id: item.id,
-          agent_id: item.agent_id,
-          agent_name: item.agent_name,
-          activity_name: item.activity_name,
-          category: item.category
-        })));
       }
-
-      // Process the data with all agents list
-      const processed = processAnalyticsData(enrichedUsageData, allAgentsList);
-      setProcessedData(processed);
 
     } catch (error) {
       console.error('Error in loadAnalyticsData:', error);
@@ -148,14 +119,66 @@ export const useAnalyticsData = (timeFilter: TimeFilter) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]); // Only depends on user, not timeFilter!
 
-  // Load data when user or timeFilter changes
+  // Load data only on mount
   useEffect(() => {
     if (user) {
       loadAnalyticsData();
     }
-  }, [user, timeFilter]);
+  }, [user, loadAnalyticsData]);
+
+  // Filter data client-side when timeFilter changes (like Audit Trail)
+  useEffect(() => {
+    if (allRawData.length === 0) {
+      setRawData([]);
+      setProcessedData(null);
+      return;
+    }
+
+    const now = new Date();
+    let cutoffDate = new Date();
+
+    switch (timeFilter) {
+      case 'last_24h':
+        cutoffDate.setHours(cutoffDate.getHours() - 24);
+        break;
+      case 'last_7d':
+        cutoffDate.setDate(cutoffDate.getDate() - 7);
+        break;
+      case 'last_30d':
+        cutoffDate.setDate(cutoffDate.getDate() - 30);
+        break;
+      case 'last_90d':
+        cutoffDate.setDate(cutoffDate.getDate() - 90);
+        break;
+      case 'last_year':
+        cutoffDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+        break;
+      case 'all':
+        cutoffDate = new Date(0);
+        break;
+    }
+
+    const filtered = timeFilter === 'all'
+      ? allRawData
+      : allRawData.filter(item => new Date(item.created_at) >= cutoffDate);
+
+    console.log('📊 Analytics Client-Side Filter:', {
+      timeFilter,
+      cutoffDate: cutoffDate.toISOString(),
+      allDataCount: allRawData.length,
+      filteredCount: filtered.length
+    });
+
+    setRawData(filtered);
+
+    // Process the filtered data
+    const allAgentsList = (window as any).__allAgentsList || [];
+    const processed = processAnalyticsData(filtered, allAgentsList);
+    setProcessedData(processed);
+
+  }, [timeFilter, allRawData]);
 
   // Helper function to export data
   const exportData = () => {

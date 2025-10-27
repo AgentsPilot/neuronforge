@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { useOnboarding } from './hooks/useOnboarding';
 import ProfileStep from './ProfileStep';
 import DomainStep from './DomainStep';
+import PluginsStep from './PluginsStep';
 import RoleStep from './RoleStep';
 
 const Onboarding: React.FC = () => {
@@ -111,20 +112,22 @@ const Onboarding: React.FC = () => {
     }
   };
 
-  const renderCurrentStep = () => {
+  const renderCurrentStep = () => {    
     switch (currentStep) {
       case 0:
         return <ProfileStep data={data.profile} onChange={updateProfile} />;
       case 1:
         return <DomainStep data={data.domain} onChange={updateDomain} />;
       case 2:
+        return <PluginsStep data={[]} onChange={() => {}} />;
+      case 3:
         return <RoleStep data={data.role} onChange={updateRole} />;
       default:
         return null;
     }
   };
 
-  const stepLabels = ['Profile', 'Domain', 'Role'];
+  const stepLabels = ['Profile', 'Domain', 'Integrations', 'Role'];
 
   return (
     <div className="min-h-screen bg-black text-white overflow-hidden">

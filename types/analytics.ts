@@ -32,15 +32,14 @@ export interface AIUsageData {
   session_id?: string;
 }
 
-export interface TimeFilter {
-  last_7d: string;
-  last_30d: string;
-  last_90d: string;
-  last_year: string;
-  all: string;
+export type TimeFilter = 'last_24h' | 'last_7d' | 'last_30d' | 'last_90d' | 'last_year' | 'all';
+
+export interface TimeFilterOption {
+  value: TimeFilter;
+  label: string;
 }
 
-export type AnalyticsView = 'overview' | 'costs' | 'performance' | 'agents' | 'timeline';
+export type AnalyticsView = 'overview' | 'insights' | 'activities' | 'agents';
 
 export interface ActivityData {
   name: string;

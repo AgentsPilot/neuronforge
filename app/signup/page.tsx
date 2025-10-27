@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import { motion } from 'framer-motion';
@@ -16,6 +16,88 @@ export default function SignupPage() {
   const [successMessage, setSuccessMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [emailCheckLoading, setEmailCheckLoading] = useState(false);
+  const emailCheckTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Check if email already exists
+  const checkEmailExists = async (emailToCheck: string) => {
+    if (!emailToCheck.trim()) return;
+
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(emailToCheck)) return;
+
+    setEmailCheckLoading(true);
+    setErrorMessage('');
+
+    try {
+      const response = await fetch('/api/check-user-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: emailToCheck })
+      });
+
+      if (response.ok) {
+        const { exists, onboardingCompleted } = await response.json();
+
+        if (exists) {
+          if (onboardingCompleted === true) {
+            setErrorMessage('This email is already registered and the account is active. Please login instead.');
+          } else if (onboardingCompleted === false) {
+            setErrorMessage('This email is already registered. Please login to complete your account setup.');
+          } else {
+            setErrorMessage('This email is already registered. Please check your email for the confirmation link.');
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error checking email:', error);
+    } finally {
+      setEmailCheckLoading(false);
+    }
+  };
+
+  // Detect autofill and validate email after a short delay
+  useEffect(() => {
+    // Clear any existing timeout
+    if (emailCheckTimeoutRef.current) {
+      clearTimeout(emailCheckTimeoutRef.current);
+    }
+
+    // If email is empty, clear errors
+    if (!email.trim()) {
+      setErrorMessage('');
+      return;
+    }
+
+    // Validate after 500ms of no changes
+    emailCheckTimeoutRef.current = setTimeout(() => {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+      // Check if email contains @ (user started typing email)
+      if (email.includes('@')) {
+        // If format is invalid, show format error
+        if (!emailRegex.test(email)) {
+          setErrorMessage('Please enter a valid email address');
+        } else {
+          // Format is valid, check if email exists in database
+          checkEmailExists(email);
+        }
+      }
+    }, 500);
+
+    // Cleanup timeout on unmount
+    return () => {
+      if (emailCheckTimeoutRef.current) {
+        clearTimeout(emailCheckTimeoutRef.current);
+      }
+    };
+  }, [email]);
+
+  // Also check on blur for immediate feedback
+  const handleEmailBlur = async () => {
+    await checkEmailExists(email);
+  };
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -76,19 +158,37 @@ export default function SignupPage() {
         },
       });
 
-      console.log('Signup response:', { data, error });
-
       if (error) {
-        console.error('Signup error details:', {
-          message: error.message,
-          status: error.status,
-          name: error.name,
-          code: (error as any).code
-        });
 
         // Check if user already exists
         if (error.message.includes('already registered') || error.message.includes('already been registered')) {
-          setErrorMessage('This email is already registered. Please login instead.');
+          // Check onboarding status to provide specific message
+          try {
+            // Try to get profile by email (need to have email column in profiles or use auth.users view)
+            // Since we can't access auth.users from client, we'll check via an API endpoint
+            const response = await fetch('/api/check-user-status', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email })
+            });
+
+            if (response.ok) {
+              const { onboardingCompleted } = await response.json();
+
+              if (onboardingCompleted === true) {
+                setErrorMessage('This email is already registered and the account is active. Please login instead.');
+              } else if (onboardingCompleted === false) {
+                setErrorMessage('This email is already registered. Please login to complete your account setup.');
+              } else {
+                setErrorMessage('This email is already registered. Please login instead.');
+              }
+            } else {
+              setErrorMessage('This email is already registered. Please login instead.');
+            }
+          } catch (profileError) {
+            console.error('Error checking user profile:', profileError);
+            setErrorMessage('This email is already registered. Please login instead.');
+          }
         } else if (error.message.includes('Email rate limit exceeded')) {
           setErrorMessage('Too many signup attempts. Please try again in a few minutes.');
         } else if (error.message.includes('Invalid email')) {
@@ -114,34 +214,48 @@ export default function SignupPage() {
         return;
       }
 
-      console.log('User data:', {
-        id: user.id,
-        email: user.email,
-        created_at: user.created_at,
-        identities: user.identities,
-        session: !!session,
-        email_confirmed_at: (user as any).email_confirmed_at,
-        confirmation_sent_at: (user as any).confirmation_sent_at
-      });
-
       // When email confirmation is enabled and user already exists:
       // - Supabase returns the user object
       // - But identities array will be empty (no new identity was created)
       // - And there's no session
       const hasIdentities = user.identities && user.identities.length > 0;
-      const isEmailConfirmed = !!(user as any).email_confirmed_at;
 
       if (!hasIdentities && !session) {
         // Existing user trying to sign up again (no new identity created)
-        console.log('Detected existing user - no identities created');
+        // The user.id from signup response is NOT the real user ID when user already exists
+        // We need to check by email using our API endpoint
+        try {
+          const response = await fetch('/api/check-user-status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email })
+          });
 
-        if (isEmailConfirmed) {
-          // User exists and has confirmed email - they should login
+          if (response.ok) {
+            const { exists, onboardingCompleted } = await response.json();
+
+            if (!exists) {
+              // User doesn't exist - this shouldn't happen but handle gracefully
+              setErrorMessage('A confirmation email was already sent to this address. Please check your email or wait a few minutes to try again.');
+            } else if (onboardingCompleted === true) {
+              // User completed onboarding - account is active
+              setErrorMessage('This email is already registered and the account is active. Please login instead.');
+            } else if (onboardingCompleted === false) {
+              // Profile exists but onboarding not completed
+              setErrorMessage('This email is already registered. Please login to complete your account setup.');
+            } else {
+              // Profile doesn't exist - user signed up but never confirmed email
+              setErrorMessage('A confirmation email was already sent to this address. Please check your email or wait a few minutes to try again.');
+            }
+          } else {
+            console.error('Failed to check user status');
+            setErrorMessage('This email is already registered. Please login instead.');
+          }
+        } catch (error) {
+          console.error('Error checking user status:', error);
           setErrorMessage('This email is already registered. Please login instead.');
-        } else {
-          // User exists but hasn't confirmed email - resend confirmation
-          setErrorMessage('A confirmation email was already sent to this address. Please check your email or wait a few minutes to try again.');
         }
+
         setIsLoading(false);
         return;
       }
@@ -286,6 +400,7 @@ export default function SignupPage() {
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
                     disabled={isLoading}
+                    autoFocus
                   />
                 </div>
 
@@ -294,15 +409,26 @@ export default function SignupPage() {
                   <label htmlFor="email" className="text-sm font-bold text-slate-200 block">
                     Email Address <span className="text-red-400">*</span>
                   </label>
-                  <input
-                    id="email"
-                    type="email"
-                    placeholder="Enter your email"
-                    className="w-full px-4 py-3.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all duration-200"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    disabled={isLoading}
-                  />
+                  <div className="relative">
+                    <input
+                      id="email"
+                      type="email"
+                      placeholder="Enter your email"
+                      className="w-full px-4 py-3.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all duration-200"
+                      value={email}
+                      onChange={(e) => {
+                        setEmail(e.target.value);
+                        setErrorMessage(''); // Clear error when user types
+                      }}
+                      onBlur={handleEmailBlur}
+                      disabled={isLoading || emailCheckLoading}
+                    />
+                    {emailCheckLoading && (
+                      <div className="absolute inset-y-0 right-0 pr-4 flex items-center">
+                        <div className="w-5 h-5 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Password */}

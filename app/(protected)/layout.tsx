@@ -417,7 +417,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
           {/* Text */}
           <h2 className="text-xl font-semibold text-slate-800 mb-2">
-            Loading AgentPilot
+            Loading AgentsPilot
           </h2>
           <p className="text-slate-500 text-sm">
             Please wait...
