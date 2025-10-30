@@ -10,6 +10,7 @@ import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
 import AgentStatsBlock from '@/components/dashboard/AgentStatsTable'
 import AgentHistoryBlock from '@/components/dashboard/AgentHistoryBlock'
 import AgentSandbox from '@/components/dashboard/AgentSandBox/AgentSandbox'
+import { AgentIntensityCard } from '@/components/agents/AgentIntensityCard'
 import {
   Bot,
   Edit,
@@ -246,12 +247,17 @@ export default function AgentPage() {
   const [isSharedAgent, setIsSharedAgent] = useState(false)
   const [isOwner, setIsOwner] = useState(false)
   const [showSuccessNotification, setShowSuccessNotification] = useState(false)
+  const [creditsAwarded, setCreditsAwarded] = useState(0)
+  const [sharingRewardAmount, setSharingRewardAmount] = useState(500) // default fallback
+  const [sharingValidation, setSharingValidation] = useState<any>(null) // Validation result
+  const [sharingStatus, setSharingStatus] = useState<any>(null) // User sharing limits
   const [isConfigured, setIsConfigured] = useState(false)
   const [showActivationWarning, setShowActivationWarning] = useState(false)
   const [currentFormIsComplete, setCurrentFormIsComplete] = useState(false)
   const [currentView, setCurrentView] = useState<'overview' | 'configuration' | 'test' | 'performance' | 'settings'>('overview')
   const [expandedPrompt, setExpandedPrompt] = useState(false)
   const [hasBeenShared, setHasBeenShared] = useState(false)
+  const [shareRewardActive, setShareRewardActive] = useState(true) // Track if share_agent reward is active
   const [expandedSections, setExpandedSections] = useState({
     plugins: true,
     outputs: true,
@@ -266,6 +272,7 @@ export default function AgentPage() {
     quickActions: true,
     // Analytics sections - Always expanded by default
     performanceStats: true,
+    complexityAnalysis: true,
     recentActivity: true
   })
 
@@ -406,6 +413,45 @@ export default function AgentPage() {
     }
   }
   
+  // Fetch reward configuration to check if sharing is enabled
+  const fetchShareRewardStatus = async () => {
+    try {
+      console.log('🔍 [ShareReward] Fetching share_agent reward configuration via API...')
+
+      // Use API endpoint to bypass RLS
+      const response = await fetch('/api/admin/reward-config')
+      const result = await response.json()
+
+      console.log('🔍 [ShareReward] API result:', result)
+
+      if (!result.success || !result.rewards) {
+        console.warn('⚠️ [ShareReward] Could not fetch reward configs from API')
+        setShareRewardActive(false)
+        return
+      }
+
+      // Find agent_sharing reward (the correct reward_key in database)
+      const shareReward = result.rewards.find((r: any) => r.reward_key === 'agent_sharing')
+
+      if (!shareReward) {
+        console.warn('⚠️ [ShareReward] No agent_sharing reward found in configs')
+        setShareRewardActive(false)
+        return
+      }
+
+      const isActive = shareReward.is_active ?? false
+      setShareRewardActive(isActive)
+      console.log('✅ [ShareReward] Share agent reward status:', {
+        is_active: isActive,
+        reward_key: shareReward.reward_key,
+        credits_amount: shareReward.credits_amount
+      })
+    } catch (error) {
+      console.error('❌ [ShareReward] Error fetching share reward config:', error)
+      setShareRewardActive(false)
+    }
+  }
+
   const fetchAgent = async () => {
     if (!agentId || !isValidUUID(agentId)) {
       setError('Invalid assistant ID')
@@ -484,9 +530,56 @@ export default function AgentPage() {
     }
   }
 
+  const fetchSharingRewardAmount = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('reward_config')
+        .select('credits_amount')
+        .eq('reward_key', 'agent_sharing')
+        .eq('is_active', true)
+        .maybeSingle()
+
+      if (!error && data) {
+        setSharingRewardAmount(data.credits_amount)
+      }
+    } catch (error) {
+      console.error('Error fetching sharing reward amount:', error)
+    }
+  }
+
+  const checkSharingEligibility = async () => {
+    if (!user?.id || !agent?.id) {
+      console.log('⚠️ [Eligibility] Missing user or agent')
+      return
+    }
+
+    console.log('🔍 [Eligibility] Checking eligibility for agent:', agent.id)
+
+    try {
+      const { AgentSharingValidator } = await import('@/lib/credits/agentSharingValidation')
+      const validator = new AgentSharingValidator(supabase)
+
+      // Check full validation
+      console.log('📋 [Eligibility] Running validation...')
+      const validation = await validator.validateSharing(user.id, agent.id)
+      console.log('📊 [Eligibility] Validation result:', validation)
+      setSharingValidation(validation)
+
+      // Get user sharing status
+      console.log('📈 [Eligibility] Getting sharing status...')
+      const status = await validator.getSharingStatus(user.id)
+      console.log('📊 [Eligibility] Sharing status:', status)
+      setSharingStatus(status)
+    } catch (error) {
+      console.error('❌ [Eligibility] Error checking sharing eligibility:', error)
+    }
+  }
+
   useEffect(() => {
     if (agentId && isValidUUID(agentId)) {
       fetchAgent()
+      fetchSharingRewardAmount() // Fetch reward amount for modal display
+      fetchShareRewardStatus() // Check if share reward is active
       if (user) {
         fetchUserCredits()
         fetchUserProfile() // Fetch user profile with timezone
@@ -536,32 +629,63 @@ export default function AgentPage() {
 
   const handleShareAgent = async () => {
     if (!agent || !user || isSharedAgent || agent.status !== 'active' || hasBeenShared) {
-      console.log('Share blocked by initial checks:', { hasAgent: !!agent, hasUser: !!user, isSharedAgent, status: agent?.status, hasBeenShared })
+      console.log('🚫 Share blocked by initial checks:', { hasAgent: !!agent, hasUser: !!user, isSharedAgent, status: agent?.status, hasBeenShared })
       return
     }
-    
+
+    console.log('🚀 Starting agent share process for:', agent.agent_name, 'ID:', agent.id)
+
     setActionLoading('share')
     try {
-      // Double-check if already shared right before attempting
+      // Import services
+      console.log('📦 Importing services...')
+      const { RewardService } = await import('@/lib/credits/rewardService')
+      const { AgentSharingValidator } = await import('@/lib/credits/agentSharingValidation')
+      const rewardService = new RewardService(supabase)
+      const validator = new AgentSharingValidator(supabase)
+      console.log('✅ Services initialized')
+
+      // Validate sharing eligibility
+      console.log('🔍 Validating sharing eligibility...')
+      const validation = await validator.validateSharing(user.id, agent.id)
+      if (!validation.valid) {
+        console.warn('❌ Validation failed:', validation.reason)
+        alert(validation.reason || 'This agent does not meet sharing requirements')
+        return
+      }
+      console.log('✅ Validation passed')
+
+      // Check if agent has already been shared (prevents duplicate rewards)
+      console.log('🔍 Checking if agent already shared...')
+      const alreadyShared = await rewardService.hasSharedAgent(user.id, agent.id)
+      if (alreadyShared) {
+        console.log('❌ Agent already shared (reward tracking), blocking share attempt')
+        setHasBeenShared(true)
+        return
+      }
+
+      // Double-check shared_agents table as well
+      console.log('🔍 Double-checking shared_agents table...')
       const { data: existingShared, error: checkError } = await supabase
         .from('shared_agents')
         .select('id')
         .eq('original_agent_id', agent.id)
         .eq('user_id', user.id)
         .limit(1)
-      
+
       if (checkError) {
-        console.error('Error checking existing shared agents:', checkError)
+        console.error('❌ Error checking existing shared agents:', checkError)
         return
       }
-      
+
       if (existingShared && existingShared.length > 0) {
-        console.log('Agent already shared, blocking share attempt')
+        console.log('❌ Agent already in shared_agents table, blocking share attempt')
         setHasBeenShared(true)
         return
       }
 
-      // Proceed with sharing
+      // Proceed with sharing to community
+      console.log('📤 Inserting agent into shared_agents table...')
       const { error: insertError } = await supabase.from('shared_agents').insert([{
         original_agent_id: agent.id,
         user_id: user.id,
@@ -579,52 +703,39 @@ export default function AgentPage() {
       }])
 
       if (insertError) {
-        console.error('Error sharing agent:', insertError)
+        console.error('❌ Error sharing agent to shared_agents table:', insertError)
         return
       }
+      console.log('✅ Agent successfully added to shared_agents table')
 
-      const creditAmount = 500
-      
-      // Try to get existing credits first
-      const { data: existingCredits, error: fetchCreditError } = await supabase
-        .from('user_credits')
-        .select('credits, total_earned')
-        .eq('user_id', user.id)
-        .maybeSingle()
+      // Award reward credits using RewardService
+      console.log('🎁 Awarding reward credits...')
+      const rewardResult = await rewardService.awardAgentSharingReward(
+        user.id,
+        agent.id,
+        agent.agent_name
+      )
 
-      if (fetchCreditError) {
-        console.error('Error fetching existing credits:', fetchCreditError)
-        // Continue without credit update if table doesn't exist or other issues
+      if (rewardResult.success) {
+        console.log('✅ Successfully awarded reward credits:', rewardResult)
+        // Store credits awarded for notification display
+        setCreditsAwarded(rewardResult.creditsAwarded)
+        // Refresh user credits display
+        await fetchUserCredits()
+        setShowSuccessNotification(true)
+        setTimeout(() => setShowSuccessNotification(false), 4000)
       } else {
-        // Update or insert credits
-        const newCredits = (existingCredits?.credits || 0) + creditAmount
-        const newTotalEarned = (existingCredits?.total_earned || 0) + creditAmount
-        
-        const { error: creditError } = await supabase
-          .from('user_credits')
-          .upsert({
-            user_id: user.id,
-            credits: newCredits,
-            total_earned: newTotalEarned
-          }, {
-            onConflict: 'user_id'
-          })
-
-        if (creditError) {
-          console.error('Error updating credits:', creditError)
-          // Don't fail the whole operation if credits fail
-        } else {
-          setUserCredits(newCredits)
-          console.log('Successfully updated credits:', { newCredits, creditAmount })
-        }
+        console.warn('⚠️ Reward credit failed but agent was shared:', rewardResult.message, rewardResult.error)
+        // Still show success since the agent was shared successfully
+        setCreditsAwarded(0)
+        setShowSuccessNotification(true)
+        setTimeout(() => setShowSuccessNotification(false), 4000)
       }
-      setHasBeenShared(true) // Update local state
-      setShowSuccessNotification(true)
-      setTimeout(() => setShowSuccessNotification(false), 4000)
-      
-      console.log('Successfully shared agent and awarded credits')
+
+      setHasBeenShared(true)
+      console.log('✅ Agent sharing complete!')
     } catch (error) {
-      console.error('Error sharing agent:', error)
+      console.error('❌ Error in handleShareAgent:', error)
     } finally {
       setActionLoading(null)
       setShowShareConfirm(false)
@@ -777,7 +888,9 @@ export default function AgentPage() {
               </div>
               <div className="flex-1">
                 <h4 className="font-semibold text-slate-900 text-sm">Shared Successfully!</h4>
-                <p className="text-xs text-slate-600 mt-1">+500 credits earned</p>
+                <p className="text-xs text-slate-600 mt-1">
+                  {creditsAwarded > 0 ? `+${creditsAwarded} credits earned` : 'Agent shared with community'}
+                </p>
               </div>
               <button
                 onClick={() => setShowSuccessNotification(false)}
@@ -847,6 +960,20 @@ export default function AgentPage() {
                       <span>Created {agent.created_at ? new Date(agent.created_at).toLocaleDateString() : 'Unknown'}</span>
                     </div>
                   </div>
+
+                  {/* Agent ID - Copyable */}
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(agent.id);
+                      // Optional: Show a brief "Copied!" toast/notification
+                    }}
+                    className="flex items-center gap-2 text-xs text-slate-400 font-mono mt-1 hover:text-slate-600 hover:bg-slate-50 px-2 py-1 rounded transition-colors group"
+                    title="Click to copy Agent ID"
+                  >
+                    <FileText className="h-3 w-3" />
+                    <span>ID: {agent.id}</span>
+                    <Copy className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </button>
                 </div>
               </div>
             </div>
@@ -865,12 +992,11 @@ export default function AgentPage() {
                     </button>
                   ) : (
                     <button
-                      onClick={handleToggleStatus}
-                      disabled={!canActivate}
+                      onClick={canActivate ? handleToggleStatus : () => setCurrentView('test')}
                       className={`group flex items-center gap-1.5 px-4 py-2 rounded-lg transition-all duration-200 font-medium transform hover:-translate-y-0.5 text-sm ${
-                        canActivate 
-                          ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:from-green-600 hover:to-emerald-600 shadow-md shadow-green-500/25 hover:shadow-lg' 
-                          : 'bg-gradient-to-r from-amber-400 to-orange-500 text-white opacity-75 shadow-md shadow-amber-500/25'
+                        canActivate
+                          ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:from-green-600 hover:to-emerald-600 shadow-md shadow-green-500/25 hover:shadow-lg'
+                          : 'bg-gradient-to-r from-amber-400 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600 shadow-md shadow-amber-500/25 hover:shadow-lg cursor-pointer'
                       }`}
                     >
                       <Rocket className={`h-4 w-4 ${canActivate ? 'group-hover:scale-110' : ''} transition-transform`} />
@@ -878,14 +1004,19 @@ export default function AgentPage() {
                     </button>
                   )}
                   
-                  <button
-                    onClick={() => setShowShareConfirm(true)}
-                    disabled={agent.status !== 'active'}
-                    className="group flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-500 text-white rounded-lg hover:from-blue-600 hover:to-purple-600 transition-all duration-200 shadow-md shadow-blue-500/25 font-medium disabled:opacity-50 disabled:cursor-not-allowed transform hover:-translate-y-0.5 hover:shadow-lg disabled:hover:transform-none text-sm"
-                  >
-                    <Share2 className="h-4 w-4 group-hover:scale-110 transition-transform" />
-                    {hasBeenShared ? 'View Sharing' : 'Share'}
-                  </button>
+                  {shareRewardActive && (
+                    <button
+                      onClick={async () => {
+                        await checkSharingEligibility()
+                        setShowShareConfirm(true)
+                      }}
+                      disabled={agent.status !== 'active'}
+                      className="group flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-500 text-white rounded-lg hover:from-blue-600 hover:to-purple-600 transition-all duration-200 shadow-md shadow-blue-500/25 font-medium disabled:opacity-50 disabled:cursor-not-allowed transform hover:-translate-y-0.5 hover:shadow-lg disabled:hover:transform-none text-sm"
+                    >
+                      <Share2 className="h-4 w-4 group-hover:scale-110 transition-transform" />
+                      {hasBeenShared ? 'View Sharing' : 'Share'}
+                    </button>
+                  )}
 
                   {/* Quick Actions Dropdown */}
                   {!isSharedAgent && isOwner && (
@@ -1589,6 +1720,35 @@ export default function AgentPage() {
                     </div>
                   )}
                 </div>
+
+                {/* Complexity Analysis Section */}
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div
+                    className="bg-gradient-to-r from-indigo-50 to-purple-50 p-3 cursor-pointer hover:from-indigo-100 hover:to-purple-100 transition-colors"
+                    onClick={() => toggleSection('complexityAnalysis')}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center">
+                          <Zap className="h-4 w-4 text-indigo-600" />
+                        </div>
+                        <div>
+                          <h3 className="font-semibold text-slate-900 text-sm">Complexity Analysis</h3>
+                          <p className="text-slate-600 text-xs">Agent intensity and resource usage</p>
+                        </div>
+                      </div>
+                      {expandedSections.complexityAnalysis ?
+                        <ChevronUp className="h-4 w-4 text-slate-600" /> :
+                        <ChevronDown className="h-4 w-4 text-slate-600" />
+                      }
+                    </div>
+                  </div>
+                  {expandedSections.complexityAnalysis && (
+                    <div className="p-4">
+                      <AgentIntensityCard agentId={agent.id} />
+                    </div>
+                  )}
+                </div>
               </>
             ) : (
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -1651,7 +1811,7 @@ export default function AgentPage() {
             <div className="flex-1">
               <h3 className="font-semibold text-slate-900 mb-3 text-lg">Share "{agent.agent_name}" with Community</h3>
               
-              {hasBeenShared ? (
+              {hasBeenShared || (sharingValidation?.details?.alreadyShared) ? (
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
                   <div className="flex items-center gap-2 mb-2">
                     <Shield className="h-5 w-5 text-amber-600" />
@@ -1661,12 +1821,54 @@ export default function AgentPage() {
                     This assistant has already been shared with the community. Each assistant can only be shared once to prevent abuse and ensure fair credit distribution.
                   </p>
                 </div>
+              ) : sharingValidation && !sharingValidation.valid ? (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <AlertTriangle className="h-5 w-5 text-red-600" />
+                    <span className="font-medium text-red-800">Cannot Share Yet</span>
+                  </div>
+                  <p className="text-red-700 text-sm mb-3">
+                    {sharingValidation.reason}
+                  </p>
+                  <div className="text-xs text-red-600 bg-red-100 rounded px-3 py-2">
+                    <strong>Requirements to share:</strong>
+                    <ul className="mt-1 space-y-1 ml-4 list-disc">
+                      <li>Agent must be at least 1 hour old</li>
+                      <li>Agent must have at least 3 successful test runs</li>
+                      <li>Agent must have 66%+ success rate</li>
+                      <li>Agent must have a description (20+ characters)</li>
+                      <li>Daily limit: {sharingStatus?.limits.daily || 5} shares per day</li>
+                      <li>Monthly limit: {sharingStatus?.limits.monthly || 20} shares per month</li>
+                    </ul>
+                  </div>
+                </div>
               ) : (
                 <div className="space-y-3 mb-4">
+                  {/* Quality Check Passed */}
+                  {sharingValidation && sharingValidation.valid && (
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                        <span className="font-medium text-emerald-800">Quality Requirements Met ✓</span>
+                      </div>
+                      <div className="text-xs text-emerald-700 grid grid-cols-2 gap-2">
+                        <div>✓ {sharingValidation.details?.agentQuality?.executions || 0} test runs</div>
+                        <div>✓ {sharingValidation.details?.agentQuality?.successRate || 0}% success rate</div>
+                        <div>✓ {sharingValidation.details?.agentQuality?.agentAgeHours || 0}h old</div>
+                        <div>✓ Description included</div>
+                      </div>
+                      {sharingStatus && (
+                        <div className="mt-2 pt-2 border-t border-emerald-200 text-xs text-emerald-600">
+                          <strong>Your sharing limits:</strong> {sharingStatus.remaining.daily} today, {sharingStatus.remaining.monthly} this month
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <div className="bg-green-50 border border-green-200 rounded-lg p-3">
                     <div className="flex items-center gap-2 mb-2">
                       <Coins className="h-4 w-4 text-green-600" />
-                      <span className="font-medium text-green-800">Earn 500 Credits (One-time)</span>
+                      <span className="font-medium text-green-800">Earn {sharingRewardAmount} Credits (One-time)</span>
                     </div>
                     <p className="text-green-700 text-sm">You'll receive credits when you share this assistant. Each assistant can only be shared once.</p>
                   </div>
@@ -1704,13 +1906,13 @@ export default function AgentPage() {
                   onClick={() => setShowShareConfirm(false)}
                   className="flex-1 px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors font-medium text-sm"
                 >
-                  {hasBeenShared ? 'Close' : 'Cancel'}
+                  {(hasBeenShared || sharingValidation?.details?.alreadyShared) ? 'Close' : 'Cancel'}
                 </button>
-                {!hasBeenShared && (
+                {!hasBeenShared && !sharingValidation?.details?.alreadyShared && (sharingValidation && !sharingValidation.valid ? null : (
                   <button
                     onClick={handleShareAgent}
-                    disabled={actionLoading === 'share'}
-                    className="flex-1 px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg hover:from-blue-600 hover:to-purple-700 transition-all duration-200 font-medium text-sm disabled:opacity-50"
+                    disabled={actionLoading === 'share' || (sharingValidation && !sharingValidation.valid)}
+                    className="flex-1 px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg hover:from-blue-600 hover:to-purple-700 transition-all duration-200 font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {actionLoading === 'share' ? (
                       <>
@@ -1721,7 +1923,7 @@ export default function AgentPage() {
                       'Share & Earn Credits'
                     )}
                   </button>
-                )}
+                ))}
               </div>
             </div>
           </div>

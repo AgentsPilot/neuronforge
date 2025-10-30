@@ -1,4 +1,33 @@
 // utils/usageTracker.ts
+/**
+ * @deprecated This module is deprecated and will be removed in a future version.
+ *
+ * MIGRATION GUIDE:
+ * - Use AIAnalyticsService from '@/lib/analytics/aiAnalytics' instead
+ * - Use OpenAIProvider from '@/lib/ai/providers/openaiProvider' for automatic tracking
+ * - Pricing is now database-backed via ai_model_pricing table
+ *
+ * Benefits of AIAnalyticsService:
+ * - Automatic tracking via BaseProvider (no manual calls needed)
+ * - 40+ tracked fields vs 10 fields in trackUsage
+ * - Activity-based tracking for better analytics
+ * - Multi-provider support (OpenAI, Anthropic, Google)
+ * - Database-backed pricing with caching
+ * - No duplicate tracking issues
+ *
+ * Example migration:
+ *
+ * OLD CODE:
+ * const response = await fetch('https://api.openai.com/v1/chat/completions', {...});
+ * await trackUsage({ userId, provider: 'openai', modelName: 'gpt-4o', ... });
+ *
+ * NEW CODE:
+ * const aiAnalytics = new AIAnalyticsService(supabase);
+ * const openaiProvider = new OpenAIProvider(apiKey, aiAnalytics);
+ * const response = await openaiProvider.chatCompletion(params, context);
+ * // Tracking happens automatically - no manual call needed!
+ */
+
 import { createClient } from '@supabase/supabase-js'
 
 // Create server-side Supabase client
@@ -61,7 +90,13 @@ export function calculateCost(provider: string, modelName: string, inputTokens: 
   return totalCost
 }
 
+/**
+ * @deprecated Use AIAnalyticsService instead. This function will be removed in a future version.
+ * See file header for migration guide.
+ */
 export async function trackUsage(data: UsageData): Promise<boolean> {
+  console.warn('⚠️ DEPRECATED: trackUsage() is deprecated. Use AIAnalyticsService with OpenAIProvider instead.');
+  console.warn('⚠️ See /lib/utils/usageTracker.ts file header for migration guide.');
   console.log('🎯 trackUsage called with data:', data)
   
   try {

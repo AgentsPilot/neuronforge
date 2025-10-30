@@ -613,17 +613,17 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         </SidebarSection>
 
         <SidebarSection title="Settings" isCollapsed={isCollapsed}>
-          <SidebarLink 
-            href="/settings/connections" 
-            label="Connections" 
+          <SidebarLink
+            href="/settings/connections"
+            label="Connections"
             icon={Link2}
             isActive={pathname === '/settings/connections'}
             onClick={() => setIsMobileOpen(false)}
             isCollapsed={isCollapsed}
           />
-          <SidebarLink 
-            href="/settings" 
-            label="Settings" 
+          <SidebarLink
+            href="/settings"
+            label="Settings"
             icon={Settings}
             isActive={pathname === '/settings'}
             onClick={() => setIsMobileOpen(false)}

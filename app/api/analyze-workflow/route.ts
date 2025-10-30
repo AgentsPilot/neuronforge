@@ -1,30 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { trackUsage } from '@/lib/utils/usageTracker';
+import { createClient } from '@supabase/supabase-js';
+import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
+import { OpenAIProvider } from '@/lib/ai/providers/openaiProvider';
+import { v4 as uuidv4 } from 'uuid';
 
 interface AnalyzeWorkflowRequest {
   systemPrompt: string;
   userMessage: string;
-  userId?: string; // Add userId to the interface
+  userId?: string;
+  sessionId?: string;
 }
 
-interface OpenAIResponse {
-  choices: Array<{
-    message: {
-      content: string;
-    };
-  }>;
-  usage?: {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    total_tokens?: number;
-  };
-}
+// Initialize Supabase service client for analytics
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
+
+// Initialize AI Analytics
+const aiAnalytics = new AIAnalyticsService(supabase, {
+  enableRealtime: true,
+  enableCostTracking: true,
+  enablePerformanceMetrics: true
+});
 
 export async function POST(request: NextRequest) {
   try {
     const body: AnalyzeWorkflowRequest = await request.json();
-    const { systemPrompt, userMessage, userId } = body;
-    
+    const { systemPrompt, userMessage, userId, sessionId: providedSessionId } = body;
+
     if (!systemPrompt || !userMessage) {
       return NextResponse.json(
         { error: 'Missing required fields: systemPrompt and userMessage' },
@@ -34,7 +38,10 @@ export async function POST(request: NextRequest) {
 
     // Get user ID from request headers if not in body (fallback method)
     const userIdToUse = userId || request.headers.get('x-user-id') || 'anonymous';
-    
+
+    // Get or generate session ID
+    const sessionId = providedSessionId || request.headers.get('x-session-id') || uuidv4();
+
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json(
         { error: 'OpenAI API key not configured in environment variables' },
@@ -44,16 +51,15 @@ export async function POST(request: NextRequest) {
 
     console.log('🚀 Processing workflow analysis request for user:', userIdToUse);
     console.log('📝 User message length:', userMessage.length);
-    
-    console.log('Making OpenAI API call...');
-    
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
+
+    // Initialize OpenAI provider with analytics
+    const openaiProvider = new OpenAIProvider(process.env.OPENAI_API_KEY!, aiAnalytics);
+
+    console.log('📊 Making tracked AI call for workflow analysis');
+
+    // Call OpenAI with automatic analytics tracking via BaseProvider
+    const response = await openaiProvider.chatCompletion(
+      {
         model: 'gpt-4o',
         messages: [
           { role: 'system', content: systemPrompt },
@@ -61,34 +67,33 @@ export async function POST(request: NextRequest) {
         ],
         temperature: 0.1,
         max_tokens: 2000
-      })
-    });
+      },
+      {
+        userId: userIdToUse,
+        sessionId: sessionId,
+        feature: 'workflow_analysis',
+        component: 'analyze-workflow',
+        workflow_step: 'ai_analysis',
+        category: 'workflow_processing',
+        activity_type: 'workflow_analysis',
+        activity_name: 'Analyzing workflow structure and steps',
+        activity_step: 'analysis'
+      }
+    );
 
-    console.log('OpenAI response status:', response.status);
+    const content = response.choices[0]?.message?.content;
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      console.error('OpenAI API error:', errorData);
-      return NextResponse.json(
-        { error: `OpenAI API failed: ${response.status} - ${errorData.error?.message || response.statusText}` },
-        { status: 500 }
-      );
-    }
-
-    const data: OpenAIResponse = await response.json();
-    const content = data.choices[0]?.message?.content;
-    
     if (!content) {
       return NextResponse.json(
-        { error: 'No response content from ChatGPT' },
+        { error: 'No response content from OpenAI' },
         { status: 500 }
       );
     }
 
     // Extract usage data from OpenAI response
-    const inputTokens = data.usage?.prompt_tokens || 0;
-    const outputTokens = data.usage?.completion_tokens || 0;
-    const totalTokens = data.usage?.total_tokens || 0;
+    const inputTokens = response.usage?.prompt_tokens || 0;
+    const outputTokens = response.usage?.completion_tokens || 0;
+    const totalTokens = response.usage?.total_tokens || 0;
 
     console.log('📊 Token usage:', {
       input: inputTokens,
@@ -96,14 +101,14 @@ export async function POST(request: NextRequest) {
       total: totalTokens
     });
 
-    console.log('ChatGPT response received, parsing JSON...');
+    console.log('✅ Workflow analysis response received, parsing JSON...');
 
-    // Extract JSON from ChatGPT response
+    // Extract JSON from response
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      console.error('No JSON found in ChatGPT response:', content);
+      console.error('No JSON found in OpenAI response:', content);
       return NextResponse.json(
-        { error: 'ChatGPT did not return valid JSON format' },
+        { error: 'OpenAI did not return valid JSON format' },
         { status: 500 }
       );
     }
@@ -111,15 +116,15 @@ export async function POST(request: NextRequest) {
     let analysis;
     try {
       analysis = JSON.parse(jsonMatch[0]);
-      console.log('Successfully parsed ChatGPT analysis');
+      console.log('✅ Successfully parsed workflow analysis');
     } catch (parseError) {
       console.error('JSON parse error:', parseError);
       return NextResponse.json(
-        { error: 'Failed to parse ChatGPT JSON response' },
+        { error: 'Failed to parse OpenAI JSON response' },
         { status: 500 }
       );
     }
-    
+
     // Validate the analysis structure
     if (!analysis.workflowSteps || !Array.isArray(analysis.workflowSteps)) {
       console.error('Invalid analysis structure:', analysis);
@@ -129,49 +134,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Track usage in database - only if we have a real user ID
-    if (userIdToUse !== 'anonymous') {
-      console.log('💾 Tracking usage for user:', userIdToUse);
-      
-      const trackingSuccess = await trackUsage({
-        userId: userIdToUse,
-        provider: 'openai',
-        modelName: 'gpt-4o',
-        inputTokens: inputTokens,
-        outputTokens: outputTokens,
-        requestType: 'workflow_analysis',
-        metadata: {
-          originalMessageLength: userMessage.length,
-          analysisSteps: analysis.workflowSteps?.length || 0,
-          confidence: analysis.confidence || 0,
-          timestamp: new Date().toISOString()
-        }
-      });
-      
-      if (trackingSuccess) {
-        console.log('✅ Usage tracking successful');
-      } else {
-        console.warn('⚠️ Usage tracking failed, but continuing with response');
-      }
-    } else {
-      console.log('⚠️ Skipping usage tracking - anonymous user');
-    }
-    
-    return NextResponse.json({ 
+    // Note: Token tracking happens automatically via openaiProvider.chatCompletion()
+    // No manual tracking needed - AIAnalyticsService handles it via BaseProvider
+
+    console.log('✅ Workflow analysis completed successfully');
+    console.log('📊 Analysis contains', analysis.workflowSteps?.length || 0, 'workflow steps');
+
+    return NextResponse.json({
       analysis,
       usage: {
         provider: 'openai',
-        model: 'gpt-4',
+        model: 'gpt-4o',
         inputTokens: inputTokens,
         outputTokens: outputTokens,
         totalTokens: totalTokens
-      }
+      },
+      sessionId: sessionId // Return session ID for tracking
     });
-    
+
   } catch (error: any) {
-    console.error('API route error:', error);
+    console.error('❌ API route error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to analyze workflow with ChatGPT' },
+      { error: error.message || 'Failed to analyze workflow' },
       { status: 500 }
     );
   }

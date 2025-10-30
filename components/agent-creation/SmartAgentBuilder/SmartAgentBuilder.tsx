@@ -326,27 +326,33 @@ export default function SmartAgentBuilder({
       console.log('Generation already in progress or agent exists, skipping');
       return;
     }
-    
+
     console.log('handleGenerateAgent called with CONSISTENT agent ID:', {
       prompt: prompt?.slice(0, 100),
       agentId: agentId.current,
       sessionId: sessionId.current
     });
-    
+
     try {
-      const generatedAgent = await generateAgent(prompt, {
+      const result = await generateAgent(prompt, {
         sessionId: sessionId.current,
         agentId: agentId.current,
         clarificationAnswers,
         promptType
       });
-      
-      if (generatedAgent) {
-        console.log('Agent generated successfully with CONSISTENT ID:', {
-          agentName: generatedAgent.agent_name,
-          agentId: agentId.current
+
+      if (result && result.agent) {
+        // CRITICAL FIX: Update sessionId and agentId refs with values from API
+        // This ensures the SAME IDs are used for creation token tracking
+        sessionId.current = result.sessionId;
+        agentId.current = result.agentId;
+
+        console.log('✅ Agent generated successfully - IDs synchronized:', {
+          agentName: result.agent.agent_name,
+          agentId: agentId.current,
+          sessionId: sessionId.current
         });
-        setAgent(generatedAgent);
+        setAgent(result.agent);
       } else {
         console.log('Agent generation failed');
         hasInitiatedGeneration.current = false;

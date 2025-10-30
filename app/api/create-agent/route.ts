@@ -219,6 +219,98 @@ export async function POST(request: NextRequest) {
       timezone: data.timezone
     });
 
+    // Track creation costs in AIS system now that agent exists in database
+    if (providedSessionId) {
+      try {
+        console.log('📊 [AIS] ========================================');
+        console.log('📊 [AIS] TRACKING CREATION COSTS');
+        console.log('📊 [AIS] Agent ID:', data.id);
+        console.log('📊 [AIS] Session ID:', providedSessionId);
+        console.log('📊 [AIS] User ID:', agentUserIdToUse);
+        console.log('📊 [AIS] ========================================');
+
+        // First, check if ANY records exist for this session (for debugging)
+        const { data: allSessionRecords } = await supabase
+          .from('token_usage')
+          .select('*')
+          .eq('session_id', providedSessionId);
+
+        console.log('📊 [AIS] All token_usage records for session:', {
+          count: allSessionRecords?.length || 0,
+          sessionId: providedSessionId,
+          records: allSessionRecords?.map(r => ({
+            activity_type: r.activity_type,
+            input_tokens: r.input_tokens,
+            output_tokens: r.output_tokens,
+            created_at: r.created_at
+          }))
+        });
+
+        // Get all creation-related token usage for this session
+        const { data: creationTokens, error: tokenError } = await supabase
+          .from('token_usage')
+          .select('input_tokens, output_tokens, activity_type, created_at')
+          .eq('session_id', providedSessionId)
+          .in('activity_type', ['agent_creation', 'agent_generation']);
+
+        if (tokenError) {
+          console.error('❌ [AIS] Error fetching token usage:', tokenError);
+        } else if (creationTokens && creationTokens.length > 0) {
+          const totalCreationTokens = creationTokens.reduce((sum: number, record: any) =>
+            sum + (record.input_tokens || 0) + (record.output_tokens || 0), 0
+          );
+
+          console.log(`📊 [AIS] Found ${creationTokens.length} token records for activity types [agent_creation, agent_generation]`);
+          console.log(`📊 [AIS] Total tokens: ${totalCreationTokens}`);
+          console.log('📊 [AIS] Token breakdown:', creationTokens.map(r => ({
+            activity_type: r.activity_type,
+            input: r.input_tokens,
+            output: r.output_tokens,
+            total: (r.input_tokens || 0) + (r.output_tokens || 0),
+            created_at: r.created_at
+          })));
+
+          // Import and call trackCreationCosts with server-side supabase client
+          const { AgentIntensityService } = await import('@/lib/services/AgentIntensityService');
+          const result = await AgentIntensityService.trackCreationCosts(
+            supabase, // Pass the server-side supabase client
+            {
+              agent_id: data.id,
+              user_id: agentUserIdToUse,
+              tokens_used: totalCreationTokens,
+              creation_duration_ms: 0 // We don't track timing across APIs
+            }
+          );
+
+          if (result) {
+            console.log(`✅ [AIS] Successfully tracked creation costs: ${totalCreationTokens} tokens for agent ${data.id}`);
+            console.log('✅ [AIS] Tracking result:', {
+              agent_id: result.agent_id,
+              creation_tokens_used: result.creation_tokens_used,
+              total_creation_cost_usd: result.total_creation_cost_usd
+            });
+          } else {
+            console.log('⚠️ [AIS] trackCreationCosts returned null');
+          }
+        } else {
+          console.log('⚠️ [AIS] No token usage records found for session:', providedSessionId);
+          console.log('⚠️ [AIS] This could mean:');
+          console.log('   1. SessionId mismatch between generation and creation');
+          console.log('   2. Token tracking failed during generation');
+          console.log('   3. Wrong activity_type used for token records');
+        }
+      } catch (aisError) {
+        console.error('❌ [AIS] Failed to track creation costs:', aisError);
+        // Non-fatal error - continue (agent is already created successfully)
+      }
+    } else {
+      console.log('❌ [AIS] ========================================');
+      console.log('❌ [AIS] NO SESSION ID PROVIDED');
+      console.log('❌ [AIS] Cannot track creation costs without sessionId');
+      console.log('❌ [AIS] Check frontend is passing sessionId to create-agent API');
+      console.log('❌ [AIS] ========================================');
+    }
+
     // Return the structure your frontend expects (consistent with your other API)
     return NextResponse.json(
       { 

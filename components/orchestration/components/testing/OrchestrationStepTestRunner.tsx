@@ -539,7 +539,7 @@ export const OrchestrationStepTestRunner: React.FC<OrchestrationStepTestRunnerPr
               <div className="font-semibold text-blue-800">Orchestration Details</div>
               <div className="text-blue-700 text-sm grid grid-cols-2 gap-2">
                 {testResult.testDetails.metadata.tokensUsed && (
-                  <div>Tokens Used: {testResult.testDetails.metadata.tokensUsed}</div>
+                  <div>Pilot Credits: {Math.round(testResult.testDetails.metadata.tokensUsed / 10)}</div>
                 )}
                 {testResult.testDetails.metadata.model && (
                   <div>Model: {testResult.testDetails.metadata.model}</div>

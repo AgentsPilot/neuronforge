@@ -14,7 +14,7 @@ import {
   ChevronRight,
   Sparkles
 } from 'lucide-react';
-import { formatCost, formatTokens, formatTime } from '@/lib/utils/analyticsHelpers';
+import { formatCost, formatPilotCredits, formatTime } from '@/lib/utils/analyticsHelpers';
 import type { ProcessedAnalyticsData } from '@/types/analytics';
 
 interface MetricsCardsProps {
@@ -84,7 +84,7 @@ export const MetricsCards: React.FC<MetricsCardsProps> = ({ data, onViewChange }
             <p className="text-xs text-purple-700 font-medium">Operations</p>
           </button>
 
-          {/* Tokens Processed */}
+          {/* Pilot Credits Processed */}
           <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200/50 rounded-xl p-3 transition-all duration-200">
             <div className="flex items-center justify-between mb-2">
               <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-md flex-shrink-0">
@@ -94,8 +94,8 @@ export const MetricsCards: React.FC<MetricsCardsProps> = ({ data, onViewChange }
                 Metric
               </span>
             </div>
-            <h3 className="text-xl font-bold text-blue-900 mb-1">{formatTokens(metrics.totalTokens)}</h3>
-            <p className="text-xs text-blue-700 font-medium">Tokens</p>
+            <h3 className="text-xl font-bold text-blue-900 mb-1">{formatPilotCredits(metrics.totalTokens)}</h3>
+            <p className="text-xs text-blue-700 font-medium">Pilot Credits</p>
           </div>
 
           {/* Average Speed */}

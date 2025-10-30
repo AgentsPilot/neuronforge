@@ -244,7 +244,8 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
     } else if (output?.agentkit === true) {
       // Run output format (simplified)
       ({ response: message, iterations, toolCallsCount, tokensUsed, executionTimeMs, success } = output);
-      model = 'gpt-4o'; // Default model
+      // Try to get model from output, fallback to default
+      model = output?.model || output?.model_used || output?.modelUsed || 'gpt-4o';
       toolCalls = []; // Not available in run_output
     }
 
@@ -295,9 +296,13 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
           )}
           {tokensUsed !== undefined && (
             <div className="bg-white border border-gray-200 rounded p-2">
-              <div className="text-xs text-gray-500 mb-0.5">Tokens</div>
+              <div className="text-xs text-gray-500 mb-0.5">Pilot Credits</div>
               <div className="text-xs font-semibold text-gray-900">
-                {typeof tokensUsed === 'number' ? tokensUsed.toLocaleString() : tokensUsed?.total?.toLocaleString() || 0}
+                {(() => {
+                  const totalTokens = typeof tokensUsed === 'number' ? tokensUsed : tokensUsed?.total || 0;
+                  const pilotCredits = Math.round(totalTokens / 10); // 10 tokens = 1 Pilot Credit
+                  return pilotCredits.toLocaleString();
+                })()}
               </div>
             </div>
           )}

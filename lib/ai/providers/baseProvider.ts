@@ -18,10 +18,13 @@ export interface CallContext {
 
 export abstract class BaseAIProvider {
   protected analytics: AIAnalyticsService;
-  
+
   constructor(analytics?: AIAnalyticsService) {
     this.analytics = analytics || new AIAnalyticsService();
   }
+
+  // Abstract method that must be implemented by subclasses
+  abstract chatCompletion(params: any, context: CallContext): Promise<any>;
 
   async callWithTracking<T>(
     context: CallContext,

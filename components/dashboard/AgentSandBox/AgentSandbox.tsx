@@ -773,8 +773,8 @@ export default function AgentSandbox(props: AgentSandboxProps) {
                       )}
                       {result.data.tokens_used !== undefined && (
                         <div className="bg-white rounded-lg p-2 border border-slate-200">
-                          <div className="text-xs text-slate-500 mb-1">Tokens</div>
-                          <div className="font-semibold text-slate-900">{result.data.tokens_used.toLocaleString()}</div>
+                          <div className="text-xs text-slate-500 mb-1">Pilot Credits</div>
+                          <div className="font-semibold text-slate-900">{Math.round(result.data.tokens_used / 10).toLocaleString()}</div>
                         </div>
                       )}
                       {result.data.execution_time_ms !== undefined && (

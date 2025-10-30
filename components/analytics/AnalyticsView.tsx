@@ -23,7 +23,7 @@ import {
   PlayCircle,
   Target
 } from 'lucide-react';
-import { formatCost, formatTokens, formatTime } from '@/lib/utils/analyticsHelpers';
+import { formatCost, formatPilotCredits, formatTime } from '@/lib/utils/analyticsHelpers';
 import type { 
   AnalyticsView, 
   ProcessedAnalyticsData 
@@ -254,7 +254,7 @@ export const AnalyticsViews: React.FC<AnalyticsViewsProps> = ({ selectedView, da
                               <div className={`font-bold ${isHighest ? 'text-blue-900 text-base' : 'text-gray-900'}`}>
                                 {formatCost(day.cost)}
                               </div>
-                              <div className="text-xs text-gray-500">{formatTokens(day.tokens)} tokens</div>
+                              <div className="text-xs text-gray-500">{formatPilotCredits(day.tokens)} Pilot Credits</div>
                             </div>
                           </div>
                           <div className="bg-gray-100 rounded-full h-2.5 overflow-hidden">
@@ -647,7 +647,7 @@ export const AnalyticsViews: React.FC<AnalyticsViewsProps> = ({ selectedView, da
                   <div className="ml-4 bg-white/80 backdrop-blur-sm rounded-xl px-4 py-3 border border-gray-200/50 shadow-sm min-w-[120px]">
                     <p className="text-xs text-gray-500 mb-1">Total Cost</p>
                     <p className="text-2xl font-bold text-gray-900">{formatCost(group.totalCost)}</p>
-                    <p className="text-xs text-gray-600 mt-1">{formatTokens(group.totalTokens)} tokens</p>
+                    <p className="text-xs text-gray-600 mt-1">{formatPilotCredits(group.totalTokens)} Pilot Credits</p>
                   </div>
                 </div>
 
@@ -762,7 +762,7 @@ export const AnalyticsViews: React.FC<AnalyticsViewsProps> = ({ selectedView, da
                                       {formatTime(activity.latency_ms)}
                                     </span>
                                     <span className="text-xs text-gray-500">
-                                      {formatTokens(activity.total_tokens)} tokens
+                                      {formatPilotCredits(activity.total_tokens)} Pilot Credits
                                     </span>
                                   </div>
                                 </div>

@@ -9,6 +9,8 @@ import { runAgentWithContext } from '@/lib/utils/runAgentWithContext'
 import { extractPdfTextFromBase64 } from '@/lib/utils/extractPdfTextFromBase64'
 import { addManualExecution } from '@/lib/queues/qstashQueue'
 import { runAgentKit } from '@/lib/agentkit/runAgentKit' // NEW: AgentKit execution
+import { updateAgentIntensityMetrics } from '@/lib/utils/updateAgentIntensity'
+import type { AgentExecutionData } from '@/lib/types/intensity'
 
 export const runtime = 'nodejs'
 
@@ -157,7 +159,8 @@ export async function POST(req: Request) {
           iterations: result.iterations,
           toolCalls: result.toolCalls,
           tokensUsed: result.tokensUsed,
-          model: 'gpt-4o',
+          model: result.model || 'gpt-4o', // Use actual model from intelligent routing
+          provider: result.provider || 'openai',
           inputValuesUsed: Object.keys(inputValues).length
         }
       })
@@ -180,12 +183,15 @@ export async function POST(req: Request) {
             iterations: result.iterations,
             toolCallsCount: result.toolCalls.length,
             tokensUsed: result.tokensUsed.total,
-            executionTimeMs: result.executionTime
+            executionTimeMs: result.executionTime,
+            model: result.model || 'gpt-4o', // Include actual model used
+            provider: result.provider || 'openai'
           }),
           full_output: {
             message: result.response,
             agentkit_metadata: {
-              model: 'gpt-4o',
+              model: result.model || 'gpt-4o', // Use actual model from intelligent routing
+              provider: result.provider || 'openai',
               iterations: result.iterations,
               toolCalls: result.toolCalls,
               tokensUsed: result.tokensUsed
@@ -214,6 +220,48 @@ export async function POST(req: Request) {
         console.error('❌ Failed to update agent_stats:', statsError)
       } else {
         console.log('✅ agent_stats updated successfully')
+      }
+
+      // Track intensity metrics for dynamic pricing
+      try {
+        console.log('📊 [INTENSITY] Starting update for agent:', agent.id);
+        console.log('📊 [INTENSITY] Tokens used:', result.tokensUsed.total);
+
+        // Parse workflow complexity from agent definition
+        const workflowSteps = agent.workflow_steps || [];
+        const workflowComplexity = {
+          steps: workflowSteps.length,
+          branches: workflowSteps.filter((s: any) => s.type === 'conditional' || s.type === 'branch').length,
+          loops: workflowSteps.filter((s: any) => s.type === 'loop' || s.type === 'iteration').length,
+          parallel: workflowSteps.filter((s: any) => s.parallel === true).length,
+        };
+
+        const executionData: AgentExecutionData = {
+          agent_id: agent.id,
+          user_id: user.id,
+          tokens_used: result.tokensUsed.total,
+          input_tokens: result.tokensUsed.prompt,
+          output_tokens: result.tokensUsed.completion,
+          execution_duration_ms: result.executionTime,
+          iterations_count: result.iterations,
+          was_successful: result.success,
+          // Hardcoded: AgentKit doesn't implement retry logic yet (feature planned)
+          retry_count: 0,
+          plugins_used: agent.plugins_required || [],
+          tool_calls_count: result.toolCalls.length,
+          // Hardcoded: Per-tool timing instrumentation not implemented (low priority)
+          tool_orchestration_time_ms: 0,
+          workflow_steps: workflowComplexity.steps,
+          conditional_branches: workflowComplexity.branches,
+          loop_iterations: workflowComplexity.loops,
+          parallel_executions: workflowComplexity.parallel,
+        };
+
+        const updated = await updateAgentIntensityMetrics(supabase, executionData);
+        console.log('✅ [INTENSITY] Update result:', updated ? 'SUCCESS' : 'FAILED');
+      } catch (intensityError) {
+        console.error('❌ Failed to update intensity metrics:', intensityError);
+        // Non-fatal error - continue execution
       }
 
       return NextResponse.json({
@@ -615,6 +663,10 @@ export async function POST(req: Request) {
     } else {
       console.log('✅ agent_stats updated')
     }
+
+    // NOTE: Legacy execution path does not track intensity metrics
+    // All agents should use AgentKit (use_agentkit: true) for proper intensity tracking
+    console.log('⚠️ Legacy execution path - intensity metrics not tracked (use AgentKit instead)');
 
     return NextResponse.json({
       result: {

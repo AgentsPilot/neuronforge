@@ -264,6 +264,9 @@ export async function POST(req: Request) {
       severity: 'info'
     })
 
+    // NOTE: Creation cost tracking moved to /api/create-agent
+    // (Must happen AFTER agent is saved to database)
+
     // DON'T save to database yet - return agent data for user review
     // User will save it through the wizard when they click "Save Agent"
     return NextResponse.json({

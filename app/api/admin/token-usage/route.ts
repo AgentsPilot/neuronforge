@@ -15,11 +15,12 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const filter = searchParams.get('filter') || 'all';
     const provider = searchParams.get('provider') || 'all';
+    const model = searchParams.get('model') || 'all';
     const search = searchParams.get('search') || '';
     const dateFrom = searchParams.get('dateFrom');
     const dateTo = searchParams.get('dateTo');
 
-    console.log('Token usage API called with params:', { filter, provider, search, dateFrom, dateTo });
+    console.log('Token usage API called with params:', { filter, provider, model, search, dateFrom, dateTo });
 
     // Start with a basic query without JOINs to avoid potential issues
     let query = supabase
@@ -40,6 +41,10 @@ export async function GET(request: NextRequest) {
 
     if (provider !== 'all') {
       query = query.eq('provider', provider);
+    }
+
+    if (model !== 'all') {
+      query = query.eq('model_name', model);
     }
 
     // Apply date range filters
