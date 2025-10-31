@@ -1,9 +1,5 @@
 import {
-  Brain, Database, FileText, Cog, CheckCircle, AlertCircle, Clock, Target, 
-  Shield, Lightbulb, Cpu, Activity, Eye, EyeOff, ArrowRight, Play, Send,
-  Download, Zap, Settings, Info, ChevronDown, ChevronUp, Loader2, Sparkles,
-  Rocket, Magic, Timer, Star, Puzzle, Wand2, Coffee, Heart, Smile, PartyPopper,
-  TrendingUp, Award, CheckCircle2, AlertTriangle, Terminal, Gauge
+  Lightbulb, Sparkles, Star, Puzzle, Wand2, Coffee, Heart, Award
 } from 'lucide-react'
 
 // Types
@@ -29,6 +25,10 @@ export interface AgentSandboxProps {
   outputSchema?: OutputField[]
   userPrompt: string
   pluginsRequired?: string[]
+  workflowSteps?: any[]
+  connectedPlugins?: Record<string, any>
+  initialContext?: 'test' | 'configure'
+  locked?: boolean  // When true, prevents mode switching (hides toggle)
   onExecutionComplete?: (executionId: string | null) => void
   onFormCompletionChange?: (isComplete: boolean) => void
 }

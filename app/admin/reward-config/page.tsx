@@ -4,8 +4,20 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/components/UserProvider';
 import {
   Gift, Zap, Clock, Users, AlertCircle, CheckCircle,
-  RefreshCw, Plus, Edit, Trash2, Save, X, Calendar
+  RefreshCw, Plus, Edit, Trash2, Save, X, Calendar,
+  Settings, ChevronUp, ChevronDown
 } from 'lucide-react';
+
+interface RewardSettings {
+  id: string;
+  min_executions: number | null;
+  min_success_rate: number | null;
+  require_description: boolean;
+  min_description_length: number | null;
+  min_agent_age_hours: number | null;
+  max_shares_per_month: number | null;
+  max_total_shares: number | null;
+}
 
 interface RewardConfig {
   id: string;
@@ -22,6 +34,7 @@ interface RewardConfig {
   valid_until: string | null;
   created_at: string;
   updated_at: string;
+  settings?: RewardSettings | null;
 }
 
 export default function RewardConfigPage() {
@@ -35,14 +48,33 @@ export default function RewardConfigPage() {
   const [editForm, setEditForm] = useState<Partial<RewardConfig>>({});
   const [showCreateForm, setShowCreateForm] = useState(false);
 
+  // Settings state
+  const [expandedSettings, setExpandedSettings] = useState<string | null>(null);
+  const [editingSettings, setEditingSettings] = useState<string | null>(null);
+  const [settingsForm, setSettingsForm] = useState<Partial<RewardSettings>>({});
+  const [settingsSuccess, setSettingsSuccess] = useState<string | null>(null);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [lastUpdate, setLastUpdate] = useState<number>(Date.now()); // Force re-render key
+
   const fetchRewards = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/admin/reward-config');
+      // Add cache busting with timestamp and no-store cache policy
+      const response = await fetch(`/api/admin/reward-config?t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache'
+        }
+      });
       const data = await response.json();
+
+      console.log('📦 [fetchRewards] Received data:', data);
 
       if (data.success) {
         setRewards(data.rewards);
+        setLastUpdate(Date.now()); // Force component re-render
+        console.log('📦 [fetchRewards] Updated rewards state:', data.rewards);
+        console.log('📦 [fetchRewards] Set lastUpdate to force re-render');
         if (data.defaultCredits !== undefined) {
           setDefaultCredits(data.defaultCredits);
         }
@@ -179,6 +211,82 @@ export default function RewardConfigPage() {
       }
     } catch (err: any) {
       setError(err.message || 'Failed to toggle reward status');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Settings handlers
+  const handleEditSettings = (reward: RewardConfig) => {
+    setEditingSettings(reward.id);
+    setSettingsForm(reward.settings || {
+      min_executions: 3,
+      min_success_rate: 66,
+      require_description: true,
+      min_description_length: 20,
+      min_agent_age_hours: 1,
+      max_shares_per_month: 20,
+      max_total_shares: 100
+    });
+  };
+
+  const handleCancelSettingsEdit = () => {
+    setEditingSettings(null);
+    setSettingsForm({});
+  };
+
+  const handleSaveSettings = async (rewardId: string) => {
+    console.log('🔥 SAVE BUTTON CLICKED - handleSaveSettings called with rewardId:', rewardId);
+    console.log('🔥 Current settingsForm state:', settingsForm);
+
+    try {
+      setSaving(true);
+      setSettingsError(null);
+      setSettingsSuccess(null);
+
+      console.log('💾 Saving settings for reward:', rewardId);
+      console.log('📝 Settings form:', settingsForm);
+
+      const response = await fetch('/api/admin/reward-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'updateSettings',
+          rewardId,
+          settings: settingsForm
+        })
+      });
+
+      const data = await response.json();
+      console.log('📥 Response:', data);
+
+      if (data.success) {
+        console.log('✅ Settings saved successfully');
+        console.log('✅ Saved settings data from API:', data.settings);
+
+        // Fetch updated data first
+        console.log('🔄 Calling fetchRewards to get fresh data...');
+        await fetchRewards();
+        console.log('🔄 fetchRewards completed');
+
+        // Then exit edit mode and show success message
+        setEditingSettings(null);
+        setSettingsForm({});
+        setSettingsSuccess('Sharing requirements updated successfully');
+        console.log('✅ Success message set, should appear in view mode');
+
+        // Auto-clear success message after 5 seconds
+        setTimeout(() => {
+          console.log('⏰ Clearing success message');
+          setSettingsSuccess(null);
+        }, 5000);
+      } else {
+        console.error('❌ Failed to save settings:', data.error);
+        setSettingsError(data.error || 'Failed to update settings');
+      }
+    } catch (err: any) {
+      console.error('❌ Exception while saving settings:', err);
+      setSettingsError(err.message || 'Failed to update settings');
     } finally {
       setSaving(false);
     }
@@ -527,6 +635,214 @@ export default function RewardConfigPage() {
                       <Trash2 className="w-5 h-5" />
                     </button>
                   </div>
+                </div>
+              )}
+
+              {/* Settings Section for agent_sharing reward */}
+              {reward.reward_key === 'agent_sharing' && editingId !== reward.id && (
+                <div className="mt-4 border-t border-slate-700 pt-4" key={`settings-${reward.id}-${lastUpdate}`}>
+                  <button
+                    onClick={() => setExpandedSettings(expandedSettings === reward.id ? null : reward.id)}
+                    className="flex items-center gap-2 text-slate-300 hover:text-white transition-colors text-sm font-medium"
+                  >
+                    <Settings className="w-4 h-4" />
+                    <span>Sharing Requirements</span>
+                    {expandedSettings === reward.id ? (
+                      <ChevronUp className="w-4 h-4" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4" />
+                    )}
+                  </button>
+
+                  {expandedSettings === reward.id && (
+                    <div className="mt-4 bg-slate-800/50 rounded-lg p-4">
+                      {(() => {
+                        console.log('🎨 [Render] Rendering settings for reward:', reward.id);
+                        console.log('🎨 [Render] Current settings:', reward.settings);
+                        console.log('🎨 [Render] lastUpdate timestamp:', lastUpdate);
+                        return null;
+                      })()}
+                      {editingSettings === reward.id ? (
+                        <div className="space-y-4">
+                          <h4 className="text-sm font-semibold text-white mb-3">Edit Sharing Requirements</h4>
+
+                          {/* Agent Quality Thresholds */}
+                          <div className="space-y-4">
+                            <div>
+                              <label className="block text-xs font-medium text-slate-300 mb-1">Min Executions</label>
+                              <input
+                                type="number"
+                                value={settingsForm.min_executions ?? 3}
+                                onChange={(e) => setSettingsForm({...settingsForm, min_executions: parseInt(e.target.value)})}
+                                className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+                              />
+                              <p className="text-xs text-slate-500 mt-1">Minimum number of successful test runs required before agent can be shared</p>
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-medium text-slate-300 mb-1">Min Success Rate (%)</label>
+                              <input
+                                type="number"
+                                value={settingsForm.min_success_rate ?? 66}
+                                onChange={(e) => setSettingsForm({...settingsForm, min_success_rate: parseInt(e.target.value)})}
+                                className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+                              />
+                              <p className="text-xs text-slate-500 mt-1">Minimum percentage of successful executions (0-100)</p>
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-medium text-slate-300 mb-1">Min Description Length</label>
+                              <input
+                                type="number"
+                                value={settingsForm.min_description_length ?? 20}
+                                onChange={(e) => setSettingsForm({...settingsForm, min_description_length: parseInt(e.target.value)})}
+                                className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+                              />
+                              <p className="text-xs text-slate-500 mt-1">Minimum character length for agent description to ensure quality</p>
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-medium text-slate-300 mb-1">Min Agent Age (hours)</label>
+                              <input
+                                type="number"
+                                step="0.1"
+                                value={settingsForm.min_agent_age_hours ?? 1}
+                                onChange={(e) => setSettingsForm({...settingsForm, min_agent_age_hours: parseFloat(e.target.value)})}
+                                className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+                              />
+                              <p className="text-xs text-slate-500 mt-1">How long agent must exist before sharing (prevents spam)</p>
+                            </div>
+                          </div>
+
+                          {/* User Rate Limits */}
+                          <div className="border-t border-slate-700 pt-4 mt-4">
+                            <h5 className="text-xs font-semibold text-slate-300 mb-3">User Rate Limits</h5>
+                            <p className="text-xs text-slate-400 mb-3">
+                              Note: Daily limit is managed in the main reward config (Max Per User Per Day)
+                            </p>
+                            <div className="space-y-4">
+                              <div>
+                                <label className="block text-xs font-medium text-slate-300 mb-1">Max Per Month</label>
+                                <input
+                                  type="number"
+                                  value={settingsForm.max_shares_per_month ?? 20}
+                                  onChange={(e) => setSettingsForm({...settingsForm, max_shares_per_month: parseInt(e.target.value)})}
+                                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+                                />
+                                <p className="text-xs text-slate-500 mt-1">Maximum agents a user can share in 30 days</p>
+                              </div>
+
+                              <div>
+                                <label className="block text-xs font-medium text-slate-300 mb-1">Max Total (Lifetime)</label>
+                                <input
+                                  type="number"
+                                  value={settingsForm.max_total_shares ?? 100}
+                                  onChange={(e) => setSettingsForm({...settingsForm, max_total_shares: parseInt(e.target.value)})}
+                                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+                                />
+                                <p className="text-xs text-slate-500 mt-1">Maximum total agents a user can share (lifetime limit)</p>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Action Buttons */}
+                          <div className="flex gap-2 justify-end pt-4 border-t border-slate-700">
+                            <button
+                              onClick={handleCancelSettingsEdit}
+                              className="px-4 py-2 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition-colors text-sm"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={() => handleSaveSettings(reward.id)}
+                              disabled={saving}
+                              className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 text-sm flex items-center gap-2"
+                            >
+                              {saving ? (
+                                <>
+                                  <RefreshCw className="w-4 h-4 animate-spin" />
+                                  Saving...
+                                </>
+                              ) : (
+                                <>
+                                  <Save className="w-4 h-4" />
+                                  Save Settings
+                                </>
+                              )}
+                            </button>
+                          </div>
+
+                          {/* Success/Error Messages */}
+                          {settingsSuccess && (
+                            <div className="mt-4 bg-green-500/10 border border-green-500/50 rounded-lg p-3 flex items-start gap-2">
+                              <CheckCircle className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
+                              <p className="text-green-400 text-sm">{settingsSuccess}</p>
+                            </div>
+                          )}
+
+                          {settingsError && (
+                            <div className="mt-4 bg-red-500/10 border border-red-500/50 rounded-lg p-3 flex items-start gap-2">
+                              <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                              <p className="text-red-400 text-sm">{settingsError}</p>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div>
+                          <div className="flex items-center justify-between mb-3">
+                            <h4 className="text-sm font-semibold text-white">Current Requirements</h4>
+                            <button
+                              onClick={() => handleEditSettings(reward)}
+                              className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1"
+                            >
+                              <Edit className="w-3 h-3" />
+                              Edit
+                            </button>
+                          </div>
+
+                          <div>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                              <div>
+                                <span className="text-slate-400">Min Executions:</span>
+                                <span className="ml-2 text-white font-semibold">{reward.settings?.min_executions ?? '3 (default)'}</span>
+                              </div>
+                              <div>
+                                <span className="text-slate-400">Success Rate:</span>
+                                <span className="ml-2 text-white font-semibold">{reward.settings?.min_success_rate ?? '66 (default)'}%</span>
+                              </div>
+                              <div>
+                                <span className="text-slate-400">Description:</span>
+                                <span className="ml-2 text-white font-semibold">{reward.settings?.min_description_length ?? '20 (default)'} chars</span>
+                              </div>
+                              <div>
+                                <span className="text-slate-400">Agent Age:</span>
+                                <span className="ml-2 text-white font-semibold">{reward.settings?.min_agent_age_hours ?? '1 (default)'}h</span>
+                              </div>
+                              <div>
+                                <span className="text-slate-400">Monthly Limit:</span>
+                                <span className="ml-2 text-white font-semibold">{reward.settings?.max_shares_per_month ?? '20 (default)'}</span>
+                              </div>
+                              <div>
+                                <span className="text-slate-400">Lifetime Limit:</span>
+                                <span className="ml-2 text-white font-semibold">{reward.settings?.max_total_shares ?? '100 (default)'}</span>
+                              </div>
+                            </div>
+                            <p className="text-xs text-slate-500 mt-3">
+                              Daily limit is managed in main reward config (currently: {reward.max_per_user_per_day ?? 'unlimited'})
+                            </p>
+                          </div>
+
+                          {/* Success Message in View Mode */}
+                          {settingsSuccess && (
+                            <div className="mt-4 bg-green-500/10 border border-green-500/50 rounded-lg p-3 flex items-start gap-2">
+                              <CheckCircle className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
+                              <p className="text-green-400 text-sm">{settingsSuccess}</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

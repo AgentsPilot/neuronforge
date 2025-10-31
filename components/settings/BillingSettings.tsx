@@ -504,18 +504,9 @@ function PlansTab({ availablePlans, currentPlan, formatCredits, formatCurrency }
 
   const handleSelectPlan = async (planKey: string) => {
     setLoading(planKey);
-    try {
-      const { createCheckoutSession } = await import('@/lib/stripe/client');
-      await createCheckoutSession({
-        planKey,
-        billingCycle: 'monthly',
-        mode: 'subscription',
-      });
-    } catch (error) {
-      console.error('Error selecting plan:', error);
-      alert('Failed to start checkout. Please try again.');
-      setLoading(null);
-    }
+    // Stripe integration coming soon
+    alert('Payment integration coming soon! Please contact support for plan upgrades.');
+    setLoading(null);
   };
 
   return (

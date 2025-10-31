@@ -12,12 +12,35 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-export async function GET() {
+// Disable caching for this route
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
+export async function GET(request: NextRequest) {
   try {
-    // Fetch all reward configurations
+    console.log('🔍 [GET] Fetching reward configs with settings...');
+    console.log('🔍 [GET] Request URL:', request.url);
+    console.log('🔍 [GET] Timestamp:', new Date().toISOString());
+
+    // Force fresh data by using maybeSingle() and explicit ordering
+    // This prevents Supabase client-side caching
     const { data: rewards, error } = await supabase
       .from('reward_config')
-      .select('*')
+      .select(`
+        *,
+        reward_settings!reward_settings_reward_config_id_fkey (
+          id,
+          min_executions,
+          min_success_rate,
+          require_description,
+          min_description_length,
+          min_agent_age_hours,
+          max_shares_per_month,
+          max_total_shares,
+          custom_settings,
+          updated_at
+        )
+      `)
       .order('reward_key');
 
     if (error) {
@@ -27,6 +50,37 @@ export async function GET() {
         { status: 500 }
       );
     }
+
+    console.log('🔍 [GET] Raw rewards data:', JSON.stringify(rewards, null, 2));
+
+    // Flatten the settings into the reward object for easier access
+    const rewardsWithSettings = rewards?.map(reward => {
+      console.log(`🔍 [GET] Processing reward ${reward.reward_key}:`, {
+        has_reward_settings: !!reward.reward_settings,
+        reward_settings_type: Array.isArray(reward.reward_settings) ? 'array' : typeof reward.reward_settings,
+        reward_settings_length: Array.isArray(reward.reward_settings) ? reward.reward_settings.length : 'N/A',
+        reward_settings_value: reward.reward_settings
+      });
+
+      // Handle both object (from foreign key join) and array (from old query style)
+      let settings = null;
+      if (reward.reward_settings) {
+        if (Array.isArray(reward.reward_settings)) {
+          // Old style - array of settings
+          settings = reward.reward_settings.length > 0 ? reward.reward_settings[0] : null;
+        } else if (typeof reward.reward_settings === 'object') {
+          // New style - single object from foreign key join
+          settings = reward.reward_settings;
+        }
+      }
+
+      return {
+        ...reward,
+        settings
+      };
+    }) || [];
+
+    console.log('🔍 [GET] Rewards with flattened settings:', JSON.stringify(rewardsWithSettings, null, 2));
 
     // Fetch default credits from pricing_config
     const { data: defaultCreditsData } = await supabase
@@ -39,7 +93,7 @@ export async function GET() {
 
     return NextResponse.json({
       success: true,
-      rewards: rewards || [],
+      rewards: rewardsWithSettings,
       defaultCredits
     });
   } catch (error: any) {
@@ -54,7 +108,98 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { action, rewardId, updates } = body;
+    const { action, rewardId, updates, settings } = body;
+
+    if (action === 'updateSettings') {
+      console.log('🔧 [API] updateSettings action received');
+      console.log('🔧 [API] rewardId:', rewardId);
+      console.log('🔧 [API] settings:', settings);
+
+      if (!rewardId || !settings) {
+        return NextResponse.json(
+          { success: false, error: 'Missing rewardId or settings' },
+          { status: 400 }
+        );
+      }
+
+      // Check if settings row exists
+      const { data: existingSettings, error: checkError } = await supabase
+        .from('reward_settings')
+        .select('id')
+        .eq('reward_config_id', rewardId)
+        .single();
+
+      console.log('🔧 [API] Existing settings check:', { existingSettings, checkError });
+
+      let result;
+      if (existingSettings) {
+        // Update existing settings
+        console.log('🔧 [API] Updating existing settings with:', {
+          ...settings,
+          updated_at: new Date().toISOString()
+        });
+
+        const { data, error } = await supabase
+          .from('reward_settings')
+          .update({
+            ...settings,
+            updated_at: new Date().toISOString()
+          })
+          .eq('reward_config_id', rewardId)
+          .select()
+          .single();
+
+        console.log('🔧 [API] Update result:', { data, error });
+
+        if (error) {
+          console.error('❌ [API] Error updating reward settings:', error);
+          return NextResponse.json(
+            { success: false, error: error.message },
+            { status: 500 }
+          );
+        }
+        result = data;
+      } else {
+        // Insert new settings
+        console.log('🔧 [API] Inserting new settings');
+
+        const { data, error } = await supabase
+          .from('reward_settings')
+          .insert({
+            reward_config_id: rewardId,
+            ...settings
+          })
+          .select()
+          .single();
+
+        console.log('🔧 [API] Insert result:', { data, error });
+
+        if (error) {
+          console.error('❌ [API] Error creating reward settings:', error);
+          return NextResponse.json(
+            { success: false, error: error.message },
+            { status: 500 }
+          );
+        }
+        result = data;
+      }
+
+      console.log('✅ [API] Returning success with result:', result);
+
+      // Verify the settings were actually saved by querying them back
+      const { data: verifySettings, error: verifyError } = await supabase
+        .from('reward_settings')
+        .select('*')
+        .eq('reward_config_id', rewardId)
+        .single();
+
+      console.log('🔍 [API] Verification query - settings in DB:', { verifySettings, verifyError });
+
+      return NextResponse.json({
+        success: true,
+        settings: result
+      });
+    }
 
     if (action === 'update') {
       if (!rewardId || !updates) {

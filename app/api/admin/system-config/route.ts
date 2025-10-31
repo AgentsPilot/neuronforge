@@ -52,6 +52,12 @@ export async function PUT(request: NextRequest) {
       );
     }
 
+    // 🔒 DEPRECATED: routing_min_executions is no longer used
+    // Routing now uses min_executions_for_score directly from AIS Config
+    if (updates.routing_min_executions !== undefined) {
+      console.warn(`⚠️ [System Config] routing_min_executions is deprecated. Routing uses min_executions_for_score from AIS Config instead.`);
+    }
+
     // Update all settings
     await SystemConfigService.setMultiple(supabase, updates);
 

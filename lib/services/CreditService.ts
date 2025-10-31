@@ -2,8 +2,7 @@
 // Core credit management service for Smart Fuel Auto-Plan pricing
 
 import { SupabaseClient } from '@supabase/supabase-js';
-import { stripe } from '@/lib/stripe/stripe';
-import Stripe from 'stripe';
+// Stripe integration removed - payment processing coming soon
 
 export interface CalculatorInputs {
   agents: number;
@@ -113,255 +112,34 @@ export class CreditService {
 
   /**
    * Create dynamic subscription from calculator
+   * NOTE: Stripe integration removed - payment processing coming soon
    */
   async createSubscription(
-    userId: string,
-    monthlyCredits: number,
-    calculatorInputs: CalculatorInputs
-  ): Promise<Stripe.Subscription> {
-    console.log('💳 Creating subscription for user:', userId, { monthlyCredits });
-
-    // Fetch pricing config from database
-    const { AISConfigService } = await import('./AISConfigService');
-    const PILOT_CREDIT_COST = await AISConfigService.getSystemConfig(
-      this.supabase,
-      'pilot_credit_cost_usd',
-      0.00048
-    );
-    const MIN_SUBSCRIPTION_USD = await AISConfigService.getSystemConfig(
-      this.supabase,
-      'min_subscription_usd',
-      10.00
-    );
-
-    // Apply minimum credits based on minimum subscription amount
-    const minimumCredits = Math.ceil(MIN_SUBSCRIPTION_USD / PILOT_CREDIT_COST);
-    const finalMonthlyCredits = Math.max(monthlyCredits, minimumCredits);
-
-    // Calculate amount from credits
-    const amountUsd = finalMonthlyCredits * PILOT_CREDIT_COST;
-
-    // Get or create Stripe customer
-    const { data: userSub } = await this.supabase
-      .from('user_subscriptions')
-      .select('stripe_customer_id')
-      .eq('user_id', userId)
-      .single();
-
-    let customerId = userSub?.stripe_customer_id;
-
-    if (!customerId) {
-      // Get user email
-      const { data: user } = await this.supabase.auth.getUser();
-      const customer = await stripe.customers.create({
-        email: user.user?.email,
-        metadata: { user_id: userId }
-      });
-      customerId = customer.id;
-
-      await this.supabase
-        .from('user_subscriptions')
-        .update({ stripe_customer_id: customerId })
-        .eq('user_id', userId);
-    }
-
-    // Create subscription
-    const subscription = await stripe.subscriptions.create({
-      customer: customerId,
-      items: [{
-        price_data: {
-          currency: 'usd',
-          product: process.env.STRIPE_PILOT_CREDITS_PRODUCT_ID!,
-          unit_amount: Math.ceil(amountUsd * 100),
-          recurring: { interval: 'month' }
-        }
-      }],
-      metadata: {
-        user_id: userId,
-        monthly_credits: finalMonthlyCredits.toString(),
-        subscription_type: 'dynamic',
-        calculator_inputs: JSON.stringify(calculatorInputs)
-      }
-    });
-
-    // Update user subscription
-    await this.supabase
-      .from('user_subscriptions')
-      .update({
-        monthly_amount_usd: amountUsd,
-        monthly_credits: finalMonthlyCredits,
-        stripe_subscription_id: subscription.id,
-        status: 'active',
-        last_calculator_inputs: calculatorInputs
-      })
-      .eq('user_id', userId);
-
-    // Log billing event
-    await this.supabase.from('billing_events').insert({
-      user_id: userId,
-      event_type: 'subscription_created',
-      stripe_event_id: subscription.id,
-      amount_cents: Math.ceil(amountUsd * 100),
-      description: `Subscription created: $${amountUsd.toFixed(2)}/month for ${finalMonthlyCredits.toLocaleString()} credits`,
-      metadata: {
-        monthly_credits: finalMonthlyCredits,
-        requested_credits: monthlyCredits,
-        calculator_inputs: calculatorInputs
-      }
-    });
-
-    console.log('✅ Subscription created:', subscription.id);
-    return subscription;
+    _userId: string,
+    _monthlyCredits: number,
+    _calculatorInputs: CalculatorInputs
+  ): Promise<any> {
+    throw new Error('Payment integration not yet implemented. Please contact support.');
   }
 
   /**
    * Update existing subscription
+   * NOTE: Stripe integration removed - payment processing coming soon
    */
   async updateSubscription(
-    userId: string,
-    newMonthlyCredits: number,
-    calculatorInputs?: CalculatorInputs
+    _userId: string,
+    _newMonthlyCredits: number,
+    _calculatorInputs?: CalculatorInputs
   ): Promise<void> {
-    console.log('🔄 Updating subscription for user:', userId);
-
-    const { data: current } = await this.supabase
-      .from('user_subscriptions')
-      .select('*')
-      .eq('user_id', userId)
-      .single();
-
-    if (!current?.stripe_subscription_id) {
-      throw new Error('No active subscription found');
-    }
-
-    // Fetch pricing config from database
-    const { AISConfigService } = await import('./AISConfigService');
-    const PILOT_CREDIT_COST = await AISConfigService.getSystemConfig(
-      this.supabase,
-      'pilot_credit_cost_usd',
-      0.00048
-    );
-    const MIN_SUBSCRIPTION_USD = await AISConfigService.getSystemConfig(
-      this.supabase,
-      'min_subscription_usd',
-      10.00
-    );
-
-    const newAmountUsd = Math.max(newMonthlyCredits * PILOT_CREDIT_COST, MIN_SUBSCRIPTION_USD);
-    const currentAmountUsd = current.monthly_amount_usd;
-
-    // Only update if significant change (> $1)
-    if (Math.abs(newAmountUsd - currentAmountUsd) < 1.00) {
-      console.log('⏭️ Skipping update - change too small');
-      return;
-    }
-
-    // Update Stripe subscription
-    const subscription = await stripe.subscriptions.retrieve(current.stripe_subscription_id);
-    await stripe.subscriptions.update(current.stripe_subscription_id, {
-      items: [{
-        id: subscription.items.data[0].id,
-        price_data: {
-          currency: 'usd',
-          product: process.env.STRIPE_PILOT_CREDITS_PRODUCT_ID!,
-          unit_amount: Math.ceil(newAmountUsd * 100),
-          recurring: { interval: 'month' }
-        }
-      }],
-      proration_behavior: 'always_invoice',
-      metadata: {
-        ...subscription.metadata,
-        monthly_credits: newMonthlyCredits.toString(),
-        calculator_inputs: calculatorInputs ? JSON.stringify(calculatorInputs) : subscription.metadata.calculator_inputs
-      }
-    });
-
-    // Update database
-    await this.supabase
-      .from('user_subscriptions')
-      .update({
-        monthly_amount_usd: newAmountUsd,
-        monthly_credits: newMonthlyCredits,
-        last_calculator_inputs: calculatorInputs || current.last_calculator_inputs
-      })
-      .eq('user_id', userId);
-
-    // Log event
-    await this.supabase.from('billing_events').insert({
-      user_id: userId,
-      event_type: 'subscription_updated',
-      amount_cents: Math.ceil(newAmountUsd * 100),
-      description: `Subscription updated: $${currentAmountUsd.toFixed(2)} → $${newAmountUsd.toFixed(2)}`,
-      metadata: {
-        old_monthly_credits: current.monthly_credits,
-        new_monthly_credits: newMonthlyCredits
-      }
-    });
-
-    console.log('✅ Subscription updated');
+    throw new Error('Payment integration not yet implemented. Please contact support.');
   }
 
   /**
    * Purchase boost pack (one-time credit purchase)
+   * NOTE: Stripe integration removed - payment processing coming soon
    */
-  async purchaseBoostPack(userId: string, boostPackId: string, stripePaymentIntentId: string): Promise<void> {
-    console.log('⚡ Processing boost pack purchase:', { userId, boostPackId });
-
-    // Get boost pack details
-    const { data: pack, error: packError } = await this.supabase
-      .from('boost_packs')
-      .select('*')
-      .eq('id', boostPackId)
-      .single();
-
-    if (packError || !pack) {
-      throw new Error('Boost pack not found');
-    }
-
-    const totalCredits = pack.credits_amount + (pack.bonus_credits || 0);
-    const currentBalance = await this.getBalance(userId);
-
-    // Update balance
-    const newBalance = currentBalance.balance + totalCredits;
-    await this.supabase
-      .from('user_subscriptions')
-      .update({
-        balance: newBalance
-      })
-      .eq('user_id', userId);
-
-    // Log transaction
-    await this.supabase.from('credit_transactions').insert({
-      user_id: userId,
-      boost_pack_id: boostPackId,
-      credits_delta: totalCredits,
-      balance_before: currentBalance.balance,
-      balance_after: newBalance,
-      transaction_type: 'boost',
-      stripe_payment_intent_id: stripePaymentIntentId,
-      description: `Boost pack: ${pack.pack_name}`,
-      metadata: {
-        base_credits: pack.credits_amount,
-        bonus_credits: pack.bonus_credits || 0,
-        price_usd: pack.price_usd
-      }
-    });
-
-    // Log billing event
-    await this.supabase.from('billing_events').insert({
-      user_id: userId,
-      event_type: 'boost_pack_purchased',
-      stripe_event_id: stripePaymentIntentId,
-      amount_cents: Math.ceil(pack.price_usd * 100),
-      credits_delta: totalCredits,
-      description: `Boost pack purchased: ${pack.pack_name}`,
-      metadata: {
-        boost_pack_id: boostPackId,
-        pack_name: pack.pack_name
-      }
-    });
-
-    console.log(`✅ Boost pack applied: ${totalCredits} credits added`);
+  async purchaseBoostPack(_userId: string, _boostPackId: string, _stripePaymentIntentId: string): Promise<void> {
+    throw new Error('Payment integration not yet implemented. Please contact support.');
   }
 
   /**

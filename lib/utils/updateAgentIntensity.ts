@@ -135,6 +135,13 @@ async function updateExistingMetrics(
   // Fetch active AIS ranges from database (using centralized config service)
   const aisRanges = await AISConfigService.getRanges(supabase);
 
+  // Fetch min_executions_for_score threshold from database
+  const minExecutionsForScore = await AISConfigService.getSystemConfig(
+    supabase,
+    'min_executions_for_score',
+    5 // Default to 5 if not configured
+  );
+
   // Calculate component scores using database-driven ranges
   const token_complexity_score = await calculateTokenComplexity(avg_tokens_per_run, peak_tokens_single_run, input_output_ratio, aisRanges);
   const execution_complexity_score = await calculateExecutionComplexity(avg_iterations_per_run, avg_execution_duration_ms, success_rate, retry_rate, aisRanges);
@@ -155,11 +162,21 @@ async function updateExistingMetrics(
   // Use default of 5.0 if not set (for agents created before three-score migration)
   const creation_score = current.creation_score ?? 5.0;
 
-  // 3. COMBINED SCORE (0-10): Weighted blend of creation (30%) + execution (70%)
-  const combined_score = (
-    creation_score * COMBINED_WEIGHTS.CREATION +
-    execution_score * COMBINED_WEIGHTS.EXECUTION
-  );
+  // 3. COMBINED SCORE (0-10): Intelligently blend creation & execution scores
+  // - If executions < threshold: Use creation score only (trust design estimate)
+  // - If executions >= threshold: Use weighted blend (30% creation + 70% execution)
+  const combined_score = total_executions < minExecutionsForScore
+    ? creation_score  // Not enough data - use creation score only
+    : (
+        creation_score * COMBINED_WEIGHTS.CREATION +
+        execution_score * COMBINED_WEIGHTS.EXECUTION
+      );
+
+  console.log(`📊 [AIS] Score calculation for agent ${execution.agent_id}:`);
+  console.log(`   Total executions: ${total_executions}, Threshold: ${minExecutionsForScore}`);
+  console.log(`   Creation: ${creation_score.toFixed(2)}, Execution: ${execution_score.toFixed(2)}`);
+  console.log(`   Combined: ${combined_score.toFixed(2)} (${total_executions < minExecutionsForScore ? 'creation-only' : 'weighted blend'})`);
+
 
   // DEPRECATED: Keep intensity_score synced with combined_score for backward compatibility
   const intensity_score = combined_score;

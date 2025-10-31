@@ -102,7 +102,8 @@ export class AgentIntensityService {
       const creationComponents = await this.calculateCreationScores(supabaseClient, creationData.agent_id);
       const creation_score = this.calculateCreationOverallScore(creationComponents);
 
-      // Calculate combined score immediately (don't wait for first execution)
+      // Calculate combined score with predicted execution complexity
+      // Use 5.0 as reasonable middle-ground estimate until first execution
       const execution_score_default = 5.0; // Default until first execution
       const combined_score = (creation_score * COMBINED_WEIGHTS.CREATION) +
                             (execution_score_default * COMBINED_WEIGHTS.EXECUTION);

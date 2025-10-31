@@ -8,6 +8,7 @@ import { AgentIntensityService } from '@/lib/services/AgentIntensityService';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { SystemConfigService } from '@/lib/services/SystemConfigService';
+import { AISConfigService } from '@/lib/services/AISConfigService';
 
 export interface ModelSelection {
   model: string;
@@ -51,19 +52,30 @@ export class ModelRouter {
       const routingConfig = await SystemConfigService.getRoutingConfig(supabase);
       const lowThreshold = routingConfig.lowThreshold;
       const mediumThreshold = routingConfig.mediumThreshold;
-      const minExecutions = routingConfig.minExecutions;
       const minSuccessRate = routingConfig.minSuccessRate;
       const anthropicEnabled = routingConfig.anthropicEnabled;
+
+      // 🚨 CRITICAL: Use min_executions_for_score as the SINGLE SOURCE OF TRUTH
+      // This ensures routing only starts when combined_score has switched to blended formula
+      // Eliminates risk of routing with stale creation-only scores
+      const minExecutionsForScore = await AISConfigService.getSystemConfig(
+        supabase,
+        'min_executions_for_score',
+        5 // Default to 5 if not configured
+      );
+
+      console.log(`🔒 [Model Router] Using min_executions_for_score (${minExecutionsForScore}) as routing threshold`);
 
       // Fetch AIS metrics for this agent
       const metrics = await AgentIntensityService.getMetrics(supabase, agentId);
 
       // CASE 1: New agent (insufficient execution history)
-      if (!metrics || metrics.total_executions < minExecutions) {
+      // Uses min_executions_for_score to ensure combined_score is using blended formula
+      if (!metrics || metrics.total_executions < minExecutionsForScore) {
         return this.logAndReturn({
           model: this.DEFAULT_CONFIG.low.model,
           provider: this.DEFAULT_CONFIG.low.provider,
-          reasoning: `New agent (${metrics?.total_executions || 0} executions) - conservative start with cost-efficient model`,
+          reasoning: `New agent (${metrics?.total_executions || 0}/${minExecutionsForScore} executions) - conservative start with cost-efficient model until blended scoring begins`,
           intensity_score: metrics?.combined_score || 5.0
         }, agentId, userId, supabase);
       }

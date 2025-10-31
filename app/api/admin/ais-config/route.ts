@@ -181,6 +181,130 @@ export async function GET() {
 
     console.log('✅ [AIS Config] Categories:', Object.keys(rangesByCategory));
 
+    // Fetch system limits and AIS weights
+    console.log('🔍 [AIS Config] Fetching system limits and AIS weights...');
+    const { data: configData, error: configError } = await supabaseServiceRole
+      .from('ais_system_config')
+      .select('config_key, config_value')
+      .in('config_key', [
+        'min_agent_intensity', 'max_agent_intensity', 'min_executions_for_score',
+        'ais_weight_tokens', 'ais_weight_execution', 'ais_weight_plugins', 'ais_weight_workflow',
+        'ais_token_volume_weight', 'ais_token_peak_weight', 'ais_token_io_weight',
+        'ais_execution_iterations_weight', 'ais_execution_duration_weight', 'ais_execution_failure_weight', 'ais_execution_retry_weight',
+        'ais_plugin_count_weight', 'ais_plugin_usage_weight', 'ais_plugin_overhead_weight',
+        'ais_workflow_steps_weight', 'ais_workflow_branches_weight', 'ais_workflow_loops_weight', 'ais_workflow_parallel_weight'
+      ]);
+
+    if (configError) {
+      console.error('❌ [AIS Config] Error fetching config:', configError);
+    }
+
+    // Parse limits and weights from config data
+    const systemLimits = {
+      minAgentIntensity: 0.0,
+      maxAgentIntensity: 10.0,
+      minExecutionsForScore: 5
+    };
+
+    const aisWeights = {
+      tokens: 0.35,
+      execution: 0.25,
+      plugins: 0.25,
+      workflow: 0.15,
+      token_volume: 0.5,
+      token_peak: 0.3,
+      token_io: 0.2,
+      execution_iterations: 0.35,
+      execution_duration: 0.30,
+      execution_failure: 0.20,
+      execution_retry: 0.15,
+      plugin_count: 0.4,
+      plugin_usage: 0.35,
+      plugin_overhead: 0.25,
+      workflow_steps: 0.4,
+      workflow_branches: 0.25,
+      workflow_loops: 0.20,
+      workflow_parallel: 0.15
+    };
+
+    configData?.forEach(item => {
+      const value = parseFloat(item.config_value);
+      switch (item.config_key) {
+        // System limits
+        case 'min_agent_intensity':
+          systemLimits.minAgentIntensity = value;
+          break;
+        case 'max_agent_intensity':
+          systemLimits.maxAgentIntensity = value;
+          break;
+        case 'min_executions_for_score':
+          systemLimits.minExecutionsForScore = parseInt(item.config_value);
+          break;
+        // Main dimension weights
+        case 'ais_weight_tokens':
+          aisWeights.tokens = value;
+          break;
+        case 'ais_weight_execution':
+          aisWeights.execution = value;
+          break;
+        case 'ais_weight_plugins':
+          aisWeights.plugins = value;
+          break;
+        case 'ais_weight_workflow':
+          aisWeights.workflow = value;
+          break;
+        // Token subdimensions
+        case 'ais_token_volume_weight':
+          aisWeights.token_volume = value;
+          break;
+        case 'ais_token_peak_weight':
+          aisWeights.token_peak = value;
+          break;
+        case 'ais_token_io_weight':
+          aisWeights.token_io = value;
+          break;
+        // Execution subdimensions
+        case 'ais_execution_iterations_weight':
+          aisWeights.execution_iterations = value;
+          break;
+        case 'ais_execution_duration_weight':
+          aisWeights.execution_duration = value;
+          break;
+        case 'ais_execution_failure_weight':
+          aisWeights.execution_failure = value;
+          break;
+        case 'ais_execution_retry_weight':
+          aisWeights.execution_retry = value;
+          break;
+        // Plugin subdimensions
+        case 'ais_plugin_count_weight':
+          aisWeights.plugin_count = value;
+          break;
+        case 'ais_plugin_usage_weight':
+          aisWeights.plugin_usage = value;
+          break;
+        case 'ais_plugin_overhead_weight':
+          aisWeights.plugin_overhead = value;
+          break;
+        // Workflow subdimensions
+        case 'ais_workflow_steps_weight':
+          aisWeights.workflow_steps = value;
+          break;
+        case 'ais_workflow_branches_weight':
+          aisWeights.workflow_branches = value;
+          break;
+        case 'ais_workflow_loops_weight':
+          aisWeights.workflow_loops = value;
+          break;
+        case 'ais_workflow_parallel_weight':
+          aisWeights.workflow_parallel = value;
+          break;
+      }
+    });
+
+    console.log('✅ [AIS Config] System limits:', systemLimits);
+    console.log('✅ [AIS Config] AIS weights loaded');
+
     const response = {
       success: true,
       config: {
@@ -196,7 +320,9 @@ export async function GET() {
           executionTokens,
           dataPointsAvailable: totalExecutions >= minExecutionsRequired
         },
-        ranges: rangesByCategory
+        ranges: rangesByCategory,
+        systemLimits,
+        aisWeights
       }
     };
 

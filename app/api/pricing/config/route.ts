@@ -1,5 +1,5 @@
 // app/api/pricing/config/route.ts
-// API endpoint to fetch pricing configuration from database
+// API endpoint to fetch pricing configuration from ais_system_config table
 
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
@@ -14,92 +14,212 @@ export async function GET() {
       process.env.SUPABASE_SERVICE_ROLE_KEY! // Use service role for consistent access
     );
 
-    console.log('📊 [Pricing Config] Fetching pricing configuration...');
+    console.log('📊 [Pricing Config] Fetching calculator configuration from ais_system_config...');
 
-    // Fetch pricing config using the database function
-    const { data, error } = await supabase.rpc('get_pricing_config').single();
+    // NEW: Fetch from calculator_config view (reads from ais_system_config table)
+    const { data, error } = await supabase
+      .from('calculator_config')
+      .select('*')
+      .single();
 
     if (error) {
-      console.error('❌ [Pricing Config] Error fetching pricing config:', error);
+      console.error('❌ [Pricing Config] Error fetching calculator config:', error);
       return NextResponse.json(
-        { success: false, error: 'Failed to fetch pricing configuration: ' + error.message },
+        { success: false, error: 'Failed to fetch calculator configuration: ' + error.message },
         { status: 500 }
       );
     }
 
     if (!data) {
-      console.error('❌ [Pricing Config] No pricing configuration found');
+      console.error('❌ [Pricing Config] No calculator configuration found');
       return NextResponse.json(
-        { success: false, error: 'No pricing configuration found' },
+        { success: false, error: 'No calculator configuration found' },
         { status: 404 }
       );
     }
 
-    console.log('✅ [Pricing Config] Raw data received:', data);
+    console.log('✅ [Pricing Config] Raw data received from calculator_config view');
 
-    // Type assertion for the data structure
-    const configData = data as any;
-
-    // Parse AIS tiers - the database returns JSONB which needs to be converted to array
-    let aisTiers: any[] = [];
-    if (configData.ais_tiers) {
-      try {
-        const tiersData = typeof configData.ais_tiers === 'string'
-          ? JSON.parse(configData.ais_tiers)
-          : configData.ais_tiers;
-
-        if (Array.isArray(tiersData)) {
-          aisTiers = tiersData.map((tier: any) => ({
-            min: parseInt(tier.min),
-            max: parseInt(tier.max),
-            score: parseFloat(tier.score)
-          }));
-        }
-      } catch (e) {
-        console.error('Error parsing AIS tiers:', e);
-      }
-    }
-
-    // Parse execution steps by plugins
-    let executionStepsByPlugins: any[] = [];
-    if (configData.execution_steps_by_plugins) {
-      try {
-        const stepsData = typeof configData.execution_steps_by_plugins === 'string'
-          ? JSON.parse(configData.execution_steps_by_plugins)
-          : configData.execution_steps_by_plugins;
-
-        if (Array.isArray(stepsData)) {
-          executionStepsByPlugins = stepsData.map((item: any) => ({
-            plugins: parseInt(item.plugins),
-            steps: parseFloat(item.steps)
-          }));
-        }
-      } catch (e) {
-        console.error('Error parsing execution steps:', e);
-      }
-    }
-
+    // Transform view data to match expected calculator format
     const config = {
-      baseCreditsPerRun: parseFloat(configData.base_credits_per_run),
-      pluginOverheadPerRun: parseFloat(configData.plugin_overhead_per_run),
-      systemOverheadPerRun: parseFloat(configData.system_overhead_per_run),
-      runsPerAgentPerMonth: parseFloat(configData.runs_per_agent_per_month),
-      creditCostUsd: parseFloat(configData.credit_cost_usd),
-      minimumMonthlyCostUsd: parseFloat(configData.minimum_monthly_cost_usd),
-      agentCreationCost: parseFloat(configData.agent_creation_cost || 800),
-      executionStepMultiplier: parseFloat(configData.execution_step_multiplier || 1.3),
-      aisTiers,
-      executionStepsByPlugins
+      // Calculator estimation formulas
+      calculatorEstimation: {
+        baseTokens: parseFloat(data.base_tokens || 1000),
+        tokensPerPlugin: parseFloat(data.tokens_per_plugin || 400),
+        peakMultiplier: parseFloat(data.peak_multiplier || 1.5),
+        baseIterations: parseFloat(data.base_iterations || 3),
+        maxIterations: parseFloat(data.max_iterations || 10),
+        pluginUsageRate: parseFloat(data.plugin_usage_rate || 0.8),
+        orchestrationOverheadMs: parseFloat(data.orchestration_overhead_ms || 1000),
+        estimatedDurationMs: parseFloat(data.estimated_duration_ms || 10000),
+        estimatedFailureRate: parseFloat(data.estimated_failure_rate || 10),
+        estimatedRetryRate: parseFloat(data.estimated_retry_rate || 0.5),
+        ioRatio: parseFloat(data.io_ratio || 2.0),
+      },
+
+      // AIS dimension weights
+      aisWeights: {
+        tokens: parseFloat(data.weight_tokens || 0.35),
+        execution: parseFloat(data.weight_execution || 0.25),
+        plugins: parseFloat(data.weight_plugins || 0.25),
+        workflow: parseFloat(data.weight_workflow || 0.15),
+      },
+
+      // AIS sub-dimension weights (both formats for compatibility)
+      aisSubWeights: {
+        token: {
+          volume: parseFloat(data.token_volume_weight || 0.5),
+          peak: parseFloat(data.token_peak_weight || 0.3),
+          io: parseFloat(data.token_io_weight || 0.2),
+        },
+        execution: {
+          iterations: parseFloat(data.execution_iterations_weight || 0.35),
+          duration: parseFloat(data.execution_duration_weight || 0.30),
+          failure: parseFloat(data.execution_failure_weight || 0.20),
+          retry: parseFloat(data.execution_retry_weight || 0.15),
+        },
+        plugin: {
+          count: parseFloat(data.plugin_count_weight || 0.4),
+          usage: parseFloat(data.plugin_usage_weight || 0.35),
+          overhead: parseFloat(data.plugin_overhead_weight || 0.25),
+        },
+        workflow: {
+          steps: parseFloat(data.workflow_steps_weight || 0.4),
+          branches: parseFloat(data.workflow_branches_weight || 0.25),
+          loops: parseFloat(data.workflow_loops_weight || 0.20),
+          parallel: parseFloat(data.workflow_parallel_weight || 0.15),
+        },
+      },
+
+      // Alternative naming for frontend compatibility
+      tokenSubWeights: {
+        volume: parseFloat(data.token_volume_weight || 0.5),
+        peak: parseFloat(data.token_peak_weight || 0.3),
+        io: parseFloat(data.token_io_weight || 0.2),
+      },
+      executionSubWeights: {
+        iterations: parseFloat(data.execution_iterations_weight || 0.35),
+        duration: parseFloat(data.execution_duration_weight || 0.30),
+        failure: parseFloat(data.execution_failure_weight || 0.20),
+        retry: parseFloat(data.execution_retry_weight || 0.15),
+      },
+      pluginSubWeights: {
+        count: parseFloat(data.plugin_count_weight || 0.4),
+        usage: parseFloat(data.plugin_usage_weight || 0.35),
+        overhead: parseFloat(data.plugin_overhead_weight || 0.25),
+      },
+      workflowSubWeights: {
+        steps: parseFloat(data.workflow_steps_weight || 0.4),
+        branches: parseFloat(data.workflow_branches_weight || 0.25),
+        loops: parseFloat(data.workflow_loops_weight || 0.20),
+        parallel: parseFloat(data.workflow_parallel_weight || 0.15),
+      },
+
+      // System limits (need to fetch from ais_system_config separately since not in view)
+      minAgentIntensity: 0.0,
+      maxAgentIntensity: 10.0,
+      minExecutionsForScore: 5,
+
+      // Pricing parameters (legacy field names for backward compatibility)
+      baseCreditsPerRun: parseFloat(data.base_credits_per_run || 100),
+      pluginOverheadPerRun: parseFloat(data.plugin_overhead_per_run || 50),
+      systemOverheadPerRun: parseFloat(data.system_overhead_per_run || 20),
+      runsPerAgentPerMonth: parseFloat(data.runs_per_agent_per_month || 15),
+      creditCostUsd: parseFloat(data.credit_cost_usd || 0.00048),
+      minimumMonthlyCostUsd: parseFloat(data.minimum_monthly_cost_usd || 10.00),
+      agentCreationCost: parseFloat(data.agent_creation_cost || 800),
+      executionStepMultiplier: parseFloat(data.execution_step_multiplier || 1.3),
+      freeTierCredits: parseFloat(data.free_tier_credits || 1000),
+
+      // Empty arrays for backward compatibility (not used by new calculator)
+      aisTiers: [],
+      executionStepsByPlugins: []
     };
 
-    console.log('✅ [Pricing Config] Returning config:', config);
+    // Fetch system limits separately (not in calculator_config view)
+    console.log('🔍 [Pricing Config] Fetching system limits...');
 
-    return NextResponse.json({
+    // Create a fresh Supabase client with global options to disable caching
+    const freshSupabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      {
+        global: {
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+          }
+        }
+      }
+    );
+
+    // Bypass Supabase query caching by ordering by updated_at DESC
+    // This makes each query slightly different and prevents caching
+    const { data: limitsData, error: limitsError } = await freshSupabase
+      .from('ais_system_config')
+      .select('config_key, config_value')
+      .in('config_key', ['min_agent_intensity', 'max_agent_intensity', 'min_executions_for_score'])
+      .order('updated_at', { ascending: false });
+
+    if (limitsError) {
+      console.error('❌ [Pricing Config] Error fetching limits:', limitsError);
+    }
+
+    console.log('📊 [Pricing Config] Raw limitsData from DB:', JSON.stringify(limitsData, null, 2));
+    console.log('📊 [Pricing Config] Number of rows:', limitsData?.length);
+
+    if (limitsData) {
+      limitsData.forEach((item, index) => {
+        console.log(`📊 [Pricing Config] Processing row ${index}:`, JSON.stringify(item));
+        if (item.config_key === 'min_agent_intensity') {
+          const rawValue = item.config_value;
+          const parsedValue = parseFloat(rawValue || 0);
+          console.log(`  🔍 min_agent_intensity: raw=${rawValue} (type=${typeof rawValue}), parsed=${parsedValue}`);
+          config.minAgentIntensity = parsedValue;
+          console.log(`  ✅ Set minAgentIntensity = ${config.minAgentIntensity}`);
+        } else if (item.config_key === 'max_agent_intensity') {
+          const rawValue = item.config_value;
+          const parsedValue = parseFloat(rawValue || 10);
+          console.log(`  🔍 max_agent_intensity: raw=${rawValue} (type=${typeof rawValue}), parsed=${parsedValue}`);
+          config.maxAgentIntensity = parsedValue;
+          console.log(`  ✅ Set maxAgentIntensity = ${config.maxAgentIntensity}`);
+        } else if (item.config_key === 'min_executions_for_score') {
+          const rawValue = item.config_value;
+          const parsedValue = parseInt(rawValue || 5);
+          console.log(`  🔍 min_executions_for_score: raw=${rawValue} (type=${typeof rawValue}), parsed=${parsedValue}`);
+          config.minExecutionsForScore = parsedValue;
+          console.log(`  ✅ Set minExecutionsForScore = ${config.minExecutionsForScore}`);
+        }
+      });
+    }
+
+    console.log('📊 [Pricing Config] Final config values:');
+    console.log(`  minAgentIntensity: ${config.minAgentIntensity}`);
+    console.log(`  maxAgentIntensity: ${config.maxAgentIntensity}`);
+    console.log(`  minExecutionsForScore: ${config.minExecutionsForScore}`);
+
+    console.log('✅ [Pricing Config] Returning config with', Object.keys(config).length, 'fields');
+    console.log('📊 [Pricing Config] AIS weights sum:',
+      config.aisWeights.tokens +
+      config.aisWeights.execution +
+      config.aisWeights.plugins +
+      config.aisWeights.workflow
+    );
+
+    const response = NextResponse.json({
       success: true,
       config
     });
+
+    // Prevent caching to ensure fresh data
+    response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    response.headers.set('Pragma', 'no-cache');
+    response.headers.set('Expires', '0');
+
+    return response;
   } catch (error) {
-    console.error('Pricing config API error:', error);
+    console.error('❌ [Pricing Config] API error:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

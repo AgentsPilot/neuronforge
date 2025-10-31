@@ -254,7 +254,7 @@ export default function AgentPage() {
   const [isConfigured, setIsConfigured] = useState(false)
   const [showActivationWarning, setShowActivationWarning] = useState(false)
   const [currentFormIsComplete, setCurrentFormIsComplete] = useState(false)
-  const [currentView, setCurrentView] = useState<'overview' | 'configuration' | 'test' | 'performance' | 'settings'>('overview')
+  const [currentView, setCurrentView] = useState<'overview' | 'configuration' | 'configure' | 'test' | 'performance' | 'settings'>('overview')
   const [expandedPrompt, setExpandedPrompt] = useState(false)
   const [hasBeenShared, setHasBeenShared] = useState(false)
   const [shareRewardActive, setShareRewardActive] = useState(true) // Track if share_agent reward is active
@@ -992,7 +992,7 @@ export default function AgentPage() {
                     </button>
                   ) : (
                     <button
-                      onClick={canActivate ? handleToggleStatus : () => setCurrentView('test')}
+                      onClick={canActivate ? handleToggleStatus : () => setCurrentView('configure')}
                       className={`group flex items-center gap-1.5 px-4 py-2 rounded-lg transition-all duration-200 font-medium transform hover:-translate-y-0.5 text-sm ${
                         canActivate
                           ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:from-green-600 hover:to-emerald-600 shadow-md shadow-green-500/25 hover:shadow-lg'
@@ -1104,9 +1104,10 @@ export default function AgentPage() {
           <div className="inline-flex bg-gray-100/80 rounded-xl p-1.5 w-fit">
             {[
               { id: 'overview', label: 'Overview', icon: Target },
-              { id: 'configuration', label: 'Configuration', icon: Settings },
-              { id: 'test', label: 'Test Run', icon: Beaker },
-              { id: 'performance', label: 'Analytics', icon: BarChart3 }
+              { id: 'configure', label: 'Setup', icon: Wand2 },
+              { id: 'test', label: 'Try It', icon: Beaker },
+              { id: 'performance', label: 'Activity', icon: BarChart3 },
+              { id: 'configuration', label: 'Advanced', icon: Settings }
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -1614,31 +1615,10 @@ export default function AgentPage() {
           </div>
         )}
 
-        {/* Test Tab - Unchanged from original */}
-        {currentView === 'test' && (
+        {/* Setup Tab - Simple one-time configuration */}
+        {currentView === 'configure' && (
           <div className="space-y-4">
-            {!isConfigured && hasRequiredFields() && (
-              <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl p-3 border border-amber-200">
-                <div className="flex items-start gap-2">
-                  <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5" />
-                  <div>
-                    <h3 className="font-semibold text-amber-800 mb-1 text-sm">Configuration Required</h3>
-                    <p className="text-amber-700 text-xs">
-                      This assistant needs some information before it can run. Please fill out all required fields below.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-
             <div className="bg-white/80 backdrop-blur-xl rounded-xl border border-white/20 shadow-lg shadow-black/5 overflow-hidden">
-              <div className="px-4 py-3 border-b border-white/20 bg-gradient-to-r from-blue-50 to-purple-50">
-                <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
-                  <Beaker className="h-4 w-4 text-blue-600" />
-                  Test Your Assistant
-                </h2>
-                <p className="text-slate-600 mt-1 text-xs">Configure and run your assistant with custom inputs</p>
-              </div>
               <div className="p-4">
                 <AgentSandbox
                   agentId={agent.id}
@@ -1648,6 +1628,33 @@ export default function AgentPage() {
                   pluginsRequired={agent.plugins_required}
                   workflowSteps={agent.workflow_steps}
                   connectedPlugins={agent.connected_plugins}
+                  initialContext="configure"
+                  onFormCompletionChange={setCurrentFormIsComplete}
+                  onExecutionComplete={() => {
+                    if (hasRequiredFields()) {
+                      setTimeout(() => checkAgentConfiguration(agent), 500)
+                    }
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Try It Tab - Quick testing */}
+        {currentView === 'test' && (
+          <div className="space-y-4">
+            <div className="bg-white/80 backdrop-blur-xl rounded-xl border border-white/20 shadow-lg shadow-black/5 overflow-hidden">
+              <div className="p-4">
+                <AgentSandbox
+                  agentId={agent.id}
+                  inputSchema={agent.input_schema}
+                  outputSchema={agent.output_schema}
+                  userPrompt={agent.user_prompt}
+                  pluginsRequired={agent.plugins_required}
+                  workflowSteps={agent.workflow_steps}
+                  connectedPlugins={agent.connected_plugins}
+                  initialContext="test"
                   onFormCompletionChange={setCurrentFormIsComplete}
                   onExecutionComplete={() => {
                     if (hasRequiredFields()) {

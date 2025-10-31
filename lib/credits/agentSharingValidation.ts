@@ -16,8 +16,8 @@ export interface AgentSharingConfig {
   requireDescription: boolean;
   minDescriptionLength: number;
 
-  // User limits
-  maxSharesPerDay: number;
+  // User limits (maxSharesPerDay comes from reward_config.max_per_user_per_day)
+  maxSharesPerDay: number; // From reward_config, not reward_settings
   maxSharesPerMonth: number;
   maxTotalShares: number; // Lifetime limit per user
 
@@ -41,6 +41,7 @@ const DEFAULT_CONFIG: AgentSharingConfig = {
 
 export class AgentSharingValidator {
   private config: AgentSharingConfig;
+  private configLoaded: boolean = false;
 
   constructor(
     private supabase: SupabaseClient,
@@ -50,9 +51,61 @@ export class AgentSharingValidator {
   }
 
   /**
+   * Load configuration from database (reward_settings table)
+   */
+  private async loadConfigFromDatabase(): Promise<void> {
+    if (this.configLoaded) return; // Only load once
+
+    try {
+      const { data: rewardConfig } = await this.supabase
+        .from('reward_config')
+        .select('id, max_per_user_per_day')
+        .eq('reward_key', 'agent_sharing')
+        .eq('is_active', true)
+        .single();
+
+      if (!rewardConfig) {
+        console.warn('⚠️ [Validator] agent_sharing reward not found or inactive, using defaults');
+        this.configLoaded = true;
+        return;
+      }
+
+      // Get daily limit from reward_config
+      if (rewardConfig.max_per_user_per_day !== null) {
+        this.config.maxSharesPerDay = rewardConfig.max_per_user_per_day;
+      }
+
+      const { data: settings } = await this.supabase
+        .from('reward_settings')
+        .select('*')
+        .eq('reward_config_id', rewardConfig.id)
+        .single();
+
+      if (settings) {
+        // Override defaults with database values
+        if (settings.min_executions !== null) this.config.minExecutions = settings.min_executions;
+        if (settings.min_success_rate !== null) this.config.minSuccessRate = settings.min_success_rate;
+        if (settings.require_description !== null) this.config.requireDescription = settings.require_description;
+        if (settings.min_description_length !== null) this.config.minDescriptionLength = settings.min_description_length;
+        if (settings.min_agent_age_hours !== null) this.config.minAgentAgeHours = Number(settings.min_agent_age_hours);
+        if (settings.max_shares_per_month !== null) this.config.maxSharesPerMonth = settings.max_shares_per_month;
+        if (settings.max_total_shares !== null) this.config.maxTotalShares = settings.max_total_shares;
+
+        console.log('✅ [Validator] Loaded config from database:', this.config);
+      }
+    } catch (error) {
+      console.error('❌ [Validator] Error loading config from database, using defaults:', error);
+    }
+
+    this.configLoaded = true;
+  }
+
+  /**
    * Validate if an agent meets quality thresholds for sharing
    */
   async validateAgentQuality(agentId: string): Promise<ValidationResult> {
+    // Load config from database before validation
+    await this.loadConfigFromDatabase();
     try {
       console.log('🔍 [Validator] Validating agent quality for:', agentId);
 
@@ -163,6 +216,9 @@ export class AgentSharingValidator {
    * Validate user sharing limits (daily, monthly, lifetime)
    */
   async validateUserLimits(userId: string): Promise<ValidationResult> {
+    // Load config from database before validation
+    await this.loadConfigFromDatabase();
+
     try {
       // Get all shared agents by this user
       const { data: sharedAgents, error } = await this.supabase

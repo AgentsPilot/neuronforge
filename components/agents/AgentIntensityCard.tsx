@@ -65,7 +65,7 @@ export function AgentIntensityCard({ agentId }: AgentIntensityCardProps) {
           <h3 className="text-lg font-semibold text-slate-900">Agent Complexity</h3>
         </div>
         <span className={`text-xs px-3 py-1 rounded-full ${badgeColorClass} font-medium`}>
-          {intensityRange}
+          {intensityRange} {!hasExecutions && '(estimated)'}
         </span>
       </div>
 
@@ -76,6 +76,9 @@ export function AgentIntensityCard({ agentId }: AgentIntensityCardProps) {
             {combinedScore.toFixed(1)}
           </div>
           <div className="text-lg text-slate-500 mb-2">/10</div>
+          {!hasExecutions && (
+            <div className="text-sm text-amber-600 mb-2 font-medium">estimated</div>
+          )}
         </div>
         <div className="text-sm text-slate-600 mb-3">
           Credit multiplier: <span className="font-semibold text-slate-900">{breakdown.combined_multiplier.toFixed(2)}x</span>
@@ -96,6 +99,17 @@ export function AgentIntensityCard({ agentId }: AgentIntensityCardProps) {
             style={{ width: `${(combinedScore / 10) * 100}%` }}
           />
         </div>
+
+        {/* Warning for agents not yet run */}
+        {!hasExecutions && (
+          <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
+            <div className="text-xs text-blue-800">
+              <span className="font-semibold">Estimated score:</span> This combines your design complexity (30%)
+              with predicted runtime complexity (70%, assumed medium at 5.0).
+              The score will update after your first run with actual data.
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Score Breakdown - Compact */}
@@ -133,24 +147,24 @@ export function AgentIntensityCard({ agentId }: AgentIntensityCardProps) {
       {/* Pilot Credits - Creation and Execution */}
       <div className="grid grid-cols-2 gap-3 mb-4">
         {/* Creation Pilot Credits */}
-        {breakdown.details.creation_stats && breakdown.details.creation_stats.creation_tokens_used > 0 && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-            <div className="text-xs text-blue-700 mb-1">Creation Credits</div>
-            <div className="text-lg font-bold text-blue-900">
-              {Math.ceil(breakdown.details.creation_stats.creation_tokens_used / 10).toLocaleString()}
-            </div>
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+          <div className="text-xs text-blue-700 mb-1">Creation Credits</div>
+          <div className="text-lg font-bold text-blue-900">
+            {breakdown.details.creation_stats?.creation_tokens_used
+              ? Math.ceil(breakdown.details.creation_stats.creation_tokens_used / 10).toLocaleString()
+              : '0'}
           </div>
-        )}
+        </div>
 
         {/* Execution Pilot Credits */}
-        {breakdown.details.token_stats && breakdown.details.token_stats.total_tokens > 0 && (
-          <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-            <div className="text-xs text-green-700 mb-1">Execution Credits</div>
-            <div className="text-lg font-bold text-green-900">
-              {Math.ceil(breakdown.details.token_stats.total_tokens / 10).toLocaleString()}
-            </div>
+        <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+          <div className="text-xs text-green-700 mb-1">Execution Credits</div>
+          <div className="text-lg font-bold text-green-900">
+            {breakdown.details.token_stats?.total_tokens
+              ? Math.ceil(breakdown.details.token_stats.total_tokens / 10).toLocaleString()
+              : '0'}
           </div>
-        )}
+        </div>
       </div>
 
       {/* Expand/Collapse Button */}

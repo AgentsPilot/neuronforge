@@ -103,14 +103,14 @@ export default function AgentSandbox(props: AgentSandboxProps) {
               {executionContext === 'test' ? 'Test Your Agent' : 'Configure Agent'}
             </h2>
             <p className="text-slate-600 text-xs">
-              {executionContext === 'test' 
-                ? "Let's see what magic it can do!" 
+              {executionContext === 'test'
+                ? "Let's see what magic it can do!"
                 : "Set up your agent for activation"
               }
             </p>
           </div>
         </div>
-        
+
         <div className="flex items-center gap-2">
           {/* Configuration Status Indicator */}
           {isConfigurationSaved && (
@@ -119,35 +119,26 @@ export default function AgentSandbox(props: AgentSandboxProps) {
               <span className="text-green-700 font-medium text-xs">Configured</span>
             </div>
           )}
-          
-          {/* Execution Context Toggle */}
-          <div className="flex items-center bg-white rounded-lg p-0.5 border border-slate-200">
-            <button
-              onClick={() => setExecutionContext('test')}
-              className={`px-3 py-1 rounded-md text-xs font-medium transition-all duration-300 ${
-                executionContext === 'test'
-                  ? 'bg-gradient-to-r from-blue-500 to-purple-500 text-white shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <div className="flex items-center gap-1">
-                <Play className="h-3 w-3" />
-                Test Mode
-              </div>
-            </button>
-            <button
-              onClick={() => setExecutionContext('configure')}
-              className={`px-3 py-1 rounded-md text-xs font-medium transition-all duration-300 ${
-                executionContext === 'configure'
-                  ? 'bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <div className="flex items-center gap-1">
-                <Settings className="h-3 w-3" />
-                Configure
-              </div>
-            </button>
+
+          {/* Mode Indicator (no toggle - set by tab) */}
+          <div className="flex items-center bg-white rounded-lg px-3 py-1.5 border border-slate-200">
+            <div className={`flex items-center gap-1.5 ${
+              executionContext === 'test'
+                ? 'text-blue-600'
+                : 'text-emerald-600'
+            }`}>
+              {executionContext === 'test' ? (
+                <>
+                  <Play className="h-3.5 w-3.5" />
+                  <span className="font-semibold text-xs">Test Mode</span>
+                </>
+              ) : (
+                <>
+                  <Settings className="h-3.5 w-3.5" />
+                  <span className="font-semibold text-xs">Configure Mode</span>
+                </>
+              )}
+            </div>
           </div>
 
           {executionTime && (
@@ -179,7 +170,7 @@ export default function AgentSandbox(props: AgentSandboxProps) {
       {/* Input Form */}
       <form onSubmit={(e) => handleFormSubmit(e, false)} className="space-y-4">
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          <div 
+          <div
             className="bg-gradient-to-r from-slate-50 to-gray-50 p-3 border-b border-slate-200 cursor-pointer hover:from-slate-100 hover:to-gray-100 transition-colors"
             onClick={() => toggleSection('inputs')}
           >
@@ -193,7 +184,7 @@ export default function AgentSandbox(props: AgentSandboxProps) {
                     {executionContext === 'test' ? 'What do you need?' : 'Agent Configuration'}
                   </h3>
                   <p className="text-slate-600 text-xs">
-                    {filteredInputSchema.length === 0 
+                    {filteredInputSchema.length === 0
                       ? 'All set! No input needed'
                       : executionContext === 'test'
                       ? `Fill out the form below to test your agent`
@@ -206,8 +197,8 @@ export default function AgentSandbox(props: AgentSandboxProps) {
                 <div className="text-xs text-slate-600">
                   {filteredInputSchema.length} input{filteredInputSchema.length !== 1 ? 's' : ''}
                 </div>
-                {expandedSections.inputs ? 
-                  <ChevronUp className="h-4 w-4 text-slate-600" /> : 
+                {expandedSections.inputs ?
+                  <ChevronUp className="h-4 w-4 text-slate-600" /> :
                   <ChevronDown className="h-4 w-4 text-slate-600" />
                 }
               </div>
@@ -217,8 +208,8 @@ export default function AgentSandbox(props: AgentSandboxProps) {
           {/* Context Information */}
           {expandedSections.inputs && (
             <div className={`border-b p-3 ${
-              executionContext === 'test' 
-                ? 'bg-blue-50 border-blue-200' 
+              executionContext === 'test'
+                ? 'bg-blue-50 border-blue-200'
                 : 'bg-green-50 border-green-200'
             }`}>
               <div className="flex items-center gap-2">
