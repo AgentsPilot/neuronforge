@@ -3,19 +3,20 @@
 import React, { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { useAuth } from '@/components/UserProvider'
-import { 
-  Activity, 
-  CheckCircle, 
-  XCircle, 
-  Clock, 
-  TrendingUp, 
+import {
+  Activity,
+  CheckCircle,
+  XCircle,
+  Clock,
+  TrendingUp,
   BarChart3,
   Zap,
   AlertTriangle,
   Calendar,
   PlayCircle,
   Target,
-  Timer
+  Timer,
+  RefreshCw
 } from 'lucide-react'
 
 type AgentStat = {
@@ -32,65 +33,58 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('table')
   const { user } = useAuth()
 
-  useEffect(() => {
-    const fetchStats = async () => {
-      if (!user?.id) {
-        setLoading(false)
-        return
-      }
-
-      // Only show loading on initial load to prevent flicker
-      if (stats.length === 0) {
-        setLoading(true)
-      }
-
-      let query = supabase
-        .from('agent_stats')
-        .select(`
-          agent_id, 
-          run_count, 
-          success_count, 
-          last_run_at,
-          agents (
-            agent_name
-          )
-        `)
-        .eq('user_id', user.id)
-        .order('run_count', { ascending: false })
-
-      if (agentId) {
-        query = query.eq('agent_id', agentId)
-      }
-
-      const { data, error } = await query
-
-      if (error) {
-        console.error('❌ Error fetching agent stats:', error.message)
-        setStats([])
-      } else if (data) {
-        const parsedStats = data
-          .filter(row => row.agents) // Filter out rows where agent join failed
-          .map((row) => ({
-            agent_id: row.agent_id,
-            run_count: row.run_count || 0,
-            success_count: row.success_count || 0,
-            last_run_at: row.last_run_at,
-            agent_name: row.agents?.agent_name || 'Unknown Agent',
-          }))
-        setStats(parsedStats)
-      } else {
-        setStats([])
-      }
-
+  const fetchStats = async () => {
+    if (!user?.id) {
       setLoading(false)
+      return
     }
 
-    fetchStats()
+    setLoading(true)
 
-    // Auto-refresh every 30 seconds without flickering
-    const interval = setInterval(fetchStats, 30000)
-    return () => clearInterval(interval)
-  }, [agentId, user?.id, stats.length])
+    let query = supabase
+      .from('agent_stats')
+      .select(`
+        agent_id,
+        run_count,
+        success_count,
+        last_run_at,
+        agents (
+          agent_name
+        )
+      `)
+      .eq('user_id', user.id)
+      .order('run_count', { ascending: false })
+
+    if (agentId) {
+      query = query.eq('agent_id', agentId)
+    }
+
+    const { data, error } = await query
+
+    if (error) {
+      console.error('❌ Error fetching agent stats:', error.message)
+      setStats([])
+    } else if (data) {
+      const parsedStats = data
+        .filter(row => row.agents) // Filter out rows where agent join failed
+        .map((row) => ({
+          agent_id: row.agent_id,
+          run_count: row.run_count || 0,
+          success_count: row.success_count || 0,
+          last_run_at: row.last_run_at,
+          agent_name: row.agents?.agent_name || 'Unknown Agent',
+        }))
+      setStats(parsedStats)
+    } else {
+      setStats([])
+    }
+
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    fetchStats()
+  }, [agentId, user?.id])
 
   const calculateSuccessRate = (successCount: number, runCount: number) => {
     if (runCount === 0) return 0
@@ -178,27 +172,38 @@ export default function AgentStatsTable({ agentId }: { agentId?: string }) {
             </div>
           </div>
 
-          <div className="flex items-center gap-1 bg-white rounded-xl px-2 py-2 shadow-md border border-gray-200">
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => setViewMode('cards')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ${
-                viewMode === 'cards'
-                  ? 'bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-md'
-                  : 'text-gray-600 hover:bg-gray-100'
-              }`}
+              onClick={fetchStats}
+              disabled={loading}
+              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              title="Refresh"
             >
-              Cards
+              <RefreshCw className={`h-4 w-4 text-gray-500 ${loading ? 'animate-spin' : ''}`} />
             </button>
-            <button
-              onClick={() => setViewMode('table')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ${
-                viewMode === 'table'
-                  ? 'bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-md'
-                  : 'text-gray-600 hover:bg-gray-100'
-              }`}
-            >
-              Table
-            </button>
+
+            <div className="flex items-center gap-1 bg-white rounded-xl px-2 py-2 shadow-md border border-gray-200">
+              <button
+                onClick={() => setViewMode('cards')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ${
+                  viewMode === 'cards'
+                    ? 'bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-md'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                Cards
+              </button>
+              <button
+                onClick={() => setViewMode('table')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ${
+                  viewMode === 'table'
+                    ? 'bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-md'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                Table
+              </button>
+            </div>
           </div>
         </div>
 

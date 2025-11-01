@@ -54,6 +54,9 @@ type SharedAgent = {
   shared_at: string
   created_at?: string
   updated_at?: string
+  import_count?: number
+  average_score?: number
+  total_ratings?: number
 }
 
 type FilterType = 'all' | 'high_confidence' | 'recent' | 'popular'
@@ -269,11 +272,23 @@ export default function AgentTemplates() {
           message: `Failed to import "${agent.agent_name}". Please try again.`
         })
       } else {
+        // Increment import count in shared_agents table
+        const { error: updateError } = await supabase
+          .from('shared_agents')
+          .update({
+            import_count: (agent.import_count || 0) + 1
+          })
+          .eq('id', agent.id)
+
+        if (updateError) {
+          console.error('Error updating import count:', updateError)
+        }
+
         setImportStatus({
           type: 'success',
           message: `"${agent.agent_name}" imported successfully! Redirecting to edit...`
         })
-        
+
         // Redirect after a short delay to show the success message
         setTimeout(() => {
           window.location.href = `/agents/${data.id}/edit`
@@ -304,12 +319,12 @@ export default function AgentTemplates() {
           {/* Top section with icon and import button */}
           <div className="flex items-start justify-between mb-3">
             <div className="relative flex-shrink-0">
-              <div className="w-12 h-12 rounded-xl flex items-center justify-center">
+              <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 rounded-xl flex items-center justify-center shadow-sm">
                 <Share2 className="h-6 w-6 text-white" />
               </div>
-              <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-blue-500 rounded-full border-2 border-white" />
+              <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 rounded-full border-2 border-white shadow-sm" />
             </div>
-            
+
             <button
               onClick={() => handleImportAgent(agent)}
               disabled={importingAgents.has(agent.id)}
@@ -339,6 +354,12 @@ export default function AgentTemplates() {
                 <div className="w-1.5 h-1.5 bg-blue-500 rounded-full" />
                 Template
               </div>
+              {agent.import_count !== undefined && agent.import_count > 0 && (
+                <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <Download className="h-3 w-3" />
+                  {agent.import_count} imports
+                </div>
+              )}
               <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-gray-600 bg-gray-50 border border-gray-200">
                 <ModeIcon className="h-3 w-3" />
                 {(agent.mode || 'on_demand').replace('_', ' ')}
@@ -390,11 +411,26 @@ export default function AgentTemplates() {
           )}
 
           {/* Footer */}
-          <div className="flex items-center justify-center pt-3 border-t border-gray-100">
+          <div className="flex items-center justify-between pt-3 border-t border-gray-100">
             <div className="flex items-center gap-2 text-xs text-gray-500">
               <Calendar className="h-3.5 w-3.5" />
               <span>Shared {formatTimeAgo(agent.shared_at)}</span>
             </div>
+
+            {/* Rating Display */}
+            {agent.average_score !== undefined && agent.average_score > 0 && (
+              <div className="flex items-center gap-1">
+                <Star className="h-3.5 w-3.5 fill-yellow-400 text-yellow-400" />
+                <span className="text-xs font-semibold text-gray-700">
+                  {agent.average_score.toFixed(1)}
+                </span>
+                {agent.total_ratings !== undefined && agent.total_ratings > 0 && (
+                  <span className="text-xs text-gray-500">
+                    ({agent.total_ratings})
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -412,9 +448,9 @@ export default function AgentTemplates() {
               <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 rounded-lg flex items-center justify-center">
                 <Share2 className="h-4 w-4 text-white" />
               </div>
-              <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-blue-500 rounded-full border border-white" />
+              <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-500 rounded-full border border-white" />
             </div>
-            
+
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-0.5">
                 <h3 className="font-bold text-gray-900 truncate text-sm">
@@ -424,6 +460,12 @@ export default function AgentTemplates() {
                   <div className="w-1 h-1 bg-blue-500 rounded-full" />
                   Template
                 </div>
+                {agent.import_count !== undefined && agent.import_count > 0 && (
+                  <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    <Download className="w-2.5 h-2.5" />
+                    {agent.import_count}
+                  </div>
+                )}
                 <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-50 text-gray-600 border border-gray-200">
                   <ModeIcon className="w-2.5 h-2.5" />
                   {(agent.mode || 'on_demand').replace('_', ' ')}
@@ -442,13 +484,28 @@ export default function AgentTemplates() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Rating Display */}
+            {agent.average_score !== undefined && agent.average_score > 0 && (
+              <div className="flex items-center gap-1 hidden sm:flex">
+                <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                <span className="text-xs font-semibold text-gray-700">
+                  {agent.average_score.toFixed(1)}
+                </span>
+                {agent.total_ratings !== undefined && agent.total_ratings > 0 && (
+                  <span className="text-xs text-gray-500">
+                    ({agent.total_ratings})
+                  </span>
+                )}
+              </div>
+            )}
+
             <div className="text-right hidden md:block">
               <p className="text-xs text-gray-500">Shared</p>
               <p className="text-xs text-gray-700 font-medium">
                 {formatTimeAgo(agent.shared_at)}
               </p>
             </div>
-            
+
             <button
               onClick={() => handleImportAgent(agent)}
               disabled={importingAgents.has(agent.id)}

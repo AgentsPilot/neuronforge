@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
+import { RefreshCw } from 'lucide-react'
 
 type Props = {
   agentId: string
@@ -16,23 +17,25 @@ export default function AgentStatsBlock({ agentId }: Props) {
 
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    const fetchStats = async () => {
-      const { data, error } = await supabase
-        .from('agent_stats')
-        .select('run_count, success_count, last_run_at')
-        .eq('agent_id', agentId)
-        .single()
+  const fetchStats = async () => {
+    setLoading(true)
 
-      if (error) {
-        console.error('❌ Error loading agent stats:', error.message)
-      } else {
-        setStats(data)
-      }
+    const { data, error } = await supabase
+      .from('agent_stats')
+      .select('run_count, success_count, last_run_at')
+      .eq('agent_id', agentId)
+      .single()
 
-      setLoading(false)
+    if (error) {
+      console.error('❌ Error loading agent stats:', error.message)
+    } else {
+      setStats(data)
     }
 
+    setLoading(false)
+  }
+
+  useEffect(() => {
     fetchStats()
   }, [agentId])
 
@@ -45,8 +48,27 @@ export default function AgentStatsBlock({ agentId }: Props) {
   }
 
   return (
-    <div className="bg-white rounded-xl p-6 shadow border border-gray-100">
-      <h3 className="text-lg font-semibold mb-4 text-gray-800">Agent Stats</h3>
+    <div className="space-y-4">
+      <div className="flex items-start justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-gray-900">
+            Performance Statistics
+          </h2>
+          <p className="text-gray-600 text-sm mt-1">
+            Agent execution metrics and performance
+          </p>
+        </div>
+
+        <button
+          onClick={fetchStats}
+          disabled={loading}
+          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+          title="Refresh"
+        >
+          <RefreshCw className={`h-4 w-4 text-gray-500 ${loading ? 'animate-spin' : ''}`} />
+        </button>
+      </div>
+
       <div className="space-y-2 text-sm text-gray-700">
         <div>
           <strong>Total Runs:</strong> {stats.run_count}

@@ -81,7 +81,11 @@ export function useAgentSandbox({
   outputSchema = [],
   userPrompt,
   pluginsRequired = [],
+  workflowSteps = [],
+  connectedPlugins = {},
+  initialContext = 'test',
   onExecutionComplete,
+  onFormCompletionChange,
 }: AgentSandboxProps) {
   const [formData, setFormData] = useState<Record<string, any>>({})
   const [result, setResult] = useState<any | null>(null)
@@ -90,17 +94,17 @@ export function useAgentSandbox({
   const [sendStatus, setSendStatus] = useState<string | null>(null)
   const [executionTime, setExecutionTime] = useState<number | null>(null)
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({})
-  
+
   // Add loading states
   const [loadingConfiguration, setLoadingConfiguration] = useState(false)
   const [loadingSchema, setLoadingSchema] = useState(false)
-  
+
   // Add actual input schema state (loaded from DB)
   const [dbInputSchema, setDbInputSchema] = useState<Field[]>([])
   const [schemaLoaded, setSchemaLoaded] = useState(false)
-  
-  // Execution context state - 'test' or 'configure'
-  const [executionContext, setExecutionContext] = useState<'test' | 'configure'>('test')
+
+  // Execution context state - 'test' or 'configure' - use initialContext prop
+  const [executionContext, setExecutionContext] = useState<'test' | 'configure'>(initialContext)
   
   // Configuration state
   const [savedConfiguration, setSavedConfiguration] = useState<Record<string, any> | null>(null)

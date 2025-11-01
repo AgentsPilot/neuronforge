@@ -89,13 +89,14 @@ export default function AdminTokenAnalytics() {
   const [selectedUserRecords, setSelectedUserRecords] = useState<TokenUsageRecord[]>([]);
   const [filter, setFilter] = useState<'all' | 'success' | 'error'>('all');
   const [providerFilter, setProviderFilter] = useState<'all' | 'openai' | 'anthropic' | 'google'>('all');
+  const [modelFilter, setModelFilter] = useState<'all' | 'gpt-4o' | 'gpt-4o-mini' | 'claude-3-5-sonnet-20241022'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [dateRange, setDateRange] = useState({ from: '', to: '' });
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
 
   useEffect(() => {
     fetchUsageData();
-  }, [filter, providerFilter]);
+  }, [filter, providerFilter, modelFilter]);
 
   useEffect(() => {
     const timeoutId = setTimeout(() => {
@@ -175,6 +176,7 @@ export default function AdminTokenAnalytics() {
       const queryParams = new URLSearchParams({
         filter,
         provider: providerFilter,
+        model: modelFilter,
         search: searchTerm,
         ...(dateRange.from && { dateFrom: dateRange.from }),
         ...(dateRange.to && { dateTo: dateRange.to })
@@ -484,6 +486,17 @@ export default function AdminTokenAnalytics() {
               <option value="openai">OpenAI</option>
               <option value="anthropic">Anthropic</option>
               <option value="google">Google</option>
+            </select>
+
+            <select
+              value={modelFilter}
+              onChange={(e) => setModelFilter(e.target.value as any)}
+              className="bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none"
+            >
+              <option value="all">All Models</option>
+              <option value="gpt-4o">GPT-4o</option>
+              <option value="gpt-4o-mini">GPT-4o Mini</option>
+              <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
             </select>
           </div>
 

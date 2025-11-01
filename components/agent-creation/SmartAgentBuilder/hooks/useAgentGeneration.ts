@@ -17,9 +17,9 @@ export const useAgentGeneration = () => {
   const [lastOptions, setLastOptions] = useState<GenerateAgentOptions>({});
 
   const generateAgent = async (
-    prompt: string, 
+    prompt: string,
     options: GenerateAgentOptions = {}
-  ): Promise<Agent | null> => {
+  ): Promise<{ agent: Agent; sessionId: string; agentId: string } | null> => {
     setIsGenerating(true);
     setError(null);
     
@@ -130,20 +130,26 @@ export const useAgentGeneration = () => {
         hasSchedule: result.extraction_details?.has_schedule || false,
         workflowSteps: result.extraction_details?.workflow_step_count || 0,
         // LOG the tracking IDs from result for verification
-        resultSessionId: result.extraction_details?.sessionId,
-        resultAgentId: result.extraction_details?.agentId,
+        resultSessionId: result.sessionId,
+        resultAgentId: result.agentId,
         activityTracked: result.extraction_details?.activity_tracked,
         // VERIFY: Check if the agent ID matches what we sent
         agentIdConsistent: result.agent?.id === options.agentId || 'ID_MISMATCH',
         // SHOW which version was used
         versionUsed: usedVersion
       });
-      
+
       if (!result.agent) {
         throw new Error('No agent data received from API');
       }
 
-      return result.agent;
+      // CRITICAL FIX: Return the sessionId and agentId from the API response
+      // so the parent component can use the SAME IDs for creation
+      return {
+        agent: result.agent,
+        sessionId: result.sessionId || options.sessionId,
+        agentId: result.agentId || options.agentId
+      };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to generate agent';
       console.error('❌ Agent generation error:', errorMessage);
@@ -154,7 +160,7 @@ export const useAgentGeneration = () => {
     }
   };
 
-  const regenerateAgent = async (): Promise<Agent | null> => {
+  const regenerateAgent = async (): Promise<{ agent: Agent; sessionId: string; agentId: string } | null> => {
     if (!lastPrompt) {
       setError('No previous prompt found to regenerate from');
       return null;

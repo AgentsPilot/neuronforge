@@ -4,24 +4,15 @@ import { openai, AGENTKIT_CONFIG } from './agentkitClient';
 import { convertPluginsToTools, getPluginContextPrompt } from './convertPlugins';
 import { PluginExecuterV2 } from '@/lib/server/plugin-executer-v2';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
-import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 import { OpenAIProvider } from '@/lib/ai/providers/openaiProvider';
-import { createClient } from '@supabase/supabase-js';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
+import { ModelRouter } from '@/lib/ai/modelRouter';
+import { ProviderFactory } from '@/lib/ai/providerFactory';
+import { SystemConfigService } from '@/lib/services/SystemConfigService';
 
-// Initialize Supabase for analytics
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
-
-// Initialize AI Analytics
-const aiAnalytics = new AIAnalyticsService(supabase, {
-  enableRealtime: true,
-  enableCostTracking: true,
-  enablePerformanceMetrics: true
-});
+// Note: AI Analytics tracking happens automatically via OpenAIProvider and BaseProvider
+// No need to initialize AIAnalyticsService or Supabase separately here
 
 // Initialize Audit Trail
 const auditTrail = AuditTrailService.getInstance();
@@ -156,8 +147,65 @@ export async function runAgentKit(
   console.log(`📦 Required plugins: ${agent.plugins_required.join(', ')}`);
   console.log(`👤 User: ${userId}`);
 
-  // Initialize OpenAI Provider WITHOUT analytics (we'll track manually with tool call details)
-  const openaiProvider = new OpenAIProvider(process.env.OPENAI_API_KEY!);
+  // INTELLIGENT MODEL ROUTING
+  // Select optimal model based on agent complexity (AIS score)
+  let selectedModel: string;
+  let selectedProvider: 'openai' | 'anthropic';
+  let routingReasoning: string = '';
+
+  // Initialize Supabase client for database operations
+  const { createClient } = await import('@supabase/supabase-js');
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+
+  // Fetch routing configuration from database
+  let ROUTING_ENABLED = false;
+  try {
+    ROUTING_ENABLED = await SystemConfigService.getBoolean(
+      supabase,
+      'intelligent_routing_enabled',
+      false
+    );
+  } catch (configError) {
+    console.error('⚠️  Failed to fetch routing config, defaulting to disabled:', configError);
+    ROUTING_ENABLED = false;
+  }
+
+  if (ROUTING_ENABLED) {
+    console.log('🎯 Intelligent Routing ENABLED - selecting optimal model based on AIS score');
+
+    try {
+      const modelSelection = await ModelRouter.selectModel(agent.id, supabase, userId);
+
+      selectedModel = modelSelection.model;
+      selectedProvider = modelSelection.provider;
+      routingReasoning = modelSelection.reasoning;
+
+      console.log('🎯 Model Selected:', {
+        model: selectedModel,
+        provider: selectedProvider,
+        reasoning: routingReasoning,
+        intensity_score: modelSelection.intensity_score
+      });
+    } catch (routingError) {
+      // On error, fall back to default model
+      console.error('⚠️  Routing error, falling back to default GPT-4o:', routingError);
+      selectedModel = AGENTKIT_CONFIG.model;
+      selectedProvider = 'openai';
+      routingReasoning = 'Routing error - using default model';
+    }
+  } else {
+    // Routing disabled - use default model
+    console.log('🎯 Intelligent Routing DISABLED - using default GPT-4o');
+    selectedModel = AGENTKIT_CONFIG.model;
+    selectedProvider = 'openai';
+    routingReasoning = 'Routing disabled via database config';
+  }
+
+  // Get appropriate provider instance
+  const aiProvider = ProviderFactory.getProvider(selectedProvider);
 
   // Log execution start to audit trail
   await auditTrail.log({
@@ -170,7 +218,10 @@ export async function runAgentKit(
       sessionId: sessionId,
       plugins_required: agent.plugins_required,
       execution_mode: 'agentkit',
-      model: AGENTKIT_CONFIG.model,
+      model: selectedModel, // Dynamic model based on routing
+      provider: selectedProvider, // Track which provider is being used
+      routing_enabled: ROUTING_ENABLED,
+      routing_reasoning: routingReasoning,
       user_input: userInput.substring(0, 200), // First 200 chars
       has_input_values: inputValues ? Object.keys(inputValues).length > 0 : false,
       trigger_condition: agent.trigger_condintion
@@ -279,24 +330,24 @@ Please use these input values when executing the task.`;
       iteration++;
       console.log(`\n🔄 AgentKit: Iteration ${iteration}/${AGENTKIT_CONFIG.maxIterations}`);
 
-      // Log the request being sent to OpenAI
-      console.log('\n📊 AGENTKIT DEBUG - OPENAI REQUEST:', {
-        model: AGENTKIT_CONFIG.model,
+      // Log the request being sent to AI provider
+      console.log('\n📊 AGENTKIT DEBUG - AI PROVIDER REQUEST:', {
+        model: selectedModel,
+        provider: selectedProvider,
         temperature: AGENTKIT_CONFIG.temperature,
         tools_count: tools.length,
         messages_count: messages.length,
-        iteration: iteration
+        iteration: iteration,
+        routing_enabled: ROUTING_ENABLED
       });
 
-      // Call OpenAI with function calling enabled + analytics tracking
-      // Note: We'll update activity_name after we see what tools were called
-      const iterationStartTime = Date.now();
-      const completion = await openaiProvider.chatCompletion(
+      // Call AI provider with function calling enabled + automatic analytics tracking via BaseProvider
+      const completion = await aiProvider.chatCompletion(
         {
-          model: AGENTKIT_CONFIG.model,
+          model: selectedModel, // Dynamic model based on routing
           messages: messages,
           tools: tools,
-          tool_choice: "auto", // Let OpenAI decide when to use tools
+          tool_choice: "auto", // Let AI decide when to use tools
           temperature: AGENTKIT_CONFIG.temperature,
         },
         {
@@ -337,31 +388,25 @@ Please use these input values when executing the task.`;
         console.log(`💰 Tokens used: ${totalTokens.total} (${totalTokens.prompt} prompt + ${totalTokens.completion} completion)`);
         console.log('\n📊 AGENTKIT DEBUG - FINAL RESPONSE:\n', message.content);
 
-        // Track final iteration (generating response)
-        await aiAnalytics.trackAICall({
-          call_id: `agentkit_iter_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          user_id: userId,
-          session_id: sessionId,
-          provider: 'openai',
-          model_name: AGENTKIT_CONFIG.model,
-          endpoint: 'chat/completions',
-          feature: 'agentkit_execution',
-          component: 'run-agentkit',
-          workflow_step: `iteration_${iteration}`,
-          category: 'agent_execution',
-          input_tokens: completion.usage?.prompt_tokens || 0,
-          output_tokens: completion.usage?.completion_tokens || 0,
-          cost_usd: ((completion.usage?.prompt_tokens || 0) * 0.0025 / 1000) +
-                    ((completion.usage?.completion_tokens || 0) * 0.01 / 1000),
-          latency_ms: Date.now() - iterationStartTime,
-          response_size_bytes: JSON.stringify(completion).length,
-          success: true,
-          request_type: 'chat',
-          activity_type: 'agent_execution',
-          activity_name: `${agent.agent_name} - Final response`,
-          agent_id: agent.id,
-          activity_step: `iteration_${iteration}_of_${AGENTKIT_CONFIG.maxIterations}`
-        });
+        // NOTE: Token tracking happens automatically via openaiProvider.chatCompletion() at line 294
+        // No manual tracking needed here to avoid duplicates
+
+        // EXECUTION SUMMARY - Model usage tracking
+        console.log('\n' + '='.repeat(80));
+        console.log('📊 AGENTKIT EXECUTION SUMMARY');
+        console.log('='.repeat(80));
+        console.log(`🤖 Agent: ${agent.agent_name}`);
+        console.log(`🆔 Agent ID: ${agent.id}`);
+        console.log(`🤝 Model Used: ${selectedModel}`);
+        console.log(`🏢 Provider: ${selectedProvider.toUpperCase()}`);
+        console.log(`🎯 Routing: ${ROUTING_ENABLED ? 'ENABLED ✅' : 'DISABLED ❌'}`);
+        console.log(`💡 Reasoning: ${routingReasoning}`);
+        console.log(`🔄 Iterations: ${iteration} / ${AGENTKIT_CONFIG.maxIterations}`);
+        console.log(`🔧 Tool Calls: ${toolCalls.length} (${toolCalls.filter(tc => tc.success).length} successful)`);
+        console.log(`💰 Tokens: ${totalTokens.prompt} input + ${totalTokens.completion} output = ${totalTokens.total} total`);
+        console.log(`⏱️  Duration: ${Date.now() - startTime}ms`);
+        console.log(`✅ Status: SUCCESS`);
+        console.log('='.repeat(80) + '\n');
 
         // Log successful completion to audit trail
         await auditTrail.log({
@@ -377,7 +422,12 @@ Please use these input values when executing the task.`;
             execution_time_ms: Date.now() - startTime,
             tool_calls_count: toolCalls.length,
             plugins_used: [...new Set(toolCalls.map(tc => tc.plugin))],
-            response_length: message.content?.length || 0
+            response_length: message.content?.length || 0,
+            // Model usage tracking
+            model_used: selectedModel,
+            provider_used: selectedProvider,
+            routing_enabled: ROUTING_ENABLED,
+            routing_reasoning: routingReasoning
           },
           severity: 'info'
         });
@@ -388,52 +438,19 @@ Please use these input values when executing the task.`;
           toolCalls: toolCalls,
           tokensUsed: totalTokens,
           executionTime: Date.now() - startTime,
-          iterations: iteration
+          iterations: iteration,
+          model: selectedModel, // Include the actual model that was used
+          provider: selectedProvider // Include the provider (openai/anthropic)
         };
       }
 
       // Add assistant's message with tool calls to conversation history
       messages.push(message);
 
-      // STEP 5: Create descriptive activity name based on tool calls
-      const toolCallDescriptions = message.tool_calls.map(tc => {
-        if (tc.type === 'function') {
-          const [pluginKey, actionName] = tc.function.name.split('__');
-          return `${pluginKey}.${actionName}`;
-        }
-        return 'unknown';
-      });
-      const iterationActivity = toolCallDescriptions.length > 0
-        ? toolCallDescriptions.join(' + ')
-        : 'Processing';
+      // NOTE: Token tracking already happened automatically via openaiProvider.chatCompletion() at line 294
+      // No manual tracking needed here to avoid duplicates
 
-      // Track this iteration with descriptive activity name
-      await aiAnalytics.trackAICall({
-        call_id: `agentkit_iter_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        user_id: userId,
-        session_id: sessionId,
-        provider: 'openai',
-        model_name: AGENTKIT_CONFIG.model,
-        endpoint: 'chat/completions',
-        feature: 'agentkit_execution',
-        component: 'run-agentkit',
-        workflow_step: `iteration_${iteration}`,
-        category: 'agent_execution',
-        input_tokens: completion.usage?.prompt_tokens || 0,
-        output_tokens: completion.usage?.completion_tokens || 0,
-        cost_usd: ((completion.usage?.prompt_tokens || 0) * 0.0025 / 1000) +
-                  ((completion.usage?.completion_tokens || 0) * 0.01 / 1000),
-        latency_ms: Date.now() - iterationStartTime,
-        response_size_bytes: JSON.stringify(completion).length,
-        success: true,
-        request_type: 'chat',
-        activity_type: 'agent_execution',
-        activity_name: `${agent.agent_name} - ${iterationActivity}`,
-        agent_id: agent.id,
-        activity_step: `iteration_${iteration}_of_${AGENTKIT_CONFIG.maxIterations}`
-      });
-
-      // STEP 6: Execute tool calls using V2 Plugin System
+      // STEP 5: Execute tool calls using V2 Plugin System
       console.log(`🔌 AgentKit: Executing ${message.tool_calls.length} tool call(s)...`);
 
       for (const toolCall of message.tool_calls) {

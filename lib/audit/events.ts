@@ -49,6 +49,9 @@ export const AUDIT_EVENTS = {
   AGENTKIT_ITERATION_COMPLETED: 'AGENTKIT_ITERATION_COMPLETED',
   AGENTKIT_MAX_ITERATIONS_REACHED: 'AGENTKIT_MAX_ITERATIONS_REACHED',
 
+  // AI Model Routing events
+  MODEL_ROUTING_DECISION: 'MODEL_ROUTING_DECISION',
+
   // ==========================================
   // USER / PROFILE EVENTS
   // ==========================================
@@ -108,6 +111,35 @@ export const AUDIT_EVENTS = {
   SYSTEM_CONFIG_CHANGED: 'SYSTEM_CONFIG_CHANGED',
   SYSTEM_MAINTENANCE_STARTED: 'SYSTEM_MAINTENANCE_STARTED',
   SYSTEM_MAINTENANCE_ENDED: 'SYSTEM_MAINTENANCE_ENDED',
+
+  // ==========================================
+  // AIS (AGENT INTENSITY SYSTEM) EVENTS
+  // ==========================================
+  AIS_SCORE_CALCULATED: 'AIS_SCORE_CALCULATED', // Initial calculation
+  AIS_SCORE_UPDATED: 'AIS_SCORE_UPDATED', // Score changed due to new executions
+  AIS_SCORE_RECALCULATED: 'AIS_SCORE_RECALCULATED', // Manual refresh
+  AIS_NORMALIZATION_REFRESH_STARTED: 'AIS_NORMALIZATION_REFRESH_STARTED', // Admin updates ranges
+  AIS_NORMALIZATION_REFRESH_COMPLETED: 'AIS_NORMALIZATION_REFRESH_COMPLETED', // Ranges updated
+  AIS_SCORES_BULK_RECALCULATED: 'AIS_SCORES_BULK_RECALCULATED', // All agents recalculated
+  AIS_MODE_SWITCHED: 'AIS_MODE_SWITCHED', // Switched between best_practice/dynamic mode
+  AIS_THRESHOLD_UPDATED: 'AIS_THRESHOLD_UPDATED', // Min executions threshold changed
+
+  // ==========================================
+  // REWARD CONFIGURATION EVENTS
+  // ==========================================
+  REWARD_CONFIG_CREATED: 'REWARD_CONFIG_CREATED',
+  REWARD_CONFIG_UPDATED: 'REWARD_CONFIG_UPDATED',
+  REWARD_CONFIG_DELETED: 'REWARD_CONFIG_DELETED',
+  REWARD_CONFIG_TOGGLED: 'REWARD_CONFIG_TOGGLED', // Active/inactive toggle
+
+  // ==========================================
+  // SYSTEM CONFIGURATION EVENTS
+  // ==========================================
+  ROUTING_CONFIG_UPDATED: 'ROUTING_CONFIG_UPDATED', // Intelligent routing settings
+  AI_PRICING_CREATED: 'AI_PRICING_CREATED',
+  AI_PRICING_UPDATED: 'AI_PRICING_UPDATED',
+  AI_PRICING_DELETED: 'AI_PRICING_DELETED',
+  AI_PRICING_SYNCED: 'AI_PRICING_SYNCED', // Synced from external source
 
   // ==========================================
   // SECURITY EVENTS
@@ -361,6 +393,97 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'critical',
     complianceFlags: ['SOC2', 'GDPR'],
     description: 'Unauthorized access attempt',
+  },
+
+  // AIS events
+  [AUDIT_EVENTS.AIS_SCORE_CALCULATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Agent intensity score initially calculated',
+  },
+  [AUDIT_EVENTS.AIS_SCORE_UPDATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Agent intensity score updated after execution',
+  },
+  [AUDIT_EVENTS.AIS_SCORE_RECALCULATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Agent intensity score manually recalculated',
+  },
+  [AUDIT_EVENTS.AIS_NORMALIZATION_REFRESH_STARTED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'AIS normalization ranges refresh started',
+  },
+  [AUDIT_EVENTS.AIS_NORMALIZATION_REFRESH_COMPLETED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'AIS normalization ranges refresh completed',
+  },
+  [AUDIT_EVENTS.AIS_SCORES_BULK_RECALCULATED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'All agent intensity scores bulk recalculated',
+  },
+  [AUDIT_EVENTS.AIS_MODE_SWITCHED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'AIS mode switched between best_practice and dynamic',
+  },
+  [AUDIT_EVENTS.AIS_THRESHOLD_UPDATED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'AIS minimum executions threshold updated',
+  },
+
+  // Reward Config events
+  [AUDIT_EVENTS.REWARD_CONFIG_CREATED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'New reward configuration created',
+  },
+  [AUDIT_EVENTS.REWARD_CONFIG_UPDATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Reward configuration updated',
+  },
+  [AUDIT_EVENTS.REWARD_CONFIG_DELETED]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2'],
+    description: 'Reward configuration deleted',
+  },
+  [AUDIT_EVENTS.REWARD_CONFIG_TOGGLED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Reward configuration active status toggled',
+  },
+
+  // System Config events
+  [AUDIT_EVENTS.ROUTING_CONFIG_UPDATED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'Intelligent routing configuration updated',
+  },
+  [AUDIT_EVENTS.AI_PRICING_CREATED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'AI model pricing created',
+  },
+  [AUDIT_EVENTS.AI_PRICING_UPDATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'AI model pricing updated',
+  },
+  [AUDIT_EVENTS.AI_PRICING_DELETED]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2'],
+    description: 'AI model pricing deleted',
+  },
+  [AUDIT_EVENTS.AI_PRICING_SYNCED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'AI model pricing synced from external source',
   },
 };
 

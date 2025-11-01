@@ -3,15 +3,18 @@
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  LayoutDashboard, 
-  MessageSquare, 
+import {
+  LayoutDashboard,
+  MessageSquare,
   Server,
   X,
   Bot,
   TrendingUp,
   Users,
-  Activity
+  Settings,
+  Gift,
+  FileText,
+  Sliders
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -49,6 +52,30 @@ const navigationItems = [
     href: '/admin/users',
     icon: Users,
     description: 'Platform Users'
+  },
+  {
+    name: 'System Config',
+    href: '/admin/system-config',
+    icon: Sliders,
+    description: 'AI Routing & Pricing'
+  },
+  {
+    name: 'AIS Config',
+    href: '/admin/ais-config',
+    icon: Settings,
+    description: 'Intensity System Settings'
+  },
+  {
+    name: 'Reward Config',
+    href: '/admin/reward-config',
+    icon: Gift,
+    description: 'Credit Rewards Management'
+  },
+  {
+    name: 'Audit Trail',
+    href: '/admin/audit-trail',
+    icon: FileText,
+    description: 'System Event History'
   },
 ];
 

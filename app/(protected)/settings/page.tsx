@@ -20,7 +20,8 @@ import PluginsTab from '@/components/settings/PluginsTab'
 import ProfileTab from '@/components/settings/ProfileTab'
 import NotificationsTab from '@/components/settings/NotificationsTab'
 import SecurityTab from '@/components/settings/SecurityTab'
-import PlanManagementTab from '@/components/settings/PlanManagementTab'
+import BillingSettings from '@/components/settings/BillingSettings'
+import UsageAnalytics from '@/components/settings/UsageAnalytics'
 import { UserProfile, UserPreferences, NotificationSettings, PluginConnection } from '@/types/settings'
 
 export default function SettingsPage() {
@@ -30,13 +31,11 @@ export default function SettingsPage() {
   
   // Data states
   const [profile, setProfile] = useState<UserProfile | null>(null)
-  const [preferences, setPreferences] = useState<UserPreferences | null>(null)
   const [notifications, setNotifications] = useState<NotificationSettings | null>(null)
   const [connections, setConnections] = useState<PluginConnection[]>([])
-  
+
   // Form states
   const [profileForm, setProfileForm] = useState<Partial<UserProfile>>({})
-  const [preferencesForm, setPreferencesForm] = useState<Partial<UserPreferences>>({})
   const [notificationsForm, setNotificationsForm] = useState<Partial<NotificationSettings>>({})
 
   const tabs = [
@@ -65,10 +64,16 @@ export default function SettingsPage() {
       description: 'Privacy and security options'
     },
     {
-      id: 'plan',
-      label: 'Plan',
+      id: 'billing',
+      label: 'Billing',
       icon: <BarChart3 className="w-4 h-4" />,
-      description: 'Manage your subscription plan'
+      description: 'Manage credits, plans, and invoices'
+    },
+    {
+      id: 'usage',
+      label: 'Usage',
+      icon: <Sparkles className="w-4 h-4" />,
+      description: 'View credit usage analytics'
     }
   ]
 
@@ -85,9 +90,8 @@ export default function SettingsPage() {
       setLoading(true)
       
       // Load all data in parallel
-      const [profileRes, preferencesRes, notificationsRes, connectionsRes] = await Promise.all([
+      const [profileRes, notificationsRes, connectionsRes] = await Promise.all([
         supabase.from('profiles').select('*').eq('id', user.id).single(),
-        supabase.from('user_preferences').select('*').eq('user_id', user.id).single(),
         supabase.from('notification_settings').select('*').eq('user_id', user.id).single(),
         supabase.from('plugin_connections').select('*').eq('user_id', user.id).neq('status', 'disconnected').order('connected_at', { ascending: false })
       ])
@@ -107,11 +111,6 @@ export default function SettingsPage() {
       }
 
       // Set other data
-      if (preferencesRes.data) {
-        setPreferences(preferencesRes.data)
-        setPreferencesForm(preferencesRes.data)
-      }
-
       if (notificationsRes.data) {
         setNotifications(notificationsRes.data)
         setNotificationsForm(notificationsRes.data)
@@ -271,7 +270,8 @@ export default function SettingsPage() {
           />
         )}
         {activeTab === 'security' && <SecurityTab />}
-        {activeTab === 'plan' && <PlanManagementTab />}
+        {activeTab === 'billing' && <BillingSettings />}
+        {activeTab === 'usage' && <UsageAnalytics />}
       </div>
     </div>
   )

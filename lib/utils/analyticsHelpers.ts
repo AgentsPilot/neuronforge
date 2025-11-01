@@ -110,6 +110,7 @@ export const formatNumber = (num: number | undefined | null): string => {
 
 /**
  * Format token counts with appropriate suffixes
+ * @deprecated Use formatPilotCredits instead for user-facing displays
  */
 export const formatTokens = (tokens: number | undefined | null): string => {
   if (tokens == null || typeof tokens !== 'number' || isNaN(tokens)) return '0';
@@ -118,6 +119,22 @@ export const formatTokens = (tokens: number | undefined | null): string => {
   if (tokens < 1000000) return `${(tokens / 1000).toFixed(1)}K`;
   if (tokens < 1000000000) return `${(tokens / 1000000).toFixed(1)}M`;
   return `${(tokens / 1000000000).toFixed(1)}B`;
+};
+
+/**
+ * Format Pilot Credits (10 tokens = 1 Pilot Credit)
+ * This is the user-facing format for displaying token usage
+ */
+export const formatPilotCredits = (tokens: number | undefined | null): string => {
+  if (tokens == null || typeof tokens !== 'number' || isNaN(tokens)) return '0';
+
+  const pilotCredits = Math.round(tokens / 10); // 10 tokens = 1 Pilot Credit
+
+  if (pilotCredits === 0) return '0';
+  if (pilotCredits < 1000) return Math.floor(pilotCredits).toLocaleString();
+  if (pilotCredits < 1000000) return `${(pilotCredits / 1000).toFixed(1)}K`;
+  if (pilotCredits < 1000000000) return `${(pilotCredits / 1000000).toFixed(1)}M`;
+  return `${(pilotCredits / 1000000000).toFixed(1)}B`;
 };
 
 /**

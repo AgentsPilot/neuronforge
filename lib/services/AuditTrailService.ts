@@ -100,10 +100,16 @@ class AuditTrailService {
       ? sanitizeChanges(input.changes)
       : null;
 
+    // Use system admin user ID as fallback when no user ID is provided
+    // System admin is used for automated/system actions
+    const systemAdminId = process.env.SYSTEM_ADMIN_USER_ID;
+    const userId = input.userId || systemAdminId || null;
+    const actorId = input.actorId || input.userId || systemAdminId || null;
+
     // Build the entry
     const entry: AuditLogEntry = {
-      user_id: input.userId || null,
-      actor_id: input.actorId || input.userId || null,
+      user_id: userId,
+      actor_id: actorId,
       action: input.action,
       entity_type: input.entityType,
       entity_id: input.entityId || null,
@@ -113,6 +119,10 @@ class AuditTrailService {
         ...input.details,
         ...(input.changes && {
           changeSummary: summarizeChanges(input.changes),
+        }),
+        // Flag when system admin is used for automated actions
+        ...(userId === systemAdminId && !input.userId && {
+          system_action: true,
         }),
       },
       ip_address: context.ipAddress || null,
