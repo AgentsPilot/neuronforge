@@ -1,18 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/components/UserProvider';
-import {
-  Message,
-  ProjectState,
-  ClarificationQuestion,
-  ClarityAnalysis,
-  RequirementItem,
-  PromptRequestPayload,
-  PromptResponsePayload,
-  ClarificationQuestionRequestPayload,
-  EnhancedPromptRequestPayload
-} from './types';
+import { Message, ProjectState, ClarificationQuestion, ClarityAnalysis, RequirementItem, PromptRequestPayload, PromptResponsePayload, ClarificationQuestionRequestPayload, EnhancedPromptRequestPayload } from './types';
 import { useProjectState } from './useProjectState';
 import { useMessageHandlers } from './useMessageHandlers';
+import { useThreadBasedAgentCreation } from '@/lib/utils/featureFlags';
+import type { ProcessMessageRequest, ProcessMessageResponse } from '@/components/agent-creation/types/agent-prompt-threads';
 
 /**
  * Main conversational builder hook - orchestrates the 3-API sequence
@@ -46,12 +38,18 @@ export function useConversationalBuilder(params: {
   // Session and agent tracking
   const sessionId = useRef(restoredState?.sessionId || generateUUID());
   const agentId = useRef(restoredState?.agentId || generateUUID());
-  
+
   console.log('🆔 Agent ID initialized for ENTIRE WORKFLOW:', {
     agentId: agentId.current,
     sessionId: sessionId.current,
     isRestored: !!restoredState?.agentId,
   });
+
+  // Feature flag: Check if thread-based agent creation is enabled
+  const useThreadFlow = useThreadBasedAgentCreation();
+  const threadId = useRef<string | null>(null);
+
+  console.log('🎛️ Feature flag - useThreadFlow:', useThreadFlow);
 
   // AI Prevention flags
   const hasProcessedInitialPrompt = useRef(false);
@@ -182,8 +180,361 @@ export function useConversationalBuilder(params: {
     catch (err) { 
       console.error('Clarification Questions API call error:', err);
       throw err;
-    }   
+    }
   };
+
+  // ============================================
+  // THREAD-BASED FLOW HELPER FUNCTIONS
+  // ============================================
+
+  /**
+   * Initialize a new OpenAI thread with system prompt injected once
+   */
+  const initializeThread = async (): Promise<string> => {
+    try {
+      const response = await fetch('/api/agent-creation/init-thread', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to initialize thread');
+      }
+
+      const result = await response.json();
+      console.log('✅ Thread initialized:', result.thread_id);
+      return result.thread_id;
+    } catch (err) {
+      console.error('❌ Failed to initialize thread:', err);
+      throw err;
+    }
+  };
+
+  /**
+   * Process a message in the thread (Phase 1, 2, or 3)
+   */
+  const processMessageInThread = async (
+    phase: 1 | 2 | 3,
+    userPrompt: string,
+    clarificationAnswers?: Record<string, string>
+  ): Promise<any> => {
+    try {
+      if (!threadId.current) {
+        throw new Error('No thread ID available');
+      }
+
+      const requestBody: ProcessMessageRequest = {
+        thread_id: threadId.current,
+        phase,
+        user_prompt: userPrompt,
+        user_context: {
+          full_name: user?.user_metadata?.full_name || '',
+          email: user?.email || ''
+        },
+        analysis: null,
+        connected_services: (projectState.connectedPluginsData || []).map(p => ({
+          name: p.displayName || p.key,
+          context: `${p.displayName || p.key} - ${p.category || 'service'}`,
+          key_actions: (p.capabilities || [])
+        }))
+      };
+
+      if (phase === 3 && clarificationAnswers) {
+        requestBody.clarification_answers = clarificationAnswers;
+      }
+
+      console.log(`🚀 Phase ${phase}: Sending message to thread`);
+
+      const response = await fetch('/api/agent-creation/process-message', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || `Phase ${phase} failed`);
+      }
+
+      const result: ProcessMessageResponse = await response.json();
+      console.log(`✅ Phase ${phase} complete:`, result);
+      return result;
+    } catch (err) {
+      console.error(`❌ Phase ${phase} error:`, err);
+      throw err;
+    }
+  };
+
+  /**
+   * Main thread-based orchestration function (replaces 3-API sequence)
+   */
+  const processWithThreads = useCallback(async (prompt: string) => {
+    try {
+      console.log('🆕 Starting thread-based flow');
+
+      // Step 1: Initialize thread with system prompt
+      const newThreadId = await initializeThread();
+      threadId.current = newThreadId;
+      console.log('✅ Thread initialized:', newThreadId);
+
+      // Step 2: Phase 1 - Analysis
+      console.log('🚀 Phase 1: Analyzing prompt clarity');
+      const phase1Result = await processMessageInThread(1, prompt);
+
+      // Handle plugin warnings from analysis
+      if (phase1Result.pluginWarning) {
+        console.log('Adding plugin warning message from analysis:', phase1Result.pluginWarning.message);
+        addMessage(phase1Result.pluginWarning.message, 'ai');
+        setProjectState((prev) => ({
+          ...prev,
+          missingPlugins: phase1Result.pluginWarning?.missingPlugins || [],
+          pluginWarning: phase1Result.pluginWarning
+        }));
+      }
+
+      console.log('🚀 Phase 1 Result:', phase1Result);
+
+      // Update state with Phase 1 results and requirements
+      setProjectState((prev) => {
+        const connected_plugins = prev.connectedPlugins || projectState.connectedPlugins || [];
+        const connected_pluginsData = prev.connectedPluginsData || projectState.connectedPluginsData || [];
+        // Update requirements from Phase 1 analysis
+        updateRequirementsFromAnalysis({
+          analysis: phase1Result.analysis || {},
+          connectedPlugins: connected_plugins,
+          connectedPluginsData: connected_pluginsData
+        } as PromptResponsePayload);
+
+        return {
+          ...prev,
+          clarityScore: phase1Result.clarityScore || 50,
+          connectedPlugins: connected_plugins
+        };
+      });
+
+      // Step 3: Decide whether to ask questions or enhance directly
+      if (phase1Result.needsClarification && (phase1Result.clarityScore || 0) < 90) {
+        console.log('🚀 Phase 2: Generating clarification questions');
+
+        // Phase 2: Get clarification questions
+        const phase2Result = await processMessageInThread(2, prompt);
+
+        console.log('🚀 Phase 2 Result:', phase2Result);
+
+        const questionsSequence = phase2Result.questionsSequence || [];
+        if (questionsSequence.length > 0) {
+          const validQuestions = questionsSequence.filter((q: ClarificationQuestion) =>
+            q?.id && q?.question && q?.type
+          );
+
+          if (validQuestions.length > 0) {
+            const firstId = validQuestions[0]?.id;
+            const initialVisible = new Set<string>();
+            if (firstId) initialVisible.add(firstId);
+
+            setProjectState((prev) => {
+              const connected_plugins = prev.connectedPlugins || projectState.connectedPlugins || [];
+              const connected_pluginsData = prev.connectedPluginsData || projectState.connectedPluginsData || [];
+              // Update requirements from Phase 2 analysis
+              updateRequirementsFromAnalysis({
+                analysis: phase2Result.analysis || phase1Result.analysis || {},
+                connectedPlugins: connected_plugins,
+                connectedPluginsData: connected_pluginsData
+              } as PromptResponsePayload);
+
+              return {
+                ...prev,
+                questionsSequence: validQuestions,
+                currentQuestionIndex: 0,
+                isProcessingQuestion: false,
+                questionsWithVisibleOptions: initialVisible,
+                clarityScore: phase2Result.clarityScore || phase1Result.clarityScore || 50,
+                connectedPlugins: connected_plugins,
+                connectedPluginsData: connected_pluginsData
+              };
+            });
+
+            console.log('🎯 Thread-based flow: Questions setup complete. User can now answer questions.');
+          } else {
+            // No valid questions, enhance directly
+            addMessage('I need more details, but let me enhance your request directly...', 'ai');
+            setTimeout(() => startEnhancementWithThread(prompt, {}), 1000);
+          }
+        } else {
+          // No questions generated, enhance directly
+          addMessage('Let me enhance your request directly...', 'ai');
+          setTimeout(() => startEnhancementWithThread(prompt, {}), 1000);
+        }
+      } else {
+        // High clarity score, skip questions
+        console.log('✅ High clarity score, skipping questions');
+        addMessage('Your request is very clear. Let me enhance it...', 'ai');
+        setTimeout(() => startEnhancementWithThread(prompt, {}), 1000);
+      }
+
+    } catch (err) {
+      console.error('❌ Thread-based processing error:', err);
+      addMessage('I encountered an error with the new flow. Let me try the standard approach...', 'ai');
+      // Could fallback to legacy flow here if needed
+      throw err;
+    }
+  }, [projectState, user, addMessage, updateRequirementsFromAnalysis, setProjectState]);
+
+  /**
+   * Enhancement using thread-based flow (Phase 3)
+   * Note: Forward reference to startEnhancement is okay because it's only called at runtime
+   */
+  const startEnhancementWithThread = useCallback(
+    async (originalPrompt: string, finalAnswers: Record<string, string>) => {
+      if (!threadId.current) {
+        console.warn('⚠️ No thread ID, falling back to legacy enhancement');
+        // Forward reference - startEnhancement is defined later but will be available at runtime
+        // eslint-disable-next-line @typescript-eslint/no-use-before-define
+        return startEnhancement(originalPrompt, finalAnswers);
+      }
+
+      console.log('🚀 STEP 3 (Thread): Enhancement with thread:', threadId.current);
+
+      // Validation checks (same as legacy)
+      if (enhancementStarted.current && projectState.enhancementComplete) {
+        console.log('Enhancement blocked - already completed');
+        return;
+      }
+
+      if (projectState.conversationCompleted || projectState.planApproved) {
+        console.log('Enhancement blocked - work already completed');
+        return;
+      }
+
+      if (!originalPrompt?.trim() || !user?.id) {
+        addMessage('I encountered an error. Please try again.', 'ai');
+        return;
+      }
+
+      setIsProcessing(true);
+      isCurrentlyProcessing.current = true;
+      addMessage('Creating your detailed automation plan...', 'ai');
+
+      try {
+        // Phase 3: Enhancement via thread
+        const phase3Result = await processMessageInThread(3, originalPrompt, finalAnswers);
+
+        console.log('🚀 Phase 3 Result:', phase3Result);
+
+        // Extract and format enhanced prompt from result
+        const formatEnhancedPrompt = (enhancedPrompt: any): string => {
+          // If it's already a string, return it
+          if (typeof enhancedPrompt === 'string') {
+            return enhancedPrompt;
+          }
+
+          // If it's the structured object from Phase 3, format it nicely
+          if (enhancedPrompt && typeof enhancedPrompt === 'object') {
+            const sections = enhancedPrompt.sections || {};
+            const specifics = enhancedPrompt.specifics || {};
+
+            let formatted = '';
+
+            // Add plan description
+            if (enhancedPrompt.plan_description) {
+              formatted += `${enhancedPrompt.plan_description}\n\n`;
+            }
+
+            // Add data section
+            if (sections.data) {
+              formatted += `**Data Source:**\n${sections.data}\n\n`;
+            }
+
+            // Add processing steps
+            if (sections.processing_steps && Array.isArray(sections.processing_steps)) {
+              formatted += `**Processing Steps:**\n`;
+              sections.processing_steps.forEach((step: string, index: number) => {
+                formatted += `${index + 1}. ${step}\n`;
+              });
+              formatted += '\n';
+            }
+
+            // Add output
+            if (sections.output) {
+              formatted += `**Output:**\n${sections.output}\n\n`;
+            }
+
+            // Add delivery
+            if (sections.delivery) {
+              formatted += `**Delivery:**\n${sections.delivery}\n\n`;
+            }
+
+            // Add services involved
+            if (specifics.services_involved && Array.isArray(specifics.services_involved)) {
+              formatted += `**Services Used:**\n${specifics.services_involved.join(', ')}\n\n`;
+            }
+
+            // Add error handling
+            if (sections.error_handling) {
+              formatted += `**Error Handling:**\n${sections.error_handling}`;
+            }
+
+            return formatted.trim();
+          }
+
+          return 'Enhanced automation plan created';
+        };
+
+        const enhancedPromptText = formatEnhancedPrompt(phase3Result.enhanced_prompt);
+
+        // Update project state with enhancement results
+        setProjectState((prev) => {
+          // Update requirements from Phase 3 analysis
+          if (phase3Result.analysis) {
+            console.log('🔄 Updating requirements from Phase 3 analysis');
+            
+            const connected_plugins = prev.connectedPlugins || projectState.connectedPlugins || [];
+            const connected_pluginsData = prev.connectedPluginsData || projectState.connectedPluginsData || [];
+              
+            updateRequirementsFromAnalysis({
+              analysis: phase3Result.analysis,
+              connectedPlugins: connected_plugins,
+              connectedPluginsData: connected_pluginsData
+            } as PromptResponsePayload);
+          }
+
+          return {
+            ...prev,
+            enhancedPrompt: enhancedPromptText,
+            enhancementComplete: true,
+            conversationCompleted: true,
+            clarificationAnswers: finalAnswers,
+            workflowPhase: 'approval',
+            clarityScore: phase3Result.clarityScore || prev.clarityScore
+          };
+        });
+
+        const message = `Perfect! I've created a detailed plan for your automation:
+
+**Your Automation Plan:**
+${enhancedPromptText}
+
+This plan explains step-by-step what your agent will do. You can approve this plan or make changes to it.`;
+
+        addMessage(message, 'ai');
+        console.log('✅ STEP 3 (Thread): Enhancement completed');
+
+      } catch (err) {
+        console.error('❌ Thread enhancement error:', err);
+        addMessage('I encountered an error creating your plan. Please try again.', 'ai');
+      } finally {
+        setIsProcessing(false);
+        isCurrentlyProcessing.current = false;
+        enhancementStarted.current = true;
+      }
+    },
+    [projectState, user, threadId, addMessage, setProjectState, enhancementStarted, isCurrentlyProcessing, setIsProcessing]
+  );
 
   // STEP 3: Enhancement logic
   const startEnhancement = useCallback(
@@ -466,7 +817,14 @@ This plan explains step-by-step what your agent will do. You can approve this pl
         .join('\n')}`;
 
       setTimeout(() => {
-        startEnhancement(fullPrompt, projectState.clarificationAnswers);
+        // Choose enhancement method based on feature flag
+        if (useThreadFlow && threadId.current) {
+          console.log('🚀 Auto-enhancement: Using thread-based flow');
+          startEnhancementWithThread(fullPrompt, projectState.clarificationAnswers);
+        } else {
+          console.log('🚀 Auto-enhancement: Using legacy flow');
+          startEnhancement(fullPrompt, projectState.clarificationAnswers);
+        }
       }, 1000);
     } else {
       console.log('Auto-enhancement conditions not met:', {
@@ -479,18 +837,21 @@ This plan explains step-by-step what your agent will do. You can approve this pl
       });
     }
   }, [
-    projectState.currentQuestionIndex, 
-    projectState.clarificationAnswers, 
-    projectState.enhancementComplete, 
+    projectState.currentQuestionIndex,
+    projectState.clarificationAnswers,
+    projectState.enhancementComplete,
     projectState.conversationCompleted,
     projectState.isInReviewMode,
-    isProcessing, 
+    isProcessing,
     projectState.originalPrompt,
     projectState.questionsSequence,
-    updateRequirementsFromAnswers, 
+    updateRequirementsFromAnswers,
     addMessage,
     startEnhancement,
-    setProjectState
+    startEnhancementWithThread,
+    setProjectState,
+    useThreadFlow,
+    threadId
   ]);
 
   // Initial prompt processing with 3-API sequence
@@ -526,14 +887,24 @@ This plan explains step-by-step what your agent will do. You can approve this pl
       try {
         setIsProcessing(true);
         addMessage(prompt, 'user');
-        
-        setProjectState((prev) => ({ 
-          ...prev, 
+
+        setProjectState((prev) => ({
+          ...prev,
           originalPrompt: prompt,
           hasProcessedInitial: true,
           isInitialized: true,
           workflowPhase: 'questions'
         }));
+
+        // ===== FEATURE FLAG BRANCHING =====
+        if (useThreadFlow) {
+          console.log('🆕 Using thread-based flow');
+          await processWithThreads(prompt);
+          return; // Exit early - processWithThreads handles everything
+        }
+
+        // ===== LEGACY 3-API FLOW =====
+        console.log('📜 Using legacy 3-API flow');
 
         // Step 1: Analyze prompt clarity
         const responsePromptClarity = await analyzePromptClarity(prompt);
@@ -608,28 +979,55 @@ This plan explains step-by-step what your agent will do. You can approve this pl
         }
         
       } catch (err) {
-        console.error('❌ 3-API sequence error:', err);
-        addMessage('I encountered an error analyzing your request. Let me try to enhance it directly...', 'ai');
-        setTimeout(() => startEnhancement(prompt, {}), 1000);
+        console.error('❌ Processing error:', err);
+        addMessage('I encountered an error. Please try again.', 'ai');
+
+        // Fallback to legacy if thread-based fails
+        if (useThreadFlow) {
+          console.log('⚠️ Thread flow failed, falling back to legacy');
+          try {
+            // Try legacy flow as fallback
+            const responsePromptClarity = await analyzePromptClarity(prompt);
+            updateRequirementsFromAnalysis(responsePromptClarity);
+            // Continue with legacy flow...
+            addMessage('Switched to standard processing...', 'ai');
+            setTimeout(() => startEnhancement(prompt, {}), 1000);
+          } catch (legacyErr) {
+            console.error('❌ Legacy fallback also failed:', legacyErr);
+            addMessage('Unable to process your request. Please try again.', 'ai');
+          }
+        } else {
+          // Legacy flow error - try direct enhancement
+          setTimeout(() => startEnhancement(prompt, {}), 1000);
+        }
       } finally {
         setIsProcessing(false);
         isCurrentlyProcessing.current = false;
       }
     };
 
-    setTimeout(processPrompt, 500);
-    
+    const timeoutId = setTimeout(processPrompt, 500);
+
+    // Cleanup function to cancel the timeout if component unmounts or cancel is clicked
+    return () => {
+      console.log('🧹 Cleaning up initial prompt processing timeout');
+      clearTimeout(timeoutId);
+    };
   }, [
-    prompt, 
-    shouldSkipAIProcessing, 
-    projectState.originalPrompt, 
-    projectState.conversationCompleted, 
-    projectState.isInReviewMode, 
+    initialPrompt,
+    shouldSkipAIProcessing,
+    projectState.originalPrompt,
+    projectState.conversationCompleted,
+    projectState.isInReviewMode,
     restoredState,
-    addMessage, 
+    addMessage,
     startEnhancement,
     updateRequirementsFromAnalysis,
-    setProjectState
+    setProjectState,
+    useThreadFlow,
+    processWithThreads,
+    analyzePromptClarity,
+    generateClarificationQuestions
   ]);
 
   // Persist state changes
@@ -649,8 +1047,8 @@ This plan explains step-by-step what your agent will do. You can approve this pl
       if (projectState.isProcessingQuestion || projectState.isInReviewMode) return;
 
       if (selectedValue === 'custom') {
-        setProjectState((prev) => ({ 
-          ...prev, 
+        setProjectState((prev) => ({
+          ...prev,
           showingCustomInput: true,
           customInputQuestionId: questionId,
           customInputValue: ''
@@ -666,13 +1064,17 @@ This plan explains step-by-step what your agent will do. You can approve this pl
 
       addMessage(selectedLabel, 'user', 'sent', questionId, true);
 
+      // Update requirements and clarity score after answer is saved
+      const updatedAnswers = { ...projectState.clarificationAnswers, [questionId]: selectedLabel };
+      updateRequirementsFromAnswers(updatedAnswers, projectState.questionsSequence);
+
       setTimeout(() => {
         addMessage('Question answered', 'system', 'sent', questionId);
         setProjectState((prev) => ({ ...prev, isProcessingQuestion: false }));
         setTimeout(proceedToNextQuestion, 200);
       }, 300);
     },
-    [projectState.isProcessingQuestion, projectState.isInReviewMode, proceedToNextQuestion, addMessage, setProjectState]
+    [projectState.isProcessingQuestion, projectState.isInReviewMode, projectState.clarificationAnswers, projectState.questionsSequence, proceedToNextQuestion, addMessage, setProjectState, updateRequirementsFromAnswers]
   );
 
   const handleCustomAnswer = useCallback(() => {
@@ -694,6 +1096,10 @@ This plan explains step-by-step what your agent will do. You can approve this pl
 
     addMessage(customAnswer, 'user', 'sent', questionId, true);
 
+    // Update requirements and clarity score after answer is saved
+    const updatedAnswers = { ...projectState.clarificationAnswers, [questionId]: customAnswer };
+    updateRequirementsFromAnswers(updatedAnswers, projectState.questionsSequence);
+
     setTimeout(() => {
       addMessage('Question answered', 'system', 'sent', questionId);
       setProjectState((prev) => ({ ...prev, isProcessingQuestion: false }));
@@ -704,9 +1110,12 @@ This plan explains step-by-step what your agent will do. You can approve this pl
     projectState.customInputValue,
     projectState.isProcessingQuestion,
     projectState.isInReviewMode,
+    projectState.clarificationAnswers,
+    projectState.questionsSequence,
     proceedToNextQuestion,
     addMessage,
     setProjectState,
+    updateRequirementsFromAnswers,
   ]);
 
   const handleChangeAnswer = useCallback((questionId: string) => {

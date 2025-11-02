@@ -812,7 +812,10 @@ export default function ConversationalAgentBuilder(props: EnhancedConversational
                           </div>
 
                           {req.detected && (
-                            <p className="text-xs text-gray-600 leading-relaxed">
+                            <p
+                              className="text-xs text-gray-600 leading-relaxed cursor-help"
+                              title={req.detected.length > 50 ? req.detected : undefined}
+                            >
                               {req.detected.length > 50 ? `${req.detected.slice(0, 50)}...` : req.detected}
                             </p>
                           )}

@@ -218,25 +218,49 @@ export function useProjectState({
 
     // Update requirements with analysis data
     const connectedServiceKeys = getConnectedServiceKeys(promptPayload.connectedPlugins);
+
+    // Handle both legacy and thread-based response structures
+    // Legacy: { analysis: { clarityScore: 70, analysis: { data: {...} } } }
+    // Thread:  { analysis: { data: {...}, output: {...} } }
+    const analysisRoot = (analysis as any).analysis || analysis;
+
+    console.log('📊 Analysis data structure:', {
+      hasAnalysis: !!analysis,
+      hasNestedAnalysis: !!(analysis as any).analysis,
+      analysisKeys: Object.keys(analysis),
+      analysisRootKeys: Object.keys(analysisRoot),
+      usingNestedStructure: !!(analysis as any).analysis,
+      sampleData: analysisRoot.data
+    });
+
     setProjectState((prev) => ({
       ...prev,
       requirements: prev.requirements.map(req => {
-        const analysisData = (analysis.analysis as any)?.[req.id];
-        
+        // Support both structures:
+        // - Legacy: analysis.analysis.data
+        // - Thread:  analysis.data
+        const analysisData = analysisRoot?.[req.id];
+
+        console.log(`📋 Requirement ${req.id}:`, {
+          found: !!analysisData,
+          status: analysisData?.status,
+          detected: analysisData?.detected?.substring(0, 50)
+        });
+
         // Special handling for actions: Filter out unconnected services
         if (req.id === 'actions' && analysisData?.detected && analysis.pluginWarning?.missingPlugins) {
           const serviceDisplayNames = getServiceDisplayNames(connectedServiceKeys, promptPayload.connectedPluginsData);
-          const filteredActions = connectedServiceKeys.length > 0 
+          const filteredActions = connectedServiceKeys.length > 0
             ? `Summarize and save to ${serviceDisplayNames.join(', ')}`
             : 'Actions require service connections';
-          
+
           return {
             ...req,
             status: connectedServiceKeys.length > 0 ? 'clear' : 'missing',
             detected: filteredActions,
           };
         }
-        
+
         // For all other requirements, use original analysis data
         return {
           ...req,
