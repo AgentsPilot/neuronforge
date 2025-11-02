@@ -150,36 +150,54 @@ export function useProjectState({
   // AI Prevention - Enhanced with completion checks and user loading
   const shouldSkipAIProcessing = useCallback(() => {
     const skipReasons = [];
-    
+
+    console.log('🔍 shouldSkipAIProcessing check:', {
+      isInitialized: isInitialized.current,
+      hasRestoredState: !!restoredState,
+      enhancementStarted: enhancementStarted.current,
+      hasOriginalPrompt: !!projectState.originalPrompt,
+      hasQuestions: projectState.questionsSequence?.length > 0,
+      userLoading,
+      shouldWaitForUserContext
+    });
+
     // Check 0: Wait for user context to load
     if (userLoading) skipReasons.push('user_loading');
     if (shouldWaitForUserContext) skipReasons.push('waiting_for_plugins');
-    
+
     // Check 1: Work is already completed
     if (projectState.conversationCompleted) skipReasons.push('conversation_completed');
     if (projectState.planApproved) skipReasons.push('plan_approved');
     if (projectState.workflowPhase === 'completed') skipReasons.push('workflow_completed');
     if (projectState.agentCreated) skipReasons.push('agent_created');
-    
+
     // Check 2: In review mode
     if (projectState.isInReviewMode) skipReasons.push('review_mode');
     if (restoredState?.isInReviewMode) skipReasons.push('restored_review_mode');
-    
+
     // Check 3: Enhancement already done (but NOT during active enhancement process)
     if (projectState.enhancementComplete && projectState.enhancedPrompt && !enhancementStarted.current) {
       skipReasons.push('enhancement_done');
     }
-    
-    // Check 4: Already initialized with restored state (but NOT for new enhancement)
-    if (isInitialized.current && restoredState && !enhancementStarted.current) {
+
+    // Check 4: Already initialized with restored state
+    // Only block if we've already processed the initial prompt AND restored a completed state
+    // Allow: new sessions, question answering flow, enhancement process
+    const isAnsweringQuestions = projectState.questionsSequence && projectState.questionsSequence.length > 0;
+    const hasOriginalPrompt = !!projectState.originalPrompt;
+
+    if (isInitialized.current && restoredState && !enhancementStarted.current && hasOriginalPrompt && !isAnsweringQuestions) {
       skipReasons.push('already_initialized');
     }
 
     if (skipReasons.length > 0) {
-      console.log('AI Processing BLOCKED - Reasons:', skipReasons);
+      // Only log if not just the already_initialized reason during question flow
+      if (!(skipReasons.length === 1 && skipReasons[0] === 'already_initialized')) {
+        console.log('AI Processing BLOCKED - Reasons:', skipReasons);
+      }
       return true;
     }
-    
+
     console.log('AI Processing ALLOWED - No blocking conditions');
     return false;
   }, [projectState, restoredState, enhancementStarted.current, userLoading, shouldWaitForUserContext]);

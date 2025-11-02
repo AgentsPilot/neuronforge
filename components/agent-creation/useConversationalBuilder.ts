@@ -720,14 +720,31 @@ This plan explains step-by-step what your agent will do. You can approve this pl
 
   // Ask current question
   useEffect(() => {
+    console.log('🎯 [QUESTION-RENDER] Question rendering useEffect triggered', {
+      isInReviewMode: projectState.isInReviewMode,
+      currentQuestionIndex: projectState.currentQuestionIndex,
+      totalQuestions: projectState.questionsSequence.length,
+      hasCurrentQuestion: !!projectState.questionsSequence[projectState.currentQuestionIndex]
+    });
+
     // Don't show new questions in review mode
-    if (projectState.isInReviewMode) return;
+    if (projectState.isInReviewMode) {
+      console.log('⏭️ [QUESTION-SKIP] In review mode, not showing questions');
+      return;
+    }
 
     const currentQuestion = projectState.questionsSequence[projectState.currentQuestionIndex];
     if (currentQuestion && projectState.currentQuestionIndex >= 0) {
+      console.log('📝 [QUESTION-DISPLAY] Scheduling question display', {
+        questionId: currentQuestion.id,
+        questionText: currentQuestion.question?.substring(0, 50),
+        questionIndex: projectState.currentQuestionIndex
+      });
+
       const timer = setTimeout(() => {
+        console.log('💬 [QUESTION-DISPLAY] Adding AI message for question');
         addMessage(currentQuestion.question, 'ai');
-        
+
         // Add question component
         const questionMessage: Message = {
           id: `question-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -736,10 +753,16 @@ This plan explains step-by-step what your agent will do. You can approve this pl
           timestamp: new Date(),
           questionId: currentQuestion.id,
         };
+        console.log('📋 [QUESTION-DISPLAY] Adding question message component');
         setMessages((prev) => [...prev, questionMessage]);
       }, 500);
-      
+
       return () => clearTimeout(timer);
+    } else {
+      console.log('⏭️ [QUESTION-SKIP] No current question to display', {
+        hasCurrentQuestion: !!currentQuestion,
+        currentQuestionIndex: projectState.currentQuestionIndex
+      });
     }
   }, [projectState.currentQuestionIndex, projectState.questionsSequence, projectState.isInReviewMode, addMessage, setMessages]);
 
@@ -856,38 +879,92 @@ This plan explains step-by-step what your agent will do. You can approve this pl
 
   // Initial prompt processing with 3-API sequence
   useEffect(() => {
-    if (!initialPrompt) return;
-    if (shouldSkipAIProcessing()) return;
-    if (hasProcessedInitialPrompt.current) return;
-    if (isCurrentlyProcessing.current) return;
-    if (projectState.originalPrompt) return;
-    if (projectState.conversationCompleted) return;
-    if (projectState.isInReviewMode) return;
+    console.log('🔍 [FLOW-START] Initial prompt processing useEffect triggered', {
+      hasProcessedInitialPrompt: hasProcessedInitialPrompt.current,
+      isCurrentlyProcessing: isCurrentlyProcessing.current,
+      initialPrompt: initialPrompt?.substring(0, 50),
+      projectStateOriginalPrompt: projectState.originalPrompt?.substring(0, 50),
+      conversationCompleted: projectState.conversationCompleted,
+      isInReviewMode: projectState.isInReviewMode,
+      hasRestoredState: !!restoredState,
+      restoredStateWorkflowPhase: restoredState?.workflowPhase,
+      useThreadFlow
+    });
+
+    // IMPORTANT: Check refs FIRST before calling any functions
+    // This prevents the effect from running multiple times
+    if (hasProcessedInitialPrompt.current) {
+      console.log('⏭️ [FLOW-SKIP] Already processed initial prompt');
+      return; // Silent skip - already processed
+    }
+    if (isCurrentlyProcessing.current) {
+      console.log('⏭️ [FLOW-SKIP] Currently processing');
+      return; // Silent skip - currently processing
+    }
+
+    if (!initialPrompt) {
+      console.log('⏭️ [FLOW-SKIP] No initial prompt');
+      return;
+    }
+    if (shouldSkipAIProcessing()) {
+      console.log('⏭️ [FLOW-SKIP] AI processing blocked by shouldSkipAIProcessing()');
+      return;
+    }
+    if (projectState.originalPrompt) {
+      console.log('⏭️ [FLOW-SKIP] Original prompt already set:', projectState.originalPrompt.substring(0, 50));
+      return;
+    }
+    if (projectState.conversationCompleted) {
+      console.log('⏭️ [FLOW-SKIP] Conversation completed');
+      return;
+    }
+    if (projectState.isInReviewMode) {
+      console.log('⏭️ [FLOW-SKIP] In review mode');
+      return;
+    }
 
     // Skip if restored state has completed work
     if (restoredState && (
-        restoredState.enhancementComplete || 
-        restoredState.planApproved || 
+        restoredState.enhancementComplete ||
+        restoredState.planApproved ||
         restoredState.conversationCompleted ||
         restoredState.workflowPhase === 'completed' ||
         restoredState.workflowPhase === 'approval'
       )) {
-      console.log('Skipping initial prompt processing - restored state has completed work');
+      console.log('⏭️ [FLOW-SKIP] Restored state has completed work', {
+        enhancementComplete: restoredState.enhancementComplete,
+        planApproved: restoredState.planApproved,
+        conversationCompleted: restoredState.conversationCompleted,
+        workflowPhase: restoredState.workflowPhase
+      });
       return;
     }
 
-    console.log('🎯 Processing initial prompt with 3-API sequence');
-    
-    hasProcessedInitialPrompt.current = true;
+    console.log('✅ [FLOW-PROCEED] All checks passed - will process initial prompt in 500ms');
+    console.log('🎯 [FLOW-PROCEED] Processing initial prompt with 3-API sequence');
+
+    // CRITICAL FIX: Don't set hasProcessedInitialPrompt until processPrompt actually starts
+    // Only set isCurrentlyProcessing to prevent duplicate triggers
     isCurrentlyProcessing.current = true;
-    isInitialized.current = true;
     const prompt = initialPrompt.trim();
 
     const processPrompt = async () => {
+      // NOW set hasProcessedInitialPrompt when we actually start processing
+      hasProcessedInitialPrompt.current = true;
+      isInitialized.current = true;
+
+      console.log('🚀 [FLOW-PROCESS] Starting processPrompt function', {
+        prompt: prompt.substring(0, 50),
+        useThreadFlow,
+        userId: user?.id
+      });
+
       try {
+        console.log('📝 [FLOW-PROCESS] Setting isProcessing=true and adding user message');
         setIsProcessing(true);
         addMessage(prompt, 'user');
 
+        console.log('📝 [FLOW-PROCESS] Updating project state with original prompt');
         setProjectState((prev) => ({
           ...prev,
           originalPrompt: prompt,
@@ -898,16 +975,22 @@ This plan explains step-by-step what your agent will do. You can approve this pl
 
         // ===== FEATURE FLAG BRANCHING =====
         if (useThreadFlow) {
-          console.log('🆕 Using thread-based flow');
+          console.log('🆕 [FLOW-THREAD] Using thread-based flow');
           await processWithThreads(prompt);
+          console.log('✅ [FLOW-THREAD] processWithThreads completed');
           return; // Exit early - processWithThreads handles everything
         }
 
         // ===== LEGACY 3-API FLOW =====
-        console.log('📜 Using legacy 3-API flow');
+        console.log('📜 [FLOW-LEGACY] Using legacy 3-API flow');
 
         // Step 1: Analyze prompt clarity
+        console.log('📞 [FLOW-API-1] Calling analyzePromptClarity API');
         const responsePromptClarity = await analyzePromptClarity(prompt);
+        console.log('✅ [FLOW-API-1] analyzePromptClarity completed', {
+          clarityScore: responsePromptClarity.analysis?.clarityScore,
+          needsClarification: responsePromptClarity.analysis?.needsClarification
+        });
         const analysisPromptClarity = responsePromptClarity.analysis;
         
         // FIXED: Handle plugin warnings from analysis
@@ -921,38 +1004,46 @@ This plan explains step-by-step what your agent will do. You can approve this pl
           }));
         }
         
+        console.log('📊 [FLOW-UPDATE] Updating requirements from analysis');
         updateRequirementsFromAnalysis(responsePromptClarity);
 
         // Step 2 & 3: Questions or direct enhancement
-        if (analysisPromptClarity.needsClarification && analysisPromptClarity.clarityScore < 90) {          
-          const resClarification = await generateClarificationQuestions(prompt, responsePromptClarity);
-          
-          // const analysisClarificationQuestions = responseClarificationQuestions.analysis;
+        console.log('🔀 [FLOW-DECISION] Determining next step based on clarity score', {
+          needsClarification: analysisPromptClarity.needsClarification,
+          clarityScore: analysisPromptClarity.clarityScore
+        });
 
-          // // TI FIX: this will not be triggered as generateClarificationQuestions returns only questions and not performes any analysis.
-          // // Handle plugin warnings from clarification API (if different from analysis)
-          // if (analysisClarificationQuestions && analysisClarificationQuestions.pluginWarning && !analysisPromptClarity.pluginWarning) {
-          //   console.log('Adding plugin warning message from clarification:', analysisClarificationQuestions.pluginWarning.message);
-          //   addMessage(analysisClarificationQuestions.pluginWarning.message, 'ai');
-          //   setProjectState((prev) => ({
-          //     ...prev,
-          //     missingPlugins: analysisClarificationQuestions.pluginWarning?.missingPlugins || [],
-          //     pluginWarning: analysisClarificationQuestions.pluginWarning
-          //   }));
-          // }
-          
+        if (analysisPromptClarity.needsClarification && analysisPromptClarity.clarityScore < 90) {
+          console.log('📞 [FLOW-API-2] Calling generateClarificationQuestions API');
+          const resClarification = await generateClarificationQuestions(prompt, responsePromptClarity);
+          console.log('✅ [FLOW-API-2] generateClarificationQuestions completed', {
+            hasAnalysis: !!resClarification.analysis,
+            questionsCount: resClarification.analysis?.questionsSequence?.length || 0
+          });
+
           const analysis = resClarification.analysis;
           const questionsSequence = analysis ? analysis.questionsSequence : [];
+          console.log('🔍 [FLOW-QUESTIONS] Processing questions sequence', {
+            totalQuestions: questionsSequence?.length || 0,
+            hasQuestions: !!questionsSequence && questionsSequence.length > 0
+          });
+
           if (questionsSequence && questionsSequence.length > 0) {
-            const validQuestions = questionsSequence.filter((q: ClarificationQuestion) => 
+            const validQuestions = questionsSequence.filter((q: ClarificationQuestion) =>
               q?.id && q?.question && q?.type
             );
-            
+
+            console.log('✅ [FLOW-QUESTIONS] Filtered valid questions', {
+              totalQuestions: questionsSequence.length,
+              validQuestions: validQuestions.length
+            });
+
             if (validQuestions.length > 0) {
               const firstId = validQuestions[0]?.id;
               const initialVisible = new Set<string>();
               if (firstId) initialVisible.add(firstId);
 
+              console.log('📝 [FLOW-STATE] Setting up questions in project state');
               setProjectState((prev) => ({
                 ...prev,
                 questionsSequence: validQuestions,
@@ -964,27 +1055,31 @@ This plan explains step-by-step what your agent will do. You can approve this pl
                 connectedPluginsData: resClarification.connectedPluginsData || [],
               }));
 
-              console.log('🎯 3-API sequence: Questions setup complete. User can now answer questions.');
+              console.log('🎯 [FLOW-COMPLETE] 3-API sequence: Questions setup complete. User can now answer questions.');
             } else {
+              console.log('⚠️ [FLOW-FALLBACK] No valid questions, enhancing directly');
               addMessage('I need more details, but let me enhance your request directly...', 'ai');
               setTimeout(() => startEnhancement(prompt, {}), 1000);
             }
           } else {
+            console.log('⚠️ [FLOW-FALLBACK] No questions returned, enhancing directly');
             addMessage('Let me enhance your request directly...', 'ai');
             setTimeout(() => startEnhancement(initialPrompt.trim(), {}), 1000);
           }
         } else {
+          console.log('✨ [FLOW-DIRECT] High clarity score, skipping questions and enhancing directly');
           addMessage('Your request is very clear. Let me enhance it...', 'ai');
           setTimeout(() => startEnhancement(prompt, {}), 1000);
         }
         
       } catch (err) {
-        console.error('❌ Processing error:', err);
+        console.error('❌ [FLOW-ERROR] Processing error:', err);
+        console.error('❌ [FLOW-ERROR] Error stack:', err instanceof Error ? err.stack : 'No stack trace');
         addMessage('I encountered an error. Please try again.', 'ai');
 
         // Fallback to legacy if thread-based fails
         if (useThreadFlow) {
-          console.log('⚠️ Thread flow failed, falling back to legacy');
+          console.log('⚠️ [FLOW-FALLBACK] Thread flow failed, falling back to legacy');
           try {
             // Try legacy flow as fallback
             const responsePromptClarity = await analyzePromptClarity(prompt);
@@ -993,14 +1088,16 @@ This plan explains step-by-step what your agent will do. You can approve this pl
             addMessage('Switched to standard processing...', 'ai');
             setTimeout(() => startEnhancement(prompt, {}), 1000);
           } catch (legacyErr) {
-            console.error('❌ Legacy fallback also failed:', legacyErr);
+            console.error('❌ [FLOW-ERROR] Legacy fallback also failed:', legacyErr);
             addMessage('Unable to process your request. Please try again.', 'ai');
           }
         } else {
+          console.log('⚠️ [FLOW-FALLBACK] Legacy flow error - trying direct enhancement');
           // Legacy flow error - try direct enhancement
           setTimeout(() => startEnhancement(prompt, {}), 1000);
         }
       } finally {
+        console.log('🏁 [FLOW-FINALLY] Processing complete, resetting flags');
         setIsProcessing(false);
         isCurrentlyProcessing.current = false;
       }
@@ -1008,26 +1105,34 @@ This plan explains step-by-step what your agent will do. You can approve this pl
 
     const timeoutId = setTimeout(processPrompt, 500);
 
-    // Cleanup function to cancel the timeout if component unmounts or cancel is clicked
+    // Cleanup function to cancel the timeout if component unmounts or dependencies change
     return () => {
-      console.log('🧹 Cleaning up initial prompt processing timeout');
+      console.log('🧹 [FLOW-CLEANUP] Cleanup triggered', {
+        timeoutCleared: true,
+        hasProcessedInitialPrompt: hasProcessedInitialPrompt.current,
+        isCurrentlyProcessing: isCurrentlyProcessing.current
+      });
       clearTimeout(timeoutId);
+      // ONLY reset flags if we haven't actually started processing yet
+      // If hasProcessedInitialPrompt is true, we've already started and shouldn't reset
+      if (!hasProcessedInitialPrompt.current) {
+        console.log('🧹 [FLOW-CLEANUP] Resetting flags - processing never started');
+        isCurrentlyProcessing.current = false;
+        isInitialized.current = false;
+      } else {
+        console.log('🧹 [FLOW-CLEANUP] Keeping flags - processing already started');
+      }
     };
   }, [
+    // Only include values that should trigger a re-run, not functions
     initialPrompt,
-    shouldSkipAIProcessing,
     projectState.originalPrompt,
     projectState.conversationCompleted,
     projectState.isInReviewMode,
-    restoredState,
-    addMessage,
-    startEnhancement,
-    updateRequirementsFromAnalysis,
-    setProjectState,
-    useThreadFlow,
-    processWithThreads,
-    analyzePromptClarity,
-    generateClarificationQuestions
+    useThreadFlow
+    // Note: Removed function dependencies (shouldSkipAIProcessing, addMessage, etc.)
+    // These change on every render and cause infinite loops
+    // The functions are captured in the closure and remain stable within the async execution
   ]);
 
   // Persist state changes
@@ -1064,17 +1169,13 @@ This plan explains step-by-step what your agent will do. You can approve this pl
 
       addMessage(selectedLabel, 'user', 'sent', questionId, true);
 
-      // Update requirements and clarity score after answer is saved
-      const updatedAnswers = { ...projectState.clarificationAnswers, [questionId]: selectedLabel };
-      updateRequirementsFromAnswers(updatedAnswers, projectState.questionsSequence);
-
       setTimeout(() => {
         addMessage('Question answered', 'system', 'sent', questionId);
         setProjectState((prev) => ({ ...prev, isProcessingQuestion: false }));
         setTimeout(proceedToNextQuestion, 200);
       }, 300);
     },
-    [projectState.isProcessingQuestion, projectState.isInReviewMode, projectState.clarificationAnswers, projectState.questionsSequence, proceedToNextQuestion, addMessage, setProjectState, updateRequirementsFromAnswers]
+    [projectState.isProcessingQuestion, projectState.isInReviewMode, proceedToNextQuestion, addMessage, setProjectState]
   );
 
   const handleCustomAnswer = useCallback(() => {
@@ -1096,10 +1197,6 @@ This plan explains step-by-step what your agent will do. You can approve this pl
 
     addMessage(customAnswer, 'user', 'sent', questionId, true);
 
-    // Update requirements and clarity score after answer is saved
-    const updatedAnswers = { ...projectState.clarificationAnswers, [questionId]: customAnswer };
-    updateRequirementsFromAnswers(updatedAnswers, projectState.questionsSequence);
-
     setTimeout(() => {
       addMessage('Question answered', 'system', 'sent', questionId);
       setProjectState((prev) => ({ ...prev, isProcessingQuestion: false }));
@@ -1110,12 +1207,9 @@ This plan explains step-by-step what your agent will do. You can approve this pl
     projectState.customInputValue,
     projectState.isProcessingQuestion,
     projectState.isInReviewMode,
-    projectState.clarificationAnswers,
-    projectState.questionsSequence,
     proceedToNextQuestion,
     addMessage,
     setProjectState,
-    updateRequirementsFromAnswers,
   ]);
 
   const handleChangeAnswer = useCallback((questionId: string) => {
