@@ -18,6 +18,7 @@ import type {
   AgentIntensityMetrics,
 } from '@/lib/types/intensity';
 import { AISConfigService } from '@/lib/services/AISConfigService';
+import { SystemConfigService } from '@/lib/services/SystemConfigService';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export async function GET(
@@ -89,12 +90,34 @@ export async function GET(
 
       // Use newly created metrics
       const breakdown = await buildIntensityBreakdown(supabase, newMetrics as AgentIntensityMetrics, agent);
-      return NextResponse.json(breakdown);
+
+      // Fetch routing configuration for UI to determine which model would be selected
+      const routingConfig = await SystemConfigService.getRoutingConfig(supabase);
+
+      return NextResponse.json({
+        ...breakdown,
+        routing_config: {
+          lowThreshold: routingConfig.lowThreshold,
+          mediumThreshold: routingConfig.mediumThreshold,
+          anthropicEnabled: routingConfig.anthropicEnabled,
+        }
+      });
     }
 
-    // Build and return breakdown
+    // Build and return breakdown with routing config
     const breakdown = await buildIntensityBreakdown(supabase, metrics as AgentIntensityMetrics, agent);
-    return NextResponse.json(breakdown);
+
+    // Fetch routing configuration for UI to determine which model would be selected
+    const routingConfig = await SystemConfigService.getRoutingConfig(supabase);
+
+    return NextResponse.json({
+      ...breakdown,
+      routing_config: {
+        lowThreshold: routingConfig.lowThreshold,
+        mediumThreshold: routingConfig.mediumThreshold,
+        anthropicEnabled: routingConfig.anthropicEnabled,
+      }
+    });
 
   } catch (error) {
     console.error('Error fetching agent intensity:', error);
@@ -181,7 +204,7 @@ async function buildIntensityBreakdown(
     },
   };
 
-  // Execution component scores (4 components)
+  // Execution component scores (5 components - includes memory)
   const executionComponents: IntensityComponentScores = {
     token_complexity: {
       score: metrics.token_complexity_score,
@@ -202,6 +225,11 @@ async function buildIntensityBreakdown(
       score: metrics.workflow_complexity_score,
       weight: EXECUTION_WEIGHTS.WORKFLOW_COMPLEXITY,
       weighted_score: metrics.workflow_complexity_score * EXECUTION_WEIGHTS.WORKFLOW_COMPLEXITY,
+    },
+    memory_complexity: {
+      score: metrics.memory_complexity_score ?? 0,
+      weight: EXECUTION_WEIGHTS.MEMORY_COMPLEXITY,
+      weighted_score: (metrics.memory_complexity_score ?? 0) * EXECUTION_WEIGHTS.MEMORY_COMPLEXITY,
     },
   };
 
@@ -260,6 +288,12 @@ async function buildIntensityBreakdown(
         branches: metrics.conditional_branches_count,
         loops: metrics.loop_iterations_count,
         parallel_executions: metrics.parallel_execution_count,
+      },
+      memory_stats: {
+        avg_memory_tokens_per_run: metrics.avg_memory_tokens_per_run ?? 0,
+        memory_token_ratio: metrics.memory_token_ratio ?? 0,
+        memory_entry_count: metrics.memory_entry_count ?? 0,
+        memory_type_diversity: metrics.memory_type_diversity ?? 0,
       },
     },
   };

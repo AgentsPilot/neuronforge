@@ -61,6 +61,8 @@ export interface ExecutionMetrics {
   businessContext: string
   dataProcessed: boolean
   pluginsUsed: string[]
+  memoriesLoaded?: number
+  memoryTokenCount?: number
 }
 
 export interface ExpandedSections {

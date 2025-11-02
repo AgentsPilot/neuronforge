@@ -10,6 +10,10 @@ import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { ModelRouter } from '@/lib/ai/modelRouter';
 import { ProviderFactory } from '@/lib/ai/providerFactory';
 import { SystemConfigService } from '@/lib/services/SystemConfigService';
+import { MemoryInjector } from '@/lib/memory/MemoryInjector';
+import { MemorySummarizer } from '@/lib/memory/MemorySummarizer';
+import { UserMemoryService } from '@/lib/memory/UserMemoryService';
+import { v4 as uuidv4 } from 'uuid';
 
 // Note: AI Analytics tracking happens automatically via OpenAIProvider and BaseProvider
 // No need to initialize AIAnalyticsService or Supabase separately here
@@ -34,7 +38,16 @@ export interface AgentKitExecutionResult {
   };
   executionTime: number;
   iterations: number;
+  model?: string;
+  provider?: string;
+  ais_score?: number;
   error?: string;
+  // Memory data for AIS tracking (NEW)
+  memoryData?: {
+    tokens: number;           // Memory tokens injected
+    entryCount: number;       // Number of memory entries
+    types: string[];          // Memory types used
+  };
 }
 
 /**
@@ -207,6 +220,20 @@ export async function runAgentKit(
   // Get appropriate provider instance
   const aiProvider = ProviderFactory.getProvider(selectedProvider);
 
+  // MEMORY SYSTEM: Load context from past executions
+  console.log('🧠 [Memory] Loading agent memory context...');
+  const memoryInjector = new MemoryInjector(supabase);
+  const memoryContext = await memoryInjector.buildMemoryContext(
+    agent.id,
+    userId,
+    { userInput, inputValues }
+  );
+  const memoryPrompt = memoryInjector.formatForPrompt(memoryContext);
+  console.log(`🧠 [Memory] Loaded ${memoryContext.token_count} tokens of memory context`);
+
+  // Get next run number for this agent
+  const runNumber = await memoryInjector.getNextRunNumber(agent.id);
+
   // Log execution start to audit trail
   await auditTrail.log({
     action: AUDIT_EVENTS.AGENTKIT_EXECUTION_STARTED,
@@ -269,6 +296,8 @@ export async function runAgentKit(
     const systemPrompt = `${agent.system_prompt || agent.enhanced_prompt || agent.user_prompt}
 
 ${pluginContext}
+
+${memoryPrompt}
 
 ## Current Date & Time
 Today is: ${readableDate}
@@ -432,16 +461,50 @@ Please use these input values when executing the task.`;
           severity: 'info'
         });
 
-        return {
+        // MEMORY SYSTEM: Async summarization (fire-and-forget)
+        const executionResult = {
           success: true,
           response: message.content || "Task completed successfully.",
           toolCalls: toolCalls,
           tokensUsed: totalTokens,
           executionTime: Date.now() - startTime,
           iterations: iteration,
-          model: selectedModel, // Include the actual model that was used
-          provider: selectedProvider // Include the provider (openai/anthropic)
+          model: selectedModel,
+          provider: selectedProvider,
+          // Memory stats for UI display
+          memoryStats: {
+            memoriesLoaded: memoryContext.recent_runs.length + memoryContext.user_context.length + memoryContext.relevant_patterns.length,
+            recentRuns: memoryContext.recent_runs.length,
+            userPreferences: memoryContext.user_context.length,
+            patterns: memoryContext.relevant_patterns.length,
+            tokenCount: memoryContext.token_count
+          },
+          // Memory data for AIS tracking (NEW)
+          memoryData: {
+            tokens: memoryContext.token_count,
+            entryCount: memoryContext.recent_runs.length + memoryContext.user_context.length + memoryContext.relevant_patterns.length,
+            types: [
+              ...(memoryContext.recent_runs.length > 0 ? ['summaries'] : []),
+              ...(memoryContext.user_context.length > 0 ? ['user_context'] : []),
+              ...(memoryContext.relevant_patterns.length > 0 ? ['patterns'] : [])
+            ]
+          }
         };
+
+        // Trigger async memory summarization (doesn't block response)
+        summarizeExecutionAsync(
+          supabase,
+          agent,
+          userId,
+          executionResult,
+          runNumber,
+          { userInput, inputValues },
+          memoryInjector
+        ).catch((err: any) => {
+          console.error('❌ [Memory] Async summarization failed (non-critical):', err);
+        });
+
+        return executionResult;
       }
 
       // Add assistant's message with tool calls to conversation history
@@ -640,5 +703,77 @@ Please use these input values when executing the task.`;
       iterations: 0,
       error: error.message
     };
+  }
+}
+
+/**
+ * Async memory summarization helper
+ *
+ * Runs in background after execution completes to create memory summary
+ * Does not block user-facing response
+ */
+async function summarizeExecutionAsync(
+  supabase: any,
+  agent: any,
+  userId: string,
+  executionResult: any,
+  runNumber: number,
+  input: { userInput: string; inputValues?: Record<string, any> },
+  memoryInjector: MemoryInjector
+): Promise<void> {
+  try {
+    console.log(`🧠 [Memory] Starting async summarization for run #${runNumber}`);
+
+    // Get recent runs for comparison context
+    const recentRuns = await memoryInjector.getRecentRunsForSummarization(agent.id, 5);
+
+    // Create summarizer
+    const summarizer = new MemorySummarizer(supabase, process.env.OPENAI_API_KEY);
+
+    // Build summarization input
+    const summarizationInput = {
+      execution_id: uuidv4(),
+      agent_id: agent.id,
+      user_id: userId,
+      run_number: runNumber,
+
+      agent_name: agent.agent_name,
+      agent_description: agent.system_prompt || agent.enhanced_prompt || agent.user_prompt,
+      agent_mode: 'agentkit',
+
+      input: input,
+      output: executionResult.response,
+      status: executionResult.success ? ('success' as const) : ('failed' as const),
+      model_used: executionResult.model || 'unknown',
+      credits_consumed: 0, // TODO: Calculate from tokens if needed
+      execution_time_ms: executionResult.executionTime,
+      ais_score: undefined,
+      error_logs: undefined,
+
+      recent_runs: recentRuns
+    };
+
+    // Call summarizer
+    await summarizer.summarizeExecution(summarizationInput);
+
+    console.log(`✅ [Memory] Async summarization completed for run #${runNumber}`);
+
+    // Extract user memories (preferences, context, patterns)
+    console.log(`🧠 [UserMemory] Extracting user preferences for run #${runNumber}`);
+    const userMemoryService = new UserMemoryService(supabase, process.env.OPENAI_API_KEY);
+    await userMemoryService.extractMemoriesFromExecution(
+      userId,
+      agent.id,
+      summarizationInput.execution_id,
+      agent.agent_name,
+      JSON.stringify(input),
+      executionResult.response,
+      agent.system_prompt || agent.enhanced_prompt || agent.user_prompt
+    );
+    console.log(`✅ [UserMemory] User preference extraction completed for run #${runNumber}`);
+
+  } catch (error) {
+    console.error('❌ [Memory] Async summarization error:', error);
+    // Don't throw - this is background processing
   }
 }

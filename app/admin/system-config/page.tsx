@@ -17,7 +17,8 @@ import {
   Check,
   Download,
   ChevronUp,
-  ChevronDown
+  ChevronDown,
+  Brain
 } from 'lucide-react';
 
 interface SystemSetting {
@@ -64,42 +65,81 @@ export default function SystemConfigPage() {
   const [routingExpanded, setRoutingExpanded] = useState(false);
   const [pricingExpanded, setPricingExpanded] = useState(false);
   const [calcExpanded, setCalcExpanded] = useState(false);
+  const [memoryExpanded, setMemoryExpanded] = useState(false);
   const [advancedExpanded, setAdvancedExpanded] = useState(false);
 
-  // Calculator configuration state
+  // Calculator configuration state (loaded from database)
   const [calcConfig, setCalcConfig] = useState({
     // Token estimation
-    baseTokens: 1000,
-    tokensPerPlugin: 400,
-    peakMultiplier: 1.5,
-    pluginUsageRate: 0.8,
-    orchestrationOverheadMs: 1000,
-    estimatedDurationMs: 10000,
-    estimatedFailureRate: 10,
-    estimatedRetryRate: 0.5,
-    ioRatio: 2.0,
+    baseTokens: 0,
+    tokensPerPlugin: 0,
+    peakMultiplier: 0,
+    pluginUsageRate: 0,
+    orchestrationOverheadMs: 0,
+    estimatedDurationMs: 0,
+    estimatedFailureRate: 0,
+    estimatedRetryRate: 0,
+    ioRatio: 0,
     // Execution parameters
-    baseIterations: 3,
-    maxIterations: 10,
+    baseIterations: 0,
+    maxIterations: 0,
     // Pricing parameters
-    runsPerAgentPerMonth: 15,
-    agentCreationCost: 800,
-    creditCostUsd: 0.00048,
-    minimumMonthlyCostUsd: 10.00,
-    baseCreditsPerRun: 100,
-    pluginOverheadPerRun: 50,
-    systemOverheadPerRun: 20,
-    executionStepMultiplier: 1.3,
-    freeTierCredits: 1000
+    runsPerAgentPerMonth: 0,
+    agentCreationCost: 0,
+    creditCostUsd: 0,
+    minimumMonthlyCostUsd: 0,
+    baseCreditsPerRun: 0,
+    pluginOverheadPerRun: 0,
+    systemOverheadPerRun: 0,
+    executionStepMultiplier: 0,
+    freeTierCredits: 0
+  });
+
+  // Memory configuration state (loaded from database)
+  const [memoryConfig, setMemoryConfig] = useState({
+    summarization: {
+      model: '',
+      temperature: 0,
+      max_tokens: 0,
+      async: false
+    },
+    embedding: {
+      model: '',
+      batch_size: 0,
+      dimensions: 0
+    },
+    injection: {
+      max_tokens: 0,
+      min_recent_runs: 0,
+      max_recent_runs: 0,
+      semantic_search_limit: 0,
+      semantic_threshold: 0
+    },
+    importance: {
+      base_score: 0,
+      error_bonus: 0,
+      pattern_bonus: 0,
+      user_feedback_bonus: 0,
+      first_run_bonus: 0,
+      milestone_bonus: 0
+    },
+    retention: {
+      run_memories_days: 0,
+      low_importance_days: 0,
+      consolidation_threshold: 0,
+      consolidation_frequency_days: 0
+    }
   });
 
   useEffect(() => {
     fetchData();
   }, []);
 
-  const fetchData = async () => {
+  const fetchData = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) {
+        setLoading(true);
+      }
       setError(null);
 
       // Fetch system settings
@@ -187,41 +227,68 @@ export default function SystemConfigPage() {
             const c = calcResult.config;
             setCalcConfig({
               // Token estimation
-              baseTokens: c.calculatorEstimation?.baseTokens || 1000,
-              tokensPerPlugin: c.calculatorEstimation?.tokensPerPlugin || 400,
-              peakMultiplier: c.calculatorEstimation?.peakMultiplier || 1.5,
-              pluginUsageRate: c.calculatorEstimation?.pluginUsageRate || 0.8,
-              orchestrationOverheadMs: c.calculatorEstimation?.orchestrationOverheadMs || 1000,
-              estimatedDurationMs: c.calculatorEstimation?.estimatedDurationMs || 10000,
-              estimatedFailureRate: c.calculatorEstimation?.estimatedFailureRate || 10,
-              estimatedRetryRate: c.calculatorEstimation?.estimatedRetryRate || 0.5,
-              ioRatio: c.calculatorEstimation?.ioRatio || 2.0,
+              baseTokens: c.calculatorEstimation?.baseTokens ?? 0,
+              tokensPerPlugin: c.calculatorEstimation?.tokensPerPlugin ?? 0,
+              peakMultiplier: c.calculatorEstimation?.peakMultiplier ?? 0,
+              pluginUsageRate: c.calculatorEstimation?.pluginUsageRate ?? 0,
+              orchestrationOverheadMs: c.calculatorEstimation?.orchestrationOverheadMs ?? 0,
+              estimatedDurationMs: c.calculatorEstimation?.estimatedDurationMs ?? 0,
+              estimatedFailureRate: c.calculatorEstimation?.estimatedFailureRate ?? 0,
+              estimatedRetryRate: c.calculatorEstimation?.estimatedRetryRate ?? 0,
+              ioRatio: c.calculatorEstimation?.ioRatio ?? 0,
               // Execution parameters
-              baseIterations: c.calculatorEstimation?.baseIterations || 3,
-              maxIterations: c.calculatorEstimation?.maxIterations || 10,
+              baseIterations: c.calculatorEstimation?.baseIterations ?? 0,
+              maxIterations: c.calculatorEstimation?.maxIterations ?? 0,
               // Pricing parameters
-              runsPerAgentPerMonth: c.runsPerAgentPerMonth || 15,
-              agentCreationCost: c.agentCreationCost || 800,
-              creditCostUsd: c.creditCostUsd || 0.00048,
-              minimumMonthlyCostUsd: c.minimumMonthlyCostUsd || 10.00,
-              baseCreditsPerRun: c.baseCreditsPerRun || 100,
-              pluginOverheadPerRun: c.pluginOverheadPerRun || 50,
-              systemOverheadPerRun: c.systemOverheadPerRun || 20,
-              executionStepMultiplier: c.executionStepMultiplier || 1.3,
-              freeTierCredits: c.freeTierCredits || 1000
+              runsPerAgentPerMonth: c.runsPerAgentPerMonth ?? 0,
+              agentCreationCost: c.agentCreationCost ?? 0,
+              creditCostUsd: c.creditCostUsd ?? 0,
+              minimumMonthlyCostUsd: c.minimumMonthlyCostUsd ?? 0,
+              baseCreditsPerRun: c.baseCreditsPerRun ?? 0,
+              pluginOverheadPerRun: c.pluginOverheadPerRun ?? 0,
+              systemOverheadPerRun: c.systemOverheadPerRun ?? 0,
+              executionStepMultiplier: c.executionStepMultiplier ?? 0,
+              freeTierCredits: c.freeTierCredits ?? 0
             });
-            console.log('Loaded calculator config');
+            console.log('Loaded calculator config:', calcResult.config);
           }
         }
       } catch (calcError) {
         console.error('Failed to fetch calculator config:', calcError);
       }
 
+      // Fetch memory configuration
+      try {
+        const memoryResponse = await fetch('/api/admin/memory-config', {
+          method: 'GET',
+          cache: 'no-store'
+        });
+
+        if (memoryResponse.ok) {
+          const memoryResult = await memoryResponse.json();
+          console.log('[SystemConfig] Memory config API response:', memoryResult);
+
+          if (memoryResult.success && memoryResult.configs) {
+            console.log('[SystemConfig] Setting memory config state:', memoryResult.configs);
+            setMemoryConfig(memoryResult.configs);
+            console.log('[SystemConfig] ✅ Memory config loaded successfully');
+          } else {
+            console.error('[SystemConfig] ❌ Memory config API returned unsuccessful or missing configs');
+          }
+        } else {
+          console.error('[SystemConfig] ❌ Memory config API returned non-OK status:', memoryResponse.status);
+        }
+      } catch (memoryError) {
+        console.error('[SystemConfig] ❌ Failed to fetch memory config:', memoryError);
+      }
+
     } catch (error) {
       console.error('Error fetching data:', error);
       setError(error instanceof Error ? error.message : 'Unknown error occurred');
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   };
 
@@ -259,10 +326,8 @@ export default function SystemConfigPage() {
 
       setSuccess('Configuration saved successfully!');
 
-      // Refresh data
-      await fetchData();
+      // Note: Don't refresh data after save - local state already has updated values
 
-      // Clear success message after 3 seconds
       setTimeout(() => setSuccess(null), 3000);
 
     } catch (error) {
@@ -316,10 +381,8 @@ export default function SystemConfigPage() {
       setSuccess('Pricing updated successfully!');
       setEditingPricing(null);
 
-      // Refresh pricing data
-      await fetchData();
+      // Note: Don't refresh data after save - local state already has updated values
 
-      // Clear success message after 3 seconds
       setTimeout(() => setSuccess(null), 3000);
 
     } catch (error) {
@@ -352,10 +415,9 @@ export default function SystemConfigPage() {
 
       setSuccess(result.message || 'Pricing synced successfully!');
 
-      // Refresh pricing data
-      await fetchData();
+      // Refresh pricing data after sync since it fetches from external API
+      await fetchData(true);
 
-      // Clear success message after 5 seconds
       setTimeout(() => setSuccess(null), 5000);
 
     } catch (error) {
@@ -388,10 +450,65 @@ export default function SystemConfigPage() {
       }
 
       setSuccess('Calculator configuration saved successfully!');
-      await fetchData();
+
+      // Note: Don't refresh data after save because:
+      // 1. Local state already has the updated values
+      // 2. Database view (calculator_config) may have caching delays
+      // 3. Refreshing would overwrite user's changes with potentially stale view data
+
       setTimeout(() => setSuccess(null), 3000);
     } catch (error) {
       console.error('Error saving calculator config:', error);
+      setError(error instanceof Error ? error.message : 'Unknown error occurred');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveMemoryConfig = async (configKey: string) => {
+    try {
+      setSaving(true);
+      setError(null);
+      setSuccess(null);
+
+      const configValue = (memoryConfig as any)[configKey];
+      console.log(`[SystemConfig] 💾 Saving memory config: ${configKey}`, configValue);
+
+      const response = await fetch('/api/admin/memory-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update',
+          configKey,
+          configValue
+        })
+      });
+
+      console.log(`[SystemConfig] Response status: ${response.status}`);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`[SystemConfig] ❌ API error:`, errorText);
+        throw new Error(`Failed to update ${configKey} configuration: ${response.status}`);
+      }
+
+      const result = await response.json();
+      console.log(`[SystemConfig] API result:`, result);
+
+      if (!result.success) {
+        throw new Error(result.error || `Failed to update ${configKey} configuration`);
+      }
+
+      const successMessage = `Memory ${configKey} configuration saved successfully!`;
+      console.log(`[SystemConfig] ✅ ${successMessage}`);
+      setSuccess(successMessage);
+
+      // Note: Don't refresh data after save - local state already has updated values
+      // and database may have caching delays
+
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (error) {
+      console.error('[SystemConfig] ❌ Error saving memory config:', error);
       setError(error instanceof Error ? error.message : 'Unknown error occurred');
     } finally {
       setSaving(false);
@@ -1291,6 +1408,521 @@ export default function SystemConfigPage() {
                   </>
                 )}
               </button>
+            </div>
+          </div>
+        )}
+      </motion.div>
+
+      {/* Memory System Configuration */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.15 }}
+        className="bg-slate-800/50 backdrop-blur-xl rounded-xl border border-white/10"
+      >
+        <div className="p-6 border-b border-white/10">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+                <Brain className="w-5 h-5 text-teal-400" />
+                Memory System Configuration
+              </h2>
+              <p className="text-sm text-slate-400 mt-1">
+                Configure AI memory system for agent execution context, summarization, and learning
+              </p>
+            </div>
+            <button
+              onClick={() => setMemoryExpanded(!memoryExpanded)}
+              className="p-2 bg-slate-700/50 hover:bg-slate-600/50 rounded-lg transition-colors"
+            >
+              {memoryExpanded ? (
+                <ChevronUp className="w-4 h-4 text-slate-400" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-slate-400" />
+              )}
+            </button>
+          </div>
+        </div>
+
+        {memoryExpanded && (
+          <div className="p-6 space-y-6">
+            {/* Info Box */}
+            <div className="bg-teal-500/10 border border-teal-500/20 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <Brain className="w-5 h-5 text-teal-400 flex-shrink-0 mt-0.5" />
+                <div className="space-y-2">
+                  <p className="text-teal-400 font-medium text-sm">How Memory System Works</p>
+                  <p className="text-slate-300 text-sm leading-relaxed">
+                    The memory system enhances agent executions with context from past runs.
+                    <strong className="text-white"> Before execution</strong>, relevant memories are loaded (recent runs, user preferences, learned patterns) within a token budget.
+                    <strong className="text-white"> After execution</strong>, gpt-4o-mini asynchronously creates a concise summary for future reference.
+                    <strong className="text-white"> Integration</strong>: Works seamlessly with ModelRouter - memory context helps agents make better decisions while AIS routes to cost-efficient models.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Token Budget & Injection Settings */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-medium text-white">Memory Injection Settings</h3>
+                <button
+                  onClick={() => handleSaveMemoryConfig('injection')}
+                  disabled={saving}
+                  className="px-4 py-2 bg-teal-600 hover:bg-teal-700 disabled:bg-slate-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                >
+                  {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  Save
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300">
+                    Max Memory Tokens
+                  </label>
+                  <input
+                    type="number"
+                    value={memoryConfig.injection.max_tokens}
+                    onChange={(e) => setMemoryConfig({
+                      ...memoryConfig,
+                      injection: { ...memoryConfig.injection, max_tokens: parseInt(e.target.value) }
+                    })}
+                    min="100"
+                    max="2000"
+                    step="50"
+                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
+                  />
+                  <p className="text-xs text-slate-500">Maximum tokens allocated for memory context. Higher values provide more context but consume more of the model's context window (recommended: 800).</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300">
+                    Min Recent Runs
+                  </label>
+                  <input
+                    type="number"
+                    value={memoryConfig.injection.min_recent_runs}
+                    onChange={(e) => setMemoryConfig({
+                      ...memoryConfig,
+                      injection: { ...memoryConfig.injection, min_recent_runs: parseInt(e.target.value) }
+                    })}
+                    min="1"
+                    max="10"
+                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
+                  />
+                  <p className="text-xs text-slate-500">Minimum number of recent execution memories to always include, even if token budget is tight (recommended: 3).</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300">
+                    Max Recent Runs
+                  </label>
+                  <input
+                    type="number"
+                    value={memoryConfig.injection.max_recent_runs}
+                    onChange={(e) => setMemoryConfig({
+                      ...memoryConfig,
+                      injection: { ...memoryConfig.injection, max_recent_runs: parseInt(e.target.value) }
+                    })}
+                    min="3"
+                    max="20"
+                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
+                  />
+                  <p className="text-xs text-slate-500">Maximum number of recent runs to fetch and consider for injection (space permitting within token budget).</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300">
+                    Semantic Search Limit
+                  </label>
+                  <input
+                    type="number"
+                    value={memoryConfig.injection.semantic_search_limit}
+                    onChange={(e) => setMemoryConfig({
+                      ...memoryConfig,
+                      injection: { ...memoryConfig.injection, semantic_search_limit: parseInt(e.target.value) }
+                    })}
+                    min="0"
+                    max="10"
+                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
+                  />
+                  <p className="text-xs text-slate-500">Maximum number of semantically similar memories to retrieve using vector search (requires embeddings to be generated).</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Summarization Settings */}
+            <div className="space-y-4 pt-6 border-t border-white/10">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-medium text-white">Memory Summarization Settings</h3>
+                <button
+                  onClick={() => handleSaveMemoryConfig('summarization')}
+                  disabled={saving}
+                  className="px-4 py-2 bg-teal-600 hover:bg-teal-700 disabled:bg-slate-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                >
+                  {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  Save
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300">
+                    Summarization Model
+                  </label>
+                  <select
+                    value={memoryConfig.summarization.model}
+                    onChange={(e) => setMemoryConfig({
+                      ...memoryConfig,
+                      summarization: { ...memoryConfig.summarization, model: e.target.value }
+                    })}
+                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
+                  >
+                    <option value="gpt-4o-mini">gpt-4o-mini (recommended)</option>
+                    <option value="gpt-4o">gpt-4o</option>
+                    <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+                  </select>
+                  <p className="text-xs text-slate-500">LLM model used to analyze executions and create concise memory summaries. gpt-4o-mini provides good quality at ~$0.0003 per run.</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300">
+                    Temperature
+                  </label>
+                  <input
+                    type="number"
+                    value={memoryConfig.summarization.temperature}
+                    onChange={(e) => setMemoryConfig({
+                      ...memoryConfig,
+                      summarization: { ...memoryConfig.summarization, temperature: parseFloat(e.target.value) }
+                    })}
+                    min="0"
+                    max="1"
+                    step="0.1"
+                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
+                  />
+                  <p className="text-xs text-slate-500">Controls randomness in summary generation. Lower values (0.3) produce more consistent, focused summaries. Higher values (0.7+) add creativity.</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300">
+                    Max Tokens
+                  </label>
+                  <input
+                    type="number"
+                    value={memoryConfig.summarization.max_tokens}
+                    onChange={(e) => setMemoryConfig({
+                      ...memoryConfig,
+                      summarization: { ...memoryConfig.summarization, max_tokens: parseInt(e.target.value) }
+                    })}
+                    min="100"
+                    max="1000"
+                    step="50"
+                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
+                  />
+                  <p className="text-xs text-slate-500">Maximum length of generated memory summaries in tokens. Higher values allow more detailed summaries but increase cost (recommended: 500).</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
+                    Async Summarization
+                  </label>
+                  <div className="flex items-center h-[42px]">
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={memoryConfig.summarization.async}
+                        onChange={(e) => setMemoryConfig({
+                          ...memoryConfig,
+                          summarization: { ...memoryConfig.summarization, async: e.target.checked }
+                        })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-teal-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal-600"></div>
+                      <span className="ml-3 text-sm text-slate-300">{memoryConfig.summarization.async ? 'Enabled' : 'Disabled'}</span>
+                    </label>
+                  </div>
+                  <p className="text-xs text-slate-500">When enabled, memory summarization runs in the background after agent execution completes. Prevents blocking user response (recommended: enabled).</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Importance Scoring Settings */}
+            <div className="space-y-4 pt-6 border-t border-white/10">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-medium text-white">Importance Scoring Weights</h3>
+                <button
+                  onClick={() => handleSaveMemoryConfig('importance')}
+                  disabled={saving}
+                  className="px-4 py-2 bg-teal-600 hover:bg-teal-700 disabled:bg-slate-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                >
+                  {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  Save
+                </button>
+              </div>
+              <p className="text-xs text-slate-400">These weights determine memory importance scores (1-10), which affect retention and priority. Higher importance memories are kept longer and loaded first.</p>
+
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300">Base Score</label>
+                  <input
+                    type="number"
+                    value={memoryConfig.importance.base_score}
+                    onChange={(e) => setMemoryConfig({
+                      ...memoryConfig,
+                      importance: { ...memoryConfig.importance, base_score: parseInt(e.target.value) }
+                    })}
+                    min="1"
+                    max="10"
+                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
+                  />
+                  <p className="text-xs text-slate-500">Starting importance for all memories</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300">Error Bonus</label>
+                  <input
+                    type="number"
+                    value={memoryConfig.importance.error_bonus}
+                    onChange={(e) => setMemoryConfig({
+                      ...memoryConfig,
+                      importance: { ...memoryConfig.importance, error_bonus: parseInt(e.target.value) }
+                    })}
+                    min="0"
+                    max="5"
+                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
+                  />
+                  <p className="text-xs text-slate-500">Added for failed executions (learn from errors)</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300">Pattern Bonus</label>
+                  <input
+                    type="number"
+                    value={memoryConfig.importance.pattern_bonus}
+                    onChange={(e) => setMemoryConfig({
+                      ...memoryConfig,
+                      importance: { ...memoryConfig.importance, pattern_bonus: parseInt(e.target.value) }
+                    })}
+                    min="0"
+                    max="5"
+                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
+                  />
+                  <p className="text-xs text-slate-500">Added when recurring patterns detected</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300">User Feedback Bonus</label>
+                  <input
+                    type="number"
+                    value={memoryConfig.importance.user_feedback_bonus}
+                    onChange={(e) => setMemoryConfig({
+                      ...memoryConfig,
+                      importance: { ...memoryConfig.importance, user_feedback_bonus: parseInt(e.target.value) }
+                    })}
+                    min="0"
+                    max="5"
+                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
+                  />
+                  <p className="text-xs text-slate-500">Added when user provides explicit feedback</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300">First Run Bonus</label>
+                  <input
+                    type="number"
+                    value={memoryConfig.importance.first_run_bonus}
+                    onChange={(e) => setMemoryConfig({
+                      ...memoryConfig,
+                      importance: { ...memoryConfig.importance, first_run_bonus: parseInt(e.target.value) }
+                    })}
+                    min="0"
+                    max="5"
+                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
+                  />
+                  <p className="text-xs text-slate-500">Added for agent's first execution (baseline)</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300">Milestone Bonus</label>
+                  <input
+                    type="number"
+                    value={memoryConfig.importance.milestone_bonus}
+                    onChange={(e) => setMemoryConfig({
+                      ...memoryConfig,
+                      importance: { ...memoryConfig.importance, milestone_bonus: parseInt(e.target.value) }
+                    })}
+                    min="0"
+                    max="5"
+                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
+                  />
+                  <p className="text-xs text-slate-500">Added every 10th run (checkpoints)</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Retention Policy */}
+            <div className="space-y-4 pt-6 border-t border-white/10">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-medium text-white">Memory Retention Policy</h3>
+                <button
+                  onClick={() => handleSaveMemoryConfig('retention')}
+                  disabled={saving}
+                  className="px-4 py-2 bg-teal-600 hover:bg-teal-700 disabled:bg-slate-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                >
+                  {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  Save
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300">
+                    Run Memories (Days)
+                  </label>
+                  <input
+                    type="number"
+                    value={memoryConfig.retention.run_memories_days}
+                    onChange={(e) => setMemoryConfig({
+                      ...memoryConfig,
+                      retention: { ...memoryConfig.retention, run_memories_days: parseInt(e.target.value) }
+                    })}
+                    min="7"
+                    max="365"
+                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
+                  />
+                  <p className="text-xs text-slate-500">Retention period for medium-importance memories (score 5-7). Balances context availability with database growth (recommended: 90 days).</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300">
+                    Low Importance (Days)
+                  </label>
+                  <input
+                    type="number"
+                    value={memoryConfig.retention.low_importance_days}
+                    onChange={(e) => setMemoryConfig({
+                      ...memoryConfig,
+                      retention: { ...memoryConfig.retention, low_importance_days: parseInt(e.target.value) }
+                    })}
+                    min="1"
+                    max="90"
+                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
+                  />
+                  <p className="text-xs text-slate-500">Retention period for low-importance memories (score 1-4). Routine successes without insights cleaned up sooner (recommended: 30 days).</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300">
+                    Consolidation Threshold
+                  </label>
+                  <input
+                    type="number"
+                    value={memoryConfig.retention.consolidation_threshold}
+                    onChange={(e) => setMemoryConfig({
+                      ...memoryConfig,
+                      retention: { ...memoryConfig.retention, consolidation_threshold: parseInt(e.target.value) }
+                    })}
+                    min="10"
+                    max="200"
+                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
+                  />
+                  <p className="text-xs text-slate-500">Number of memories that triggers consolidation. When agent accumulates this many memories, similar patterns merge into consolidated insights (recommended: 50).</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300">
+                    Consolidation Frequency (Days)
+                  </label>
+                  <input
+                    type="number"
+                    value={memoryConfig.retention.consolidation_frequency_days}
+                    onChange={(e) => setMemoryConfig({
+                      ...memoryConfig,
+                      retention: { ...memoryConfig.retention, consolidation_frequency_days: parseInt(e.target.value) }
+                    })}
+                    min="1"
+                    max="30"
+                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
+                  />
+                  <p className="text-xs text-slate-500">How often to run memory consolidation job. Lower frequency keeps memories fresher but uses more compute (recommended: 7 days).</p>
+                </div>
+              </div>
+              <p className="text-xs text-slate-400">Note: High-importance memories (score 8-10) with critical patterns, errors, or user feedback are kept indefinitely.</p>
+            </div>
+
+            {/* Embedding Settings */}
+            <div className="space-y-4 pt-6 border-t border-white/10">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-medium text-white">Embedding Configuration</h3>
+                <button
+                  onClick={() => handleSaveMemoryConfig('embedding')}
+                  disabled={saving}
+                  className="px-4 py-2 bg-teal-600 hover:bg-teal-700 disabled:bg-slate-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                >
+                  {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  Save
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300">
+                    Embedding Model
+                  </label>
+                  <select
+                    value={memoryConfig.embedding.model}
+                    onChange={(e) => setMemoryConfig({
+                      ...memoryConfig,
+                      embedding: { ...memoryConfig.embedding, model: e.target.value }
+                    })}
+                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
+                  >
+                    <option value="text-embedding-3-small">text-embedding-3-small (recommended)</option>
+                    <option value="text-embedding-3-large">text-embedding-3-large</option>
+                    <option value="text-embedding-ada-002">text-embedding-ada-002</option>
+                  </select>
+                  <p className="text-xs text-slate-500">OpenAI model for generating vector embeddings. Used for semantic search to find similar memories based on meaning (recommended: text-embedding-3-small).</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300">
+                    Batch Size
+                  </label>
+                  <input
+                    type="number"
+                    value={memoryConfig.embedding.batch_size}
+                    onChange={(e) => setMemoryConfig({
+                      ...memoryConfig,
+                      embedding: { ...memoryConfig.embedding, batch_size: parseInt(e.target.value) }
+                    })}
+                    min="1"
+                    max="500"
+                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
+                  />
+                  <p className="text-xs text-slate-500">Number of memories to process in a single batch when generating embeddings. Higher values are more efficient but use more memory (recommended: 100).</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300">
+                    Dimensions
+                  </label>
+                  <input
+                    type="number"
+                    value={memoryConfig.embedding.dimensions}
+                    onChange={(e) => setMemoryConfig({
+                      ...memoryConfig,
+                      embedding: { ...memoryConfig.embedding, dimensions: parseInt(e.target.value) }
+                    })}
+                    min="256"
+                    max="3072"
+                    step="256"
+                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
+                  />
+                  <p className="text-xs text-slate-500">Vector embedding dimension size. Higher dimensions provide better semantic accuracy but require more storage (recommended: 1536 for text-embedding-3-small).</p>
+                </div>
+              </div>
             </div>
           </div>
         )}

@@ -44,17 +44,17 @@ export async function GET() {
     const config = {
       // Calculator estimation formulas
       calculatorEstimation: {
-        baseTokens: parseFloat(data.base_tokens || 1000),
-        tokensPerPlugin: parseFloat(data.tokens_per_plugin || 400),
-        peakMultiplier: parseFloat(data.peak_multiplier || 1.5),
-        baseIterations: parseFloat(data.base_iterations || 3),
-        maxIterations: parseFloat(data.max_iterations || 10),
-        pluginUsageRate: parseFloat(data.plugin_usage_rate || 0.8),
-        orchestrationOverheadMs: parseFloat(data.orchestration_overhead_ms || 1000),
-        estimatedDurationMs: parseFloat(data.estimated_duration_ms || 10000),
-        estimatedFailureRate: parseFloat(data.estimated_failure_rate || 10),
-        estimatedRetryRate: parseFloat(data.estimated_retry_rate || 0.5),
-        ioRatio: parseFloat(data.io_ratio || 2.0),
+        baseTokens: parseFloat(data.base_tokens ?? 0),
+        tokensPerPlugin: parseFloat(data.tokens_per_plugin ?? 0),
+        peakMultiplier: parseFloat(data.peak_multiplier ?? 0),
+        baseIterations: parseFloat(data.base_iterations ?? 0),
+        maxIterations: parseFloat(data.max_iterations ?? 0),
+        pluginUsageRate: parseFloat(data.plugin_usage_rate ?? 0),
+        orchestrationOverheadMs: parseFloat(data.orchestration_overhead_ms ?? 0),
+        estimatedDurationMs: parseFloat(data.estimated_duration_ms ?? 0),
+        estimatedFailureRate: parseFloat(data.estimated_failure_rate ?? 0),
+        estimatedRetryRate: parseFloat(data.estimated_retry_rate ?? 0),
+        ioRatio: parseFloat(data.io_ratio ?? 0),
       },
 
       // AIS dimension weights
@@ -121,15 +121,15 @@ export async function GET() {
       minExecutionsForScore: 5,
 
       // Pricing parameters (legacy field names for backward compatibility)
-      baseCreditsPerRun: parseFloat(data.base_credits_per_run || 100),
-      pluginOverheadPerRun: parseFloat(data.plugin_overhead_per_run || 50),
-      systemOverheadPerRun: parseFloat(data.system_overhead_per_run || 20),
-      runsPerAgentPerMonth: parseFloat(data.runs_per_agent_per_month || 15),
-      creditCostUsd: parseFloat(data.credit_cost_usd || 0.00048),
-      minimumMonthlyCostUsd: parseFloat(data.minimum_monthly_cost_usd || 10.00),
-      agentCreationCost: parseFloat(data.agent_creation_cost || 800),
-      executionStepMultiplier: parseFloat(data.execution_step_multiplier || 1.3),
-      freeTierCredits: parseFloat(data.free_tier_credits || 1000),
+      baseCreditsPerRun: parseFloat(data.base_credits_per_run ?? 0),
+      pluginOverheadPerRun: parseFloat(data.plugin_overhead_per_run ?? 0),
+      systemOverheadPerRun: parseFloat(data.system_overhead_per_run ?? 0),
+      runsPerAgentPerMonth: parseFloat(data.runs_per_agent_per_month ?? 0),
+      creditCostUsd: parseFloat(data.credit_cost_usd ?? 0),
+      minimumMonthlyCostUsd: parseFloat(data.minimum_monthly_cost_usd ?? 0),
+      agentCreationCost: parseFloat(data.agent_creation_cost ?? 0),
+      executionStepMultiplier: parseFloat(data.execution_step_multiplier ?? 0),
+      freeTierCredits: parseFloat(data.free_tier_credits ?? 0),
 
       // Empty arrays for backward compatibility (not used by new calculator)
       aisTiers: [],

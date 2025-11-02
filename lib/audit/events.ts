@@ -142,6 +142,28 @@ export const AUDIT_EVENTS = {
   AI_PRICING_SYNCED: 'AI_PRICING_SYNCED', // Synced from external source
 
   // ==========================================
+  // MEMORY SYSTEM EVENTS
+  // ==========================================
+  MEMORY_CREATED: 'MEMORY_CREATED', // New memory record saved
+  MEMORY_SUMMARIZATION_STARTED: 'MEMORY_SUMMARIZATION_STARTED', // LLM summarization began
+  MEMORY_SUMMARIZATION_COMPLETED: 'MEMORY_SUMMARIZATION_COMPLETED', // Summary saved
+  MEMORY_SUMMARIZATION_FAILED: 'MEMORY_SUMMARIZATION_FAILED', // Summarization error
+  MEMORY_INJECTED: 'MEMORY_INJECTED', // Memory context injected into execution
+  MEMORY_EMBEDDING_GENERATED: 'MEMORY_EMBEDDING_GENERATED', // Vector embedding created
+  MEMORY_CONSOLIDATED: 'MEMORY_CONSOLIDATED', // Multiple memories merged
+  MEMORY_DELETED: 'MEMORY_DELETED', // Memory removed (retention policy)
+  MEMORY_CONFIG_UPDATED: 'MEMORY_CONFIG_UPDATED', // Memory system config changed
+  MEMORY_SENTIMENT_DETECTED: 'MEMORY_SENTIMENT_DETECTED', // Sentiment classification
+  MEMORY_PATTERN_DETECTED: 'MEMORY_PATTERN_DETECTED', // Recurring pattern identified
+  MEMORY_ALERT_TRIGGERED: 'MEMORY_ALERT_TRIGGERED', // Negative sentiment alert
+
+  // User Memory Events (cross-agent preferences)
+  USER_MEMORY_EXTRACTED: 'USER_MEMORY_EXTRACTED', // User preference extracted from conversation
+  USER_MEMORY_SAVED: 'USER_MEMORY_SAVED', // User preference saved to database
+  USER_MEMORY_UPDATED: 'USER_MEMORY_UPDATED', // User preference updated
+  USER_MEMORY_INJECTED: 'USER_MEMORY_INJECTED', // User context injected into execution
+
+  // ==========================================
   // SECURITY EVENTS
   // ==========================================
   SECURITY_BREACH_DETECTED: 'SECURITY_BREACH_DETECTED',
@@ -431,6 +453,85 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     complianceFlags: ['SOC2'],
     description: 'AIS mode switched between best_practice and dynamic',
   },
+
+  // Memory System events
+  [AUDIT_EVENTS.MEMORY_CREATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'New memory record created for agent execution',
+  },
+  [AUDIT_EVENTS.MEMORY_SUMMARIZATION_STARTED]: {
+    severity: 'info',
+    description: 'Memory summarization process initiated',
+  },
+  [AUDIT_EVENTS.MEMORY_SUMMARIZATION_COMPLETED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Memory summarization completed and saved',
+  },
+  [AUDIT_EVENTS.MEMORY_SUMMARIZATION_FAILED]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2'],
+    description: 'Memory summarization failed',
+  },
+  [AUDIT_EVENTS.MEMORY_INJECTED]: {
+    severity: 'info',
+    description: 'Memory context injected into agent execution',
+  },
+  [AUDIT_EVENTS.MEMORY_EMBEDDING_GENERATED]: {
+    severity: 'info',
+    description: 'Vector embedding generated for memory',
+  },
+  [AUDIT_EVENTS.MEMORY_CONSOLIDATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Multiple memories consolidated',
+  },
+  [AUDIT_EVENTS.MEMORY_DELETED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2', 'GDPR'],
+    description: 'Memory record deleted per retention policy',
+  },
+  [AUDIT_EVENTS.MEMORY_CONFIG_UPDATED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'Memory system configuration updated',
+  },
+  [AUDIT_EVENTS.MEMORY_SENTIMENT_DETECTED]: {
+    severity: 'info',
+    description: 'Sentiment classification detected in memory',
+  },
+  [AUDIT_EVENTS.MEMORY_PATTERN_DETECTED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'Recurring pattern detected across executions',
+  },
+  [AUDIT_EVENTS.MEMORY_ALERT_TRIGGERED]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2'],
+    description: 'Memory alert triggered for negative sentiment pattern',
+  },
+
+  // User Memory Events
+  [AUDIT_EVENTS.USER_MEMORY_EXTRACTED]: {
+    severity: 'info',
+    description: 'User preference extracted from agent conversation',
+  },
+  [AUDIT_EVENTS.USER_MEMORY_SAVED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'User preference saved to cross-agent memory',
+  },
+  [AUDIT_EVENTS.USER_MEMORY_UPDATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'User preference updated in cross-agent memory',
+  },
+  [AUDIT_EVENTS.USER_MEMORY_INJECTED]: {
+    severity: 'info',
+    description: 'User context injected into agent execution',
+  },
+
   [AUDIT_EVENTS.AIS_THRESHOLD_UPDATED]: {
     severity: 'warning',
     complianceFlags: ['SOC2'],

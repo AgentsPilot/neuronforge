@@ -36,6 +36,7 @@
     "axios": "^1.10.0",
     "class-variance-authority": "^0.7.1",
     "cron-parser": "^4.9.0",
+    "date-fns": "^4.1.0",
     "dotenv": "^17.2.3",
     "framer-motion": "^12.23.11",
     "googleapis": "^157.0.0",

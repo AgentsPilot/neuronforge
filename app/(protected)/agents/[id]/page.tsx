@@ -7,16 +7,14 @@ import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 import Link from 'next/link'
 import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
-import AgentStatsBlock from '@/components/dashboard/AgentStatsTable'
 import AgentHistoryBlock from '@/components/dashboard/AgentHistoryBlock'
 import AgentSandbox from '@/components/dashboard/AgentSandBox/AgentSandbox'
 import { AgentIntensityCard } from '@/components/agents/AgentIntensityCard'
+import { SiGmail, SiSlack, SiNotion, SiGoogledrive, SiGooglecalendar, SiGoogledocs, SiGooglesheets, SiGithub, SiHubspot, SiWhatsapp } from 'react-icons/si'
 import {
   Bot,
   Edit,
   Trash2,
-  Power,
-  PowerOff,
   ArrowLeft,
   Calendar,
   Activity,
@@ -28,7 +26,6 @@ import {
   Clock,
   FileText,
   Zap,
-  Link2,
   MoreVertical,
   Copy,
   Download,
@@ -39,37 +36,26 @@ import {
   Share2,
   Coins,
   Users,
-  Heart,
   ChevronDown,
   ChevronUp,
-  Code2,
   Info,
   Sparkles,
-  Timer,
   Puzzle,
-  Star,
+  Brain,
   Mail,
   Globe,
   Database,
-  Workflow,
   Target,
   TrendingUp,
   Shield,
-  Layers,
-  Cpu,
-  BarChart3,
-  Command,
-  Wand2,
-  CircuitBoard,
-  Beaker,
-  Rocket,
-  Send,
-  CheckCircle2,
-  Lightbulb,
   Loader2,
   Bell,
   List,
   FileBarChart,
+  Wand2,
+  Rocket,
+  CheckCircle2,
+  Check,
   User
 } from 'lucide-react'
 
@@ -86,8 +72,8 @@ const Modal = ({ isOpen, onClose, children }: { isOpen: boolean; onClose: () => 
 
   return createPortal(
     <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
-      <div 
-        className="absolute inset-0 bg-black/20 backdrop-blur-md"
+      <div
+        className="absolute inset-0 bg-black/30 backdrop-blur-md"
         onClick={onClose}
       />
       <div className="relative bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/20 max-w-lg w-full mx-auto max-h-[90vh] overflow-y-auto">
@@ -114,7 +100,7 @@ type Agent = {
   updated_at?: string
   mode?: string
   schedule_cron?: string
-  timezone?: string // Add timezone field
+  timezone?: string
   generated_plan?: string
   ai_reasoning?: string
   ai_confidence?: number
@@ -138,7 +124,7 @@ const getStatusConfig = (status: string) => {
         icon: CheckCircle,
         label: 'Live',
         color: 'text-emerald-600',
-        bg: 'bg-emerald-50',
+        bg: 'bg-gradient-to-r from-green-50 to-emerald-50',
         border: 'border-emerald-200',
         pulse: 'animate-pulse'
       }
@@ -147,7 +133,7 @@ const getStatusConfig = (status: string) => {
         icon: Pause,
         label: 'Paused',
         color: 'text-slate-500',
-        bg: 'bg-slate-50',
+        bg: 'bg-gradient-to-r from-slate-50 to-gray-50',
         border: 'border-slate-200',
         pulse: ''
       }
@@ -156,7 +142,7 @@ const getStatusConfig = (status: string) => {
         icon: Wand2,
         label: 'Draft',
         color: 'text-amber-600',
-        bg: 'bg-amber-50',
+        bg: 'bg-gradient-to-r from-amber-50 to-orange-50',
         border: 'border-amber-200',
         pulse: ''
       }
@@ -165,7 +151,7 @@ const getStatusConfig = (status: string) => {
         icon: Users,
         label: 'Community',
         color: 'text-blue-600',
-        bg: 'bg-blue-50',
+        bg: 'bg-gradient-to-r from-blue-50 to-indigo-50',
         border: 'border-blue-200',
         pulse: ''
       }
@@ -174,7 +160,7 @@ const getStatusConfig = (status: string) => {
         icon: Clock,
         label: 'Unknown',
         color: 'text-slate-500',
-        bg: 'bg-slate-50',
+        bg: 'bg-gradient-to-r from-slate-50 to-gray-50',
         border: 'border-slate-200',
         pulse: ''
       }
@@ -183,18 +169,17 @@ const getStatusConfig = (status: string) => {
 
 const getModeIcon = (mode: string) => {
   switch (mode) {
-    case 'on_demand': return Command
+    case 'on_demand': return Play
     case 'scheduled': return Calendar
     case 'triggered': return Zap
     default: return Activity
   }
 }
 
-// Enhanced timezone display function
 const getTimezoneDisplayName = (timezone: string) => {
   const timezoneMap = {
     'America/New_York': 'Eastern Time (EST/EDT)',
-    'America/Chicago': 'Central Time (CST/CDT)', 
+    'America/Chicago': 'Central Time (CST/CDT)',
     'America/Denver': 'Mountain Time (MST/MDT)',
     'America/Los_Angeles': 'Pacific Time (PST/PDT)',
     'Europe/London': 'London Time (GMT/BST)',
@@ -204,19 +189,47 @@ const getTimezoneDisplayName = (timezone: string) => {
     'Australia/Sydney': 'Australia Eastern Time (AEST/AEDT)',
     'UTC': 'UTC (Coordinated Universal Time)'
   }
-  
+
   return timezoneMap[timezone] || timezone.replace('_', ' ').split('/').pop() || 'Local Time'
 }
 
-// Format schedule with timezone
+// Helper function to get plugin-specific icon (using real brand logos with brand colors on white bg)
+const getPluginIcon = (pluginName: string) => {
+  const name = pluginName.toLowerCase()
+  // Use brand colors for recognizable logos
+  if (name.includes('gmail') || name.includes('google-mail')) return <SiGmail className="h-8 w-8 text-red-500" />
+  if (name.includes('calendar')) return <SiGooglecalendar className="h-8 w-8 text-blue-500" />
+  if (name.includes('drive')) return <SiGoogledrive className="h-8 w-8 text-green-500" />
+  if (name.includes('docs') || name.includes('document')) return <SiGoogledocs className="h-8 w-8 text-blue-600" />
+  if (name.includes('sheets') || name.includes('excel')) return <SiGooglesheets className="h-8 w-8 text-emerald-500" />
+  if (name.includes('github')) return <SiGithub className="h-8 w-8 text-gray-900" />
+  if (name.includes('slack')) return <SiSlack className="h-8 w-8 text-[#4A154B]" />
+  if (name.includes('hubspot') || name.includes('crm')) return <SiHubspot className="h-8 w-8 text-orange-500" />
+  if (name.includes('notion')) return <SiNotion className="h-8 w-8 text-gray-900" />
+  if (name.includes('whatsapp')) return <SiWhatsapp className="h-8 w-8 text-green-500" />
+  if (name.includes('outlook') || name.includes('microsoft')) return <Mail className="h-8 w-8 text-blue-600" />
+  if (name.includes('twilio') || name.includes('phone')) return <Phone className="h-8 w-8 text-red-600" />
+  if (name.includes('aws') || name.includes('cloud')) return <Cloud className="h-8 w-8 text-orange-500" />
+  if (name.includes('azure')) return <Cloud className="h-8 w-8 text-blue-600" />
+  if (name.includes('database') || name.includes('db')) return <Database className="h-8 w-8 text-indigo-500" />
+  if (name.includes('web') || name.includes('http')) return <Globe className="h-8 w-8 text-teal-500" />
+  return <Puzzle className="h-8 w-8 text-rose-500" />
+}
+
+// Helper function to get plugin-specific background (now white for all to show brand colors)
+const getPluginColor = (pluginName: string) => {
+  // Use white background to show brand colors properly
+  return 'from-white to-gray-50'
+}
+
 const formatScheduleWithTimezone = (mode: string, scheduleCron: string, timezone?: string, userTimezone?: string) => {
   const baseSchedule = formatScheduleDisplay(mode, scheduleCron)
-  
+
   if (mode === 'scheduled' && timezone) {
     const timezoneDisplay = getTimezoneDisplayName(timezone)
     return `${baseSchedule} (${timezoneDisplay})`
   }
-  
+
   return baseSchedule
 }
 
@@ -224,7 +237,7 @@ export default function AgentPage() {
   const { user, connectedPlugins } = useAuth()
   const router = useRouter()
   const params = useParams()
-  
+
   const agentId = (() => {
     if (Array.isArray(params.id)) {
       return params.id[0]
@@ -233,7 +246,7 @@ export default function AgentPage() {
   })()
 
   const [agent, setAgent] = useState<Agent | null>(null)
-  const [userProfile, setUserProfile] = useState<{ timezone?: string } | null>(null) // Add user profile state
+  const [userProfile, setUserProfile] = useState<{ timezone?: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
@@ -241,91 +254,75 @@ export default function AgentPage() {
   const [showDeactivateConfirm, setShowDeactivateConfirm] = useState(false)
   const [showShareConfirm, setShowShareConfirm] = useState(false)
   const [showQuickActionsMenu, setShowQuickActionsMenu] = useState(false)
-  const [isEditingName, setIsEditingName] = useState(false)
-  const [editedName, setEditedName] = useState('')
+  const [memoryCount, setMemoryCount] = useState(0)
   const [userCredits, setUserCredits] = useState(0)
   const [isSharedAgent, setIsSharedAgent] = useState(false)
   const [isOwner, setIsOwner] = useState(false)
   const [showSuccessNotification, setShowSuccessNotification] = useState(false)
   const [creditsAwarded, setCreditsAwarded] = useState(0)
-  const [sharingRewardAmount, setSharingRewardAmount] = useState(500) // default fallback
-  const [sharingValidation, setSharingValidation] = useState<any>(null) // Validation result
-  const [sharingStatus, setSharingStatus] = useState<any>(null) // User sharing limits
+  const [sharingRewardAmount, setSharingRewardAmount] = useState(500)
+  const [sharingValidation, setSharingValidation] = useState<any>(null)
+  const [sharingStatus, setSharingStatus] = useState<any>(null)
   const [isConfigured, setIsConfigured] = useState(false)
   const [showActivationWarning, setShowActivationWarning] = useState(false)
   const [currentFormIsComplete, setCurrentFormIsComplete] = useState(false)
-  const [currentView, setCurrentView] = useState<'overview' | 'configuration' | 'configure' | 'test' | 'performance' | 'settings'>('overview')
+  const [currentView, setCurrentView] = useState<'overview' | 'test' | 'history' | 'settings'>('overview')
   const [expandedPrompt, setExpandedPrompt] = useState(false)
   const [hasBeenShared, setHasBeenShared] = useState(false)
-  const [shareRewardActive, setShareRewardActive] = useState(true) // Track if share_agent reward is active
-  const [expandedSections, setExpandedSections] = useState({
-    plugins: true,
-    outputs: true,
-    'system-outputs': true,
-    // Overview sections
-    description: true,
-    schedule: true,
-    instructions: true,
-    setupStatus: true,
-    // Settings sections
-    basicInfo: true,
-    quickActions: true,
-    // Analytics sections - Always expanded by default
-    performanceStats: true,
-    complexityAnalysis: true,
-    recentActivity: true
+  const [shareRewardActive, setShareRewardActive] = useState(true)
+  const [expandedTestPlayground, setExpandedTestPlayground] = useState(false)
+  const [expandedActivity, setExpandedActivity] = useState(false)
+  const [expandedOutputs, setExpandedOutputs] = useState(true) // Default expanded to show outputs
+
+  // Performance stats state
+  const [performanceStats, setPerformanceStats] = useState<{
+    totalRuns: number
+    successRate: number
+    avgDuration: number
+    totalCost: number
+    recentExecutions: Array<{ status: string; duration: number }>
+  }>({
+    totalRuns: 0,
+    successRate: 0,
+    avgDuration: 0,
+    totalCost: 0,
+    recentExecutions: []
   })
 
-  // Helper function to check plugin status - using connected plugins from UserProvider
+  // Helper function to check plugin status
   const getPluginStatus = (plugin: string) => {
     if (!connectedPlugins) return false
-    
+
     const pluginData = connectedPlugins[plugin]
-    
-    // Debug: Let's see what the actual data looks like
-    console.log(`Plugin ${plugin}:`, pluginData, typeof pluginData)
-    
-    // Check if plugin exists and has any truthy value
+
     if (pluginData === undefined || pluginData === null) return false
     if (pluginData === false || pluginData === 'false') return false
     if (pluginData === 'disconnected' || pluginData === 'inactive') return false
     if (pluginData === '' || pluginData === 0) return false
-    
-    // If it exists and is not explicitly false/disconnected, consider it connected
+
     return true
   }
 
-  // Toggle section function for configuration tab
-  const toggleSection = (section: string) => {
-    setExpandedSections(prev => ({
-      ...prev,
-      [section]: !prev[section]
-    }))
-  }
-
-  // Enhanced user profile fetching with timezone
   const fetchUserProfile = async () => {
     if (!user?.id) return
-    
+
     try {
       const { data: profile, error } = await supabase
         .from('profiles')
         .select('timezone')
         .eq('id', user.id)
         .single()
-      
+
       if (error) {
         console.warn('Could not fetch user profile timezone:', error)
       } else {
         setUserProfile(profile)
-        console.log('User profile timezone loaded:', profile?.timezone)
       }
     } catch (error) {
       console.warn('Error fetching user profile:', error)
     }
   }
 
-  // Get user's detected timezone as fallback
   const getUserDetectedTimezone = () => {
     try {
       return Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -335,12 +332,10 @@ export default function AgentPage() {
     }
   }
 
-  // Get the effective user timezone (profile > detected > UTC)
   const getEffectiveUserTimezone = () => {
     return userProfile?.timezone || getUserDetectedTimezone()
   }
 
-  // Configuration check
   const checkAgentConfiguration = async (agentData: Agent) => {
     if (!user?.id) {
       setIsConfigured(false)
@@ -348,7 +343,6 @@ export default function AgentPage() {
     }
 
     try {
-      // Get the latest configuration for this agent and user
       const { data, error } = await supabase
         .from('agent_configurations')
         .select('input_values, input_schema')
@@ -359,96 +353,148 @@ export default function AgentPage() {
         .limit(1)
         .maybeSingle()
 
-      console.log('Configuration check:', {
-        agentId: agentData.id,
-        userId: user.id,
-        data,
-        error
-      })
-
       if (error) {
         console.error('Error fetching configuration:', error)
         setIsConfigured(false)
         return
       }
 
-      // If no configuration found, agent is not configured
       if (!data) {
-        console.log('No configuration found')
         setIsConfigured(false)
         return
       }
 
-      // Configuration exists - check if it has requirements
       if (!data.input_schema || !Array.isArray(data.input_schema)) {
-        console.log('No input schema - considering configured')
         setIsConfigured(true)
         return
       }
 
       const requiredFields = data.input_schema.filter((field: any) => field.required)
-      console.log('Required fields:', requiredFields)
-      
-      // If no required fields, consider it configured
+
       if (requiredFields.length === 0) {
-        console.log('No required fields - configured')
         setIsConfigured(true)
         return
       }
 
-      // Check if all required fields have non-empty values
       const hasAllRequiredValues = requiredFields.every((field: any) => {
         const value = data.input_values?.[field.name]
-        const isValid = value !== undefined && value !== null && value !== ''
-        console.log(`Field ${field.name}: ${value} (valid: ${isValid})`)
-        return isValid
+        return value !== undefined && value !== null && value !== ''
       })
 
-      console.log('Has all required values:', hasAllRequiredValues)
       setIsConfigured(hasAllRequiredValues)
-      
     } catch (error) {
       console.error('Error in checkAgentConfiguration:', error)
       setIsConfigured(false)
     }
   }
-  
-  // Fetch reward configuration to check if sharing is enabled
+
   const fetchShareRewardStatus = async () => {
     try {
-      console.log('🔍 [ShareReward] Fetching share_agent reward configuration via API...')
-
-      // Use API endpoint to bypass RLS
       const response = await fetch('/api/admin/reward-config')
       const result = await response.json()
 
-      console.log('🔍 [ShareReward] API result:', result)
-
       if (!result.success || !result.rewards) {
-        console.warn('⚠️ [ShareReward] Could not fetch reward configs from API')
         setShareRewardActive(false)
         return
       }
 
-      // Find agent_sharing reward (the correct reward_key in database)
       const shareReward = result.rewards.find((r: any) => r.reward_key === 'agent_sharing')
 
       if (!shareReward) {
-        console.warn('⚠️ [ShareReward] No agent_sharing reward found in configs')
         setShareRewardActive(false)
         return
       }
 
       const isActive = shareReward.is_active ?? false
       setShareRewardActive(isActive)
-      console.log('✅ [ShareReward] Share agent reward status:', {
-        is_active: isActive,
-        reward_key: shareReward.reward_key,
-        credits_amount: shareReward.credits_amount
+    } catch (error) {
+      console.error('Error fetching share reward config:', error)
+      setShareRewardActive(false)
+    }
+  }
+
+  const fetchPerformanceStats = async () => {
+    if (!agentId || !isValidUUID(agentId)) return
+
+    try {
+      // Fetch from agent_stats table
+      const { data: stats } = await supabase
+        .from('agent_stats')
+        .select('run_count, success_count')
+        .eq('agent_id', agentId)
+        .maybeSingle()
+
+      // Fetch execution details for duration and graph data
+      const { data: executions, error: execError} = await supabase
+        .from('agent_executions')
+        .select('execution_duration_ms, started_at, completed_at, status')
+        .eq('agent_id', agentId)
+        .order('created_at', { ascending: false })
+        .limit(100)
+
+      if (execError) {
+        console.error('Error fetching executions:', execError)
+      }
+
+      const totalRuns = stats?.run_count || 0
+      const successCount = stats?.success_count || 0
+      const successRate = totalRuns > 0 ? Math.round((successCount / totalRuns) * 100) : 0
+
+      // Calculate average duration from all executions with valid duration
+      let avgDuration = 0
+      if (executions && executions.length > 0) {
+        const executionsWithDuration = executions.map(e => {
+          // Use execution_duration_ms if available, otherwise calculate from timestamps
+          let duration = e.execution_duration_ms
+          if (!duration && e.started_at && e.completed_at) {
+            duration = new Date(e.completed_at).getTime() - new Date(e.started_at).getTime()
+          }
+          return { ...e, duration }
+        })
+
+        const validExecutions = executionsWithDuration.filter(e => e.duration && e.duration > 0)
+        if (validExecutions.length > 0) {
+          const totalDuration = validExecutions.reduce((sum, e) => sum + (e.duration || 0), 0)
+          avgDuration = totalDuration / validExecutions.length / 1000 // Convert to seconds
+        }
+      }
+
+      // Fetch intensity data for total credits (creation + execution)
+      let totalCost = 0
+      try {
+        const intensityResponse = await fetch(`/api/agents/${agentId}/intensity`)
+        if (intensityResponse.ok) {
+          const intensityData = await intensityResponse.json()
+          const creationCredits = intensityData.details.creation_stats?.creation_tokens_used
+            ? Math.ceil(intensityData.details.creation_stats.creation_tokens_used / 10)
+            : 0
+          const executionCredits = intensityData.details.token_stats?.total_tokens
+            ? Math.ceil(intensityData.details.token_stats.total_tokens / 10)
+            : 0
+          totalCost = creationCredits + executionCredits
+        }
+      } catch (intensityError) {
+        console.warn('Could not fetch intensity data for credits:', intensityError)
+      }
+
+      // Get last 10 executions for graph with calculated duration
+      const recentExecutions = (executions?.slice(0, 10) || []).map(e => {
+        let duration = e.execution_duration_ms
+        if (!duration && e.started_at && e.completed_at) {
+          duration = new Date(e.completed_at).getTime() - new Date(e.started_at).getTime()
+        }
+        return { status: e.status, duration: duration || 0 }
+      })
+
+      setPerformanceStats({
+        totalRuns,
+        successRate,
+        avgDuration,
+        totalCost,
+        recentExecutions
       })
     } catch (error) {
-      console.error('❌ [ShareReward] Error fetching share reward config:', error)
-      setShareRewardActive(false)
+      console.error('Error fetching performance stats:', error)
     }
   }
 
@@ -463,7 +509,7 @@ export default function AgentPage() {
       if (user?.id) {
         const { data: regularAgent } = await supabase
           .from('agents')
-          .select('*, connected_plugins, plugins_required, workflow_steps, schedule_cron, timezone') // Include timezone
+          .select('*, connected_plugins, plugins_required, workflow_steps, schedule_cron, timezone')
           .eq('id', agentId)
           .eq('user_id', user.id)
           .maybeSingle()
@@ -472,22 +518,17 @@ export default function AgentPage() {
           setAgent(regularAgent)
           setIsSharedAgent(false)
           setIsOwner(true)
-          setEditedName(regularAgent.agent_name || '')
           await checkAgentConfiguration(regularAgent)
-          
-          // More robust check for shared status with debugging
-          const { data: sharedCheck, error: sharedError } = await supabase
+
+          const { data: sharedCheck } = await supabase
             .from('shared_agents')
             .select('id, shared_at')
             .eq('original_agent_id', regularAgent.id)
             .eq('user_id', user.id)
-          
-          console.log('Shared check result:', { sharedCheck, sharedError, agentId: regularAgent.id, userId: user.id })
-          
-          // Check if any records exist (array length > 0)
+
           const alreadyShared = sharedCheck && sharedCheck.length > 0
           setHasBeenShared(alreadyShared)
-          
+
           setLoading(false)
           return
         }
@@ -503,7 +544,6 @@ export default function AgentPage() {
         setAgent({ ...sharedAgent, status: 'shared' })
         setIsSharedAgent(true)
         setIsOwner(sharedAgent.user_id === user?.id)
-        setEditedName(sharedAgent.agent_name || '')
         setIsConfigured(true)
         setHasBeenShared(true)
       } else {
@@ -547,42 +587,50 @@ export default function AgentPage() {
     }
   }
 
-  const checkSharingEligibility = async () => {
-    if (!user?.id || !agent?.id) {
-      console.log('⚠️ [Eligibility] Missing user or agent')
-      return
-    }
+  const fetchMemoryCount = async () => {
+    if (!agentId || !isValidUUID(agentId)) return
 
-    console.log('🔍 [Eligibility] Checking eligibility for agent:', agent.id)
+    try {
+      const { count, error } = await supabase
+        .from('run_memories')
+        .select('*', { count: 'exact', head: true })
+        .eq('agent_id', agentId)
+
+      if (!error && count !== null) {
+        setMemoryCount(count)
+      }
+    } catch (error) {
+      console.error('Error fetching memory count:', error)
+    }
+  }
+
+  const checkSharingEligibility = async () => {
+    if (!user?.id || !agent?.id) return
 
     try {
       const { AgentSharingValidator } = await import('@/lib/credits/agentSharingValidation')
       const validator = new AgentSharingValidator(supabase)
 
-      // Check full validation
-      console.log('📋 [Eligibility] Running validation...')
       const validation = await validator.validateSharing(user.id, agent.id)
-      console.log('📊 [Eligibility] Validation result:', validation)
       setSharingValidation(validation)
 
-      // Get user sharing status
-      console.log('📈 [Eligibility] Getting sharing status...')
       const status = await validator.getSharingStatus(user.id)
-      console.log('📊 [Eligibility] Sharing status:', status)
       setSharingStatus(status)
     } catch (error) {
-      console.error('❌ [Eligibility] Error checking sharing eligibility:', error)
+      console.error('Error checking sharing eligibility:', error)
     }
   }
 
   useEffect(() => {
     if (agentId && isValidUUID(agentId)) {
       fetchAgent()
-      fetchSharingRewardAmount() // Fetch reward amount for modal display
-      fetchShareRewardStatus() // Check if share reward is active
+      fetchMemoryCount()
+      fetchSharingRewardAmount()
+      fetchShareRewardStatus()
+      fetchPerformanceStats()
       if (user) {
         fetchUserCredits()
-        fetchUserProfile() // Fetch user profile with timezone
+        fetchUserProfile()
       }
     } else if (agentId) {
       setError('Invalid assistant ID')
@@ -590,7 +638,6 @@ export default function AgentPage() {
     }
   }, [user, agentId])
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (showQuickActionsMenu && !(event.target as Element).closest('.relative')) {
@@ -604,19 +651,19 @@ export default function AgentPage() {
 
   const handleToggleStatus = async () => {
     if (!isOwner || isSharedAgent) return
-    
+
     const newStatus = agent?.status === 'active' ? 'inactive' : 'active'
-    
+
     if (newStatus === 'active' && !isConfigured && hasRequiredFields()) {
       setShowActivationWarning(true)
       return
     }
-    
+
     if (agent?.status === 'active') {
       setShowDeactivateConfirm(true)
       return
     }
-    
+
     setActionLoading('toggle')
     try {
       await supabase.from('agents').update({ status: newStatus }).eq('id', agentId)
@@ -629,43 +676,28 @@ export default function AgentPage() {
 
   const handleShareAgent = async () => {
     if (!agent || !user || isSharedAgent || agent.status !== 'active' || hasBeenShared) {
-      console.log('🚫 Share blocked by initial checks:', { hasAgent: !!agent, hasUser: !!user, isSharedAgent, status: agent?.status, hasBeenShared })
       return
     }
 
-    console.log('🚀 Starting agent share process for:', agent.agent_name, 'ID:', agent.id)
-
     setActionLoading('share')
     try {
-      // Import services
-      console.log('📦 Importing services...')
       const { RewardService } = await import('@/lib/credits/rewardService')
       const { AgentSharingValidator } = await import('@/lib/credits/agentSharingValidation')
       const rewardService = new RewardService(supabase)
       const validator = new AgentSharingValidator(supabase)
-      console.log('✅ Services initialized')
 
-      // Validate sharing eligibility
-      console.log('🔍 Validating sharing eligibility...')
       const validation = await validator.validateSharing(user.id, agent.id)
       if (!validation.valid) {
-        console.warn('❌ Validation failed:', validation.reason)
         alert(validation.reason || 'This agent does not meet sharing requirements')
         return
       }
-      console.log('✅ Validation passed')
 
-      // Check if agent has already been shared (prevents duplicate rewards)
-      console.log('🔍 Checking if agent already shared...')
       const alreadyShared = await rewardService.hasSharedAgent(user.id, agent.id)
       if (alreadyShared) {
-        console.log('❌ Agent already shared (reward tracking), blocking share attempt')
         setHasBeenShared(true)
         return
       }
 
-      // Double-check shared_agents table as well
-      console.log('🔍 Double-checking shared_agents table...')
       const { data: existingShared, error: checkError } = await supabase
         .from('shared_agents')
         .select('id')
@@ -674,18 +706,15 @@ export default function AgentPage() {
         .limit(1)
 
       if (checkError) {
-        console.error('❌ Error checking existing shared agents:', checkError)
+        console.error('Error checking existing shared agents:', checkError)
         return
       }
 
       if (existingShared && existingShared.length > 0) {
-        console.log('❌ Agent already in shared_agents table, blocking share attempt')
         setHasBeenShared(true)
         return
       }
 
-      // Proceed with sharing to community
-      console.log('📤 Inserting agent into shared_agents table...')
       const { error: insertError } = await supabase.from('shared_agents').insert([{
         original_agent_id: agent.id,
         user_id: user.id,
@@ -703,13 +732,10 @@ export default function AgentPage() {
       }])
 
       if (insertError) {
-        console.error('❌ Error sharing agent to shared_agents table:', insertError)
+        console.error('Error sharing agent to shared_agents table:', insertError)
         return
       }
-      console.log('✅ Agent successfully added to shared_agents table')
 
-      // Award reward credits using RewardService
-      console.log('🎁 Awarding reward credits...')
       const rewardResult = await rewardService.awardAgentSharingReward(
         user.id,
         agent.id,
@@ -717,25 +743,19 @@ export default function AgentPage() {
       )
 
       if (rewardResult.success) {
-        console.log('✅ Successfully awarded reward credits:', rewardResult)
-        // Store credits awarded for notification display
         setCreditsAwarded(rewardResult.creditsAwarded)
-        // Refresh user credits display
         await fetchUserCredits()
         setShowSuccessNotification(true)
         setTimeout(() => setShowSuccessNotification(false), 4000)
       } else {
-        console.warn('⚠️ Reward credit failed but agent was shared:', rewardResult.message, rewardResult.error)
-        // Still show success since the agent was shared successfully
         setCreditsAwarded(0)
         setShowSuccessNotification(true)
         setTimeout(() => setShowSuccessNotification(false), 4000)
       }
 
       setHasBeenShared(true)
-      console.log('✅ Agent sharing complete!')
     } catch (error) {
-      console.error('❌ Error in handleShareAgent:', error)
+      console.error('Error in handleShareAgent:', error)
     } finally {
       setActionLoading(null)
       setShowShareConfirm(false)
@@ -762,7 +782,7 @@ export default function AgentPage() {
 
   const handleExportConfiguration = () => {
     if (!agent) return
-    
+
     const exportData = {
       agent_name: agent.agent_name,
       description: agent.description,
@@ -774,11 +794,11 @@ export default function AgentPage() {
       workflow_steps: agent.workflow_steps,
       mode: agent.mode,
       schedule_cron: agent.schedule_cron,
-      timezone: agent.timezone, // Include timezone in export
+      timezone: agent.timezone,
       exported_at: new Date().toISOString(),
       export_version: "1.0"
     }
-    
+
     const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -792,7 +812,7 @@ export default function AgentPage() {
 
   const handleDuplicateAgent = async () => {
     if (!agent || !user) return
-    
+
     setActionLoading('duplicate')
     try {
       const { data: newAgent, error } = await supabase
@@ -810,8 +830,8 @@ export default function AgentPage() {
           workflow_steps: agent.workflow_steps,
           mode: agent.mode,
           schedule_cron: agent.schedule_cron,
-          timezone: agent.timezone, // Include timezone in duplication
-          status: 'draft' // Always start duplicates as draft
+          timezone: agent.timezone,
+          status: 'draft'
         }])
         .select()
         .single()
@@ -821,7 +841,6 @@ export default function AgentPage() {
         return
       }
 
-      // Navigate to the new agent
       router.push(`/agents/${newAgent.id}`)
     } catch (error) {
       console.error('Error duplicating agent:', error)
@@ -837,7 +856,7 @@ export default function AgentPage() {
           <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mb-6 mx-auto shadow-xl shadow-blue-500/25">
             <Bot className="h-8 w-8 text-white animate-pulse" />
           </div>
-          <p className="text-slate-600 font-medium text-lg">Loading your assistant...</p>
+          <p className="text-slate-600 font-semibold text-lg tracking-tight">Loading your assistant...</p>
         </div>
       </div>
     )
@@ -850,13 +869,13 @@ export default function AgentPage() {
           <div className="w-16 h-16 bg-red-100 rounded-2xl flex items-center justify-center mb-6 mx-auto">
             <Bot className="h-8 w-8 text-red-500" />
           </div>
-          <h2 className="text-2xl font-bold text-slate-900 mb-4">Assistant Not Found</h2>
+          <h2 className="text-2xl font-bold text-slate-900 mb-4 tracking-tight">Assistant Not Found</h2>
           <p className="text-slate-600 mb-8">This assistant doesn't exist or you don't have access to it.</p>
           <Link
             href="/agents"
-            className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all duration-200 shadow-lg shadow-blue-600/25"
+            className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-xl font-semibold shadow-lg hover:shadow-xl hover:scale-105 transition-all duration-200"
           >
-            <ArrowLeft className="h-4 w-4" />
+            <ArrowLeft className="h-5 w-5" />
             Back to Assistants
           </Link>
         </div>
@@ -869,7 +888,6 @@ export default function AgentPage() {
   const ModeIcon = getModeIcon(agent.mode || 'on_demand')
   const canActivate = isConfigured || !hasRequiredFields() || currentFormIsComplete
 
-  // Safe schema processing
   const safePluginsRequired = Array.isArray(agent.plugins_required) ? agent.plugins_required : []
   const humanOutputs = Array.isArray(agent.output_schema) ? agent.output_schema.filter(o => !o.category || o.category === 'human-facing') : []
   const systemOutputs = Array.isArray(agent.output_schema) ? agent.output_schema.filter(o => o.category === 'system' || o.category === 'machine-facing') : []
@@ -877,24 +895,24 @@ export default function AgentPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
-      
+
       {/* Success Notification */}
       {showSuccessNotification && (
         <div className="fixed top-6 right-6 z-50 animate-in slide-in-from-top-2 duration-300">
-          <div className="bg-white/95 backdrop-blur-xl rounded-2xl shadow-xl border border-white/20 p-6 max-w-sm">
+          <div className="bg-white/90 backdrop-blur-xl rounded-2xl shadow-xl border border-white/20 p-6 max-w-sm">
             <div className="flex items-start gap-4">
-              <div className="w-10 h-10 bg-gradient-to-br from-green-400 to-emerald-500 rounded-xl flex items-center justify-center">
+              <div className="w-10 h-10 bg-gradient-to-br from-green-400 to-emerald-500 rounded-xl flex items-center justify-center shadow-lg">
                 <Sparkles className="h-5 w-5 text-white" />
               </div>
               <div className="flex-1">
-                <h4 className="font-semibold text-slate-900 text-sm">Shared Successfully!</h4>
+                <h4 className="font-semibold text-slate-900 text-sm tracking-tight">Shared Successfully!</h4>
                 <p className="text-xs text-slate-600 mt-1">
                   {creditsAwarded > 0 ? `+${creditsAwarded} credits earned` : 'Agent shared with community'}
                 </p>
               </div>
               <button
                 onClick={() => setShowSuccessNotification(false)}
-                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100"
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-all duration-200"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -903,749 +921,634 @@ export default function AgentPage() {
         </div>
       )}
 
-      {/* Enhanced Modern Header */}
-      <div className="bg-white/90 backdrop-blur-xl border-b border-slate-200/50 sticky top-0 z-40 shadow-sm">
-        <div className="max-w-7xl mx-auto px-8 py-6">
+      {/* Header */}
+      <div className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-gray-200/50 shadow-lg">
+        <div className="max-w-7xl mx-auto px-8 py-3">
           <div className="flex items-center justify-between">
-            {/* Left Side - Enhanced Layout */}
             <div className="flex items-center gap-6">
               <Link
                 href={isSharedAgent ? "/community" : "/agents"}
-                className="group p-2.5 hover:bg-slate-100 rounded-xl transition-all duration-200 hover:shadow-md"
+                className="group p-2.5 hover:bg-slate-100 rounded-xl transition-all duration-200 hover:shadow-md hover:scale-105"
               >
-                <ArrowLeft className="h-4 w-4 text-slate-600 group-hover:text-slate-900 transition-colors" />
+                <ArrowLeft className="h-5 w-5 text-slate-600 group-hover:text-slate-900 transition-colors" />
               </Link>
-              
+
               <div className="flex items-center gap-4">
-                {/* Clean Avatar without Status Badge */}
                 <div className="relative">
                   <div className="w-14 h-14 bg-gradient-to-br from-blue-500 via-purple-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/20 ring-2 ring-white">
                     <Bot className="h-7 w-7 text-white" />
                   </div>
                 </div>
-                
-                {/* Enhanced Title Section */}
+
                 <div className="space-y-2">
                   <div className="flex items-center gap-3">
-                    <h1 className="text-2xl font-bold text-slate-900 leading-tight">{agent.agent_name}</h1>
+                    <h1 className="text-2xl font-bold text-slate-900 leading-tight tracking-tight">{agent.agent_name}</h1>
                     {agent.status === 'shared' && (
-                      <div className="flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 rounded-lg text-xs font-medium">
+                      <div className="flex items-center gap-1 px-3 py-1.5 bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 rounded-lg text-xs font-semibold border border-blue-200">
                         <Users className="h-3 w-3" />
                         Community
                       </div>
                     )}
                   </div>
-                  
-                  {/* Meta Information with Status Badge First */}
-                  <div className="flex items-center gap-6 text-sm text-slate-600">
-                    {/* Status Badge */}
-                    <div className={`flex items-center gap-1.5 ${statusConfig.bg} px-3 py-1 rounded-lg border ${statusConfig.border}`}>
-                      <div className={`w-2 h-2 ${statusConfig.color === 'text-emerald-600' ? 'bg-emerald-500' : statusConfig.color === 'text-amber-600' ? 'bg-amber-500' : 'bg-slate-400'} rounded-full ${statusConfig.pulse}`}></div>
-                      <span className={`font-medium ${statusConfig.color}`}>{statusConfig.label}</span>
+
+                  <div className="flex items-center gap-3 text-sm text-slate-600">
+                    <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full ${statusConfig.bg} border ${statusConfig.border} ${statusConfig.pulse} shadow-sm`}>
+                      <div className={`w-1.5 h-1.5 ${statusConfig.color === 'text-emerald-600' ? 'bg-emerald-500' : statusConfig.color === 'text-amber-600' ? 'bg-amber-500' : 'bg-slate-400'} rounded-full ${statusConfig.pulse}`}></div>
+                      <span className={`font-semibold text-xs ${statusConfig.color}`}>{statusConfig.label}</span>
                     </div>
-                    
-                    {/* Execution Mode */}
-                    <div className="flex items-center gap-2 bg-slate-50 px-3 py-1 rounded-lg">
-                      <ModeIcon className="h-4 w-4 text-slate-500" />
-                      <span className="font-medium">
-                        {agent.mode === 'on_demand' ? 'On Demand' : 
-                         agent.mode === 'scheduled' ? 'Scheduled' : 
+
+                    <div className="flex items-center gap-1.5 bg-gradient-to-r from-slate-50 to-gray-50 px-3 py-1.5 rounded-full border border-slate-200 shadow-sm">
+                      <ModeIcon className="h-3.5 w-3.5 text-slate-500" />
+                      <span className="font-semibold text-xs">
+                        {agent.mode === 'on_demand' ? 'On Demand' :
+                         agent.mode === 'scheduled' ? 'Scheduled' :
                          agent.mode === 'triggered' ? 'Event Triggered' : 'Standard'}
                       </span>
                     </div>
-                    
-                    {/* Created Date */}
-                    <div className="flex items-center gap-2 text-slate-500">
-                      <Calendar className="h-4 w-4" />
-                      <span>Created {agent.created_at ? new Date(agent.created_at).toLocaleDateString() : 'Unknown'}</span>
-                    </div>
-                  </div>
 
-                  {/* Agent ID - Copyable */}
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(agent.id);
-                      // Optional: Show a brief "Copied!" toast/notification
-                    }}
-                    className="flex items-center gap-2 text-xs text-slate-400 font-mono mt-1 hover:text-slate-600 hover:bg-slate-50 px-2 py-1 rounded transition-colors group"
-                    title="Click to copy Agent ID"
-                  >
-                    <FileText className="h-3 w-3" />
-                    <span>ID: {agent.id}</span>
-                    <Copy className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-                  </button>
+                    {memoryCount > 0 && (
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200 shadow-sm">
+                        <Brain className="h-4 w-4 text-purple-600" />
+                        <span className="font-semibold text-purple-700 text-xs">
+                          Learning Active
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
 
-            {/* Compact Action Buttons - Removed menu button */}
-            <div className="flex items-center gap-2">
-              {!isSharedAgent && isOwner && (
-                <>
-                  {agent.status === 'active' ? (
-                    <button
-                      onClick={() => setShowDeactivateConfirm(true)}
-                      className="group flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-orange-500 to-red-500 text-white rounded-lg hover:from-orange-600 hover:to-red-600 transition-all duration-200 shadow-md shadow-orange-500/25 font-medium transform hover:-translate-y-0.5 hover:shadow-lg text-sm"
-                    >
-                      <Pause className="h-4 w-4 group-hover:scale-110 transition-transform" />
-                      Pause
-                    </button>
-                  ) : (
-                    <button
-                      onClick={canActivate ? handleToggleStatus : () => setCurrentView('configure')}
-                      className={`group flex items-center gap-1.5 px-4 py-2 rounded-lg transition-all duration-200 font-medium transform hover:-translate-y-0.5 text-sm ${
-                        canActivate
-                          ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:from-green-600 hover:to-emerald-600 shadow-md shadow-green-500/25 hover:shadow-lg'
-                          : 'bg-gradient-to-r from-amber-400 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600 shadow-md shadow-amber-500/25 hover:shadow-lg cursor-pointer'
-                      }`}
-                    >
-                      <Rocket className={`h-4 w-4 ${canActivate ? 'group-hover:scale-110' : ''} transition-transform`} />
-                      {canActivate ? 'Launch' : 'Setup Required'}
-                    </button>
-                  )}
-                  
-                  {shareRewardActive && (
-                    <button
-                      onClick={async () => {
-                        await checkSharingEligibility()
-                        setShowShareConfirm(true)
-                      }}
-                      disabled={agent.status !== 'active'}
-                      className="group flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-500 text-white rounded-lg hover:from-blue-600 hover:to-purple-600 transition-all duration-200 shadow-md shadow-blue-500/25 font-medium disabled:opacity-50 disabled:cursor-not-allowed transform hover:-translate-y-0.5 hover:shadow-lg disabled:hover:transform-none text-sm"
-                    >
-                      <Share2 className="h-4 w-4 group-hover:scale-110 transition-transform" />
-                      {hasBeenShared ? 'View Sharing' : 'Share'}
-                    </button>
-                  )}
+            {/* Quick Actions Icons - Right Side */}
+            {!isSharedAgent && isOwner && (
+              <div className="flex items-center gap-2">
+                      {/* Launch/Pause Button */}
+                      {agent.status === 'active' ? (
+                        <button
+                          onClick={() => setShowDeactivateConfirm(true)}
+                          className="group relative w-10 h-10 bg-white border-2 border-orange-200 text-orange-600 rounded-lg hover:bg-orange-50 hover:border-orange-300 transition-all duration-200 hover:scale-110 shadow-sm hover:shadow-md flex items-center justify-center"
+                          title="Pause Agent"
+                        >
+                          <Pause className="h-5 w-5" />
+                          <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                            Pause
+                          </span>
+                        </button>
+                      ) : (
+                        <button
+                          onClick={canActivate ? handleToggleStatus : () => setCurrentView('test')}
+                          className="group relative w-10 h-10 bg-white border-2 border-green-200 text-green-600 rounded-lg hover:bg-green-50 hover:border-green-300 transition-all duration-200 hover:scale-110 shadow-sm hover:shadow-md flex items-center justify-center"
+                          title={canActivate ? 'Launch Agent' : 'Setup Required'}
+                        >
+                          <Rocket className="h-5 w-5" />
+                          <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                            {canActivate ? 'Launch' : 'Setup'}
+                          </span>
+                        </button>
+                      )}
 
-                  {/* Quick Actions Dropdown */}
-                  {!isSharedAgent && isOwner && (
-                    <div className="relative">
+                      {/* Share Button */}
+                      {shareRewardActive && (
+                        <button
+                          onClick={async () => {
+                            await checkSharingEligibility()
+                            setShowShareConfirm(true)
+                          }}
+                          disabled={agent.status !== 'active'}
+                          className="group relative w-10 h-10 bg-white border-2 border-indigo-200 text-indigo-600 rounded-lg hover:bg-indigo-50 hover:border-indigo-300 transition-all duration-200 hover:scale-110 shadow-sm hover:shadow-md flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                          title="Share Agent"
+                        >
+                          <Share2 className="h-5 w-5" />
+                          <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                            Share
+                          </span>
+                        </button>
+                      )}
+
+                      {/* Test Button */}
                       <button
-                        onClick={() => setShowQuickActionsMenu(!showQuickActionsMenu)}
-                        className="group flex items-center gap-1.5 px-4 py-2 bg-white text-slate-700 rounded-lg hover:bg-slate-50 transition-all duration-200 shadow-md border border-slate-200 font-medium text-sm"
+                        onClick={() => {
+                          setExpandedTestPlayground(true)
+                          setTimeout(() => {
+                            const element = document.querySelector('[data-card="test-playground"]')
+                            element?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                          }, 100)
+                        }}
+                        className="group relative w-10 h-10 bg-white border-2 border-purple-200 text-purple-600 rounded-lg hover:bg-purple-50 hover:border-purple-300 transition-all duration-200 hover:scale-110 shadow-sm hover:shadow-md flex items-center justify-center"
+                        title="Test Agent"
                       >
-                        <MoreVertical className="h-4 w-4" />
-                        Actions
+                        <Play className="h-5 w-5" />
+                        <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                          Test
+                        </span>
                       </button>
 
-                      {showQuickActionsMenu && (
-                        <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-xl border border-slate-200 py-2 z-50">
-                          <Link
-                            href={`/agents/${agent.id}/edit`}
-                            className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 transition-colors text-slate-700"
-                          >
-                            <Edit className="h-4 w-4 text-blue-600" />
-                            <span className="text-sm font-medium">Edit Settings</span>
-                          </Link>
+                      {/* Edit Button */}
+                      <Link
+                        href={`/agents/${agent.id}/edit`}
+                        className="group relative w-10 h-10 bg-white border-2 border-blue-200 text-blue-600 rounded-lg hover:bg-blue-50 hover:border-blue-300 transition-all duration-200 hover:scale-110 shadow-sm hover:shadow-md flex items-center justify-center"
+                        title="Edit Agent"
+                      >
+                        <Edit className="h-5 w-5" />
+                        <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                          Edit
+                        </span>
+                      </Link>
 
-                          <button
-                            onClick={() => {
-                              handleExportConfiguration();
-                              setShowQuickActionsMenu(false);
-                            }}
-                            disabled={actionLoading === 'export'}
-                            className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 transition-colors text-slate-700 w-full disabled:opacity-50"
-                          >
-                            {actionLoading === 'export' ? (
-                              <Loader2 className="h-4 w-4 animate-spin text-green-600" />
-                            ) : (
-                              <Download className="h-4 w-4 text-green-600" />
-                            )}
-                            <span className="text-sm font-medium">
-                              {actionLoading === 'export' ? 'Exporting...' : 'Export Configuration'}
-                            </span>
-                          </button>
+                      {/* Activity Button */}
+                      <button
+                        onClick={() => {
+                          setExpandedActivity(true)
+                          setTimeout(() => {
+                            const element = document.querySelector('[data-card="recent-activity"]')
+                            element?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                          }, 100)
+                        }}
+                        className="group relative w-10 h-10 bg-white border-2 border-amber-200 text-amber-600 rounded-lg hover:bg-amber-50 hover:border-amber-300 transition-all duration-200 hover:scale-110 shadow-sm hover:shadow-md flex items-center justify-center"
+                        title="View Activity"
+                      >
+                        <Activity className="h-5 w-5" />
+                        <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                          Activity
+                        </span>
+                      </button>
 
-                          <button
-                            onClick={() => {
-                              handleDuplicateAgent();
-                              setShowQuickActionsMenu(false);
-                            }}
-                            disabled={actionLoading === 'duplicate'}
-                            className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 transition-colors text-slate-700 w-full disabled:opacity-50"
-                          >
-                            {actionLoading === 'duplicate' ? (
-                              <Loader2 className="h-4 w-4 animate-spin text-purple-600" />
-                            ) : (
-                              <Copy className="h-4 w-4 text-purple-600" />
-                            )}
-                            <span className="text-sm font-medium">
-                              {actionLoading === 'duplicate' ? 'Creating Copy...' : 'Duplicate Assistant'}
-                            </span>
-                          </button>
+                      {/* Export Button */}
+                      <button
+                        onClick={handleExportConfiguration}
+                        className="group relative w-10 h-10 bg-white border-2 border-green-200 text-green-600 rounded-lg hover:bg-green-50 hover:border-green-300 transition-all duration-200 hover:scale-110 shadow-sm hover:shadow-md flex items-center justify-center"
+                        title="Export Configuration"
+                      >
+                        <Download className="h-5 w-5" />
+                        <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                          Export
+                        </span>
+                      </button>
 
-                          <div className="border-t border-slate-200 my-2"></div>
+                      {/* Duplicate Button */}
+                      <button
+                        onClick={handleDuplicateAgent}
+                        disabled={actionLoading === 'duplicate'}
+                        className="group relative w-10 h-10 bg-white border-2 border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 hover:border-slate-300 transition-all duration-200 hover:scale-110 shadow-sm hover:shadow-md flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                        title="Duplicate Agent"
+                      >
+                        <Copy className="h-5 w-5" />
+                        <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                          Duplicate
+                        </span>
+                      </button>
 
-                          <button
-                            onClick={() => {
-                              setShowDeleteConfirm(true);
-                              setShowQuickActionsMenu(false);
-                            }}
-                            className="flex items-center gap-3 px-4 py-2.5 hover:bg-red-50 transition-colors text-red-600 w-full"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                            <span className="text-sm font-medium">Delete Assistant</span>
-                          </button>
-                        </div>
-                      )}
+                      {/* Delete Button */}
+                      <button
+                        onClick={() => setShowDeleteConfirm(true)}
+                        className="group relative w-10 h-10 bg-white border-2 border-red-200 text-red-600 rounded-lg hover:bg-red-50 hover:border-red-300 transition-all duration-200 hover:scale-110 shadow-sm hover:shadow-md flex items-center justify-center"
+                        title="Delete Agent"
+                      >
+                        <Trash2 className="h-5 w-5" />
+                        <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                          Delete
+                        </span>
+                      </button>
                     </div>
                   )}
-                </>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="max-w-7xl mx-auto px-8 py-8">
+        <div className="space-y-6">
+
+          {/* Row 1: What This Agent Does + Current Status */}
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+
+            {/* Description Card with Expand Button - 3 columns */}
+            <div className="lg:col-span-3 bg-gradient-to-br from-indigo-50 via-white to-blue-50 rounded-2xl border border-gray-200 shadow-lg p-6">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-blue-600 rounded-lg flex items-center justify-center">
+                    <FileText className="h-5 w-5 text-white" />
+                  </div>
+                  <h3 className="text-sm font-semibold text-gray-700">What This Agent Does</h3>
+                </div>
+                <button
+                  onClick={() => setExpandedPrompt(!expandedPrompt)}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 font-semibold text-xs transition-all duration-200"
+                >
+                  {expandedPrompt ? (
+                    <>
+                      <EyeOff className="h-3 w-3" />
+                      Hide Prompt
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="h-3 w-3" />
+                      View Prompt
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {agent.description ? (
+                <p className="text-gray-700 leading-relaxed">{agent.description}</p>
+              ) : (
+                <p className="text-gray-500 italic">No description provided</p>
+              )}
+
+              {expandedPrompt && (
+                <div className="mt-4 pt-4 border-t border-gray-200">
+                  <p className="text-xs text-gray-600 mb-2 uppercase tracking-wide font-semibold">Full Instructions</p>
+                  <div className="text-sm text-gray-700 bg-white p-4 rounded-xl border border-gray-200 font-mono whitespace-pre-wrap leading-relaxed max-h-96 overflow-y-auto">
+                    {agent.user_prompt}
+                  </div>
+                </div>
               )}
             </div>
-          </div>
-        </div>
-      </div>
 
-      {/* Modern Tab Navigation */}
-      <div className="bg-white/50 backdrop-blur-xl border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-8 pt-6 pb-4">
-          <div className="inline-flex bg-gray-100/80 rounded-xl p-1.5 w-fit">
-            {[
-              { id: 'overview', label: 'Overview', icon: Target },
-              { id: 'configure', label: 'Setup', icon: Wand2 },
-              { id: 'test', label: 'Try It', icon: Beaker },
-              { id: 'performance', label: 'Activity', icon: BarChart3 },
-              { id: 'configuration', label: 'Advanced', icon: Settings }
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setCurrentView(tab.id as any)}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-lg transition-all duration-200 font-medium text-sm ${
-                  currentView === tab.id
-                    ? 'bg-white text-blue-600 shadow-sm'
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
-                }`}
-              >
-                <tab.icon className="h-4 w-4" />
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
+            {/* Current Status Card - 2 columns */}
+            <div className="lg:col-span-2 bg-gradient-to-br from-blue-50 via-white to-purple-50 rounded-2xl border border-gray-200 shadow-lg p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                  <StatusIcon className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-600">Current Status</h3>
+                  <p className={`text-lg font-bold ${statusConfig.color}`}>{statusConfig.label}</p>
+                </div>
+              </div>
 
-      {/* Content with Reduced Spacing */}
-      <div className="max-w-7xl mx-auto px-8 py-6">
-        
-        {/* Overview Tab - More Compact */}
-        {currentView === 'overview' && (
-          <div className="space-y-4">
-            
-            {/* Description */}
-            {agent.description && (
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                <div
-                  className="bg-gradient-to-r from-blue-50 to-purple-50 p-3 cursor-pointer hover:from-blue-100 hover:to-purple-100 transition-colors"
-                  onClick={() => toggleSection('description')}
+              {/* Agent ID - Copyable */}
+              <div className="pt-4 border-t border-gray-200">
+                <div className="flex items-center gap-2 text-xs text-gray-600 mb-1">
+                  <Target className="h-3 w-3" />
+                  <span>Agent ID</span>
+                </div>
+                <button
+                  onClick={() => navigator.clipboard.writeText(agent.id)}
+                  className="flex items-center gap-2 text-xs text-gray-600 font-mono hover:text-gray-900 hover:bg-gray-50 px-2 py-1 rounded transition-all duration-200 group w-full"
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
-                        <MessageSquare className="h-4 w-4 text-blue-600" />
-                      </div>
-                      <div>
-                        <h3 className="font-semibold text-slate-900 text-sm">What This Assistant Does</h3>
-                        <p className="text-slate-600 text-xs">Purpose and capabilities overview</p>
-                      </div>
+                  <span className="truncate flex-1 text-left">{agent.id}</span>
+                  <Copy className="h-3 w-3 text-gray-400 group-hover:text-gray-600 flex-shrink-0" />
+                </button>
+              </div>
+
+              {/* Schedule */}
+              <div className="pt-4 border-t border-gray-200 mt-4">
+                <div className="flex items-center gap-2 text-xs text-gray-600 mb-1">
+                  <ModeIcon className="h-3 w-3" />
+                  <span>Schedule</span>
+                </div>
+                <p className="text-xs text-gray-700 font-medium">{formatScheduleDisplay(agent.trigger_conditions, userProfile?.timezone)}</p>
+              </div>
+
+              {/* Created */}
+              <div className="pt-4 border-t border-gray-200 mt-4">
+                <div className="flex items-center gap-2 text-xs text-gray-600 mb-1">
+                  <Clock className="h-3 w-3" />
+                  <span>Created</span>
+                </div>
+                <p className="text-xs text-gray-700 font-medium">
+                  {new Date(agent.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Row 2: What you'll get + Plugins */}
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+
+            {/* Output Schema Display - What you'll get - 3 columns */}
+            {(humanOutputs.length > 0 || systemOutputs.length > 0) && (
+              <div className="lg:col-span-3 bg-gradient-to-br from-emerald-50 via-white to-green-50 rounded-2xl border border-gray-200 shadow-lg overflow-hidden">
+                <div
+                  className="bg-gradient-to-r from-emerald-50 to-green-50 p-3 cursor-pointer hover:from-emerald-100 hover:to-green-100 transition-colors"
+                  onClick={() => setExpandedOutputs(!expandedOutputs)}
+                >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 bg-emerald-100 rounded-lg flex items-center justify-center">
+                      <Target className="h-4 w-4 text-emerald-600" />
                     </div>
-                    {expandedSections.description ?
+                    <div>
+                      <h3 className="font-semibold text-slate-900 text-sm">What you'll get</h3>
+                      <p className="text-slate-600 text-xs">The outputs your agent will create</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs text-slate-600">
+                      {humanOutputs.length + systemOutputs.length} output{(humanOutputs.length + systemOutputs.length) !== 1 ? 's' : ''}
+                    </div>
+                    {expandedOutputs ?
                       <ChevronUp className="h-4 w-4 text-slate-600" /> :
                       <ChevronDown className="h-4 w-4 text-slate-600" />
                     }
                   </div>
                 </div>
-                {expandedSections.description && (
-                  <div className="p-4">
-                    <p className="text-slate-700 leading-relaxed text-sm">{agent.description}</p>
-                  </div>
-                )}
               </div>
-            )}
 
-            {/* Enhanced Schedule Information with Timezone */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-              <div
-                className="bg-gradient-to-r from-purple-50 to-pink-50 p-3 cursor-pointer hover:from-purple-100 hover:to-pink-100 transition-colors"
-                onClick={() => toggleSection('schedule')}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center">
-                      <Calendar className="h-4 w-4 text-purple-600" />
-                    </div>
+              {expandedOutputs && (
+                <div className="p-3 space-y-4">
+                  {/* Human Outputs */}
+                  {humanOutputs.length > 0 && (
                     <div>
-                      <h3 className="font-semibold text-slate-900 text-sm">Execution Schedule</h3>
-                      <p className="text-slate-600 text-xs">How and when your assistant runs</p>
-                    </div>
-                  </div>
-                  {expandedSections.schedule ?
-                    <ChevronUp className="h-4 w-4 text-slate-600" /> :
-                    <ChevronDown className="h-4 w-4 text-slate-600" />
-                  }
-                </div>
-              </div>
-              {expandedSections.schedule && (
-                <div className="p-4 space-y-3">
-                  {/* Mode Display */}
-                  <div>
-                    <p className="text-xs text-slate-600 mb-1">How it runs</p>
-                    <p className="text-slate-900 font-medium text-sm">
-                      {agent.mode === 'on_demand' ? 'Run manually when you need it' :
-                       agent.mode === 'scheduled' ? 'Runs automatically on schedule' :
-                       agent.mode === 'triggered' ? 'Runs when events happen' : 'Standard'}
-                    </p>
-                  </div>
-
-                  {/* Schedule Details for Scheduled Mode */}
-                  {agent.mode === 'scheduled' && agent.schedule_cron && (
-                    <>
-                      <div className="border-t border-slate-200 pt-3">
-                        <p className="text-xs text-slate-600 mb-1">Schedule</p>
-                        <p className="text-slate-900 font-medium text-sm">
-                          {formatScheduleWithTimezone(agent.mode, agent.schedule_cron, agent.timezone, getEffectiveUserTimezone())}
-                        </p>
+                      <div className="text-xs font-semibold text-emerald-700 mb-2 flex items-center gap-1.5">
+                        <User className="h-3.5 w-3.5" />
+                        Human-Facing Outputs
                       </div>
+                      <div className="space-y-2">
+                        {humanOutputs.map((field: any, index: number) => {
+                          const getUserFriendlyType = (type: string) => {
+                            const typeMap: Record<string, { label: string; Icon: any; iconColor: string; bgColor: string; badgeColor: string }> = {
+                              'EmailDraft': { label: 'Email', Icon: Mail, iconColor: 'text-blue-600', bgColor: 'bg-blue-100', badgeColor: 'bg-blue-100 text-blue-700' },
+                              'PluginAction': { label: 'Action', Icon: Zap, iconColor: 'text-purple-600', bgColor: 'bg-purple-100', badgeColor: 'bg-purple-100 text-purple-700' },
+                              'SummaryBlock': { label: 'Report', Icon: FileBarChart, iconColor: 'text-green-600', bgColor: 'bg-green-100', badgeColor: 'bg-green-100 text-green-700' },
+                              'Alert': { label: 'Notification', Icon: Bell, iconColor: 'text-orange-600', bgColor: 'bg-orange-100', badgeColor: 'bg-orange-100 text-orange-700' },
+                              'string': { label: 'Text', Icon: MessageSquare, iconColor: 'text-cyan-600', bgColor: 'bg-cyan-100', badgeColor: 'bg-cyan-100 text-cyan-700' },
+                              'object': { label: 'Data', Icon: Database, iconColor: 'text-indigo-600', bgColor: 'bg-indigo-100', badgeColor: 'bg-indigo-100 text-indigo-700' },
+                              'array': { label: 'List', Icon: List, iconColor: 'text-teal-600', bgColor: 'bg-teal-100', badgeColor: 'bg-teal-100 text-teal-700' }
+                            };
+                            return typeMap[type] || { label: 'Result', Icon: Sparkles, iconColor: 'text-amber-600', bgColor: 'bg-amber-100', badgeColor: 'bg-amber-100 text-amber-700' };
+                          };
 
-                      {/* Timezone information */}
-                      {agent.timezone && (
-                        <div className="border-t border-slate-200 pt-3">
-                          <p className="text-xs text-slate-600 mb-2">Timezone</p>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-sm font-medium">
-                              <Globe className="h-3.5 w-3.5" />
-                              {getTimezoneDisplayName(agent.timezone)}
+                          const typeInfo = getUserFriendlyType(field.type);
+                          const IconComponent = typeInfo.Icon;
+
+                          return (
+                            <div key={index} className="flex items-center gap-3 p-3 bg-white/80 backdrop-blur rounded-xl border border-gray-200/50 hover:border-blue-300 hover:shadow-md transition-all duration-200">
+                              <div className={`w-8 h-8 ${typeInfo.bgColor} rounded-lg flex items-center justify-center flex-shrink-0`}>
+                                <IconComponent className={`h-4 w-4 ${typeInfo.iconColor}`} />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-sm font-medium text-gray-900">{field.name}</div>
+                                {field.description && (
+                                  <div className="text-xs text-gray-500">{field.description}</div>
+                                )}
+                              </div>
+                              <div className={`px-2 py-1 rounded-md ${typeInfo.badgeColor}`}>
+                                <span className="text-xs font-medium">{typeInfo.label}</span>
+                              </div>
                             </div>
-                            {agent.timezone !== getEffectiveUserTimezone() && (
-                              <span className="text-xs text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
-                                Your timezone: {getTimezoneDisplayName(getEffectiveUserTimezone())}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </>
+                          );
+                        })}
+                      </div>
+                    </div>
                   )}
 
-                  {/* Schedule Not Configured Warning */}
-                  {agent.mode === 'scheduled' && !agent.schedule_cron && (
-                    <div className="border-t border-slate-200 pt-3">
-                      <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
-                        <AlertTriangle className="h-4 w-4 text-amber-600 flex-shrink-0" />
-                        <p className="text-amber-800 text-sm">
-                          Schedule not set up yet
-                        </p>
+                  {/* System Outputs */}
+                  {systemOutputs.length > 0 && (
+                    <div>
+                      <div className="text-xs font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
+                        <Settings className="h-3.5 w-3.5" />
+                        System Outputs
+                      </div>
+                      <div className="space-y-2">
+                        {systemOutputs.map((field: any, index: number) => {
+                          const getUserFriendlyType = (type: string) => {
+                            const typeMap: Record<string, { label: string; Icon: any; iconColor: string; bgColor: string; badgeColor: string }> = {
+                              'EmailDraft': { label: 'Email', Icon: Mail, iconColor: 'text-blue-600', bgColor: 'bg-blue-100', badgeColor: 'bg-blue-100 text-blue-700' },
+                              'PluginAction': { label: 'Action', Icon: Zap, iconColor: 'text-purple-600', bgColor: 'bg-purple-100', badgeColor: 'bg-purple-100 text-purple-700' },
+                              'SummaryBlock': { label: 'Report', Icon: FileBarChart, iconColor: 'text-green-600', bgColor: 'bg-green-100', badgeColor: 'bg-green-100 text-green-700' },
+                              'Alert': { label: 'Notification', Icon: Bell, iconColor: 'text-orange-600', bgColor: 'bg-orange-100', badgeColor: 'bg-orange-100 text-orange-700' },
+                              'string': { label: 'Text', Icon: MessageSquare, iconColor: 'text-cyan-600', bgColor: 'bg-cyan-100', badgeColor: 'bg-cyan-100 text-cyan-700' },
+                              'object': { label: 'Data', Icon: Database, iconColor: 'text-indigo-600', bgColor: 'bg-indigo-100', badgeColor: 'bg-indigo-100 text-indigo-700' },
+                              'array': { label: 'List', Icon: List, iconColor: 'text-teal-600', bgColor: 'bg-teal-100', badgeColor: 'bg-teal-100 text-teal-700' }
+                            };
+                            return typeMap[type] || { label: 'Result', Icon: Sparkles, iconColor: 'text-amber-600', bgColor: 'bg-amber-100', badgeColor: 'bg-amber-100 text-amber-700' };
+                          };
+
+                          const typeInfo = getUserFriendlyType(field.type);
+                          const IconComponent = typeInfo.Icon;
+
+                          return (
+                            <div key={index} className="flex items-center gap-3 p-3 bg-white/80 backdrop-blur rounded-xl border border-gray-200/50 hover:border-slate-300 hover:shadow-md transition-all duration-200">
+                              <div className={`w-8 h-8 ${typeInfo.bgColor} rounded-lg flex items-center justify-center flex-shrink-0`}>
+                                <IconComponent className={`h-4 w-4 ${typeInfo.iconColor}`} />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-sm font-medium text-gray-900">{field.name}</div>
+                                {field.description && (
+                                  <div className="text-xs text-gray-500">{field.description}</div>
+                                )}
+                              </div>
+                              <div className={`px-2 py-1 rounded-md ${typeInfo.badgeColor}`}>
+                                <span className="text-xs font-medium">{typeInfo.label}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
                 </div>
               )}
             </div>
+          )}
 
-            {/* Rest of the existing sections remain the same... */}
-            {/* Assistant Instructions/Prompt */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-              <div
-                className="bg-gradient-to-r from-indigo-50 to-blue-50 p-3 cursor-pointer hover:from-indigo-100 hover:to-blue-100 transition-colors"
-                onClick={() => toggleSection('instructions')}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center">
-                      <Wand2 className="h-4 w-4 text-indigo-600" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-slate-900 text-sm">Assistant Instructions</h3>
-                      <p className="text-slate-600 text-xs">The core prompt and behavior guide</p>
-                    </div>
-                  </div>
-                  {expandedSections.instructions ?
-                    <ChevronUp className="h-4 w-4 text-slate-600" /> :
-                    <ChevronDown className="h-4 w-4 text-slate-600" />
-                  }
+            {/* Plugin Requirements Card - 2 columns */}
+            <div className="lg:col-span-2 bg-gradient-to-br from-rose-50 via-white to-pink-50 rounded-2xl border border-gray-200 shadow-lg p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 bg-gradient-to-br from-rose-500 to-pink-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-md">
+                  <Puzzle className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-700">Plugins</h3>
+                  <p className="text-[10px] text-gray-500">{safePluginsRequired.length} {safePluginsRequired.length === 1 ? 'integration' : 'integrations'}</p>
                 </div>
               </div>
-              {expandedSections.instructions && (
-                <div className="p-4">
-                  <div className="relative">
-                    <p className="text-slate-700 leading-relaxed whitespace-pre-wrap font-mono text-sm">
-                      {expandedPrompt || (agent.user_prompt && agent.user_prompt.length <= 300)
-                        ? agent.user_prompt
-                        : `${agent.user_prompt?.substring(0, 300)}...`
-                      }
-                    </p>
-                    {agent.user_prompt && agent.user_prompt.length > 300 && (
-                      <button
-                        onClick={() => setExpandedPrompt(!expandedPrompt)}
-                        className="mt-3 flex items-center gap-2 text-indigo-600 hover:text-indigo-700 font-medium text-sm"
+
+              {safePluginsRequired.length > 0 ? (
+                <div className="flex flex-wrap gap-3">
+                  {safePluginsRequired.map(plugin => {
+                    const isConnected = getPluginStatus(plugin)
+                    return (
+                      <div
+                        key={plugin}
+                        className="group relative"
+                        title={`${plugin} - ${isConnected ? 'Connected' : 'Not connected'}`}
                       >
-                        {expandedPrompt ? (
-                          <>
-                            <EyeOff className="h-4 w-4" />
-                            Show Less
-                          </>
-                        ) : (
-                          <>
-                            <Eye className="h-4 w-4" />
-                            Show Full Instructions
-                          </>
-                        )}
-                      </button>
-                    )}
+                        {/* Plugin Icon with Status Badge */}
+                        <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${getPluginColor(plugin)} flex items-center justify-center shadow-md transition-all duration-300 hover:scale-110 cursor-pointer`}>
+                          {getPluginIcon(plugin)}
+                        </div>
+                        {/* Status Badge Overlay */}
+                        <div className={`absolute -top-1 -right-1 w-5 h-5 rounded-full border-2 border-white shadow-md flex items-center justify-center transition-all duration-300 ${
+                          isConnected ? 'bg-green-500' : 'bg-red-500'
+                        }`}>
+                          {isConnected && (
+                            <Check className="h-3 w-3 text-white" strokeWidth={3} />
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-8 px-4">
+                  <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mb-3">
+                    <Puzzle className="h-6 w-6 text-gray-400" />
                   </div>
+                  <p className="text-gray-500 text-xs text-center">No plugins required</p>
+                  <p className="text-gray-400 text-[10px] text-center mt-1">This agent works standalone</p>
                 </div>
               )}
             </div>
+          </div>
 
-            {/* Setup Status */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-              <div
-                className="bg-gradient-to-r from-green-50 to-emerald-50 p-3 cursor-pointer hover:from-green-100 hover:to-emerald-100 transition-colors"
-                onClick={() => toggleSection('setupStatus')}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center">
-                      <Shield className="h-4 w-4 text-green-600" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-slate-900 text-sm">Setup Status</h3>
-                      <p className="text-slate-600 text-xs">Current configuration and readiness</p>
-                    </div>
-                  </div>
-                  {expandedSections.setupStatus ?
-                    <ChevronUp className="h-4 w-4 text-slate-600" /> :
-                    <ChevronDown className="h-4 w-4 text-slate-600" />
-                  }
+          {/* Row 3: Performance and AIS */}
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+
+            {/* Performance Metrics Card - 2 columns */}
+            <div className="lg:col-span-2 bg-gradient-to-br from-green-50 via-white to-emerald-50 rounded-2xl border border-gray-200 shadow-lg p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-600 rounded-lg flex items-center justify-center">
+                  <TrendingUp className="h-5 w-5 text-white" />
                 </div>
+                <h3 className="text-sm font-semibold text-gray-700">Performance</h3>
               </div>
-              {expandedSections.setupStatus && (
-                <div className="p-4">
-                  {agent.status === 'draft' ? (
-                    <div className="space-y-3">
-                      <div>
-                        <h3 className="font-semibold text-slate-900 mb-2 text-sm">Assistant in Draft Mode</h3>
-                        <p className="text-slate-700 text-sm">
-                          Your assistant is ready but needs to be launched to start working.
-                          {hasRequiredFields() && !isConfigured
-                            ? ' Complete the configuration first, then launch it to make it live.'
-                            : ' Once you launch it, it will be active and ready to help you.'
-                          }
-                        </p>
-                      </div>
 
-                      <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium ${
-                        isConfigured
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-amber-100 text-amber-800'
-                      }`}>
-                        {isConfigured ? (
-                          <>
-                            <CheckCircle className="h-3.5 w-3.5" />
-                            Configuration Complete
-                          </>
-                        ) : (
-                          <>
-                            <AlertTriangle className="h-3.5 w-3.5" />
-                            Configuration Required
-                          </>
-                        )}
-                      </div>
+              <div className="space-y-4">
+                {/* Stats Grid */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="text-center p-3 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg border border-blue-200/50 shadow-sm">
+                    <div className="text-2xl font-bold text-blue-600">{performanceStats.totalRuns}</div>
+                    <div className="text-xs font-medium text-blue-700 uppercase tracking-wide mt-1">Runs</div>
+                  </div>
 
-                      {canActivate && (
-                        <button
-                          onClick={handleToggleStatus}
-                          className="group flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-lg hover:from-green-600 hover:to-emerald-700 transition-all duration-200 shadow-md shadow-green-500/30 hover:shadow-lg font-medium text-sm"
-                        >
-                          <Rocket className="h-4 w-4" />
-                          <span>Launch Assistant</span>
-                          <span className="text-xs opacity-90">• Ready to go!</span>
-                        </button>
-                      )}
-                      {!canActivate && hasRequiredFields() && !isConfigured && (
-                        <button
-                          onClick={() => setCurrentView('test')}
-                          className="group flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-xl hover:from-amber-600 hover:to-orange-700 transition-all duration-200 shadow-lg shadow-amber-500/30 hover:shadow-xl hover:shadow-amber-500/40 font-semibold text-sm transform hover:-translate-y-0.5"
-                        >
-                          <Settings className="h-4 w-4 group-hover:scale-110 transition-transform" />
-                          Complete Setup
-                          <div className="ml-1 text-xs opacity-80">Go to Test Run</div>
-                        </button>
-                      )}
+                  <div className="text-center p-3 bg-gradient-to-br from-green-50 to-emerald-50 rounded-lg border border-green-200/50 shadow-sm">
+                    <div className="text-2xl font-bold text-green-600">{performanceStats.successRate}%</div>
+                    <div className="text-xs font-medium text-green-700 uppercase tracking-wide mt-1">Success</div>
+                  </div>
+
+                  <div className="text-center p-3 bg-gradient-to-br from-purple-50 to-indigo-50 rounded-lg border border-purple-200/50 shadow-sm">
+                    <div className="text-2xl font-bold text-purple-600">{performanceStats.avgDuration.toFixed(1)}s</div>
+                    <div className="text-xs font-medium text-purple-700 uppercase tracking-wide mt-1">Speed</div>
+                  </div>
+
+                  <div className="text-center p-3 bg-gradient-to-br from-amber-50 to-orange-50 rounded-lg border border-amber-200/50 shadow-sm">
+                    <div className="text-2xl font-bold text-amber-600">{performanceStats.totalCost.toFixed(0)}</div>
+                    <div className="text-xs font-medium text-amber-700 uppercase tracking-wide mt-1">Total Pilot Credits</div>
+                  </div>
+                </div>
+
+                {/* Performance Trend Graph */}
+                <div className="bg-gradient-to-br from-slate-50 to-gray-50 rounded-lg border border-slate-200/50 p-4 shadow-sm">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="text-xs font-medium text-slate-600">
+                      Execution Duration Trend {performanceStats.recentExecutions.length > 0 && `(Last ${performanceStats.recentExecutions.length})`}
                     </div>
+                    {performanceStats.recentExecutions.length > 0 && (
+                      <div className="text-[10px] text-slate-500">
+                        {(() => {
+                          const durations = performanceStats.recentExecutions.map(e => e.duration / 1000)
+                          const min = Math.min(...durations)
+                          const max = Math.max(...durations)
+                          const range = max - min
+                          const trend = durations.length >= 2
+                            ? durations[durations.length - 1] - durations[0]
+                            : 0
+                          return (
+                            <span className={trend > 1 ? 'text-orange-600' : trend < -1 ? 'text-green-600' : 'text-slate-500'}>
+                              {trend > 1 ? '↗ Slowing' : trend < -1 ? '↘ Improving' : '→ Stable'}
+                            </span>
+                          )
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                  {performanceStats.recentExecutions.length > 0 ? (
+                    <>
+                      <div className="relative">
+                        {/* Y-axis labels */}
+                        <div className="absolute left-0 top-0 bottom-0 flex flex-col justify-between text-[9px] text-slate-400 pr-1">
+                          <span>{Math.max(...performanceStats.recentExecutions.map(e => e.duration / 1000)).toFixed(1)}s</span>
+                          <span>{(Math.max(...performanceStats.recentExecutions.map(e => e.duration / 1000)) / 2).toFixed(1)}s</span>
+                          <span>0s</span>
+                        </div>
+                        <div className="ml-8 flex items-end justify-between h-24 gap-1 bg-white/50 rounded-lg p-2 border-l-2 border-b-2 border-slate-300">
+                          {performanceStats.recentExecutions.map((execution, i) => {
+                            const durations = performanceStats.recentExecutions.map(e => e.duration || 0)
+                            const minDuration = Math.min(...durations)
+                            const maxDuration = Math.max(...durations)
+                            const range = maxDuration - minDuration
+
+                            // Use relative scaling for better visualization
+                            const heightPercent = range > 0
+                              ? ((execution.duration - minDuration) / range) * 80 + 20
+                              : 50
+
+                            const isSuccess = execution.status === 'success' || execution.status === 'completed'
+                            const durationSec = execution.duration / 1000
+
+                            return (
+                              <div key={i} className="flex-1 flex flex-col justify-end group relative min-w-[6px]">
+                                <div
+                                  className={`w-full rounded-t transition-all duration-300 min-h-[12px] shadow-sm ${
+                                    isSuccess ? 'bg-gradient-to-t from-green-500 to-emerald-400' : 'bg-gradient-to-t from-red-500 to-orange-400'
+                                  }`}
+                                  style={{ height: `${heightPercent}%` }}
+                                />
+                                {/* Enhanced Tooltip */}
+                                <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-[10px] px-2.5 py-1.5 rounded-md opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-10 shadow-lg">
+                                  <div className="font-semibold mb-0.5">{isSuccess ? '✓ Success' : '✗ Failed'}</div>
+                                  <div>Duration: {durationSec.toFixed(2)}s</div>
+                                  <div className="text-[9px] text-gray-300 mt-0.5">Run #{performanceStats.recentExecutions.length - i}</div>
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between mt-2 text-[9px] text-slate-500 ml-8">
+                        <span>← Oldest</span>
+                        <span>
+                          Range: {(Math.max(...performanceStats.recentExecutions.map(e => e.duration / 1000)) -
+                                  Math.min(...performanceStats.recentExecutions.map(e => e.duration / 1000))).toFixed(1)}s
+                        </span>
+                        <span>Recent →</span>
+                      </div>
+                    </>
                   ) : (
-                    <div className="space-y-2">
-                      <h3 className={`font-semibold text-sm ${
-                        agent.status === 'active' ? 'text-green-900' : 'text-slate-900'
-                      }`}>
-                        Assistant is {statusConfig.label}
-                      </h3>
-                      <p className={`text-sm ${agent.status === 'active' ? 'text-slate-700' : 'text-slate-700'}`}>
-                        {agent.status === 'active'
-                          ? 'Your assistant is live and ready to work. It will respond to requests and run on schedule if configured.'
-                          : 'Your assistant is currently paused and not responding to requests.'
-                        }
-                      </p>
+                    <div className="flex flex-col items-center justify-center h-16 text-slate-400">
+                      <TrendingUp className="h-6 w-6 mb-1 opacity-30" />
+                      <p className="text-[10px]">No execution data yet</p>
                     </div>
                   )}
                 </div>
+              </div>
+            </div>
+
+            {/* AIS Complexity Card - 3 columns */}
+            <div className="lg:col-span-3">
+              <AgentIntensityCard agentId={agent.id} />
+            </div>
+          </div>
+
+          {/* Test Playground Card - Collapsible */}
+          <div data-card="test-playground" className="bg-gradient-to-br from-purple-50 via-white to-pink-50 rounded-2xl border border-gray-200 shadow-lg overflow-hidden">
+            <button
+              onClick={() => setExpandedTestPlayground(!expandedTestPlayground)}
+              className="w-full p-6 flex items-center justify-between hover:bg-purple-100/50 transition-all duration-200"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-lg flex items-center justify-center">
+                  <Play className="h-5 w-5 text-white" />
+                </div>
+                <div className="text-left">
+                  <h3 className="text-sm font-semibold text-gray-700">Test Playground</h3>
+                  <p className="text-xs text-gray-500">
+                    {expandedTestPlayground ? 'Click to collapse' : 'Click to expand and test your agent'}
+                  </p>
+                </div>
+              </div>
+              {expandedTestPlayground ? (
+                <ChevronUp className="h-5 w-5 text-gray-600" />
+              ) : (
+                <ChevronDown className="h-5 w-5 text-gray-600" />
               )}
-            </div>
-          </div>
-        )}
+            </button>
 
-        {/* Configuration Tab - Unchanged from original */}
-        {currentView === 'configuration' && (
-          <div className="space-y-4">
-            
-            {/* Plugin Requirements */}
-            {safePluginsRequired.length > 0 && (
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                <div
-                  className="bg-gradient-to-r from-indigo-50 to-blue-50 p-3 cursor-pointer hover:from-indigo-100 hover:to-blue-100 transition-colors"
-                  onClick={() => toggleSection('plugins')}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center">
-                        <Puzzle className="h-4 w-4 text-indigo-600" />
-                      </div>
-                      <div>
-                        <h3 className="font-semibold text-slate-900 text-sm">Connected Tools</h3>
-                        <p className="text-slate-600 text-xs">Your agent needs these to work properly</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="text-xs text-slate-600">
-                        {safePluginsRequired.filter(p => getPluginStatus(p)).length}/{safePluginsRequired.length} ready
-                      </div>
-                      {expandedSections.plugins ?
-                        <ChevronUp className="h-4 w-4 text-slate-600" /> :
-                        <ChevronDown className="h-4 w-4 text-slate-600" />
-                      }
-                    </div>
-                  </div>
-                </div>
-                
-                {expandedSections.plugins && (
-                  <div className="p-3 space-y-2">
-                    {safePluginsRequired.map(plugin => {
-                      const isConnected = getPluginStatus(plugin)
-                      return (
-                        <div
-                          key={plugin}
-                          className={`flex items-center gap-3 p-3 bg-white/80 backdrop-blur rounded-xl border transition-all duration-200 ${
-                            isConnected
-                              ? 'border-gray-200/50 hover:border-green-300 hover:shadow-md'
-                              : 'border-orange-200 hover:border-orange-300 hover:shadow-md'
-                          }`}
-                        >
-                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                            isConnected ? 'bg-indigo-100' : 'bg-orange-100'
-                          }`}>
-                            <Puzzle className={`h-4 w-4 ${
-                              isConnected ? 'text-indigo-600' : 'text-orange-600'
-                            }`} />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-sm font-medium text-gray-900">
-                              {plugin}
-                            </div>
-                            <div className={`text-xs ${
-                              isConnected ? 'text-gray-500' : 'text-orange-600'
-                            }`}>
-                              {isConnected ? 'Ready to use' : 'Needs connection'}
-                            </div>
-                          </div>
-                          <div className={`px-2 py-1 rounded-md ${
-                            isConnected
-                              ? 'bg-green-100 text-green-700'
-                              : 'bg-orange-100 text-orange-700'
-                          }`}>
-                            <span className="text-xs font-medium">
-                              {isConnected ? 'Connected' : 'Pending'}
-                            </span>
-                          </div>
-                        </div>
-                      )
-                    })}
-                    
-                    {missingPlugins.length > 0 && (
-                      <div className="mt-3 p-3 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-lg">
-                        <div className="flex items-center gap-2 text-amber-800">
-                          <AlertTriangle className="h-4 w-4" />
-                          <span className="font-medium text-sm">Please connect the missing tools before testing or configuring your agent.</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Expected Output - Combined */}
-            {(humanOutputs.length > 0 || systemOutputs.length > 0) && (
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                <div
-                  className="bg-gradient-to-r from-emerald-50 to-green-50 p-3 cursor-pointer hover:from-emerald-100 hover:to-green-100 transition-colors"
-                  onClick={() => toggleSection('outputs')}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 bg-emerald-100 rounded-lg flex items-center justify-center">
-                        <Target className="h-4 w-4 text-emerald-600" />
-                      </div>
-                      <div>
-                        <h3 className="font-semibold text-slate-900 text-sm">What you'll get</h3>
-                        <p className="text-slate-600 text-xs">The magic your agent will create</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="text-xs text-slate-600">
-                        {humanOutputs.length + systemOutputs.length} output{(humanOutputs.length + systemOutputs.length) !== 1 ? 's' : ''}
-                      </div>
-                      {expandedSections.outputs ?
-                        <ChevronUp className="h-4 w-4 text-slate-600" /> :
-                        <ChevronDown className="h-4 w-4 text-slate-600" />
-                      }
-                    </div>
-                  </div>
-                </div>
-
-                {expandedSections.outputs && (
-                  <div className="p-3 space-y-4">
-                    {/* Human Outputs */}
-                    {humanOutputs.length > 0 && (
-                      <div>
-                        <div className="text-xs font-semibold text-emerald-700 mb-2 flex items-center gap-1.5">
-                          <User className="h-3.5 w-3.5" />
-                          Human-Facing Outputs
-                        </div>
-                        <div className="space-y-2">
-                          {humanOutputs.map((field: any, index: number) => {
-                            // Convert technical types to user-friendly labels with Lucide icons
-                            const getUserFriendlyType = (type: string) => {
-                              const typeMap: Record<string, { label: string; Icon: any; iconColor: string; bgColor: string; badgeColor: string }> = {
-                                'EmailDraft': { label: 'Email', Icon: Mail, iconColor: 'text-blue-600', bgColor: 'bg-blue-100', badgeColor: 'bg-blue-100 text-blue-700' },
-                                'PluginAction': { label: 'Action', Icon: Zap, iconColor: 'text-purple-600', bgColor: 'bg-purple-100', badgeColor: 'bg-purple-100 text-purple-700' },
-                                'SummaryBlock': { label: 'Report', Icon: FileBarChart, iconColor: 'text-green-600', bgColor: 'bg-green-100', badgeColor: 'bg-green-100 text-green-700' },
-                                'Alert': { label: 'Notification', Icon: Bell, iconColor: 'text-orange-600', bgColor: 'bg-orange-100', badgeColor: 'bg-orange-100 text-orange-700' },
-                                'string': { label: 'Text', Icon: MessageSquare, iconColor: 'text-cyan-600', bgColor: 'bg-cyan-100', badgeColor: 'bg-cyan-100 text-cyan-700' },
-                                'object': { label: 'Data', Icon: Database, iconColor: 'text-indigo-600', bgColor: 'bg-indigo-100', badgeColor: 'bg-indigo-100 text-indigo-700' },
-                                'array': { label: 'List', Icon: List, iconColor: 'text-teal-600', bgColor: 'bg-teal-100', badgeColor: 'bg-teal-100 text-teal-700' }
-                              };
-                              return typeMap[type] || { label: 'Result', Icon: Sparkles, iconColor: 'text-amber-600', bgColor: 'bg-amber-100', badgeColor: 'bg-amber-100 text-amber-700' };
-                            };
-
-                            const typeInfo = getUserFriendlyType(field.type);
-                            const IconComponent = typeInfo.Icon;
-
-                            return (
-                              <div key={index} className="flex items-center gap-3 p-3 bg-white/80 backdrop-blur rounded-xl border border-gray-200/50 hover:border-blue-300 hover:shadow-md transition-all duration-200">
-                                <div className={`w-8 h-8 ${typeInfo.bgColor} rounded-lg flex items-center justify-center flex-shrink-0`}>
-                                  <IconComponent className={`h-4 w-4 ${typeInfo.iconColor}`} />
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="text-sm font-medium text-gray-900">{field.name}</div>
-                                  {field.description && (
-                                    <div className="text-xs text-gray-500">{field.description}</div>
-                                  )}
-                                </div>
-                                <div className={`px-2 py-1 rounded-md ${typeInfo.badgeColor}`}>
-                                  <span className="text-xs font-medium">{typeInfo.label}</span>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* System Outputs */}
-                    {systemOutputs.length > 0 && (
-                      <div>
-                        <div className="text-xs font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
-                          <Settings className="h-3.5 w-3.5" />
-                          System Outputs
-                        </div>
-                        <div className="space-y-2">
-                          {systemOutputs.map((field: any, index: number) => {
-                            // Convert technical types to user-friendly labels with Lucide icons
-                            const getUserFriendlyType = (type: string) => {
-                              const typeMap: Record<string, { label: string; Icon: any; iconColor: string; bgColor: string; badgeColor: string }> = {
-                                'EmailDraft': { label: 'Email', Icon: Mail, iconColor: 'text-blue-600', bgColor: 'bg-blue-100', badgeColor: 'bg-blue-100 text-blue-700' },
-                                'PluginAction': { label: 'Action', Icon: Zap, iconColor: 'text-purple-600', bgColor: 'bg-purple-100', badgeColor: 'bg-purple-100 text-purple-700' },
-                                'SummaryBlock': { label: 'Report', Icon: FileBarChart, iconColor: 'text-green-600', bgColor: 'bg-green-100', badgeColor: 'bg-green-100 text-green-700' },
-                                'Alert': { label: 'Notification', Icon: Bell, iconColor: 'text-orange-600', bgColor: 'bg-orange-100', badgeColor: 'bg-orange-100 text-orange-700' },
-                                'string': { label: 'Text', Icon: MessageSquare, iconColor: 'text-cyan-600', bgColor: 'bg-cyan-100', badgeColor: 'bg-cyan-100 text-cyan-700' },
-                                'object': { label: 'Data', Icon: Database, iconColor: 'text-indigo-600', bgColor: 'bg-indigo-100', badgeColor: 'bg-indigo-100 text-indigo-700' },
-                                'array': { label: 'List', Icon: List, iconColor: 'text-teal-600', bgColor: 'bg-teal-100', badgeColor: 'bg-teal-100 text-teal-700' }
-                              };
-                              return typeMap[type] || { label: 'Result', Icon: Sparkles, iconColor: 'text-amber-600', bgColor: 'bg-amber-100', badgeColor: 'bg-amber-100 text-amber-700' };
-                            };
-
-                            const typeInfo = getUserFriendlyType(field.type);
-                            const IconComponent = typeInfo.Icon;
-
-                            return (
-                              <div key={index} className="flex items-center gap-3 p-3 bg-white/80 backdrop-blur rounded-xl border border-gray-200/50 hover:border-slate-300 hover:shadow-md transition-all duration-200">
-                                <div className={`w-8 h-8 ${typeInfo.bgColor} rounded-lg flex items-center justify-center flex-shrink-0`}>
-                                  <IconComponent className={`h-4 w-4 ${typeInfo.iconColor}`} />
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="text-sm font-medium text-gray-900">{field.name}</div>
-                                  {field.description && (
-                                    <div className="text-xs text-gray-500">{field.description}</div>
-                                  )}
-                                </div>
-                                <div className={`px-2 py-1 rounded-md ${typeInfo.badgeColor}`}>
-                                  <span className="text-xs font-medium">{typeInfo.label}</span>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Setup Tab - Simple one-time configuration */}
-        {currentView === 'configure' && (
-          <div className="space-y-4">
-            <div className="bg-white/80 backdrop-blur-xl rounded-xl border border-white/20 shadow-lg shadow-black/5 overflow-hidden">
-              <div className="p-4">
-                <AgentSandbox
-                  agentId={agent.id}
-                  inputSchema={agent.input_schema}
-                  outputSchema={agent.output_schema}
-                  userPrompt={agent.user_prompt}
-                  pluginsRequired={agent.plugins_required}
-                  workflowSteps={agent.workflow_steps}
-                  connectedPlugins={agent.connected_plugins}
-                  initialContext="configure"
-                  onFormCompletionChange={setCurrentFormIsComplete}
-                  onExecutionComplete={() => {
-                    if (hasRequiredFields()) {
-                      setTimeout(() => checkAgentConfiguration(agent), 500)
-                    }
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Try It Tab - Quick testing */}
-        {currentView === 'test' && (
-          <div className="space-y-4">
-            <div className="bg-white/80 backdrop-blur-xl rounded-xl border border-white/20 shadow-lg shadow-black/5 overflow-hidden">
-              <div className="p-4">
+            {expandedTestPlayground && (
+              <div className="px-6 pb-6 pt-4 border-t border-purple-200">
                 <AgentSandbox
                   agentId={agent.id}
                   inputSchema={agent.input_schema}
@@ -1660,147 +1563,78 @@ export default function AgentPage() {
                     if (hasRequiredFields()) {
                       setTimeout(() => checkAgentConfiguration(agent), 500)
                     }
+                    fetchPerformanceStats()
                   }}
                 />
               </div>
-            </div>
+            )}
           </div>
-        )}
 
-        {/* Performance Tab - Always show analytics */}
-        {currentView === 'performance' && (
-          <div className="space-y-4">
-            {!isSharedAgent ? (
-              <>
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div
-                    className="bg-gradient-to-r from-green-50 to-emerald-50 p-3 cursor-pointer hover:from-green-100 hover:to-emerald-100 transition-colors"
-                    onClick={() => toggleSection('performanceStats')}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center">
-                          <BarChart3 className="h-4 w-4 text-green-600" />
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-slate-900 text-sm">Performance Statistics</h3>
-                          <p className="text-slate-600 text-xs">Key metrics and success rates</p>
-                        </div>
-                      </div>
-                      {expandedSections.performanceStats ?
-                        <ChevronUp className="h-4 w-4 text-slate-600" /> :
-                        <ChevronDown className="h-4 w-4 text-slate-600" />
-                      }
-                    </div>
-                  </div>
-                  {expandedSections.performanceStats && (
-                    <div className="p-4">
-                      <AgentStatsBlock agentId={agent.id} />
-                    </div>
-                  )}
+          {/* Recent Activity Card - Collapsible */}
+          <div data-card="recent-activity" className="bg-gradient-to-br from-amber-50 via-white to-orange-50 rounded-2xl border border-gray-200 shadow-lg overflow-hidden">
+            <button
+              onClick={() => setExpandedActivity(!expandedActivity)}
+              className="w-full p-6 flex items-center justify-between hover:bg-amber-100/50 transition-all duration-200"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-gradient-to-br from-amber-500 to-orange-600 rounded-lg flex items-center justify-center">
+                  <Activity className="h-5 w-5 text-white" />
                 </div>
-
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div
-                    className="bg-gradient-to-r from-purple-50 to-blue-50 p-3 cursor-pointer hover:from-purple-100 hover:to-blue-100 transition-colors"
-                    onClick={() => toggleSection('recentActivity')}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center">
-                          <Activity className="h-4 w-4 text-purple-600" />
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-slate-900 text-sm">Recent Activity</h3>
-                          <p className="text-slate-600 text-xs">Latest executions and history</p>
-                        </div>
-                      </div>
-                      {expandedSections.recentActivity ?
-                        <ChevronUp className="h-4 w-4 text-slate-600" /> :
-                        <ChevronDown className="h-4 w-4 text-slate-600" />
-                      }
-                    </div>
-                  </div>
-                  {expandedSections.recentActivity && (
-                    <div className="p-4">
-                      <AgentHistoryBlock agentId={agent.id} />
-                    </div>
-                  )}
-                </div>
-
-                {/* Complexity Analysis Section */}
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div
-                    className="bg-gradient-to-r from-indigo-50 to-purple-50 p-3 cursor-pointer hover:from-indigo-100 hover:to-purple-100 transition-colors"
-                    onClick={() => toggleSection('complexityAnalysis')}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center">
-                          <Zap className="h-4 w-4 text-indigo-600" />
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-slate-900 text-sm">Complexity Analysis</h3>
-                          <p className="text-slate-600 text-xs">Agent intensity and resource usage</p>
-                        </div>
-                      </div>
-                      {expandedSections.complexityAnalysis ?
-                        <ChevronUp className="h-4 w-4 text-slate-600" /> :
-                        <ChevronDown className="h-4 w-4 text-slate-600" />
-                      }
-                    </div>
-                  </div>
-                  {expandedSections.complexityAnalysis && (
-                    <div className="p-4">
-                      <AgentIntensityCard agentId={agent.id} />
-                    </div>
-                  )}
-                </div>
-              </>
-            ) : (
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                <div className="bg-gradient-to-r from-slate-50 to-gray-50 p-3">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-slate-200 rounded-lg flex items-center justify-center">
-                      <TrendingUp className="h-4 w-4 text-slate-600" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-slate-900 text-sm">No Analytics Yet</h3>
-                      <p className="text-slate-600 text-xs">Shared agents don't show analytics</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="p-8 text-center">
-                  <div className="w-16 h-16 bg-gradient-to-br from-slate-200 to-gray-300 rounded-xl flex items-center justify-center mx-auto mb-4">
-                    <TrendingUp className="h-8 w-8 text-slate-500" />
-                  </div>
-                  <h3 className="text-lg font-semibold text-slate-900 mb-2">No Analytics Available</h3>
-                  <p className="text-slate-600 max-w-md mx-auto text-sm">
-                    Analytics are only available for your own agents, not shared community agents.
+                <div className="text-left">
+                  <h3 className="text-sm font-semibold text-gray-700">Recent Activity</h3>
+                  <p className="text-xs text-gray-500">
+                    {expandedActivity
+                      ? 'Click to collapse'
+                      : performanceStats.totalRuns > 0
+                        ? `${performanceStats.totalRuns} execution${performanceStats.totalRuns === 1 ? '' : 's'} - Click to view`
+                        : 'No executions yet'}
                   </p>
+                </div>
+              </div>
+              {expandedActivity ? (
+                <ChevronUp className="h-5 w-5 text-gray-600" />
+              ) : (
+                <ChevronDown className="h-5 w-5 text-gray-600" />
+              )}
+            </button>
+
+            {expandedActivity && performanceStats.totalRuns > 0 && (
+              <div className="px-6 pb-6 pt-4 border-t border-amber-200">
+                <AgentHistoryBlock agentId={agent.id} />
+              </div>
+            )}
+
+            {expandedActivity && performanceStats.totalRuns === 0 && (
+              <div className="px-6 pb-6 pt-4 border-t border-amber-200">
+                <div className="text-center py-8">
+                  <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                    <Activity className="h-8 w-8 text-amber-600" />
+                  </div>
+                  <p className="text-sm text-gray-600 mb-2">No activity yet</p>
+                  <p className="text-xs text-gray-500">Test your agent to see execution history</p>
                 </div>
               </div>
             )}
           </div>
-        )}
 
+        </div>
       </div>
 
-      {/* All existing modals remain unchanged */}
+      {/* All Modals */}
       <Modal isOpen={showActivationWarning} onClose={() => setShowActivationWarning(false)}>
         <div className="p-6">
           <div className="flex items-start gap-4">
-            <div className="w-10 h-10 bg-gradient-to-br from-amber-400 to-orange-500 rounded-xl flex items-center justify-center">
-              <AlertTriangle className="h-5 w-5 text-white" />
+            <div className="w-12 h-12 bg-gradient-to-br from-amber-400 to-orange-500 rounded-xl flex items-center justify-center shadow-lg">
+              <AlertTriangle className="h-6 w-6 text-white" />
             </div>
             <div className="flex-1">
-              <h3 className="font-semibold text-slate-900 mb-2">Configuration Required</h3>
-              <p className="text-slate-600 mb-4 text-sm">
-                Complete the configuration in the Test Run section first.
+              <h3 className="font-semibold text-slate-900 mb-2 text-lg tracking-tight">Configuration Required</h3>
+              <p className="text-slate-600 mb-4">
+                Complete the configuration in the Test section first.
               </p>
               <button
                 onClick={() => setShowActivationWarning(false)}
-                className="w-full px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg hover:from-blue-600 hover:to-purple-700 transition-all duration-200 font-medium"
+                className="w-full px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-xl hover:from-blue-600 hover:to-purple-700 transition-all duration-200 font-semibold shadow-lg hover:shadow-xl hover:scale-105"
               >
                 Got It
               </button>
@@ -1812,106 +1646,57 @@ export default function AgentPage() {
       <Modal isOpen={showShareConfirm} onClose={() => setShowShareConfirm(false)}>
         <div className="p-6">
           <div className="flex items-start gap-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-blue-400 to-purple-500 rounded-xl flex items-center justify-center">
+            <div className="w-12 h-12 bg-gradient-to-br from-blue-400 to-purple-500 rounded-xl flex items-center justify-center shadow-lg">
               <Share2 className="h-6 w-6 text-white" />
             </div>
             <div className="flex-1">
-              <h3 className="font-semibold text-slate-900 mb-3 text-lg">Share "{agent.agent_name}" with Community</h3>
-              
+              <h3 className="font-semibold text-slate-900 mb-3 text-lg tracking-tight">Share "{agent.agent_name}" with Community</h3>
+
               {hasBeenShared || (sharingValidation?.details?.alreadyShared) ? (
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
+                <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-4 mb-4 shadow-md">
                   <div className="flex items-center gap-2 mb-2">
                     <Shield className="h-5 w-5 text-amber-600" />
-                    <span className="font-medium text-amber-800">Already Shared</span>
+                    <span className="font-semibold text-amber-800">Already Shared</span>
                   </div>
                   <p className="text-amber-700 text-sm">
-                    This assistant has already been shared with the community. Each assistant can only be shared once to prevent abuse and ensure fair credit distribution.
+                    This assistant has already been shared with the community.
                   </p>
                 </div>
               ) : sharingValidation && !sharingValidation.valid ? (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+                <div className="bg-gradient-to-r from-red-50 to-pink-50 border border-red-200 rounded-xl p-4 mb-4 shadow-md">
                   <div className="flex items-center gap-2 mb-2">
                     <AlertTriangle className="h-5 w-5 text-red-600" />
-                    <span className="font-medium text-red-800">Cannot Share Yet</span>
+                    <span className="font-semibold text-red-800">Cannot Share Yet</span>
                   </div>
                   <p className="text-red-700 text-sm mb-3">
                     {sharingValidation.reason}
                   </p>
-                  <div className="text-xs text-red-600 bg-red-100 rounded px-3 py-2">
-                    <strong>Requirements to share:</strong>
-                    <ul className="mt-1 space-y-1 ml-4 list-disc">
-                      <li>Agent must be at least 1 hour old</li>
-                      <li>Agent must have at least 3 successful test runs</li>
-                      <li>Agent must have 66%+ success rate</li>
-                      <li>Agent must have a description (20+ characters)</li>
-                      <li>Daily limit: {sharingStatus?.limits.daily || 5} shares per day</li>
-                      <li>Monthly limit: {sharingStatus?.limits.monthly || 20} shares per month</li>
-                    </ul>
-                  </div>
                 </div>
               ) : (
                 <div className="space-y-3 mb-4">
-                  {/* Quality Check Passed */}
                   {sharingValidation && sharingValidation.valid && (
-                    <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                    <div className="bg-gradient-to-r from-emerald-50 to-green-50 border border-emerald-200 rounded-xl p-3 shadow-md">
                       <div className="flex items-center gap-2 mb-2">
-                        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                        <span className="font-medium text-emerald-800">Quality Requirements Met ✓</span>
+                        <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                        <span className="font-semibold text-emerald-800">Quality Requirements Met</span>
                       </div>
-                      <div className="text-xs text-emerald-700 grid grid-cols-2 gap-2">
-                        <div>✓ {sharingValidation.details?.agentQuality?.executions || 0} test runs</div>
-                        <div>✓ {sharingValidation.details?.agentQuality?.successRate || 0}% success rate</div>
-                        <div>✓ {sharingValidation.details?.agentQuality?.agentAgeHours || 0}h old</div>
-                        <div>✓ Description included</div>
-                      </div>
-                      {sharingStatus && (
-                        <div className="mt-2 pt-2 border-t border-emerald-200 text-xs text-emerald-600">
-                          <strong>Your sharing limits:</strong> {sharingStatus.remaining.daily} today, {sharingStatus.remaining.monthly} this month
-                        </div>
-                      )}
                     </div>
                   )}
 
-                  <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                  <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-xl p-3 shadow-md">
                     <div className="flex items-center gap-2 mb-2">
-                      <Coins className="h-4 w-4 text-green-600" />
-                      <span className="font-medium text-green-800">Earn {sharingRewardAmount} Credits (One-time)</span>
+                      <Coins className="h-5 w-5 text-green-600" />
+                      <span className="font-semibold text-green-800">Earn {sharingRewardAmount} Credits</span>
                     </div>
-                    <p className="text-green-700 text-sm">You'll receive credits when you share this assistant. Each assistant can only be shared once.</p>
-                  </div>
-                  
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Users className="h-4 w-4 text-blue-600" />
-                      <span className="font-medium text-blue-800">What gets shared:</span>
-                    </div>
-                    <ul className="text-blue-700 text-sm space-y-1">
-                      <li>• Assistant name and description</li>
-                      <li>• Instructions and configuration</li>
-                      <li>• Required tools and settings</li>
-                      <li>• Input/output schema</li>
-                    </ul>
-                  </div>
-                  
-                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Shield className="h-4 w-4 text-slate-600" />
-                      <span className="font-medium text-slate-800">Your privacy is protected:</span>
-                    </div>
-                    <ul className="text-slate-700 text-sm space-y-1">
-                      <li>• Your personal data stays private</li>
-                      <li>• Execution history not included</li>
-                      <li>• Only the template is shared</li>
-                      <li>• You remain the original creator</li>
-                    </ul>
+                    <p className="text-green-700 text-sm">You'll receive credits when you share this assistant.</p>
                   </div>
                 </div>
               )}
-              
+
               <div className="flex gap-3">
                 <button
                   onClick={() => setShowShareConfirm(false)}
-                  className="flex-1 px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors font-medium text-sm"
+                  className="flex-1 px-6 py-3 bg-slate-100 hover:bg-slate-200 rounded-xl transition-all duration-200 font-semibold shadow-md hover:shadow-lg hover:scale-105"
                 >
                   {(hasBeenShared || sharingValidation?.details?.alreadyShared) ? 'Close' : 'Cancel'}
                 </button>
@@ -1919,13 +1704,13 @@ export default function AgentPage() {
                   <button
                     onClick={handleShareAgent}
                     disabled={actionLoading === 'share' || (sharingValidation && !sharingValidation.valid)}
-                    className="flex-1 px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg hover:from-blue-600 hover:to-purple-700 transition-all duration-200 font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-xl hover:from-blue-600 hover:to-purple-700 transition-all duration-200 font-semibold shadow-lg hover:shadow-xl hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
                   >
                     {actionLoading === 'share' ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      <div className="flex items-center justify-center gap-2">
+                        <Loader2 className="h-5 w-5 animate-spin" />
                         Sharing...
-                      </>
+                      </div>
                     ) : (
                       'Share & Earn Credits'
                     )}
@@ -1940,66 +1725,39 @@ export default function AgentPage() {
       <Modal isOpen={showDeleteConfirm} onClose={() => setShowDeleteConfirm(false)}>
         <div className="p-6">
           <div className="flex items-start gap-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-red-400 to-pink-500 rounded-xl flex items-center justify-center">
+            <div className="w-12 h-12 bg-gradient-to-br from-red-400 to-pink-500 rounded-xl flex items-center justify-center shadow-lg">
               <AlertTriangle className="h-6 w-6 text-white" />
             </div>
             <div className="flex-1">
-              <h3 className="font-semibold text-slate-900 mb-3 text-lg">Delete "{agent.agent_name}"</h3>
-              
+              <h3 className="font-semibold text-slate-900 mb-3 text-lg tracking-tight">Delete "{agent.agent_name}"</h3>
+
               <div className="space-y-3 mb-4">
-                <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                <div className="bg-gradient-to-r from-red-50 to-pink-50 border border-red-200 rounded-xl p-3 shadow-md">
                   <div className="flex items-center gap-2 mb-2">
-                    <AlertTriangle className="h-4 w-4 text-red-600" />
-                    <span className="font-medium text-red-800">This action cannot be undone</span>
+                    <AlertTriangle className="h-5 w-5 text-red-600" />
+                    <span className="font-semibold text-red-800">This action cannot be undone</span>
                   </div>
-                  <p className="text-red-700 text-sm">Once deleted, you cannot recover this assistant or its configuration. All data will be permanently removed.</p>
-                </div>
-                
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Database className="h-4 w-4 text-amber-600" />
-                    <span className="font-medium text-amber-800">What will be permanently deleted:</span>
-                  </div>
-                  <ul className="text-amber-700 text-sm space-y-1">
-                    <li>• All assistant configurations and settings</li>
-                    <li>• Complete execution history and logs</li>
-                    <li>• Scheduled tasks and automations</li>
-                    <li>• Any saved input templates and forms</li>
-                    <li>• Performance metrics and analytics</li>
-                    {hasBeenShared && <li>• Shared community version (if applicable)</li>}
-                  </ul>
-                </div>
-                
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Lightbulb className="h-4 w-4 text-blue-600" />
-                    <span className="font-medium text-blue-800">Consider alternatives:</span>
-                  </div>
-                  <ul className="text-blue-700 text-sm space-y-1">
-                    <li>• <strong>Pause</strong> the assistant to stop it temporarily</li>
-                    <li>• <strong>Archive</strong> it for potential future use</li>
-                    <li>• <strong>Export</strong> the configuration before deleting</li>
-                  </ul>
+                  <p className="text-red-700 text-sm">Once deleted, you cannot recover this assistant or its configuration.</p>
                 </div>
               </div>
-              
+
               <div className="flex gap-3">
                 <button
                   onClick={() => setShowDeleteConfirm(false)}
-                  className="flex-1 px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors font-medium text-sm"
+                  className="flex-1 px-6 py-3 bg-slate-100 hover:bg-slate-200 rounded-xl transition-all duration-200 font-semibold shadow-md hover:shadow-lg hover:scale-105"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleDelete}
                   disabled={actionLoading === 'delete'}
-                  className="flex-1 px-4 py-2 bg-gradient-to-r from-red-500 to-pink-600 text-white rounded-lg hover:from-red-600 hover:to-pink-700 transition-all duration-200 font-medium text-sm disabled:opacity-50"
+                  className="flex-1 px-6 py-3 bg-gradient-to-r from-red-500 to-pink-600 text-white rounded-xl hover:from-red-600 hover:to-pink-700 transition-all duration-200 font-semibold shadow-lg hover:shadow-xl hover:scale-105 disabled:opacity-50 disabled:hover:scale-100"
                 >
                   {actionLoading === 'delete' ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    <div className="flex items-center justify-center gap-2">
+                      <Loader2 className="h-5 w-5 animate-spin" />
                       Deleting...
-                    </>
+                    </div>
                   ) : (
                     'Delete Forever'
                   )}
@@ -2013,54 +1771,29 @@ export default function AgentPage() {
       <Modal isOpen={showDeactivateConfirm} onClose={() => setShowDeactivateConfirm(false)}>
         <div className="p-6">
           <div className="flex items-start gap-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-orange-400 to-red-500 rounded-xl flex items-center justify-center">
+            <div className="w-12 h-12 bg-gradient-to-br from-orange-400 to-red-500 rounded-xl flex items-center justify-center shadow-lg">
               <Pause className="h-6 w-6 text-white" />
             </div>
             <div className="flex-1">
-              <h3 className="font-semibold text-slate-900 mb-3 text-lg">Pause "{agent.agent_name}"</h3>
-              
+              <h3 className="font-semibold text-slate-900 mb-3 text-lg tracking-tight">Pause "{agent.agent_name}"</h3>
+
               <div className="space-y-3 mb-4">
-                <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+                <div className="bg-gradient-to-r from-orange-50 to-red-50 border border-orange-200 rounded-xl p-3 shadow-md">
                   <div className="flex items-center gap-2 mb-2">
-                    <Pause className="h-4 w-4 text-orange-600" />
-                    <span className="font-medium text-orange-800">What happens when paused:</span>
+                    <Pause className="h-5 w-5 text-orange-600" />
+                    <span className="font-semibold text-orange-800">What happens when paused:</span>
                   </div>
                   <ul className="text-orange-700 text-sm space-y-1">
-                    <li>• All automated executions will stop</li>
-                    <li>• Scheduled tasks will be disabled</li>
-                    <li>• Manual testing will be unavailable</li>
-                    <li>• No new execution history will be created</li>
+                    <li>All automated executions will stop</li>
+                    <li>You can reactivate anytime</li>
                   </ul>
-                </div>
-                
-                <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Shield className="h-4 w-4 text-green-600" />
-                    <span className="font-medium text-green-800">What stays safe:</span>
-                  </div>
-                  <ul className="text-green-700 text-sm space-y-1">
-                    <li>• All configurations and settings preserved</li>
-                    <li>• Execution history and logs remain intact</li>
-                    <li>• You can reactivate anytime</li>
-                    <li>• No data or setup will be lost</li>
-                  </ul>
-                </div>
-                
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Info className="h-4 w-4 text-blue-600" />
-                    <span className="font-medium text-blue-800">Good for:</span>
-                  </div>
-                  <p className="text-blue-700 text-sm">
-                    Temporary breaks, maintenance periods, or when you want to stop automation without losing your setup.
-                  </p>
                 </div>
               </div>
-              
+
               <div className="flex gap-3">
                 <button
                   onClick={() => setShowDeactivateConfirm(false)}
-                  className="flex-1 px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors font-medium text-sm"
+                  className="flex-1 px-6 py-3 bg-slate-100 hover:bg-slate-200 rounded-xl transition-all duration-200 font-semibold shadow-md hover:shadow-lg hover:scale-105"
                 >
                   Cancel
                 </button>
@@ -2076,15 +1809,15 @@ export default function AgentPage() {
                     }
                   }}
                   disabled={actionLoading === 'toggle'}
-                  className="flex-1 px-4 py-2 bg-gradient-to-r from-orange-500 to-red-600 text-white rounded-lg hover:from-orange-600 hover:to-red-700 transition-all duration-200 font-medium text-sm disabled:opacity-50"
+                  className="flex-1 px-6 py-3 bg-gradient-to-r from-orange-500 to-red-600 text-white rounded-xl hover:from-orange-600 hover:to-red-700 transition-all duration-200 font-semibold shadow-lg hover:shadow-xl hover:scale-105 disabled:opacity-50 disabled:hover:scale-100"
                 >
                   {actionLoading === 'toggle' ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    <div className="flex items-center justify-center gap-2">
+                      <Loader2 className="h-5 w-5 animate-spin" />
                       Pausing...
-                    </>
+                    </div>
                   ) : (
-                    'Pause Assistant'
+                    'Pause Agent'
                   )}
                 </button>
               </div>
@@ -2092,6 +1825,7 @@ export default function AgentPage() {
           </div>
         </div>
       </Modal>
+
     </div>
   )
 }

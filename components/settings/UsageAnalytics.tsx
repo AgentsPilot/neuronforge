@@ -3,6 +3,7 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabaseClient';
+import { formatActivityType } from '@/lib/utils/formatActivityName';
 import {
   TrendingUp,
   Activity,
@@ -393,8 +394,8 @@ export default function UsageAnalytics() {
                       {/* Activity Type */}
                       <div>
                         <div className="text-slate-500 mb-1">Activity Type</div>
-                        <div className="font-medium text-slate-900 capitalize">
-                          {transaction.activity_type?.replace('_', ' ') || 'N/A'}
+                        <div className="font-medium text-slate-900">
+                          {formatActivityType(transaction.activity_type)}
                         </div>
                       </div>
 

@@ -246,8 +246,10 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
       ({ response: message, iterations, toolCallsCount, tokensUsed, executionTimeMs, success } = output);
       // Try to get model from output, fallback to default
       model = output?.model || output?.model_used || output?.modelUsed || 'gpt-4o';
-      toolCalls = []; // Not available in run_output
+      // Try to get tool calls from the output if available
+      toolCalls = output?.toolCalls || output?.tool_calls || [];
     }
+
 
     return (
       <div className="space-y-3">
@@ -265,10 +267,18 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
             )}
           </div>
           <div className="p-2.5">
-            <div
-              className="prose prose-sm max-w-none text-gray-700 text-xs leading-relaxed"
-              dangerouslySetInnerHTML={{ __html: formatText(message || 'No message available') }}
-            />
+            <div className="prose prose-sm max-w-none text-gray-700 text-xs leading-relaxed">
+              {message ? (
+                <div dangerouslySetInnerHTML={{ __html: formatText(message) }} />
+              ) : (
+                <div className="flex items-start gap-2 text-gray-500 italic">
+                  <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>Execution completed successfully. Output details are not stored for privacy.</span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -282,7 +292,7 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
           )}
           {iterations !== undefined && (
             <div className="bg-white border border-gray-200 rounded p-2">
-              <div className="text-xs text-gray-500 mb-0.5">Steps</div>
+              <div className="text-xs text-gray-500 mb-0.5">Iterations</div>
               <div className="text-xs font-semibold text-gray-900">{iterations}</div>
             </div>
           )}
@@ -319,8 +329,13 @@ export default function AgentHistoryBlock({ agentId }: { agentId: string }) {
         {/* Tool Calls Timeline - Compact Design with Full Details */}
         {toolCalls && toolCalls.length > 0 && (
           <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-            <div className="bg-gradient-to-r from-gray-50 to-gray-100 px-3 py-2 border-b border-gray-200">
+            <div className="bg-gradient-to-r from-gray-50 to-gray-100 px-3 py-2 border-b border-gray-200 flex items-center justify-between">
               <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Execution Steps</span>
+              {toolCalls && toolCalls.length > 0 && (
+                <span className="text-xs text-gray-500">
+                  {toolCalls.length} action{toolCalls.length !== 1 ? 's' : ''}
+                </span>
+              )}
             </div>
             <div className="divide-y divide-gray-100">
               {toolCalls.map((call: any, idx: number) => {

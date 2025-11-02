@@ -17,6 +17,7 @@ interface AgentIntensityCardProps {
 
 export function AgentIntensityCard({ agentId }: AgentIntensityCardProps) {
   const [breakdown, setBreakdown] = useState<IntensityBreakdown | null>(null);
+  const [routingConfig, setRoutingConfig] = useState<{ lowThreshold: number; mediumThreshold: number; anthropicEnabled: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(false);
 
@@ -29,7 +30,9 @@ export function AgentIntensityCard({ agentId }: AgentIntensityCardProps) {
       const response = await fetch(`/api/agents/${agentId}/intensity`);
       if (response.ok) {
         const data = await response.json();
-        setBreakdown(data);
+        const { routing_config, ...breakdownData } = data;
+        setBreakdown(breakdownData);
+        setRoutingConfig(routing_config);
       }
     } catch (err) {
       console.error('Error fetching intensity:', err);
@@ -56,17 +59,47 @@ export function AgentIntensityCard({ agentId }: AgentIntensityCardProps) {
   const badgeColorClass = getIntensityBadgeColor(combinedScore);
   const hasExecutions = breakdown.details.execution_stats.total_executions > 0;
 
+  // Determine model based on AIS score (matches ModelRouter thresholds from database)
+  const getModelInfo = (score: number) => {
+    // Use dynamic thresholds from database or fallback to defaults
+    const lowThreshold = routingConfig?.lowThreshold ?? 3.9;
+    const mediumThreshold = routingConfig?.mediumThreshold ?? 6.9;
+    const anthropicEnabled = routingConfig?.anthropicEnabled ?? true;
+
+    if (score <= lowThreshold) {
+      return { name: 'GPT-4o-mini', color: 'text-green-600', bg: 'bg-green-50', border: 'border-green-200' };
+    } else if (score <= mediumThreshold) {
+      // Show Claude Haiku if Anthropic is enabled, otherwise GPT-4o-mini
+      if (anthropicEnabled) {
+        return { name: 'Claude Haiku', color: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-200' };
+      } else {
+        return { name: 'GPT-4o-mini', color: 'text-green-600', bg: 'bg-green-50', border: 'border-green-200' };
+      }
+    } else {
+      return { name: 'GPT-4o', color: 'text-purple-600', bg: 'bg-purple-50', border: 'border-purple-200' };
+    }
+  };
+
+  const modelInfo = getModelInfo(combinedScore);
+
   return (
-    <div className="bg-white rounded-lg border border-slate-200 p-6">
+    <div className="bg-gradient-to-br from-purple-50 via-white to-indigo-50 rounded-2xl border border-gray-200 shadow-lg p-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-2">
-          <Activity className="h-5 w-5 text-slate-700" />
-          <h3 className="text-lg font-semibold text-slate-900">Agent Complexity</h3>
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-lg flex items-center justify-center">
+            <Activity className="h-5 w-5 text-white" />
+          </div>
+          <h3 className="text-sm font-semibold text-gray-700">Agent Complexity</h3>
         </div>
-        <span className={`text-xs px-3 py-1 rounded-full ${badgeColorClass} font-medium`}>
-          {intensityRange} {!hasExecutions && '(estimated)'}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className={`text-xs px-3 py-1 rounded-full ${modelInfo.bg} ${modelInfo.color} font-semibold border ${modelInfo.border}`}>
+            {modelInfo.name}
+          </span>
+          <span className={`text-xs px-3 py-1 rounded-full ${badgeColorClass} font-medium`}>
+            {intensityRange} {!hasExecutions && '(estimated)'}
+          </span>
+        </div>
       </div>
 
       {/* Main Score Display */}
@@ -167,23 +200,25 @@ export function AgentIntensityCard({ agentId }: AgentIntensityCardProps) {
         </div>
       </div>
 
-      {/* Expand/Collapse Button */}
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full py-2 text-sm text-slate-600 hover:text-slate-900 flex items-center justify-center gap-2 border-t border-slate-200 mt-4 pt-4"
-      >
-        {expanded ? (
-          <>
-            <span>Hide technical details</span>
-            <ChevronUp className="h-4 w-4" />
-          </>
-        ) : (
-          <>
-            <span>Show technical details</span>
-            <ChevronDown className="h-4 w-4" />
-          </>
-        )}
-      </button>
+      {/* Expand/Collapse Button - Matching View Prompt style */}
+      <div className="flex justify-center">
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex items-center gap-2 px-3 py-1.5 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 font-semibold text-xs transition-all duration-200"
+        >
+          {expanded ? (
+            <>
+              <ChevronUp className="h-3 w-3" />
+              Hide Details
+            </>
+          ) : (
+            <>
+              <ChevronDown className="h-3 w-3" />
+              View Details
+            </>
+          )}
+        </button>
+      </div>
 
       {/* Expanded Technical Details */}
       {expanded && (
@@ -234,10 +269,10 @@ export function AgentIntensityCard({ agentId }: AgentIntensityCardProps) {
             </div>
           </div>
 
-          {/* Runtime Complexity Breakdown - 4 Dimensions */}
+          {/* Runtime Complexity Breakdown - 5 Dimensions */}
           <div>
             <h4 className="text-sm font-semibold text-slate-700 mb-3">
-              Runtime Complexity - 4 Dimensions
+              Runtime Complexity - 5 Dimensions
               <span className="text-xs font-normal text-slate-500 ml-2">(Runtime Score: {breakdown.execution_score.toFixed(1)}/10)</span>
               {!hasExecutions && <span className="text-xs font-normal text-amber-600 ml-2">(defaults until first run)</span>}
             </h4>
@@ -309,9 +344,29 @@ export function AgentIntensityCard({ agentId }: AgentIntensityCardProps) {
                   <span className="text-slate-400">No runs yet - using default value</span>
                 )}
               </MetricRow>
+
+              <MetricRow
+                label="Memory Complexity"
+                score={breakdown.execution_components.memory_complexity.score}
+                weight={breakdown.execution_components.memory_complexity.weight}
+              >
+                {hasExecutions && breakdown.details.memory_stats.memory_entry_count > 0 ? (
+                  <>
+                    {breakdown.details.memory_stats.memory_entry_count.toFixed(0)} avg entries •
+                    {breakdown.details.memory_stats.avg_memory_tokens_per_run.toFixed(0)} tokens/run •
+                    {(breakdown.details.memory_stats.memory_token_ratio * 100).toFixed(1)}% of input
+                  </>
+                ) : breakdown.details.memory_stats.memory_entry_count > 0 ? (
+                  <>
+                    {breakdown.details.memory_stats.memory_entry_count.toFixed(0)} avg entries loaded
+                  </>
+                ) : (
+                  <span className="text-slate-400">No memory usage detected</span>
+                )}
+              </MetricRow>
             </div>
             <div className="mt-3 pt-3 border-t border-slate-200 text-xs text-slate-600">
-              <span className="font-medium">Weighted calculation:</span> Token (35%) + Execution (25%) + Plugin (25%) + Workflow (15%)
+              <span className="font-medium">Weighted calculation:</span> Token (30%) + Execution (25%) + Plugin (20%) + Workflow (15%) + Memory (10%)
             </div>
           </div>
 

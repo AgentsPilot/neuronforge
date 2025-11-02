@@ -8,6 +8,7 @@ import AgentStatsChart from '@/components/dashboard/AgentStatsChart'
 import AgentStatsTable from '@/components/dashboard/AgentStatsTable'
 import ScheduledAgentsCard from '@/components/dashboard/ScheduledAgentsCard'
 import AlertFeed from '@/components/dashboard/AlertFeed'
+import LearningAnalyticsCard from '@/components/dashboard/LearningAnalyticsCard'
 import {
   Activity,
   Bell,
@@ -16,7 +17,8 @@ import {
   BarChart3,
   RefreshCw,
   Sparkles,
-  CheckCircle
+  CheckCircle,
+  Brain
 } from 'lucide-react'
 
 export default function DashboardPage() {
@@ -25,6 +27,7 @@ export default function DashboardPage() {
   const [agentStats, setAgentStats] = useState<any[]>([])
   const [scheduledCount, setScheduledCount] = useState(0)
   const [alertsCount, setAlertsCount] = useState(0)
+  const [totalMemories, setTotalMemories] = useState(0)
   const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
 
@@ -83,6 +86,18 @@ export default function DashboardPage() {
       console.error('❌ Failed to fetch alerts:', alertsError.message)
     } else {
       setAlertsCount(failedCount || 0)
+    }
+
+    // Fetch total memories count
+    const { count: memoriesCount, error: memoriesError } = await supabase
+      .from('run_memories')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+
+    if (memoriesError) {
+      console.error('❌ Failed to fetch memories count:', memoriesError.message)
+    } else {
+      setTotalMemories(memoriesCount || 0)
     }
 
     setLastUpdated(new Date())
@@ -165,7 +180,7 @@ export default function DashboardPage() {
           <h2 className="text-xl font-bold text-gray-900">Quick Overview</h2>
           <p className="text-gray-600">A snapshot of your automation activity</p>
         </div>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
           <div className="group relative overflow-hidden bg-gradient-to-br from-violet-50 to-purple-50 p-5 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 border-2 border-violet-100">
             <div className="absolute inset-0 bg-gradient-to-br from-violet-500/10 to-purple-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
             <div className="relative space-y-3">
@@ -226,6 +241,22 @@ export default function DashboardPage() {
               <div>
                 <p className="text-sm text-slate-700 font-semibold">Needs Attention</p>
                 <p className="text-xs text-slate-600 font-medium mt-1">{alertsCount > 0 ? 'Issues in last 24 hours' : 'Everything looks good!'}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="group relative overflow-hidden bg-gradient-to-br from-purple-50 to-indigo-50 p-5 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 border-2 border-purple-100">
+            <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-indigo-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            <div className="relative space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="w-12 h-12 bg-gradient-to-br from-purple-500 via-indigo-500 to-violet-600 rounded-2xl flex items-center justify-center shadow-lg">
+                  <Brain className="h-6 w-6 text-white" />
+                </div>
+                <div className="text-3xl font-bold text-gray-900">{totalMemories}</div>
+              </div>
+              <div>
+                <p className="text-sm text-purple-700 font-semibold">Learning Progress</p>
+                <p className="text-xs text-purple-600 font-medium mt-1">{totalMemories > 0 ? 'Agents are learning' : 'Start learning today'}</p>
               </div>
             </div>
           </div>
@@ -332,6 +363,9 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Learning Analytics Card */}
+      {user && <LearningAnalyticsCard userId={user.id} />}
 
       {/* Quick Actions - Compact */}
       <div className="bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-600 rounded-2xl p-6 text-white shadow-xl">

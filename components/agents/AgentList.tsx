@@ -4,12 +4,12 @@ import Link from 'next/link'
 import { useEffect, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabaseClient'
-import { 
+import {
   Bot, Plus, Search, Filter, Play, Pause, Edit, AlertCircle, CheckCircle, Clock,
   FileText, Zap, Calendar, Settings, ArrowUpDown, Sparkles, Rocket, Star, Heart,
   Grid3X3, List, ChevronDown, ChevronUp, TrendingUp, Activity, MoreHorizontal,
   Eye, Copy, Archive, Trash2, ExternalLink, Square, Loader2, StopCircle, Timer,
-  PlayCircle, Cpu, BarChart3, Shield, Workflow, History, Globe, X, Info
+  PlayCircle, Cpu, BarChart3, Shield, Workflow, History, Globe, X, Info, Brain
 } from 'lucide-react'
 import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
 
@@ -49,6 +49,7 @@ type Agent = {
   schedule_cron?: string
   timezone?: string
   next_run?: string
+  memory_count?: number
 }
 
 type FilterType = 'all' | 'active' | 'inactive' | 'draft'
@@ -1009,9 +1010,26 @@ export default function AgentList() {
 
       if (error) {
         console.error('Error fetching agents:', error)
-      } else {
-        setAgents(data || [])
+        setLoading(false)
+        return
       }
+
+      // Fetch memory counts for each agent
+      const agentsWithMemoryCount = await Promise.all(
+        (data || []).map(async (agent) => {
+          const { count } = await supabase
+            .from('run_memories')
+            .select('*', { count: 'exact', head: true })
+            .eq('agent_id', agent.id)
+
+          return {
+            ...agent,
+            memory_count: count || 0
+          }
+        })
+      )
+
+      setAgents(agentsWithMemoryCount)
       setLoading(false)
     }
     fetchAgents()
@@ -1253,6 +1271,14 @@ export default function AgentList() {
                     <div className="flex items-center gap-1 text-xs text-gray-500">
                       <Timer className="w-3 h-3" />
                       <span>{nextRunInfo.text}</span>
+                    </div>
+                  )}
+
+                  {/* Learning indicator - only show if agent has memories */}
+                  {agent.memory_count && agent.memory_count > 0 && (
+                    <div className="flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-purple-50 text-purple-700 border border-purple-200">
+                      <Brain className="w-3 h-3" />
+                      <span>Learning</span>
                     </div>
                   )}
                 </div>

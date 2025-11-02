@@ -142,6 +142,24 @@ export async function POST(req: Request) {
         // Just log that email delivery was configured
       }
 
+      // Sanitize toolCalls to remove client data (keep metadata only)
+      const sanitizeToolCalls = (toolCalls: any[]) => {
+        return toolCalls.map(tc => ({
+          plugin: tc.plugin || 'unknown',
+          action: tc.action || 'unknown',
+          success: tc.success ?? true,
+          itemsReturned: tc.result?.emails?.length ||
+                         tc.result?.contacts?.length ||
+                         tc.result?.events?.length ||
+                         tc.result?.items?.length ||
+                         tc.result?.length ||
+                         (tc.result ? 1 : 0),
+          executionTime: tc.executionTime || 0,
+          error: tc.error || null
+          // NO client data: no email subjects, bodies, contact names, etc.
+        }));
+      };
+
       // Log execution to agent_executions table
       const now = new Date().toISOString()
       const { error: insertError } = await supabase.from('agent_executions').insert({
@@ -157,7 +175,7 @@ export async function POST(req: Request) {
         logs: {
           agentkit: true,
           iterations: result.iterations,
-          toolCalls: result.toolCalls,
+          toolCalls: sanitizeToolCalls(result.toolCalls), // SANITIZED - metadata only
           tokensUsed: result.tokensUsed,
           model: result.model || 'gpt-4o', // Use actual model from intelligent routing
           provider: result.provider || 'openai',
@@ -177,7 +195,7 @@ export async function POST(req: Request) {
           agent_id: agent.id,
           user_id: user.id,
           run_output: JSON.stringify({
-            response: result.response,
+            // SANITIZED: No actual response content (may contain client data)
             success: result.success,
             agentkit: true,
             iterations: result.iterations,
@@ -186,16 +204,18 @@ export async function POST(req: Request) {
             executionTimeMs: result.executionTime,
             model: result.model || 'gpt-4o', // Include actual model used
             provider: result.provider || 'openai'
+            // response: result.response ← REMOVED (contains client data summaries)
           }),
           full_output: {
-            message: result.response,
+            // SANITIZED: No message content
             agentkit_metadata: {
               model: result.model || 'gpt-4o', // Use actual model from intelligent routing
               provider: result.provider || 'openai',
               iterations: result.iterations,
-              toolCalls: result.toolCalls,
+              toolCalls: sanitizeToolCalls(result.toolCalls), // SANITIZED - metadata only (actions only, no synthetic LLM steps)
               tokensUsed: result.tokensUsed
             }
+            // message: result.response ← REMOVED (contains client data summaries)
           },
           status: result.success ? '✅ AgentKit execution completed successfully' : '❌ AgentKit execution failed',
           created_at: now,
@@ -255,10 +275,20 @@ export async function POST(req: Request) {
           conditional_branches: workflowComplexity.branches,
           loop_iterations: workflowComplexity.loops,
           parallel_executions: workflowComplexity.parallel,
+          // Memory data for AIS tracking (NEW)
+          memory_tokens: result.memoryData?.tokens || 0,
+          memory_entry_count: result.memoryData?.entryCount || 0,
+          memory_types: result.memoryData?.types || [],
         };
 
-        const updated = await updateAgentIntensityMetrics(supabase, executionData);
-        console.log('✅ [INTENSITY] Update result:', updated ? 'SUCCESS' : 'FAILED');
+        const aisResult = await updateAgentIntensityMetrics(supabase, executionData);
+        if (aisResult.success) {
+          console.log('✅ [INTENSITY] Update SUCCESS - Combined Score:', aisResult.combined_score.toFixed(2));
+          // Store AIS score for potential use in response or logging
+          (result as any).ais_score = aisResult.combined_score;
+        } else {
+          console.log('❌ [INTENSITY] Update FAILED');
+        }
       } catch (intensityError) {
         console.error('❌ Failed to update intensity metrics:', intensityError);
         // Non-fatal error - continue execution
@@ -586,69 +616,8 @@ export async function POST(req: Request) {
       console.error('❌ Failed to insert log into agent_logs:', logInsertError)
     } else {
       console.log('✅ Agent log inserted successfully')
-
-      // Insert output context if we have a log ID and output data
-      if (logData?.id && (message || parsed_output || pluginContext)) {
-        console.log('📝 Inserting agent output context...')
-        
-        const contextEntries = []
-        
-        // Add message as context if it exists
-        if (message) {
-          contextEntries.push({
-            user_id: user.id,
-            source_agent_id: agent_id,
-            run_id: logData.id,
-            context_key: 'agent_message',
-            context_data: { message }
-          })
-        }
-        
-        // Add parsed output as context if it exists
-        if (parsed_output) {
-          contextEntries.push({
-            user_id: user.id,
-            source_agent_id: agent_id,
-            run_id: logData.id,
-            context_key: 'parsed_output',
-            context_data: parsed_output
-          })
-        }
-        
-        // Add plugin context if it exists
-        if (pluginContext && Object.keys(pluginContext).length > 0) {
-          contextEntries.push({
-            user_id: user.id,
-            source_agent_id: agent_id,
-            run_id: logData.id,
-            context_key: 'plugin_context',
-            context_data: pluginContext
-          })
-        }
-        
-        // Add input variables as context for future reference
-        if (input_variables && Object.keys(input_variables).length > 0) {
-          contextEntries.push({
-            user_id: user.id,
-            source_agent_id: agent_id,
-            run_id: logData.id,
-            context_key: 'input_variables',
-            context_data: input_variables
-          })
-        }
-
-        if (contextEntries.length > 0) {
-          const { error: contextInsertError } = await supabase
-            .from('agent_output_context')
-            .insert(contextEntries)
-
-          if (contextInsertError) {
-            console.error('❌ Failed to insert agent output context:', contextInsertError)
-          } else {
-            console.log('✅ Agent output context inserted successfully')
-          }
-        }
-      }
+      // Note: agent_output_context table removed for privacy compliance
+      // We no longer store raw execution outputs (message, parsed_output, pluginContext)
     }
 
     console.log('📊 Updating agent_stats...')
