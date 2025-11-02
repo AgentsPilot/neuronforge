@@ -31,11 +31,12 @@ export interface AgentIntensityMetrics {
   creation_complexity_score: number;          // DEPRECATED: Use creation dimension scores
   creation_token_efficiency_score: number;    // DEPRECATED: Use creation dimension scores
 
-  // === EXECUTION COMPONENT SCORES (4 components) ===
+  // === EXECUTION COMPONENT SCORES (5 components) ===
   token_complexity_score: number;
   execution_complexity_score: number;
   plugin_complexity_score: number;
   workflow_complexity_score: number;
+  memory_complexity_score: number;  // NEW: Memory complexity (5th component)
 
   // Token Statistics
   total_tokens_used: number;
@@ -44,6 +45,18 @@ export interface AgentIntensityMetrics {
   input_output_ratio: number;
   creation_tokens_used: number; // NEW: Tokens used during agent creation
   total_creation_cost_usd: number; // NEW: USD cost of creation
+
+  // Output Token Growth Tracking (NEW)
+  avg_output_tokens_per_run: number;      // Average output tokens across all executions
+  output_token_growth_rate: number;       // Percentage growth vs baseline
+  output_token_baseline: number;          // Rolling average baseline (all executions)
+  output_token_alert_level: 'none' | 'monitor' | 'rescore' | 'upgrade'; // Alert level based on growth
+
+  // Memory Complexity Tracking (NEW)
+  avg_memory_tokens_per_run: number;      // Average memory tokens injected per execution
+  memory_token_ratio: number;             // Ratio of memory tokens to total input tokens
+  memory_entry_count: number;             // Average number of memory entries loaded
+  memory_type_diversity: number;          // Number of distinct memory types used
 
   // Execution Statistics
   total_executions: number;
@@ -117,6 +130,11 @@ export interface AgentExecutionData {
   // Resource usage (optional)
   memory_usage_mb?: number;
   api_calls?: number;
+
+  // Memory context data (optional)
+  memory_tokens?: number;           // Number of memory tokens injected
+  memory_entry_count?: number;      // Number of memory entries loaded
+  memory_types?: string[];          // Types of memory used (e.g., ['user_context', 'summaries'])
 }
 
 /**
@@ -168,7 +186,7 @@ export interface CreationComponentScores {
 }
 
 /**
- * Execution component scores (4 components - from current AIS)
+ * Execution component scores (5 components - includes memory)
  */
 export interface IntensityComponentScores {
   token_complexity: {
@@ -187,6 +205,11 @@ export interface IntensityComponentScores {
     weighted_score: number;
   };
   workflow_complexity: {
+    score: number;
+    weight: number;
+    weighted_score: number;
+  };
+  memory_complexity: {
     score: number;
     weight: number;
     weighted_score: number;
@@ -257,6 +280,12 @@ export interface IntensityBreakdown {
       loops: number;
       parallel_executions: number;
     };
+    memory_stats: {
+      avg_memory_tokens_per_run: number;
+      memory_token_ratio: number;
+      memory_entry_count: number;
+      memory_type_diversity: number;
+    };
   };
 }
 
@@ -297,13 +326,15 @@ export const CREATION_WEIGHTS = {
 } as const;
 
 /**
- * Execution score weights (4 components)
+ * Execution score weights (5 components)
+ * UPDATED: Rebalanced to include memory complexity
  */
 export const EXECUTION_WEIGHTS = {
-  TOKEN_COMPLEXITY: 0.35,      // 35% weight
-  EXECUTION_COMPLEXITY: 0.25,  // 25% weight
-  PLUGIN_COMPLEXITY: 0.25,     // 25% weight
-  WORKFLOW_COMPLEXITY: 0.15,   // 15% weight
+  TOKEN_COMPLEXITY: 0.30,      // 30% weight (reduced from 35%)
+  EXECUTION_COMPLEXITY: 0.25,  // 25% weight (unchanged)
+  PLUGIN_COMPLEXITY: 0.20,     // 20% weight (reduced from 25%)
+  WORKFLOW_COMPLEXITY: 0.15,   // 15% weight (unchanged)
+  MEMORY_COMPLEXITY: 0.10,     // 10% weight (NEW - 5th component)
 } as const;
 
 /**
@@ -357,17 +388,31 @@ export const DEFAULT_INTENSITY_METRICS: Partial<AgentIntensityMetrics> = {
   creation_complexity_score: 5.0,
   creation_token_efficiency_score: 5.0,
 
-  // Execution component scores
+  // Execution component scores (5 components)
   token_complexity_score: 5.0,
   execution_complexity_score: 5.0,
   plugin_complexity_score: 5.0,
   workflow_complexity_score: 5.0,
+  memory_complexity_score: 0.0,    // NEW: Memory complexity (default 0 until memory is used)
   total_tokens_used: 0,
   avg_tokens_per_run: 0,
   peak_tokens_single_run: 0,
   input_output_ratio: 1.0,
   creation_tokens_used: 0,
   total_creation_cost_usd: 0,
+
+  // Output token growth tracking
+  avg_output_tokens_per_run: 0,
+  output_token_growth_rate: 0,
+  output_token_baseline: 0,
+  output_token_alert_level: 'none' as 'none' | 'monitor' | 'rescore' | 'upgrade',
+
+  // Memory complexity tracking
+  avg_memory_tokens_per_run: 0,
+  memory_token_ratio: 0,
+  memory_entry_count: 0,
+  memory_type_diversity: 0,
+
   total_executions: 0,
   successful_executions: 0,
   failed_executions: 0,

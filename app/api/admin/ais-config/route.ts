@@ -50,7 +50,22 @@ export async function GET() {
     const currentMode = firstRange?.active_mode === 1 ? 'dynamic' : 'best_practice';
     const minExecutionsRequired = firstRange?.min_executions_threshold || 10;
 
+    // Extract growth thresholds (all rows have same values, use first)
+    const growthThresholds = {
+      monitorThreshold: firstRange?.output_token_growth_monitor_threshold || 25,
+      rescoreThreshold: firstRange?.output_token_growth_rescore_threshold || 50,
+      upgradeThreshold: firstRange?.output_token_growth_upgrade_threshold || 100,
+      monitorAdjustment: firstRange?.output_token_growth_monitor_adjustment || 0.2,
+      rescoreAdjustment: firstRange?.output_token_growth_rescore_adjustment || 0.75,
+      upgradeAdjustment: firstRange?.output_token_growth_upgrade_adjustment || 1.25,
+      qualitySuccessThreshold: firstRange?.quality_success_threshold || 80,
+      qualityRetryThreshold: firstRange?.quality_retry_threshold || 30,
+      qualitySuccessMultiplier: firstRange?.quality_success_multiplier || 0.3,
+      qualityRetryMultiplier: firstRange?.quality_retry_multiplier || 0.2
+    };
+
     console.log('✅ [AIS Config] Active mode:', currentMode, '(', firstRange?.active_mode, ')');
+    console.log('✅ [AIS Config] Growth thresholds loaded:', growthThresholds);
 
     // Get statistics about data points from production data
     console.log('🔍 [AIS Config] Fetching production stats from agents table and token_usage...');
@@ -170,13 +185,19 @@ export async function GET() {
     console.log(`   - These are NOT counts of "how many agents created" or "how many times agents ran"`);
     console.log(`\n========================================================\n`);
 
-    // Group ranges by category
+    // Group ranges by category with special handling for memory complexity
     const rangesByCategory: Record<string, any[]> = {};
     ranges?.forEach(range => {
-      if (!rangesByCategory[range.category]) {
-        rangesByCategory[range.category] = [];
+      // Special handling: memory ranges get their own category
+      let category = range.category;
+      if (range.range_key?.includes('memory_')) {
+        category = 'memory_complexity';
       }
-      rangesByCategory[range.category].push(range);
+
+      if (!rangesByCategory[category]) {
+        rangesByCategory[category] = [];
+      }
+      rangesByCategory[category].push(range);
     });
 
     console.log('✅ [AIS Config] Categories:', Object.keys(rangesByCategory));
@@ -207,10 +228,11 @@ export async function GET() {
     };
 
     const aisWeights = {
-      tokens: 0.35,
+      tokens: 0.30,       // Updated default (reduced from 0.35)
       execution: 0.25,
-      plugins: 0.25,
+      plugins: 0.20,      // Updated default (reduced from 0.25)
       workflow: 0.15,
+      memory: 0.10,       // NEW: Memory complexity weight
       token_volume: 0.5,
       token_peak: 0.3,
       token_io: 0.2,
@@ -252,6 +274,9 @@ export async function GET() {
           break;
         case 'ais_weight_workflow':
           aisWeights.workflow = value;
+          break;
+        case 'ais_weight_memory':
+          aisWeights.memory = value;
           break;
         // Token subdimensions
         case 'ais_token_volume_weight':
@@ -322,7 +347,8 @@ export async function GET() {
         },
         ranges: rangesByCategory,
         systemLimits,
-        aisWeights
+        aisWeights,
+        growthThresholds
       }
     };
 
@@ -499,6 +525,48 @@ export async function POST(req: Request) {
         success: true,
         message: `Minimum executions threshold updated to ${threshold}`,
         threshold
+      });
+    }
+
+    if (action === 'update_growth_thresholds') {
+      const { growthThresholds } = body;
+
+      if (!growthThresholds) {
+        return NextResponse.json({ error: 'Missing growth thresholds data' }, { status: 400 });
+      }
+
+      console.log('🔄 [AIS Config] Updating growth thresholds:', growthThresholds);
+
+      // Update growth thresholds in ALL rows of ais_normalization_ranges table
+      const { error: updateError } = await supabaseServiceRole
+        .from('ais_normalization_ranges')
+        .update({
+          output_token_growth_monitor_threshold: growthThresholds.monitorThreshold,
+          output_token_growth_rescore_threshold: growthThresholds.rescoreThreshold,
+          output_token_growth_upgrade_threshold: growthThresholds.upgradeThreshold,
+          output_token_growth_monitor_adjustment: growthThresholds.monitorAdjustment,
+          output_token_growth_rescore_adjustment: growthThresholds.rescoreAdjustment,
+          output_token_growth_upgrade_adjustment: growthThresholds.upgradeAdjustment,
+          quality_success_threshold: growthThresholds.qualitySuccessThreshold,
+          quality_retry_threshold: growthThresholds.qualityRetryThreshold,
+          quality_success_multiplier: growthThresholds.qualitySuccessMultiplier,
+          quality_retry_multiplier: growthThresholds.qualityRetryMultiplier
+        })
+        .neq('id', '00000000-0000-0000-0000-000000000000'); // Update all rows
+
+      if (updateError) {
+        console.error('❌ [AIS Config] Error updating growth thresholds:', updateError);
+        return NextResponse.json({
+          success: false,
+          error: 'Failed to update growth thresholds: ' + updateError.message
+        }, { status: 500 });
+      }
+
+      console.log('✅ [AIS Config] Growth thresholds updated successfully');
+
+      return NextResponse.json({
+        success: true,
+        message: 'Growth thresholds updated successfully'
       });
     }
 

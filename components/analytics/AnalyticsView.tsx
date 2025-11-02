@@ -24,9 +24,10 @@ import {
   Target
 } from 'lucide-react';
 import { formatCost, formatPilotCredits, formatTime } from '@/lib/utils/analyticsHelpers';
-import type { 
-  AnalyticsView, 
-  ProcessedAnalyticsData 
+import { formatActivityName } from '@/lib/utils/formatActivityName';
+import type {
+  AnalyticsView,
+  ProcessedAnalyticsData
 } from '@/types/analytics';
 
 // Icon mapping helper
@@ -487,13 +488,13 @@ export const AnalyticsViews: React.FC<AnalyticsViewsProps> = ({ selectedView, da
       // Extract agent name and create summary of operations
       const firstActivity = sortedActivities[0].activity_name;
       const agentNameMatch = firstActivity.match(/^(.+?)\s*-\s*/);
-      const agentName = agentNameMatch ? agentNameMatch[1] : firstActivity;
+      const agentName = agentNameMatch ? agentNameMatch[1] : formatActivityName(firstActivity);
 
       // Collect unique operations (extract everything after " - ")
       const operations = sortedActivities
         .map(a => {
           const match = a.activity_name.match(/\s*-\s*(.+)$/);
-          return match ? match[1] : null;
+          return match ? formatActivityName(match[1]) : null;
         })
         .filter((op, idx, arr) => op && op !== 'Final response' && arr.indexOf(op) === idx);
 
@@ -729,7 +730,10 @@ export const AnalyticsViews: React.FC<AnalyticsViewsProps> = ({ selectedView, da
                         let stepDescription = `Step ${idx + 1}`;
                         const operationMatch = activity.activity_name.match(/\s*-\s*(.+)$/);
                         if (operationMatch && operationMatch[1]) {
-                          stepDescription = operationMatch[1];
+                          stepDescription = formatActivityName(operationMatch[1]);
+                        } else {
+                          // No " - " separator, normalize the whole activity name
+                          stepDescription = formatActivityName(activity.activity_name);
                         }
 
                         return (

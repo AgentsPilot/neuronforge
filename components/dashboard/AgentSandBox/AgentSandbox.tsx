@@ -120,25 +120,30 @@ export default function AgentSandbox(props: AgentSandboxProps) {
             </div>
           )}
 
-          {/* Mode Indicator (no toggle - set by tab) */}
-          <div className="flex items-center bg-white rounded-lg px-3 py-1.5 border border-slate-200">
-            <div className={`flex items-center gap-1.5 ${
-              executionContext === 'test'
-                ? 'text-blue-600'
-                : 'text-emerald-600'
-            }`}>
-              {executionContext === 'test' ? (
-                <>
-                  <Play className="h-3.5 w-3.5" />
-                  <span className="font-semibold text-xs">Test Mode</span>
-                </>
-              ) : (
-                <>
-                  <Settings className="h-3.5 w-3.5" />
-                  <span className="font-semibold text-xs">Configure Mode</span>
-                </>
-              )}
-            </div>
+          {/* Mode Toggle - Clickable */}
+          <div className="flex items-center bg-white rounded-lg border border-slate-200 overflow-hidden">
+            <button
+              onClick={() => setExecutionContext('test')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 transition-all duration-200 ${
+                executionContext === 'test'
+                  ? 'bg-blue-100 text-blue-700'
+                  : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              <Play className="h-3.5 w-3.5" />
+              <span className="font-semibold text-xs">Test</span>
+            </button>
+            <button
+              onClick={() => setExecutionContext('configure')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 transition-all duration-200 ${
+                executionContext === 'configure'
+                  ? 'bg-emerald-100 text-emerald-700'
+                  : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              <Settings className="h-3.5 w-3.5" />
+              <span className="font-semibold text-xs">Configure</span>
+            </button>
           </div>
 
           {executionTime && (
@@ -528,7 +533,7 @@ export default function AgentSandbox(props: AgentSandboxProps) {
             </div>
             
             {/* Fun Metrics - More Compact */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
               <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3 text-center border border-white/20">
                 <div className="text-lg font-bold text-yellow-400">{executionLogs.length}</div>
                 <div className="text-slate-300 text-xs">Steps Taken</div>
@@ -550,6 +555,13 @@ export default function AgentSandbox(props: AgentSandboxProps) {
                   {executionTime ? formatDuration(executionTime) : formatDuration(executionMetrics.duration || 0)}
                 </div>
                 <div className="text-slate-300 text-xs">Time</div>
+              </div>
+              <div className="bg-purple-500/20 backdrop-blur-sm rounded-lg p-3 text-center border border-purple-400/30">
+                <Brain className="h-4 w-4 text-purple-300 mx-auto mb-1" />
+                <div className="text-lg font-bold text-purple-200">
+                  {executionMetrics.memoriesLoaded || 0}
+                </div>
+                <div className="text-purple-300 text-xs">Learnings</div>
               </div>
             </div>
 
@@ -741,7 +753,30 @@ export default function AgentSandbox(props: AgentSandboxProps) {
                 <div className="bg-white border border-slate-200 rounded-lg p-4">
                   <div className="prose prose-sm max-w-none">
                     <div className="whitespace-pre-wrap text-slate-900 text-sm leading-relaxed">
-                      {result.message || 'Execution completed successfully'}
+                      {(() => {
+                        const message = result.message || 'Execution completed successfully';
+                        // Remove detailed lists and content after summary
+                        const summaryMarkers = [
+                          'Here are the main points included in the summary:',
+                          'Here are the key points:',
+                          'Here\'s what was included:',
+                          '\n\n-',
+                          '\n\n*',
+                          '\n\n1.',
+                          '\n\n#'
+                        ];
+
+                        let cleanedMessage = message;
+                        for (const marker of summaryMarkers) {
+                          const markerIndex = cleanedMessage.indexOf(marker);
+                          if (markerIndex !== -1) {
+                            cleanedMessage = cleanedMessage.substring(0, markerIndex).trim();
+                            break;
+                          }
+                        }
+
+                        return cleanedMessage;
+                      })()}
                     </div>
                   </div>
                 </div>

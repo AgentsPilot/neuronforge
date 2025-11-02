@@ -10,8 +10,8 @@ export interface AISRange {
 
 export interface AISRanges {
   // Execution metrics (runtime complexity)
-  token_volume: AISRange;
-  token_peak: AISRange;
+  token_volume: AISRange;  // DEPRECATED: Will be removed after migration to growth-based system
+  token_peak: AISRange;    // DEPRECATED: Will be removed after migration to growth-based system
   token_io_ratio_min: number;
   token_io_ratio_max: number;
   iterations: AISRange;
@@ -30,6 +30,20 @@ export interface AISRanges {
   creation_workflow_steps: AISRange;
   creation_plugins: AISRange;
   creation_io_fields: AISRange;
+
+  // Output Token Growth Thresholds (NEW - replaces absolute token thresholds)
+  output_token_growth_monitor_threshold?: number;    // Default: 25%
+  output_token_growth_rescore_threshold?: number;    // Default: 50%
+  output_token_growth_upgrade_threshold?: number;    // Default: 100%
+  output_token_growth_monitor_adjustment?: number;   // Default: 0.2
+  output_token_growth_rescore_adjustment?: number;   // Default: 0.75
+  output_token_growth_upgrade_adjustment?: number;   // Default: 1.25
+
+  // Quality Metric Thresholds (NEW - for amplifying growth adjustments)
+  quality_success_threshold?: number;                // Default: 80 (%)
+  quality_retry_threshold?: number;                  // Default: 30 (%)
+  quality_success_multiplier?: number;               // Default: 0.3
+  quality_retry_multiplier?: number;                 // Default: 0.2
 }
 
 /**
@@ -105,6 +119,9 @@ export class AISConfigService {
       };
     });
 
+    // Extract global threshold values from first row (all rows have same values)
+    const firstRow = data[0] || {};
+
     // Return fully typed ranges with fallbacks
     return {
       // Execution ranges
@@ -128,6 +145,20 @@ export class AISConfigService {
       creation_workflow_steps: map.creation_workflow_steps ?? map.workflow_steps ?? { min: 1, max: 10 },
       creation_plugins: map.creation_plugins ?? map.plugin_count ?? { min: 1, max: 5 },
       creation_io_fields: map.creation_io_fields ?? { min: 1, max: 8 },
+
+      // Growth thresholds (extracted from first row, all rows have same values)
+      output_token_growth_monitor_threshold: firstRow.output_token_growth_monitor_threshold ?? 25,
+      output_token_growth_rescore_threshold: firstRow.output_token_growth_rescore_threshold ?? 50,
+      output_token_growth_upgrade_threshold: firstRow.output_token_growth_upgrade_threshold ?? 100,
+      output_token_growth_monitor_adjustment: firstRow.output_token_growth_monitor_adjustment ?? 0.2,
+      output_token_growth_rescore_adjustment: firstRow.output_token_growth_rescore_adjustment ?? 0.75,
+      output_token_growth_upgrade_adjustment: firstRow.output_token_growth_upgrade_adjustment ?? 1.25,
+
+      // Quality thresholds (extracted from first row, all rows have same values)
+      quality_success_threshold: firstRow.quality_success_threshold ?? 80,
+      quality_retry_threshold: firstRow.quality_retry_threshold ?? 30,
+      quality_success_multiplier: firstRow.quality_success_multiplier ?? 0.3,
+      quality_retry_multiplier: firstRow.quality_retry_multiplier ?? 0.2,
     };
   }
 
@@ -160,6 +191,20 @@ export class AISConfigService {
       creation_workflow_steps: { min: 1, max: 10 },
       creation_plugins: { min: 1, max: 5 },
       creation_io_fields: { min: 1, max: 8 },
+
+      // Growth thresholds (fallback defaults)
+      output_token_growth_monitor_threshold: 25,
+      output_token_growth_rescore_threshold: 50,
+      output_token_growth_upgrade_threshold: 100,
+      output_token_growth_monitor_adjustment: 0.2,
+      output_token_growth_rescore_adjustment: 0.75,
+      output_token_growth_upgrade_adjustment: 1.25,
+
+      // Quality thresholds (fallback defaults)
+      quality_success_threshold: 80,
+      quality_retry_threshold: 30,
+      quality_success_multiplier: 0.3,
+      quality_retry_multiplier: 0.2,
     };
   }
 

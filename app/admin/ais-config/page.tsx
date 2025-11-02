@@ -65,17 +65,36 @@ export default function AISConfigPage() {
   const [creationRangesExpanded, setCreationRangesExpanded] = useState(false);
   const [executionRangesExpanded, setExecutionRangesExpanded] = useState(false);
 
+  // Growth Thresholds state
+  const [growthExpanded, setGrowthExpanded] = useState(false);
+  const [savingGrowth, setSavingGrowth] = useState(false);
+  const [growthError, setGrowthError] = useState<string | null>(null);
+  const [growthSuccess, setGrowthSuccess] = useState<string | null>(null);
+  const [growthThresholds, setGrowthThresholds] = useState({
+    monitorThreshold: 25,
+    rescoreThreshold: 50,
+    upgradeThreshold: 100,
+    monitorAdjustment: 0.2,
+    rescoreAdjustment: 0.75,
+    upgradeAdjustment: 1.25,
+    qualitySuccessThreshold: 80,
+    qualityRetryThreshold: 30,
+    qualitySuccessMultiplier: 0.3,
+    qualityRetryMultiplier: 0.2
+  });
+
   // AIS Weights state
   const [weightsExpanded, setWeightsExpanded] = useState(false);
   const [savingWeights, setSavingWeights] = useState(false);
   const [weightsError, setWeightsError] = useState<string | null>(null);
   const [weightsSuccess, setWeightsSuccess] = useState<string | null>(null);
   const [aisWeights, setAisWeights] = useState({
-    // Dimension weights (must sum to 1.0)
-    tokens: 0.35,
+    // Dimension weights (must sum to 1.0) - UPDATED: Added memory
+    tokens: 0.30,      // Reduced from 0.35
     execution: 0.25,
-    plugins: 0.25,
+    plugins: 0.20,     // Reduced from 0.25
     workflow: 0.15,
+    memory: 0.10,      // NEW: Memory complexity
     // Token subdimensions (must sum to 1.0)
     token_volume: 0.5,
     token_peak: 0.3,
@@ -121,10 +140,11 @@ export default function AISConfigPage() {
           const w = data.config.aisWeights;
           console.log('🔄 [Frontend] Updating aisWeights state');
           setAisWeights({
-            tokens: w.tokens || 0.35,
+            tokens: w.tokens || 0.30,      // Updated default
             execution: w.execution || 0.25,
-            plugins: w.plugins || 0.25,
+            plugins: w.plugins || 0.20,    // Updated default
             workflow: w.workflow || 0.15,
+            memory: w.memory || 0.10,      // NEW: Memory weight
             token_volume: w.token_volume || 0.5,
             token_peak: w.token_peak || 0.3,
             token_io: w.token_io || 0.2,
@@ -139,6 +159,24 @@ export default function AISConfigPage() {
             workflow_branches: w.workflow_branches || 0.25,
             workflow_loops: w.workflow_loops || 0.20,
             workflow_parallel: w.workflow_parallel || 0.15
+          });
+        }
+
+        // Load growth thresholds
+        if (data.config.growthThresholds) {
+          const g = data.config.growthThresholds;
+          console.log('🔄 [Frontend] Updating growthThresholds state:', g);
+          setGrowthThresholds({
+            monitorThreshold: g.monitorThreshold || 25,
+            rescoreThreshold: g.rescoreThreshold || 50,
+            upgradeThreshold: g.upgradeThreshold || 100,
+            monitorAdjustment: g.monitorAdjustment || 0.2,
+            rescoreAdjustment: g.rescoreAdjustment || 0.75,
+            upgradeAdjustment: g.upgradeAdjustment || 1.25,
+            qualitySuccessThreshold: g.qualitySuccessThreshold || 80,
+            qualityRetryThreshold: g.qualityRetryThreshold || 30,
+            qualitySuccessMultiplier: g.qualitySuccessMultiplier || 0.3,
+            qualityRetryMultiplier: g.qualityRetryMultiplier || 0.2
           });
         }
       } else {
@@ -390,6 +428,53 @@ export default function AISConfigPage() {
       console.error(err);
     } finally {
       setSavingLimits(false);
+      console.log('🔧 [Frontend] Save operation completed');
+    }
+  };
+
+  const handleSaveGrowthThresholds = async () => {
+    try {
+      console.log('🔧 [Frontend] Starting growth thresholds save...');
+      console.log('🔧 [Frontend] Current growthThresholds state:', growthThresholds);
+
+      setSavingGrowth(true);
+      setGrowthError(null);
+      setGrowthSuccess(null);
+
+      const response = await fetch('/api/admin/ais-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_growth_thresholds',
+          growthThresholds
+        })
+      });
+
+      console.log('🔧 [Frontend] Response status:', response.status);
+      const data = await response.json();
+      console.log('🔧 [Frontend] Response data:', data);
+
+      if (data.success) {
+        setGrowthSuccess('Growth thresholds updated successfully');
+        console.log('✅ [Frontend] Refreshing config after successful save...');
+
+        // Refresh config to get latest values from database
+        await fetchConfig();
+
+        // Keep the card expanded
+        setGrowthExpanded(true);
+
+        setTimeout(() => setGrowthSuccess(null), 5000);
+      } else {
+        console.error('❌ [Frontend] Save failed:', data.error);
+        setGrowthError(data.error || 'Failed to update growth thresholds');
+      }
+    } catch (err) {
+      console.error('❌ [Frontend] Exception during save:', err);
+      setGrowthError('Failed to update growth thresholds');
+      console.error(err);
+    } finally {
+      setSavingGrowth(false);
       console.log('🔧 [Frontend] Save operation completed');
     }
   };
@@ -813,6 +898,298 @@ export default function AISConfigPage() {
           )}
         </div>
 
+        {/* Growth Threshold Configuration */}
+        <div className="bg-gradient-to-br from-slate-800/90 to-slate-900/90 backdrop-blur-xl rounded-2xl border border-white/10">
+          <div className="p-6 border-b border-white/10">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-white flex items-center gap-3">
+                  <TrendingUp className="w-6 h-6 text-green-400" />
+                  Output Token Growth Thresholds
+                </h2>
+                <p className="text-slate-400 text-sm mt-1">
+                  Configure when agents should be upgraded based on output token growth patterns and quality metrics
+                </p>
+              </div>
+              <button
+                onClick={() => setGrowthExpanded(!growthExpanded)}
+                className="p-2 bg-slate-700/50 hover:bg-slate-600/50 rounded-lg transition-colors"
+              >
+                {growthExpanded ? (
+                  <ChevronUp className="w-4 h-4 text-slate-400" />
+                ) : (
+                  <ChevronDown className="w-4 h-4 text-slate-400" />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {growthExpanded && (
+            <div className="p-6 space-y-6">
+              {/* Error/Success Messages */}
+              {growthError && (
+                <div className="bg-red-500/10 border border-red-500/50 rounded-lg p-4 flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-red-400 font-medium">Error</p>
+                    <p className="text-red-300 text-sm mt-1">{growthError}</p>
+                  </div>
+                </div>
+              )}
+
+              {growthSuccess && (
+                <div className="bg-green-500/10 border border-green-500/50 rounded-lg p-4 flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-green-400 font-medium">Success</p>
+                    <p className="text-green-300 text-sm mt-1">{growthSuccess}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Growth Rate Thresholds */}
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-green-400" />
+                  Growth Rate Thresholds
+                </h3>
+                <p className="text-slate-400 text-sm">
+                  Define percentage thresholds for detecting output token growth anomalies
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-slate-700/30 border border-white/5 rounded-lg p-4">
+                    <label className="text-sm font-medium text-slate-300 mb-2 block">
+                      Monitor Threshold (%)
+                    </label>
+                    <input
+                      type="number"
+                      value={growthThresholds.monitorThreshold}
+                      onChange={(e) => setGrowthThresholds({ ...growthThresholds, monitorThreshold: parseFloat(e.target.value) })}
+                      className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                      step="1"
+                      min="0"
+                      max="100"
+                    />
+                    <p className="text-xs text-slate-400 mt-2">
+                      Output token growth % that triggers monitoring. Agent output tokens are growing compared to baseline, but no action needed yet.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-700/30 border border-white/5 rounded-lg p-4">
+                    <label className="text-sm font-medium text-slate-300 mb-2 block">
+                      Rescore Threshold (%)
+                    </label>
+                    <input
+                      type="number"
+                      value={growthThresholds.rescoreThreshold}
+                      onChange={(e) => setGrowthThresholds({ ...growthThresholds, rescoreThreshold: parseFloat(e.target.value) })}
+                      className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-orange-500"
+                      step="1"
+                      min="0"
+                      max="200"
+                    />
+                    <p className="text-xs text-slate-400 mt-2">
+                      Output token growth % that triggers intensity rescoring. Agent may need a higher complexity score.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-700/30 border border-white/5 rounded-lg p-4">
+                    <label className="text-sm font-medium text-slate-300 mb-2 block">
+                      Upgrade Threshold (%)
+                    </label>
+                    <input
+                      type="number"
+                      value={growthThresholds.upgradeThreshold}
+                      onChange={(e) => setGrowthThresholds({ ...growthThresholds, upgradeThreshold: parseFloat(e.target.value) })}
+                      className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-red-500"
+                      step="1"
+                      min="0"
+                      max="500"
+                    />
+                    <p className="text-xs text-slate-400 mt-2">
+                      Output token growth % that triggers model tier upgrade. Agent is struggling and should use a more powerful model.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Score Adjustments */}
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                  <Zap className="w-5 h-5 text-yellow-400" />
+                  Score Adjustments
+                </h3>
+                <p className="text-slate-400 text-sm">
+                  Define how much to increase intensity score for each alert level
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-slate-700/30 border border-white/5 rounded-lg p-4">
+                    <label className="text-sm font-medium text-slate-300 mb-2 block">
+                      Monitor Adjustment
+                    </label>
+                    <input
+                      type="number"
+                      value={growthThresholds.monitorAdjustment}
+                      onChange={(e) => setGrowthThresholds({ ...growthThresholds, monitorAdjustment: parseFloat(e.target.value) })}
+                      className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                      step="0.1"
+                      min="0"
+                      max="2"
+                    />
+                    <p className="text-xs text-slate-400 mt-2">
+                      Points added to intensity score when growth reaches monitor threshold. Small adjustment for early warning.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-700/30 border border-white/5 rounded-lg p-4">
+                    <label className="text-sm font-medium text-slate-300 mb-2 block">
+                      Rescore Adjustment
+                    </label>
+                    <input
+                      type="number"
+                      value={growthThresholds.rescoreAdjustment}
+                      onChange={(e) => setGrowthThresholds({ ...growthThresholds, rescoreAdjustment: parseFloat(e.target.value) })}
+                      className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-orange-500"
+                      step="0.1"
+                      min="0"
+                      max="2"
+                    />
+                    <p className="text-xs text-slate-400 mt-2">
+                      Points added to intensity score when growth reaches rescore threshold. Moderate adjustment to reflect increasing complexity.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-700/30 border border-white/5 rounded-lg p-4">
+                    <label className="text-sm font-medium text-slate-300 mb-2 block">
+                      Upgrade Adjustment
+                    </label>
+                    <input
+                      type="number"
+                      value={growthThresholds.upgradeAdjustment}
+                      onChange={(e) => setGrowthThresholds({ ...growthThresholds, upgradeAdjustment: parseFloat(e.target.value) })}
+                      className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-red-500"
+                      step="0.1"
+                      min="0"
+                      max="3"
+                    />
+                    <p className="text-xs text-slate-400 mt-2">
+                      Points added to intensity score when growth reaches upgrade threshold. Large adjustment to trigger model tier upgrade.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Quality Metrics Amplification */}
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                  <CheckCircle className="w-5 h-5 text-blue-400" />
+                  Quality Metrics Amplification
+                </h3>
+                <p className="text-slate-400 text-sm">
+                  Amplify adjustments when agents show signs of struggling (low success, high retries)
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="bg-slate-700/30 border border-white/5 rounded-lg p-4">
+                    <label className="text-sm font-medium text-slate-300 mb-2 block">
+                      Success Rate Threshold (%)
+                    </label>
+                    <input
+                      type="number"
+                      value={growthThresholds.qualitySuccessThreshold}
+                      onChange={(e) => setGrowthThresholds({ ...growthThresholds, qualitySuccessThreshold: parseFloat(e.target.value) })}
+                      className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      step="1"
+                      min="0"
+                      max="100"
+                    />
+                    <p className="text-xs text-slate-400 mt-2">
+                      If agent success rate falls below this %, growth adjustments are amplified. Indicates the agent is struggling and needs more powerful models.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-700/30 border border-white/5 rounded-lg p-4">
+                    <label className="text-sm font-medium text-slate-300 mb-2 block">
+                      Success Rate Multiplier
+                    </label>
+                    <input
+                      type="number"
+                      value={growthThresholds.qualitySuccessMultiplier}
+                      onChange={(e) => setGrowthThresholds({ ...growthThresholds, qualitySuccessMultiplier: parseFloat(e.target.value) })}
+                      className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      step="0.1"
+                      min="0"
+                      max="1"
+                    />
+                    <p className="text-xs text-slate-400 mt-2">
+                      Additional multiplier added to growth adjustments when success rate is low. E.g., 0.3 = +30% to the adjustment.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-700/30 border border-white/5 rounded-lg p-4">
+                    <label className="text-sm font-medium text-slate-300 mb-2 block">
+                      Retry Rate Threshold (%)
+                    </label>
+                    <input
+                      type="number"
+                      value={growthThresholds.qualityRetryThreshold}
+                      onChange={(e) => setGrowthThresholds({ ...growthThresholds, qualityRetryThreshold: parseFloat(e.target.value) })}
+                      className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      step="1"
+                      min="0"
+                      max="100"
+                    />
+                    <p className="text-xs text-slate-400 mt-2">
+                      If agent retry rate exceeds this %, growth adjustments are amplified. High retries indicate the model is struggling with the task.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-700/30 border border-white/5 rounded-lg p-4">
+                    <label className="text-sm font-medium text-slate-300 mb-2 block">
+                      Retry Rate Multiplier
+                    </label>
+                    <input
+                      type="number"
+                      value={growthThresholds.qualityRetryMultiplier}
+                      onChange={(e) => setGrowthThresholds({ ...growthThresholds, qualityRetryMultiplier: parseFloat(e.target.value) })}
+                      className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      step="0.1"
+                      min="0"
+                      max="1"
+                    />
+                    <p className="text-xs text-slate-400 mt-2">
+                      Additional multiplier added to growth adjustments when retry rate is high. E.g., 0.2 = +20% to the adjustment.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Save Button */}
+              <div className="flex justify-end pt-4 border-t border-white/10">
+                <button
+                  onClick={handleSaveGrowthThresholds}
+                  disabled={savingGrowth}
+                  className="px-6 py-2.5 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors flex items-center gap-2"
+                >
+                  {savingGrowth ? (
+                    <>
+                      <RefreshCw className={`w-4 h-4 ${savingGrowth ? 'animate-spin' : ''}`} />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4" />
+                      Save Growth Thresholds
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* AIS Dimension Weights Configuration */}
         <div className="bg-gradient-to-br from-slate-800/90 to-slate-900/90 backdrop-blur-xl rounded-2xl border border-white/10">
           <div className="p-6 border-b border-white/10">
@@ -881,10 +1258,10 @@ export default function AISConfigPage() {
                     Main Dimension Weights (must sum to 1.0)
                   </h3>
                   <span className="text-xs text-slate-400">
-                    Current sum: {(aisWeights.tokens + aisWeights.execution + aisWeights.plugins + aisWeights.workflow).toFixed(3)}
+                    Current sum: {(aisWeights.tokens + aisWeights.execution + aisWeights.plugins + aisWeights.workflow + aisWeights.memory).toFixed(3)}
                   </span>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-slate-300">Tokens</label>
                     <input
@@ -936,6 +1313,19 @@ export default function AISConfigPage() {
                       className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                     />
                     <p className="text-xs text-slate-500">Logic complexity weight. Higher = branches/loops matter more in score.</p>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-300">Memory 🆕</label>
+                    <input
+                      type="number"
+                      value={aisWeights.memory}
+                      onChange={(e) => setAisWeights({ ...aisWeights, memory: parseFloat(e.target.value) || 0 })}
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    />
+                    <p className="text-xs text-slate-500">Memory context weight. Higher = memory usage impacts routing more (NEW: 5th component).</p>
                   </div>
                 </div>
               </div>
@@ -1355,11 +1745,12 @@ export default function AISConfigPage() {
                     <p className="text-purple-400 font-medium text-sm">About Execution Ranges</p>
                     <p className="text-slate-300 text-sm leading-relaxed">
                       Execution ranges normalize agent complexity based on actual runtime behavior (after agents have run).
-                      These cover four categories:
+                      These cover five categories:
                       <strong className="text-white"> Token Complexity</strong> (AI model usage),
                       <strong className="text-white"> Execution Complexity</strong> (loops/duration),
-                      <strong className="text-white"> Plugin Complexity</strong> (integration usage), and
-                      <strong className="text-white"> Workflow Complexity</strong> (logic patterns).
+                      <strong className="text-white"> Plugin Complexity</strong> (integration usage),
+                      <strong className="text-white"> Workflow Complexity</strong> (logic patterns), and
+                      <strong className="text-white"> Memory Complexity</strong> 🆕 (context usage).
                       <strong className="text-white"> Best Practice</strong> ranges are industry standards while
                       <strong className="text-white"> Dynamic</strong> ranges learn from your production data.
                     </p>
@@ -1614,13 +2005,75 @@ export default function AISConfigPage() {
                 </div>
               </div>
             )}
+
+            {/* Memory Complexity - NEW */}
+            {config.ranges?.memory_complexity && (
+              <div>
+                <div className="mb-3">
+                  <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                    <Database className="w-5 h-5 text-purple-400" />
+                    Memory Complexity 🆕
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-1 ml-7">Measures memory context usage: token ratio, entry count, and type diversity from past executions.</p>
+                </div>
+                <div className="space-y-4">
+                  {config.ranges.memory_complexity.map((range) => (
+                    <div key={range.id} className="bg-slate-800/50 border border-slate-700 rounded-lg p-4 hover:border-purple-500/30 transition-colors">
+                      <div className="flex items-start justify-between mb-3">
+                        <div>
+                          <h4 className="text-white font-semibold">{formatRangeLabel(range.range_key)}</h4>
+                          <p className="text-slate-400 text-sm mt-1">{range.description}</p>
+                        </div>
+                        {range.data_points_analyzed > 0 && (
+                          <div className="text-xs text-slate-500">
+                            {range.data_points_analyzed} data points
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="bg-blue-500/5 border border-blue-500/20 rounded p-3">
+                          <div className="text-xs text-blue-400 font-medium mb-2">Best Practice</div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-white font-mono">
+                              {range.best_practice_min} - {range.best_practice_max}
+                            </span>
+                            {config.mode === 'best_practice' && (
+                              <span className="text-xs text-green-400">(Active)</span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="bg-green-500/5 border border-green-500/20 rounded p-3">
+                          <div className="text-xs text-green-400 font-medium mb-2">Dynamic (Learned)</div>
+                          <div className="flex items-center gap-2">
+                            {range.dynamic_min !== null && range.dynamic_max !== null ? (
+                              <>
+                                <span className="text-white font-mono">
+                                  {range.dynamic_min} - {range.dynamic_max}
+                                </span>
+                                {config.mode === 'dynamic' && (
+                                  <span className="text-xs text-green-400">(Active)</span>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-slate-500 text-sm">Not calculated yet</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
           )}
         </div>
 
         {/* Old ranges display for any uncategorized items */}
         {Object.entries(config.ranges).filter(([category]) =>
-          !['creation', 'token_complexity', 'execution_complexity', 'plugin_complexity', 'workflow_complexity'].includes(category)
+          !['creation', 'token_complexity', 'execution_complexity', 'plugin_complexity', 'workflow_complexity', 'memory_complexity'].includes(category)
         ).map(([category, ranges]) => (
           <div
             key={category}

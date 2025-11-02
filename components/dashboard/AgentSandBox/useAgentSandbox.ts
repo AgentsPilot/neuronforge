@@ -1014,6 +1014,15 @@ export function useAgentSandbox({
 
         setResult(result)
 
+        // Extract and update memory stats if available
+        if (res.data?.memoryStats) {
+          setExecutionMetrics(prev => ({
+            ...prev,
+            memoriesLoaded: res.data.memoryStats.memoriesLoaded || 0,
+            memoryTokenCount: res.data.memoryStats.tokenCount || 0
+          }))
+        }
+
         // Set appropriate success message based on output type
         const hasEmailOutput = safeOutputSchema.some(f =>
           f.type === 'EmailDraft' || f.name.toLowerCase().includes('email')

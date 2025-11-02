@@ -1,0 +1,568 @@
+// lib/memory/MemorySummarizer.ts
+// Async LLM-based memory summarization service
+
+import { SupabaseClient } from '@supabase/supabase-js';
+import OpenAI from 'openai';
+import { MemoryConfigService } from './MemoryConfigService';
+import { AuditTrailService } from '@/lib/services/AuditTrailService';
+import { AUDIT_EVENTS } from '@/lib/audit/events';
+import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
+
+export interface SummarizationInput {
+  execution_id: string;
+  agent_id: string;
+  user_id: string;
+  run_number: number;
+
+  // Agent context
+  agent_name: string;
+  agent_description: string;
+  agent_mode?: string;
+
+  // Execution data
+  input: any;
+  output: any;
+  status: 'success' | 'failed' | 'error';
+  model_used: string;
+  credits_consumed: number;
+  execution_time_ms: number;
+  ais_score?: number;
+  error_logs?: string;
+
+  // Recent history for comparison
+  recent_runs?: Array<{
+    run_number: number;
+    summary: string;
+    key_outcomes: any;
+    patterns_detected: any;
+  }>;
+
+  user_feedback?: string;
+}
+
+export interface RunMemory {
+  summary: string;
+  sentiment: 'positive' | 'neutral' | 'negative' | 'mixed';
+  key_outcomes: {
+    success: boolean;
+    items_processed?: number;
+    errors?: string[];
+    warnings?: string[];
+  };
+  patterns_detected: {
+    recurring_error?: string;
+    success_pattern?: string;
+    performance_issue?: string;
+  };
+  suggestions: {
+    improve_prompt?: string;
+    adjust_schedule?: string;
+    optimize_config?: string;
+  };
+}
+
+/**
+ * Memory Summarization Service
+ *
+ * Uses LLM (gpt-4o-mini) to create concise, structured memories from executions
+ * Runs asynchronously to avoid blocking user-facing responses
+ */
+export class MemorySummarizer {
+  private openai: OpenAI;
+  private auditTrail: AuditTrailService;
+  private analytics: AIAnalyticsService;
+
+  constructor(
+    private supabase: SupabaseClient,
+    openaiApiKey?: string
+  ) {
+    this.openai = new OpenAI({
+      apiKey: openaiApiKey || process.env.OPENAI_API_KEY
+    });
+    this.auditTrail = AuditTrailService.getInstance();
+    this.analytics = new AIAnalyticsService(supabase);
+  }
+
+  /**
+   * Summarize an execution and save to run_memories table
+   *
+   * This is the main entry point - call this after agent execution completes
+   */
+  async summarizeExecution(input: SummarizationInput): Promise<void> {
+    try {
+      console.log(`🧠 [MemorySummarizer] Starting summarization for execution ${input.execution_id}`);
+
+      // Audit: Summarization started
+      await this.auditTrail.log({
+        action: AUDIT_EVENTS.MEMORY_SUMMARIZATION_STARTED,
+        entityType: 'agent',
+        entityId: input.agent_id,
+        userId: input.user_id,
+        resourceName: input.agent_name,
+        details: {
+          execution_id: input.execution_id,
+          run_number: input.run_number,
+          model: input.model_used,
+          status: input.status
+        },
+        severity: 'info'
+      });
+
+      // 1. Load configuration from database
+      const config = await MemoryConfigService.getSummarizationConfig(this.supabase);
+      const importanceConfig = await MemoryConfigService.getImportanceConfig(this.supabase);
+
+      // 2. Build summarization prompt
+      const prompt = this.buildSummarizationPrompt(input);
+
+      // 3. Call LLM to generate memory
+      console.log(`🤖 [MemorySummarizer] Calling ${config.model} for summarization...`);
+      const startTime = Date.now();
+
+      const completion = await this.openai.chat.completions.create({
+        model: config.model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: config.temperature,
+        max_tokens: config.max_tokens,
+        response_format: { type: 'json_object' }
+      });
+
+      const latency = Date.now() - startTime;
+
+      // Track LLM call analytics
+      const usage = completion.usage;
+      if (usage) {
+        const cost = await this.calculateCost(config.model, usage.prompt_tokens, usage.completion_tokens);
+        await this.analytics.trackAICall({
+          user_id: input.user_id,
+          provider: 'openai',
+          model_name: config.model,
+          input_tokens: usage.prompt_tokens,
+          output_tokens: usage.completion_tokens,
+          cost_usd: cost,
+          latency_ms: latency,
+          success: true,
+          feature: 'memory_system',
+          component: 'memory_summarizer',
+          activity_type: 'memory_creation',
+          activity_name: 'summarize_execution',
+          agent_id: input.agent_id,
+          session_id: input.execution_id,
+          metadata: {
+            run_number: input.run_number,
+            agent_name: input.agent_name,
+            execution_status: input.status,
+            temperature: config.temperature,
+            max_tokens: config.max_tokens
+          }
+        });
+      }
+
+      const memoryJson = completion.choices[0].message.content;
+      if (!memoryJson) {
+        throw new Error('Empty response from LLM');
+      }
+
+      const memory: RunMemory = JSON.parse(memoryJson);
+
+      // Ensure patterns_detected and suggestions are objects (LLM might return null)
+      if (!memory.patterns_detected || typeof memory.patterns_detected !== 'object') {
+        memory.patterns_detected = {};
+      }
+      if (!memory.suggestions || typeof memory.suggestions !== 'object') {
+        memory.suggestions = {};
+      }
+
+      // Ensure sentiment is valid (fallback to neutral if invalid/missing)
+      const validSentiments = ['positive', 'neutral', 'negative', 'mixed'];
+      if (!memory.sentiment || !validSentiments.includes(memory.sentiment)) {
+        memory.sentiment = 'neutral';
+      }
+
+      console.log(`✅ [MemorySummarizer] Memory generated:`, {
+        summary_length: memory.summary.length,
+        sentiment: memory.sentiment,
+        has_patterns: Object.keys(memory.patterns_detected).length > 0,
+        has_suggestions: Object.keys(memory.suggestions).length > 0
+      });
+
+      // 4. Calculate importance score
+      const importanceScore = this.calculateImportance(memory, input, importanceConfig);
+
+      // 5. Save to database (embedding will be generated later in batch)
+      await this.saveMemory(input, memory, importanceScore);
+
+      console.log(`💾 [MemorySummarizer] Memory saved for run #${input.run_number}`);
+
+      // Audit: Memory created successfully
+      await this.auditTrail.log({
+        action: AUDIT_EVENTS.MEMORY_SUMMARIZATION_COMPLETED,
+        entityType: 'agent',
+        entityId: input.agent_id,
+        userId: input.user_id,
+        resourceName: input.agent_name,
+        details: {
+          execution_id: input.execution_id,
+          run_number: input.run_number,
+          sentiment: memory.sentiment,
+          importance_score: importanceScore,
+          has_patterns: Object.keys(memory.patterns_detected || {}).length > 0,
+          has_suggestions: Object.keys(memory.suggestions || {}).length > 0,
+          summary_length: memory.summary.length,
+          token_count: this.estimateTokens(memory.summary)
+        },
+        severity: 'info'
+      });
+
+      // Audit: Sentiment detected (if not neutral)
+      if (memory.sentiment && memory.sentiment !== 'neutral') {
+        await this.auditTrail.log({
+          action: AUDIT_EVENTS.MEMORY_SENTIMENT_DETECTED,
+          entityType: 'agent',
+          entityId: input.agent_id,
+          userId: input.user_id,
+          resourceName: input.agent_name,
+          details: {
+            execution_id: input.execution_id,
+            run_number: input.run_number,
+            sentiment: memory.sentiment,
+            success: memory.key_outcomes.success,
+            errors: memory.key_outcomes.errors
+          },
+          severity: memory.sentiment === 'negative' ? 'warning' : 'info'
+        });
+      }
+
+      // Audit: Pattern detected
+      if (memory.patterns_detected.recurring_error || memory.patterns_detected.performance_issue) {
+        await this.auditTrail.log({
+          action: AUDIT_EVENTS.MEMORY_PATTERN_DETECTED,
+          entityType: 'agent',
+          entityId: input.agent_id,
+          userId: input.user_id,
+          resourceName: input.agent_name,
+          details: {
+            execution_id: input.execution_id,
+            run_number: input.run_number,
+            recurring_error: memory.patterns_detected.recurring_error,
+            performance_issue: memory.patterns_detected.performance_issue
+          },
+          severity: 'warning'
+        });
+      }
+    } catch (error) {
+      console.error(`❌ [MemorySummarizer] Error summarizing execution:`, error);
+
+      // Audit: Memory summarization failed
+      await this.auditTrail.log({
+        action: AUDIT_EVENTS.MEMORY_SUMMARIZATION_FAILED,
+        entityType: 'agent',
+        entityId: input.agent_id,
+        userId: input.user_id,
+        resourceName: input.agent_name,
+        details: {
+          execution_id: input.execution_id,
+          run_number: input.run_number,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        },
+        severity: 'critical'
+      });
+
+      // Don't throw - summarization failures should not break execution
+    }
+  }
+
+  /**
+   * Build the LLM prompt for memory creation
+   *
+   * @private
+   */
+  private buildSummarizationPrompt(input: SummarizationInput): string {
+    const recentContext = input.recent_runs
+      ?.map((r) => `
+Run ${r.run_number}: ${r.summary}
+Result: ${r.key_outcomes.success ? '✅ Success' : '❌ Failed'}
+${r.patterns_detected.recurring_error ? '⚠️ ' + r.patterns_detected.recurring_error : ''}
+`)
+      .join('\n') || 'No recent history available';
+
+    return `You are a memory summarization AI for NeuronForge agent system.
+
+AGENT CONTEXT:
+Name: ${input.agent_name}
+Purpose: ${input.agent_description}
+${input.agent_mode ? `Mode: ${input.agent_mode}` : ''}
+
+RECENT HISTORY (for comparison):
+${recentContext}
+
+CURRENT EXECUTION:
+Status: ${input.status}
+Model: ${input.model_used}
+Credits: ${input.credits_consumed}
+Time: ${input.execution_time_ms}ms
+${input.ais_score ? `AIS Score: ${input.ais_score.toFixed(2)}` : ''}
+
+Input: ${JSON.stringify(input.input, null, 2).substring(0, 500)}
+Output: ${JSON.stringify(input.output, null, 2).substring(0, 1000)}
+${input.error_logs ? `Errors: ${input.error_logs.substring(0, 500)}` : ''}
+${input.user_feedback ? `User Feedback: ${input.user_feedback}` : ''}
+
+CREATE MEMORY (JSON only, no markdown):
+{
+  "summary": "2-3 sentences: WHAT CHANGED or WHAT'S IMPORTANT (compare to history)",
+  "sentiment": "positive" | "neutral" | "negative" | "mixed",
+  "key_outcomes": {
+    "success": boolean,
+    "items_processed": number | null,
+    "errors": ["specific error"] | null,
+    "warnings": ["specific warning"] | null
+  },
+  "patterns_detected": {
+    "recurring_error": "specific description" | null,
+    "success_pattern": "what consistently works" | null,
+    "performance_issue": "bottleneck description" | null
+  },
+  "suggestions": {
+    "improve_prompt": "specific improvement" | null,
+    "adjust_schedule": "timing recommendation" | null,
+    "optimize_config": "config change" | null
+  }
+}
+
+CRITICAL GUIDELINES:
+✅ ALWAYS include all objects (key_outcomes, patterns_detected, suggestions)
+✅ NEVER set objects to null - only individual fields can be null
+✅ Summary: 50-200 tokens, focus on CURRENT run vs HISTORY
+✅ Be specific: "Gmail API 429 rate limit on weekend" not "API error"
+✅ Only note NEW patterns or CHANGES
+✅ Actionable suggestions only
+✅ If no patterns detected: {"patterns_detected": {"recurring_error": null, "success_pattern": null, "performance_issue": null}}
+✅ If no suggestions: {"suggestions": {"improve_prompt": null, "adjust_schedule": null, "optimize_config": null}}
+❌ Don't repeat obvious info
+❌ Don't summarize all I/O, just key changes
+❌ NEVER return null for patterns_detected or suggestions objects themselves
+
+SENTIMENT RULES:
+✅ "positive": Complete success, no errors, met/exceeded expectations
+✅ "neutral": Routine success, nothing notable, expected outcome
+✅ "negative": Failed, errors occurred, didn't complete task
+✅ "mixed": Partial success (some items processed, some failed) OR success with warnings
+
+EXAMPLES:
+
+Good (pattern detected):
+{
+  "summary": "Gmail API rate limit error (429) occurred for 3rd consecutive weekend run. Pattern: high user activity weekends trigger rate limiting.",
+  "sentiment": "negative",
+  "key_outcomes": {"success": false, "items_processed": 0, "errors": ["Gmail API 429"], "warnings": null},
+  "patterns_detected": {"recurring_error": "Weekend rate limiting (3 consecutive occurrences)", "success_pattern": null, "performance_issue": null},
+  "suggestions": {"improve_prompt": null, "adjust_schedule": "Move weekend runs to off-peak hours (early morning)", "optimize_config": null}
+}
+
+Good (improvement):
+{
+  "summary": "Newsletter filtering (from Run 1 suggestion) reduced processing time 8.3s→4.1s (50% faster). Relevant emails: 47→31.",
+  "sentiment": "positive",
+  "key_outcomes": {"success": true, "items_processed": 31, "errors": null, "warnings": null},
+  "patterns_detected": {"recurring_error": null, "success_pattern": "Newsletter filtering effective (16 items filtered)", "performance_issue": null},
+  "suggestions": {"improve_prompt": null, "adjust_schedule": null, "optimize_config": null}
+}
+
+Bad (too verbose):
+"The agent executed at 9 AM and connected to Gmail successfully. Retrieved emails..."
+
+Response (JSON only):`;
+  }
+
+  /**
+   * Calculate importance score (1-10) based on memory content
+   *
+   * @private
+   */
+  private calculateImportance(
+    memory: RunMemory,
+    input: SummarizationInput,
+    config: any
+  ): number {
+    let score = config.base_score || 5;
+
+    // Errors are important (learn from failures)
+    if (!memory.key_outcomes.success) {
+      score += config.error_bonus || 2;
+    }
+
+    // Patterns are very important
+    if (memory.patterns_detected.recurring_error) {
+      score += config.pattern_bonus || 2;
+    }
+    if (memory.patterns_detected.success_pattern) {
+      score += 1;
+    }
+    if (memory.patterns_detected.performance_issue) {
+      score += 1;
+    }
+
+    // User feedback is critical
+    if (input.user_feedback) {
+      score += config.user_feedback_bonus || 3;
+    }
+
+    // Suggestions indicate actionable insights
+    const hasSuggestions = Object.values(memory.suggestions).some(v => v !== null);
+    if (hasSuggestions) {
+      score += 1;
+    }
+
+    // Reduce for routine success
+    if (memory.key_outcomes.success && !memory.patterns_detected.recurring_error) {
+      score -= 1;
+    }
+
+    // Milestone runs
+    if (input.run_number === 1) {
+      score += config.first_run_bonus || 2; // First run always important
+    }
+    if (input.run_number % 10 === 0) {
+      score += config.milestone_bonus || 1; // Every 10th run
+    }
+
+    return Math.max(1, Math.min(10, score));
+  }
+
+  /**
+   * Save memory to database
+   *
+   * @private
+   */
+  private async saveMemory(
+    input: SummarizationInput,
+    memory: RunMemory,
+    importanceScore: number
+  ): Promise<void> {
+    const tokenCount = this.estimateTokens(memory.summary);
+
+    const { error } = await this.supabase
+      .from('run_memories')
+      .insert({
+        agent_id: input.agent_id,
+        user_id: input.user_id,
+        execution_id: input.execution_id,
+        run_number: input.run_number,
+        run_timestamp: new Date().toISOString(),
+
+        summary: memory.summary,
+        sentiment: memory.sentiment,
+        key_outcomes: memory.key_outcomes,
+        patterns_detected: memory.patterns_detected,
+        suggestions: memory.suggestions,
+        user_feedback: input.user_feedback || null,
+
+        importance_score: importanceScore,
+        memory_type: 'run',
+        token_count: tokenCount,
+
+        model_used: input.model_used,
+        credits_consumed: input.credits_consumed,
+        execution_time_ms: input.execution_time_ms,
+        ais_score: input.ais_score || null,
+
+        // Embedding will be generated later in batch
+        embedding: null
+      });
+
+    if (error) {
+      console.error('❌ [MemorySummarizer] Error saving memory to database:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Estimate token count (rough approximation)
+   *
+   * @private
+   */
+  private estimateTokens(text: string): number {
+    // Rough estimate: 1 token ≈ 4 characters
+    return Math.ceil(text.length / 4);
+  }
+
+  /**
+   * Calculate cost for LLM call using database pricing
+   *
+   * @private
+   */
+  private async calculateCost(model: string, inputTokens: number, outputTokens: number): Promise<number> {
+    try {
+      // Fetch pricing from database
+      const { data: pricing, error } = await this.supabase
+        .from('ai_model_pricing')
+        .select('input_cost_per_million, output_cost_per_million')
+        .eq('model_name', model)
+        .eq('is_active', true)
+        .single();
+
+      if (error || !pricing) {
+        console.warn(`⚠️ [MemorySummarizer] No pricing found for model ${model}, using fallback`);
+        // Fallback: gpt-4o-mini pricing
+        return ((inputTokens / 1000000) * 0.15) + ((outputTokens / 1000000) * 0.60);
+      }
+
+      const inputCost = (inputTokens / 1000000) * pricing.input_cost_per_million;
+      const outputCost = (outputTokens / 1000000) * pricing.output_cost_per_million;
+
+      return inputCost + outputCost;
+    } catch (error) {
+      console.error('❌ [MemorySummarizer] Error calculating cost:', error);
+      // Fallback on error
+      return ((inputTokens / 1000000) * 0.15) + ((outputTokens / 1000000) * 0.60);
+    }
+  }
+
+  /**
+   * Generate embedding for existing memory (can be called in batch)
+   */
+  async generateEmbedding(memoryId: string): Promise<void> {
+    try {
+      // Get memory text
+      const { data: memory, error: fetchError } = await this.supabase
+        .from('run_memories')
+        .select('summary, key_outcomes, patterns_detected')
+        .eq('id', memoryId)
+        .single();
+
+      if (fetchError || !memory) {
+        console.error('❌ [MemorySummarizer] Memory not found:', memoryId);
+        return;
+      }
+
+      // Build text for embedding
+      const embeddingText = `${memory.summary} ${JSON.stringify(memory.key_outcomes)} ${JSON.stringify(memory.patterns_detected)}`;
+
+      // Load config
+      const config = await MemoryConfigService.getEmbeddingConfig(this.supabase);
+
+      // Generate embedding
+      const response = await this.openai.embeddings.create({
+        model: config.model,
+        input: embeddingText
+      });
+
+      const embedding = response.data[0].embedding;
+
+      // Save to database
+      const { error: updateError } = await this.supabase
+        .from('run_memories')
+        .update({ embedding })
+        .eq('id', memoryId);
+
+      if (updateError) {
+        console.error('❌ [MemorySummarizer] Error saving embedding:', updateError);
+      } else {
+        console.log(`✅ [MemorySummarizer] Embedding generated for memory ${memoryId}`);
+      }
+    } catch (error) {
+      console.error('❌ [MemorySummarizer] Error generating embedding:', error);
+    }
+  }
+}

@@ -13,11 +13,13 @@ import { AISConfigService, type AISRanges } from '@/lib/services/AISConfigServic
 /**
  * Update agent intensity metrics after execution (server-side only)
  * This is a standalone function that doesn't depend on AgentIntensityService
+ *
+ * @returns Object with success status and calculated scores, or false if failed
  */
 export async function updateAgentIntensityMetrics(
   supabase: SupabaseClient,
   executionData: AgentExecutionData
-): Promise<boolean> {
+): Promise<{ success: true; execution_score: number; combined_score: number; creation_score: number } | { success: false }> {
   try {
     // 1. Get existing metrics or create if not exists
     const { data: existing, error: fetchError } = await supabase
@@ -28,7 +30,7 @@ export async function updateAgentIntensityMetrics(
 
     if (fetchError && fetchError.code !== 'PGRST116') {
       console.error('Error fetching intensity metrics:', fetchError);
-      return false;
+      return { success: false };
     }
 
     if (!existing) {
@@ -43,7 +45,7 @@ export async function updateAgentIntensityMetrics(
 
       if (insertError) {
         console.error('Error initializing intensity metrics:', insertError);
-        return false;
+        return { success: false };
       }
 
       // Fetch the newly created record
@@ -53,7 +55,7 @@ export async function updateAgentIntensityMetrics(
         .eq('agent_id', executionData.agent_id)
         .single();
 
-      if (!newMetrics) return false;
+      if (!newMetrics) return { success: false };
 
       // Use the newly created record as existing
       return await updateExistingMetrics(supabase, newMetrics as AgentIntensityMetrics, executionData);
@@ -63,7 +65,7 @@ export async function updateAgentIntensityMetrics(
     return await updateExistingMetrics(supabase, existing as AgentIntensityMetrics, executionData);
   } catch (error) {
     console.error('Exception in updateAgentIntensityMetrics:', error);
-    return false;
+    return { success: false };
   }
 }
 
@@ -74,7 +76,7 @@ async function updateExistingMetrics(
   supabase: SupabaseClient,
   current: AgentIntensityMetrics,
   execution: AgentExecutionData
-): Promise<boolean> {
+): Promise<{ success: true; execution_score: number; combined_score: number; creation_score: number } | { success: false }> {
   // Update execution counts
   const total_executions = current.total_executions + 1;
   const successful_executions = current.successful_executions + (execution.was_successful ? 1 : 0);
@@ -88,6 +90,23 @@ async function updateExistingMetrics(
   const input_output_ratio = execution.input_tokens && execution.output_tokens
     ? execution.output_tokens / execution.input_tokens
     : current.input_output_ratio;
+
+  // Update output token statistics (NEW - for growth tracking)
+  const currentOutputTokens = execution.output_tokens || 0;
+  const total_output_tokens = (current.avg_output_tokens_per_run * current.total_executions) + currentOutputTokens;
+  const avg_output_tokens_per_run = total_output_tokens / total_executions;
+
+  // Update memory statistics (NEW - for memory complexity tracking)
+  const currentMemoryTokens = execution.memory_tokens || 0;
+  const total_memory_tokens = (current.avg_memory_tokens_per_run * current.total_executions) + currentMemoryTokens;
+  const avg_memory_tokens_per_run = total_memory_tokens / total_executions;
+
+  const memory_token_ratio = execution.input_tokens && execution.input_tokens > 0
+    ? Math.min(currentMemoryTokens / execution.input_tokens, 1.0)
+    : current.memory_token_ratio;
+
+  const memory_entry_count = execution.memory_entry_count || 0;
+  const memory_type_diversity = execution.memory_types ? execution.memory_types.length : 0;
 
   // Update execution statistics
   const total_iterations = current.total_iterations + execution.iterations_count;
@@ -143,19 +162,44 @@ async function updateExistingMetrics(
   );
 
   // Calculate component scores using database-driven ranges
-  const token_complexity_score = await calculateTokenComplexity(avg_tokens_per_run, peak_tokens_single_run, input_output_ratio, aisRanges);
+  const tokenComplexityResult = await calculateTokenComplexity(
+    supabase,
+    execution.agent_id,
+    avg_tokens_per_run,
+    peak_tokens_single_run,
+    input_output_ratio,
+    currentOutputTokens,
+    aisRanges,
+    success_rate,  // Add quality metrics for amplification
+    retry_rate
+  );
+  const token_complexity_score = tokenComplexityResult.score;
+  const output_token_growth_rate = tokenComplexityResult.growthData.growthRate;
+  const output_token_baseline = tokenComplexityResult.baseline;
+  const output_token_alert_level = tokenComplexityResult.growthData.alertLevel;
+
   const execution_complexity_score = await calculateExecutionComplexity(avg_iterations_per_run, avg_execution_duration_ms, success_rate, retry_rate, aisRanges);
   const plugin_complexity_score = await calculatePluginComplexity(unique_plugins_used, avg_plugins_per_run, tool_orchestration_overhead_ms, aisRanges);
   const workflow_complexity_score = await calculateWorkflowComplexity(workflow_steps_count, conditional_branches_count, loop_iterations_count, parallel_execution_count, aisRanges);
 
+  // NEW: Calculate memory complexity score (5th component)
+  const memory_complexity_score = await calculateMemoryComplexity(
+    currentMemoryTokens,
+    execution.input_tokens || 0,
+    memory_entry_count,
+    memory_type_diversity,
+    aisRanges
+  );
+
   // === THREE SCORE SYSTEM ===
 
-  // 1. EXECUTION SCORE (0-10): Weighted average of 4 execution components
+  // 1. EXECUTION SCORE (0-10): Weighted average of 5 execution components (UPDATED)
   const execution_score = (
     token_complexity_score * EXECUTION_WEIGHTS.TOKEN_COMPLEXITY +
     execution_complexity_score * EXECUTION_WEIGHTS.EXECUTION_COMPLEXITY +
     plugin_complexity_score * EXECUTION_WEIGHTS.PLUGIN_COMPLEXITY +
-    workflow_complexity_score * EXECUTION_WEIGHTS.WORKFLOW_COMPLEXITY
+    workflow_complexity_score * EXECUTION_WEIGHTS.WORKFLOW_COMPLEXITY +
+    memory_complexity_score * EXECUTION_WEIGHTS.MEMORY_COMPLEXITY
   );
 
   // 2. CREATION SCORE (0-10): Fetch from existing metrics (unchanged during execution)
@@ -196,6 +240,7 @@ async function updateExistingMetrics(
       execution_complexity_score,
       plugin_complexity_score,
       workflow_complexity_score,
+      memory_complexity_score,  // NEW: 5th component
 
       // === EXECUTION STATISTICS ===
       total_executions,
@@ -205,6 +250,19 @@ async function updateExistingMetrics(
       avg_tokens_per_run,
       peak_tokens_single_run,
       input_output_ratio,
+
+      // === OUTPUT TOKEN GROWTH TRACKING (NEW) ===
+      avg_output_tokens_per_run,
+      output_token_growth_rate,
+      output_token_baseline,
+      output_token_alert_level,
+
+      // === MEMORY COMPLEXITY TRACKING (NEW) ===
+      avg_memory_tokens_per_run,
+      memory_token_ratio,
+      memory_entry_count,
+      memory_type_diversity,
+
       total_iterations,
       avg_iterations_per_run,
       avg_execution_duration_ms,
@@ -229,12 +287,18 @@ async function updateExistingMetrics(
 
   if (updateError) {
     console.error('Error updating intensity metrics:', updateError);
-    return false;
+    return { success: false };
   }
 
   console.log(`✅ [AIS] Three-score system updated for agent ${execution.agent_id}:`);
   console.log(`   Creation: ${creation_score.toFixed(2)} | Execution: ${execution_score.toFixed(2)} | Combined: ${combined_score.toFixed(2)}`);
-  return true;
+
+  return {
+    success: true,
+    execution_score,
+    combined_score,
+    creation_score
+  };
 }
 
 // Helper functions for calculating component scores
@@ -247,16 +311,178 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+/**
+ * Calculate output token growth patterns for intelligent model routing
+ * Returns growth rate, alert level, and score adjustment based on user's table:
+ *
+ * Growth vs previous window | Meaning               | AIS Adjustment | Action
+ * --------------------------|----------------------|----------------|----------
+ * < 25%                     | Normal variance      | 0              | Ignore
+ * 25-50%                    | Moderate rise        | +0.2 (max)     | Monitor
+ * 50-100%                   | High sustained inc.  | +0.5 – +1.0    | Re-score
+ * ≥ 100%                    | Extreme growth       | +1.0 – +1.5    | Upgrade tier
+ */
+interface OutputTokenGrowthResult {
+  growthRate: number;
+  alertLevel: 'none' | 'monitor' | 'rescore' | 'upgrade';
+  adjustment: number;
+}
+
+async function calculateOutputTokenGrowth(
+  supabase: SupabaseClient,
+  agentId: string,
+  currentOutputTokens: number,
+  ranges: AISRanges
+): Promise<OutputTokenGrowthResult> {
+  try {
+    // Query ALL historical executions for this agent to calculate baseline
+    // User specified: "Why the time is matter, let's average all"
+    const { data: allExecutions, error } = await supabase
+      .from('token_usage')
+      .select('output_tokens')
+      .eq('agent_id', agentId)
+      .eq('activity_type', 'agent_execution')
+      .not('output_tokens', 'is', null);
+
+    if (error || !allExecutions || allExecutions.length === 0) {
+      // No baseline data yet - return no growth
+      return {
+        growthRate: 0,
+        alertLevel: 'none',
+        adjustment: 0
+      };
+    }
+
+    // Calculate baseline as average of all historical output tokens
+    const totalOutputTokens = allExecutions.reduce((sum, e) => sum + (e.output_tokens || 0), 0);
+    const baselineOutputTokens = totalOutputTokens / allExecutions.length;
+
+    if (baselineOutputTokens === 0 || currentOutputTokens === 0) {
+      return {
+        growthRate: 0,
+        alertLevel: 'none',
+        adjustment: 0
+      };
+    }
+
+    // Calculate growth rate as percentage
+    const growthRate = ((currentOutputTokens - baselineOutputTokens) / baselineOutputTokens) * 100;
+
+    // Get thresholds from AIS config (NO FALLBACKS - must be configured in database)
+    const monitorThreshold = (ranges as any).output_token_growth_monitor_threshold;
+    const rescoreThreshold = (ranges as any).output_token_growth_rescore_threshold;
+    const upgradeThreshold = (ranges as any).output_token_growth_upgrade_threshold;
+
+    const monitorAdjustment = (ranges as any).output_token_growth_monitor_adjustment;
+    const rescoreAdjustment = (ranges as any).output_token_growth_rescore_adjustment;
+    const upgradeAdjustment = (ranges as any).output_token_growth_upgrade_adjustment;
+
+    // Validate thresholds exist
+    if (monitorThreshold === undefined || rescoreThreshold === undefined || upgradeThreshold === undefined ||
+        monitorAdjustment === undefined || rescoreAdjustment === undefined || upgradeAdjustment === undefined) {
+      console.error('❌ Growth thresholds not configured in database. Please configure in Admin AIS Config.');
+      throw new Error('Growth thresholds not configured. Please set thresholds in Admin AIS Config.');
+    }
+
+    // Apply user's growth table
+    if (growthRate < monitorThreshold) {
+      return { growthRate, alertLevel: 'none', adjustment: 0 };
+    } else if (growthRate >= monitorThreshold && growthRate < rescoreThreshold) {
+      return { growthRate, alertLevel: 'monitor', adjustment: monitorAdjustment };
+    } else if (growthRate >= rescoreThreshold && growthRate < upgradeThreshold) {
+      return { growthRate, alertLevel: 'rescore', adjustment: rescoreAdjustment };
+    } else {
+      return { growthRate, alertLevel: 'upgrade', adjustment: upgradeAdjustment };
+    }
+  } catch (error) {
+    console.error('Error calculating output token growth:', error);
+    return {
+      growthRate: 0,
+      alertLevel: 'none',
+      adjustment: 0
+    };
+  }
+}
+
 async function calculateTokenComplexity(
+  supabase: SupabaseClient,
+  agentId: string,
   avgTokens: number,
   peakTokens: number,
   ioRatio: number,
-  ranges: AISRanges
-): Promise<number> {
-  const tokenVolumeScore = AISConfigService.normalize(avgTokens, ranges.token_volume);
-  const tokenPeakScore = AISConfigService.normalize(peakTokens, ranges.token_peak);
-  const tokenEfficiencyScore = normalizeToScale(ioRatio, ranges.token_io_ratio_min, ranges.token_io_ratio_max, 10, 0);
-  return clamp(tokenVolumeScore * 0.5 + tokenPeakScore * 0.3 + tokenEfficiencyScore * 0.2, 0, 10);
+  currentOutputTokens: number,
+  ranges: AISRanges,
+  successRate: number,
+  retryRate: number
+): Promise<{ score: number; growthData: OutputTokenGrowthResult; baseline: number }> {
+  // Calculate output token growth pattern (NEW - replaces absolute thresholds)
+  const growthResult = await calculateOutputTokenGrowth(supabase, agentId, currentOutputTokens, ranges);
+
+  // Calculate baseline from all executions
+  const { data: allExecutions } = await supabase
+    .from('token_usage')
+    .select('output_tokens')
+    .eq('agent_id', agentId)
+    .eq('activity_type', 'agent_execution')
+    .not('output_tokens', 'is', null);
+
+  const totalOutputTokens = (allExecutions || []).reduce((sum, e) => sum + (e.output_tokens || 0), 0);
+  const baseline = allExecutions && allExecutions.length > 0 ? totalOutputTokens / allExecutions.length : 0;
+
+  // Token efficiency score (I/O ratio - lower ratio = more efficient)
+  // Inverted scale: higher ratio (verbose output) = lower efficiency score
+  const tokenEfficiencyScore = normalizeToScale(
+    ioRatio,
+    ranges.token_io_ratio_min,
+    ranges.token_io_ratio_max,
+    10,
+    0  // Inverted: high ratio = low score
+  );
+
+  // Base token complexity from efficiency
+  const baseComplexity = tokenEfficiencyScore * 0.7;
+
+  // Apply growth adjustment (0 to +1.5 based on growth tier)
+  let growthAdjustment = growthResult.adjustment;
+
+  // === QUALITY METRICS AMPLIFICATION (NEW) ===
+  // Amplify adjustment if quality metrics indicate struggle
+  let qualityMultiplier = 1.0;
+
+  // Get quality thresholds from AIS config (NO FALLBACKS - must be configured in database)
+  const qualitySuccessThreshold = (ranges as any).quality_success_threshold;
+  const qualityRetryThreshold = (ranges as any).quality_retry_threshold;
+  const qualitySuccessMultiplier = (ranges as any).quality_success_multiplier;
+  const qualityRetryMultiplier = (ranges as any).quality_retry_multiplier;
+
+  // Validate quality thresholds exist
+  if (qualitySuccessThreshold === undefined || qualityRetryThreshold === undefined ||
+      qualitySuccessMultiplier === undefined || qualityRetryMultiplier === undefined) {
+    console.error('❌ Quality metric thresholds not configured in database. Please configure in Admin AIS Config.');
+    throw new Error('Quality metric thresholds not configured. Please set in Admin AIS Config.');
+  }
+
+  if (successRate < qualitySuccessThreshold) {
+    // Low success rate = agent struggling
+    qualityMultiplier += qualitySuccessMultiplier;
+  }
+
+  if (retryRate > qualityRetryThreshold) {
+    // High retry rate = agent struggling
+    qualityMultiplier += qualityRetryMultiplier;
+  }
+
+  // Apply quality multiplier to growth adjustment
+  growthAdjustment = growthAdjustment * qualityMultiplier;
+
+  // Final token complexity: base efficiency + amplified growth adjustment
+  const score = clamp(baseComplexity + growthAdjustment, 0, 10);
+
+  return {
+    score,
+    growthData: growthResult,
+    baseline
+  };
 }
 
 async function calculateExecutionComplexity(
@@ -297,4 +523,62 @@ async function calculateWorkflowComplexity(
   const loopScore = AISConfigService.normalize(loops, ranges.loops);
   const parallelScore = AISConfigService.normalize(parallel, ranges.parallel);
   return clamp(stepsScore * 0.4 + branchScore * 0.25 + loopScore * 0.20 + parallelScore * 0.15, 0, 10);
+}
+
+/**
+ * Calculate memory complexity score (NEW - 5th execution component)
+ *
+ * Considers three dimensions:
+ * 1. Memory token ratio (50% weight): How much of input is memory context
+ * 2. Memory type diversity (30% weight): Variety of memory types used
+ * 3. Memory volume (20% weight): Number of memory entries
+ *
+ * @param memoryTokens - Number of memory tokens injected
+ * @param totalInputTokens - Total input tokens (including memory)
+ * @param memoryEntryCount - Number of memory entries loaded
+ * @param memoryTypeDiversity - Number of distinct memory types used
+ * @param ranges - AIS normalization ranges
+ * @returns Memory complexity score (0-10)
+ */
+async function calculateMemoryComplexity(
+  memoryTokens: number,
+  totalInputTokens: number,
+  memoryEntryCount: number,
+  memoryTypeDiversity: number,
+  ranges: AISRanges
+): Promise<number> {
+  // If no memory used, return 0
+  if (memoryTokens === 0 || totalInputTokens === 0) {
+    return 0;
+  }
+
+  // 1. Memory Ratio Score (50% weight)
+  // How much of the input is memory context (0.0 - 1.0)
+  const memoryRatio = Math.min(memoryTokens / totalInputTokens, 1.0);
+  const ratioRange = { min: 0.0, max: 0.9 }; // High memory ratio (>90%) is unusual
+  const ratioScore = AISConfigService.normalize(memoryRatio, ratioRange);
+
+  // 2. Memory Type Diversity Score (30% weight)
+  // More types = more sophisticated memory usage
+  const diversityRange = { min: 0, max: 3 }; // 0-3 types (user_context, summaries, patterns)
+  const diversityScore = AISConfigService.normalize(memoryTypeDiversity, diversityRange);
+
+  // 3. Memory Volume Score (20% weight)
+  // Number of memory entries loaded
+  const volumeRange = { min: 0, max: 20 }; // 0-20 memory entries
+  const volumeScore = AISConfigService.normalize(memoryEntryCount, volumeRange);
+
+  // Weighted combination
+  const score = clamp(
+    ratioScore * 0.5 +
+    diversityScore * 0.3 +
+    volumeScore * 0.2,
+    0,
+    10
+  );
+
+  console.log(`🧠 [Memory Complexity] Tokens: ${memoryTokens}/${totalInputTokens} (${(memoryRatio * 100).toFixed(1)}%), ` +
+    `Entries: ${memoryEntryCount}, Types: ${memoryTypeDiversity}, Score: ${score.toFixed(2)}/10`);
+
+  return score;
 }

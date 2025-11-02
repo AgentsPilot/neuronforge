@@ -14,7 +14,8 @@ import {
   Settings,
   Gift,
   FileText,
-  Sliders
+  Sliders,
+  Brain
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -46,6 +47,12 @@ const navigationItems = [
     href: '/admin/analytics',
     icon: TrendingUp,
     description: 'Usage & Performance'
+  },
+  {
+    name: 'Memory System',
+    href: '/admin/learning-system',
+    icon: Brain,
+    description: 'Agent Memory & ROI'
   },
   {
     name: 'User Management',
