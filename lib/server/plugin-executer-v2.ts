@@ -42,6 +42,7 @@ export class PluginExecuterV2 {
   private pluginInstances: Map<string, BasePluginExecutor> = new Map();
   private pluginManager: PluginManagerV2;
   private userConnections: UserPluginConnections;
+  public static debug = process.env.NODE_ENV === 'development';
   private debug = process.env.NODE_ENV === 'development';
   private initialized = false;
 
@@ -54,7 +55,7 @@ export class PluginExecuterV2 {
   // Singleton factory for serverless functions
   static async getInstance(): Promise<PluginExecuterV2> {
     if (!pluginExecuterInstance) {
-      if (process.env.NODE_ENV === 'development') {
+      if (PluginExecuterV2.debug) {
         console.log('DEBUG: Creating new PluginExecuterV2 instance for serverless function');
       }
 
@@ -72,8 +73,7 @@ export class PluginExecuterV2 {
       if (this.debug) console.log('DEBUG: PluginExecuterV2 already initialized, skipping');
       return;
     }
-
-    if (this.debug) console.log('DEBUG: Initializing PluginExecuterV2');
+    
     // Plugin instances will be created lazily on-demand
     this.initialized = true;
     if (this.debug) console.log('DEBUG: PluginExecuterV2 initialization complete');

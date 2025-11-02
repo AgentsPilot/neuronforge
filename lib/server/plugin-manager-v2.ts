@@ -29,6 +29,7 @@ let pluginManagerInstance: PluginManagerV2 | null = null;
 export class PluginManagerV2 {
   private plugins: Map<string, PluginDefinition> = new Map();
   private userConnections: UserPluginConnections;
+  public static debug = process.env.NODE_ENV === 'development';
   private debug = process.env.NODE_ENV === 'development';
   private initialized = false;
 
@@ -40,7 +41,7 @@ export class PluginManagerV2 {
   // Singleton factory for serverless functions
   static async getInstance(): Promise<PluginManagerV2> {
     if (!pluginManagerInstance) {
-      if (process.env.NODE_ENV === 'development') {
+      if (PluginManagerV2.debug) {
         console.log('DEBUG: Creating new PluginManagerV2 instance for serverless function');
       }
       
@@ -58,7 +59,6 @@ export class PluginManagerV2 {
       return;
     }
 
-    if (this.debug) console.log('DEBUG: Initializing plugin manager with core plugins');
     await this.loadCorePlugins();
     this.initialized = true;
     if (this.debug) console.log(`DEBUG: Plugin manager initialized with ${this.plugins.size} plugins`);
