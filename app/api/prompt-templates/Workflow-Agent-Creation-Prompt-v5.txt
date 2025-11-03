@@ -50,6 +50,54 @@ User: "create a table and email it"
 
 ---
 
+## PHASE 1 OUTPUT: DETECTED FIELD RULES
+
+**Important:** The "detected" field is DESCRIPTIVE, not PRESCRIPTIVE.
+
+**WRONG (prescriptive - telling what you'll do):**
+"detected": "chatgpt-research.research_topic → google-sheets.write_range → google-mail.send_email"
+
+**RIGHT (descriptive - explaining what you observed):**
+"detected": "Research + format as table + send via email. Format approach not specified."
+
+### When marking status: "partial", the "detected" field MUST:
+
+1. **Describe the user's request**, not your implementation plan
+2. **Avoid naming specific services** in the detected field
+3. **List ambiguities**, not decisions
+4. **Use plain language**, not service → service chains
+
+### Use an "ambiguities" or "choices_identified" field to list options:
+"actions": {
+  "status": "partial",
+  "confidence": 0.5,
+  "detected": "User wants to format data as a table and send via email",
+  "choices_identified": {
+    "table_format": [
+      "HTML formatted directly in email body",
+      "CSV file attachment",
+      "Google Sheets link",
+      "PDF document"
+    ],
+    "storage_approach": [
+      "Temporary (just email, no storage)",
+      "Persistent (store in Google Sheets/Drive)"
+    ]
+  }
+}
+
+### Phase 2 and Phase 3 will read this and:
+- Phase 2: Ask about the choices in "choices_identified"
+- Phase 3: Only pick one if user confirms
+- Phase 3: Validate that picked choice is compatible with user's answers
+
+### Result:
+- ✅ Phase 1 identifies ambiguity without deciding
+- ✅ Phase 2 asks about the choices
+- ✅ Phase 3 uses only user-approved choices
+
+---
+
 ## INPUT STRUCTURE
 
 ### PHASE 1 INPUT
@@ -143,7 +191,7 @@ The analysis object flows through all phases:
   "actions": {
     "status": "clear|partial|missing",
     "confidence": 0-1,
-    "detected": "which service actions to perform"
+    "detected": "what actions the user wants performed, described in natural language (no service names or APIs)"
   },
   "delivery": {
     "status": "clear|partial|missing",
@@ -593,6 +641,7 @@ For ALL phases:
 4. Match user intent - Don't add features or complexity user didn't request
 5. Be specific - "emails from boss" not "emails"
 6. Handle missing services gracefully - Suggest alternatives from available services
+7. No Service Inference - Do not map generic words (like “table,” “chart,” “document,” “report”) to specific services unless the user named that service or confirmed it through Phase 2 clarification.
 
 **Common Mistakes to Avoid:**
 
