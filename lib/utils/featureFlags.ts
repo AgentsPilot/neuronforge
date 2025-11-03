@@ -37,6 +37,33 @@ export function useThreadBasedAgentCreation(): boolean {
 }
 
 /**
+ * Check if new conversational UI V2 is enabled
+ *
+ * @returns {boolean} True if new UI should be used, false to use legacy UI
+ */
+export function useNewAgentCreationUI(): boolean {
+  const flag = process.env.NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI;
+
+  console.log("Feature Flag: NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI=", flag || 'none');
+
+  if (!flag || flag.trim() === '') {
+    return false;
+  }
+
+  const normalizedFlag = flag.trim().toLowerCase();
+
+  if (normalizedFlag === 'false' || normalizedFlag === '0') {
+    return false;
+  }
+
+  if (normalizedFlag === 'true' || normalizedFlag === '1') {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Get all feature flags status
  * Useful for debugging and admin dashboards
  *
@@ -45,6 +72,6 @@ export function useThreadBasedAgentCreation(): boolean {
 export function getFeatureFlags() {
   return {
     useThreadBasedAgentCreation: useThreadBasedAgentCreation(),
-    // Add more feature flags here as needed
+    useNewAgentCreationUI: useNewAgentCreationUI(),
   };
 }
