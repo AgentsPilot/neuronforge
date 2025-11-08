@@ -31,6 +31,7 @@ interface PluginCardProps {
   isConnected: boolean
   connectionDetails: ConnectionDetails | null
   additionalConfig?: AdditionalConfig
+  isSystem?: boolean
   onConnectionChange?: (pluginKey: string, connected: boolean) => void
 }
 
@@ -46,6 +47,7 @@ export default function PluginCard({
   isConnected,
   connectionDetails,
   additionalConfig,
+  isSystem,
   onConnectionChange
 }: PluginCardProps) {
   const [connecting, setConnecting] = useState(false)
@@ -357,61 +359,63 @@ export default function PluginCard({
 
         {/* Action Button */}
         <div className="flex flex-col gap-2 flex-shrink-0">
-          <div className="flex justify-center">
-            {isConnected ? (
-              <div className="flex gap-2">
+          {!isSystem && (
+            <div className="flex justify-center">
+              {isConnected ? (
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="px-6"
+                    onClick={handleConnect}
+                    disabled={connecting || disconnecting}
+                  >
+                    {connecting ? (
+                      <>
+                        <Loader2 className="w-3 h-3 animate-spin mr-2" />
+                        Connecting...
+                      </>
+                    ) : (
+                      'Reconnect'
+                    )}
+                  </Button>
+
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleDisconnect}
+                    disabled={disconnecting}
+                    className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                  >
+                    {disconnecting ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      'Disconnect'
+                    )}
+                  </Button>
+                </div>
+              ) : (
                 <Button
                   size="sm"
-                  variant="outline"
-                  className="px-6"
+                  className="px-8"
                   onClick={handleConnect}
-                  disabled={connecting || disconnecting}
+                  disabled={connecting || !isAvailable}
+                  variant={isAvailable ? "default" : "secondary"}
                 >
                   {connecting ? (
                     <>
                       <Loader2 className="w-3 h-3 animate-spin mr-2" />
                       Connecting...
                     </>
+                  ) : isAvailable ? (
+                    'Connect'
                   ) : (
-                    'Reconnect'
+                    'Coming Soon'
                   )}
                 </Button>
-
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleDisconnect}
-                  disabled={disconnecting}
-                  className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                >
-                  {disconnecting ? (
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                  ) : (
-                    'Disconnect'
-                  )}
-                </Button>
-              </div>
-            ) : (
-              <Button
-                size="sm"
-                className="px-8"
-                onClick={handleConnect}
-                disabled={connecting || !isAvailable}
-                variant={isAvailable ? "default" : "secondary"}
-              >
-                {connecting ? (
-                  <>
-                    <Loader2 className="w-3 h-3 animate-spin mr-2" />
-                    Connecting...
-                  </>
-                ) : isAvailable ? (
-                  'Connect'
-                ) : (
-                  'Coming Soon'
-                )}
-              </Button>
-            )}
-          </div>
+              )}
+            </div>
+          )}
 
           {/* Additional Config Button */}
           {isConnected && additionalConfig?.enabled && (

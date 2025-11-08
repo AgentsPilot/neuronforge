@@ -204,8 +204,14 @@ export class PluginManagerV2 {
           // OPTIMIZATION: Skip expensive token refresh for status checks (UI display)
           // Token refresh will happen automatically on actual plugin execution
           if (options.skipTokenRefresh) {
+            // Only include if token is still valid (not expired)
+            // Use existing isTokenValid method to check if token is actually expired
+            if (!this.userConnections.isTokenValid(conn.expires_at)) {
+              if (this.debug) console.log(`DEBUG: Token expired for ${conn.plugin_key}, excluding from status check`);
+              continue;
+            }
+            // Token expires soon but still valid - include it
             if (this.debug) console.log(`DEBUG: Token needs refresh for ${conn.plugin_key}, skipping (status check only)`);
-            // Still include the connection - UI will show it as connected but may prompt reconnect on use
             actionableConnections.push(conn);
             continue;
           }

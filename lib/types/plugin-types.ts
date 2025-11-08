@@ -161,6 +161,7 @@ export interface PluginInfo {
   auth_config: PluginAuthConfig;
   actions: string[];
   action_count: number;
+  isSystem?: boolean; // Flag for system plugins (no user OAuth required)
 }
 
 export interface ConnectedPluginInfo extends PluginInfo {

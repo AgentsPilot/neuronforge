@@ -25,7 +25,8 @@ export async function GET(request: NextRequest) {
       auth_type: definition.plugin.auth_config.auth_type,
       auth_config: definition.plugin.auth_config, // Include processed auth config
       actions: Object.keys(definition.actions),
-      action_count: Object.keys(definition.actions).length
+      action_count: Object.keys(definition.actions).length,
+      isSystem: definition.plugin.isSystem || false // Include system flag
     }));
 
     console.log(`DEBUG: API - Returning ${formatted.length} available plugins`);

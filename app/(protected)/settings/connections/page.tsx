@@ -198,6 +198,12 @@ export default function ConnectionsPage() {
     return (pluginData as any)?.additional_config || undefined
   }
 
+  // Helper to get isSystem flag for a plugin
+  const getPluginIsSystem = (pluginKey: string): boolean => {
+    const pluginData = availablePluginsData.find(p => p.key === pluginKey)
+    return pluginData?.isSystem || false
+  }
+
   // Loading skeleton component
   const PluginSkeleton = () => (
     <div className="bg-white rounded-xl border border-gray-200 p-4 animate-pulse">
@@ -558,6 +564,7 @@ export default function ConnectionsPage() {
                           isConnected={connectedPlugins.includes(plugin.pluginKey)}
                           connectionDetails={getPluginConnectionDetails(plugin.pluginKey)}
                           additionalConfig={getPluginAdditionalConfig(plugin.pluginKey)}
+                          isSystem={getPluginIsSystem(plugin.pluginKey)}
                           onConnectionChange={handleConnectionChange}
                         />
                       </div>
@@ -610,6 +617,7 @@ export default function ConnectionsPage() {
                           isConnected={false}
                           connectionDetails={null}
                           additionalConfig={getPluginAdditionalConfig(plugin.pluginKey)}
+                          isSystem={getPluginIsSystem(plugin.pluginKey)}
                           onConnectionChange={handleConnectionChange}
                         />
                       </div>
@@ -662,6 +670,7 @@ export default function ConnectionsPage() {
                           isConnected={false}
                           connectionDetails={null}
                           additionalConfig={getPluginAdditionalConfig(plugin.pluginKey)}
+                          isSystem={getPluginIsSystem(plugin.pluginKey)}
                           onConnectionChange={handleConnectionChange}
                         />
                       </div>
@@ -714,6 +723,7 @@ export default function ConnectionsPage() {
                             isConnected={isConnected}
                             connectionDetails={getPluginConnectionDetails(plugin.pluginKey)}
                             additionalConfig={getPluginAdditionalConfig(plugin.pluginKey)}
+                            isSystem={getPluginIsSystem(plugin.pluginKey)}
                             onConnectionChange={handleConnectionChange}
                           />
                         </div>
