@@ -12,9 +12,20 @@ export class UserPluginConnections {
 
   constructor() {
     // Create client for read operations (server-side with service role key for better permissions)
+    // Disable query caching to ensure fresh data for plugin connections
     this.supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      {
+        db: {
+          schema: 'public',
+        },
+        global: {
+          headers: {
+            'cache-control': 'no-cache',
+          },
+        },
+      }
     );
     if (this.debug) console.log('DEBUG: Server UserPluginConnections initialized');
   }
