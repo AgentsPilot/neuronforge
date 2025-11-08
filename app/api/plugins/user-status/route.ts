@@ -27,9 +27,8 @@ export async function GET(request: NextRequest) {
     const pluginManager = await PluginManagerV2.getInstance();
 
     // Get user's actionable plugins (connected with valid tokens)
-    // OPTIMIZATION: Skip token refresh for status checks - speeds up page load significantly
-    // Token refresh will happen automatically when user actually executes a plugin
-    const actionablePlugins = await pluginManager.getUserActionablePlugins(userId, { skipTokenRefresh: true });
+    // Enable token refresh to ensure we show accurate connection status
+    const actionablePlugins = await pluginManager.getUserActionablePlugins(userId, { skipTokenRefresh: false });
 
     // Get disconnected plugins (available but not connected)
     const disconnectedPlugins = await pluginManager.getDisconnectedPlugins(userId);
