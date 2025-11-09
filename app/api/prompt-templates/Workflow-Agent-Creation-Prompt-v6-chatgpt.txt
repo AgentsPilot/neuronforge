@@ -72,12 +72,14 @@ This field should be a warm, friendly 1-3 sentence summary written in natural, c
 * If the user uses a generic term (e.g., “email,” “table,” “report,” “spreadsheet”) and multiple connected services could satisfy it, mark that dimension **partial**.
 * When partial, create a `choices_identified` field listing valid options primarily from `connected_services`: 
 	- If too few relevant options exist (e.g., <2), supplement with options from `available_services` and mark unconnected ones with a note in `pluginWarning` (e.g., “requires connection”).
+* When actions involve summarization, aggregation, synthesis, or analysis of text or data (e.g., “summarize”, “analyze”, “aggregate insights”, “generate report”), include any summarization-capable services (such as `chatgpt-research`) in `choices_identified.actions`.
+  Only skip them if the user explicitly restricts the workflow to a single tool (e.g., “within Google Sheets only”).
 * Always keep `detected` descriptive (plain language), not prescriptive.
 * If a dimension is marked partial and no `choices_identified` is provided:
-	- Infer plausible options primarily from `connected_services`.
-	- If fewer than 2 meaningful options exist from `connected_services`, you MAY include additional options based on `available_services` (for example, other channels or storage targets supported by the platform).
-	- Any option that relies on a service not in `connected_services` must be treated as a potential future option: if selected later, it should appear in `missingPlugins` and/or `pluginWarning` until connected.
-	- Always produce at least one option for each partial dimension.
+  - Infer plausible options primarily from `connected_services` when available.
+  - If `connected_services` is omitted or offers fewer than two relevant options, expand the list using `available_services` to surface other potential implementations.
+  - Clearly label any option from an unconnected service as "requires connection" via `pluginWarning`.
+  - Always produce at least one option for each partial dimension so the user can confirm intent.
 
 ### Phase 2 Behavior
 
@@ -399,6 +401,8 @@ Before marking ready_for_generation:
 After reconciling services and clarifications:
 
 1. Compare `requiredServices` against `connected_services`.
+1a. Re-evaluate `requiredServices` and `specifics.services_involved` after applying all clarifications.
+    Remove any services that are no longer relevant (e.g., if the user chose "HTML in email" instead of "Google Sheets link").
 2. For every service in `requiredServices` **not** present in `connected_services`, add its name to `missingPlugins`.
 3. For each such service, optionally include a descriptive note in `pluginWarning`, e.g.:
    "pluginWarning": {
@@ -422,7 +426,9 @@ After reconciling services and clarifications:
 ### Selective Confirmation
 
 * Explicit intent → implement directly.
-* Implicit but unambiguous → implement directly.
+* Implicit and explicit are distinct:
+  - If explicit (user named the service) → implement directly.
+  - If implicit, even if only one available match exists → treat as **partial** and confirm in Phase 2.
 * Ambiguous (multiple valid mappings) → ask user.
 * Never re-ask about clearly named services.
 
