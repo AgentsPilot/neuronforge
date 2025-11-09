@@ -11,7 +11,9 @@ import type {
   ProcessMessageResponse,
   ThreadErrorResponse,
   UpdateAgentPromptThread,
-  ClarificationQuestion
+  ClarificationQuestion,
+  ConnectedService,
+  UserContext
 } from '@/components/agent-creation/types/agent-prompt-threads';
 
 /**
@@ -162,7 +164,8 @@ export async function POST(request: NextRequest) {
       user_prompt,
       user_context,
       connected_services,
-      clarification_answers
+      clarification_answers,
+      metadata
     } = requestBody;
 
     // Step 4: Validate required fields
@@ -199,33 +202,84 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log('✅ User Context retrieved from client side:', user_context);
-    let user_connected_services = connected_services;
+    // Step 3.5: Build user context (merge client-provided with server-side user data)
+    const serverUserContext: UserContext = {
+      full_name: user.user_metadata?.full_name || user.user_metadata?.name || '',
+      email: user.email || '',
+      role: user.user_metadata?.role || '',
+      company: user.user_metadata?.company || '',
+      domain: user.user_metadata?.domain || ''
+    };
+
+    // Merge client-provided context with server context (client takes priority if provided)
+    const mergedUserContext: UserContext = {
+      ...serverUserContext,
+      ...user_context
+    };
+
+    console.log('✅ User Context (server):', serverUserContext);
+    console.log('✅ User Context (merged with client):', mergedUserContext);
+
+    let user_connected_services: ConnectedService[] = [];
+    let user_available_services: ConnectedService[] = [];
     console.log('✅ Connected plugins retrieved from client side:', connected_services);
+
+    // Step 4: Get User's Connected Plugins (just populate name, context/actions come from available_services)
     if (!connected_services || connected_services.length === 0)
-    {        
-      console.log('❌ No connected_services recieved from client for user:', user.id);
+    {
+      console.log('❌ No connected_services received from client for user:', user.id);
       try {
         const pluginManager = await PluginManagerV2.getInstance();
-
-        // Step 4: Get User Plugins and Plugins Metadata for LLM context
-        // TO FIX: call API - /app/api/plugins/user-status
         const userConnectedPlugins = await pluginManager.getUserActionablePlugins(user.id);
-        const connectedPluginsKeys = Object.keys(userConnectedPlugins);
-        console.log('✅ Connected plugins retrieved:', connectedPluginsKeys);
-        
-        const connectedPluginsMetaData = pluginManager.convertToPluginDefinitionContext(userConnectedPlugins);
-        user_connected_services = connectedPluginsMetaData
-          .map((p: PluginDefinitionContext) => p.toShortLLMContext())
-          .map((p: any) => ({
-            name: p.key,
-            context: p.context,
-            key_actions: p.capabilities
-          }));
-        console.log('✅ Plugin metadata retrieved:', user_connected_services);
+        const connectedPluginKeys = Object.keys(userConnectedPlugins);
+
+        // Only populate name field - full details are in available_services
+        user_connected_services = connectedPluginKeys.map(key => ({
+          name: key,
+          context: "",
+          key_actions: []
+        }));
+        console.log('✅ Connected plugin keys retrieved:', connectedPluginKeys);
       } catch (error: any) {
         console.log('UNEXPECTED_ERROR', error)
       }
+    } else {
+      // If connected_services passed from client, ensure only name is populated
+      user_connected_services = Array.isArray(connected_services)
+        ? connected_services.map((s: any) => ({
+            name: typeof s === 'string' ? s : s.name,
+            context: "",
+            key_actions: []
+          }))
+        : [];
+    }
+
+    // Step 4.5: Get ALL available plugins with full context (for LLM to understand capabilities)
+    try {
+      const pluginManager = await PluginManagerV2.getInstance();
+      const allAvailablePlugins = pluginManager.getAvailablePlugins();
+      const availablePluginsKeys = Object.keys(allAvailablePlugins);
+      console.log('✅ All available plugins retrieved:', availablePluginsKeys);
+
+      // Convert to full LLM context with actions and capabilities
+      const allPluginsContext = pluginManager.convertToPluginDefinitionContext(
+        Object.entries(allAvailablePlugins).reduce((acc, [key, definition]) => {
+          acc[key] = { definition, connection: null };
+          return acc;
+        }, {} as Record<string, any>)
+      );
+
+      user_available_services = allPluginsContext
+        .map((p: PluginDefinitionContext) => p.toShortLLMContext())
+        .map((p: any) => ({
+          name: p.key,
+          context: p.context,
+          key_actions: p.capabilities
+        }));
+      console.log('✅ Available services formatted for LLM:', user_available_services.length, 'total');
+    } catch (error: any) {
+      console.error('❌ Failed to fetch available plugins:', error);
+      // Don't fail the request, just log the error
     }
 
     console.log('✅ Request validated:', { thread_id, phase, user_id: user.id });
@@ -278,9 +332,10 @@ export async function POST(request: NextRequest) {
       userMessage = {
         phase: 1,
         user_prompt,
-        user_context,
+        user_context: mergedUserContext,
         analysis: null,
-        connected_services: user_connected_services
+        connected_services: user_connected_services,
+        available_services: user_available_services
       };
     } else if (phase === 2) {
       userMessage = {
@@ -289,7 +344,10 @@ export async function POST(request: NextRequest) {
     } else if (phase === 3) {
       userMessage = {
         phase: 3,
-        clarification_answers: clarification_answers || {}
+        clarification_answers: clarification_answers || {},
+        metadata: metadata || {},
+        connected_services: user_connected_services
+        // Note: available_services already in thread context from Phase 1, no need to resend
       };
     }
 
@@ -418,9 +476,30 @@ export async function POST(request: NextRequest) {
 
       console.log('✅ AI response parsed successfully');
 
+      // Step 12.4: Enrich Phase 1 response with connectedPlugins
+      if (phase === 1) {
+        // Return the list of connected plugin keys to frontend
+        aiResponse.connectedPlugins = user_connected_services.map(s => s.name);
+        console.log('✅ Phase 1 - Returning connected plugins to frontend:', aiResponse.connectedPlugins);
+      }
+
       // Step 12.5: Add standard error handling question if Phase 2 and missing
       if (phase === 2) {
         aiResponse = addStandardErrorHandlingQuestion(aiResponse, user_prompt || '');
+      }
+
+      // Step 12.6: Log Phase 3 OAuth gate details
+      if (phase === 3) {
+        console.log('🔒 Phase 3 - OAuth Gate Check:');
+        console.log('  Required services:', aiResponse.requiredServices);
+        console.log('  Missing plugins:', aiResponse.missingPlugins);
+        console.log('  Ready for generation:', aiResponse.ready_for_generation);
+        if (aiResponse.metadata?.declined_plugins_blocking) {
+          console.log('  ⚠️ Declined plugins blocking:', aiResponse.metadata.declined_plugins_blocking);
+        }
+        if (aiResponse.error) {
+          console.log('  ❌ Error:', aiResponse.error);
+        }
       }
 
     } catch (parseError: any) {

@@ -89,7 +89,12 @@ export interface ProcessMessageRequest {
   user_context: UserContext;
   analysis: AnalysisObject | null;
   connected_services: ConnectedService[];
+  available_services?: ConnectedService[]; // All plugins available in the system (same structure as connected_services)
   clarification_answers?: Record<string, any>;
+  metadata?: {
+    declined_plugins?: string[]; // Plugins user explicitly declined to connect
+    [key: string]: any; // Allow additional metadata
+  };
 }
 
 export interface ProcessMessageResponse {
@@ -104,7 +109,22 @@ export interface ProcessMessageResponse {
   suggestions?: string[];
   missingPlugins?: string[];
   pluginWarning?: Record<string, any>;
-  metadata?: Record<string, any>;
+  connectedPlugins?: string[]; // Phase 1: List of user's connected plugin keys (e.g., ['google-mail', 'slack'])
+  conversationalSummary?: string; // All Phases: LLM-generated friendly summary of understanding/progress
+  ready_for_generation?: boolean; // Phase 3: True if all plugins connected and ready to create agent
+  error?: string; // Phase 3: Error message if workflow impossible (e.g., no alternatives for declined plugin)
+  metadata?: {
+    all_clarifications_applied?: boolean;
+    confirmation_needed?: boolean;
+    implicit_services_detected?: string[];
+    oauth_required?: boolean;
+    oauth_message?: string;
+    plugins_adjusted?: string[];
+    adjustment_reason?: string;
+    declined_plugins_blocking?: string[];
+    reason?: string;
+    [key: string]: any;
+  };
 }
 
 export interface ClarificationQuestion {

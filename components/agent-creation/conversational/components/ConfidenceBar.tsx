@@ -5,7 +5,7 @@ import { getConfidenceGradient } from '../utils/confidenceCalculator';
 
 export default function ConfidenceBar({ score }: ConfidenceBarProps) {
   return (
-    <div className="fixed bottom-20 left-0 right-0 z-30 bg-white/90 backdrop-blur-xl border-t border-white/20 shadow-lg">
+    <div className="bg-white/90 backdrop-blur-xl border-t border-white/20 shadow-lg">
       <div className="max-w-4xl mx-auto px-4 py-3">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">

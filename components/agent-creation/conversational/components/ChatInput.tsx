@@ -28,7 +28,7 @@ export default function ChatInput({ onSubmit, disabled = false, placeholder = 'T
   }, [value]);
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-gray-200 shadow-lg">
+    <div className="bg-white border-t border-gray-200 shadow-lg">
       <form onSubmit={handleSubmit} className="max-w-4xl mx-auto p-4">
         <div className="flex gap-2 items-end">
           <textarea

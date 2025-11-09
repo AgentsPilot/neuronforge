@@ -5,10 +5,12 @@
 export type MessageType =
   | 'text'
   | 'plugin_warning'
+  | 'plugin_connection'
   | 'clarification_question'
   | 'enhanced_prompt_review'
   | 'system_notification'
-  | 'transition';
+  | 'transition'
+  | 'analysis_insight';
 
 export interface Message {
   id: string;
@@ -18,6 +20,9 @@ export interface Message {
   content?: string;
   data?: any;
   isQuestionAnswer?: boolean;
+  missingPlugins?: string[]; // For plugin_connection messages
+  questions?: ClarificationQuestion[]; // For clarification_question messages
+  enhancedPrompt?: any; // For enhanced_prompt_review messages
 }
 
 export type ConversationalStage =
@@ -101,7 +106,8 @@ export interface UseConversationalFlowReturn {
 
   handleInitialPrompt: (prompt: string) => Promise<void>;
   handlePluginConnected: (pluginKey: string) => Promise<void>;
-  handleAnswerQuestion: (questionId: string, answer: string) => Promise<void>;
+  handlePluginSkipped: (pluginKey: string) => Promise<void>;
+  handleAnswerQuestion: (questionId: string, answer: string, displayLabel?: string) => Promise<void>;
   handleAcceptPrompt: () => Promise<void>;
   handleRevisePrompt: () => Promise<void>;
   handleSendMessage: (message: string) => Promise<void>;
@@ -115,7 +121,8 @@ export interface UserMessageProps {
 export interface AIMessageProps {
   message: Message;
   onPluginConnect?: (pluginKey: string) => void;
-  onAnswerQuestion?: (questionId: string, answer: string) => void;
+  onPluginSkip?: (pluginKey: string) => void;
+  onAnswerQuestion?: (questionId: string, answer: string, displayLabel?: string) => void;
   onAcceptPrompt?: () => void;
   onRevisePrompt?: () => void;
 }
@@ -123,6 +130,7 @@ export interface AIMessageProps {
 export interface PluginConnectionCardProps {
   missingPlugins: string[];
   onConnect: (pluginKey: string) => void;
+  onSkip?: (pluginKey: string) => void;
   connectingPlugin?: string | null;
 }
 
@@ -130,12 +138,29 @@ export interface QuestionCardProps {
   question: ClarificationQuestion;
   questionNumber: number;
   totalQuestions: number;
-  onAnswer: (questionId: string, answer: string) => void;
+  onAnswer: (questionId: string, answer: string, displayLabel?: string) => void;
   isProcessing?: boolean;
 }
 
 export interface EnhancedPromptReviewProps {
-  plan: string;
+  enhancedPrompt: {
+    plan_title: string;
+    plan_description: string;
+    sections: {
+      data: string;
+      processing_steps: string[];
+      output: string;
+      delivery: string;
+      error_handling: string;
+    };
+    specifics: {
+      services_involved: string[];
+      user_inputs_required: string[];
+      trigger_scope: string;
+    };
+  };
+  requiredServices: string[];
+  connectedPlugins: string[];
   onAccept: () => void;
   onRevise: () => void;
 }

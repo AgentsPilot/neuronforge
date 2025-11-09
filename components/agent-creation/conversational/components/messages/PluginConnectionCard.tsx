@@ -6,6 +6,7 @@ import { getPluginDisplayName, getPluginDescription } from '../../utils/messageF
 export default function PluginConnectionCard({
   missingPlugins,
   onConnect,
+  onSkip,
   connectingPlugin
 }: PluginConnectionCardProps) {
   return (
@@ -32,22 +33,31 @@ export default function PluginConnectionCard({
               </div>
             </div>
 
-            <button
-              onClick={() => onConnect(plugin)}
-              disabled={connectingPlugin === plugin}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-all flex items-center gap-2"
-            >
-              {connectingPlugin === plugin ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Connecting...
-                </>
-              ) : (
-                <>
-                  Connect {getPluginDisplayName(plugin)} →
-                </>
-              )}
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => onSkip?.(plugin)}
+                disabled={connectingPlugin === plugin}
+                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-all"
+              >
+                Skip
+              </button>
+              <button
+                onClick={() => onConnect(plugin)}
+                disabled={connectingPlugin === plugin}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-all flex items-center gap-2"
+              >
+                {connectingPlugin === plugin ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Connecting...
+                  </>
+                ) : (
+                  <>
+                    Connect {getPluginDisplayName(plugin)} →
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       ))}

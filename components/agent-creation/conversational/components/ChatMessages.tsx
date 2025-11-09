@@ -22,7 +22,7 @@ export default function ChatMessages({ messages, children }: ChatMessagesProps) 
   }, [messages.length]);
 
   return (
-    <div className="flex-1 overflow-y-auto pb-32">
+    <div className="h-full overflow-y-auto">
       <div className="max-w-4xl mx-auto px-4 py-6 space-y-4">
         {children}
         <div ref={messagesEndRef} />

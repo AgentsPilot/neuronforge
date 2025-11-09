@@ -34,6 +34,7 @@ export default function ConversationalAgentBuilderV2({
     isProcessing,
     missingPlugins,
     handlePluginConnected,
+    handlePluginSkipped,
     handleAnswerQuestion,
     handleAcceptPrompt,
     handleRevisePrompt,
@@ -47,46 +48,69 @@ export default function ConversationalAgentBuilderV2({
 
   const waitingForPlugins = currentStage === 'plugins' && missingPlugins.length > 0;
 
+  // Define thinking steps based on current stage
+  const getThinkingSteps = () => {
+    switch (currentStage) {
+      case 'clarity':
+        return ['Analyzing your request', 'Identifying services', 'Checking clarity'];
+      case 'questions':
+        return ['Generating questions', 'Planning workflow'];
+      case 'review':
+        return ['Creating automation plan', 'Optimizing workflow'];
+      default:
+        return undefined;
+    }
+  };
+
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
-      {/* Header */}
-      <ChatHeader onCancel={onCancel} />
+    <div className="fixed inset-0 flex flex-col bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 overflow-hidden">
+      {/* Header - Fixed */}
+      <div className="flex-shrink-0">
+        <ChatHeader onCancel={onCancel} />
+      </div>
 
-      {/* Messages Area */}
-      <ChatMessages messages={messages}>
-        {messages.map((message) => {
-          if (message.type === 'user') {
-            return <UserMessage key={message.id} message={message} />;
-          }
+      {/* Messages Area - Scrollable */}
+      <div className="flex-1 overflow-hidden">
+        <ChatMessages messages={messages}>
+          {messages.map((message) => {
+            if (message.type === 'user') {
+              return <UserMessage key={message.id} message={message} />;
+            }
 
-          if (message.type === 'ai' || message.type === 'system') {
-            return (
-              <AIMessage
-                key={message.id}
-                message={message}
-                onPluginConnect={handlePluginConnected}
-                onAnswerQuestion={handleAnswerQuestion}
-                onAcceptPrompt={handleAcceptPrompt}
-                onRevisePrompt={handleRevisePrompt}
-              />
-            );
-          }
+            if (message.type === 'ai' || message.type === 'system') {
+              return (
+                <AIMessage
+                  key={message.id}
+                  message={message}
+                  onPluginConnect={handlePluginConnected}
+                  onPluginSkip={handlePluginSkipped}
+                  onAnswerQuestion={handleAnswerQuestion}
+                  onAcceptPrompt={handleAcceptPrompt}
+                  onRevisePrompt={handleRevisePrompt}
+                />
+              );
+            }
 
-          return null;
-        })}
+            return null;
+          })}
 
-        {isProcessing && <TypingIndicator />}
-      </ChatMessages>
+          {isProcessing && <TypingIndicator steps={getThinkingSteps()} />}
+        </ChatMessages>
+      </div>
 
-      {/* Confidence Bar */}
-      <ConfidenceBar score={confidenceScore} />
+      {/* Confidence Bar - Fixed */}
+      <div className="flex-shrink-0">
+        <ConfidenceBar score={confidenceScore} />
+      </div>
 
-      {/* Input */}
-      <ChatInput
-        onSubmit={handleSendMessage}
-        disabled={isProcessing || waitingForPlugins}
-        placeholder={getPlaceholderText(currentStage, waitingForPlugins, isProcessing)}
-      />
+      {/* Input - Fixed */}
+      <div className="flex-shrink-0">
+        <ChatInput
+          onSubmit={handleSendMessage}
+          disabled={isProcessing || waitingForPlugins}
+          placeholder={getPlaceholderText(currentStage, waitingForPlugins, isProcessing)}
+        />
+      </div>
     </div>
   );
 }

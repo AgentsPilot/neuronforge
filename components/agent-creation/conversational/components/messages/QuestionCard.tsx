@@ -12,13 +12,13 @@ export default function QuestionCard({
   const [customValue, setCustomValue] = useState('');
   const [showCustomInput, setShowCustomInput] = useState(false);
 
-  const handleOptionSelect = (value: string) => {
-    onAnswer(question.id, value);
+  const handleOptionSelect = (value: string, label: string) => {
+    onAnswer(question.id, value, label);
   };
 
   const handleCustomSubmit = () => {
     if (customValue.trim()) {
-      onAnswer(question.id, customValue.trim());
+      onAnswer(question.id, customValue.trim(), customValue.trim()); // For custom, value = label
       setCustomValue('');
       setShowCustomInput(false);
     }
@@ -41,7 +41,7 @@ export default function QuestionCard({
           {question.options.map((option) => (
             <button
               key={option.value}
-              onClick={() => handleOptionSelect(option.value)}
+              onClick={() => handleOptionSelect(option.value, option.label)}
               disabled={isProcessing}
               className="px-4 py-3 bg-white border-2 border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-all text-sm font-medium text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >

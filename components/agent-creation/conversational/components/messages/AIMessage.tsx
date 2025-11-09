@@ -7,10 +7,12 @@ import PluginConnectionCard from './PluginConnectionCard';
 import QuestionCard from './QuestionCard';
 import EnhancedPromptReview from './EnhancedPromptReview';
 import SystemNotification from './SystemNotification';
+import AnalysisInsightCard from './AnalysisInsightCard';
 
 export default function AIMessage({
   message,
   onPluginConnect,
+  onPluginSkip,
   onAnswerQuestion,
   onAcceptPrompt,
   onRevisePrompt
@@ -18,10 +20,12 @@ export default function AIMessage({
   const renderContent = () => {
     switch (message.messageType) {
       case 'plugin_warning':
+      case 'plugin_connection':
         return (
           <PluginConnectionCard
-            missingPlugins={message.data?.missingPlugins || []}
+            missingPlugins={message.data?.missingPlugins || message.missingPlugins || []}
             onConnect={onPluginConnect!}
+            onSkip={onPluginSkip}
             connectingPlugin={message.data?.connectingPlugin}
           />
         );
@@ -40,7 +44,24 @@ export default function AIMessage({
       case 'enhanced_prompt_review':
         return (
           <EnhancedPromptReview
-            plan={message.data?.enhancedPlan || ''}
+            enhancedPrompt={message.data?.enhancedPrompt || {
+              plan_title: '',
+              plan_description: '',
+              sections: {
+                data: '',
+                processing_steps: [],
+                output: '',
+                delivery: '',
+                error_handling: ''
+              },
+              specifics: {
+                services_involved: [],
+                user_inputs_required: [],
+                trigger_scope: ''
+              }
+            }}
+            requiredServices={message.data?.requiredServices || []}
+            connectedPlugins={message.data?.connectedPlugins || []}
             onAccept={onAcceptPrompt!}
             onRevise={onRevisePrompt!}
           />
@@ -48,6 +69,14 @@ export default function AIMessage({
 
       case 'system_notification':
         return <SystemNotification content={message.content || ''} />;
+
+      case 'analysis_insight':
+        return (
+          <AnalysisInsightCard
+            insights={message.data?.insights || []}
+            clarityScore={message.data?.clarityScore || 0}
+          />
+        );
 
       case 'transition':
         return (

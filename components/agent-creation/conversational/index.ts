@@ -16,6 +16,7 @@ export type {
 
 // Export hooks
 export { useConversationalFlow } from './hooks/useConversationalFlow';
+export { useThreadManagement } from './hooks/useThreadManagement';
 
 // Export utilities
 export {
