@@ -68,13 +68,9 @@ export default function RewardConfigPage() {
       });
       const data = await response.json();
 
-      console.log('📦 [fetchRewards] Received data:', data);
-
       if (data.success) {
         setRewards(data.rewards);
         setLastUpdate(Date.now()); // Force component re-render
-        console.log('📦 [fetchRewards] Updated rewards state:', data.rewards);
-        console.log('📦 [fetchRewards] Set lastUpdate to force re-render');
         if (data.defaultCredits !== undefined) {
           setDefaultCredits(data.defaultCredits);
         }
@@ -236,16 +232,10 @@ export default function RewardConfigPage() {
   };
 
   const handleSaveSettings = async (rewardId: string) => {
-    console.log('🔥 SAVE BUTTON CLICKED - handleSaveSettings called with rewardId:', rewardId);
-    console.log('🔥 Current settingsForm state:', settingsForm);
-
     try {
       setSaving(true);
       setSettingsError(null);
       setSettingsSuccess(null);
-
-      console.log('💾 Saving settings for reward:', rewardId);
-      console.log('📝 Settings form:', settingsForm);
 
       const response = await fetch('/api/admin/reward-config', {
         method: 'POST',
@@ -258,34 +248,24 @@ export default function RewardConfigPage() {
       });
 
       const data = await response.json();
-      console.log('📥 Response:', data);
 
       if (data.success) {
-        console.log('✅ Settings saved successfully');
-        console.log('✅ Saved settings data from API:', data.settings);
-
         // Fetch updated data first
-        console.log('🔄 Calling fetchRewards to get fresh data...');
         await fetchRewards();
-        console.log('🔄 fetchRewards completed');
 
         // Then exit edit mode and show success message
         setEditingSettings(null);
         setSettingsForm({});
         setSettingsSuccess('Sharing requirements updated successfully');
-        console.log('✅ Success message set, should appear in view mode');
 
         // Auto-clear success message after 5 seconds
         setTimeout(() => {
-          console.log('⏰ Clearing success message');
           setSettingsSuccess(null);
         }, 5000);
       } else {
-        console.error('❌ Failed to save settings:', data.error);
         setSettingsError(data.error || 'Failed to update settings');
       }
     } catch (err: any) {
-      console.error('❌ Exception while saving settings:', err);
       setSettingsError(err.message || 'Failed to update settings');
     } finally {
       setSaving(false);
@@ -656,12 +636,6 @@ export default function RewardConfigPage() {
 
                   {expandedSettings === reward.id && (
                     <div className="mt-4 bg-slate-800/50 rounded-lg p-4">
-                      {(() => {
-                        console.log('🎨 [Render] Rendering settings for reward:', reward.id);
-                        console.log('🎨 [Render] Current settings:', reward.settings);
-                        console.log('🎨 [Render] lastUpdate timestamp:', lastUpdate);
-                        return null;
-                      })()}
                       {editingSettings === reward.id ? (
                         <div className="space-y-4">
                           <h4 className="text-sm font-semibold text-white mb-3">Edit Sharing Requirements</h4>

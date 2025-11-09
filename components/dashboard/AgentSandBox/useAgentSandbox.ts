@@ -85,6 +85,7 @@ export function useAgentSandbox({
   connectedPlugins = {},
   initialContext = 'test',
   onExecutionComplete,
+  onExecutionStart,
   onFormCompletionChange,
 }: AgentSandboxProps) {
   const [formData, setFormData] = useState<Record<string, any>>({})
@@ -973,14 +974,16 @@ export function useAgentSandbox({
       const requestBody = {
         agent_id: agentId,
         input_variables: executionContext === 'test' ? formData : undefined, // Only send UI values in test mode
-        use_agentkit: true, // Use OpenAI AgentKit for consistent execution
-        execution_type: executionContext === 'test' ? 'test' : 'run' // Distinguish test vs configured run
+        execution_type: executionContext === 'test' ? 'test' : 'run', // Distinguish test vs configured run
+        use_queue: true // Use queue-based execution for tracking in Agent Activity dashboard
+        // Removed use_agentkit flag - respect system-wide pilot_enabled configuration
       }
 
-      console.log('Sending request to run-agent (AgentKit):', {
+      console.log('Sending request to run-agent:', {
         agentId,
         executionContext,
-        requestBody
+        requestBody,
+        note: 'Will use Pilot if pilot_enabled=true and agent has pilot_steps, otherwise AgentKit'
       })
 
       const response = await fetch('/api/run-agent', {
@@ -1004,6 +1007,11 @@ export function useAgentSandbox({
 
       // Handle AgentKit execution results
       if (res.success) {
+        // Notify parent about execution start if execution_id is available
+        if (onExecutionStart && res.data?.execution_id) {
+          onExecutionStart(res.data.execution_id)
+        }
+
         // Build result object compatible with existing sandbox UI
         const result = {
           message: res.message,

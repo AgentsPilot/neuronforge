@@ -1,10 +1,94 @@
-// lib/utils/analyticsHelpers.ts
+ // lib/utils/analyticsHelpers.ts
 
 import type { AIUsageData, ProcessedAnalyticsData, ActivityData, AgentData, TimeFilter } from '@/types/analytics';
+import { supabase } from '@/lib/supabaseClient';
 
 interface AgentInfo {
   agentId: string;
   agentName: string;
+}
+
+/**
+ * Cache for Pilot Credit configuration
+ * Refreshes every 5 minutes to avoid excessive database queries
+ */
+let cachedPilotConfig: {
+  pilotCreditCostUsd: number;
+  tokensPerCredit: number;
+  cachedAt: number;
+} | null = null;
+
+const CONFIG_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Fetch Pilot Credit configuration from database
+ * Uses 5-minute cache to minimize database queries
+ *
+ * @returns Configuration with pilot credit cost and token conversion rate
+ */
+async function getPilotCreditConfig(): Promise<{
+  pilotCreditCostUsd: number;
+  tokensPerCredit: number;
+}> {
+  const now = Date.now();
+
+  // Return cached config if still valid
+  if (cachedPilotConfig && (now - cachedPilotConfig.cachedAt) < CONFIG_CACHE_TTL) {
+    return {
+      pilotCreditCostUsd: cachedPilotConfig.pilotCreditCostUsd,
+      tokensPerCredit: cachedPilotConfig.tokensPerCredit
+    };
+  }
+
+  // Fetch fresh config from database
+  const { data, error } = await supabase
+    .from('ais_system_config')
+    .select('config_key, config_value')
+    .in('config_key', ['pilot_credit_cost_usd', 'tokens_per_pilot_credit']);
+
+  if (error) {
+    console.error('[analyticsHelpers] Error fetching Pilot Credit config:', error);
+    // Fall back to default values if fetch fails
+    return {
+      pilotCreditCostUsd: 0.00048,
+      tokensPerCredit: 10
+    };
+  }
+
+  // Build config map
+  const configMap = new Map(data?.map(c => [c.config_key, c.config_value]) || []);
+
+  const config = {
+    pilotCreditCostUsd: parseFloat(configMap.get('pilot_credit_cost_usd') || '0.00048'),
+    tokensPerCredit: parseInt(configMap.get('tokens_per_pilot_credit') || '10'),
+    cachedAt: now
+  };
+
+  // Update cache
+  cachedPilotConfig = config;
+
+  return {
+    pilotCreditCostUsd: config.pilotCreditCostUsd,
+    tokensPerCredit: config.tokensPerCredit
+  };
+}
+
+/**
+ * Calculate Pilot Credit cost from LLM tokens
+ * Formula: Pilot Credits = Math.ceil(tokens / tokensPerCredit) × pilotCreditCostUsd
+ *
+ * @param tokens - Total LLM tokens used
+ * @param config - Pilot Credit configuration
+ * @returns Cost in USD based on Pilot Credit pricing
+ */
+function calculatePilotCreditCost(
+  tokens: number,
+  config: { pilotCreditCostUsd: number; tokensPerCredit: number }
+): number {
+  if (!tokens || tokens <= 0) return 0;
+
+  const pilotCredits = Math.ceil(tokens / config.tokensPerCredit);
+  return pilotCredits * config.pilotCreditCostUsd;
 }
 
 /**
@@ -397,10 +481,12 @@ const generateInsights = (
  * @param rawData - Token usage data from database
  * @param allAgents - ALL user's agents (optional, for showing inactive agents)
  */
-export const processAnalyticsData = (
+export const processAnalyticsData = async (
   rawData: AIUsageData[],
   allAgents?: Array<{ id: string; agent_name: string; created_at: string; is_archived?: boolean }>
-): ProcessedAnalyticsData => {
+): Promise<ProcessedAnalyticsData> => {
+  // Fetch Pilot Credit configuration at the start
+  const pilotConfig = await getPilotCreditConfig();
   if (!rawData || rawData.length === 0) {
     // If no usage data but we have agents, show them all as inactive
     const inactiveAgents: AgentData[] = (allAgents || []).map(agent => ({
@@ -464,12 +550,21 @@ export const processAnalyticsData = (
     .map(([agentId, group]) => {
       const { agentInfo, records } = group;
       const totalCalls = records.length;
-      const totalCost = records.reduce((sum, r) => sum + (r.cost_usd || 0), 0);
 
-      // Separate creation vs usage costs
-      const creationCost = records
-        .filter(r => r.activity_name && r.activity_name.includes('specification'))
-        .reduce((sum, r) => sum + (r.cost_usd || 0), 0);
+      // Calculate cost from tokens using Pilot Credit pricing (not LLM cost_usd)
+      const totalTokens = records.reduce((sum, r) => sum + (r.total_tokens || 0), 0);
+      const totalCost = calculatePilotCreditCost(totalTokens, pilotConfig);
+
+      // Separate creation vs usage costs - FIXED: Check activity_type instead of activity_name
+      const creationTokens = records
+        .filter(r =>
+          r.activity_type === 'agent_creation' ||
+          r.activity_type === 'agent_generation' ||
+          (r.activity_name && r.activity_name.toLowerCase().includes('generate agent'))
+        )
+        .reduce((sum, r) => sum + (r.total_tokens || 0), 0);
+
+      const creationCost = calculatePilotCreditCost(creationTokens, pilotConfig);
       const usageCost = totalCost - creationCost;
 
       const successCount = records.filter(r => r.success !== false).length;
@@ -505,7 +600,7 @@ export const processAnalyticsData = (
       !agent.agentName.startsWith('Agent ')
     );
 
-  // Add agents with no usage data (they're still "Active" unless archived)
+  // Add agents with no usage data - FIXED: They are NOT active (no usage)
   const activeAgentIds = new Set(activeAgents.map(a => a.agentId));
   const unusedAgents: AgentData[] = (allAgents || [])
     .filter(agent => !activeAgentIds.has(agent.id))
@@ -524,7 +619,7 @@ export const processAnalyticsData = (
       status: 'needs_attention' as const,
       lastUsed: agent.created_at,
       efficiency: 0,
-      isActive: !agent.is_archived, // Active unless explicitly archived
+      isActive: false, // FIXED: Not active if no usage data
       isArchived: agent.is_archived || false
     }));
 
@@ -570,16 +665,18 @@ export const processAnalyticsData = (
   // Process activities data - CHANGED: Keep aggregated for overview, but main focus is rawActivities
   const activities: ActivityData[] = Array.from(activityGroups.entries()).map(([name, records]) => {
     const count = records.length;
-    const cost = records.reduce((sum, r) => sum + (r.cost_usd || 0), 0);
+    // Calculate cost from tokens using Pilot Credit pricing (not LLM cost_usd)
+    const totalTokens = records.reduce((sum, r) => sum + (r.total_tokens || 0), 0);
+    const cost = calculatePilotCreditCost(totalTokens, pilotConfig);
     const successCount = records.filter(r => r.success !== false).length;
     const successRate = count > 0 ? (successCount / count) * 100 : 0;
     const avgLatency = count > 0 ? records.reduce((sum, r) => sum + (r.latency_ms || 0), 0) / count : 0;
 
-    return { 
-      name, 
-      count, 
-      cost, 
-      successRate, 
+    return {
+      name,
+      count,
+      cost,
+      successRate,
       avgLatency,
       // Add color and bgColor properties for UI
       color: getColorForCategory(name),
@@ -620,27 +717,30 @@ export const processAnalyticsData = (
     dailyGroups.get(date)!.push(item);
   });
 
-  const dailyUsage = Array.from(dailyGroups.entries()).map(([date, records]) => ({
-    date,
-    cost: records.reduce((sum, r) => sum + (r.cost_usd || 0), 0),
-    tokens: records.reduce((sum, r) => sum + (r.total_tokens || 0), 0),
-    requests: records.length,
-    activities: records.length,
-    agents_created: 0,
-    agents_run: records.filter(r => r.agent_id && r.agent_id !== 'unknown').length
-  })).sort((a, b) => a.date.localeCompare(b.date));
+  const dailyUsage = Array.from(dailyGroups.entries()).map(([date, records]) => {
+    const tokens = records.reduce((sum, r) => sum + (r.total_tokens || 0), 0);
+    return {
+      date,
+      cost: calculatePilotCreditCost(tokens, pilotConfig), // Use Pilot Credit pricing
+      tokens,
+      requests: records.length,
+      activities: records.length,
+      agents_created: 0,
+      agents_run: records.filter(r => r.agent_id && r.agent_id !== 'unknown').length
+    };
+  }).sort((a, b) => a.date.localeCompare(b.date));
 
   // Calculate metrics FIRST (needed for costBreakdown)
   const totalActivities = rawData.length;
-  const totalCost = rawData.reduce((sum, r) => sum + (r.cost_usd || 0), 0);
   const totalTokens = rawData.reduce((sum, r) => sum + (r.total_tokens || 0), 0);
+  const totalCost = calculatePilotCreditCost(totalTokens, pilotConfig); // Use Pilot Credit pricing
   const successCount = rawData.filter(r => r.success !== false).length;
   const successRate = totalActivities > 0 ? (successCount / totalActivities) * 100 : 0;
   const averageLatency = totalActivities > 0 ? rawData.reduce((sum, r) => sum + (r.latency_ms || 0), 0) / totalActivities : 0;
   const costSavings = totalTokens * 0.00005; // Rough estimate of cost savings
 
   // Process cost breakdown by activity_type (AFTER totalCost is calculated)
-  const costBreakdownGroups = new Map<string, number>();
+  const costBreakdownGroups = new Map<string, { tokens: number; cost: number }>();
 
   rawData.forEach(item => {
     let category = 'Other';
@@ -661,15 +761,20 @@ export const processAnalyticsData = (
       category = 'agent_creation';
     }
 
-    const current = costBreakdownGroups.get(category) || 0;
-    costBreakdownGroups.set(category, current + (item.cost_usd || 0));
+    const current = costBreakdownGroups.get(category) || { tokens: 0, cost: 0 };
+    const itemTokens = item.total_tokens || 0;
+    const itemCost = calculatePilotCreditCost(itemTokens, pilotConfig);
+    costBreakdownGroups.set(category, {
+      tokens: current.tokens + itemTokens,
+      cost: current.cost + itemCost
+    });
   });
 
   const costBreakdown = Array.from(costBreakdownGroups.entries())
-    .map(([activityType, cost]) => ({
+    .map(([activityType, data]) => ({
       name: getActivityTypeDisplayName(activityType), // Convert to human-friendly name
-      cost,
-      percentage: totalCost > 0 ? (cost / totalCost) * 100 : 0,
+      cost: data.cost,
+      percentage: totalCost > 0 ? (data.cost / totalCost) * 100 : 0,
       color: getColorForCategory(activityType),
       bgColor: getBgColorForCategory(activityType)
     }))
@@ -698,6 +803,7 @@ export const processAnalyticsData = (
     dailyUsage,
     costBreakdown: costBreakdown || [], // Ensure it's always an array
     insights: insights || [], // Ensure it's always an array
-    rawActivities: individualActivities
+    rawActivities: individualActivities,
+    pilotCreditConfig: pilotConfig // Add config for UI components
   };
 };

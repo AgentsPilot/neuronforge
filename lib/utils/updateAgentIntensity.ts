@@ -5,8 +5,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AgentExecutionData, AgentIntensityMetrics } from '@/lib/types/intensity';
 import {
   DEFAULT_INTENSITY_METRICS,
-  EXECUTION_WEIGHTS,
-  COMBINED_WEIGHTS,
+  // EXECUTION_WEIGHTS - REMOVED: Now loaded from database via AISConfigService.getExecutionWeights()
+  // COMBINED_WEIGHTS - REMOVED: Now loaded from database via AISConfigService.getCombinedWeights()
 } from '@/lib/types/intensity';
 import { AISConfigService, type AISRanges } from '@/lib/services/AISConfigService';
 
@@ -77,6 +77,10 @@ async function updateExistingMetrics(
   current: AgentIntensityMetrics,
   execution: AgentExecutionData
 ): Promise<{ success: true; execution_score: number; combined_score: number; creation_score: number } | { success: false }> {
+  // Load weights from database (DATABASE-DRIVEN - Phase 1 Refactoring)
+  const executionWeights = await AISConfigService.getExecutionWeights(supabase);
+  const combinedWeights = await AISConfigService.getCombinedWeights(supabase);
+
   // Update execution counts
   const total_executions = current.total_executions + 1;
   const successful_executions = current.successful_executions + (execution.was_successful ? 1 : 0);
@@ -178,12 +182,13 @@ async function updateExistingMetrics(
   const output_token_baseline = tokenComplexityResult.baseline;
   const output_token_alert_level = tokenComplexityResult.growthData.alertLevel;
 
-  const execution_complexity_score = await calculateExecutionComplexity(avg_iterations_per_run, avg_execution_duration_ms, success_rate, retry_rate, aisRanges);
-  const plugin_complexity_score = await calculatePluginComplexity(unique_plugins_used, avg_plugins_per_run, tool_orchestration_overhead_ms, aisRanges);
-  const workflow_complexity_score = await calculateWorkflowComplexity(workflow_steps_count, conditional_branches_count, loop_iterations_count, parallel_execution_count, aisRanges);
+  const execution_complexity_score = await calculateExecutionComplexity(supabase, avg_iterations_per_run, avg_execution_duration_ms, success_rate, retry_rate, aisRanges);
+  const plugin_complexity_score = await calculatePluginComplexity(supabase, unique_plugins_used, avg_plugins_per_run, tool_orchestration_overhead_ms, aisRanges);
+  const workflow_complexity_score = await calculateWorkflowComplexity(supabase, workflow_steps_count, conditional_branches_count, loop_iterations_count, parallel_execution_count, aisRanges);
 
   // NEW: Calculate memory complexity score (5th component)
   const memory_complexity_score = await calculateMemoryComplexity(
+    supabase,
     currentMemoryTokens,
     execution.input_tokens || 0,
     memory_entry_count,
@@ -193,31 +198,33 @@ async function updateExistingMetrics(
 
   // === THREE SCORE SYSTEM ===
 
-  // 1. EXECUTION SCORE (0-10): Weighted average of 5 execution components (UPDATED)
+  // 1. EXECUTION SCORE (0-10): Weighted average of 5 execution components (DATABASE-DRIVEN)
   const execution_score = (
-    token_complexity_score * EXECUTION_WEIGHTS.TOKEN_COMPLEXITY +
-    execution_complexity_score * EXECUTION_WEIGHTS.EXECUTION_COMPLEXITY +
-    plugin_complexity_score * EXECUTION_WEIGHTS.PLUGIN_COMPLEXITY +
-    workflow_complexity_score * EXECUTION_WEIGHTS.WORKFLOW_COMPLEXITY +
-    memory_complexity_score * EXECUTION_WEIGHTS.MEMORY_COMPLEXITY
+    token_complexity_score * executionWeights.tokens +
+    execution_complexity_score * executionWeights.execution +
+    plugin_complexity_score * executionWeights.plugins +
+    workflow_complexity_score * executionWeights.workflow +
+    memory_complexity_score * executionWeights.memory
   );
 
   // 2. CREATION SCORE (0-10): Fetch from existing metrics (unchanged during execution)
   // Use default of 5.0 if not set (for agents created before three-score migration)
   const creation_score = current.creation_score ?? 5.0;
 
-  // 3. COMBINED SCORE (0-10): Intelligently blend creation & execution scores
+  // 3. COMBINED SCORE (0-10): Intelligently blend creation & execution scores (DATABASE-DRIVEN)
   // - If executions < threshold: Use creation score only (trust design estimate)
-  // - If executions >= threshold: Use weighted blend (30% creation + 70% execution)
+  // - If executions >= threshold: Use weighted blend from database
   const combined_score = total_executions < minExecutionsForScore
     ? creation_score  // Not enough data - use creation score only
     : (
-        creation_score * COMBINED_WEIGHTS.CREATION +
-        execution_score * COMBINED_WEIGHTS.EXECUTION
+        creation_score * combinedWeights.creation +
+        execution_score * combinedWeights.execution
       );
 
   console.log(`📊 [AIS] Score calculation for agent ${execution.agent_id}:`);
   console.log(`   Total executions: ${total_executions}, Threshold: ${minExecutionsForScore}`);
+  console.log(`   Database Execution Weights: tokens=${executionWeights.tokens}, execution=${executionWeights.execution}, plugins=${executionWeights.plugins}, workflow=${executionWeights.workflow}, memory=${executionWeights.memory}`);
+  console.log(`   Database Combined Weights: creation=${combinedWeights.creation}, execution=${combinedWeights.execution}`);
   console.log(`   Creation: ${creation_score.toFixed(2)}, Execution: ${execution_score.toFixed(2)}`);
   console.log(`   Combined: ${combined_score.toFixed(2)} (${total_executions < minExecutionsForScore ? 'creation-only' : 'weighted blend'})`);
 
@@ -486,43 +493,87 @@ async function calculateTokenComplexity(
 }
 
 async function calculateExecutionComplexity(
+  supabase: SupabaseClient,
   avgIterations: number,
   avgDuration: number,
   successRate: number,
   retryRate: number,
   ranges: AISRanges
 ): Promise<number> {
+  // Load execution subdimension weights from database (DATABASE-DRIVEN - Phase 2 Extended)
+  const execWeights = await AISConfigService.getExecutionSubWeights(supabase);
+
   const iterationScore = AISConfigService.normalize(avgIterations, ranges.iterations);
   const durationScore = AISConfigService.normalize(avgDuration, ranges.duration_ms);
   const failureRateScore = AISConfigService.normalize(100 - successRate, ranges.failure_rate);
   const retryScore = AISConfigService.normalize(retryRate, ranges.retry_rate);
-  return clamp(iterationScore * 0.35 + durationScore * 0.30 + failureRateScore * 0.20 + retryScore * 0.15, 0, 10);
+
+  const score = clamp(
+    iterationScore * execWeights.iterations +
+    durationScore * execWeights.duration +
+    failureRateScore * execWeights.failure +
+    retryScore * execWeights.retry,
+    0, 10
+  );
+
+  console.log(`⚙️  [Execution Weights] iterations=${execWeights.iterations}, duration=${execWeights.duration}, failure=${execWeights.failure}, retry=${execWeights.retry}`);
+
+  return score;
 }
 
 async function calculatePluginComplexity(
+  supabase: SupabaseClient,
   uniquePlugins: number,
   avgPluginsPerRun: number,
   orchestrationOverhead: number,
   ranges: AISRanges
 ): Promise<number> {
+  // Load plugin subdimension weights from database (DATABASE-DRIVEN - Phase 2 Extended)
+  const pluginWeights = await AISConfigService.getPluginSubWeights(supabase);
+
   const pluginCountScore = AISConfigService.normalize(uniquePlugins, ranges.plugin_count);
   const pluginFrequencyScore = AISConfigService.normalize(avgPluginsPerRun, ranges.plugins_per_run);
   const orchestrationScore = AISConfigService.normalize(orchestrationOverhead, ranges.orchestration_overhead_ms);
-  return clamp(pluginCountScore * 0.4 + pluginFrequencyScore * 0.35 + orchestrationScore * 0.25, 0, 10);
+
+  const score = clamp(
+    pluginCountScore * pluginWeights.count +
+    pluginFrequencyScore * pluginWeights.usage +
+    orchestrationScore * pluginWeights.overhead,
+    0, 10
+  );
+
+  console.log(`🔌 [Plugin Weights] count=${pluginWeights.count}, usage=${pluginWeights.usage}, overhead=${pluginWeights.overhead}`);
+
+  return score;
 }
 
 async function calculateWorkflowComplexity(
+  supabase: SupabaseClient,
   steps: number,
   branches: number,
   loops: number,
   parallel: number,
   ranges: AISRanges
 ): Promise<number> {
+  // Load workflow subdimension weights from database (DATABASE-DRIVEN - Phase 2 Extended)
+  const workflowWeights = await AISConfigService.getWorkflowSubWeights(supabase);
+
   const stepsScore = AISConfigService.normalize(steps, ranges.workflow_steps);
   const branchScore = AISConfigService.normalize(branches, ranges.branches);
   const loopScore = AISConfigService.normalize(loops, ranges.loops);
   const parallelScore = AISConfigService.normalize(parallel, ranges.parallel);
-  return clamp(stepsScore * 0.4 + branchScore * 0.25 + loopScore * 0.20 + parallelScore * 0.15, 0, 10);
+
+  const score = clamp(
+    stepsScore * workflowWeights.steps +
+    branchScore * workflowWeights.branches +
+    loopScore * workflowWeights.loops +
+    parallelScore * workflowWeights.parallel,
+    0, 10
+  );
+
+  console.log(`🔄 [Workflow Weights] steps=${workflowWeights.steps}, branches=${workflowWeights.branches}, loops=${workflowWeights.loops}, parallel=${workflowWeights.parallel}`);
+
+  return score;
 }
 
 /**
@@ -541,6 +592,7 @@ async function calculateWorkflowComplexity(
  * @returns Memory complexity score (0-10)
  */
 async function calculateMemoryComplexity(
+  supabase: SupabaseClient,
   memoryTokens: number,
   totalInputTokens: number,
   memoryEntryCount: number,
@@ -552,33 +604,41 @@ async function calculateMemoryComplexity(
     return 0;
   }
 
-  // 1. Memory Ratio Score (50% weight)
+  // Load memory subdimension weights from database (DATABASE-DRIVEN - Phase 2 Refactoring)
+  const memoryWeights = await AISConfigService.getMemorySubWeights(supabase);
+
+  // 1. Memory Ratio Score
   // How much of the input is memory context (0.0 - 1.0)
   const memoryRatio = Math.min(memoryTokens / totalInputTokens, 1.0);
-  const ratioRange = { min: 0.0, max: 0.9 }; // High memory ratio (>90%) is unusual
+  // DATABASE-DRIVEN (Phase 4): Load memory ratio range from database
+  const ratioRange = { min: ranges.memory_ratio_min, max: ranges.memory_ratio_max };
   const ratioScore = AISConfigService.normalize(memoryRatio, ratioRange);
 
-  // 2. Memory Type Diversity Score (30% weight)
+  // 2. Memory Type Diversity Score
   // More types = more sophisticated memory usage
-  const diversityRange = { min: 0, max: 3 }; // 0-3 types (user_context, summaries, patterns)
+  // DATABASE-DRIVEN (Phase 4): Load memory diversity range from database
+  const diversityRange = { min: ranges.memory_diversity_min, max: ranges.memory_diversity_max };
   const diversityScore = AISConfigService.normalize(memoryTypeDiversity, diversityRange);
 
-  // 3. Memory Volume Score (20% weight)
+  // 3. Memory Volume Score
   // Number of memory entries loaded
-  const volumeRange = { min: 0, max: 20 }; // 0-20 memory entries
+  // DATABASE-DRIVEN (Phase 4): Load memory volume range from database
+  const volumeRange = { min: ranges.memory_volume_min, max: ranges.memory_volume_max };
   const volumeScore = AISConfigService.normalize(memoryEntryCount, volumeRange);
 
-  // Weighted combination
+  // Weighted combination (DATABASE-DRIVEN)
   const score = clamp(
-    ratioScore * 0.5 +
-    diversityScore * 0.3 +
-    volumeScore * 0.2,
+    ratioScore * memoryWeights.ratio +
+    diversityScore * memoryWeights.diversity +
+    volumeScore * memoryWeights.volume,
     0,
     10
   );
 
   console.log(`🧠 [Memory Complexity] Tokens: ${memoryTokens}/${totalInputTokens} (${(memoryRatio * 100).toFixed(1)}%), ` +
-    `Entries: ${memoryEntryCount}, Types: ${memoryTypeDiversity}, Score: ${score.toFixed(2)}/10`);
+    `Entries: ${memoryEntryCount}, Types: ${memoryTypeDiversity}`);
+  console.log(`🧠 [Memory Weights] ratio=${memoryWeights.ratio}, diversity=${memoryWeights.diversity}, volume=${memoryWeights.volume}`);
+  console.log(`🧠 [Memory Score] ${score.toFixed(2)}/10`);
 
   return score;
 }

@@ -3,12 +3,15 @@
 export interface UserProfile {
   id: string
   full_name?: string
-  avatar_url?: string
+  avatar_url?: string | null
   plan?: string
   company?: string
   job_title?: string
+  role?: string
   timezone?: string
   language?: string
+  preferred_currency?: string
+  preferred_language?: string
   created_at?: string
   updated_at?: string
 }

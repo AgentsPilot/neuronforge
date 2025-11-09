@@ -28,6 +28,7 @@ export async function PUT(request: NextRequest) {
       execution: 'ais_weight_execution',
       plugins: 'ais_weight_plugins',
       workflow: 'ais_weight_workflow',
+      memory: 'ais_weight_memory',
       // Token subdimensions
       token_volume: 'ais_token_volume_weight',
       token_peak: 'ais_token_peak_weight',
@@ -45,7 +46,11 @@ export async function PUT(request: NextRequest) {
       workflow_steps: 'ais_workflow_steps_weight',
       workflow_branches: 'ais_workflow_branches_weight',
       workflow_loops: 'ais_workflow_loops_weight',
-      workflow_parallel: 'ais_workflow_parallel_weight'
+      workflow_parallel: 'ais_workflow_parallel_weight',
+      // Memory subdimensions
+      memory_ratio: 'ais_memory_ratio_weight',
+      memory_diversity: 'ais_memory_diversity_weight',
+      memory_volume: 'ais_memory_volume_weight'
     };
 
     const errors = [];
@@ -65,8 +70,12 @@ export async function PUT(request: NextRequest) {
 
       const { data: updateData, error } = await supabase
         .from('ais_system_config')
-        .update({ config_value: value })
-        .eq('config_key', dbKey)
+        .upsert({
+          config_key: dbKey,
+          config_value: value,
+          description: `AIS weight configuration for ${key}`,
+          category: 'ais_dimension_weights'
+        }, { onConflict: 'config_key' })
         .select();
 
       if (error) {

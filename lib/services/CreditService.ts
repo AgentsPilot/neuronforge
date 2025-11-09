@@ -2,6 +2,7 @@
 // Core credit management service for Smart Fuel Auto-Plan pricing
 
 import { SupabaseClient } from '@supabase/supabase-js';
+import { tokensToPilotCredits, pilotCreditsToTokens } from '@/lib/utils/pricingConfig';
 // Stripe integration removed - payment processing coming soon
 
 export interface CalculatorInputs {
@@ -29,14 +30,18 @@ export class CreditService {
   async initializeUser(userId: string, stripeCustomerId?: string): Promise<void> {
     console.log('🎁 Initializing user with trial credits:', userId);
 
+    // Trial credits: 1,000 Pilot Credits → tokens (fetched from database)
+    const trialPilotCredits = 1000;
+    const trialTokens = await pilotCreditsToTokens(trialPilotCredits, this.supabase);
+
     const { error: insertError } = await this.supabase
       .from('user_subscriptions')
       .insert({
         user_id: userId,
-        balance: 1000,
+        balance: trialTokens,
         total_earned: 0,
         total_spent: 0,
-        trial_credits_granted: 1000,
+        trial_credits_granted: trialTokens,
         free_trial_used: true,
         monthly_amount_usd: 0,
         monthly_credits: 0,
@@ -53,13 +58,15 @@ export class CreditService {
     // Log trial credit transaction
     await this.supabase.from('credit_transactions').insert({
       user_id: userId,
-      credits_delta: 1000,
+      credits_delta: trialTokens,
       balance_before: 0,
-      balance_after: 1000,
+      balance_after: trialTokens,
       transaction_type: 'trial',
-      description: 'Welcome! 1,000 free trial credits',
+      description: `Welcome! ${trialPilotCredits.toLocaleString()} free trial Pilot Credits`,
       metadata: {
-        trial_type: 'signup_bonus'
+        trial_type: 'signup_bonus',
+        pilot_credits: trialPilotCredits,
+        tokens: trialTokens
       }
     });
 
@@ -67,11 +74,11 @@ export class CreditService {
     await this.supabase.from('billing_events').insert({
       user_id: userId,
       event_type: 'trial_granted',
-      credits_delta: 1000,
-      description: 'New user trial credits granted'
+      credits_delta: trialTokens,
+      description: `New user trial: ${trialPilotCredits.toLocaleString()} Pilot Credits granted`
     });
 
-    console.log('✅ User initialized with 1,000 trial credits');
+    console.log(`✅ User initialized with ${trialPilotCredits.toLocaleString()} trial Pilot Credits (${trialTokens} tokens)`);
   }
 
   /**
@@ -151,7 +158,8 @@ export class CreditService {
     tokens: number,
     intensityScore: number
   ): Promise<{ charged: number; newBalance: number }> {
-    const baseCredits = Math.ceil(tokens / 10);
+    // Use database-driven token-to-credit conversion
+    const baseCredits = await tokensToPilotCredits(tokens, this.supabase);
     const intensityMultiplier = 1.0 + (intensityScore / 10);
     const finalCredits = Math.ceil(baseCredits * intensityMultiplier);
 
@@ -216,7 +224,8 @@ export class CreditService {
     agentId: string,
     tokens: number
   ): Promise<{ charged: number; newBalance: number }> {
-    const credits = Math.ceil(tokens / 10);
+    // Use database-driven token-to-credit conversion
+    const credits = await tokensToPilotCredits(tokens, this.supabase);
 
     console.log('💸 Charging for agent creation:', { tokens, credits });
 

@@ -15,7 +15,8 @@ export default function AgentPreview({
 
   if (!agent) return null;
 
-  const getPluginIcon = (plugin: string) => {
+  const getPluginIcon = (plugin: string | undefined) => {
+    if (!plugin) return <Settings className="h-3.5 w-3.5" />;
     if (plugin.includes('mail')) return <Mail className="h-3.5 w-3.5" />;
     if (plugin.includes('drive') || plugin.includes('file')) return <FileText className="h-3.5 w-3.5" />;
     if (plugin.includes('chat') || plugin.includes('ai')) return <Bot className="h-3.5 w-3.5" />;
@@ -173,7 +174,7 @@ export default function AgentPreview({
                   </div>
                   <span className="font-semibold text-gray-900">Original Request</span>
                   <span className="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full">
-                    {promptType === 'task' ? '📋 Task' : promptType === 'workflow' ? '🔄 Workflow' : '🤖 Assistant'}
+                    {promptType === 'enhanced' ? '✨ Enhanced' : '📋 Original'}
                   </span>
                 </div>
                 <ChevronDown className={`h-5 w-5 text-gray-400 transition-transform duration-200 ${expandedSection === 'prompt' ? 'rotate-180' : ''}`} />
@@ -264,22 +265,36 @@ export default function AgentPreview({
 
                               {/* Plugin and Action in flow format */}
                               <div className="flex items-center gap-2 flex-wrap">
-                                {/* Plugin Badge */}
-                                <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-orange-50 to-pink-50 rounded-lg border border-orange-200/50 shadow-sm">
-                                  {getPluginIcon(step.plugin)}
-                                  <span className="text-xs font-medium text-gray-700">{step.plugin}</span>
-                                </div>
+                                {step.plugin && step.plugin_action ? (
+                                  <>
+                                    {/* Plugin Badge */}
+                                    <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-orange-50 to-pink-50 rounded-lg border border-orange-200/50 shadow-sm">
+                                      {getPluginIcon(step.plugin)}
+                                      <span className="text-xs font-medium text-gray-700">{step.plugin}</span>
+                                    </div>
 
-                                {/* Flow Arrow */}
-                                <div className="flex items-center gap-1 text-gray-400">
-                                  <div className="w-6 h-[1px] bg-gray-300" />
-                                  <div className="w-0 h-0 border-t-[4px] border-t-transparent border-b-[4px] border-b-transparent border-l-[6px] border-l-gray-300" />
-                                </div>
+                                    {/* Flow Arrow */}
+                                    <div className="flex items-center gap-1 text-gray-400">
+                                      <div className="w-6 h-[1px] bg-gray-300" />
+                                      <div className="w-0 h-0 border-t-[4px] border-t-transparent border-b-[4px] border-b-transparent border-l-[6px] border-l-gray-300" />
+                                    </div>
 
-                                {/* Action Badge */}
-                                <div className="px-3 py-1.5 bg-gray-50 rounded-lg border border-gray-200">
-                                  <span className="text-xs text-gray-700 font-medium">{step.plugin_action}</span>
-                                </div>
+                                    {/* Action Badge */}
+                                    <div className="px-3 py-1.5 bg-gray-50 rounded-lg border border-gray-200">
+                                      <span className="text-xs text-gray-700 font-medium">{step.plugin_action}</span>
+                                    </div>
+                                  </>
+                                ) : (
+                                  /* Conditional/AI Processing Step */
+                                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-50 to-purple-100 rounded-lg border border-purple-200/50 shadow-sm">
+                                    <Bot className="h-3.5 w-3.5 text-purple-600" />
+                                    <span className="text-xs font-medium text-purple-700">
+                                      {step.operation && (step.operation.toLowerCase().includes('determine') || step.operation.toLowerCase().includes('decide') || step.operation.toLowerCase().includes('check if'))
+                                        ? 'Condition'
+                                        : 'AI Processing'}
+                                    </span>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </div>

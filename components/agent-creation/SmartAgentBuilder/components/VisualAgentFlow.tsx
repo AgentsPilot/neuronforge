@@ -14,9 +14,10 @@ import {
 
 interface WorkflowStep {
   step?: number;
+  type?: string; // Step type: plugin_action, ai_processing, conditional, etc.
   operation: string; // This is the correct field name from your data
-  plugin: string;
-  plugin_action: string;
+  plugin?: string; // Optional for AI processing/conditional steps
+  plugin_action?: string; // Optional for AI processing/conditional steps
   error_handling?: string;
   validated?: boolean;
 }
@@ -36,7 +37,9 @@ interface ProcessingNode {
   plugin: string;
   pluginAction: string;
   validated: boolean;
-  isConnected: boolean; // NEW: Track if plugin is connected
+  isConnected: boolean;
+  isConditional: boolean; // Track if this is a conditional step
+  branchPath?: 'yes' | 'no' | null; // Track which branch path this step is on
   icon: any;
   color: {
     bg: string;
@@ -48,7 +51,13 @@ interface ProcessingNode {
   processingTime: number;
 }
 
-const getPluginIcon = (plugin: string) => {
+const getPluginIcon = (step: WorkflowStep) => {
+  // For AI processing or conditional steps without plugins, use Brain icon
+  if (!step.plugin || step.type === 'ai_processing' || step.type === 'conditional') {
+    return Brain;
+  }
+
+  const plugin = step.plugin;
   if (plugin.includes('mail') || plugin.includes('gmail')) return Mail;
   if (plugin.includes('drive') || plugin.includes('file')) return FileText;
   if (plugin.includes('research') || plugin.includes('chat')) return Brain;
@@ -75,7 +84,17 @@ const isDocumentCreationStep = (operation: string): boolean => {
   return documentPatterns.some(pattern => pattern.test(operationLower));
 };
 
-const getPluginColor = (plugin: string, isConnected: boolean) => {
+const getPluginColor = (step: WorkflowStep, isConnected: boolean) => {
+  // AI processing/conditional steps always use purple color scheme
+  if (!step.plugin || step.type === 'ai_processing' || step.type === 'conditional') {
+    return {
+      bg: 'bg-purple-400',
+      border: 'border-purple-300',
+      bgActive: 'bg-purple-500',
+      borderActive: 'border-purple-300'
+    };
+  }
+
   if (!isConnected) {
     return {
       bg: 'bg-gray-400',
@@ -85,7 +104,7 @@ const getPluginColor = (plugin: string, isConnected: boolean) => {
     };
   }
 
-  const hash = plugin.split('').reduce((a, b) => {
+  const hash = step.plugin.split('').reduce((a, b) => {
     a = ((a << 5) - a) + b.charCodeAt(0);
     return a & a;
   }, 0);
@@ -106,72 +125,214 @@ const getPluginColor = (plugin: string, isConnected: boolean) => {
 
 const buildWorkflowNodes = (agent: Agent | null): ProcessingNode[] => {
   if (!agent?.workflow_steps) return [];
-  
+
   const connectedPlugins = agent.connected_plugins || agent.plugins_required || [];
-  
-  return agent.workflow_steps.map((step, index) => {
-    const totalSteps = agent.workflow_steps!.length;
-    const xPercent = totalSteps === 1 ? 50 : (index / (totalSteps - 1)) * 70 + 15;
-    
-    // Use index as fallback if step.step is undefined
+
+  // First pass: identify conditional steps and calculate positions
+  const nodesWithFlags = agent.workflow_steps.map((step, index) => {
     const stepNumber = step.step ?? (index + 1);
-    
-    // Check if this is a document creation step (handled by AI, not a plugin)
     const isDocumentCreation = isDocumentCreationStep(step.operation || '');
-    
-    // For document creation, it's always "connected" since AI handles it naturally
-    // For actual plugins, check if they're in the connected plugins list
-    const isConnected = isDocumentCreation || connectedPlugins.includes(step.plugin);
-    
+    const isAIStep = !step.plugin || step.type === 'ai_processing' || step.type === 'conditional';
+    const isConnected = isAIStep || isDocumentCreation || (step.plugin ? connectedPlugins.includes(step.plugin) : false);
+
+    let displayPlugin = '';
+    let displayAction = '';
+    let isConditional = false;
+
+    if (step.plugin && step.plugin.trim() !== '') {
+      displayPlugin = step.plugin;
+      displayAction = step.plugin_action || 'unknown';
+    } else if (isAIStep) {
+      isConditional = step.operation && (
+        step.operation.toLowerCase().includes('determine') ||
+        step.operation.toLowerCase().includes('check if') ||
+        step.operation.toLowerCase().includes('decide') ||
+        step.operation.toLowerCase().includes('if ')
+      );
+
+      if (isConditional) {
+        displayPlugin = 'Condition';
+        displayAction = '';
+      } else {
+        displayPlugin = 'AI Processing';
+        displayAction = 'process';
+      }
+    } else {
+      displayPlugin = 'unknown';
+      displayAction = 'unknown';
+    }
+
     return {
-      id: `step-${stepNumber}-${index}`, // Include index to ensure uniqueness
-      step: stepNumber,
-      title: step.operation || 'Untitled Step', // FIXED: Use step.operation instead of step.action
-      plugin: step.plugin || 'unknown',
-      pluginAction: step.plugin_action || 'unknown',
-      validated: step.validated ?? false,
-      isConnected: isConnected,
-      icon: getPluginIcon(step.plugin || ''),
-      color: getPluginColor(step.plugin || '', isConnected),
-      position: { x: xPercent, y: 35 },
-      processingTime: 2000 + (index * 500)
+      step,
+      stepNumber,
+      isConditional,
+      isConnected,
+      displayPlugin,
+      displayAction,
+      isDocumentCreation,
+      isAIStep,
     };
   });
+
+  // Second pass: calculate positions with proper branching
+  const totalSteps = nodesWithFlags.length;
+  const nodes: ProcessingNode[] = [];
+
+  for (let index = 0; index < totalSteps; index++) {
+    const { step, stepNumber, isConditional, isConnected, displayPlugin, displayAction } = nodesWithFlags[index];
+
+    // Stretch to use maximum container width (5% to 95%)
+    const xPercent = totalSteps === 1 ? 50 : (index / (totalSteps - 1)) * 90 + 5;
+    let yPercent = 50; // Center position (use more vertical space)
+    let branchPath: 'yes' | 'no' | null = null;
+
+    // Position step after a conditional on the "Yes" path (upper)
+    if (index > 0 && nodesWithFlags[index - 1].isConditional) {
+      yPercent = 25; // Upper branch for "Yes" (use more vertical space)
+      branchPath = 'yes';
+    } else if (index > 1 && nodesWithFlags[index - 2].isConditional) {
+      // Second step after conditional - return to center (reconverge point)
+      yPercent = 50;
+      branchPath = null;
+    }
+
+    nodes.push({
+      id: `step-${stepNumber}-${index}`,
+      step: stepNumber,
+      title: step.operation || 'Untitled Step',
+      plugin: displayPlugin,
+      pluginAction: displayAction,
+      validated: step.validated ?? false,
+      isConnected: isConnected,
+      isConditional: Boolean(isConditional),
+      branchPath: branchPath,
+      icon: getPluginIcon(step),
+      color: getPluginColor(step, isConnected),
+      position: { x: xPercent, y: yPercent },
+      processingTime: 2000 + (index * 500)
+    });
+  }
+
+  // Add virtual "No" path nodes for conditionals
+  const nodesWithBranches: ProcessingNode[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    nodesWithBranches.push(nodes[i]);
+
+    // If this is a conditional and there's a next step, create a virtual "No" branch node
+    if (nodes[i].isConditional && i < nodes.length - 2) {
+      const conditionalNode = nodes[i];
+      const skipToNode = nodes[i + 2];
+
+      // Create virtual node for "No" path visualization
+      const noBranchNode: ProcessingNode = {
+        id: `${conditionalNode.id}-no-branch`,
+        step: 0, // Virtual step
+        title: 'Skip (No)',
+        plugin: '',
+        pluginAction: '',
+        validated: false,
+        isConnected: true,
+        isConditional: false,
+        branchPath: 'no',
+        icon: Brain,
+        color: {
+          bg: 'bg-gray-300',
+          border: 'border-gray-200',
+          bgActive: 'bg-gray-400',
+          borderActive: 'border-gray-300'
+        },
+        position: {
+          x: (conditionalNode.position.x + skipToNode.position.x) / 2,
+          y: 55 // Lower branch for "No"
+        },
+        processingTime: 0
+      };
+
+      nodesWithBranches.push(noBranchNode);
+    }
+  }
+
+  return nodes; // Return original nodes without virtual branches for now
 };
 
-const ConnectionLine = ({ 
-  fromX, 
-  toX, 
-  isActive, 
-  containerWidth 
+const ConnectionLine = ({
+  fromX,
+  fromY,
+  toX,
+  toY,
+  isActive,
+  containerWidth,
+  containerHeight,
+  label,
+  isConditionalBranch
 }: {
   fromX: number;
+  fromY: number;
   toX: number;
+  toY: number;
   isActive: boolean;
   containerWidth: number;
+  containerHeight: number;
+  label?: string;
+  isConditionalBranch?: boolean;
 }) => {
   const startX = (fromX / 100) * containerWidth;
+  const startY = (fromY / 100) * containerHeight;
   const endX = (toX / 100) * containerWidth;
-  const y = (35 / 100) * 500; // Fixed Y position
-  const length = Math.abs(endX - startX);
+  const endY = (toY / 100) * containerHeight;
+
+  const midX = (startX + endX) / 2;
+
+  // Create SVG path for curved line
+  const pathData = `M ${startX} ${startY} Q ${midX} ${startY} ${midX} ${(startY + endY) / 2} Q ${midX} ${endY} ${endX} ${endY}`;
 
   return (
-    <div
-      className={`absolute transition-all duration-500 ${
-        isActive ? 'opacity-100' : 'opacity-30'
-      }`}
+    <svg
+      className="absolute top-0 left-0 pointer-events-none"
       style={{
-        left: `${Math.min(startX, endX)}px`,
-        top: `${y}px`,
-        width: `${length}px`,
-        height: '3px',
-        background: isActive 
-          ? 'linear-gradient(90deg, #3b82f6, #8b5cf6)' 
-          : '#d1d5db',
-        borderRadius: '2px',
-        transform: 'translateY(-50%)'
+        width: containerWidth,
+        height: containerHeight,
+        zIndex: 1
       }}
-    />
+    >
+      <defs>
+        <marker
+          id="arrowhead"
+          markerWidth="10"
+          markerHeight="10"
+          refX="9"
+          refY="3"
+          orient="auto"
+        >
+          <polygon
+            points="0 0, 10 3, 0 6"
+            fill={isActive ? '#8b5cf6' : '#d1d5db'}
+            className="transition-all duration-500"
+          />
+        </marker>
+      </defs>
+      <path
+        d={pathData}
+        stroke={isActive ? (isConditionalBranch ? '#a855f7' : '#3b82f6') : '#d1d5db'}
+        strokeWidth="3"
+        fill="none"
+        markerEnd="url(#arrowhead)"
+        className={`transition-all duration-500 ${
+          isActive ? 'opacity-100' : 'opacity-30'
+        }`}
+        strokeDasharray={isConditionalBranch ? '8,4' : 'none'}
+      />
+      {label && isConditionalBranch && (
+        <text
+          x={midX}
+          y={(startY + endY) / 2 - 10}
+          textAnchor="middle"
+          className="text-xs font-medium fill-purple-600"
+        >
+          {label}
+        </text>
+      )}
+    </svg>
   );
 };
 
@@ -312,20 +473,117 @@ export default function SimpleDynamicWorkflow({ agent }: { agent: Agent | null }
       >
         {/* Connection Lines */}
         {nodes.map((node, index) => {
-          if (index === nodes.length - 1) return null;
-          const nextNode = nodes[index + 1];
-          const isActive = completedNodes.includes(node.id) && 
-                           (activeNode === nextNode.id || completedNodes.includes(nextNode.id));
-          
-          return (
-            <ConnectionLine
-              key={`line-${index}`}
-              fromX={node.position.x}
-              toX={nextNode.position.x}
-              isActive={isActive}
-              containerWidth={containerSize.width}
-            />
-          );
+          const connections = [];
+
+          // For conditional nodes, only draw the "Yes" and "No" branches
+          if (node.isConditional) {
+            // Draw "Yes" branch to next step (upper path)
+            if (index < nodes.length - 1) {
+              const yesNode = nodes[index + 1];
+              const isActive = completedNodes.includes(node.id) &&
+                               (activeNode === yesNode.id || completedNodes.includes(yesNode.id));
+
+              connections.push(
+                <ConnectionLine
+                  key={`line-${index}-yes`}
+                  fromX={node.position.x}
+                  fromY={node.position.y}
+                  toX={yesNode.position.x}
+                  toY={yesNode.position.y}
+                  isActive={isActive}
+                  containerWidth={containerSize.width}
+                  containerHeight={containerSize.height}
+                  label="Yes"
+                  isConditionalBranch={true}
+                />
+              );
+            }
+
+            // Draw "No" branch that skips next step (lower path)
+            if (index < nodes.length - 2) {
+              const noNode = nodes[index + 2]; // Skip to step after next
+              const midX = (node.position.x + noNode.position.x) / 2;
+
+              connections.push(
+                <svg
+                  key={`line-${index}-no`}
+                  className="absolute top-0 left-0 pointer-events-none"
+                  style={{
+                    width: containerSize.width,
+                    height: containerSize.height,
+                    zIndex: 1
+                  }}
+                >
+                  <path
+                    d={`M ${(node.position.x / 100) * containerSize.width} ${(node.position.y / 100) * containerSize.height}
+                        Q ${(midX / 100) * containerSize.width} ${(75 / 100) * containerSize.height}
+                        ${(noNode.position.x / 100) * containerSize.width} ${(noNode.position.y / 100) * containerSize.height}`}
+                    stroke="#d1d5db"
+                    strokeWidth="3"
+                    fill="none"
+                    markerEnd="url(#arrowhead)"
+                    className="transition-all duration-500 opacity-30"
+                    strokeDasharray="8,4"
+                  />
+                  <text
+                    x={(midX / 100) * containerSize.width}
+                    y={(75 / 100) * containerSize.height + 20}
+                    textAnchor="middle"
+                    className="text-xs font-medium fill-gray-500"
+                  >
+                    No
+                  </text>
+                </svg>
+              );
+            }
+          }
+          // For "Yes" path nodes, connect to reconverge point
+          else if (node.branchPath === 'yes' && index < nodes.length - 1) {
+            const reconvergeNode = nodes[index + 1];
+            const isActive = completedNodes.includes(node.id) &&
+                             (activeNode === reconvergeNode.id || completedNodes.includes(reconvergeNode.id));
+
+            connections.push(
+              <ConnectionLine
+                key={`line-${index}-reconverge`}
+                fromX={node.position.x}
+                fromY={node.position.y}
+                toX={reconvergeNode.position.x}
+                toY={reconvergeNode.position.y}
+                isActive={isActive}
+                containerWidth={containerSize.width}
+                containerHeight={containerSize.height}
+                label={undefined}
+                isConditionalBranch={false}
+              />
+            );
+          }
+          // For regular nodes (not conditional, not on yes path), connect to next node
+          else if (!node.isConditional && node.branchPath !== 'yes' && index < nodes.length - 1) {
+            const nextNode = nodes[index + 1];
+            // Skip connection if next node is on "yes" path (already connected from conditional)
+            if (nextNode.branchPath !== 'yes') {
+              const isActive = completedNodes.includes(node.id) &&
+                               (activeNode === nextNode.id || completedNodes.includes(nextNode.id));
+
+              connections.push(
+                <ConnectionLine
+                  key={`line-${index}-regular`}
+                  fromX={node.position.x}
+                  fromY={node.position.y}
+                  toX={nextNode.position.x}
+                  toY={nextNode.position.y}
+                  isActive={isActive}
+                  containerWidth={containerSize.width}
+                  containerHeight={containerSize.height}
+                  label={undefined}
+                  isConditionalBranch={false}
+                />
+              );
+            }
+          }
+
+          return connections;
         })}
 
         {/* Workflow Nodes */}
@@ -339,7 +597,7 @@ export default function SimpleDynamicWorkflow({ agent }: { agent: Agent | null }
 
           return (
             <div key={node.id} className="absolute">
-              {/* Node Circle */}
+              {/* Node Shape - Diamond for conditionals, Circle for others */}
               <div
                 className={`absolute transition-all duration-500 ${
                   isActive ? 'scale-110 z-20' : 'scale-100 z-10'
@@ -347,34 +605,67 @@ export default function SimpleDynamicWorkflow({ agent }: { agent: Agent | null }
                 style={{
                   left: `${pixelX}px`,
                   top: `${pixelY}px`,
-                  transform: 'translate(-50%, -50%)'
+                  transform: 'translate(-50%, -50%)',
+                  zIndex: 10
                 }}
               >
-                <div
-                  className={`w-16 h-16 rounded-full border-4 flex items-center justify-center transition-all duration-500 ${
-                    isCompleted
-                      ? 'bg-green-500 border-green-300 shadow-md'
-                      : isActive
-                        ? `${node.color.bgActive} ${node.color.borderActive} shadow-lg`
-                        : `${node.color.bg} ${node.color.border}`
-                  }`}
-                >
-                  {isCompleted ? (
-                    <CheckCircle className="h-8 w-8 text-white" />
-                  ) : !node.isConnected ? (
-                    <AlertTriangle className="h-8 w-8 text-white" />
-                  ) : (
-                    <Icon className="h-8 w-8 text-white" />
-                  )}
-                </div>
+                {node.isConditional ? (
+                  // Diamond shape for conditional steps
+                  <div
+                    className={`w-20 h-20 border-4 flex items-center justify-center transition-all duration-500 ${
+                      isCompleted
+                        ? 'bg-green-500 border-green-300 shadow-md'
+                        : isActive
+                          ? `${node.color.bgActive} ${node.color.borderActive} shadow-lg`
+                          : `${node.color.bg} ${node.color.border}`
+                    }`}
+                    style={{
+                      transform: 'rotate(45deg)',
+                      borderRadius: '8px'
+                    }}
+                  >
+                    <div style={{ transform: 'rotate(-45deg)' }}>
+                      {isCompleted ? (
+                        <CheckCircle className="h-8 w-8 text-white" />
+                      ) : (
+                        <Icon className="h-8 w-8 text-white" />
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  // Circle for regular steps
+                  <div
+                    className={`w-16 h-16 rounded-full border-4 flex items-center justify-center transition-all duration-500 ${
+                      isCompleted
+                        ? 'bg-green-500 border-green-300 shadow-md'
+                        : isActive
+                          ? `${node.color.bgActive} ${node.color.borderActive} shadow-lg`
+                          : `${node.color.bg} ${node.color.border}`
+                    }`}
+                  >
+                    {isCompleted ? (
+                      <CheckCircle className="h-8 w-8 text-white" />
+                    ) : !node.isConnected ? (
+                      <AlertTriangle className="h-8 w-8 text-white" />
+                    ) : (
+                      <Icon className="h-8 w-8 text-white" />
+                    )}
+                  </div>
+                )}
 
                 {/* Step Number */}
-                <div className="absolute -top-2 -right-2 w-6 h-6 bg-gray-800 text-white text-xs rounded-full flex items-center justify-center font-bold">
+                <div
+                  className="absolute w-6 h-6 bg-gray-800 text-white text-xs rounded-full flex items-center justify-center font-bold"
+                  style={{
+                    top: node.isConditional ? '-8px' : '-8px',
+                    right: node.isConditional ? '-8px' : '-8px',
+                  }}
+                >
                   {node.step}
                 </div>
 
                 {/* Validation Check */}
-                {node.validated && node.isConnected && (
+                {node.validated && node.isConnected && !node.isConditional && (
                   <div className="absolute -top-1 -left-1 w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">
                     <CheckCircle className="h-3 w-3 text-white" />
                   </div>
@@ -393,15 +684,17 @@ export default function SimpleDynamicWorkflow({ agent }: { agent: Agent | null }
               >
                 <div className={`p-3 rounded-lg border transition-all duration-300 ${
                   isActive || isCompleted
-                    ? 'bg-white border-gray-300 shadow-lg' 
+                    ? 'bg-white border-gray-300 shadow-lg'
                     : 'bg-gray-100 border-gray-200'
                 }`}>
                   <div className="font-semibold text-sm text-gray-900 mb-1">
                     {node.title}
                   </div>
-                  <div className="text-xs text-gray-600 mb-2">
-                    {node.plugin} → {node.pluginAction}
-                  </div>
+                  {node.plugin && (
+                    <div className="text-xs text-gray-600 mb-2">
+                      {node.pluginAction ? `${node.plugin} → ${node.pluginAction}` : node.plugin}
+                    </div>
+                  )}
                   {node.isConnected ? (
                     node.validated && (
                       <div className="text-xs text-green-600 font-medium">

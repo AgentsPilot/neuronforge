@@ -3,6 +3,7 @@
 
 import { supabase as defaultSupabase } from '@/lib/supabaseClient';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { tokensToPilotCredits } from '@/lib/utils/pricingConfig';
 import type {
   AgentIntensityMetrics,
   AgentExecutionData,
@@ -12,13 +13,12 @@ import type {
   CreationComponentScores,
 } from '@/lib/types/intensity';
 import {
-  EXECUTION_WEIGHTS,
-  COMBINED_WEIGHTS,
   DEFAULT_INTENSITY_METRICS,
   calculateCreationMultiplier,
   calculateExecutionMultiplier,
   calculateCombinedMultiplier,
 } from '@/lib/types/intensity';
+// Phase 6: Removed EXECUTION_WEIGHTS and COMBINED_WEIGHTS imports - now using database-driven weights!
 import { AISConfigService } from './AISConfigService';
 import { logAISScoreCalculated, logAISScoreUpdated } from '@/lib/audit/ais-helpers';
 
@@ -92,7 +92,8 @@ export class AgentIntensityService {
         0.00048 // Fallback only if database unavailable
       );
 
-      const pilotCredits = Math.ceil(creationData.tokens_used / 10);
+      // Use database-driven token-to-credit conversion
+      const pilotCredits = await tokensToPilotCredits(creationData.tokens_used, supabaseClient);
       const creation_cost_usd = pilotCredits * PILOT_CREDIT_COST;
 
       // Fetch AIS ranges for audit trail
@@ -102,11 +103,14 @@ export class AgentIntensityService {
       const creationComponents = await this.calculateCreationScores(supabaseClient, creationData.agent_id);
       const creation_score = this.calculateCreationOverallScore(creationComponents);
 
+      // Phase 6: Fetch combined weights from database (no more COMBINED_WEIGHTS constant!)
+      const combinedWeights = await AISConfigService.getCombinedWeights(supabaseClient);
+
       // Calculate combined score with predicted execution complexity
       // Use 5.0 as reasonable middle-ground estimate until first execution
       const execution_score_default = 5.0; // Default until first execution
-      const combined_score = (creation_score * COMBINED_WEIGHTS.CREATION) +
-                            (execution_score_default * COMBINED_WEIGHTS.EXECUTION);
+      const combined_score = (creation_score * combinedWeights.creation) +
+                            (execution_score_default * combinedWeights.execution);
 
       console.log(`✅ [AIS] Creation score calculated:`, {
         tokens: creationData.tokens_used,
@@ -364,22 +368,26 @@ export class AgentIntensityService {
         }
       }
 
-      // Creation component scores (4 dimensions)
+      // Phase 6: Fetch weights from database (no more hardcoded constants!)
+      const creationWeights = await AISConfigService.getCreationWeights(supabaseClient);
+      const executionWeights = await AISConfigService.getExecutionWeights(supabaseClient);
+
+      // Creation component scores (4 dimensions) - database-driven weights
       const creationComponents: CreationComponentScores = {
         workflow_structure: {
           score: metrics.creation_workflow_score ?? 5.0,
-          weight: 0.5,
-          weighted_score: (metrics.creation_workflow_score ?? 5.0) * 0.5,
+          weight: creationWeights.workflow,
+          weighted_score: (metrics.creation_workflow_score ?? 5.0) * creationWeights.workflow,
         },
         plugin_diversity: {
           score: metrics.creation_plugin_score ?? 5.0,
-          weight: 0.3,
-          weighted_score: (metrics.creation_plugin_score ?? 5.0) * 0.3,
+          weight: creationWeights.plugins,
+          weighted_score: (metrics.creation_plugin_score ?? 5.0) * creationWeights.plugins,
         },
         io_schema: {
           score: metrics.creation_io_score ?? 5.0,
-          weight: 0.2,
-          weighted_score: (metrics.creation_io_score ?? 5.0) * 0.2,
+          weight: creationWeights.io_schema,
+          weighted_score: (metrics.creation_io_score ?? 5.0) * creationWeights.io_schema,
         },
         trigger_type: {
           score: metrics.creation_trigger_score ?? 0.0,
@@ -388,27 +396,32 @@ export class AgentIntensityService {
         },
       };
 
-      // Execution component scores
+      // Execution component scores - database-driven weights
       const executionComponents: IntensityComponentScores = {
         token_complexity: {
           score: metrics.token_complexity_score,
-          weight: EXECUTION_WEIGHTS.TOKEN_COMPLEXITY,
-          weighted_score: metrics.token_complexity_score * EXECUTION_WEIGHTS.TOKEN_COMPLEXITY,
+          weight: executionWeights.tokens,
+          weighted_score: metrics.token_complexity_score * executionWeights.tokens,
         },
         execution_complexity: {
           score: metrics.execution_complexity_score,
-          weight: EXECUTION_WEIGHTS.EXECUTION_COMPLEXITY,
-          weighted_score: metrics.execution_complexity_score * EXECUTION_WEIGHTS.EXECUTION_COMPLEXITY,
+          weight: executionWeights.execution,
+          weighted_score: metrics.execution_complexity_score * executionWeights.execution,
         },
         plugin_complexity: {
           score: metrics.plugin_complexity_score,
-          weight: EXECUTION_WEIGHTS.PLUGIN_COMPLEXITY,
-          weighted_score: metrics.plugin_complexity_score * EXECUTION_WEIGHTS.PLUGIN_COMPLEXITY,
+          weight: executionWeights.plugins,
+          weighted_score: metrics.plugin_complexity_score * executionWeights.plugins,
         },
         workflow_complexity: {
           score: metrics.workflow_complexity_score,
-          weight: EXECUTION_WEIGHTS.WORKFLOW_COMPLEXITY,
-          weighted_score: metrics.workflow_complexity_score * EXECUTION_WEIGHTS.WORKFLOW_COMPLEXITY,
+          weight: executionWeights.workflow,
+          weighted_score: metrics.workflow_complexity_score * executionWeights.workflow,
+        },
+        memory_complexity: {
+          score: metrics.memory_complexity_score ?? 0,
+          weight: executionWeights.memory,
+          weighted_score: (metrics.memory_complexity_score ?? 0) * executionWeights.memory,
         },
       };
 
@@ -587,9 +600,9 @@ export class AgentIntensityService {
     supabaseClient: SupabaseClient,
     agent_id: string
   ): Promise<CreationComponentScores> {
-    // Fetch AIS ranges and creation weights from database
+    // Fetch AIS ranges and creation weights from database (Phase 5: database-driven)
     const ranges = await AISConfigService.getRanges(supabaseClient);
-    const creationWeights = await AISConfigService.getScoringWeights(supabaseClient, 'creation');
+    const creationWeights = await AISConfigService.getCreationWeights(supabaseClient);
 
     // Fetch agent configuration to analyze design complexity
     const { data: agent, error } = await supabaseClient
@@ -664,10 +677,10 @@ export class AgentIntensityService {
     if (triggerConditions.schedule_cron) triggerBonus = 1;
     if (triggerConditions.event_triggers && triggerConditions.event_triggers.length > 0) triggerBonus = 2;
 
-    // Return 4 dimensions using database-driven weights
-    const workflowWeight = creationWeights.workflow || 0.5;
-    const pluginWeight = creationWeights.plugins || 0.3;
-    const ioWeight = creationWeights.io_schema || 0.2;
+    // Use database-driven weights (Phase 5: no more fallbacks!)
+    const workflowWeight = creationWeights.workflow;
+    const pluginWeight = creationWeights.plugins;
+    const ioWeight = creationWeights.io_schema;
 
     return {
       workflow_structure: {
@@ -723,6 +736,9 @@ export class AgentIntensityService {
     const pluginWeights = await AISConfigService.getScoringWeights(supabase, 'plugin_complexity');
     const workflowWeights = await AISConfigService.getScoringWeights(supabase, 'workflow_complexity');
 
+    // Phase 6: Fetch main dimension weights from database (no more EXECUTION_WEIGHTS constant!)
+    const executionWeights = await AISConfigService.getExecutionWeights(supabase);
+
     // TOKEN COMPLEXITY (35% weight)
     // Based on: volume, efficiency, peak usage, input/output ratio
     const tokenVolumeScore = AISConfigService.normalize(metrics.avg_tokens_per_run || 0, ranges.token_volume);
@@ -775,26 +791,32 @@ export class AgentIntensityService {
       parallelScore * (workflowWeights.parallel || 0.15)
     );
 
+    // Phase 6: Use database-driven weights instead of EXECUTION_WEIGHTS constant
     return {
       token_complexity: {
         score: this.clamp(token_complexity_score, 0, 10),
-        weight: EXECUTION_WEIGHTS.TOKEN_COMPLEXITY,
-        weighted_score: this.clamp(token_complexity_score, 0, 10) * EXECUTION_WEIGHTS.TOKEN_COMPLEXITY,
+        weight: executionWeights.tokens,
+        weighted_score: this.clamp(token_complexity_score, 0, 10) * executionWeights.tokens,
       },
       execution_complexity: {
         score: this.clamp(execution_complexity_score, 0, 10),
-        weight: EXECUTION_WEIGHTS.EXECUTION_COMPLEXITY,
-        weighted_score: this.clamp(execution_complexity_score, 0, 10) * EXECUTION_WEIGHTS.EXECUTION_COMPLEXITY,
+        weight: executionWeights.execution,
+        weighted_score: this.clamp(execution_complexity_score, 0, 10) * executionWeights.execution,
       },
       plugin_complexity: {
         score: this.clamp(plugin_complexity_score, 0, 10),
-        weight: EXECUTION_WEIGHTS.PLUGIN_COMPLEXITY,
-        weighted_score: this.clamp(plugin_complexity_score, 0, 10) * EXECUTION_WEIGHTS.PLUGIN_COMPLEXITY,
+        weight: executionWeights.plugins,
+        weighted_score: this.clamp(plugin_complexity_score, 0, 10) * executionWeights.plugins,
       },
       workflow_complexity: {
         score: this.clamp(workflow_complexity_score, 0, 10),
-        weight: EXECUTION_WEIGHTS.WORKFLOW_COMPLEXITY,
-        weighted_score: this.clamp(workflow_complexity_score, 0, 10) * EXECUTION_WEIGHTS.WORKFLOW_COMPLEXITY,
+        weight: executionWeights.workflow,
+        weighted_score: this.clamp(workflow_complexity_score, 0, 10) * executionWeights.workflow,
+      },
+      memory_complexity: {
+        score: this.clamp(metrics.memory_complexity_score || 0, 0, 10),
+        weight: executionWeights.memory,
+        weighted_score: this.clamp(metrics.memory_complexity_score || 0, 0, 10) * executionWeights.memory,
       },
     };
   }

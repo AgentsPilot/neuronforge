@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
@@ -10,6 +10,8 @@ import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
 import AgentHistoryBlock from '@/components/dashboard/AgentHistoryBlock'
 import AgentSandbox from '@/components/dashboard/AgentSandBox/AgentSandbox'
 import { AgentIntensityCard } from '@/components/agents/AgentIntensityCard'
+import AgentPreview from '@/components/agent-creation/SmartAgentBuilder/components/AgentPreview'
+import SimpleDynamicWorkflow from '@/components/agent-creation/SmartAgentBuilder/components/VisualAgentFlow'
 import { SiGmail, SiSlack, SiNotion, SiGoogledrive, SiGooglecalendar, SiGoogledocs, SiGooglesheets, SiGithub, SiHubspot, SiWhatsapp } from 'react-icons/si'
 import {
   Bot,
@@ -56,7 +58,10 @@ import {
   Rocket,
   CheckCircle2,
   Check,
-  User
+  User,
+  FlaskConical,
+  Phone,
+  Cloud
 } from 'lucide-react'
 
 // Ultra-Modern Modal with Dynamic Sizing
@@ -253,6 +258,7 @@ export default function AgentPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showDeactivateConfirm, setShowDeactivateConfirm] = useState(false)
   const [showShareConfirm, setShowShareConfirm] = useState(false)
+  const [showSetupRequired, setShowSetupRequired] = useState(false)
   const [showQuickActionsMenu, setShowQuickActionsMenu] = useState(false)
   const [memoryCount, setMemoryCount] = useState(0)
   const [userCredits, setUserCredits] = useState(0)
@@ -265,14 +271,16 @@ export default function AgentPage() {
   const [sharingStatus, setSharingStatus] = useState<any>(null)
   const [isConfigured, setIsConfigured] = useState(false)
   const [showActivationWarning, setShowActivationWarning] = useState(false)
-  const [currentFormIsComplete, setCurrentFormIsComplete] = useState(false)
   const [currentView, setCurrentView] = useState<'overview' | 'test' | 'history' | 'settings'>('overview')
   const [expandedPrompt, setExpandedPrompt] = useState(false)
   const [hasBeenShared, setHasBeenShared] = useState(false)
   const [shareRewardActive, setShareRewardActive] = useState(true)
+  const [expandedSetup, setExpandedSetup] = useState(false)
   const [expandedTestPlayground, setExpandedTestPlayground] = useState(false)
   const [expandedActivity, setExpandedActivity] = useState(false)
   const [expandedOutputs, setExpandedOutputs] = useState(true) // Default expanded to show outputs
+  const [expandedExecutionPreview, setExpandedExecutionPreview] = useState(false)
+  const currentFormIsCompleteRef = useRef(false)
 
   // Performance stats state
   const [performanceStats, setPerformanceStats] = useState<{
@@ -462,9 +470,17 @@ export default function AgentPage() {
       // Fetch intensity data for total credits (creation + execution)
       let totalCost = 0
       try {
-        const intensityResponse = await fetch(`/api/agents/${agentId}/intensity`)
+        console.log('[PerformanceStats] Fetching intensity data from:', `/api/agents/${agentId}/intensity`)
+        const intensityResponse = await fetch(`/api/agents/${agentId}/intensity`, {
+          headers: {
+            'x-user-id': user.id,
+          },
+        })
+        console.log('[PerformanceStats] Response status:', intensityResponse.status)
+
         if (intensityResponse.ok) {
           const intensityData = await intensityResponse.json()
+          console.log('[PerformanceStats] Intensity data:', intensityData)
           const creationCredits = intensityData.details.creation_stats?.creation_tokens_used
             ? Math.ceil(intensityData.details.creation_stats.creation_tokens_used / 10)
             : 0
@@ -472,9 +488,13 @@ export default function AgentPage() {
             ? Math.ceil(intensityData.details.token_stats.total_tokens / 10)
             : 0
           totalCost = creationCredits + executionCredits
+          console.log('[PerformanceStats] Calculated total cost:', totalCost, 'creation:', creationCredits, 'execution:', executionCredits)
+        } else {
+          const errorData = await intensityResponse.json()
+          console.error('[PerformanceStats] Response not OK:', intensityResponse.status, errorData)
         }
       } catch (intensityError) {
-        console.warn('Could not fetch intensity data for credits:', intensityError)
+        console.error('[PerformanceStats] Error fetching intensity data:', intensityError)
       }
 
       // Get last 10 executions for graph with calculated duration
@@ -623,15 +643,18 @@ export default function AgentPage() {
 
   useEffect(() => {
     if (agentId && isValidUUID(agentId)) {
+      // Critical data: Load agent first (blocking)
       fetchAgent()
-      fetchMemoryCount()
-      fetchSharingRewardAmount()
-      fetchShareRewardStatus()
-      fetchPerformanceStats()
-      if (user) {
-        fetchUserCredits()
-        fetchUserProfile()
-      }
+
+      // Non-critical data: Load in parallel (non-blocking)
+      Promise.all([
+        fetchMemoryCount(),
+        fetchPerformanceStats(),
+        fetchSharingRewardAmount(),
+        fetchShareRewardStatus(),
+        user ? fetchUserCredits() : Promise.resolve(),
+        user ? fetchUserProfile() : Promise.resolve()
+      ]).catch(err => console.error('Error loading secondary data:', err))
     } else if (agentId) {
       setError('Invalid assistant ID')
       setLoading(false)
@@ -886,7 +909,7 @@ export default function AgentPage() {
   const statusConfig = getStatusConfig(agent.status || 'unknown')
   const StatusIcon = statusConfig.icon
   const ModeIcon = getModeIcon(agent.mode || 'on_demand')
-  const canActivate = isConfigured || !hasRequiredFields() || currentFormIsComplete
+  const canActivate = isConfigured || !hasRequiredFields() || currentFormIsCompleteRef.current
 
   const safePluginsRequired = Array.isArray(agent.plugins_required) ? agent.plugins_required : []
   const humanOutputs = Array.isArray(agent.output_schema) ? agent.output_schema.filter(o => !o.category || o.category === 'human-facing') : []
@@ -996,13 +1019,20 @@ export default function AgentPage() {
                         </button>
                       ) : (
                         <button
-                          onClick={canActivate ? handleToggleStatus : () => setCurrentView('test')}
+                          onClick={() => {
+                            if (canActivate) {
+                              handleToggleStatus()
+                            } else {
+                              // Show setup required modal
+                              setShowSetupRequired(true)
+                            }
+                          }}
                           className="group relative w-10 h-10 bg-white border-2 border-green-200 text-green-600 rounded-lg hover:bg-green-50 hover:border-green-300 transition-all duration-200 hover:scale-110 shadow-sm hover:shadow-md flex items-center justify-center"
-                          title={canActivate ? 'Launch Agent' : 'Setup Required'}
+                          title="Launch Agent"
                         >
                           <Rocket className="h-5 w-5" />
                           <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
-                            {canActivate ? 'Launch' : 'Setup'}
+                            Launch
                           </span>
                         </button>
                       )}
@@ -1037,7 +1067,7 @@ export default function AgentPage() {
                         className="group relative w-10 h-10 bg-white border-2 border-purple-200 text-purple-600 rounded-lg hover:bg-purple-50 hover:border-purple-300 transition-all duration-200 hover:scale-110 shadow-sm hover:shadow-md flex items-center justify-center"
                         title="Test Agent"
                       >
-                        <Play className="h-5 w-5" />
+                        <FlaskConical className="h-5 w-5" />
                         <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                           Test
                         </span>
@@ -1119,21 +1149,24 @@ export default function AgentPage() {
       <div className="max-w-7xl mx-auto px-8 py-8">
         <div className="space-y-6">
 
-          {/* Row 1: What This Agent Does + Current Status */}
+          {/* Row 1: What This Agent Does + Plugins + Current Status */}
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
 
-            {/* Description Card with Expand Button - 3 columns */}
+            {/* Combined Description + Outputs Card - 3 columns (wider) */}
             <div className="lg:col-span-3 bg-gradient-to-br from-indigo-50 via-white to-blue-50 rounded-2xl border border-gray-200 shadow-lg p-6">
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-blue-600 rounded-lg flex items-center justify-center">
+                  <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-blue-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-md">
                     <FileText className="h-5 w-5 text-white" />
                   </div>
-                  <h3 className="text-sm font-semibold text-gray-700">What This Agent Does</h3>
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-700">What This Agent Does</h3>
+                    <p className="text-[10px] text-gray-500">Description & outputs</p>
+                  </div>
                 </div>
                 <button
                   onClick={() => setExpandedPrompt(!expandedPrompt)}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 font-semibold text-xs transition-all duration-200"
+                  className="flex items-center gap-2 px-2.5 py-1.5 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 font-semibold text-[10px] transition-all duration-200"
                 >
                   {expandedPrompt ? (
                     <>
@@ -1149,125 +1182,39 @@ export default function AgentPage() {
                 </button>
               </div>
 
+              {/* Description */}
               {agent.description ? (
-                <p className="text-gray-700 leading-relaxed">{agent.description}</p>
+                <p className="text-sm text-gray-700 leading-relaxed mb-4">{agent.description}</p>
               ) : (
-                <p className="text-gray-500 italic">No description provided</p>
+                <p className="text-sm text-gray-500 italic mb-4">No description provided</p>
               )}
 
-              {expandedPrompt && (
-                <div className="mt-4 pt-4 border-t border-gray-200">
-                  <p className="text-xs text-gray-600 mb-2 uppercase tracking-wide font-semibold">Full Instructions</p>
-                  <div className="text-sm text-gray-700 bg-white p-4 rounded-xl border border-gray-200 font-mono whitespace-pre-wrap leading-relaxed max-h-96 overflow-y-auto">
-                    {agent.user_prompt}
+              {/* Outputs Section */}
+              {(humanOutputs.length > 0 || systemOutputs.length > 0) && (
+                <div className="pt-4 border-t border-gray-200">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Target className="h-4 w-4 text-emerald-600" />
+                    <span className="text-xs font-semibold text-gray-700">
+                      What you'll get ({humanOutputs.length + systemOutputs.length} output{(humanOutputs.length + systemOutputs.length) !== 1 ? 's' : ''})
+                    </span>
                   </div>
-                </div>
-              )}
-            </div>
 
-            {/* Current Status Card - 2 columns */}
-            <div className="lg:col-span-2 bg-gradient-to-br from-blue-50 via-white to-purple-50 rounded-2xl border border-gray-200 shadow-lg p-6">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                  <StatusIcon className="h-5 w-5 text-white" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-semibold text-gray-600">Current Status</h3>
-                  <p className={`text-lg font-bold ${statusConfig.color}`}>{statusConfig.label}</p>
-                </div>
-              </div>
-
-              {/* Agent ID - Copyable */}
-              <div className="pt-4 border-t border-gray-200">
-                <div className="flex items-center gap-2 text-xs text-gray-600 mb-1">
-                  <Target className="h-3 w-3" />
-                  <span>Agent ID</span>
-                </div>
-                <button
-                  onClick={() => navigator.clipboard.writeText(agent.id)}
-                  className="flex items-center gap-2 text-xs text-gray-600 font-mono hover:text-gray-900 hover:bg-gray-50 px-2 py-1 rounded transition-all duration-200 group w-full"
-                >
-                  <span className="truncate flex-1 text-left">{agent.id}</span>
-                  <Copy className="h-3 w-3 text-gray-400 group-hover:text-gray-600 flex-shrink-0" />
-                </button>
-              </div>
-
-              {/* Schedule */}
-              <div className="pt-4 border-t border-gray-200 mt-4">
-                <div className="flex items-center gap-2 text-xs text-gray-600 mb-1">
-                  <ModeIcon className="h-3 w-3" />
-                  <span>Schedule</span>
-                </div>
-                <p className="text-xs text-gray-700 font-medium">{formatScheduleDisplay(agent.trigger_conditions, userProfile?.timezone)}</p>
-              </div>
-
-              {/* Created */}
-              <div className="pt-4 border-t border-gray-200 mt-4">
-                <div className="flex items-center gap-2 text-xs text-gray-600 mb-1">
-                  <Clock className="h-3 w-3" />
-                  <span>Created</span>
-                </div>
-                <p className="text-xs text-gray-700 font-medium">
-                  {new Date(agent.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Row 2: What you'll get + Plugins */}
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-
-            {/* Output Schema Display - What you'll get - 3 columns */}
-            {(humanOutputs.length > 0 || systemOutputs.length > 0) && (
-              <div className="lg:col-span-3 bg-gradient-to-br from-emerald-50 via-white to-green-50 rounded-2xl border border-gray-200 shadow-lg overflow-hidden">
-                <div
-                  className="bg-gradient-to-r from-emerald-50 to-green-50 p-3 cursor-pointer hover:from-emerald-100 hover:to-green-100 transition-colors"
-                  onClick={() => setExpandedOutputs(!expandedOutputs)}
-                >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-emerald-100 rounded-lg flex items-center justify-center">
-                      <Target className="h-4 w-4 text-emerald-600" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-slate-900 text-sm">What you'll get</h3>
-                      <p className="text-slate-600 text-xs">The outputs your agent will create</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="text-xs text-slate-600">
-                      {humanOutputs.length + systemOutputs.length} output{(humanOutputs.length + systemOutputs.length) !== 1 ? 's' : ''}
-                    </div>
-                    {expandedOutputs ?
-                      <ChevronUp className="h-4 w-4 text-slate-600" /> :
-                      <ChevronDown className="h-4 w-4 text-slate-600" />
-                    }
-                  </div>
-                </div>
-              </div>
-
-              {expandedOutputs && (
-                <div className="p-3 space-y-4">
-                  {/* Human Outputs */}
-                  {humanOutputs.length > 0 && (
-                    <div>
-                      <div className="text-xs font-semibold text-emerald-700 mb-2 flex items-center gap-1.5">
-                        <User className="h-3.5 w-3.5" />
-                        Human-Facing Outputs
-                      </div>
+                  <div className="space-y-3">
+                    {/* Human Outputs */}
+                    {humanOutputs.length > 0 && (
                       <div className="space-y-2">
                         {humanOutputs.map((field: any, index: number) => {
                           const getUserFriendlyType = (type: string) => {
-                            const typeMap: Record<string, { label: string; Icon: any; iconColor: string; bgColor: string; badgeColor: string }> = {
-                              'EmailDraft': { label: 'Email', Icon: Mail, iconColor: 'text-blue-600', bgColor: 'bg-blue-100', badgeColor: 'bg-blue-100 text-blue-700' },
-                              'PluginAction': { label: 'Action', Icon: Zap, iconColor: 'text-purple-600', bgColor: 'bg-purple-100', badgeColor: 'bg-purple-100 text-purple-700' },
-                              'SummaryBlock': { label: 'Report', Icon: FileBarChart, iconColor: 'text-green-600', bgColor: 'bg-green-100', badgeColor: 'bg-green-100 text-green-700' },
-                              'Alert': { label: 'Notification', Icon: Bell, iconColor: 'text-orange-600', bgColor: 'bg-orange-100', badgeColor: 'bg-orange-100 text-orange-700' },
-                              'string': { label: 'Text', Icon: MessageSquare, iconColor: 'text-cyan-600', bgColor: 'bg-cyan-100', badgeColor: 'bg-cyan-100 text-cyan-700' },
-                              'object': { label: 'Data', Icon: Database, iconColor: 'text-indigo-600', bgColor: 'bg-indigo-100', badgeColor: 'bg-indigo-100 text-indigo-700' },
-                              'array': { label: 'List', Icon: List, iconColor: 'text-teal-600', bgColor: 'bg-teal-100', badgeColor: 'bg-teal-100 text-teal-700' }
+                            const typeMap: Record<string, { label: string; Icon: any; iconColor: string; bgColor: string }> = {
+                              'EmailDraft': { label: 'Email', Icon: Mail, iconColor: 'text-blue-600', bgColor: 'bg-blue-100' },
+                              'PluginAction': { label: 'Action', Icon: Zap, iconColor: 'text-purple-600', bgColor: 'bg-purple-100' },
+                              'SummaryBlock': { label: 'Report', Icon: FileBarChart, iconColor: 'text-green-600', bgColor: 'bg-green-100' },
+                              'Alert': { label: 'Notification', Icon: Bell, iconColor: 'text-orange-600', bgColor: 'bg-orange-100' },
+                              'string': { label: 'Text', Icon: MessageSquare, iconColor: 'text-cyan-600', bgColor: 'bg-cyan-100' },
+                              'object': { label: 'Data', Icon: Database, iconColor: 'text-indigo-600', bgColor: 'bg-indigo-100' },
+                              'array': { label: 'List', Icon: List, iconColor: 'text-teal-600', bgColor: 'bg-teal-100' }
                             };
-                            return typeMap[type] || { label: 'Result', Icon: Sparkles, iconColor: 'text-amber-600', bgColor: 'bg-amber-100', badgeColor: 'bg-amber-100 text-amber-700' };
+                            return typeMap[type] || { label: 'Result', Icon: Sparkles, iconColor: 'text-amber-600', bgColor: 'bg-amber-100' };
                           };
 
                           const typeInfo = getUserFriendlyType(field.type);
@@ -1281,71 +1228,34 @@ export default function AgentPage() {
                               <div className="flex-1 min-w-0">
                                 <div className="text-sm font-medium text-gray-900">{field.name}</div>
                                 {field.description && (
-                                  <div className="text-xs text-gray-500">{field.description}</div>
+                                  <div className="text-xs text-gray-500 mt-0.5">{field.description}</div>
                                 )}
                               </div>
-                              <div className={`px-2 py-1 rounded-md ${typeInfo.badgeColor}`}>
-                                <span className="text-xs font-medium">{typeInfo.label}</span>
+                              <div className={`px-2 py-1 rounded-md text-xs font-medium ${typeInfo.bgColor} ${typeInfo.iconColor}`}>
+                                {typeInfo.label}
                               </div>
                             </div>
                           );
                         })}
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
+                </div>
+              )}
 
-                  {/* System Outputs */}
-                  {systemOutputs.length > 0 && (
-                    <div>
-                      <div className="text-xs font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
-                        <Settings className="h-3.5 w-3.5" />
-                        System Outputs
-                      </div>
-                      <div className="space-y-2">
-                        {systemOutputs.map((field: any, index: number) => {
-                          const getUserFriendlyType = (type: string) => {
-                            const typeMap: Record<string, { label: string; Icon: any; iconColor: string; bgColor: string; badgeColor: string }> = {
-                              'EmailDraft': { label: 'Email', Icon: Mail, iconColor: 'text-blue-600', bgColor: 'bg-blue-100', badgeColor: 'bg-blue-100 text-blue-700' },
-                              'PluginAction': { label: 'Action', Icon: Zap, iconColor: 'text-purple-600', bgColor: 'bg-purple-100', badgeColor: 'bg-purple-100 text-purple-700' },
-                              'SummaryBlock': { label: 'Report', Icon: FileBarChart, iconColor: 'text-green-600', bgColor: 'bg-green-100', badgeColor: 'bg-green-100 text-green-700' },
-                              'Alert': { label: 'Notification', Icon: Bell, iconColor: 'text-orange-600', bgColor: 'bg-orange-100', badgeColor: 'bg-orange-100 text-orange-700' },
-                              'string': { label: 'Text', Icon: MessageSquare, iconColor: 'text-cyan-600', bgColor: 'bg-cyan-100', badgeColor: 'bg-cyan-100 text-cyan-700' },
-                              'object': { label: 'Data', Icon: Database, iconColor: 'text-indigo-600', bgColor: 'bg-indigo-100', badgeColor: 'bg-indigo-100 text-indigo-700' },
-                              'array': { label: 'List', Icon: List, iconColor: 'text-teal-600', bgColor: 'bg-teal-100', badgeColor: 'bg-teal-100 text-teal-700' }
-                            };
-                            return typeMap[type] || { label: 'Result', Icon: Sparkles, iconColor: 'text-amber-600', bgColor: 'bg-amber-100', badgeColor: 'bg-amber-100 text-amber-700' };
-                          };
-
-                          const typeInfo = getUserFriendlyType(field.type);
-                          const IconComponent = typeInfo.Icon;
-
-                          return (
-                            <div key={index} className="flex items-center gap-3 p-3 bg-white/80 backdrop-blur rounded-xl border border-gray-200/50 hover:border-slate-300 hover:shadow-md transition-all duration-200">
-                              <div className={`w-8 h-8 ${typeInfo.bgColor} rounded-lg flex items-center justify-center flex-shrink-0`}>
-                                <IconComponent className={`h-4 w-4 ${typeInfo.iconColor}`} />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="text-sm font-medium text-gray-900">{field.name}</div>
-                                {field.description && (
-                                  <div className="text-xs text-gray-500">{field.description}</div>
-                                )}
-                              </div>
-                              <div className={`px-2 py-1 rounded-md ${typeInfo.badgeColor}`}>
-                                <span className="text-xs font-medium">{typeInfo.label}</span>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
+              {/* Full Instructions (expandable) */}
+              {expandedPrompt && (
+                <div className="mt-4 pt-4 border-t border-gray-200">
+                  <p className="text-[10px] text-gray-600 mb-2 uppercase tracking-wide font-semibold">Full Instructions</p>
+                  <div className="text-xs text-gray-700 bg-white p-3 rounded-lg border border-gray-200 font-mono whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto">
+                    {agent.user_prompt}
+                  </div>
                 </div>
               )}
             </div>
-          )}
 
-            {/* Plugin Requirements Card - 2 columns */}
-            <div className="lg:col-span-2 bg-gradient-to-br from-rose-50 via-white to-pink-50 rounded-2xl border border-gray-200 shadow-lg p-6">
+            {/* Plugin Requirements Card - 1 column */}
+            <div className="lg:col-span-1 bg-gradient-to-br from-rose-50 via-white to-pink-50 rounded-2xl border border-gray-200 shadow-lg p-6">
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-10 h-10 bg-gradient-to-br from-rose-500 to-pink-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-md">
                   <Puzzle className="h-5 w-5 text-white" />
@@ -1392,18 +1302,71 @@ export default function AgentPage() {
                 </div>
               )}
             </div>
+
+            {/* Current Status Card - 1 column (narrower) */}
+            <div className="lg:col-span-1 bg-gradient-to-br from-blue-50 via-white to-purple-50 rounded-2xl border border-gray-200 shadow-lg p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-md">
+                  <StatusIcon className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-700">Current Status</h3>
+                  <p className={`text-xs font-bold ${statusConfig.color}`}>{statusConfig.label}</p>
+                </div>
+              </div>
+
+              {/* Agent ID - Copyable */}
+              <div className="space-y-3">
+                <div>
+                  <div className="flex items-center gap-2 text-[10px] text-gray-500 mb-1.5">
+                    <Target className="h-3 w-3" />
+                    <span className="uppercase tracking-wide font-semibold">Agent ID</span>
+                  </div>
+                  <button
+                    onClick={() => navigator.clipboard.writeText(agent.id)}
+                    className="flex items-center gap-2 text-[10px] text-gray-600 font-mono hover:text-gray-900 hover:bg-gray-50 px-2 py-1.5 rounded transition-all duration-200 group w-full"
+                  >
+                    <span className="truncate flex-1 text-left">{agent.id}</span>
+                    <Copy className="h-3 w-3 text-gray-400 group-hover:text-gray-600 flex-shrink-0" />
+                  </button>
+                </div>
+
+                {/* Schedule */}
+                <div>
+                  <div className="flex items-center gap-2 text-[10px] text-gray-500 mb-1.5">
+                    <ModeIcon className="h-3 w-3" />
+                    <span className="uppercase tracking-wide font-semibold">Schedule</span>
+                  </div>
+                  <p className="text-xs text-gray-700 font-medium px-2">{formatScheduleDisplay(agent.mode, agent.schedule_cron)}</p>
+                </div>
+
+                {/* Created */}
+                <div>
+                  <div className="flex items-center gap-2 text-[10px] text-gray-500 mb-1.5">
+                    <Clock className="h-3 w-3" />
+                    <span className="uppercase tracking-wide font-semibold">Created</span>
+                  </div>
+                  <p className="text-xs text-gray-700 font-medium px-2">
+                    {agent.created_at ? new Date(agent.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
 
-          {/* Row 3: Performance and AIS */}
+          {/* Row 2: Performance and AIS */}
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
 
             {/* Performance Metrics Card - 2 columns */}
             <div className="lg:col-span-2 bg-gradient-to-br from-green-50 via-white to-emerald-50 rounded-2xl border border-gray-200 shadow-lg p-6">
               <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-600 rounded-lg flex items-center justify-center">
+                <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-md">
                   <TrendingUp className="h-5 w-5 text-white" />
                 </div>
-                <h3 className="text-sm font-semibold text-gray-700">Performance</h3>
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-700">Performance</h3>
+                  <p className="text-[10px] text-gray-500">Execution metrics & trends</p>
+                </div>
               </div>
 
               <div className="space-y-4">
@@ -1425,7 +1388,7 @@ export default function AgentPage() {
                   </div>
 
                   <div className="text-center p-3 bg-gradient-to-br from-amber-50 to-orange-50 rounded-lg border border-amber-200/50 shadow-sm">
-                    <div className="text-2xl font-bold text-amber-600">{performanceStats.totalCost.toFixed(0)}</div>
+                    <div className="text-2xl font-bold text-amber-600">{Number(performanceStats.totalCost.toFixed(0)).toLocaleString()}</div>
                     <div className="text-xs font-medium text-amber-700 uppercase tracking-wide mt-1">Total Pilot Credits</div>
                   </div>
                 </div>
@@ -1523,28 +1486,79 @@ export default function AgentPage() {
             </div>
           </div>
 
+          {/* Setup/Configuration Card - Collapsible */}
+          {hasRequiredFields() && (
+            <div data-card="setup-card" className="bg-gradient-to-br from-blue-50 via-white to-cyan-50 rounded-2xl border border-gray-200 shadow-lg overflow-hidden" style={{ contentVisibility: 'auto' }}>
+              <button
+                onClick={() => setExpandedSetup(!expandedSetup)}
+                type="button"
+                className="w-full p-6 flex items-center justify-between hover:bg-blue-100/50 group"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-md">
+                    <Settings className="h-5 w-5 text-white" />
+                  </div>
+                  <div className="text-left">
+                    <h3 className="text-sm font-semibold text-gray-700">Agent Setup</h3>
+                    <p className="text-[10px] text-gray-500">Configure agent inputs</p>
+                  </div>
+                </div>
+                <div className="text-gray-400 group-hover:text-gray-600">
+                  {expandedSetup ? (
+                    <ChevronUp className="h-5 w-5" />
+                  ) : (
+                    <ChevronDown className="h-5 w-5" />
+                  )}
+                </div>
+              </button>
+
+              {expandedSetup && (
+                <div className="px-6 pb-6 pt-4 border-t border-blue-200">
+                  <AgentSandbox
+                    agentId={agent.id}
+                    inputSchema={agent.input_schema}
+                    outputSchema={agent.output_schema}
+                    userPrompt={agent.user_prompt}
+                    pluginsRequired={agent.plugins_required}
+                    workflowSteps={agent.workflow_steps}
+                    connectedPlugins={agent.connected_plugins}
+                    initialContext="configure"
+                    onFormCompletionChange={(isComplete) => {
+                      currentFormIsCompleteRef.current = isComplete
+                    }}
+                    onExecutionComplete={() => {
+                      // Do nothing - avoid triggering state updates that cause flicker
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Test Playground Card - Collapsible */}
           <div data-card="test-playground" className="bg-gradient-to-br from-purple-50 via-white to-pink-50 rounded-2xl border border-gray-200 shadow-lg overflow-hidden">
             <button
               onClick={() => setExpandedTestPlayground(!expandedTestPlayground)}
-              className="w-full p-6 flex items-center justify-between hover:bg-purple-100/50 transition-all duration-200"
+              className="w-full p-6 flex items-center justify-between hover:bg-purple-100/50 transition-all duration-200 group"
             >
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-lg flex items-center justify-center">
+                <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-md">
                   <Play className="h-5 w-5 text-white" />
                 </div>
                 <div className="text-left">
                   <h3 className="text-sm font-semibold text-gray-700">Test Playground</h3>
-                  <p className="text-xs text-gray-500">
+                  <p className="text-[10px] text-gray-500">
                     {expandedTestPlayground ? 'Click to collapse' : 'Click to expand and test your agent'}
                   </p>
                 </div>
               </div>
-              {expandedTestPlayground ? (
-                <ChevronUp className="h-5 w-5 text-gray-600" />
-              ) : (
-                <ChevronDown className="h-5 w-5 text-gray-600" />
-              )}
+              <div className="text-gray-400 group-hover:text-gray-600 transition-colors">
+                {expandedTestPlayground ? (
+                  <ChevronUp className="h-5 w-5" />
+                ) : (
+                  <ChevronDown className="h-5 w-5" />
+                )}
+              </div>
             </button>
 
             {expandedTestPlayground && (
@@ -1558,7 +1572,9 @@ export default function AgentPage() {
                   workflowSteps={agent.workflow_steps}
                   connectedPlugins={agent.connected_plugins}
                   initialContext="test"
-                  onFormCompletionChange={setCurrentFormIsComplete}
+                  onFormCompletionChange={(isComplete) => {
+                    currentFormIsCompleteRef.current = isComplete
+                  }}
                   onExecutionComplete={() => {
                     if (hasRequiredFields()) {
                       setTimeout(() => checkAgentConfiguration(agent), 500)
@@ -1574,15 +1590,15 @@ export default function AgentPage() {
           <div data-card="recent-activity" className="bg-gradient-to-br from-amber-50 via-white to-orange-50 rounded-2xl border border-gray-200 shadow-lg overflow-hidden">
             <button
               onClick={() => setExpandedActivity(!expandedActivity)}
-              className="w-full p-6 flex items-center justify-between hover:bg-amber-100/50 transition-all duration-200"
+              className="w-full p-6 flex items-center justify-between hover:bg-amber-100/50 transition-all duration-200 group"
             >
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-gradient-to-br from-amber-500 to-orange-600 rounded-lg flex items-center justify-center">
+                <div className="w-10 h-10 bg-gradient-to-br from-amber-500 to-orange-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-md">
                   <Activity className="h-5 w-5 text-white" />
                 </div>
                 <div className="text-left">
                   <h3 className="text-sm font-semibold text-gray-700">Recent Activity</h3>
-                  <p className="text-xs text-gray-500">
+                  <p className="text-[10px] text-gray-500">
                     {expandedActivity
                       ? 'Click to collapse'
                       : performanceStats.totalRuns > 0
@@ -1591,11 +1607,13 @@ export default function AgentPage() {
                   </p>
                 </div>
               </div>
-              {expandedActivity ? (
-                <ChevronUp className="h-5 w-5 text-gray-600" />
-              ) : (
-                <ChevronDown className="h-5 w-5 text-gray-600" />
-              )}
+              <div className="text-gray-400 group-hover:text-gray-600 transition-colors">
+                {expandedActivity ? (
+                  <ChevronUp className="h-5 w-5" />
+                ) : (
+                  <ChevronDown className="h-5 w-5" />
+                )}
+              </div>
             </button>
 
             {expandedActivity && performanceStats.totalRuns > 0 && (
@@ -1612,6 +1630,129 @@ export default function AgentPage() {
                   </div>
                   <p className="text-sm text-gray-600 mb-2">No activity yet</p>
                   <p className="text-xs text-gray-500">Test your agent to see execution history</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Workflow Preview Card - Collapsible */}
+          <div data-card="workflow-preview" className="bg-gradient-to-br from-indigo-50 via-white to-purple-50 rounded-2xl border border-gray-200 shadow-lg overflow-hidden">
+            <button
+              onClick={() => setExpandedExecutionPreview(!expandedExecutionPreview)}
+              className="w-full p-6 flex items-center justify-between hover:bg-indigo-100/50 transition-all duration-200 group"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-md">
+                  <Play className="h-5 w-5 text-white" />
+                </div>
+                <div className="text-left">
+                  <h3 className="text-sm font-semibold text-gray-700">Workflow Visualization</h3>
+                  <p className="text-[10px] text-gray-500">
+                    {expandedExecutionPreview ? 'Click to collapse' : `${agent?.workflow_steps?.length || 0} steps - Click to view`}
+                  </p>
+                </div>
+              </div>
+              <div className="text-gray-400 group-hover:text-gray-600 transition-colors">
+                {expandedExecutionPreview ? (
+                  <ChevronUp className="h-5 w-5" />
+                ) : (
+                  <ChevronDown className="h-5 w-5" />
+                )}
+              </div>
+            </button>
+
+            {expandedExecutionPreview && agent && agent.workflow_steps && agent.workflow_steps.length > 0 && (
+              <div className="px-6 pb-6 pt-4 border-t border-indigo-200">
+                {/* Animated Workflow Visualization */}
+                <div className="mb-8">
+                  <SimpleDynamicWorkflow
+                    agent={{
+                      agent_name: agent.agent_name,
+                      description: agent.description || '',
+                      workflow_steps: agent.workflow_steps || [],
+                      plugins_required: agent.plugins_required || [],
+                      connected_plugins: connectedPlugins ? Object.keys(connectedPlugins) : []
+                    }}
+                  />
+                </div>
+
+                {/* Workflow Steps Visualization */}
+                <div className="relative">
+                  {/* Vertical Flow Line */}
+                  <div className="absolute left-5 top-0 bottom-0 w-0.5 bg-gradient-to-b from-orange-200 via-pink-200 to-purple-200" />
+
+                  <div className="space-y-3">
+                    {agent.workflow_steps.map((step: any, idx: number) => (
+                      <div key={idx} className="relative flex items-start gap-4 group">
+                        {/* Step Number Badge */}
+                        <div className="relative flex-shrink-0 z-10">
+                          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-orange-400 to-pink-500 flex items-center justify-center text-white text-sm font-bold shadow-lg ring-4 ring-white">
+                            {idx + 1}
+                          </div>
+                          {step.validated && (
+                            <div className="absolute -top-1 -right-1 w-5 h-5 bg-green-500 rounded-full flex items-center justify-center shadow-sm border-2 border-white">
+                              <CheckCircle className="h-3 w-3 text-white fill-current" />
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Flow Card */}
+                        <div className="flex-1 min-w-0">
+                          <div className="relative p-4 bg-white/90 backdrop-blur rounded-xl border border-gray-200/50 shadow-sm group-hover:shadow-md group-hover:border-orange-300 transition-all duration-200">
+                            <div className="absolute left-0 top-5 -ml-2 w-0 h-0 border-t-[6px] border-t-transparent border-b-[6px] border-b-transparent border-r-[8px] border-r-white/90" />
+
+                            <div className="space-y-3">
+                              <div>
+                                <div className="text-xs font-medium text-orange-600 mb-1">Step {idx + 1}</div>
+                                <div className="text-sm font-semibold text-gray-900 leading-snug">
+                                  {step.action || step.operation}
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 flex-wrap">
+                                {step.plugin && step.plugin_action ? (
+                                  <>
+                                    <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-orange-50 to-pink-50 rounded-lg border border-orange-200/50 shadow-sm">
+                                      <Settings className="h-3.5 w-3.5" />
+                                      <span className="text-xs font-medium text-gray-700">{step.plugin}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1 text-gray-400">
+                                      <div className="w-6 h-[1px] bg-gray-300" />
+                                      <div className="w-0 h-0 border-t-[4px] border-t-transparent border-b-[4px] border-b-transparent border-l-[6px] border-l-gray-300" />
+                                    </div>
+                                    <div className="px-3 py-1.5 bg-gray-50 rounded-lg border border-gray-200">
+                                      <span className="text-xs text-gray-700 font-medium">{step.plugin_action}</span>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-50 to-purple-100 rounded-lg border border-purple-200/50 shadow-sm">
+                                    <Bot className="h-3.5 w-3.5 text-purple-600" />
+                                    <span className="text-xs font-medium text-purple-700">
+                                      {step.operation && (step.operation.toLowerCase().includes('determine') || step.operation.toLowerCase().includes('decide') || step.operation.toLowerCase().includes('check if'))
+                                        ? 'Condition'
+                                        : 'AI Processing'}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {expandedExecutionPreview && agent && (!agent.workflow_steps || agent.workflow_steps.length === 0) && (
+              <div className="px-6 pb-6 pt-4 border-t border-indigo-200">
+                <div className="text-center py-8">
+                  <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                    <Play className="h-8 w-8 text-indigo-600" />
+                  </div>
+                  <p className="text-sm text-gray-600 mb-2">No workflow steps</p>
+                  <p className="text-xs text-gray-500">This agent doesn't have a defined workflow</p>
                 </div>
               </div>
             )}
@@ -1819,6 +1960,52 @@ export default function AgentPage() {
                   ) : (
                     'Pause Agent'
                   )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Setup Required Modal */}
+      <Modal isOpen={showSetupRequired} onClose={() => setShowSetupRequired(false)}>
+        <div className="p-6">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 bg-gradient-to-br from-amber-400 to-orange-500 rounded-xl flex items-center justify-center shadow-lg">
+              <Settings className="h-6 w-6 text-white" />
+            </div>
+            <div className="flex-1">
+              <h3 className="font-semibold text-slate-900 mb-3 text-lg tracking-tight">Configuration Required</h3>
+
+              <div className="space-y-3 mb-4">
+                <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-3 shadow-md">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Info className="h-5 w-5 text-amber-600" />
+                    <span className="font-semibold text-amber-800">Setup needed to launch</span>
+                  </div>
+                  <p className="text-amber-700 text-sm">Please fill in the required inputs in the Agent Setup section to activate this agent.</p>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowSetupRequired(false)}
+                  className="flex-1 px-6 py-3 bg-slate-100 hover:bg-slate-200 rounded-xl transition-all duration-200 font-semibold shadow-md hover:shadow-lg hover:scale-105"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    setShowSetupRequired(false)
+                    setExpandedSetup(true)
+                    setTimeout(() => {
+                      const element = document.querySelector('[data-card="setup-card"]')
+                      element?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                    }, 100)
+                  }}
+                  className="flex-1 px-6 py-3 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-xl hover:from-amber-600 hover:to-orange-700 transition-all duration-200 font-semibold shadow-lg hover:shadow-xl hover:scale-105"
+                >
+                  Go to Setup
                 </button>
               </div>
             </div>

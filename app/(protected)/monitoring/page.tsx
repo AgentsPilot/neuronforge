@@ -578,7 +578,7 @@ export default function AuditTrailPage() {
         </div>
       </div>
 
-      {/* Overview View */}
+      {/* Overview View - Metrics Cards */}
       {selectedView === 'overview' && (
         <div className="space-y-6">
           {/* Most Active Day Card - Full Width at Top */}
@@ -606,10 +606,10 @@ export default function AuditTrailPage() {
             </div>
           )}
 
-          {/* ROW 1: OVERVIEW - High-level metrics */}
+          {/* ROW 1: ACTIVITY OVERVIEW - High-level metrics */}
           <div className="space-y-2">
             <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider px-1">Activity Overview</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               {/* Total Activity Card */}
               <button
                 onClick={() => drillDownToLogs('ALL')}
@@ -780,22 +780,15 @@ export default function AuditTrailPage() {
               >
                 <div className="flex items-center justify-between mb-3">
                   <div className="w-10 h-10 bg-gradient-to-br from-red-500 to-rose-600 rounded-lg flex items-center justify-center shadow-md flex-shrink-0">
-                    <AlertTriangle className="w-5 h-5 text-white" />
+                    <UserX className="w-5 h-5 text-white" />
                   </div>
-                  <div className="flex items-center gap-2">
-                    {userStats.failedLogins > 0 && (
-                      <span className="text-xs font-semibold text-red-700 bg-red-100 px-2 py-0.5 rounded-full">
-                        Alert
-                      </span>
-                    )}
-                    <ChevronRight className="w-4 h-4 text-red-400" />
-                  </div>
+                  <ChevronRight className="w-4 h-4 text-red-400" />
                 </div>
                 <h3 className="text-2xl font-bold text-red-900 mb-1">{userStats.failedLogins}</h3>
                 <p className="text-sm text-red-700 font-medium">Failed Logins</p>
               </button>
 
-              {/* Settings Card */}
+              {/* Settings Updates Card */}
               <button
                 onClick={() => drillDownToLogs('SETTINGS')}
                 className="bg-gradient-to-br from-violet-50 to-purple-50 border border-violet-200/50 rounded-xl p-4 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 cursor-pointer text-left w-full"
@@ -807,80 +800,124 @@ export default function AuditTrailPage() {
                   <ChevronRight className="w-4 h-4 text-violet-400" />
                 </div>
                 <h3 className="text-2xl font-bold text-violet-900 mb-1">{userStats.settingsUpdated}</h3>
-                <p className="text-sm text-violet-700 font-medium">Settings Changed</p>
+                <p className="text-sm text-violet-700 font-medium">Settings Updated</p>
               </button>
 
               {/* Profile Updates Card */}
               <button
                 onClick={() => drillDownToLogs('PROFILE')}
-                className="bg-gradient-to-br from-rose-50 to-pink-50 border border-rose-200/50 rounded-xl p-4 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 cursor-pointer text-left w-full"
+                className="bg-gradient-to-br from-pink-50 to-rose-50 border border-pink-200/50 rounded-xl p-4 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 cursor-pointer text-left w-full"
               >
                 <div className="flex items-center justify-between mb-3">
-                  <div className="w-10 h-10 bg-gradient-to-br from-rose-500 to-pink-600 rounded-lg flex items-center justify-center shadow-md flex-shrink-0">
+                  <div className="w-10 h-10 bg-gradient-to-br from-pink-500 to-rose-600 rounded-lg flex items-center justify-center shadow-md flex-shrink-0">
                     <User className="w-5 h-5 text-white" />
                   </div>
-                  <ChevronRight className="w-4 h-4 text-rose-400" />
+                  <ChevronRight className="w-4 h-4 text-pink-400" />
                 </div>
-                <h3 className="text-2xl font-bold text-rose-900 mb-1">{userStats.profileUpdates}</h3>
-                <p className="text-sm text-rose-700 font-medium">Profile Updates</p>
+                <h3 className="text-2xl font-bold text-pink-900 mb-1">{userStats.profileUpdates}</h3>
+                <p className="text-sm text-pink-700 font-medium">Profile Updates</p>
               </button>
 
-              {/* Notifications Card */}
-              <button
-                onClick={() => drillDownToLogs('NOTIFICATION')}
-                className="bg-gradient-to-br from-cyan-50 to-teal-50 border border-cyan-200/50 rounded-xl p-4 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 cursor-pointer text-left w-full"
-              >
-                <div className="flex items-center justify-between mb-3">
-                  <div className="w-10 h-10 bg-gradient-to-br from-cyan-500 to-teal-600 rounded-lg flex items-center justify-center shadow-md flex-shrink-0">
-                    <Bell className="w-5 h-5 text-white" />
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-cyan-400" />
-                </div>
-                <h3 className="text-2xl font-bold text-cyan-900 mb-1">
-                  {categoryBreakdown.find(c => c.name === 'Notifications')?.count || 0}
-                </h3>
-                <p className="text-sm text-cyan-700 font-medium">Notifications</p>
-              </button>
-            </div>
-          </div>
-
-          {/* ROW 4: COMPLIANCE - Security & Regulatory Standards */}
-          <div className="space-y-2">
-            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider px-1">Compliance & Standards</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-              {/* SOC2 Card */}
+              {/* Critical Events Card */}
               <button
                 onClick={() => {
                   setSelectedView('logs');
-                  setComplianceFilter('SOC2');
-                  setFilterSeverity('all');
+                  setFilterSeverity('critical');
+                  setComplianceFilter('all');
                   setSearchFilter('');
                   setCurrentPage(1);
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
-                className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200/50 rounded-xl p-4 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 cursor-pointer text-left w-full"
+                className="bg-gradient-to-br from-red-50 to-orange-50 border border-red-200/50 rounded-xl p-4 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 cursor-pointer text-left w-full"
               >
                 <div className="flex items-center justify-between mb-3">
-                  <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-md flex-shrink-0">
-                    <Shield className="w-5 h-5 text-white" />
+                  <div className="w-10 h-10 bg-gradient-to-br from-red-500 to-orange-600 rounded-lg flex items-center justify-center shadow-md flex-shrink-0">
+                    <AlertTriangle className="w-5 h-5 text-white" />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">
-                      SOC2
-                    </span>
-                    <ChevronRight className="w-4 h-4 text-blue-400" />
-                  </div>
+                  <ChevronRight className="w-4 h-4 text-red-400" />
                 </div>
-                <h3 className="text-2xl font-bold text-blue-900 mb-1">{userStats.soc2Events}</h3>
-                <p className="text-sm text-blue-700 font-medium">SOC 2 Events</p>
+                <h3 className="text-2xl font-bold text-red-900 mb-1">{stats.critical}</h3>
+                <p className="text-sm text-red-700 font-medium">Critical Events</p>
               </button>
 
-              {/* GDPR Card */}
+              {/* Warning Events Card */}
               <button
                 onClick={() => {
                   setSelectedView('logs');
-                  setComplianceFilter('GDPR');
+                  setFilterSeverity('warning');
+                  setComplianceFilter('all');
+                  setSearchFilter('');
+                  setCurrentPage(1);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                className="bg-gradient-to-br from-yellow-50 to-orange-50 border border-yellow-200/50 rounded-xl p-4 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 cursor-pointer text-left w-full"
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <div className="w-10 h-10 bg-gradient-to-br from-yellow-500 to-orange-600 rounded-lg flex items-center justify-center shadow-md flex-shrink-0">
+                    <Eye className="w-5 h-5 text-white" />
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-yellow-400" />
+                </div>
+                <h3 className="text-2xl font-bold text-yellow-900 mb-1">{stats.warning}</h3>
+                <p className="text-sm text-yellow-700 font-medium">Warnings</p>
+              </button>
+            </div>
+          </div>
+
+          {/* ROW 4: COMPLIANCE - Standards tracking */}
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider px-1">Compliance Events</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+              {/* SOC2 Events Card */}
+              <button
+                onClick={() => {
+                  setSelectedView('logs');
                   setFilterSeverity('all');
+                  setComplianceFilter('SOC2');
+                  setSearchFilter('');
+                  setCurrentPage(1);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                className="bg-gradient-to-br from-blue-50 to-cyan-50 border border-blue-200/50 rounded-xl p-4 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 cursor-pointer text-left w-full"
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-600 rounded-lg flex items-center justify-center shadow-md flex-shrink-0">
+                    <Award className="w-5 h-5 text-white" />
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-blue-400" />
+                </div>
+                <h3 className="text-2xl font-bold text-blue-900 mb-1">{userStats.soc2Events}</h3>
+                <p className="text-sm text-blue-700 font-medium">SOC2 Events</p>
+              </button>
+
+              {/* GDPR Events Card */}
+              <button
+                onClick={() => {
+                  setSelectedView('logs');
+                  setFilterSeverity('all');
+                  setComplianceFilter('GDPR');
+                  setSearchFilter('');
+                  setCurrentPage(1);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                className="bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200/50 rounded-xl p-4 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 cursor-pointer text-left w-full"
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-600 rounded-lg flex items-center justify-center shadow-md flex-shrink-0">
+                    <Lock className="w-5 h-5 text-white" />
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-green-400" />
+                </div>
+                <h3 className="text-2xl font-bold text-green-900 mb-1">{userStats.gdprEvents}</h3>
+                <p className="text-sm text-green-700 font-medium">GDPR Events</p>
+              </button>
+
+              {/* HIPAA Events Card */}
+              <button
+                onClick={() => {
+                  setSelectedView('logs');
+                  setFilterSeverity('all');
+                  setComplianceFilter('HIPAA');
                   setSearchFilter('');
                   setCurrentPage(1);
                   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -889,294 +926,247 @@ export default function AuditTrailPage() {
               >
                 <div className="flex items-center justify-between mb-3">
                   <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-violet-600 rounded-lg flex items-center justify-center shadow-md flex-shrink-0">
-                    <Lock className="w-5 h-5 text-white" />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full">
-                      GDPR
-                    </span>
-                    <ChevronRight className="w-4 h-4 text-purple-400" />
-                  </div>
-                </div>
-                <h3 className="text-2xl font-bold text-purple-900 mb-1">{userStats.gdprEvents}</h3>
-                <p className="text-sm text-purple-700 font-medium">GDPR Events</p>
-              </button>
-
-              {/* HIPAA Card */}
-              <button
-                onClick={() => {
-                  setSelectedView('logs');
-                  setComplianceFilter('HIPAA');
-                  setFilterSeverity('all');
-                  setSearchFilter('');
-                  setCurrentPage(1);
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }}
-                className="bg-gradient-to-br from-teal-50 to-emerald-50 border border-teal-200/50 rounded-xl p-4 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 cursor-pointer text-left w-full"
-              >
-                <div className="flex items-center justify-between mb-3">
-                  <div className="w-10 h-10 bg-gradient-to-br from-teal-500 to-emerald-600 rounded-lg flex items-center justify-center shadow-md flex-shrink-0">
                     <Shield className="w-5 h-5 text-white" />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-teal-700 bg-teal-100 px-2 py-0.5 rounded-full">
-                      HIPAA
-                    </span>
-                    <ChevronRight className="w-4 h-4 text-teal-400" />
-                  </div>
+                  <ChevronRight className="w-4 h-4 text-purple-400" />
                 </div>
-                <h3 className="text-2xl font-bold text-teal-900 mb-1">{userStats.hipaaEvents}</h3>
-                <p className="text-sm text-teal-700 font-medium">HIPAA Events</p>
+                <h3 className="text-2xl font-bold text-purple-900 mb-1">{userStats.hipaaEvents}</h3>
+                <p className="text-sm text-purple-700 font-medium">HIPAA Events</p>
               </button>
 
-              {/* ISO27001 Card */}
+              {/* ISO27001 Events Card */}
               <button
                 onClick={() => {
                   setSelectedView('logs');
-                  setComplianceFilter('ISO27001');
                   setFilterSeverity('all');
+                  setComplianceFilter('ISO27001');
                   setSearchFilter('');
                   setCurrentPage(1);
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
-                className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200/50 rounded-xl p-4 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 cursor-pointer text-left w-full"
+                className="bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-200/50 rounded-xl p-4 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 cursor-pointer text-left w-full"
               >
                 <div className="flex items-center justify-between mb-3">
-                  <div className="w-10 h-10 bg-gradient-to-br from-amber-500 to-orange-600 rounded-lg flex items-center justify-center shadow-md flex-shrink-0">
+                  <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-blue-600 rounded-lg flex items-center justify-center shadow-md flex-shrink-0">
                     <Target className="w-5 h-5 text-white" />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
-                      ISO27001
-                    </span>
-                    <ChevronRight className="w-4 h-4 text-amber-400" />
-                  </div>
+                  <ChevronRight className="w-4 h-4 text-indigo-400" />
                 </div>
-                <h3 className="text-2xl font-bold text-amber-900 mb-1">{userStats.iso27001Events}</h3>
-                <p className="text-sm text-amber-700 font-medium">ISO 27001 Events</p>
+                <h3 className="text-2xl font-bold text-indigo-900 mb-1">{userStats.iso27001Events}</h3>
+                <p className="text-sm text-indigo-700 font-medium">ISO27001 Events</p>
               </button>
 
-              {/* CCPA Card */}
+              {/* CCPA Events Card */}
               <button
                 onClick={() => {
                   setSelectedView('logs');
-                  setComplianceFilter('CCPA');
                   setFilterSeverity('all');
+                  setComplianceFilter('CCPA');
                   setSearchFilter('');
                   setCurrentPage(1);
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
-                className="bg-gradient-to-br from-pink-50 to-rose-50 border border-pink-200/50 rounded-xl p-4 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 cursor-pointer text-left w-full"
+                className="bg-gradient-to-br from-teal-50 to-cyan-50 border border-teal-200/50 rounded-xl p-4 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 cursor-pointer text-left w-full"
               >
                 <div className="flex items-center justify-between mb-3">
-                  <div className="w-10 h-10 bg-gradient-to-br from-pink-500 to-rose-600 rounded-lg flex items-center justify-center shadow-md flex-shrink-0">
+                  <div className="w-10 h-10 bg-gradient-to-br from-teal-500 to-cyan-600 rounded-lg flex items-center justify-center shadow-md flex-shrink-0">
                     <User className="w-5 h-5 text-white" />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-pink-700 bg-pink-100 px-2 py-0.5 rounded-full">
-                      CCPA
-                    </span>
-                    <ChevronRight className="w-4 h-4 text-pink-400" />
-                  </div>
+                  <ChevronRight className="w-4 h-4 text-teal-400" />
                 </div>
-                <h3 className="text-2xl font-bold text-pink-900 mb-1">{userStats.ccpaEvents}</h3>
-                <p className="text-sm text-pink-700 font-medium">CCPA Events</p>
+                <h3 className="text-2xl font-bold text-teal-900 mb-1">{userStats.ccpaEvents}</h3>
+                <p className="text-sm text-teal-700 font-medium">CCPA Events</p>
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Insights View */}
+      {/* Insights View - Detailed analysis with security insights */}
       {selectedView === 'insights' && (
         <div className="space-y-6">
           {/* Summary Cards Row */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Weekly Activity */}
+            {/* Last 24h Activity */}
             <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200/50 rounded-xl p-5">
               <div className="flex items-center justify-between mb-3">
                 <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-md">
-                  <TrendingUp className="w-5 h-5 text-white" />
+                  <Clock className="w-5 h-5 text-white" />
                 </div>
                 <span className="text-xs font-semibold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">
-                  Last 7 days
+                  Last 24h
                 </span>
               </div>
-              <h3 className="text-3xl font-bold text-blue-900 mb-1">
-                {logs.filter(l => {
-                  const logDate = new Date(l.created_at);
-                  const sevenDaysAgo = new Date();
-                  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-                  return logDate >= sevenDaysAgo;
-                }).length}
-              </h3>
-              <p className="text-sm text-blue-700 font-medium mb-2">Weekly Actions</p>
-              <p className="text-xs text-blue-600">Avg: {Math.round(stats.total / 7)} actions/day</p>
-            </div>
-
-            {/* Critical Events */}
-            <div className="bg-gradient-to-br from-red-50 to-rose-50 border border-red-200/50 rounded-xl p-5">
-              <div className="flex items-center justify-between mb-3">
-                <div className="w-10 h-10 bg-gradient-to-br from-red-500 to-rose-600 rounded-lg flex items-center justify-center shadow-md">
-                  <AlertTriangle className="w-5 h-5 text-white" />
-                </div>
-                <span className="text-xs font-semibold text-red-700 bg-red-100 px-2 py-0.5 rounded-full">
-                  {stats.critical > 0 ? 'Alert' : 'Clear'}
-                </span>
-              </div>
-              <h3 className="text-3xl font-bold text-red-900 mb-1">{stats.critical}</h3>
-              <p className="text-sm text-red-700 font-medium mb-2">Critical Events</p>
-              <p className="text-xs text-red-600">
-                {stats.critical === 0 ? 'All systems secure' : 'Requires attention'}
+              <h3 className="text-3xl font-bold text-blue-900 mb-1">{stats.last24h}</h3>
+              <p className="text-sm text-blue-700 font-medium mb-2">Recent Activity</p>
+              <p className="text-xs text-blue-600">
+                {stats.last24h > 0 ? `${((stats.last24h / stats.total) * 100).toFixed(0)}% of all events` : 'No recent activity'}
               </p>
             </div>
 
-            {/* Top Category */}
-            {categoryBreakdown[0] && (
-              <div className="bg-gradient-to-br from-emerald-50 to-green-50 border border-emerald-200/50 rounded-xl p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-green-600 rounded-lg flex items-center justify-center shadow-md">
-                    <Target className="w-5 h-5 text-white" />
-                  </div>
-                  <span className="text-xs font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
-                    {((categoryBreakdown[0].count / stats.total) * 100).toFixed(0)}%
-                  </span>
+            {/* Category Distribution */}
+            <div className="bg-gradient-to-br from-purple-50 to-pink-50 border border-purple-200/50 rounded-xl p-5">
+              <div className="flex items-center justify-between mb-3">
+                <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-lg flex items-center justify-center shadow-md">
+                  <PieChart className="w-5 h-5 text-white" />
                 </div>
-                <h3 className="text-3xl font-bold text-emerald-900 mb-1">{categoryBreakdown[0].count}</h3>
-                <p className="text-sm text-emerald-700 font-medium mb-2">Top Category</p>
-                <p className="text-xs text-emerald-600 truncate">{categoryBreakdown[0].name}</p>
+                <span className="text-xs font-semibold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full">
+                  Categories
+                </span>
               </div>
-            )}
+              <h3 className="text-3xl font-bold text-purple-900 mb-1">{categoryBreakdown.length}</h3>
+              <p className="text-sm text-purple-700 font-medium mb-2">Activity Types</p>
+              <p className="text-xs text-purple-600">
+                {categoryBreakdown[0] ? `Top: ${categoryBreakdown[0].name}` : 'No data'}
+              </p>
+            </div>
+
+            {/* Security Score */}
+            <div className="bg-gradient-to-br from-emerald-50 to-green-50 border border-emerald-200/50 rounded-xl p-5">
+              <div className="flex items-center justify-between mb-3">
+                <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-green-600 rounded-lg flex items-center justify-center shadow-md">
+                  <Shield className="w-5 h-5 text-white" />
+                </div>
+                <span className="text-xs font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                  Health
+                </span>
+              </div>
+              <h3 className="text-3xl font-bold text-emerald-900 mb-1">
+                {stats.critical === 0 && stats.warning === 0 ? '100' : stats.critical > 0 ? '40' : '75'}%
+              </h3>
+              <p className="text-sm text-emerald-700 font-medium mb-2">Security Health</p>
+              <p className="text-xs text-emerald-600">
+                {stats.critical === 0 && stats.warning === 0 ? 'Excellent' : stats.critical > 0 ? 'Needs attention' : 'Good'}
+              </p>
+            </div>
           </div>
 
           {/* Main Grid: Daily Activity & Category Breakdown */}
           <div className="grid lg:grid-cols-2 gap-6">
             {/* Daily Activity Trend */}
             <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg overflow-hidden">
-              {/* Header */}
               <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-b border-blue-200/50 p-5">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-md">
-                      <TrendingUp className="w-5 h-5 text-white" />
+                      <BarChart3 className="w-5 h-5 text-white" />
                     </div>
                     <div>
                       <h3 className="font-bold text-gray-900">Daily Activity Trend</h3>
-                      <p className="text-sm text-blue-700">Last 5 days activity pattern</p>
+                      <p className="text-sm text-blue-700">Last 5 days pattern</p>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Visual Graph */}
-              <div className="bg-gradient-to-br from-blue-50/50 to-indigo-50/30 rounded-xl p-5 border-b border-blue-200/30 m-5">
-                <h4 className="text-xs font-bold text-blue-900 uppercase tracking-wider mb-4">5-Day Activity Trend</h4>
-                <div className="flex items-end justify-between gap-2 h-40">
-                  {dailyActivity.slice().reverse().map((day) => {
-                    const maxCount = Math.max(...dailyActivity.map(d => d.count));
-                    const barHeight = maxCount > 0 ? (day.count / maxCount) * 100 : 0;
-                    const isHighest = day.count === maxCount && maxCount > 0;
-
-                    return (
-                      <div key={day.date} className="flex-1 flex flex-col items-center gap-2 group">
-                        {/* Count tooltip */}
-                        <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-gray-900 text-white text-xs px-2 py-1 rounded whitespace-nowrap mb-1">
-                          {day.count} actions
-                        </div>
-
-                        {/* Bar */}
-                        <div className="w-full flex items-end justify-center" style={{ height: '120px' }}>
-                          <div
-                            className={`w-full rounded-t-lg transition-all duration-500 ${
-                              isHighest
-                                ? 'bg-gradient-to-t from-blue-600 to-indigo-600 shadow-lg'
-                                : 'bg-gradient-to-t from-blue-400 to-indigo-500'
-                            } hover:opacity-80 cursor-pointer relative group-hover:shadow-xl`}
-                            style={{ height: `${Math.max(barHeight, 5)}%` }}
-                          >
-                            {isHighest && (
-                              <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-blue-600">
-                                <Star className="w-4 h-4 fill-current" />
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Day label */}
-                        <div className={`text-xs font-medium ${isHighest ? 'text-blue-900' : 'text-gray-600'}`}>
-                          {new Date(day.date).toLocaleDateString('en-US', { weekday: 'short' })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Content */}
               <div className="p-6">
-                <div className="space-y-3">
-                  {dailyActivity.slice(0, 3).map((day, index) => {
-                    const maxCount = Math.max(...dailyActivity.map(d => d.count));
-                    const countWidth = maxCount > 0 ? (day.count / maxCount) * 100 : 0;
-                    const isHighest = day.count === maxCount && maxCount > 0;
+                {dailyActivity.length === 0 ? (
+                  <div className="text-center py-8">
+                    <Clock className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                    <p className="text-gray-500 text-sm">No daily data available</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {/* Visual Graph */}
+                    <div className="bg-gradient-to-br from-blue-50/50 to-indigo-50/30 rounded-xl p-5 border border-blue-200/30">
+                      <h4 className="text-xs font-bold text-blue-900 uppercase tracking-wider mb-4">5-Day Activity Chart</h4>
+                      <div className="flex items-end justify-between gap-2 h-40">
+                        {dailyActivity.map((day) => {
+                          const maxCount = Math.max(...dailyActivity.map(d => d.count), 1);
+                          const barHeight = (day.count / maxCount) * 100;
+                          const isToday = new Date(day.date).toDateString() === new Date().toDateString();
 
-                    return (
-                      <div key={day.date} className={`group hover:bg-gradient-to-r hover:from-blue-50/50 hover:to-indigo-50/30 rounded-xl p-4 transition-all duration-200 border border-transparent hover:border-blue-200/30 ${
-                        isHighest ? 'bg-blue-50/30' : ''
-                      }`}>
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <Clock className="w-4 h-4 text-blue-600" />
-                            <span className="text-sm font-semibold text-gray-800">
-                              {new Date(day.date).toLocaleDateString('en-US', {
-                                weekday: 'short',
-                                month: 'short',
-                                day: 'numeric'
-                              })}
-                            </span>
-                            {isHighest && (
-                              <span className="text-xs font-bold text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">
-                                Peak
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-right">
-                            <div className={`font-bold ${isHighest ? 'text-blue-900 text-base' : 'text-gray-900'}`}>
-                              {day.count}
+                          return (
+                            <div key={day.date} className="flex-1 flex flex-col items-center gap-2 group">
+                              <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-gray-900 text-white text-xs px-2 py-1 rounded whitespace-nowrap mb-1">
+                                {day.count} events
+                              </div>
+
+                              <div className="w-full flex items-end justify-center" style={{ height: '120px' }}>
+                                <div
+                                  className={`w-full rounded-t-lg transition-all duration-500 ${
+                                    isToday
+                                      ? 'bg-gradient-to-t from-blue-600 to-indigo-600 shadow-lg'
+                                      : 'bg-gradient-to-t from-blue-400 to-indigo-500'
+                                  } hover:opacity-80 cursor-pointer relative group-hover:shadow-xl`}
+                                  style={{ height: `${Math.max(barHeight, 5)}%` }}
+                                >
+                                  {isToday && (
+                                    <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-blue-600">
+                                      <Star className="w-4 h-4 fill-current" />
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className={`text-xs font-medium ${isToday ? 'text-blue-900' : 'text-gray-600'}`}>
+                                {new Date(day.date).toLocaleDateString('en-US', { weekday: 'short' })}
+                              </div>
                             </div>
-                            <div className="text-xs text-gray-500">actions</div>
-                          </div>
-                        </div>
-                        <div className="bg-gray-100 rounded-full h-2.5 overflow-hidden">
-                          <div
-                            className={`h-2.5 rounded-full transition-all duration-500 ${
-                              isHighest
-                                ? 'bg-gradient-to-r from-blue-600 to-indigo-600'
-                                : 'bg-gradient-to-r from-blue-400 to-purple-500'
-                            }`}
-                            style={{ width: `${Math.max(countWidth, 2)}%` }}
-                          ></div>
-                        </div>
-                        <div className="flex justify-between text-xs text-gray-600 mt-2">
-                          <span className="flex items-center gap-1">
-                            <AlertTriangle className="w-3 h-3 text-red-500" />
-                            {day.critical} critical
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <Shield className="w-3 h-3 text-amber-500" />
-                            {day.security} security
-                          </span>
-                        </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
-                </div>
+                    </div>
+
+                    {/* Daily Bars */}
+                    <div className="space-y-4">
+                      {dailyActivity.map((day) => {
+                        const maxCount = Math.max(...dailyActivity.map(d => d.count), 1);
+                        const countWidth = (day.count / maxCount) * 100;
+                        const isToday = new Date(day.date).toDateString() === new Date().toDateString();
+
+                        return (
+                          <div key={day.date} className={`space-y-2 ${isToday ? 'p-3 bg-blue-50/50 rounded-xl border border-blue-200/30' : ''}`}>
+                            <div className="flex justify-between items-start text-sm">
+                              <div className="flex items-center gap-2">
+                                <span className={`font-semibold ${isToday ? 'text-blue-900' : 'text-gray-700'}`}>
+                                  {new Date(day.date).toLocaleDateString('en-US', {
+                                    weekday: 'short',
+                                    month: 'short',
+                                    day: 'numeric'
+                                  })}
+                                </span>
+                                {isToday && (
+                                  <span className="text-xs font-bold text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">
+                                    Today
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-right">
+                                <div className={`font-bold ${isToday ? 'text-blue-900 text-base' : 'text-gray-900'}`}>
+                                  {day.count}
+                                </div>
+                                <div className="text-xs text-gray-500">{day.critical} critical</div>
+                              </div>
+                            </div>
+                            <div className="bg-gray-100 rounded-full h-2.5 overflow-hidden">
+                              <div
+                                className={`h-2.5 rounded-full transition-all duration-500 ${
+                                  isToday
+                                    ? 'bg-gradient-to-r from-blue-600 to-indigo-600'
+                                    : 'bg-gradient-to-r from-blue-400 to-purple-500'
+                                }`}
+                                style={{ width: `${Math.max(countWidth, 2)}%` }}
+                              ></div>
+                            </div>
+                            <div className="flex justify-between text-xs text-gray-600">
+                              <span className="flex items-center gap-1">
+                                <Shield className="w-3 h-3" />
+                                {day.security} security
+                              </span>
+                              <span>{day.warning} warnings</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
             {/* Category Breakdown */}
             <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg overflow-hidden">
-              {/* Header */}
               <div className="bg-gradient-to-br from-emerald-50 to-green-50 border-b border-emerald-200/50 p-5">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
@@ -1184,14 +1174,13 @@ export default function AuditTrailPage() {
                       <PieChart className="w-5 h-5 text-white" />
                     </div>
                     <div>
-                      <h3 className="font-bold text-gray-900">Activity Breakdown</h3>
-                      <p className="text-sm text-emerald-700">Events by category</p>
+                      <h3 className="font-bold text-gray-900">Activity Categories</h3>
+                      <p className="text-sm text-emerald-700">Event distribution by type</p>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Content */}
               <div className="p-6">
                 {categoryBreakdown.length === 0 ? (
                   <div className="text-center py-8">
@@ -1200,43 +1189,42 @@ export default function AuditTrailPage() {
                   </div>
                 ) : (
                   <div className="space-y-5">
-                    {/* Category Insight */}
-                    <div className="bg-amber-50/50 border border-amber-200/50 rounded-xl p-4">
-                      <h4 className="text-xs font-bold text-amber-900 uppercase tracking-wider mb-2">Category Insight</h4>
-                      <p className="text-sm text-amber-800">
-                        Top 3 categories account for <span className="font-bold">
-                          {((categoryBreakdown.slice(0, 3).reduce((sum, c) => sum + c.count, 0) / stats.total) * 100).toFixed(0)}%
-                        </span> of all events.
-                      </p>
-                    </div>
+                    {/* Top Category Insight */}
+                    {categoryBreakdown[0] && (
+                      <div className="bg-amber-50/50 border border-amber-200/50 rounded-xl p-4">
+                        <h4 className="text-xs font-bold text-amber-900 uppercase tracking-wider mb-2">Top Category</h4>
+                        <p className="text-sm text-amber-800">
+                          <span className="font-bold">{categoryBreakdown[0].name}</span> accounts for{' '}
+                          <span className="font-bold">{((categoryBreakdown[0].count / stats.total) * 100).toFixed(0)}%</span> of all events.
+                        </p>
+                      </div>
+                    )}
 
                     {/* Category List */}
                     <div className="space-y-3">
-                      {categoryBreakdown.slice(0, 6).map((item, index) => (
+                      {categoryBreakdown.slice(0, 8).map((category, index) => (
                         <div key={index} className="group hover:bg-gradient-to-r hover:from-emerald-50/50 hover:to-green-50/30 rounded-xl p-3 transition-all duration-200 border border-transparent hover:border-emerald-200/30">
                           <div className="flex items-center justify-between mb-2">
                             <div className="flex items-center gap-3">
-                              <div className="flex items-center gap-2">
-                                <div className={`w-4 h-4 rounded-lg ${item.color} shadow-sm`}></div>
-                                <span className="text-sm font-semibold text-gray-800">{item.name}</span>
-                              </div>
+                              <div className={`w-4 h-4 rounded-lg ${category.color} shadow-sm`}></div>
+                              <span className="text-sm font-semibold text-gray-800">{category.name}</span>
                               {index === 0 && (
                                 <span className="text-xs font-bold text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded-full">
-                                  Highest
+                                  Top
                                 </span>
                               )}
                             </div>
                             <div className="text-right">
-                              <div className="font-bold text-gray-900">{item.count}</div>
+                              <div className="font-bold text-gray-900">{category.count}</div>
                               <div className="text-xs font-semibold text-emerald-600">
-                                {((item.count / stats.total) * 100).toFixed(1)}%
+                                {((category.count / stats.total) * 100).toFixed(1)}%
                               </div>
                             </div>
                           </div>
                           <div className="bg-gray-100 rounded-full h-2 overflow-hidden">
                             <div
-                              className={`h-2 rounded-full transition-all duration-500 ${item.color} shadow-sm`}
-                              style={{ width: `${(item.count / stats.total) * 100}%` }}
+                              className={`h-2 rounded-full transition-all duration-500 ${category.color} shadow-sm`}
+                              style={{ width: `${(category.count / stats.total) * 100}%` }}
                             ></div>
                           </div>
                         </div>
@@ -1248,23 +1236,21 @@ export default function AuditTrailPage() {
             </div>
           </div>
 
-          {/* AI-Powered Insights */}
+          {/* AI-Generated Security Insights */}
           {insights.length > 0 && (
             <div className="space-y-4">
-              <h3 className="text-lg font-bold text-gray-900">AI-Powered Insights</h3>
+              <h3 className="text-lg font-bold text-gray-900">Security Insights</h3>
               <div className="grid lg:grid-cols-2 gap-4">
-                {insights.map((insight: any, index) => {
-                  const IconComponent =
-                    insight.icon === 'Shield' ? Shield :
-                    insight.icon === 'TrendingUp' ? TrendingUp :
-                    insight.icon === 'TrendingDown' ? TrendingDown :
-                    insight.icon === 'AlertTriangle' ? AlertTriangle :
-                    insight.icon === 'Lock' ? Lock :
-                    insight.icon === 'UserX' ? UserX :
-                    insight.icon === 'Key' ? Key :
-                    insight.icon === 'BarChart3' ? BarChart3 :
-                    insight.icon === 'Activity' ? Activity :
-                    Shield;
+                {insights.map((insight: any, index: number) => {
+                  const IconComponent = insight.icon === 'Shield' ? Shield :
+                                       insight.icon === 'AlertTriangle' ? AlertTriangle :
+                                       insight.icon === 'UserX' ? UserX :
+                                       insight.icon === 'Key' ? Key :
+                                       insight.icon === 'TrendingUp' ? TrendingUp :
+                                       insight.icon === 'TrendingDown' ? TrendingDown :
+                                       insight.icon === 'BarChart3' ? BarChart3 :
+                                       insight.icon === 'Lock' ? Lock :
+                                       insight.icon === 'Activity' ? Activity : Activity;
 
                   return (
                     <div key={index} className={`${insight.bgColor} backdrop-blur-sm rounded-2xl border ${insight.borderColor} shadow-lg p-6 hover:shadow-xl transition-all duration-300`}>
@@ -1281,15 +1267,6 @@ export default function AuditTrailPage() {
                   );
                 })}
               </div>
-            </div>
-          )}
-
-          {/* Empty State */}
-          {insights.length === 0 && (
-            <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg p-12 text-center">
-              <Brain className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <h3 className="text-xl font-bold text-gray-900 mb-2">Generating Insights</h3>
-              <p className="text-gray-600">More activity is needed to generate security insights</p>
             </div>
           )}
         </div>

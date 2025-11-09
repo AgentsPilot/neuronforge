@@ -86,6 +86,35 @@ export default function AuthCallbackPage() {
 
         console.log('Onboarding status:', onboardingCompleted);
 
+        // AUDIT TRAIL: Log OAuth login
+        try {
+          const provider = user.app_metadata?.provider || 'unknown';
+          await fetch('/api/audit/log', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-user-id': user.id
+            },
+            body: JSON.stringify({
+              action: 'USER_LOGIN',
+              entityType: 'user',
+              entityId: user.id,
+              userId: user.id,
+              resourceName: user.email || 'Unknown',
+              details: {
+                email: user.email,
+                timestamp: new Date().toISOString(),
+                login_method: 'oauth',
+                provider: provider
+              },
+              severity: 'info',
+              complianceFlags: ['SOC2']
+            })
+          });
+        } catch (auditError) {
+          console.error('Audit logging failed (non-critical):', auditError);
+        }
+
         setStatus('redirecting');
 
         if (onboardingCompleted === false || onboardingCompleted === undefined) {

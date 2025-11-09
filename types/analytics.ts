@@ -68,6 +68,9 @@ export interface AgentData {
   efficiency?: number; // Added for UI display
   isActive?: boolean; // Whether the agent has been executed (has token usage data)
   isArchived?: boolean; // Whether the agent has been archived
+  dbStatus?: string; // Database status: 'active', 'inactive', 'draft'
+  isPaused?: boolean; // Whether the agent is paused (inactive status)
+  isDraft?: boolean; // Whether the agent is in draft mode
 }
 
 export interface ProcessedAnalyticsData {
@@ -128,4 +131,8 @@ export interface ProcessedAnalyticsData {
     workflow_step: string | null;
     metadata: any | null;
   }>;
+  pilotCreditConfig: {
+    pilotCreditCostUsd: number;
+    tokensPerCredit: number;
+  };
 }

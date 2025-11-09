@@ -153,20 +153,52 @@ export class SystemConfigService {
 
   /**
    * Set a configuration value (admin only)
+   * Uses upsert to handle both new and existing keys
    */
   static async set(
     supabase: SupabaseClient,
     key: string,
     value: any
   ): Promise<void> {
-    const { error } = await supabase
+    // First, check if the key exists
+    const { data: existing } = await supabase
       .from('system_settings_config')
-      .update({ value })
-      .eq('key', key);
+      .select('id, category')
+      .eq('key', key)
+      .single();
 
-    if (error) {
-      console.error(`[SystemConfig] Failed to update config '${key}':`, error);
-      throw error;
+    if (existing) {
+      // Update existing
+      const { error } = await supabase
+        .from('system_settings_config')
+        .update({ value, updated_at: new Date().toISOString() })
+        .eq('key', key);
+
+      if (error) {
+        console.error(`[SystemConfig] Failed to update config '${key}':`, error);
+        throw error;
+      }
+    } else {
+      // Insert new - infer category from key prefix
+      const category = key.startsWith('pilot_') || key.startsWith('workflow_orchestrator_')
+        ? 'pilot'
+        : key.startsWith('routing_') || key.startsWith('intelligent_routing_')
+        ? 'routing'
+        : 'general';
+
+      const { error } = await supabase
+        .from('system_settings_config')
+        .insert({
+          key,
+          value,
+          category,
+          description: `Auto-created configuration for ${key}`
+        });
+
+      if (error) {
+        console.error(`[SystemConfig] Failed to create config '${key}':`, error);
+        throw error;
+      }
     }
 
     // Invalidate cache

@@ -15,7 +15,8 @@ import {
   Gift,
   FileText,
   Sliders,
-  Brain
+  Brain,
+  Activity
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -59,6 +60,12 @@ const navigationItems = [
     href: '/admin/users',
     icon: Users,
     description: 'Platform Users'
+  },
+  {
+    name: 'System Flow',
+    href: '/admin/system-flow',
+    icon: Activity,
+    description: 'Live System Visualization'
   },
   {
     name: 'System Config',

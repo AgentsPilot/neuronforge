@@ -129,6 +129,7 @@ export async function POST(request: NextRequest) {
       trigger_conditions: agent.trigger_conditions || null,
       plugins_required: agent.plugins_required || null,
       workflow_steps: agent.workflow_steps || null,
+      pilot_steps: agent.pilot_steps || null, // PILOT: Normalized steps for Pilot execution
       generated_plan: agent.generated_plan || null, // Added missing field
       detected_categories: agent.detected_categories || null,
       ai_reasoning: aiReasoning,
@@ -144,6 +145,8 @@ export async function POST(request: NextRequest) {
     console.log('💾 Agent name:', agentData.agent_name);
     console.log('💾 Agent ID being used:', finalAgentId || 'database_generated');
     console.log('💾 Agent config being saved:', !!agentData.agent_config);
+    console.log('💾 Pilot steps being saved:', agentData.pilot_steps?.length || 0, 'steps');
+    console.log('💾 Workflow steps being saved:', agentData.workflow_steps?.length || 0, 'steps');
     console.log('💾 Schedule configuration:', {
       mode: agentData.mode,
       schedule_cron: agentData.schedule_cron,

@@ -18,22 +18,6 @@ export interface ModelSelection {
 }
 
 export class ModelRouter {
-  // Default model configuration
-  private static readonly DEFAULT_CONFIG = {
-    low: {
-      model: 'gpt-4o-mini',
-      provider: 'openai' as const
-    },
-    medium: {
-      model: 'claude-3-haiku-20240307',
-      provider: 'anthropic' as const
-    },
-    high: {
-      model: 'gpt-4o',
-      provider: 'openai' as const
-    }
-  };
-
   /**
    * Select optimal model for agent execution based on AIS score
    *
@@ -48,7 +32,10 @@ export class ModelRouter {
     userId: string
   ): Promise<ModelSelection> {
     try {
-      // Get routing configuration from database
+      // Get model routing configuration from database (Phase 3 - database-driven models)
+      const modelConfig = await AISConfigService.getModelRoutingConfig(supabase);
+
+      // Get routing thresholds from database
       const routingConfig = await SystemConfigService.getRoutingConfig(supabase);
       const lowThreshold = routingConfig.lowThreshold;
       const mediumThreshold = routingConfig.mediumThreshold;
@@ -73,8 +60,8 @@ export class ModelRouter {
       // Uses min_executions_for_score to ensure combined_score is using blended formula
       if (!metrics || metrics.total_executions < minExecutionsForScore) {
         return this.logAndReturn({
-          model: this.DEFAULT_CONFIG.low.model,
-          provider: this.DEFAULT_CONFIG.low.provider,
+          model: modelConfig.low.model,
+          provider: modelConfig.low.provider,
           reasoning: `New agent (${metrics?.total_executions || 0}/${minExecutionsForScore} executions) - conservative start with cost-efficient model until blended scoring begins`,
           intensity_score: metrics?.combined_score || 5.0
         }, agentId, userId, supabase);
@@ -96,8 +83,8 @@ export class ModelRouter {
       // CASE 2: Low success rate - upgrade to premium model
       if (successRate < minSuccessRate) {
         return this.logAndReturn({
-          model: this.DEFAULT_CONFIG.high.model,
-          provider: this.DEFAULT_CONFIG.high.provider,
+          model: modelConfig.high.model,
+          provider: modelConfig.high.provider,
           reasoning: `Low success rate (${successRate.toFixed(1)}%) - upgrading to premium model for reliability`,
           intensity_score: score
         }, agentId, userId, supabase);
@@ -105,43 +92,43 @@ export class ModelRouter {
 
       // CASE 3: Route based on complexity score
 
-      // Low complexity: Use GPT-4o-mini (94% cost savings)
+      // Low complexity: Use database-configured low-tier model
       if (score <= lowThreshold) {
         return this.logAndReturn({
-          model: this.DEFAULT_CONFIG.low.model,
-          provider: this.DEFAULT_CONFIG.low.provider,
-          reasoning: `Low complexity (score: ${score.toFixed(2)}) - using cost-optimized model`,
+          model: modelConfig.low.model,
+          provider: modelConfig.low.provider,
+          reasoning: `Low complexity (score: ${score.toFixed(2)}) - using cost-optimized model (${modelConfig.low.model})`,
           intensity_score: score
         }, agentId, userId, supabase);
       }
 
-      // Medium complexity: Use Claude Haiku (88% cost savings)
+      // Medium complexity: Use database-configured medium-tier model
       else if (score <= mediumThreshold) {
         // Check if Anthropic provider is enabled (from database config)
         if (anthropicEnabled) {
           return this.logAndReturn({
-            model: this.DEFAULT_CONFIG.medium.model,
-            provider: this.DEFAULT_CONFIG.medium.provider,
-            reasoning: `Medium complexity (score: ${score.toFixed(2)}) - balanced cost/performance with Claude`,
+            model: modelConfig.medium.model,
+            provider: modelConfig.medium.provider,
+            reasoning: `Medium complexity (score: ${score.toFixed(2)}) - balanced cost/performance with ${modelConfig.medium.model}`,
             intensity_score: score
           }, agentId, userId, supabase);
         } else {
-          // Fallback to GPT-4o-mini if Anthropic disabled
+          // Fallback to low-tier if Anthropic disabled
           return this.logAndReturn({
-            model: this.DEFAULT_CONFIG.low.model,
-            provider: this.DEFAULT_CONFIG.low.provider,
-            reasoning: `Medium complexity (score: ${score.toFixed(2)}) - Anthropic disabled, using GPT-4o-mini`,
+            model: modelConfig.low.model,
+            provider: modelConfig.low.provider,
+            reasoning: `Medium complexity (score: ${score.toFixed(2)}) - Anthropic disabled, using ${modelConfig.low.model}`,
             intensity_score: score
           }, agentId, userId, supabase);
         }
       }
 
-      // High complexity: Use GPT-4o (premium performance)
+      // High complexity: Use database-configured high-tier model
       else {
         return this.logAndReturn({
-          model: this.DEFAULT_CONFIG.high.model,
-          provider: this.DEFAULT_CONFIG.high.provider,
-          reasoning: `High complexity (score: ${score.toFixed(2)}) - using premium model for optimal results`,
+          model: modelConfig.high.model,
+          provider: modelConfig.high.provider,
+          reasoning: `High complexity (score: ${score.toFixed(2)}) - using premium model (${modelConfig.high.model}) for optimal results`,
           intensity_score: score
         }, agentId, userId, supabase);
       }
@@ -207,32 +194,50 @@ export class ModelRouter {
 
   /**
    * Check if intelligent routing is enabled via feature flag
+   * DATABASE-DRIVEN (Phase 4): Uses SystemConfigService instead of environment variables
    *
+   * @param supabase - Supabase client for database access
    * @returns true if routing enabled, false otherwise
    */
-  static isRoutingEnabled(): boolean {
-    return process.env.ENABLE_INTELLIGENT_ROUTING === 'true';
+  static async isRoutingEnabled(supabase: SupabaseClient): Promise<boolean> {
+    const routingConfig = await SystemConfigService.getRoutingConfig(supabase);
+    return routingConfig.enabled;
   }
 
   /**
    * Get current routing configuration (for debugging/monitoring)
+   * DATABASE-DRIVEN (Phase 4): All values loaded from database, no environment variables
    *
+   * @param supabase - Supabase client for database access
    * @returns Current routing thresholds and settings
    */
-  static getConfig() {
+  static async getConfig(supabase: SupabaseClient) {
+    // Load model config from database (Phase 3)
+    const modelConfig = await AISConfigService.getModelRoutingConfig(supabase);
+
+    // Load routing thresholds from database (Phase 4 - eliminated env vars)
+    const routingConfig = await SystemConfigService.getRoutingConfig(supabase);
+
+    // Load min_executions_for_score from database
+    const minExecutionsForScore = await AISConfigService.getSystemConfig(
+      supabase,
+      'min_executions_for_score',
+      5 // Default to 5 if not configured
+    );
+
     return {
-      routing_enabled: this.isRoutingEnabled(),
-      anthropic_enabled: process.env.ENABLE_ANTHROPIC_PROVIDER !== 'false',
+      routing_enabled: routingConfig.enabled,
+      anthropic_enabled: routingConfig.anthropicEnabled,
       thresholds: {
-        low: parseFloat(process.env.ROUTING_LOW_THRESHOLD || '3.9'),
-        medium: parseFloat(process.env.ROUTING_MEDIUM_THRESHOLD || '6.9')
+        low: routingConfig.lowThreshold,
+        medium: routingConfig.mediumThreshold
       },
-      min_executions: parseInt(process.env.ROUTING_MIN_EXECUTIONS || '3'),
-      min_success_rate: parseInt(process.env.ROUTING_MIN_SUCCESS_RATE || '85'),
+      min_executions: minExecutionsForScore,
+      min_success_rate: routingConfig.minSuccessRate,
       models: {
-        low: this.DEFAULT_CONFIG.low,
-        medium: this.DEFAULT_CONFIG.medium,
-        high: this.DEFAULT_CONFIG.high
+        low: modelConfig.low,
+        medium: modelConfig.medium,
+        high: modelConfig.high
       }
     };
   }

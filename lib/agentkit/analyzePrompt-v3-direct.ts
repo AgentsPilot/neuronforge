@@ -5,10 +5,25 @@ import { openai, AGENTKIT_CONFIG } from './agentkitClient';
 import { convertPluginsToTools, getPluginContextPrompt } from './convertPlugins';
 
 export interface AnalyzedWorkflowStep {
+  id: string;
   operation: string;
+  type: 'plugin_action' | 'ai_processing' | 'conditional' | 'transform' | 'human_approval';
   plugin: string;
   plugin_action: string;
+  dependencies: string[];
   reasoning: string;
+  // Conditional-specific fields
+  condition?: {
+    field: string;
+    operator: string;
+    value: any;
+  };
+  // Conditional execution
+  executeIf?: {
+    field: string;
+    operator: string;
+    value: any;
+  };
 }
 
 export interface AnalyzedInput {
@@ -209,21 +224,30 @@ Return a JSON object with:
   ],
   "workflow_steps": [
     {
+      "id": "step1",
       "operation": "Read last 10 emails",
+      "type": "plugin_action",
       "plugin": "google-mail",
       "plugin_action": "search_emails",
+      "dependencies": [],
       "reasoning": "User requested last 10 emails"
     },
     {
+      "id": "step2",
       "operation": "Summarize email content",
+      "type": "ai_processing",
       "plugin": "ai_processing",
       "plugin_action": "process",
+      "dependencies": ["step1"],
       "reasoning": "Summarization is AI processing"
     },
     {
+      "id": "step3",
       "operation": "Append summary to Google Sheet",
+      "type": "plugin_action",
       "plugin": "google-sheets",
       "plugin_action": "append_rows",
+      "dependencies": ["step2"],
       "reasoning": "User wants to send to sheet"
     }
   ],
@@ -248,6 +272,63 @@ Return a JSON object with:
   "reasoning": "Explain your analysis",
   "confidence": 0.95
 }
+
+# ⚡ CONDITIONAL WORKFLOWS - WHEN TO USE ⚡
+Use conditional branching when the workflow has DECISION POINTS based on data:
+
+**WHEN TO USE CONDITIONALS:**
+- "If customer is VIP, do X, otherwise do Y"
+- "Check if field exists, then process accordingly"
+- "Route based on priority/status/type"
+- "Different actions for new vs existing records"
+
+**CONDITIONAL STEP FORMAT:**
+{
+  "id": "check_vip",
+  "operation": "Check if customer is VIP",
+  "type": "conditional",
+  "condition": {
+    "field": "step1.data.is_vip",
+    "operator": "==",
+    "value": true
+  },
+  "dependencies": ["step1"],
+  "reasoning": "Decision point based on VIP status"
+}
+
+**CONDITIONAL EXECUTION (executeIf):**
+Steps that should only run when a condition is true must include "executeIf":
+{
+  "id": "step_vip",
+  "operation": "Create VIP task",
+  "type": "plugin_action",
+  "plugin": "google-drive",
+  "plugin_action": "create_document",
+  "executeIf": {
+    "field": "check_vip.data.result",
+    "operator": "==",
+    "value": true
+  },
+  "dependencies": ["check_vip"],
+  "reasoning": "Only for VIP customers"
+}
+
+**EXAMPLE - Customer Order Workflow:**
+[
+  {"id": "step1", "operation": "Extract order data", "type": "ai_processing", "dependencies": []},
+  {"id": "step2", "operation": "Lookup customer info", "type": "plugin_action", "plugin": "database", "plugin_action": "query", "dependencies": ["step1"]},
+  {"id": "check_vip", "operation": "Check if VIP", "type": "conditional", "condition": {"field": "step2.data.is_vip", "operator": "==", "value": true}, "dependencies": ["step2"]},
+  {"id": "step3_vip", "operation": "Create VIP priority task", "type": "plugin_action", "plugin": "google-drive", "plugin_action": "create_document", "executeIf": {"field": "check_vip.data.result", "operator": "==", "value": true}, "dependencies": ["check_vip"]},
+  {"id": "step3_normal", "operation": "Create standard task", "type": "plugin_action", "plugin": "google-drive", "plugin_action": "create_document", "executeIf": {"field": "check_vip.data.result", "operator": "==", "value": false}, "dependencies": ["check_vip"]}
+]
+
+**IMPORTANT STEP RULES:**
+1. Every step MUST have "id", "operation", "type", "dependencies"
+2. Use "type": "conditional" for decision points
+3. Use "executeIf" on steps that should only run when conditions are met
+4. Available operators: "==", "!=", ">", "<", ">=", "<=", "contains", "not_contains"
+5. Sequential steps should have dependencies on previous step (e.g., step2 depends on step1)
+6. Conditional branches should depend on the conditional step
 
 # ⚡ CRITICAL - ALWAYS DETECT OUTPUT FORMAT ⚡
 EVERY SummaryBlock output MUST have a "format" field. Analyze the user's prompt and detect their desired format:
@@ -366,10 +447,13 @@ For each plugin action in workflow_steps:
     console.error('❌ AgentKit Direct: Analysis failed:', error);
 
     // Fallback workflow steps
-    const fallbackSteps = [{
+    const fallbackSteps: AnalyzedWorkflowStep[] = [{
+      id: 'step1',
       operation: 'Process user request',
+      type: 'ai_processing',
       plugin: 'ai_processing',
       plugin_action: 'process',
+      dependencies: [],
       reasoning: 'Fallback due to analysis error'
     }];
 

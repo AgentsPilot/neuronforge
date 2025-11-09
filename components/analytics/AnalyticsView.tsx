@@ -1,6 +1,7 @@
 // components/analytics/AnalyticsView.tsx
 
 import React from 'react';
+import Link from 'next/link';
 import {
   Bot,
   TrendingUp,
@@ -21,7 +22,8 @@ import {
   Award,
   Star,
   PlayCircle,
-  Target
+  Target,
+  ExternalLink
 } from 'lucide-react';
 import { formatCost, formatPilotCredits, formatTime } from '@/lib/utils/analyticsHelpers';
 import { formatActivityName } from '@/lib/utils/formatActivityName';
@@ -56,7 +58,163 @@ interface AnalyticsViewsProps {
 }
 
 export const AnalyticsViews: React.FC<AnalyticsViewsProps> = ({ selectedView, data, activityFilter }) => {
-  const { agents, dailyUsage, costBreakdown, insights } = data;
+  const { agents, dailyUsage, costBreakdown, insights, pilotCreditConfig } = data;
+
+  // Helper function to convert activity cost from tokens to Pilot Credit pricing
+  const convertActivityCost = React.useCallback((activity: { total_tokens: number }) => {
+    const pilotCredits = Math.ceil(activity.total_tokens / pilotCreditConfig.tokensPerCredit);
+    return pilotCredits * pilotCreditConfig.pilotCreditCostUsd;
+  }, [pilotCreditConfig]);
+
+  // Activity type filter state - MUST be at top level (before any returns)
+  const [selectedActivityType, setSelectedActivityType] = React.useState<string>(activityFilter || 'all');
+
+  // Update selected activity type when activityFilter prop changes
+  React.useEffect(() => {
+    if (activityFilter) {
+      setSelectedActivityType(activityFilter);
+    }
+  }, [activityFilter]);
+
+  // Extract unique activity types from activities - MUST be at top level
+  const uniqueActivityTypes = React.useMemo(() => {
+    const types = new Set<string>();
+    data.rawActivities.forEach(activity => {
+      if (activity.activity_type) {
+        // Normalize: treat agent_generation as agent_creation to avoid duplicates
+        const normalizedType = activity.activity_type === 'agent_generation'
+          ? 'agent_creation'
+          : activity.activity_type;
+        types.add(normalizedType);
+      }
+    });
+    return Array.from(types).sort();
+  }, [data.rawActivities]);
+
+  // Filter activities by activity type - MUST be at top level
+  const filteredActivities = React.useMemo(() => {
+    if (selectedActivityType === 'all') {
+      return data.rawActivities;
+    }
+    // Handle unified naming: both agent_creation and agent_generation should match
+    if (selectedActivityType === 'agent_creation') {
+      return data.rawActivities.filter(activity =>
+        activity.activity_type === 'agent_creation' || activity.activity_type === 'agent_generation'
+      );
+    }
+    return data.rawActivities.filter(activity => activity.activity_type === selectedActivityType);
+  }, [data.rawActivities, selectedActivityType]);
+
+  // Group activities by session_id - MUST be at top level
+  const groupedActivities = React.useMemo(() => {
+    return filteredActivities.reduce((acc, activity) => {
+      const sessionKey = activity.session_id || activity.id;
+      if (!acc[sessionKey]) {
+        acc[sessionKey] = [];
+      }
+      acc[sessionKey].push(activity);
+      return acc;
+    }, {} as Record<string, typeof data.rawActivities>);
+  }, [filteredActivities]);
+
+  // Convert to array and sort by most recent - MUST be at top level
+  const allSessionGroups = React.useMemo(() => {
+    return Object.entries(groupedActivities)
+      .map(([sessionId, activities]) => {
+        const sortedActivities = activities.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+        // Extract agent name and create summary of operations
+        const firstActivity = sortedActivities[0].activity_name;
+        const agentNameMatch = firstActivity.match(/^(.+?)\s*-\s*/);
+        const agentName = agentNameMatch ? agentNameMatch[1] : formatActivityName(firstActivity);
+
+        // Collect unique operations (extract everything after " - ")
+        const operations = sortedActivities
+          .map(a => {
+            const match = a.activity_name.match(/\s*-\s*(.+)$/);
+            return match ? formatActivityName(match[1]) : null;
+          })
+          .filter((op, idx, arr) => op && op !== 'Final response' && arr.indexOf(op) === idx);
+
+        // Create display name
+        let displayName = agentName;
+        if (operations.length > 0) {
+          displayName = `${agentName} - ${operations.join(' → ')}`;
+        }
+
+        return {
+          sessionId,
+          activities: sortedActivities,
+          totalCost: activities.reduce((sum, a) => sum + convertActivityCost(a), 0), // Use Pilot Credit pricing
+          totalTokens: activities.reduce((sum, a) => sum + a.total_tokens, 0),
+          totalLatency: activities.reduce((sum, a) => sum + a.latency_ms, 0),
+          startTime: sortedActivities[0].created_at,
+          allSuccess: activities.every(a => a.success),
+          activityName: displayName,
+          model: sortedActivities[0].model_name,
+          provider: sortedActivities[0].provider
+        };
+      })
+      .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
+  }, [groupedActivities, convertActivityCost]);
+
+  // Pagination state - MUST be at top level
+  const [currentPage, setCurrentPage] = React.useState(1);
+  const itemsPerPage = 10;
+
+  // Reset pagination when activity type filter changes
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedActivityType]);
+
+  // Convert activity type to user-friendly name - MUST be at top level
+  const getActivityTypeLabel = React.useCallback((activityType: string): string => {
+    const labelMap: Record<string, string> = {
+      'agent_creation': 'Agent Creation',
+      'agent_generation': 'Agent Creation', // Same as agent_creation - unified naming
+      'agent_execution': 'Agent Execution',
+      'agent_enhancement': 'Agent Enhancement',
+      'plugin_operation': 'Plugin Operations',
+      'research': 'Research',
+      'analysis': 'Analysis',
+      'generation': 'Generation',
+      'chat': 'Chat',
+      'system': 'System',
+      'workflow': 'Workflow',
+      'api': 'API Calls',
+      'database': 'Database',
+      'authentication': 'Authentication'
+    };
+
+    return labelMap[activityType] || activityType.split('_').map(word =>
+      word.charAt(0).toUpperCase() + word.slice(1)
+    ).join(' ');
+  }, []);
+
+  // Calculate pagination - MUST be at top level
+  const totalPages = Math.ceil(allSessionGroups.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const sessionGroups = allSessionGroups.slice(startIndex, endIndex);
+
+  // Agent status filter - MUST be at top level
+  const [agentStatusFilter, setAgentStatusFilter] = React.useState<'all' | 'active' | 'paused' | 'draft' | 'archived'>('all');
+
+  // Filter agents by status - MUST be at top level
+  const filteredAgents = React.useMemo(() => {
+    switch (agentStatusFilter) {
+      case 'active':
+        return agents.filter(a => a.isActive && !a.isArchived && !a.isDraft && !a.isPaused);
+      case 'paused':
+        return agents.filter(a => a.isPaused && !a.isArchived && !a.isDraft);
+      case 'draft':
+        return agents.filter(a => a.isDraft && !a.isArchived);
+      case 'archived':
+        return agents.filter(a => a.isArchived);
+      default:
+        return agents;
+    }
+  }, [agents, agentStatusFilter]);
 
   // Overview View - Just show the cards (cards are rendered in parent component)
   if (selectedView === 'overview') {
@@ -407,132 +565,7 @@ export const AnalyticsViews: React.FC<AnalyticsViewsProps> = ({ selectedView, da
 
   // Activities View - Grouped by session with iteration details
   if (selectedView === 'activities') {
-  // Activity type filter state - use activityFilter from props as initial value
-  const [selectedActivityType, setSelectedActivityType] = React.useState<string>(activityFilter || 'all');
-
-  // Update selected activity type when activityFilter prop changes
-  React.useEffect(() => {
-    if (activityFilter) {
-      setSelectedActivityType(activityFilter);
-    }
-  }, [activityFilter]);
-
-  // Extract unique activity types from activities (normalize agent_generation -> agent_creation)
-  const uniqueActivityTypes = React.useMemo(() => {
-    const types = new Set<string>();
-    data.rawActivities.forEach(activity => {
-      if (activity.activity_type) {
-        // Normalize: treat agent_generation as agent_creation to avoid duplicates
-        const normalizedType = activity.activity_type === 'agent_generation'
-          ? 'agent_creation'
-          : activity.activity_type;
-        types.add(normalizedType);
-      }
-    });
-    return Array.from(types).sort();
-  }, [data.rawActivities]);
-
-  // Convert activity type to user-friendly name
-  const getActivityTypeLabel = (activityType: string): string => {
-    const labelMap: Record<string, string> = {
-      'agent_creation': 'Agent Creation',
-      'agent_generation': 'Agent Creation', // Same as agent_creation - unified naming
-      'agent_execution': 'Agent Execution',
-      'agent_enhancement': 'Agent Enhancement',
-      'plugin_operation': 'Plugin Operations',
-      'research': 'Research',
-      'analysis': 'Analysis',
-      'generation': 'Generation',
-      'chat': 'Chat',
-      'system': 'System',
-      'workflow': 'Workflow',
-      'api': 'API Calls',
-      'database': 'Database',
-      'authentication': 'Authentication'
-    };
-
-    return labelMap[activityType] || activityType.split('_').map(word =>
-      word.charAt(0).toUpperCase() + word.slice(1)
-    ).join(' ');
-  };
-
-  // Filter activities by activity type
-  const filteredActivities = React.useMemo(() => {
-    if (selectedActivityType === 'all') {
-      return data.rawActivities;
-    }
-    // Handle unified naming: both agent_creation and agent_generation should match
-    if (selectedActivityType === 'agent_creation') {
-      return data.rawActivities.filter(activity =>
-        activity.activity_type === 'agent_creation' || activity.activity_type === 'agent_generation'
-      );
-    }
-    return data.rawActivities.filter(activity => activity.activity_type === selectedActivityType);
-  }, [data.rawActivities, selectedActivityType]);
-
-  // Group activities by session_id
-  const groupedActivities = filteredActivities.reduce((acc, activity) => {
-    const sessionKey = activity.session_id || activity.id;
-    if (!acc[sessionKey]) {
-      acc[sessionKey] = [];
-    }
-    acc[sessionKey].push(activity);
-    return acc;
-  }, {} as Record<string, typeof data.rawActivities>);
-
-  // Convert to array and sort by most recent
-  const allSessionGroups = Object.entries(groupedActivities)
-    .map(([sessionId, activities]) => {
-      const sortedActivities = activities.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-
-      // Extract agent name and create summary of operations
-      const firstActivity = sortedActivities[0].activity_name;
-      const agentNameMatch = firstActivity.match(/^(.+?)\s*-\s*/);
-      const agentName = agentNameMatch ? agentNameMatch[1] : formatActivityName(firstActivity);
-
-      // Collect unique operations (extract everything after " - ")
-      const operations = sortedActivities
-        .map(a => {
-          const match = a.activity_name.match(/\s*-\s*(.+)$/);
-          return match ? formatActivityName(match[1]) : null;
-        })
-        .filter((op, idx, arr) => op && op !== 'Final response' && arr.indexOf(op) === idx);
-
-      // Create display name
-      let displayName = agentName;
-      if (operations.length > 0) {
-        displayName = `${agentName} - ${operations.join(' → ')}`;
-      }
-
-      return {
-        sessionId,
-        activities: sortedActivities,
-        totalCost: activities.reduce((sum, a) => sum + a.cost_usd, 0),
-        totalTokens: activities.reduce((sum, a) => sum + a.total_tokens, 0),
-        totalLatency: activities.reduce((sum, a) => sum + a.latency_ms, 0),
-        startTime: sortedActivities[0].created_at,
-        allSuccess: activities.every(a => a.success),
-        activityName: displayName,
-        model: sortedActivities[0].model_name,
-        provider: sortedActivities[0].provider
-      };
-    })
-    .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
-
-  // Pagination state
-  const [currentPage, setCurrentPage] = React.useState(1);
-  const itemsPerPage = 10;
-
-  // Reset pagination when activity type filter changes
-  React.useEffect(() => {
-    setCurrentPage(1);
-  }, [selectedActivityType]);
-  const totalPages = Math.ceil(allSessionGroups.length / itemsPerPage);
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
-  const sessionGroups = allSessionGroups.slice(startIndex, endIndex);
-
-  return (
+    return (
     <div className="space-y-4">
       {/* Sticky Header */}
       <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg p-6 sticky top-0 z-10">
@@ -834,6 +867,11 @@ export const AnalyticsViews: React.FC<AnalyticsViewsProps> = ({ selectedView, da
 
   // Agents View
   if (selectedView === 'agents') {
+    const activeCount = agents.filter(a => a.isActive && !a.isArchived && !a.isDraft && !a.isPaused).length;
+    const pausedCount = agents.filter(a => a.isPaused && !a.isArchived && !a.isDraft).length;
+    const draftCount = agents.filter(a => a.isDraft && !a.isArchived).length;
+    const archivedCount = agents.filter(a => a.isArchived).length;
+
     return (
       <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/50 shadow-lg p-6">
         <div className="flex items-center justify-between mb-6">
@@ -849,28 +887,93 @@ export const AnalyticsViews: React.FC<AnalyticsViewsProps> = ({ selectedView, da
           <div className="flex items-center gap-4 text-sm">
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded-full bg-green-500"></div>
-              <span className="text-gray-600">Active ({agents.filter(a => a.isActive && !a.isArchived).length})</span>
+              <span className="text-gray-600">Active ({activeCount})</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-gray-400"></div>
-              <span className="text-gray-600">Inactive ({agents.filter(a => !a.isActive && !a.isArchived).length})</span>
+              <div className="w-3 h-3 rounded-full bg-orange-400"></div>
+              <span className="text-gray-600">Paused ({pausedCount})</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-purple-400"></div>
+              <span className="text-gray-600">Draft ({draftCount})</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded-full bg-amber-500"></div>
-              <span className="text-gray-600">Archived ({agents.filter(a => a.isArchived).length})</span>
+              <span className="text-gray-600">Archived ({archivedCount})</span>
             </div>
           </div>
         </div>
-        
-        {agents.length === 0 ? (
+
+        {/* Filter Buttons */}
+        <div className="mb-6 inline-flex bg-gray-100/80 rounded-xl p-1 w-fit">
+          <button
+            onClick={() => setAgentStatusFilter('all')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              agentStatusFilter === 'all'
+                ? 'bg-white text-blue-600 shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            All ({agents.length})
+          </button>
+          <button
+            onClick={() => setAgentStatusFilter('active')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              agentStatusFilter === 'active'
+                ? 'bg-white text-green-600 shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            Active ({activeCount})
+          </button>
+          <button
+            onClick={() => setAgentStatusFilter('paused')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              agentStatusFilter === 'paused'
+                ? 'bg-white text-orange-600 shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            Paused ({pausedCount})
+          </button>
+          <button
+            onClick={() => setAgentStatusFilter('draft')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              agentStatusFilter === 'draft'
+                ? 'bg-white text-purple-600 shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            Draft ({draftCount})
+          </button>
+          <button
+            onClick={() => setAgentStatusFilter('archived')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              agentStatusFilter === 'archived'
+                ? 'bg-white text-amber-600 shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            Archived ({archivedCount})
+          </button>
+        </div>
+
+        {filteredAgents.length === 0 ? (
           <div className="text-center py-12">
             <Bot className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-            <h4 className="text-lg font-bold text-gray-900 mb-2">No Agents Created Yet</h4>
-            <p className="text-gray-600">Build your first workflow agent to see metrics</p>
+            <h4 className="text-lg font-bold text-gray-900 mb-2">
+              {agentStatusFilter === 'all' ? 'No Agents Created Yet' : `No ${agentStatusFilter} agents`}
+            </h4>
+            <p className="text-gray-600">
+              {agentStatusFilter === 'all'
+                ? 'Build your first workflow agent to see metrics'
+                : `You don't have any ${agentStatusFilter} agents at the moment`
+              }
+            </p>
           </div>
         ) : (
           <div className="space-y-4">
-            {agents.map((agent, index) => (
+            {filteredAgents.map((agent, index) => (
               <div key={agent.id || index} className={`border rounded-xl p-4 hover:shadow-md transition-all duration-200 ${
                 agent.isArchived ? 'border-amber-200/50 bg-amber-50/30' :
                 agent.isActive ? 'border-gray-200/50 bg-white' : 'border-gray-300/50 bg-gray-50/50'
@@ -880,23 +983,44 @@ export const AnalyticsViews: React.FC<AnalyticsViewsProps> = ({ selectedView, da
                     <div className={`w-12 h-12 rounded-xl flex items-center justify-center shadow-lg relative ${
                       agent.isArchived
                         ? 'bg-gradient-to-br from-amber-400 to-amber-600'
+                        : agent.isDraft
+                        ? 'bg-gradient-to-br from-purple-400 to-purple-600'
+                        : agent.isPaused
+                        ? 'bg-gradient-to-br from-orange-400 to-orange-600'
                         : agent.isActive
                         ? 'bg-gradient-to-br from-green-500 to-emerald-600'
                         : 'bg-gradient-to-br from-gray-400 to-gray-500'
                     }`}>
                       <Bot className="w-6 h-6 text-white" />
-                      {/* Active/Inactive/Archived indicator dot */}
+                      {/* Active/Paused/Draft/Archived indicator dot */}
                       <div className={`absolute -top-1 -right-1 w-4 h-4 rounded-full border-2 border-white ${
-                        agent.isArchived ? 'bg-amber-500' : (agent.isActive ? 'bg-green-500' : 'bg-gray-400')
+                        agent.isArchived ? 'bg-amber-500' :
+                        agent.isDraft ? 'bg-purple-500' :
+                        agent.isPaused ? 'bg-orange-400' :
+                        agent.isActive ? 'bg-green-500' : 'bg-gray-400'
                       }`}></div>
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <h4 className="font-bold text-gray-900">{agent.name}</h4>
+                        <Link
+                          href={`/agents/${agent.id}`}
+                          className="font-bold text-gray-900 hover:text-blue-600 transition-colors flex items-center gap-1 group"
+                        >
+                          {agent.name}
+                          <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </Link>
                         {/* Status Badge */}
                         {agent.isArchived ? (
                           <span className="px-2 py-0.5 bg-amber-200 text-amber-700 text-xs font-medium rounded">
                             Archived
+                          </span>
+                        ) : agent.isDraft ? (
+                          <span className="px-2 py-0.5 bg-purple-200 text-purple-700 text-xs font-medium rounded">
+                            Draft
+                          </span>
+                        ) : agent.isPaused ? (
+                          <span className="px-2 py-0.5 bg-orange-200 text-orange-700 text-xs font-medium rounded">
+                            Paused
                           </span>
                         ) : agent.isActive ? (
                           <span className="px-2 py-0.5 bg-green-200 text-green-700 text-xs font-medium rounded">

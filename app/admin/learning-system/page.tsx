@@ -66,29 +66,38 @@ export default function MemorySystemAdminPage() {
   const [topAgents, setTopAgents] = useState<AgentLearningData[]>([])
   const [growthData, setGrowthData] = useState<DailyGrowth[]>([])
   const [loading, setLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const [timeRange, setTimeRange] = useState<'7d' | '30d' | '90d'>('30d')
 
   useEffect(() => {
     if (!user) {
-      router.push('/login')
+      // User is null or undefined - could be loading or not logged in
+      // The layout will handle redirect if needed
       return
     }
 
     fetchSystemStats()
-  }, [user, timeRange, router])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, timeRange])
 
-  const fetchSystemStats = async () => {
-    setLoading(true)
+  const fetchSystemStats = async (isTimeRangeChange = false) => {
+    // Only show full loading on initial load, use refresh state for time range changes
+    if (loading) {
+      setLoading(true)
+    } else {
+      setIsRefreshing(true)
+    }
     try {
       // Calculate date range
       const startDate = new Date()
       const daysMap = { '7d': 7, '30d': 30, '90d': 90 }
       startDate.setDate(startDate.getDate() - daysMap[timeRange])
 
-      // Fetch total learnings
+      // Fetch total learnings in the selected time range
       const { count: totalLearnings } = await supabase
         .from('run_memories')
         .select('*', { count: 'exact', head: true })
+        .gte('created_at', startDate.toISOString())
 
       // Fetch unique users with learnings
       const { data: uniqueUsers } = await supabase
@@ -106,7 +115,7 @@ export default function MemorySystemAdminPage() {
 
       const totalAgents = new Set(uniqueAgents?.map(a => a.agent_id)).size
 
-      // Calculate average learnings per agent
+      // Calculate average learnings per agent (within time range)
       const avgLearningsPerAgent = totalAgents > 0 ? (totalLearnings || 0) / totalAgents : 0
 
       // Fetch learnings in current period
@@ -163,7 +172,7 @@ export default function MemorySystemAdminPage() {
       })
 
       // Fetch top learning agents
-      const { data: agentLearnings } = await supabase
+      const { data: agentLearnings, error: agentError } = await supabase
         .from('run_memories')
         .select(`
           agent_id,
@@ -174,6 +183,10 @@ export default function MemorySystemAdminPage() {
         .gte('created_at', startDate.toISOString())
         .order('created_at', { ascending: false })
 
+      if (agentError) {
+        console.error('Error fetching agent learnings:', agentError)
+      }
+
       // Group by agent and count
       const agentMap = new Map<string, any>()
       agentLearnings?.forEach((learning: any) => {
@@ -181,8 +194,8 @@ export default function MemorySystemAdminPage() {
         if (!agentMap.has(agentId)) {
           agentMap.set(agentId, {
             agent_id: agentId,
-            agent_name: learning.agents.agent_name,
-            user_id: learning.agents.user_id,
+            agent_name: learning.agents?.agent_name || 'Unknown Agent',
+            user_id: learning.agents?.user_id,
             learning_count: 0,
             last_learning: learning.created_at,
             sentiments: []
@@ -193,23 +206,38 @@ export default function MemorySystemAdminPage() {
         if (learning.sentiment) agent.sentiments.push(learning.sentiment)
       })
 
-      // Get user emails for top agents
+      // Get top agents array
       const topAgentsArray = Array.from(agentMap.values())
         .sort((a, b) => b.learning_count - a.learning_count)
         .slice(0, 10)
 
-      const userIds = [...new Set(topAgentsArray.map(a => a.user_id))]
-      const { data: users } = await supabase
-        .from('users')
-        .select('id, email')
-        .in('id', userIds)
+      // Fetch user emails from admin API endpoint
+      const uniqueUserIds = [...new Set(topAgentsArray.map(a => a.user_id).filter(Boolean))]
+      let userEmailMap = new Map()
 
-      const userEmailMap = new Map(users?.map(u => [u.id, u.email]) || [])
+      if (uniqueUserIds.length > 0) {
+        try {
+          const response = await fetch('/api/admin/user-emails', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userIds: uniqueUserIds })
+          })
+
+          if (response.ok) {
+            const { data } = await response.json()
+            userEmailMap = new Map(Object.entries(data))
+          } else {
+            console.error('Error fetching user emails:', await response.text())
+          }
+        } catch (error) {
+          console.error('Error calling user-emails API:', error)
+        }
+      }
 
       const topAgentsWithEmails = topAgentsArray.map(agent => ({
         agent_id: agent.agent_id,
         agent_name: agent.agent_name,
-        user_email: userEmailMap.get(agent.user_id) || 'Unknown',
+        user_email: agent.user_id ? (userEmailMap.get(agent.user_id) || 'Unknown User') : 'Unknown User',
         learning_count: agent.learning_count,
         last_learning: agent.last_learning,
         avg_sentiment: agent.sentiments.length > 0
@@ -252,9 +280,11 @@ export default function MemorySystemAdminPage() {
 
       setGrowthData(growthArray)
       setLoading(false)
+      setIsRefreshing(false)
     } catch (error) {
       console.error('Error fetching system stats:', error)
       setLoading(false)
+      setIsRefreshing(false)
     }
   }
 
@@ -290,25 +320,31 @@ export default function MemorySystemAdminPage() {
         </div>
 
         {/* Time Range Selector */}
-        <div className="flex items-center gap-2 bg-slate-800/50 backdrop-blur-xl rounded-lg p-1 border border-white/10">
-          {(['7d', '30d', '90d'] as const).map(range => (
-            <button
-              key={range}
-              onClick={() => setTimeRange(range)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                timeRange === range
-                  ? 'bg-gradient-to-r from-purple-500 to-indigo-600 text-white'
-                  : 'text-slate-300 hover:bg-slate-700/50'
-              }`}
-            >
-              {range === '7d' ? '7 Days' : range === '30d' ? '30 Days' : '90 Days'}
-            </button>
-          ))}
+        <div className="flex items-center gap-2">
+          {isRefreshing && (
+            <RefreshCw className="h-4 w-4 animate-spin text-purple-400" />
+          )}
+          <div className="flex items-center gap-2 bg-slate-800/50 backdrop-blur-xl rounded-lg p-1 border border-white/10">
+            {(['7d', '30d', '90d'] as const).map(range => (
+              <button
+                key={range}
+                onClick={() => setTimeRange(range)}
+                disabled={isRefreshing}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                  timeRange === range
+                    ? 'bg-gradient-to-r from-purple-500 to-indigo-600 text-white'
+                    : 'text-slate-300 hover:bg-slate-700/50'
+                }`}
+              >
+                {range === '7d' ? '7 Days' : range === '30d' ? '30 Days' : '90 Days'}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
       {/* Key Metrics Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 transition-opacity duration-300 ${isRefreshing ? 'opacity-60' : 'opacity-100'}`}>
         {/* Total Memories */}
         <div className="bg-purple-500/20 backdrop-blur-xl rounded-xl p-4 border border-purple-500/20">
           <div className="flex items-center justify-between mb-3">
@@ -509,7 +545,7 @@ export default function MemorySystemAdminPage() {
           <div>
             <div className="text-sm font-semibold text-slate-300 mb-3">Cumulative Growth</div>
             <div className="h-48 flex items-end relative">
-              <svg width="100%" height="100%" className="overflow-visible">
+              <svg viewBox="0 0 400 192" preserveAspectRatio="none" className="w-full h-48">
                 <defs>
                   <linearGradient id="gradient" x1="0%" y1="0%" x2="0%" y2="100%">
                     <stop offset="0%" stopColor="rgb(168 85 247)" stopOpacity="0.4" />
@@ -520,21 +556,21 @@ export default function MemorySystemAdminPage() {
                   <>
                     {/* Area */}
                     <path
-                      d={`M 0 ${192} ${growthData.map((d, i) => {
-                        const x = (i / (growthData.length - 1)) * 100
+                      d={`M 0 192 ${growthData.map((d, i) => {
+                        const x = (i / (growthData.length - 1)) * 400
                         const maxCumulative = Math.max(...growthData.map(g => g.cumulative), 1)
                         const y = 192 - (d.cumulative / maxCumulative) * 160
-                        return `L ${x}% ${y}`
-                      }).join(' ')} L 100% 192 Z`}
+                        return `L ${x} ${y}`
+                      }).join(' ')} L 400 192 Z`}
                       fill="url(#gradient)"
                     />
                     {/* Line */}
                     <path
                       d={`M ${growthData.map((d, i) => {
-                        const x = (i / (growthData.length - 1)) * 100
+                        const x = (i / (growthData.length - 1)) * 400
                         const maxCumulative = Math.max(...growthData.map(g => g.cumulative), 1)
                         const y = 192 - (d.cumulative / maxCumulative) * 160
-                        return `${x}% ${y}`
+                        return `${x} ${y}`
                       }).join(' L ')}`}
                       stroke="rgb(139 92 246)"
                       strokeWidth="3"

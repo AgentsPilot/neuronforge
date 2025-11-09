@@ -2,15 +2,14 @@
 // API endpoint to get agent intensity breakdown
 
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createServerClient } from '@supabase/ssr';
+import { createClient } from '@supabase/supabase-js';
 import {
-  EXECUTION_WEIGHTS,
   calculateCreationMultiplier,
   calculateExecutionMultiplier,
   calculateCombinedMultiplier,
   DEFAULT_INTENSITY_METRICS,
 } from '@/lib/types/intensity';
+// Phase 6: Removed EXECUTION_WEIGHTS import - now using database-driven weights
 import type {
   IntensityBreakdown,
   IntensityComponentScores,
@@ -21,28 +20,44 @@ import { AISConfigService } from '@/lib/services/AISConfigService';
 import { SystemConfigService } from '@/lib/services/SystemConfigService';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+// Initialize Supabase client with Service Role Key
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
+
+// Helper function to extract user ID from request
+function getUserIdFromRequest(request: NextRequest): string | null {
+  const userIdHeader = request.headers.get('x-user-id');
+  const authHeader = request.headers.get('authorization');
+
+  if (userIdHeader) {
+    return userIdHeader;
+  }
+
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    // JWT token handling would go here
+  }
+
+  return null;
+}
+
 export async function GET(
-  _req: NextRequest,
+  request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const cookieStore = await cookies();
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          get: (name) => cookieStore.get(name)?.value,
-          set: async () => {},
-          remove: async () => {},
-        },
-      }
-    );
+    const userId = getUserIdFromRequest(request);
 
-    // Get authenticated user
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!userId) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Unauthorized - Please provide user authentication',
+          details: 'Missing x-user-id header or authorization token'
+        },
+        { status: 401 }
+      );
     }
 
     const agentId = params.id;
@@ -58,7 +73,7 @@ export async function GET(
       return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
     }
 
-    if (agent.user_id !== user.id) {
+    if (agent.user_id !== userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
     }
 
@@ -75,7 +90,7 @@ export async function GET(
         .from('agent_intensity_metrics')
         .insert({
           agent_id: agentId,
-          user_id: user.id,
+          user_id: userId,
           ...DEFAULT_INTENSITY_METRICS,
         })
         .select()
@@ -136,6 +151,10 @@ async function buildIntensityBreakdown(
   metrics: AgentIntensityMetrics,
   agent: any
 ): Promise<IntensityBreakdown> {
+  // Phase 6: Load weights from database (no more hardcoded constants!)
+  const executionWeights = await AISConfigService.getExecutionWeights(supabase);
+  const creationWeights = await AISConfigService.getCreationWeights(supabase);
+
   // Parse agent design data
   const workflowSteps = typeof agent.workflow_steps === 'string'
     ? JSON.parse(agent.workflow_steps)
@@ -180,22 +199,22 @@ async function buildIntensityBreakdown(
   const execution_score = metrics.execution_score ?? metrics.intensity_score; // Fallback to old score
   const combined_score = metrics.combined_score ?? metrics.intensity_score; // Fallback to old score
 
-  // Creation component scores (4 dimensions)
+  // Creation component scores (4 dimensions) - Phase 6: Database-driven weights
   const creationComponents: CreationComponentScores = {
     workflow_structure: {
       score: workflowScore,
-      weight: 0.5,
-      weighted_score: workflowScore * 0.5,
+      weight: creationWeights.workflow,
+      weighted_score: workflowScore * creationWeights.workflow,
     },
     plugin_diversity: {
       score: pluginScore,
-      weight: 0.3,
-      weighted_score: pluginScore * 0.3,
+      weight: creationWeights.plugins,
+      weighted_score: pluginScore * creationWeights.plugins,
     },
     io_schema: {
       score: ioScore,
-      weight: 0.2,
-      weighted_score: ioScore * 0.2,
+      weight: creationWeights.io_schema,
+      weighted_score: ioScore * creationWeights.io_schema,
     },
     trigger_type: {
       score: triggerBonus,
@@ -204,32 +223,32 @@ async function buildIntensityBreakdown(
     },
   };
 
-  // Execution component scores (5 components - includes memory)
+  // Execution component scores (5 components - includes memory) - Phase 6: Database-driven weights
   const executionComponents: IntensityComponentScores = {
     token_complexity: {
       score: metrics.token_complexity_score,
-      weight: EXECUTION_WEIGHTS.TOKEN_COMPLEXITY,
-      weighted_score: metrics.token_complexity_score * EXECUTION_WEIGHTS.TOKEN_COMPLEXITY,
+      weight: executionWeights.tokens,
+      weighted_score: metrics.token_complexity_score * executionWeights.tokens,
     },
     execution_complexity: {
       score: metrics.execution_complexity_score,
-      weight: EXECUTION_WEIGHTS.EXECUTION_COMPLEXITY,
-      weighted_score: metrics.execution_complexity_score * EXECUTION_WEIGHTS.EXECUTION_COMPLEXITY,
+      weight: executionWeights.execution,
+      weighted_score: metrics.execution_complexity_score * executionWeights.execution,
     },
     plugin_complexity: {
       score: metrics.plugin_complexity_score,
-      weight: EXECUTION_WEIGHTS.PLUGIN_COMPLEXITY,
-      weighted_score: metrics.plugin_complexity_score * EXECUTION_WEIGHTS.PLUGIN_COMPLEXITY,
+      weight: executionWeights.plugins,
+      weighted_score: metrics.plugin_complexity_score * executionWeights.plugins,
     },
     workflow_complexity: {
       score: metrics.workflow_complexity_score,
-      weight: EXECUTION_WEIGHTS.WORKFLOW_COMPLEXITY,
-      weighted_score: metrics.workflow_complexity_score * EXECUTION_WEIGHTS.WORKFLOW_COMPLEXITY,
+      weight: executionWeights.workflow,
+      weighted_score: metrics.workflow_complexity_score * executionWeights.workflow,
     },
     memory_complexity: {
       score: metrics.memory_complexity_score ?? 0,
-      weight: EXECUTION_WEIGHTS.MEMORY_COMPLEXITY,
-      weighted_score: (metrics.memory_complexity_score ?? 0) * EXECUTION_WEIGHTS.MEMORY_COMPLEXITY,
+      weight: executionWeights.memory,
+      weighted_score: (metrics.memory_complexity_score ?? 0) * executionWeights.memory,
     },
   };
 

@@ -9,6 +9,9 @@ import AgentStatsTable from '@/components/dashboard/AgentStatsTable'
 import ScheduledAgentsCard from '@/components/dashboard/ScheduledAgentsCard'
 import AlertFeed from '@/components/dashboard/AlertFeed'
 import LearningAnalyticsCard from '@/components/dashboard/LearningAnalyticsCard'
+import { UserPendingApprovals } from '@/components/approvals/UserPendingApprovals'
+import { PilotTestButton } from '@/components/dev/PilotTestButton'
+import { RunningExecutionsCard } from '@/components/dashboard/RunningExecutionsCard'
 import {
   Activity,
   Bell,
@@ -49,11 +52,14 @@ export default function DashboardPage() {
     if (statsError) {
       console.error('❌ Failed to fetch agent stats:', statsError.message)
     } else {
-      const parsedStats = stats.map((s) => ({
-        name: s.agents?.agent_name ?? 'Unknown Agent',
-        count: s.run_count,
-        lastRun: s.last_run_at,
-      }))
+      const parsedStats = stats.map((s) => {
+        const agentData = s.agents as any
+        return {
+          name: agentData?.agent_name ?? 'Unknown Agent',
+          count: s.run_count,
+          lastRun: s.last_run_at,
+        }
+      })
       setAgentStats(parsedStats)
     }
 
@@ -174,6 +180,12 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Pending Approvals Notification */}
+      {user && <UserPendingApprovals userId={user.id} />}
+
+      {/* Pilot Test Button (Development) */}
+      <PilotTestButton />
+
       {/* Quick Stats - Simplified Language */}
       <div>
         <div className="mb-4">
@@ -262,6 +274,9 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Running Executions Card */}
+      {user && <RunningExecutionsCard userId={user.id} />}
 
       {/* Upcoming Tasks and Recent Activity - Side by Side */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

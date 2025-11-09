@@ -1,6 +1,6 @@
-import { availablePlugins } from '../../components/orchestration/constants/plugins'
-import { ConfigurationField } from '../../components/orchestration/types/configuration'
-import { WorkflowStep } from '../../components/orchestration/types/workflow'
+import { availablePlugins } from '../../components/orchestration-NOT-USED/constants/plugins'
+import { ConfigurationField } from '../../components/orchestration-NOT-USED/types/configuration'
+import { WorkflowStep } from '../../components/orchestration-NOT-USED/types/workflow'
 
 /**
  * Generate configuration fields for an agent

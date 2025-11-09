@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabaseClient'
 import { Save, Loader2, CheckCircle, AlertCircle, User, Building, Briefcase, Globe, Clock, Crown, Search, X, Shield } from 'lucide-react'
 import { UserProfile } from '@/types/settings'
 import AvatarUpload from '../ui/AvatarUpload'
+import CurrencySelector from './CurrencySelector'
 
 interface ProfileTabProps {
   profile: UserProfile | null
@@ -245,15 +246,36 @@ export default function ProfileTab({
         .eq('id', user.id)
         .single()
 
-      const { error } = await supabase
+      // Save profile fields only (not preferences like timezone, language, currency)
+      const { error: profileError } = await supabase
         .from('profiles')
         .upsert({
           id: user.id,
-          ...profileForm,
+          full_name: profileForm.full_name,
+          avatar_url: profileForm.avatar_url,
+          company: profileForm.company,
+          job_title: profileForm.job_title,
           updated_at: new Date().toISOString()
         })
 
-      if (error) throw error
+      if (profileError) throw profileError
+
+      // Save preferences to user_preferences table (timezone, language)
+      // Note: preferred_currency is handled separately by CurrencySelector component
+      if (profileForm.timezone || profileForm.language) {
+        const { error: prefsError } = await supabase
+          .from('user_preferences')
+          .upsert({
+            user_id: user.id,
+            timezone: profileForm.timezone,
+            preferred_language: profileForm.language,
+            updated_at: new Date().toISOString()
+          }, {
+            onConflict: 'user_id'
+          })
+
+        if (prefsError) throw prefsError
+      }
 
       // AUDIT TRAIL: Log profile update
       try {
@@ -649,6 +671,20 @@ export default function ProfileTab({
 
 
             <div className="space-y-1">
+              <label className="block text-xs font-semibold text-gray-700">Currency</label>
+              {user && (
+                <CurrencySelector
+                  userId={user.id}
+                  currentCurrency={profileForm.preferred_currency || 'USD'}
+                  onCurrencyChange={(currency) => {
+                    setProfileForm(prev => ({ ...prev, preferred_currency: currency }));
+                  }}
+                />
+              )}
+              <p className="text-xs text-gray-500">Your preferred currency for billing display</p>
+            </div>
+
+            <div className="space-y-1">
               <label className="block text-xs font-semibold text-gray-700">Language</label>
               <div className="relative">
                 <Globe className="w-3.5 h-3.5 absolute left-2.5 top-1/2 transform -translate-y-1/2 text-gray-400" />
@@ -672,12 +708,6 @@ export default function ProfileTab({
           >
             {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
             Save Changes
-          </button>
-          <button
-            onClick={() => setProfileForm(profile || {})}
-            className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-colors text-xs font-semibold"
-          >
-            Cancel
           </button>
         </div>
 
