@@ -15,6 +15,8 @@ import { SlackPluginExecutor } from './slack-plugin-executor';
 import { WhatsAppPluginExecutor } from './whatsapp-plugin-executor';
 import { HubSpotPluginExecutor } from './hubspot-plugin-executor';
 import { ChatGPTResearchPluginExecutor } from './chatgpt-research-plugin-executor';
+import { LinkedInPluginExecutor } from './linkedin-plugin-executor';
+import { AirtablePluginExecutor } from './airtable-plugin-executor';
 
 let pluginExecuterInstance: PluginExecuterV2 | null = null;
 
@@ -36,6 +38,8 @@ export class PluginExecuterV2 {
     'whatsapp': WhatsAppPluginExecutor,
     'hubspot': HubSpotPluginExecutor,
     'chatgpt-research': ChatGPTResearchPluginExecutor,
+    'linkedin': LinkedInPluginExecutor,
+    'airtable': AirtablePluginExecutor,
     // Add new plugin executors here
   };
 

@@ -123,6 +123,15 @@ export const pluginList: PluginDefinition[] = [
     icon: <MessageCircle className="w-5 h-5 text-green-600" />,
     category: 'communication',
   },
+  {
+    pluginKey: 'linkedin',
+    name: 'LinkedIn',
+    description: 'Access profile, create posts, manage connections, interact with professional network',
+    detailedDescription: 'Professional networking platform for career development and business networking. Enables accessing your profile information, creating and publishing posts, managing professional connections, viewing organization details, and engaging with your professional network.',
+    icon: <Briefcase className="w-5 h-5 text-blue-700" />,
+    category: 'communication',
+    isPopular: true,
+  },
 
   // 📁 Documents & Notes
   {
@@ -181,9 +190,10 @@ export const pluginList: PluginDefinition[] = [
     pluginKey: 'airtable',
     name: 'Airtable',
     description: 'Read/write records, filter and query views, use structured data for workflows and dashboards',
-    detailedDescription: 'Database-spreadsheet hybrid for structured data management. Provides record creation and updates, view filtering, field management, and API integration for building custom applications and workflows.',
+    detailedDescription: 'Database-spreadsheet hybrid for structured data management. Provides record creation and updates, view filtering, field management, attachment handling, and API integration for building custom applications and workflows.',
     icon: <Database className="w-5 h-5 text-yellow-600" />,
     category: 'productivity',
+    isPopular: true,
   },
   {
     pluginKey: 'clickup-docs',

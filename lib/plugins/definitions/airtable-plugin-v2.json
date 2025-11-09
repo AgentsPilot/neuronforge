@@ -1,0 +1,499 @@
+{
+  "plugin": {
+    "name": "airtable",
+    "version": "1.0.0",
+    "description": "Access Airtable bases, tables, and records for data management and workflow automation",
+    "context": "Airtable is a cloud-based database platform that combines spreadsheet simplicity with database power. Use this plugin to read/write records, manage tables, filter and query views, handle attachments, and integrate structured data into your workflows and dashboards.",
+    "icon": "<Database className='w-5 h-5 text-yellow-600'/>",
+    "category": "productivity",
+    "isPopular": true,
+    "auth_config": {
+      "auth_type": "oauth2",
+      "client_id": "${AIRTABLE_CLIENT_ID}",
+      "client_secret": "${AIRTABLE_CLIENT_SECRET}",
+      "redirect_uri": "${NEXT_PUBLIC_APP_URL}/oauth/callback/airtable",
+      "auth_url": "https://www.airtable.com/oauth2/v1/authorize",
+      "token_url": "https://airtable.com/oauth2/v1/token",
+      "refresh_url": "https://airtable.com/oauth2/v1/token",
+      "profile_url": "https://api.airtable.com/v0/meta/whoami",
+      "required_scopes": [
+        "data.records:read",
+        "data.records:write",
+        "schema.bases:read",
+        "user.email:read"
+      ],
+      "token_expiry_seconds": 3600,
+      "requires_pkce": true
+    }
+  },
+  "actions": {
+    "list_bases": {
+      "description": "List all accessible Airtable bases for the authenticated user",
+      "usage_context": "Use this action first to discover which bases you have access to. Returns base IDs, names, and permission levels. Essential for getting the base_id needed for other actions.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "rules": {
+        "limits": {
+          "rate_limit": "5 requests per second",
+          "timeout_seconds": 10
+        }
+      },
+      "output_guidance": {
+        "success_description": "Returns array of bases with IDs, names, and permission details",
+        "sample_output": {
+          "bases": [
+            {
+              "id": "appXXXXXXXXXXXXXX",
+              "name": "My Projects",
+              "permission_level": "owner"
+            }
+          ]
+        }
+      }
+    },
+    "list_records": {
+      "description": "List and query records from a table with filtering, sorting, and pagination",
+      "usage_context": "Use this action to retrieve multiple records from an Airtable table. Supports filtering by formula, sorting by fields, selecting specific fields, and pagination. Perfect for querying data sets, generating reports, or syncing data.",
+      "parameters": {
+        "type": "object",
+        "required": ["base_id", "table_name"],
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The ID of the Airtable base (starts with 'app')",
+            "pattern": "^app[a-zA-Z0-9]{14}$"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table to query",
+            "minLength": 1
+          },
+          "view": {
+            "type": "string",
+            "description": "Optional: Name of a specific view to use for filtering and sorting"
+          },
+          "fields": {
+            "type": "array",
+            "description": "Optional: Array of field names to return (returns all fields if omitted)",
+            "items": {
+              "type": "string"
+            }
+          },
+          "filter_by_formula": {
+            "type": "string",
+            "description": "Optional: Airtable formula to filter records (e.g., '{Status} = \"Active\"')"
+          },
+          "sort": {
+            "type": "array",
+            "description": "Optional: Array of sort objects to order results",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string"
+                },
+                "direction": {
+                  "type": "string",
+                  "enum": ["asc", "desc"]
+                }
+              }
+            }
+          },
+          "max_records": {
+            "type": "integer",
+            "description": "Maximum number of records to return (default: 100)",
+            "minimum": 1,
+            "maximum": 1000,
+            "default": 100
+          },
+          "page_size": {
+            "type": "integer",
+            "description": "Number of records per page (max: 100)",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 100
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "rate_limit": "5 requests per second per base",
+          "max_page_size": 100,
+          "timeout_seconds": 30
+        }
+      },
+      "output_guidance": {
+        "success_description": "Returns an array of records with their IDs, fields, and metadata",
+        "sample_output": {
+          "records": [
+            {
+              "id": "recXXXXXXXXXXXXXX",
+              "fields": {
+                "Name": "Sample Record",
+                "Status": "Active"
+              },
+              "createdTime": "2025-01-01T00:00:00.000Z"
+            }
+          ],
+          "offset": "itrXXXXXXXXXXXXXX/recXXXXXXXXXXXXXX"
+        }
+      }
+    },
+    "get_record": {
+      "description": "Get a single record by ID with all field details",
+      "usage_context": "Use this action to retrieve detailed information about a specific record when you know its record ID. Returns all fields and metadata for that record.",
+      "parameters": {
+        "type": "object",
+        "required": ["base_id", "table_name", "record_id"],
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The ID of the Airtable base (starts with 'app')",
+            "pattern": "^app[a-zA-Z0-9]{14}$"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table",
+            "minLength": 1
+          },
+          "record_id": {
+            "type": "string",
+            "description": "The ID of the record to retrieve (starts with 'rec')",
+            "pattern": "^rec[a-zA-Z0-9]{14}$"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "rate_limit": "5 requests per second per base",
+          "timeout_seconds": 10
+        }
+      },
+      "output_guidance": {
+        "success_description": "Returns the record with ID, fields, and metadata",
+        "sample_output": {
+          "id": "recXXXXXXXXXXXXXX",
+          "fields": {
+            "Name": "Sample Record",
+            "Status": "Active",
+            "Created": "2025-01-01"
+          },
+          "createdTime": "2025-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    "create_records": {
+      "description": "Create one or multiple new records in a table",
+      "usage_context": "Use this action to add new records to an Airtable table. Can create up to 10 records in a single request. Provide field names and values according to the table schema.",
+      "parameters": {
+        "type": "object",
+        "required": ["base_id", "table_name", "records"],
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The ID of the Airtable base (starts with 'app')",
+            "pattern": "^app[a-zA-Z0-9]{14}$"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table",
+            "minLength": 1
+          },
+          "records": {
+            "type": "array",
+            "description": "Array of records to create (max 10 records per request)",
+            "minItems": 1,
+            "maxItems": 10,
+            "items": {
+              "type": "object",
+              "required": ["fields"],
+              "properties": {
+                "fields": {
+                  "type": "object",
+                  "description": "Object containing field names as keys and values",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "typecast": {
+            "type": "boolean",
+            "description": "If true, Airtable will attempt to convert string values to the appropriate field type",
+            "default": false
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "rate_limit": "5 requests per second per base",
+          "max_records_per_request": 10,
+          "timeout_seconds": 30
+        },
+        "confirmations": {
+          "bulk_create": {
+            "threshold": 5,
+            "message": "You are about to create {count} records in {table_name}. Continue?"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Returns array of created records with their new IDs and field values",
+        "sample_output": {
+          "records": [
+            {
+              "id": "recXXXXXXXXXXXXXX",
+              "fields": {
+                "Name": "New Record",
+                "Status": "Draft"
+              },
+              "createdTime": "2025-01-01T00:00:00.000Z"
+            }
+          ]
+        }
+      }
+    },
+    "update_records": {
+      "description": "Update existing records with new field values",
+      "usage_context": "Use this action to modify existing records in an Airtable table. Can update up to 10 records in a single request. Supports both full replacement and partial updates of fields.",
+      "parameters": {
+        "type": "object",
+        "required": ["base_id", "table_name", "records"],
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The ID of the Airtable base (starts with 'app')",
+            "pattern": "^app[a-zA-Z0-9]{14}$"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table",
+            "minLength": 1
+          },
+          "records": {
+            "type": "array",
+            "description": "Array of records to update (max 10 records per request)",
+            "minItems": 1,
+            "maxItems": 10,
+            "items": {
+              "type": "object",
+              "required": ["id", "fields"],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "The ID of the record to update",
+                  "pattern": "^rec[a-zA-Z0-9]{14}$"
+                },
+                "fields": {
+                  "type": "object",
+                  "description": "Object containing field names and new values",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "typecast": {
+            "type": "boolean",
+            "description": "If true, Airtable will attempt to convert string values to the appropriate field type",
+            "default": false
+          },
+          "destructive": {
+            "type": "boolean",
+            "description": "If true, clears fields not included in the request (full replacement). If false, only updates specified fields (partial update)",
+            "default": false
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "rate_limit": "5 requests per second per base",
+          "max_records_per_request": 10,
+          "timeout_seconds": 30
+        },
+        "confirmations": {
+          "bulk_update": {
+            "threshold": 5,
+            "message": "You are about to update {count} records in {table_name}. Continue?"
+          },
+          "destructive_update": {
+            "condition": "destructive === true",
+            "message": "Destructive mode will clear all fields not specified in the update. Continue?"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Returns array of updated records with their IDs and new field values",
+        "sample_output": {
+          "records": [
+            {
+              "id": "recXXXXXXXXXXXXXX",
+              "fields": {
+                "Name": "Updated Record",
+                "Status": "Complete"
+              },
+              "createdTime": "2025-01-01T00:00:00.000Z"
+            }
+          ]
+        }
+      }
+    },
+    "list_tables": {
+      "description": "List all tables in a specific base with metadata",
+      "usage_context": "Use this action to discover available tables in an Airtable base. Returns table names, IDs, and basic metadata. Helpful for dynamically working with bases where table structure may vary.",
+      "parameters": {
+        "type": "object",
+        "required": ["base_id"],
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The ID of the Airtable base (starts with 'app')",
+            "pattern": "^app[a-zA-Z0-9]{14}$"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "rate_limit": "5 requests per second per base",
+          "timeout_seconds": 10
+        }
+      },
+      "output_guidance": {
+        "success_description": "Returns array of tables with their IDs, names, and metadata",
+        "sample_output": {
+          "tables": [
+            {
+              "id": "tblXXXXXXXXXXXXXX",
+              "name": "Contacts",
+              "primaryFieldId": "fldXXXXXXXXXXXXXX",
+              "fields": [],
+              "views": []
+            }
+          ]
+        }
+      }
+    },
+    "upload_attachment": {
+      "description": "Upload a file attachment to a record's attachment field",
+      "usage_context": "Use this action to add file attachments to a record. The file must be provided as a Base64-encoded string or a publicly accessible URL. Airtable will process and store the attachment.",
+      "parameters": {
+        "type": "object",
+        "required": ["base_id", "table_name", "record_id", "field_name", "attachment"],
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The ID of the Airtable base (starts with 'app')",
+            "pattern": "^app[a-zA-Z0-9]{14}$"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table",
+            "minLength": 1
+          },
+          "record_id": {
+            "type": "string",
+            "description": "The ID of the record to attach the file to",
+            "pattern": "^rec[a-zA-Z0-9]{14}$"
+          },
+          "field_name": {
+            "type": "string",
+            "description": "The name of the attachment field",
+            "minLength": 1
+          },
+          "attachment": {
+            "type": "object",
+            "description": "The attachment to upload",
+            "required": ["url", "filename"],
+            "properties": {
+              "url": {
+                "type": "string",
+                "description": "Publicly accessible URL of the file to attach (Airtable will download and store it)"
+              },
+              "filename": {
+                "type": "string",
+                "description": "The filename to use for the attachment"
+              }
+            }
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "rate_limit": "5 requests per second per base",
+          "max_file_size_mb": 20,
+          "timeout_seconds": 60
+        }
+      },
+      "output_guidance": {
+        "success_description": "Returns the updated record with the new attachment added to the specified field",
+        "sample_output": {
+          "id": "recXXXXXXXXXXXXXX",
+          "fields": {
+            "Attachments": [
+              {
+                "id": "attXXXXXXXXXXXXXX",
+                "url": "https://dl.airtable.com/.attachments/...",
+                "filename": "document.pdf",
+                "size": 123456,
+                "type": "application/pdf"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "get_attachment_urls": {
+      "description": "Get download URLs for attachments from a record (URLs expire after 2 hours)",
+      "usage_context": "Use this action to retrieve temporary download URLs for file attachments stored in an Airtable record. Note: URLs expire after approximately 2 hours for security reasons and must be downloaded before expiration.",
+      "parameters": {
+        "type": "object",
+        "required": ["base_id", "table_name", "record_id", "field_name"],
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "The ID of the Airtable base (starts with 'app')",
+            "pattern": "^app[a-zA-Z0-9]{14}$"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The name or ID of the table",
+            "minLength": 1
+          },
+          "record_id": {
+            "type": "string",
+            "description": "The ID of the record containing attachments",
+            "pattern": "^rec[a-zA-Z0-9]{14}$"
+          },
+          "field_name": {
+            "type": "string",
+            "description": "The name of the attachment field",
+            "minLength": 1
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "rate_limit": "5 requests per second per base",
+          "timeout_seconds": 10
+        }
+      },
+      "output_guidance": {
+        "success_description": "Returns array of attachment objects with temporary download URLs (expire in ~2 hours)",
+        "sample_output": {
+          "attachments": [
+            {
+              "id": "attXXXXXXXXXXXXXX",
+              "url": "https://dl.airtable.com/.attachments/...",
+              "filename": "document.pdf",
+              "size": 123456,
+              "type": "application/pdf",
+              "width": null,
+              "height": null,
+              "expires_at": "~2 hours from request time"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

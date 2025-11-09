@@ -290,6 +290,120 @@ const PARAMETER_TEMPLATES = {
       "properties": ["dealname", "amount", "dealstage", "closedate", "pipeline", "hubspot_owner_id", "createdate"],
       "include_associations": true
     }
+  },
+  "linkedin": {
+    "get_profile": {
+      "projection": "(id,firstName,lastName,profilePicture(displayImage~:playableStreams))"
+    },
+    "get_user_info": {},
+    "create_post": {
+      "text": "Excited to share my latest project! This is a test post created via the LinkedIn API. #automation #innovation",
+      "visibility": "PUBLIC",
+      "media_url": "https://example.com/article",
+      "media_title": "Check out this article",
+      "media_description": "An interesting article about API automation"
+    },
+    "get_posts": {
+      "count": 10,
+      "sort_by": "LAST_MODIFIED"
+    },
+    "get_organization": {
+      "organization_id": "12345678"
+    },
+    "search_organizations": {
+      "keywords": "technology consulting",
+      "industry": "Information Technology and Services",
+      "company_size": "51-200",
+      "max_results": 10
+    },
+    "get_organization_posts": {
+      "organization_id": "12345678",
+      "count": 10
+    },
+    "get_connections": {
+      "start": 0,
+      "count": 50
+    }
+  },
+  "airtable": {
+    "list_bases": {},
+    "list_records": {
+      "base_id": "appXXXXXXXXXXXXXX",
+      "table_name": "Contacts",
+      "view": "All Contacts",
+      "fields": ["Name", "Email", "Status", "Created"],
+      "filter_by_formula": "{Status} = 'Active'",
+      "sort": [
+        {
+          "field": "Created",
+          "direction": "desc"
+        }
+      ],
+      "max_records": 100,
+      "page_size": 50
+    },
+    "get_record": {
+      "base_id": "appXXXXXXXXXXXXXX",
+      "table_name": "Contacts",
+      "record_id": "recXXXXXXXXXXXXXX"
+    },
+    "create_records": {
+      "base_id": "appXXXXXXXXXXXXXX",
+      "table_name": "Contacts",
+      "records": [
+        {
+          "fields": {
+            "Name": "John Doe",
+            "Email": "john.doe@example.com",
+            "Status": "Active",
+            "Notes": "New contact added via API"
+          }
+        },
+        {
+          "fields": {
+            "Name": "Jane Smith",
+            "Email": "jane.smith@example.com",
+            "Status": "Pending",
+            "Notes": "Follow up needed"
+          }
+        }
+      ],
+      "typecast": true
+    },
+    "update_records": {
+      "base_id": "appXXXXXXXXXXXXXX",
+      "table_name": "Contacts",
+      "records": [
+        {
+          "id": "recXXXXXXXXXXXXXX",
+          "fields": {
+            "Status": "Complete",
+            "Notes": "Updated via API"
+          }
+        }
+      ],
+      "typecast": true,
+      "destructive": false
+    },
+    "list_tables": {
+      "base_id": "appXXXXXXXXXXXXXX"
+    },
+    "upload_attachment": {
+      "base_id": "appXXXXXXXXXXXXXX",
+      "table_name": "Contacts",
+      "record_id": "recXXXXXXXXXXXXXX",
+      "field_name": "Attachments",
+      "attachment": {
+        "url": "https://example.com/documents/sample.pdf",
+        "filename": "sample.pdf"
+      }
+    },
+    "get_attachment_urls": {
+      "base_id": "appXXXXXXXXXXXXXX",
+      "table_name": "Contacts",
+      "record_id": "recXXXXXXXXXXXXXX",
+      "field_name": "Attachments"
+    }
   }
 };
 

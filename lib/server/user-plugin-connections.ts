@@ -237,7 +237,7 @@ export class UserPluginConnections {
 
       // Parse state
       const parsedState = JSON.parse(decodeURIComponent(state));
-      const { user_id, plugin_key } = parsedState;
+      const { user_id, plugin_key, code_verifier } = parsedState;
 
       if (this.debug) console.log(`DEBUG: OAuth callback for plugin ${plugin_key}, user ${user_id}`);
 
@@ -246,20 +246,40 @@ export class UserPluginConnections {
         throw new Error('OAuth credentials not configured');
       }
 
+      // Build token exchange parameters
+      const tokenParams: Record<string, string> = {
+        code,
+        grant_type: 'authorization_code',
+        redirect_uri: authConfig.redirect_uri,
+      };
+
+      // Prepare headers
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json',
+      };
+
+      // Add code_verifier for PKCE if present
+      if (code_verifier) {
+        tokenParams.code_verifier = code_verifier;
+        if (this.debug) console.log(`DEBUG: Using PKCE for token exchange`);
+
+        // For PKCE flows (like Airtable), send credentials via Basic Auth header
+        const credentials = Buffer.from(`${authConfig.client_id}:${authConfig.client_secret}`).toString('base64');
+        headers['Authorization'] = `Basic ${credentials}`;
+        if (this.debug) console.log(`DEBUG: Sending credentials via Basic Auth header (PKCE flow)`);
+      } else {
+        // For non-PKCE flows, send credentials in body
+        tokenParams.client_id = authConfig.client_id;
+        tokenParams.client_secret = authConfig.client_secret;
+        if (this.debug) console.log(`DEBUG: Sending credentials in request body (standard OAuth flow)`);
+      }
+
       // Exchange code for tokens
       const tokenResponse = await fetch(authConfig.token_url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Accept': 'application/json',
-        },
-        body: new URLSearchParams({
-          client_id: authConfig.client_id,
-          client_secret: authConfig.client_secret,
-          code,
-          grant_type: 'authorization_code',
-          redirect_uri: authConfig.redirect_uri,
-        }),
+        headers: headers,
+        body: new URLSearchParams(tokenParams),
       });
 
       if (!tokenResponse.ok) {
@@ -406,17 +426,35 @@ export class UserPluginConnections {
 
     try {
       console.log(`📤 Token Refresh: Calling refresh endpoint: ${authConfig.refresh_url}`);
+
+      // Build refresh token parameters
+      const refreshParams: Record<string, string> = {
+        refresh_token: connection.refresh_token,
+        grant_type: 'refresh_token',
+      };
+
+      // Prepare headers
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json',
+      };
+
+      // Check if this is a PKCE-enabled plugin (like Airtable)
+      if (authConfig.requires_pkce) {
+        // For PKCE plugins, send credentials via Basic Auth header
+        const credentials = Buffer.from(`${authConfig.client_id}:${authConfig.client_secret}`).toString('base64');
+        headers['Authorization'] = `Basic ${credentials}`;
+        console.log(`📤 Token Refresh: Using Basic Auth for PKCE plugin`);
+      } else {
+        // For non-PKCE plugins, send credentials in body
+        refreshParams.client_id = authConfig.client_id;
+        refreshParams.client_secret = authConfig.client_secret;
+      }
+
       const response = await fetch(authConfig.refresh_url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: new URLSearchParams({
-          client_id: authConfig.client_id,
-          client_secret: authConfig.client_secret,
-          refresh_token: connection.refresh_token,
-          grant_type: 'refresh_token',
-        }),
+        headers: headers,
+        body: new URLSearchParams(refreshParams),
       });
 
       if (!response.ok) {

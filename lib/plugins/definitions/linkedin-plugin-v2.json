@@ -1,0 +1,362 @@
+{
+  "plugin": {
+    "name": "linkedin",
+    "version": "1.0.0",
+    "description": "Access LinkedIn profile, create posts, manage connections, and interact with your professional network",
+    "context": "Use for professional networking, sharing content, retrieving profile information, posting updates, accessing organization data, and managing LinkedIn connections and posts",
+    "icon": "<Briefcase className='w-5 h-5 text-blue-600'/>",
+    "category": "professional",
+    "isPopular": true,
+    "auth_config": {
+      "auth_type": "oauth2",
+      "client_id": "${LINKEDIN_CLIENT_ID}",
+      "client_secret": "${LINKEDIN_CLIENT_SECRET}",
+      "redirect_uri": "${NEXT_PUBLIC_APP_URL}/oauth/callback/linkedin",
+      "auth_url": "https://www.linkedin.com/oauth/v2/authorization",
+      "token_url": "https://www.linkedin.com/oauth/v2/accessToken",
+      "refresh_url": "https://www.linkedin.com/oauth/v2/accessToken",
+      "profile_url": "https://api.linkedin.com/v2/userinfo",
+      "required_scopes": [
+        "openid",
+        "profile",
+        "email",
+        "w_member_social"
+      ]
+    }
+  },
+  "actions": {
+    "get_profile": {
+      "description": "Retrieve authenticated user's LinkedIn profile information",
+      "usage_context": "Use when you need to access the user's basic LinkedIn profile data including name, headline, profile picture, and unique identifier",
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "projection": {
+            "type": "string",
+            "description": "Optional projection fields (e.g., 'id,firstName,lastName,profilePicture'). If not specified, returns all available fields.",
+            "required": false
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_guidance": {
+        "success_message": "Retrieved LinkedIn profile successfully",
+        "common_errors": {
+          "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
+          "insufficient_permissions": "Missing required 'profile' scope. Please reconnect with full permissions.",
+          "api_rate_limit": "LinkedIn API rate limit exceeded. Please wait and try again.",
+          "profile_not_found": "Profile not found or access denied."
+        }
+      }
+    },
+    "get_user_info": {
+      "description": "Get user information via OpenID Connect (email, name, picture, locale)",
+      "usage_context": "Use when you need the user's email address, verified status, profile picture URL, or locale information using OpenID Connect standard",
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {}
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_guidance": {
+        "success_message": "Retrieved user info successfully",
+        "common_errors": {
+          "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
+          "insufficient_permissions": "Missing required 'openid' scope. Please reconnect with OpenID Connect permissions.",
+          "api_rate_limit": "LinkedIn API rate limit exceeded. Please wait and try again."
+        }
+      }
+    },
+    "create_post": {
+      "description": "Create and publish a post on LinkedIn with text and optional media",
+      "usage_context": "Use when you want to share content, updates, articles, or media on the user's LinkedIn feed. Supports text posts up to 3000 characters with optional visibility settings.",
+      "parameters": {
+        "type": "object",
+        "required": ["text"],
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 3000,
+            "description": "The text content of the post. Maximum 3000 characters.",
+            "required": true
+          },
+          "visibility": {
+            "type": "string",
+            "enum": ["PUBLIC", "CONNECTIONS"],
+            "default": "PUBLIC",
+            "description": "Post visibility setting. 'PUBLIC' makes it visible to everyone, 'CONNECTIONS' limits it to 1st-degree connections.",
+            "required": false
+          },
+          "media_url": {
+            "type": "string",
+            "format": "url",
+            "description": "Optional URL to share as an article or link preview",
+            "required": false
+          },
+          "media_title": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "Optional title for the shared media/article",
+            "required": false
+          },
+          "media_description": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "Optional description for the shared media/article",
+            "required": false
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_text_length": {
+            "condition": "text.length > 3000",
+            "action": "block",
+            "message": "Post text cannot exceed 3000 characters. Please shorten your message."
+          }
+        },
+        "confirmations": {
+          "public_visibility": {
+            "condition": "visibility === 'PUBLIC'",
+            "action": "confirm",
+            "message": "This post will be visible to everyone on LinkedIn. Proceed?"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_message": "Post published successfully on LinkedIn",
+        "common_errors": {
+          "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
+          "insufficient_permissions": "Missing 'w_member_social' scope required to create posts. Please reconnect with posting permissions.",
+          "api_rate_limit": "LinkedIn API rate limit exceeded. Please wait before posting again.",
+          "invalid_content": "Post content violates LinkedIn's content policy or contains invalid characters.",
+          "duplicate_post": "This post appears to be a duplicate. LinkedIn prevents posting identical content within a short time period."
+        }
+      }
+    },
+    "get_posts": {
+      "description": "Retrieve the authenticated user's published LinkedIn posts",
+      "usage_context": "Use when you need to fetch the user's post history, analyze their content, or display their recent LinkedIn activity",
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "count": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 10,
+            "description": "Number of posts to retrieve (1-50). Default is 10.",
+            "required": false
+          },
+          "sort_by": {
+            "type": "string",
+            "enum": ["LAST_MODIFIED", "CREATED"],
+            "default": "LAST_MODIFIED",
+            "description": "Sort order for posts. LAST_MODIFIED shows recently edited posts first.",
+            "required": false
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_count": {
+            "condition": "count > 50",
+            "action": "block",
+            "message": "Cannot retrieve more than 50 posts per request. Please use pagination or reduce the count."
+          }
+        },
+        "confirmations": {}
+      },
+      "output_guidance": {
+        "success_message": "Retrieved {post_count} LinkedIn posts",
+        "common_errors": {
+          "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
+          "insufficient_permissions": "Missing 'r_member_social' scope required to read posts. Please reconnect with read permissions.",
+          "api_rate_limit": "LinkedIn API rate limit exceeded. Please wait and try again.",
+          "no_posts_found": "No posts found for this user."
+        }
+      }
+    },
+    "get_organization": {
+      "description": "Get detailed information about a LinkedIn organization/company page",
+      "usage_context": "Use when you need company information such as name, logo, location, industry, employee count, or other organization details",
+      "parameters": {
+        "type": "object",
+        "required": ["organization_id"],
+        "properties": {
+          "organization_id": {
+            "type": "string",
+            "description": "The LinkedIn organization ID (numeric) or vanity name",
+            "required": true
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_guidance": {
+        "success_message": "Retrieved organization '{organization_name}' details",
+        "common_errors": {
+          "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
+          "organization_not_found": "Organization not found. Check the organization ID or vanity name.",
+          "insufficient_permissions": "Missing required permissions to access organization data.",
+          "api_rate_limit": "LinkedIn API rate limit exceeded. Please wait and try again."
+        }
+      }
+    },
+    "search_organizations": {
+      "description": "Search for LinkedIn organizations by keywords, industry, or company size",
+      "usage_context": "Use when you need to find companies matching specific criteria. Note: This endpoint requires LinkedIn Partner Program approval and may be restricted.",
+      "parameters": {
+        "type": "object",
+        "required": ["keywords"],
+        "properties": {
+          "keywords": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Search keywords (company name or related terms)",
+            "required": true
+          },
+          "industry": {
+            "type": "string",
+            "description": "Optional industry filter (LinkedIn industry ID)",
+            "required": false
+          },
+          "company_size": {
+            "type": "string",
+            "enum": ["A", "B", "C", "D", "E", "F", "G", "H", "I"],
+            "description": "Optional company size filter: A(1-10), B(11-50), C(51-200), D(201-500), E(501-1000), F(1001-5000), G(5001-10000), H(10001+)",
+            "required": false
+          },
+          "max_results": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 10,
+            "description": "Maximum number of results to return (1-50)",
+            "required": false
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_results": {
+            "condition": "max_results > 50",
+            "action": "block",
+            "message": "Cannot return more than 50 results per search. Please refine your search criteria."
+          }
+        },
+        "confirmations": {}
+      },
+      "output_guidance": {
+        "success_message": "Found {result_count} organizations matching '{keywords}'",
+        "common_errors": {
+          "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
+          "insufficient_permissions": "This endpoint requires LinkedIn Partner Program approval. Your application may not have access.",
+          "api_rate_limit": "LinkedIn API rate limit exceeded. Please wait and try again.",
+          "no_results": "No organizations found matching your search criteria.",
+          "partner_access_required": "Organization search requires Partner Program approval from LinkedIn. Contact LinkedIn Developer Relations."
+        }
+      }
+    },
+    "get_organization_posts": {
+      "description": "Retrieve posts published by a LinkedIn organization/company page",
+      "usage_context": "Use when you need to fetch posts from a company page. Requires admin access to the organization or appropriate permissions.",
+      "parameters": {
+        "type": "object",
+        "required": ["organization_id"],
+        "properties": {
+          "organization_id": {
+            "type": "string",
+            "description": "The LinkedIn organization ID (numeric)",
+            "required": true
+          },
+          "count": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 10,
+            "description": "Number of posts to retrieve (1-100). Default is 10.",
+            "required": false
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_count": {
+            "condition": "count > 100",
+            "action": "block",
+            "message": "Cannot retrieve more than 100 posts per request for organizations."
+          }
+        },
+        "confirmations": {}
+      },
+      "output_guidance": {
+        "success_message": "Retrieved {post_count} posts from organization",
+        "common_errors": {
+          "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
+          "insufficient_permissions": "Missing 'r_organization_social' scope or you must be an admin of this organization.",
+          "organization_not_found": "Organization ID not found. Verify the organization exists.",
+          "admin_access_required": "You must have admin access to this organization to retrieve its posts.",
+          "api_rate_limit": "LinkedIn API rate limit exceeded. Please wait and try again.",
+          "no_posts_found": "No posts found for this organization."
+        }
+      }
+    },
+    "get_connections": {
+      "description": "Get the authenticated user's 1st-degree LinkedIn connections",
+      "usage_context": "Use when you need to access the user's professional network. Note: This endpoint requires LinkedIn Partner Program approval and may be restricted.",
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "start": {
+            "type": "number",
+            "minimum": 0,
+            "default": 0,
+            "description": "Pagination start offset. Default is 0.",
+            "required": false
+          },
+          "count": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 50,
+            "description": "Number of connections to retrieve per page (1-50). Default and recommended maximum is 50.",
+            "required": false
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_count": {
+            "condition": "count > 50",
+            "action": "block",
+            "message": "Cannot retrieve more than 50 connections per request. LinkedIn recommends a maximum of 50."
+          }
+        },
+        "confirmations": {}
+      },
+      "output_guidance": {
+        "success_message": "Retrieved {connection_count} connections",
+        "common_errors": {
+          "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
+          "insufficient_permissions": "This endpoint requires LinkedIn Partner Program approval. Your application may not have access to the Connections API.",
+          "api_rate_limit": "LinkedIn API rate limit exceeded. Please wait and try again.",
+          "partner_access_required": "Connections API requires Partner Program approval from LinkedIn. Contact LinkedIn Developer Relations.",
+          "no_connections": "No connections found or connection list is private."
+        }
+      }
+    }
+  }
+}

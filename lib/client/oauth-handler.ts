@@ -6,6 +6,7 @@ interface OAuthConfig {
   redirect_uri: string;
   required_scopes: string[];
   user_scopes?: string[];
+  requires_pkce?: boolean;
 }
 
 interface OAuthResult {
@@ -22,8 +23,18 @@ export class OAuthHandler {
     if (this.debug) console.log(`DEBUG: Client - Initiating OAuth for ${pluginKey}`);
 
     try {
-      // Generate state parameter for security
-      const state = this.generateOAuthState(userId, pluginKey);
+      // Generate PKCE parameters if required (must be done before state generation)
+      let codeVerifier: string | undefined;
+      let codeChallenge: string | undefined;
+      if (authConfig.requires_pkce) {
+        codeVerifier = this.generateCodeVerifier();
+        codeChallenge = await this.generateCodeChallenge(codeVerifier);
+
+        if (this.debug) console.log(`DEBUG: Client - Generated PKCE parameters for ${pluginKey}`);
+      }
+
+      // Generate state parameter for security (includes code_verifier for PKCE)
+      const state = this.generateOAuthState(userId, pluginKey, codeVerifier);
 
       // Build OAuth URL
       const authUrl = new URL(authConfig.auth_url);
@@ -35,8 +46,18 @@ export class OAuthHandler {
         authUrl.searchParams.set('user_scope', authConfig.user_scopes.join(' '));
       }
       authUrl.searchParams.set('state', state);
-      authUrl.searchParams.set('access_type', 'offline');
-      authUrl.searchParams.set('prompt', 'consent');
+
+      // Add PKCE parameters if required
+      if (authConfig.requires_pkce && codeChallenge) {
+        authUrl.searchParams.set('code_challenge', codeChallenge);
+        authUrl.searchParams.set('code_challenge_method', 'S256');
+      }
+
+      // Don't add access_type and prompt for all providers (Airtable doesn't use these)
+      if (!authConfig.requires_pkce) {
+        authUrl.searchParams.set('access_type', 'offline');
+        authUrl.searchParams.set('prompt', 'consent');
+      }
 
       if (this.debug) console.log(`DEBUG: Client - Opening OAuth popup for ${pluginKey}`);
 
@@ -81,16 +102,20 @@ export class OAuthHandler {
       };
 
       const messageHandler = (event: MessageEvent) => {
-        if (this.debug) console.log(`DEBUG: Client - Received message:`, event.data);
+        console.log(`[OAuth Handler] Received message:`, event.data);
+        console.log(`[OAuth Handler] Message origin: ${event.origin}, Expected: ${window.location.origin}`);
 
         // Security check - only accept messages from same origin
         if (event.origin !== window.location.origin) {
-          if (this.debug) console.log(`DEBUG: Client - Ignoring message from different origin: ${event.origin}`);
+          console.log(`[OAuth Handler] ⚠️ Ignoring message from different origin: ${event.origin}`);
           return;
         }
 
+        console.log(`[OAuth Handler] Message type: ${event.data.type}, Plugin: ${event.data.plugin}, Expected plugin: ${pluginKey}`);
+
         // Check if this is our plugin connection message
         if (event.data.type === 'plugin-connected' && event.data.plugin === pluginKey) {
+          console.log(`[OAuth Handler] ✅ Plugin connection message received for ${pluginKey}`);
           messageReceived = true;
           cleanup();
 
@@ -111,6 +136,7 @@ export class OAuthHandler {
       };
 
       // Listen for messages from popup
+      console.log(`[OAuth Handler] Setting up message listener for ${pluginKey}`);
       window.addEventListener('message', messageHandler);
 
       // Check if popup was closed manually
@@ -148,13 +174,18 @@ export class OAuthHandler {
   }
 
   // Generate secure OAuth state parameter
-  private generateOAuthState(userId: string, pluginKey: string): string {
-    const state = {
+  private generateOAuthState(userId: string, pluginKey: string, codeVerifier?: string): string {
+    const state: any = {
       user_id: userId,
       plugin_key: pluginKey,
       timestamp: Date.now(),
       random: Math.random().toString(36).substring(2)
     };
+
+    // Include code_verifier in state for PKCE (will be retrieved on server during callback)
+    if (codeVerifier) {
+      state.code_verifier = codeVerifier;
+    }
 
     return encodeURIComponent(JSON.stringify(state));
   }
@@ -174,8 +205,17 @@ export class OAuthHandler {
   }
 
   // Get OAuth authorization URL (for manual navigation if popups fail)
-  getAuthorizationUrl(userId: string, pluginKey: string, authConfig: OAuthConfig): string {
-    const state = this.generateOAuthState(userId, pluginKey);
+  async getAuthorizationUrl(userId: string, pluginKey: string, authConfig: OAuthConfig): Promise<string> {
+    // Generate PKCE parameters if required (must be done before state generation)
+    let codeVerifier: string | undefined;
+    let codeChallenge: string | undefined;
+    if (authConfig.requires_pkce) {
+      codeVerifier = this.generateCodeVerifier();
+      codeChallenge = await this.generateCodeChallenge(codeVerifier);
+    }
+
+    // Generate state parameter for security (includes code_verifier for PKCE)
+    const state = this.generateOAuthState(userId, pluginKey, codeVerifier);
 
     const authUrl = new URL(authConfig.auth_url);
     authUrl.searchParams.set('client_id', authConfig.client_id);
@@ -186,16 +226,26 @@ export class OAuthHandler {
       authUrl.searchParams.set('user_scope', authConfig.user_scopes.join(' '));
     }
     authUrl.searchParams.set('state', state);
-    authUrl.searchParams.set('access_type', 'offline');
-    authUrl.searchParams.set('prompt', 'consent');
+
+    // Add PKCE parameters if required
+    if (authConfig.requires_pkce && codeChallenge) {
+      authUrl.searchParams.set('code_challenge', codeChallenge);
+      authUrl.searchParams.set('code_challenge_method', 'S256');
+    }
+
+    // Don't add access_type and prompt for all providers
+    if (!authConfig.requires_pkce) {
+      authUrl.searchParams.set('access_type', 'offline');
+      authUrl.searchParams.set('prompt', 'consent');
+    }
 
     return authUrl.toString();
   }
 
   // Handle popup blocked scenario
   async handlePopupBlocked(userId: string, pluginKey: string, authConfig: OAuthConfig): Promise<void> {
-    const authUrl = this.getAuthorizationUrl(userId, pluginKey, authConfig);
-    
+    const authUrl = await this.getAuthorizationUrl(userId, pluginKey, authConfig);
+
     // Show user instructions for manual OAuth
     const userConfirmed = confirm(
       `Popup blocked! To connect ${pluginKey}, we'll open the authorization page in a new tab. ` +
@@ -205,5 +255,31 @@ export class OAuthHandler {
     if (userConfirmed) {
       window.open(authUrl, '_blank');
     }
+  }
+
+  // PKCE Helper Methods
+
+  // Generate a random code verifier for PKCE
+  private generateCodeVerifier(): string {
+    const array = new Uint8Array(32);
+    crypto.getRandomValues(array);
+    return this.base64URLEncode(array);
+  }
+
+  // Generate code challenge from verifier using SHA-256
+  private async generateCodeChallenge(verifier: string): Promise<string> {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(verifier);
+    const hash = await crypto.subtle.digest('SHA-256', data);
+    return this.base64URLEncode(new Uint8Array(hash));
+  }
+
+  // Base64 URL encode (without padding)
+  private base64URLEncode(buffer: Uint8Array): string {
+    const base64 = btoa(String.fromCharCode(...buffer));
+    return base64
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=/g, '');
   }
 }

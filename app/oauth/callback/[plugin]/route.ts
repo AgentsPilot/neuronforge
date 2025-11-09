@@ -100,20 +100,39 @@ export async function GET(
 
     // Return success response that communicates with popup window
     return new NextResponse(`
-      <script>
-        window.opener.postMessage({
-          type: 'plugin-connected',
-          plugin: '${plugin}',
-          success: true,
-          data: {
-            plugin_key: '${connection.plugin_key}',
-            plugin_name: '${connection.plugin_name}',
-            username: '${connection.username}',
-            connected_at: '${connection.connected_at}'
-          }
-        }, '${process.env.NEXT_PUBLIC_APP_URL}');
-        setTimeout(() => window.close(), 100);
-      </script>
+      <html>
+        <body>
+          <h3>Authorization Successful!</h3>
+          <p>Closing window...</p>
+          <script>
+            console.log('[OAuth Callback] Sending postMessage to parent window');
+            console.log('[OAuth Callback] Plugin:', '${plugin}');
+            console.log('[OAuth Callback] Target origin:', '${process.env.NEXT_PUBLIC_APP_URL}');
+
+            if (window.opener) {
+              window.opener.postMessage({
+                type: 'plugin-connected',
+                plugin: '${plugin}',
+                success: true,
+                data: {
+                  plugin_key: '${connection.plugin_key}',
+                  plugin_name: '${connection.plugin_name}',
+                  username: '${connection.username}',
+                  connected_at: '${connection.connected_at}'
+                }
+              }, '${process.env.NEXT_PUBLIC_APP_URL}');
+              console.log('[OAuth Callback] postMessage sent successfully');
+              setTimeout(() => {
+                console.log('[OAuth Callback] Closing window now');
+                window.close();
+              }, 500);
+            } else {
+              console.error('[OAuth Callback] No window.opener found!');
+              document.body.innerHTML += '<p style="color: red;">Error: Could not communicate with parent window. Please close this window and try again.</p>';
+            }
+          </script>
+        </body>
+      </html>
     `, {
       headers: { 'Content-Type': 'text/html' }
     });

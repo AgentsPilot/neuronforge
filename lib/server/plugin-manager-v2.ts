@@ -16,6 +16,8 @@ const corePluginFiles = [
       'whatsapp-plugin-v2.json',
       'hubspot-plugin-v2.json',
       'chatgpt-research-plugin-v2.json',
+      'linkedin-plugin-v2.json',
+      'airtable-plugin-v2.json',
       // Add other plugin files here as you create them
     ];
 console.log('Plugin-Manager-v2 Loaded:', {
@@ -514,39 +516,58 @@ export class PluginManagerV2 {
   // Validate parameters against JSON Schema
   private validateParametersAgainstSchema(parameters: any, schema: any): string[] {
     if (this.debug) console.log('DEBUG: Validating parameters against schema');
-    
+
     const errors: string[] = [];
-    
+
     // Check required fields
     if (schema.required) {
       for (const required of schema.required) {
-        if (!parameters || !parameters[required]) {
+        if (!parameters || parameters[required] === undefined || parameters[required] === null) {
           errors.push(`Missing required parameter: ${required}`);
         }
       }
     }
-    
-    // Basic type checking for properties
+
+    // Basic type checking for properties with type coercion
     if (schema.properties && parameters) {
       for (const [key, value] of Object.entries(parameters)) {
         const propSchema = schema.properties[key];
         if (propSchema && propSchema.type) {
           const actualType = typeof value;
           const expectedType = propSchema.type;
-          
+
+          // Type coercion for integers - convert numeric strings to numbers
+          if (expectedType === 'integer' && actualType === 'string' && /^\d+$/.test(value as string)) {
+            parameters[key] = parseInt(value as string, 10);
+            if (this.debug) console.log(`DEBUG: Coerced ${key} from string "${value}" to integer ${parameters[key]}`);
+            continue; // Skip validation after coercion
+          }
+
+          // Validate types
           if (expectedType === 'array' && !Array.isArray(value)) {
-            errors.push(`Parameter ${key} should be an array`);
-          } else if (expectedType === 'object' && (actualType !== 'object' || Array.isArray(value))) {
-            errors.push(`Parameter ${key} should be an object`);
-          } else if (expectedType !== 'array' && expectedType !== 'object' && actualType !== expectedType) {
-            errors.push(`Parameter ${key} should be ${expectedType}, got ${actualType}`);
+            errors.push(`Parameter ${key} should be array, got ${actualType}`);
+          } else if (expectedType === 'object' && (actualType !== 'object' || Array.isArray(value) || value === null)) {
+            errors.push(`Parameter ${key} should be object, got ${actualType}`);
+          } else if (expectedType === 'integer') {
+            // In JavaScript, integers are numbers - check if it's a number and is an integer
+            if (actualType !== 'number') {
+              errors.push(`Parameter ${key} should be integer, got ${actualType}`);
+            } else if (!Number.isInteger(value)) {
+              errors.push(`Parameter ${key} should be integer, got decimal number`);
+            }
+          } else if (expectedType === 'number' && actualType !== 'number') {
+            errors.push(`Parameter ${key} should be number, got ${actualType}`);
+          } else if (expectedType === 'string' && actualType !== 'string') {
+            errors.push(`Parameter ${key} should be string, got ${actualType}`);
+          } else if (expectedType === 'boolean' && actualType !== 'boolean') {
+            errors.push(`Parameter ${key} should be boolean, got ${actualType}`);
           }
         }
       }
     }
-    
+
     if (this.debug) console.log(`DEBUG: Schema validation found ${errors.length} errors`);
-    
+
     return errors;
   }
 
