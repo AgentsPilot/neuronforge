@@ -1,0 +1,101 @@
+/* app/v2/globals-v2.css */
+/* V2 specific global styles */
+
+@import url('../globals.css');
+
+/* V2 CSS Variables */
+:root {
+  /* These are set dynamically by ThemeProvider, but provide defaults */
+  --v2-bg: #F5F5F7;
+  --v2-surface: #FFFFFF;
+  --v2-primary: #6366F1;
+  --v2-primary-dark: #4F46E5;
+  --v2-secondary: #8B5CF6;
+  --v2-text-primary: #1F2937;
+  --v2-text-secondary: #6B7280;
+  --v2-text-muted: #9CA3AF;
+
+  --v2-radius-panel: 24px;
+  --v2-radius-card: 16px;
+  --v2-radius-button: 12px;
+
+  --v2-shadow-card: 0 2px 16px rgba(0, 0, 0, 0.06);
+  --v2-shadow-button: 0 4px 16px rgba(99, 102, 241, 0.3);
+}
+
+/* Smooth transitions for theme changes */
+* {
+  transition-property: background-color, border-color, color, fill, stroke;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 200ms;
+}
+
+/* Scrollbar styling for V2 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #475569;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #64748B;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-in {
+  animation: slideIn 0.4s ease-out;
+}
+
+/* Glass morphism effect */
+.glass {
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.dark .glass {
+  background: rgba(30, 41, 59, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}

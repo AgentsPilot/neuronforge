@@ -36,6 +36,7 @@
     "@upstash/qstash": "^2.8.4",
     "axios": "^1.10.0",
     "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "cron-parser": "^4.9.0",
     "date-fns": "^4.1.0",
     "dotenv": "^17.2.3",
@@ -57,6 +58,7 @@
     "resend": "^6.2.0",
     "sonner": "^2.0.7",
     "stripe": "^19.2.1",
+    "tailwind-merge": "^3.4.0",
     "uuid": "^13.0.0"
   },
   "devDependencies": {

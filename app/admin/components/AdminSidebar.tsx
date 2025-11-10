@@ -16,7 +16,8 @@ import {
   FileText,
   Sliders,
   Brain,
-  Activity
+  Activity,
+  Palette
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -72,6 +73,12 @@ const navigationItems = [
     href: '/admin/system-config',
     icon: Sliders,
     description: 'AI Routing & Pricing'
+  },
+  {
+    name: 'UI Config',
+    href: '/admin/ui-config',
+    icon: Palette,
+    description: 'Design System & Version'
   },
   {
     name: 'AIS Config',
