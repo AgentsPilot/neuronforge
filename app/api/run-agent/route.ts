@@ -25,6 +25,7 @@ interface RunAgentRequest {
   use_agentkit?: boolean; // NEW: Use OpenAI AgentKit for execution
   execution_type?: string; // NEW: 'manual' (test mode) vs other types
   user_id?: string; // For queue-based execution
+  session_id?: string; // NEW: For SSE correlation - pass to WorkflowPilot
 }
 
 /**
@@ -40,7 +41,8 @@ export async function POST(req: Request) {
     use_queue = false, // Default to immediate execution for backward compatibility
     use_agentkit = false, // NEW: Default to false (use old system)
     execution_type, // NEW: Track if this is test mode from AgentSandbox
-    user_id: provided_user_id
+    user_id: provided_user_id,
+    session_id: provided_session_id // NEW: For SSE correlation
   } = body
 
   const cookieStore = await cookies()
@@ -123,8 +125,9 @@ export async function POST(req: Request) {
           console.log(`📋 Pilot RUN MODE: Using ${Object.keys(inputValues).length} input values from saved configuration`);
         }
 
-        // Generate session ID for analytics tracking
-        const sessionId = uuidv4();
+        // Use provided session_id for SSE correlation, or generate new one
+        const sessionId = provided_session_id || uuidv4();
+        console.log(`📋 Using session_id: ${sessionId} ${provided_session_id ? '(from request)' : '(generated)'}`);
 
         // Execute using WorkflowPilot
         const pilot = new WorkflowPilot(supabase);
@@ -161,7 +164,8 @@ export async function POST(req: Request) {
   }
 
   // **AGENTKIT EXECUTION PATH**
-  if (shouldExecute && use_agentkit) {
+  // Execute with AgentKit if pilot didn't execute (shouldExecute is still true)
+  if (shouldExecute) {
     console.log(`🤖 Using AgentKit execution for agent "${agent.agent_name}" (${agent_id})`)
 
     try {
@@ -280,38 +284,36 @@ export async function POST(req: Request) {
       };
 
       // 1. Log execution to agent_executions table
-      const { error: insertError } = await supabase.from('agent_executions').insert({
-        agent_id: agent.id,
-        user_id: user.id,
-        execution_type: 'manual',
-        status: normalizedResult.success ? 'completed' : 'failed',
-        scheduled_at: now,
-        started_at: new Date(Date.now() - normalizedResult.executionTime).toISOString(),
-        completed_at: now,
-        execution_duration_ms: normalizedResult.executionTime,
-        error_message: normalizedResult.error || null,
-        logs: executionType === 'pilot' ? {
-          pilot: true,
-          executionId: executionResult.executionId,
-          stepsCompleted: executionResult.stepsCompleted,
-          stepsFailed: executionResult.stepsFailed,
-          stepsSkipped: executionResult.stepsSkipped,
-          totalSteps: executionResult.stepsCompleted + executionResult.stepsFailed + executionResult.stepsSkipped,
-          tokensUsed: normalizedResult.tokensUsed,
-          inputValuesUsed: Object.keys(inputValues || {}).length
-        } : {
-          agentkit: true,
-          iterations: normalizedResult.iterations,
-          toolCalls: sanitizeToolCalls(normalizedResult.toolCalls),
-          tokensUsed: normalizedResult.tokensUsed,
-          model: normalizedResult.model || 'gpt-4o',
-          provider: normalizedResult.provider || 'openai',
-          inputValuesUsed: Object.keys(inputValues || {}).length
-        }
-      })
+      // IMPORTANT: Skip this for pilot executions - StateManager already logs to agent_executions
+      // Pilot inserts via StateManager.completeExecution() with workflowExecution: true
+      // Only AgentKit needs logging here since it doesn't use StateManager
+      if (executionType !== 'pilot') {
+        const { error: insertError } = await supabase.from('agent_executions').insert({
+          agent_id: agent.id,
+          user_id: user.id,
+          execution_type: 'manual',
+          status: normalizedResult.success ? 'completed' : 'failed',
+          scheduled_at: now,
+          started_at: new Date(Date.now() - normalizedResult.executionTime).toISOString(),
+          completed_at: now,
+          execution_duration_ms: normalizedResult.executionTime,
+          error_message: normalizedResult.error || null,
+          logs: {
+            agentkit: true,
+            iterations: normalizedResult.iterations,
+            toolCalls: sanitizeToolCalls(normalizedResult.toolCalls),
+            tokensUsed: normalizedResult.tokensUsed,
+            model: normalizedResult.model || 'gpt-4o',
+            provider: normalizedResult.provider || 'openai',
+            inputValuesUsed: Object.keys(inputValues || {}).length
+          }
+        })
 
-      if (insertError) {
-        console.error('Failed to log AgentKit execution:', insertError)
+        if (insertError) {
+          console.error('Failed to log AgentKit execution:', insertError)
+        }
+      } else {
+        console.log(`✅ Skipping agent_executions insert for pilot (StateManager already logged it)`);
       }
 
       // 2. Log to agent_logs table for consistency with legacy system
@@ -361,9 +363,9 @@ export async function POST(req: Request) {
               tokensUsed: normalizedResult.tokensUsed
             }
           },
-          status: normalizedResult.success ?
-            `✅ ${executionType === 'pilot' ? 'Pilot' : 'AgentKit'} execution completed successfully` :
-            `❌ ${executionType === 'pilot' ? 'Pilot' : 'AgentKit'} execution failed`,
+          status: normalizedResult.success ? 'completed' : 'failed',
+          // status_message: REMOVED - Column doesn't exist in agent_logs schema
+          // execution_type: REMOVED - Column doesn't exist in schema yet
           created_at: now
         })
         .select('id')
@@ -390,6 +392,7 @@ export async function POST(req: Request) {
       }
 
       // 4. Track intensity metrics for dynamic pricing
+      let intensityScore = 5.0; // Default medium intensity
       try {
         console.log('📊 [INTENSITY] Starting update for agent:', agent.id);
         console.log('📊 [INTENSITY] Tokens used:', normalizedResult.tokensUsed.total);
@@ -429,12 +432,83 @@ export async function POST(req: Request) {
 
         const aisResult = await updateAgentIntensityMetrics(supabase, executionData);
         if (aisResult.success) {
-          console.log('✅ [INTENSITY] Update SUCCESS - Combined Score:', aisResult.combined_score.toFixed(2));
+          intensityScore = aisResult.combined_score;
+          console.log('✅ [INTENSITY] Update SUCCESS - Combined Score:', intensityScore.toFixed(2));
         } else {
-          console.log('❌ [INTENSITY] Update FAILED');
+          console.log('❌ [INTENSITY] Update FAILED - using default score:', intensityScore);
         }
       } catch (intensityError) {
         console.error('❌ Failed to update intensity metrics:', intensityError);
+        console.log('⚠️  Using default intensity score:', intensityScore);
+        // Non-fatal error - continue execution
+      }
+
+      // 5. Track token spending (stored as tokens in DB, displayed as Pilot Credits in UI)
+      try {
+        console.log('💰 [SPENDING] Tracking token consumption for execution');
+        const tokensUsed = normalizedResult.tokensUsed.total;
+
+        // Calculate what these tokens represent for display purposes (tokens stored in DB)
+        const intensityMultiplier = 1.0 + (intensityScore / 10);
+        const adjustedTokens = Math.ceil(tokensUsed * intensityMultiplier);
+
+        console.log('💰 [SPENDING] Token calculation:', {
+          rawTokens: tokensUsed,
+          intensityScore,
+          intensityMultiplier,
+          adjustedTokens
+        });
+
+        // Get current total_spent (stored as tokens)
+        const { data: currentSub } = await supabase
+          .from('user_subscriptions')
+          .select('total_spent')
+          .eq('user_id', user.id)
+          .single();
+
+        const currentTotalSpent = currentSub?.total_spent || 0;
+        const newTotalSpent = currentTotalSpent + adjustedTokens;
+
+        // Update total_spent with tokens (UI will convert to Pilot Credits for display)
+        const { error: updateError } = await supabase
+          .from('user_subscriptions')
+          .update({ total_spent: newTotalSpent })
+          .eq('user_id', user.id);
+
+        if (updateError) {
+          console.error('❌ [SPENDING] Failed to update total_spent:', updateError);
+        } else {
+          console.log(`✅ [SPENDING] Token spending tracked: ${adjustedTokens} tokens (Total: ${currentTotalSpent} → ${newTotalSpent} tokens)`);
+        }
+
+        // Log transaction for audit trail (stored as tokens)
+        const { error: txError } = await supabase.from('credit_transactions').insert({
+          user_id: user.id,
+          agent_id: agent.id,
+          credits_delta: -adjustedTokens, // Stored as tokens
+          balance_before: currentTotalSpent,
+          balance_after: newTotalSpent,
+          transaction_type: 'deduction', // DB constraint requires 'deduction' for charges
+          activity_type: 'agent_execution',
+          description: `${executionType === 'pilot' ? 'Pilot' : 'AgentKit'} execution: ${tokensUsed} tokens × ${intensityMultiplier.toFixed(2)} intensity`,
+          metadata: {
+            execution_type: executionType,
+            raw_tokens: tokensUsed,
+            intensity_score: intensityScore,
+            multiplier: intensityMultiplier,
+            adjusted_tokens: adjustedTokens,
+            agent_name: agent.agent_name
+          }
+        });
+
+        if (txError) {
+          console.error('❌ [SPENDING] Failed to log transaction:', txError);
+        } else {
+          console.log('✅ [SPENDING] Transaction logged successfully');
+        }
+
+      } catch (spendingError) {
+        console.error('❌ [SPENDING] Failed to track token consumption:', spendingError);
         // Non-fatal error - continue execution
       }
 
@@ -446,14 +520,18 @@ export async function POST(req: Request) {
           agent_id: agent.id,
           agent_name: agent.agent_name,
           execution_type: 'workflow_pilot',
-          execution_id: executionResult.executionId,
-          steps_completed: executionResult.stepsCompleted,
-          steps_failed: executionResult.stepsFailed,
-          steps_skipped: executionResult.stepsSkipped,
-          total_steps: executionResult.stepsCompleted + executionResult.stepsFailed + executionResult.stepsSkipped,
+          executionId: executionResult.executionId,
+          stepsCompleted: executionResult.stepsCompleted,
+          stepsFailed: executionResult.stepsFailed,
+          stepsSkipped: executionResult.stepsSkipped,
+          totalSteps: executionResult.stepsCompleted + executionResult.stepsFailed + executionResult.stepsSkipped,
           tokens_used: normalizedResult.tokensUsed.total,
           execution_time_ms: normalizedResult.executionTime,
           output: executionResult.output,
+          // Include step IDs for visualization
+          completedStepIds: executionResult.completedStepIds || [],
+          failedStepIds: executionResult.failedStepIds || [],
+          skippedStepIds: executionResult.skippedStepIds || [],
         } : {
           agent_id: agent.id,
           agent_name: agent.agent_name,
@@ -761,6 +839,10 @@ export async function POST(req: Request) {
     }
 
     console.log('🪵 Inserting agent log...')
+    // Determine standardized status from descriptive send_status
+    const isSuccess = send_status?.startsWith('✅') || send_status?.startsWith('📧') || send_status?.startsWith('🚨');
+    const standardizedStatus = isSuccess ? 'completed' : 'failed';
+
     const { data: logData, error: logInsertError } = await supabase
       .from('agent_logs')
       .insert({
@@ -768,7 +850,9 @@ export async function POST(req: Request) {
         user_id: user.id,
         run_output: parsed_output ? JSON.stringify(parsed_output) : null,
         full_output: message ? { message } : null,
-        status: send_status,
+        status: standardizedStatus, // Standardized: 'completed' or 'failed'
+        status_message: send_status, // Descriptive message for display
+        execution_type: 'agentkit_legacy', // Mark as legacy AgentKit execution
         created_at: new Date().toISOString(),
       })
       .select('id')
@@ -786,7 +870,7 @@ export async function POST(req: Request) {
     const { error: statsError } = await supabase.rpc('increment_agent_stats', {
       agent_id_input: agent_id,
       user_id_input: user.id,
-      success: send_status?.startsWith('✅') || send_status?.startsWith('📧') || send_status?.startsWith('🚨'),
+      success: isSuccess,
     })
 
     if (statsError) {

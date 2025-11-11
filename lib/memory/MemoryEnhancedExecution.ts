@@ -57,7 +57,8 @@ export class MemoryEnhancedExecution {
     openaiApiKey?: string
   ) {
     this.injector = new MemoryInjector(supabase);
-    this.summarizer = new MemorySummarizer(supabase, openaiApiKey);
+    // MemorySummarizer uses service role client internally for RLS bypass
+    this.summarizer = new MemorySummarizer(openaiApiKey);
   }
 
   /**

@@ -57,6 +57,11 @@ export default function V2RunAgentPage() {
   const [result, setResult] = useState<any>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // Real-time step tracking for SSE
+  const [executingSteps, setExecutingSteps] = useState<Set<string>>(new Set())
+  const [completedStepsLive, setCompletedStepsLive] = useState<Set<string>>(new Set())
+  const [failedStepsLive, setFailedStepsLive] = useState<Set<string>>(new Set())
+
   useEffect(() => {
     if (user && agentId) {
       fetchAgentData()
@@ -108,28 +113,120 @@ export default function V2RunAgentPage() {
     setError(null)
     setResult(null)
 
+    // Reset real-time step tracking
+    setExecutingSteps(new Set())
+    setCompletedStepsLive(new Set())
+    setFailedStepsLive(new Set())
+
     try {
       const startTime = Date.now()
 
-      // Use the unified run-agent API endpoint (same as V1)
-      const requestBody = {
-        agent_id: agent.id,
-        input_variables: formData, // Send form data as input_variables
-        execution_type: 'test', // Mark as test execution
-        use_queue: true // Use queue-based execution for tracking in Agent Activity dashboard
+      // ARCHITECTURE (Updated to prevent duplicate execution):
+      // 1. Generate session_id upfront for execution tracking
+      // 2. Connect SSE stream FIRST (if workflow agent) to catch all events
+      // 3. Start /api/run-agent execution with the same session_id
+      // 4. Wait for /api/run-agent to complete (single source of truth)
+
+      console.log('Starting agent execution...')
+
+      // STEP 1: Generate session_id upfront for tracking
+      const sessionId = crypto.randomUUID()
+      console.log('Generated session_id:', sessionId)
+
+      // STEP 2: For workflow-based agents, connect SSE stream FIRST (in background)
+      // SSE will wait for events from the execution we're about to start
+      const hasWorkflowSteps = agent.workflow_steps && agent.workflow_steps.length > 0
+
+      if (hasWorkflowSteps) {
+        // Start SSE connection immediately (runs in parallel with execution)
+        // SSE will poll the database to find the execution once it's created
+        fetch('/api/run-agent-stream', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agent_id: agent.id,
+            session_id: sessionId, // Backend will use this to find the right execution
+          }),
+        })
+          .then(async (response) => {
+            if (!response.ok) {
+              console.warn('SSE visualization unavailable:', response.status, response.statusText)
+              return
+            }
+
+            const reader = response.body?.getReader()
+            if (!reader) return
+
+            const decoder = new TextDecoder()
+            let buffer = ''
+
+            const processLine = (line: string) => {
+              if (!line.trim() || !line.includes(':')) return
+
+              const colonIndex = line.indexOf(':')
+              const fieldName = line.substring(0, colonIndex).trim()
+              const fieldValue = line.substring(colonIndex + 1).trim()
+
+              if (fieldName === 'event') {
+                buffer = fieldValue // Store event type
+              } else if (fieldName === 'data') {
+                const eventType = buffer
+                const data = JSON.parse(fieldValue)
+
+                if (eventType === 'step_started') {
+                  setExecutingSteps(prev => new Set(prev).add(data.stepId))
+                } else if (eventType === 'step_completed') {
+                  setExecutingSteps(prev => {
+                    const updated = new Set(prev)
+                    updated.delete(data.stepId)
+                    return updated
+                  })
+                  setCompletedStepsLive(prev => new Set(prev).add(data.stepId))
+                } else if (eventType === 'step_failed') {
+                  setExecutingSteps(prev => {
+                    const updated = new Set(prev)
+                    updated.delete(data.stepId)
+                    return updated
+                  })
+                  setFailedStepsLive(prev => new Set(prev).add(data.stepId))
+                }
+                // Ignore execution_complete and error from SSE - we get final results from /api/run-agent
+
+                buffer = ''
+              }
+            }
+
+            try {
+              while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+                const chunk = decoder.decode(value, { stream: true })
+                chunk.split('\n').forEach(processLine)
+              }
+            } catch (err) {
+              console.warn('SSE stream error (non-critical):', err)
+            }
+          })
+          .catch(err => {
+            console.warn('SSE streaming failed (non-critical):', err)
+          })
+
+        // Don't wait - start execution immediately so SSE can find it
+        console.log('SSE stream initiated, starting execution immediately...')
       }
 
-      console.log('Sending request to run-agent:', {
-        agentId: agent.id,
-        requestBody,
-        note: 'Will use Pilot if pilot_enabled=true and agent has pilot_steps, otherwise AgentKit'
-      })
+      // STEP 3: Start main execution (with sessionId for SSE correlation)
+      const requestBody = {
+        agent_id: agent.id,
+        input_variables: formData,
+        execution_type: 'test',
+        use_queue: false,
+        session_id: sessionId, // Pass sessionId for SSE correlation
+      }
 
       const response = await fetch('/api/run-agent', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
       })
 
@@ -144,33 +241,34 @@ export default function V2RunAgentPage() {
 
       console.log('AgentKit/Pilot response:', res)
 
-      // Handle both AgentKit and Pilot execution results
-      // Pilot returns success:false with message "Workflow completed" which is actually a success
-      const isPilotSuccess = res.pilot && res.message === 'Workflow completed'
-
-      if (res.success || isPilotSuccess) {
-        // Build result object compatible with V1 sandbox UI
-        const resultData = {
-          message: res.message,
-          agentkit: res.pilot ? false : true, // Use agentkit flag for AgentKit, not for Pilot
-          pilot: res.pilot || false,
-          data: res.data,
-          execution_duration_ms: executionTime,
-          output: res.data // Include data as output for display
-        }
-
-        setResult(resultData)
-      } else {
-        // Handle actual execution failure - provide detailed error message
+      if (res.error || (res.success === false && !res.pilot)) {
         const errorMessage = res.error || res.message || 'Execution failed'
         console.error('Execution failed with error:', errorMessage)
         console.error('Full response:', res)
         throw new Error(errorMessage)
       }
+
+      if (res.success) {
+        const resultData = {
+          message: res.message,
+          agentkit: res.pilot ? false : true,
+          pilot: res.pilot || false,
+          data: res.data,
+          execution_duration_ms: executionTime,
+          output: res.data
+        }
+        setResult(resultData)
+      } else {
+        const errorMessage = res.error || res.message || 'Execution failed'
+        console.error('Unexpected execution state:', errorMessage)
+        console.error('Full response:', res)
+        throw new Error(errorMessage)
+      }
+
+      setExecuting(false)
     } catch (err: any) {
       console.error('Error executing agent:', err)
       setError(err.message || 'Failed to execute agent')
-    } finally {
       setExecuting(false)
     }
   }
@@ -398,10 +496,16 @@ export default function V2RunAgentPage() {
           ) : result ? (
             <div className="space-y-4">
               {/* Success Banner */}
-              <div className="p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+              <div
+                className="p-4 border"
+                style={{
+                  borderRadius: 'var(--v2-radius-button)',
+                  backgroundColor: 'var(--v2-status-success-bg)',
+                  borderColor: 'var(--v2-status-success-border)'
+                }}>
                 <div className="flex items-center gap-3">
                   <CheckCircle className="w-5 h-5 text-green-600 dark:text-green-400" />
-                  <h4 className="text-sm font-semibold text-green-900 dark:text-green-100">
+                  <h4 className="text-sm font-semibold" style={{ color: 'var(--v2-status-success-text)' }}>
                     Execution Completed Successfully
                   </h4>
                 </div>
@@ -410,10 +514,85 @@ export default function V2RunAgentPage() {
               {result.agentkit || result.pilot ? (
                 // AgentKit or Pilot execution - display the message and metrics
                 <>
-                  {/* Message Display */}
-                  {result.message && (
+                  {/* Workflow Output - Structured Display */}
+                  {result.pilot && result.data?.output && (
                     <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-                      <div className="prose prose-sm max-w-none">
+                      <div className="text-xs font-semibold text-[var(--v2-text-muted)] mb-3 uppercase tracking-wide flex items-center gap-2">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Workflow Output
+                      </div>
+                      <div className="space-y-2">
+                        {Object.entries(result.data.output).map(([key, value]) => (
+                          <div key={key} className="bg-[var(--v2-bg)] dark:bg-slate-800 border border-[var(--v2-border)] p-3" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                            <div className="text-xs text-[var(--v2-text-muted)] mb-1.5 font-medium capitalize">
+                              {key.replace(/_/g, ' ')}
+                            </div>
+                            <div className="text-sm text-[var(--v2-text-primary)]">
+                              {typeof value === 'string' ? (
+                                <p className="whitespace-pre-wrap leading-relaxed">{value}</p>
+                              ) : typeof value === 'number' || typeof value === 'boolean' ? (
+                                <p className="font-semibold">{String(value)}</p>
+                              ) : Array.isArray(value) ? (
+                                <ul className="list-disc list-inside space-y-1">
+                                  {value.map((item, idx) => (
+                                    <li key={idx} className="text-sm">
+                                      {typeof item === 'string' ? item : JSON.stringify(item)}
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : value && typeof value === 'object' ? (
+                                <div className="space-y-1">
+                                  {Object.entries(value).map(([subKey, subValue]) => (
+                                    <div key={subKey} className="flex gap-2">
+                                      <span className="text-[var(--v2-text-muted)] text-xs font-medium">{subKey}:</span>
+                                      <span className="text-sm flex-1">
+                                        {Array.isArray(subValue) ? (
+                                          <ul className="list-disc list-inside space-y-0.5">
+                                            {subValue.map((item, idx) => (
+                                              <li key={idx} className="text-xs">
+                                                {typeof item === 'object' && item !== null ? JSON.stringify(item, null, 2) : String(item)}
+                                              </li>
+                                            ))}
+                                          </ul>
+                                        ) : typeof subValue === 'object' && subValue !== null ? (
+                                          <div className="space-y-0.5 ml-2">
+                                            {Object.entries(subValue).map(([nestedKey, nestedValue]) => (
+                                              <div key={nestedKey} className="flex gap-2 text-xs">
+                                                <span className="text-[var(--v2-text-muted)] font-medium">{nestedKey}:</span>
+                                                <span className="text-[var(--v2-text-primary)]">
+                                                  {Array.isArray(nestedValue)
+                                                    ? nestedValue.join(', ')
+                                                    : typeof nestedValue === 'object' && nestedValue !== null
+                                                    ? JSON.stringify(nestedValue)
+                                                    : String(nestedValue)
+                                                  }
+                                                </span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        ) : (
+                                          String(subValue)
+                                        )}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-[var(--v2-text-muted)] italic">No data</p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Message Display (for non-workflow or AgentKit) */}
+                  {result.message && !result.pilot && (
+                    <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                      <div className="prose prose-sm max-w-none dark:prose-invert">
                         <div className="whitespace-pre-wrap text-[var(--v2-text-primary)] text-sm leading-relaxed">
                           {(() => {
                             const message = result.message || 'Execution completed successfully';
@@ -451,28 +630,54 @@ export default function V2RunAgentPage() {
                         Execution Metrics
                       </div>
                       <div className="grid grid-cols-2 gap-3">
-                        {result.data.iterations !== undefined && (
-                          <div className="bg-[var(--v2-background)] border border-[var(--v2-border)] p-3" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-                            <div className="text-xs text-[var(--v2-text-muted)] mb-1">Steps</div>
+                        {result.pilot && result.data.stepsCompleted !== undefined && (
+                          <div className="bg-[var(--v2-bg)] dark:bg-slate-800 border border-[var(--v2-border)] p-3" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                            <div className="text-xs text-[var(--v2-text-muted)] mb-1">Steps Completed</div>
+                            <div className="font-semibold text-green-600 dark:text-green-400">{result.data.stepsCompleted}</div>
+                          </div>
+                        )}
+                        {result.pilot && result.data.totalSteps !== undefined && (
+                          <div className="bg-[var(--v2-bg)] dark:bg-slate-800 border border-[var(--v2-border)] p-3" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                            <div className="text-xs text-[var(--v2-text-muted)] mb-1">Total Steps</div>
+                            <div className="font-semibold text-[var(--v2-text-primary)]">{result.data.totalSteps}</div>
+                          </div>
+                        )}
+                        {result.pilot && result.data.executionId && (
+                          <div className="bg-[var(--v2-bg)] dark:bg-slate-800 border border-[var(--v2-border)] p-3 col-span-2" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                            <div className="text-xs text-[var(--v2-text-muted)] mb-1">Execution ID</div>
+                            <div className="font-mono text-xs text-[var(--v2-text-primary)] break-all">{result.data.executionId}</div>
+                          </div>
+                        )}
+                        {result.data.iterations !== undefined && !result.pilot && (
+                          <div className="bg-[var(--v2-bg)] dark:bg-slate-800 border border-[var(--v2-border)] p-3" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                            <div className="text-xs text-[var(--v2-text-muted)] mb-1">Iterations</div>
                             <div className="font-semibold text-[var(--v2-text-primary)]">{result.data.iterations}</div>
                           </div>
                         )}
                         {result.data.tool_calls_count !== undefined && (
-                          <div className="bg-[var(--v2-background)] border border-[var(--v2-border)] p-3" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                          <div className="bg-[var(--v2-bg)] dark:bg-slate-800 border border-[var(--v2-border)] p-3" style={{ borderRadius: 'var(--v2-radius-button)' }}>
                             <div className="text-xs text-[var(--v2-text-muted)] mb-1">Actions</div>
                             <div className="font-semibold text-[var(--v2-text-primary)]">{result.data.tool_calls_count}</div>
                           </div>
                         )}
-                        {result.data.tokens_used !== undefined && (
-                          <div className="bg-[var(--v2-background)] border border-[var(--v2-border)] p-3" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                        {result.data.totalTokensUsed !== undefined && (
+                          <div className="bg-[var(--v2-bg)] dark:bg-slate-800 border border-[var(--v2-border)] p-3" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                            <div className="text-xs text-[var(--v2-text-muted)] mb-1">Pilot Credits</div>
+                            <div className="font-semibold text-[var(--v2-text-primary)]">{Math.round(result.data.totalTokensUsed / 10).toLocaleString()}</div>
+                          </div>
+                        )}
+                        {result.data.tokens_used !== undefined && !result.data.totalTokensUsed && (
+                          <div className="bg-[var(--v2-bg)] dark:bg-slate-800 border border-[var(--v2-border)] p-3" style={{ borderRadius: 'var(--v2-radius-button)' }}>
                             <div className="text-xs text-[var(--v2-text-muted)] mb-1">Pilot Credits</div>
                             <div className="font-semibold text-[var(--v2-text-primary)]">{Math.round(result.data.tokens_used / 10).toLocaleString()}</div>
                           </div>
                         )}
-                        {result.data.execution_time_ms !== undefined && (
-                          <div className="bg-[var(--v2-background)] border border-[var(--v2-border)] p-3" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                        {(result.data.execution_time_ms !== undefined || result.execution_duration_ms !== undefined) && (
+                          <div className="bg-[var(--v2-bg)] dark:bg-slate-800 border border-[var(--v2-border)] p-3" style={{ borderRadius: 'var(--v2-radius-button)' }}>
                             <div className="text-xs text-[var(--v2-text-muted)] mb-1">Duration</div>
-                            <div className="font-semibold text-[var(--v2-text-primary)]">{(result.data.execution_time_ms / 1000).toFixed(1)}s</div>
+                            <div className="font-semibold text-[var(--v2-text-primary)]">
+                              {((result.data.execution_time_ms || result.execution_duration_ms) / 1000).toFixed(1)}s
+                            </div>
                           </div>
                         )}
                       </div>
@@ -483,7 +688,7 @@ export default function V2RunAgentPage() {
                 // Legacy execution or other structured results
                 <div className="space-y-3">
                   {Object.entries(result)
-                    .filter(([key]) => key !== 'send_status' && key !== 'agentkit' && key !== 'execution_duration_ms')
+                    .filter(([key]) => key !== 'send_status' && key !== 'agentkit' && key !== 'pilot' && key !== 'execution_duration_ms')
                     .map(([key, value]) => (
                       <div key={key} className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-3" style={{ borderRadius: 'var(--v2-radius-button)' }}>
                         <div className="flex items-center gap-2 mb-2">
@@ -494,7 +699,7 @@ export default function V2RunAgentPage() {
                         <div className="text-[var(--v2-text-primary)]">
                           {value !== null && value !== undefined && value !== '' ? (
                             typeof value === 'object' ? (
-                              <pre className="text-xs bg-[var(--v2-background)] border border-[var(--v2-border)] p-3 overflow-x-auto font-mono" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                              <pre className="text-xs bg-[var(--v2-bg)] dark:bg-slate-800 border border-[var(--v2-border)] p-3 overflow-x-auto font-mono" style={{ borderRadius: 'var(--v2-radius-button)' }}>
                                 {JSON.stringify(value, null, 2)}
                               </pre>
                             ) : (
@@ -523,6 +728,29 @@ export default function V2RunAgentPage() {
       {/* Workflow Steps Visualization Card */}
       {agent.workflow_steps && agent.workflow_steps.length > 0 && (() => {
         const steps = agent.workflow_steps!
+
+        // Get step execution status from result if available (final state)
+        const completedSteps = result?.data?.completed_step_ids || []
+        const failedSteps = result?.data?.failed_step_ids || []
+        const skippedSteps = result?.data?.skipped_step_ids || []
+
+        // Helper to get step status (combines live and final states)
+        const getStepStatus = (stepId: string) => {
+          // Live states (during execution)
+          if (executing) {
+            if (executingSteps.has(stepId)) return 'executing'
+            if (completedStepsLive.has(stepId)) return 'completed'
+            if (failedStepsLive.has(stepId)) return 'failed'
+            return 'pending'
+          }
+
+          // Final states (after execution)
+          if (completedSteps.includes(stepId)) return 'completed'
+          if (failedSteps.includes(stepId)) return 'failed'
+          if (skippedSteps.includes(stepId)) return 'skipped'
+          return 'pending'
+        }
+
         return (
           <Card className="!p-4 sm:!p-6">
             {/* Header */}
@@ -530,55 +758,121 @@ export default function V2RunAgentPage() {
               <GitBranch className="w-5 h-5 text-[var(--v2-primary)]" />
               <div>
                 <h3 className="text-sm font-semibold text-[var(--v2-text-primary)]">Workflow Steps</h3>
-                <p className="text-xs text-[var(--v2-text-muted)]">{steps.length} steps</p>
+                <p className="text-xs text-[var(--v2-text-muted)]">
+                  {steps.length} steps
+                  {(executing || result) && ` • ${executing ? completedStepsLive.size : completedSteps.length} completed, ${executing ? failedStepsLive.size : failedSteps.length} failed, ${skippedSteps.length} skipped`}
+                </p>
               </div>
             </div>
 
             {/* Workflow Steps - Wrapping Grid */}
             <div className="flex flex-wrap gap-2">
-              {steps.map((step: any, idx: number) => (
-                <div key={idx} className="flex items-center gap-2">
-                  {/* Step Card */}
-                  <div className="relative group">
-                    <div className="px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:shadow-sm transition-all duration-200 flex items-center gap-2" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-                      {/* Step Number Badge */}
-                      <div className="relative flex-shrink-0">
-                        <div className="w-6 h-6 rounded-full bg-gradient-to-br from-[var(--v2-primary)] to-[var(--v2-secondary)] flex items-center justify-center text-white text-xs font-bold">
-                          {idx + 1}
+              {steps.map((step: any, idx: number) => {
+                const stepId = step.id || `step${idx + 1}`
+                const status = getStepStatus(stepId)
+
+                // Debug logging
+                if (executing && idx === 0) {
+                  console.log('Step status check:', {
+                    stepId,
+                    status,
+                    executing,
+                    executingSteps: Array.from(executingSteps),
+                    completedStepsLive: Array.from(completedStepsLive),
+                    hasStepId: executingSteps.has(stepId)
+                  })
+                }
+
+                return (
+                  <div key={idx} className="flex items-center gap-2">
+                    {/* Step Card */}
+                    <div className="relative group">
+                      <div
+                        className={`px-3 py-2 border transition-all duration-200 flex items-center gap-2 ${
+                          status === 'executing' ? 'animate-pulse' : ''
+                        } ${
+                          status === 'pending' ? 'hover:border-[var(--v2-primary)] hover:shadow-sm' : ''
+                        }`}
+                        style={{
+                          borderRadius: 'var(--v2-radius-button)',
+                          backgroundColor: status === 'executing' ? 'var(--v2-status-executing-bg)' :
+                                         status === 'completed' ? 'var(--v2-status-success-bg)' :
+                                         status === 'failed' ? 'var(--v2-status-error-bg)' :
+                                         status === 'skipped' ? 'var(--v2-status-warning-bg)' :
+                                         'var(--v2-surface)',
+                          borderColor: status === 'executing' ? 'var(--v2-status-executing-border)' :
+                                      status === 'completed' ? 'var(--v2-status-success-border)' :
+                                      status === 'failed' ? 'var(--v2-status-error-border)' :
+                                      status === 'skipped' ? 'var(--v2-status-warning-border)' :
+                                      'var(--v2-border)'
+                        }}>
+                        {/* Step Number Badge */}
+                        <div className="relative flex-shrink-0">
+                          <div className={`w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold ${
+                            status === 'executing' ? 'bg-blue-500' :
+                            status === 'completed' ? 'bg-green-500' :
+                            status === 'failed' ? 'bg-red-500' :
+                            status === 'skipped' ? 'bg-yellow-500' :
+                            'bg-gradient-to-br from-[var(--v2-primary)] to-[var(--v2-secondary)]'
+                          }`}>
+                            {status === 'executing' ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              idx + 1
+                            )}
+                          </div>
+                          {step.validated && status === 'pending' && (
+                            <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full flex items-center justify-center border border-white dark:border-slate-800">
+                              <CheckCircle className="h-2 w-2 text-white fill-current" />
+                            </div>
+                          )}
+                          {status === 'completed' && (
+                            <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-600 rounded-full flex items-center justify-center border border-white dark:border-slate-800">
+                              <CheckCircle className="h-2 w-2 text-white fill-current" />
+                            </div>
+                          )}
+                          {status === 'failed' && (
+                            <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-600 rounded-full flex items-center justify-center border border-white dark:border-slate-800">
+                              <XCircle className="h-2 w-2 text-white fill-current" />
+                            </div>
+                          )}
                         </div>
-                        {step.validated && (
-                          <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full flex items-center justify-center border border-white dark:border-slate-800">
-                            <CheckCircle className="h-2 w-2 text-white fill-current" />
-                          </div>
-                        )}
-                      </div>
 
-                      {/* Step Content */}
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-medium text-[var(--v2-text-primary)] max-w-[150px] truncate">
-                          {step.action || step.operation}
-                        </span>
+                        {/* Step Content */}
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="text-xs font-medium max-w-[150px] truncate"
+                            style={{
+                              color: status === 'executing' ? 'var(--v2-status-executing-text)' :
+                                    status === 'completed' ? 'var(--v2-status-success-text)' :
+                                    status === 'failed' ? 'var(--v2-status-error-text)' :
+                                    status === 'skipped' ? 'var(--v2-status-warning-text)' :
+                                    'var(--v2-text-primary)'
+                            }}>
+                            {step.action || step.operation}
+                          </span>
 
-                        {/* Step Type Badge */}
-                        {step.plugin && step.plugin_action ? (
-                          <div className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded">
-                            <Settings className="h-2.5 w-2.5 text-orange-600 dark:text-orange-400" />
-                          </div>
-                        ) : (
-                          <div className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-700 rounded">
-                            <Bot className="h-2.5 w-2.5 text-purple-600 dark:text-purple-400" />
-                          </div>
-                        )}
+                          {/* Step Type Badge */}
+                          {step.plugin && step.plugin_action ? (
+                            <div className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-orange-50 dark:bg-slate-700 border border-orange-200 dark:border-orange-700 rounded">
+                              <Settings className="h-2.5 w-2.5 text-orange-600 dark:text-orange-400" />
+                            </div>
+                          ) : (
+                            <div className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-purple-50 dark:bg-slate-700 border border-purple-200 dark:border-purple-600 rounded">
+                              <Bot className="h-2.5 w-2.5 text-purple-600 dark:text-purple-400" />
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* Arrow between steps */}
-                  {idx < steps.length - 1 && (
-                    <div className="w-0 h-0 border-t-[4px] border-t-transparent border-b-[4px] border-b-transparent border-l-[6px] border-l-[var(--v2-primary)]" />
-                  )}
-                </div>
-              ))}
+                    {/* Arrow between steps */}
+                    {idx < steps.length - 1 && (
+                      <div className="w-0 h-0 border-t-[4px] border-t-transparent border-b-[4px] border-b-transparent border-l-[6px] border-l-[var(--v2-primary)]" />
+                    )}
+                  </div>
+                )
+              })}
             </div>
           </Card>
         )

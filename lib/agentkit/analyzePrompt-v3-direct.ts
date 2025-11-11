@@ -10,6 +10,7 @@ export interface AnalyzedWorkflowStep {
   type: 'plugin_action' | 'ai_processing' | 'conditional' | 'transform' | 'human_approval';
   plugin: string;
   plugin_action: string;
+  params?: Record<string, any>; // Parameters to pass to plugin action
   dependencies: string[];
   reasoning: string;
   // Conditional-specific fields
@@ -229,6 +230,10 @@ Return a JSON object with:
       "type": "plugin_action",
       "plugin": "google-mail",
       "plugin_action": "search_emails",
+      "params": {
+        "query": "in:inbox",
+        "max_results": 10
+      },
       "dependencies": [],
       "reasoning": "User requested last 10 emails"
     },
@@ -238,6 +243,10 @@ Return a JSON object with:
       "type": "ai_processing",
       "plugin": "ai_processing",
       "plugin_action": "process",
+      "params": {
+        "prompt": "Summarize these emails: {{step1.data.emails}}",
+        "output_format": "summary"
+      },
       "dependencies": ["step1"],
       "reasoning": "Summarization is AI processing"
     },
@@ -247,6 +256,12 @@ Return a JSON object with:
       "type": "plugin_action",
       "plugin": "google-sheets",
       "plugin_action": "append_rows",
+      "params": {
+        "spreadsheet_id": "{{input.spreadsheet_id}}",
+        "values": [[
+          "{{step2.data.summary}}"
+        ]]
+      },
       "dependencies": ["step2"],
       "reasoning": "User wants to send to sheet"
     }
@@ -355,14 +370,41 @@ User says: "Send me bullet points"
 - DO NOT create error notification outputs - these are added automatically by the system
 - Focus on the main deliverable outputs only
 
-# IMPORTANT - Input Detection:
+# IMPORTANT - Input Detection & Parameter Mapping:
 For each plugin action in workflow_steps:
 1. Check what parameters it requires (see Connected Services above)
-2. If parameter value is NOT in the user's prompt, add it to required_inputs
-3. Example: append_rows needs "spreadsheet_id", "range", "values"
-   - "values" comes from AI summary
-   - "spreadsheet_id" NOT in prompt → add to required_inputs
-   - "range" could default to sheet name, but better to ask → add to required_inputs`;
+2. Add a "params" field that maps inputs and previous step outputs to plugin parameters
+3. If parameter value is NOT in the user's prompt, add it to required_inputs
+4. Use variable interpolation syntax:
+   - {{input.field_name}} for user inputs
+   - {{step1.data.field_name}} for previous step outputs (plugin actions)
+   - {{step2.data.X}} for AI processing results (see below for available fields)
+
+Example: append_rows needs "spreadsheet_id", "range", "values"
+   - "values" comes from AI summary → "params": {"values": [[{{step2.data.summary}}]]}
+   - "spreadsheet_id" NOT in prompt → add to required_inputs + use {{input.spreadsheet_id}} in params
+   - "range" → use {{input.range}} or default value in params
+
+AI PROCESSING STEPS - FLEXIBLE OUTPUT REFERENCES:
+AI processing steps return the same result under MULTIPLE field names for flexibility.
+Choose the most semantic field name based on what the AI is doing:
+
+Common field names (all contain the same value):
+- {{stepX.data.result}} - Generic, always works for any AI processing task
+- {{stepX.data.summary}} - Use for summarization tasks (most intuitive)
+- {{stepX.data.analysis}} - Use for analysis tasks
+- {{stepX.data.decision}} - Use for decision-making tasks
+- {{stepX.data.classification}} - Use for classification tasks
+- {{stepX.data.response}} - Raw AI response
+
+Example workflows:
+- Summarize emails → reference as {{step2.data.summary}}
+- Analyze data → reference as {{step3.data.analysis}}
+- Make decision → reference as {{step1.data.decision}}
+
+The "prompt" in params should include variable references: "Summarize these: {{step1.data.emails}}"
+
+CRITICAL: Every plugin_action step MUST have a "params" field with proper variable mapping!`;
 
     const completion = await openai.chat.completions.create({
       model: AGENTKIT_CONFIG.model,

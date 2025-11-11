@@ -108,7 +108,22 @@ export class AIAnalyticsService {
 
     try {
       const call_id = callData.call_id || this.generateCallId();
-      
+
+      // Validate session_id is a proper UUID, otherwise set to null
+      const isValidUUID = (str: string | undefined) => {
+        if (!str) return false;
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        return uuidRegex.test(str);
+      };
+
+      const validSessionId = callData.session_id && isValidUUID(callData.session_id)
+        ? callData.session_id
+        : null;
+
+      if (callData.session_id && !validSessionId) {
+        console.warn(`⚠️ Invalid session_id format: "${callData.session_id}", setting to null`);
+      }
+
       // Build the complete insert data using your full schema
       const insertData = {
         // Required fields
@@ -118,10 +133,10 @@ export class AIAnalyticsService {
         input_tokens: callData.input_tokens,
         output_tokens: callData.output_tokens,
         cost_usd: callData.cost_usd,
-        
+
         // Optional basic fields
         request_type: callData.request_type || 'chat',
-        session_id: callData.session_id,
+        session_id: validSessionId,
         category: callData.category || 'general',
         
         // Enhanced tracking fields (now supported by your schema)

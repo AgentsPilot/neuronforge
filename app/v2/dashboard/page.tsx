@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 
 interface AgentStat {
+  id: string
   name: string
   count: number
   lastRun: string | null
@@ -125,6 +126,7 @@ export default function V2DashboardPage() {
       const parsedStats: AgentStat[] = agentStatsData?.map((s) => {
         const agentData = s.agents as any
         return {
+          id: s.agent_id,
           name: agentData?.agent_name ?? 'Unknown Agent',
           count: s.run_count,
           lastRun: s.last_run_at,
@@ -281,7 +283,11 @@ export default function V2DashboardPage() {
                     {stats.agentStats.slice(0, 3).map((agent, index) => (
                       <div
                         key={index}
-                        className="flex items-center justify-between py-2 px-3 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors duration-200"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          router.push(`/v2/agents/${agent.id}`)
+                        }}
+                        className="flex items-center justify-between py-2 px-3 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors duration-200 cursor-pointer"
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
                       >
                         <div className="flex items-center gap-2 flex-1 min-w-0">

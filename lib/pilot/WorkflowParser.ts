@@ -86,6 +86,18 @@ export class WorkflowParser {
       const legacyStep = step as any;
 
       if (legacyStep.type === 'plugin_action') {
+        // Validate params existence
+        const params = legacyStep.params || {};
+        const hasParams = Object.keys(params).length > 0;
+
+        if (!hasParams) {
+          console.warn(
+            `⚠️  [WorkflowParser] Step "${legacyStep.operation}" (${legacyStep.plugin}.${legacyStep.plugin_action}) has empty params.`,
+            `This may cause execution failures if the plugin action requires parameters.`,
+            `Consider adding params field with proper variable mappings (e.g., {{input.field}} or {{step1.data.field}})`
+          );
+        }
+
         // Convert legacy plugin_action to orchestrator action step
         return {
           id: generatedId,
@@ -93,7 +105,7 @@ export class WorkflowParser {
           name: legacyStep.operation || `Step ${index + 1}`,
           plugin: legacyStep.plugin,
           action: legacyStep.plugin_action,
-          params: legacyStep.params || {},
+          params: params,
           dependencies: step.dependencies || [],
         };
       }

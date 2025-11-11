@@ -201,7 +201,6 @@ export default function V2AgentListPage() {
           agent_id: agentId,
           input_variables: {},
           use_queue: true,
-          use_agentkit: true,
           execution_type: 'manual'
         }),
       })
@@ -523,34 +522,6 @@ export default function V2AgentListPage() {
             )}
           </div>
         </div>
-      </div>
-
-      {/* Agent Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
-        <Card className="!p-4">
-          <div className="text-xs sm:text-sm text-[var(--v2-text-muted)] mb-1">Total Agents</div>
-          <div className="text-xl sm:text-2xl font-bold text-[var(--v2-text-primary)]">
-            {agents.length}
-          </div>
-        </Card>
-        <Card className="!p-4">
-          <div className="text-xs sm:text-sm text-[var(--v2-text-muted)] mb-1">Active</div>
-          <div className="text-xl sm:text-2xl font-bold text-green-600 dark:text-green-400">
-            {agents.filter(a => a.status === 'active').length}
-          </div>
-        </Card>
-        <Card className="!p-4">
-          <div className="text-xs sm:text-sm text-[var(--v2-text-muted)] mb-1">Inactive</div>
-          <div className="text-xl sm:text-2xl font-bold text-gray-600 dark:text-gray-400">
-            {agents.filter(a => a.status === 'inactive').length}
-          </div>
-        </Card>
-        <Card className="!p-4">
-          <div className="text-xs sm:text-sm text-[var(--v2-text-muted)] mb-1">Draft</div>
-          <div className="text-xl sm:text-2xl font-bold text-yellow-600 dark:text-yellow-400">
-            {agents.filter(a => a.status === 'draft').length}
-          </div>
-        </Card>
       </div>
 
       {/* Agents List */}

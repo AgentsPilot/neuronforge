@@ -123,9 +123,10 @@ async function updateExistingMetrics(
 
   // Update plugin statistics
   const total_plugin_calls = current.total_plugin_calls + execution.tool_calls_count;
-  const unique_plugins_used = Math.max(current.unique_plugins_used, execution.plugins_used.length);
-  const avg_plugins_per_run = execution.plugins_used.length > 0
-    ? ((current.avg_plugins_per_run * current.total_executions) + execution.plugins_used.length) / total_executions
+  const pluginsUsedCount = execution.plugins_used?.length || 0;
+  const unique_plugins_used = Math.max(current.unique_plugins_used, pluginsUsedCount);
+  const avg_plugins_per_run = pluginsUsedCount > 0
+    ? ((current.avg_plugins_per_run * current.total_executions) + pluginsUsedCount) / total_executions
     : current.avg_plugins_per_run;
 
   const tool_orchestration_overhead_ms = execution.tool_orchestration_time_ms

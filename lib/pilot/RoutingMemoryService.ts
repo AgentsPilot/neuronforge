@@ -357,40 +357,65 @@ export class RoutingMemoryService {
   ): Promise<void> {
     // Calculate cost savings vs always using tier3
     const tier3Cost = 0.005; // Rough estimate: $5 per 1M tokens
-    const currentCost = pattern.avgCostUsd;
+    const currentCost = Number.isFinite(pattern.avgCostUsd) ? pattern.avgCostUsd : 0;
     const costSavingsPercent = ((tier3Cost - currentCost) / tier3Cost) * 100;
 
     const memoryValue = {
       stepType,
       preferredTier: pattern.preferredTier,
-      successRate: pattern.successRate,
-      avgTokens: pattern.avgTokens,
-      costSavings: Math.max(0, costSavingsPercent),
-      totalRuns: pattern.totalExecutions,
+      successRate: Number.isFinite(pattern.successRate) ? pattern.successRate : 0,
+      avgTokens: Number.isFinite(pattern.avgTokens) ? Math.round(pattern.avgTokens) : 0,
+      costSavings: Number.isFinite(costSavingsPercent) ? Math.max(0, costSavingsPercent) : 0,
+      totalRuns: pattern.totalExecutions || 0,
       recommendation: `Use ${pattern.preferredTier} for ${stepType} steps (${(pattern.successRate * 100).toFixed(0)}% success)`,
       confidence: pattern.confidence >= 0.8 ? 'high' : pattern.confidence >= 0.5 ? 'medium' : 'low'
     };
 
     // Upsert to agent_memories table
-    const { error } = await this.supabase
-      .from('agent_memories')
-      .upsert({
-        agent_id: agentId,
-        user_id: userId,
-        memory_type: 'routing_pattern',
-        memory_key: `routing_${stepType}`,
-        memory_value: JSON.stringify(memoryValue),
-        importance: Math.floor(pattern.confidence * 10), // 0-10 based on confidence
-        last_used_at: new Date().toISOString(),
-        usage_count: pattern.totalExecutions
-      }, {
-        onConflict: 'agent_id,memory_key'
-      });
+    try {
+      const { error, data } = await this.supabase
+        .from('agent_memories')
+        .upsert({
+          agent_id: agentId,
+          user_id: userId,
+          memory_type: 'routing_pattern',
+          memory_key: `routing_${stepType}`,
+          memory_value: JSON.stringify(memoryValue),
+          importance: Math.floor(pattern.confidence * 10), // 0-10 based on confidence
+          last_used_at: new Date().toISOString(),
+          usage_count: pattern.totalExecutions
+        }, {
+          onConflict: 'agent_id,memory_key'
+        })
+        .select();
 
-    if (error) {
-      console.error('❌ [RoutingMemory] Failed to store memory:', error);
-    } else {
-      console.log(`💾 [RoutingMemory] Stored memory for ${stepType}: prefer ${pattern.preferredTier}`);
+      if (error) {
+        console.error('❌ [RoutingMemory] Failed to store memory:', {
+          error: JSON.stringify(error),
+          errorMessage: error?.message,
+          errorCode: error?.code,
+          errorDetails: error?.details,
+          errorHint: error?.hint,
+          agentId,
+          stepType,
+          memoryKey: `routing_${stepType}`,
+          memoryValue,
+          dataReturned: data
+        });
+        // Don't throw - log the detailed error but allow execution to continue
+      } else {
+        console.log(`💾 [RoutingMemory] Stored memory for ${stepType}: prefer ${pattern.preferredTier} (rows affected: ${data?.length || 0})`);
+      }
+    } catch (err: any) {
+      console.error('❌ [RoutingMemory] Exception storing memory:', {
+        error: err,
+        errorString: String(err),
+        errorMessage: err?.message,
+        errorStack: err?.stack,
+        agentId,
+        stepType,
+        memoryValue
+      });
     }
   }
 

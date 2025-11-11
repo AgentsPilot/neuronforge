@@ -118,6 +118,7 @@ export class StateManager {
     const summary = context.getSummary();
     const executionTrace = context.getExecutionTrace();
 
+    // Update workflow_executions table (internal tracking)
     const { error } = await this.supabase
       .from('workflow_executions')
       .update({
@@ -140,6 +141,49 @@ export class StateManager {
     }
 
     console.log(`[StateManager] Marked execution as completed: ${executionId}`);
+
+    // Also log to agent_executions table for UI display
+    // This ensures executions appear in the agent page analytics tab
+    try {
+      const now = new Date().toISOString();
+      const startTime = new Date(Date.now() - summary.totalExecutionTime).toISOString();
+
+      const { error: agentExecError } = await this.supabase.from('agent_executions').insert({
+        agent_id: context.agentId,
+        user_id: context.userId,
+        execution_type: 'manual',
+        status: 'completed',
+        scheduled_at: now,
+        started_at: startTime,
+        completed_at: now,
+        execution_duration_ms: summary.totalExecutionTime,
+        logs: {
+          success: true,
+          executionTime: summary.totalExecutionTime,
+          tokensUsed: { total: summary.totalTokensUsed, prompt: 0, completion: 0 }, // Pilot aggregates tokens
+          iterations: 1,
+          response: finalOutput?.message || 'Workflow completed',
+          model: 'workflow_orchestrator',
+          provider: 'pilot',
+          pilot: true, // UI checks this flag to display "Workflow Pilot"
+          workflowExecution: true,
+          stepsCompleted: summary.stepCount.completed,
+          stepsFailed: summary.stepCount.failed,
+          stepsSkipped: summary.stepCount.skipped,
+          executionId: executionId
+        }
+      });
+
+      if (agentExecError) {
+        console.error('[StateManager] Failed to log to agent_executions:', agentExecError);
+        // Non-fatal - don't throw, just log the error
+      } else {
+        console.log(`[StateManager] Logged execution to agent_executions for UI display`);
+      }
+    } catch (logError) {
+      console.error('[StateManager] Error logging to agent_executions:', logError);
+      // Non-fatal - continue execution
+    }
   }
 
   /**
@@ -153,6 +197,7 @@ export class StateManager {
     const summary = context.getSummary();
     const executionTrace = context.getExecutionTrace();
 
+    // Update workflow_executions table (internal tracking)
     const { error: dbError } = await this.supabase
       .from('workflow_executions')
       .update({
@@ -175,6 +220,49 @@ export class StateManager {
       // Don't throw - we're already handling an error
     } else {
       console.log(`[StateManager] Marked execution as failed: ${executionId}`);
+    }
+
+    // Also log to agent_executions table for UI display
+    try {
+      const now = new Date().toISOString();
+      const startTime = new Date(Date.now() - summary.totalExecutionTime).toISOString();
+
+      const { error: agentExecError } = await this.supabase.from('agent_executions').insert({
+        agent_id: context.agentId,
+        user_id: context.userId,
+        execution_type: 'manual',
+        status: 'failed',
+        scheduled_at: now,
+        started_at: startTime,
+        completed_at: now,
+        execution_duration_ms: summary.totalExecutionTime,
+        error_message: error.message,
+        logs: {
+          success: false,
+          error: error.message,
+          executionTime: summary.totalExecutionTime,
+          tokensUsed: { total: summary.totalTokensUsed, prompt: 0, completion: 0 }, // Pilot aggregates tokens
+          iterations: 1,
+          model: 'workflow_orchestrator',
+          provider: 'pilot',
+          pilot: true, // UI checks this flag to display "Workflow Pilot"
+          workflowExecution: true,
+          stepsCompleted: summary.stepCount.completed,
+          stepsFailed: summary.stepCount.failed,
+          stepsSkipped: summary.stepCount.skipped,
+          executionId: executionId
+        }
+      });
+
+      if (agentExecError) {
+        console.error('[StateManager] Failed to log to agent_executions:', agentExecError);
+        // Non-fatal - don't throw
+      } else {
+        console.log(`[StateManager] Logged failed execution to agent_executions for UI display`);
+      }
+    } catch (logError) {
+      console.error('[StateManager] Error logging failed execution to agent_executions:', logError);
+      // Non-fatal - continue
     }
   }
 

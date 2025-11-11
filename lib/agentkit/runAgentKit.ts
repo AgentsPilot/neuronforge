@@ -178,6 +178,9 @@ export async function runAgentKit(
   // 2nd Priority: ModelRouter.selectModel() (agent-level routing based on AIS)
   // 3rd Priority: AGENTKIT_CONFIG.model (default: gpt-4o)
 
+  // Declare ROUTING_ENABLED at function scope so it's accessible throughout
+  let ROUTING_ENABLED = false;
+
   // Check if per-step routing (Pilot workflows) already selected a model
   if (agent.model_preference) {
     // Per-step routing has already made a decision - respect it
@@ -208,7 +211,6 @@ export async function runAgentKit(
     // No per-step routing decision - check agent-level routing
 
     // Fetch routing configuration from database
-    let ROUTING_ENABLED = false;
     try {
       ROUTING_ENABLED = await SystemConfigService.getBoolean(
         supabase,
@@ -296,8 +298,10 @@ export async function runAgentKit(
     // STEP 1: Convert V2 plugins to OpenAI tools
     const tools = await convertPluginsToTools(userId, agent.plugins_required);
 
-    if (tools.length === 0) {
-      console.warn('⚠️ AgentKit: No plugins are connected');
+    // Only error if plugins were expected but couldn't be loaded
+    // Allow zero tools if plugins_required is empty (text-only processing for ai_processing steps)
+    if (tools.length === 0 && agent.plugins_required && agent.plugins_required.length > 0) {
+      console.warn('⚠️ AgentKit: No plugins are connected, but plugins were required');
       return {
         success: false,
         response: "No plugins are connected. Please connect the required plugins in Settings → Connected Apps to use this agent.",
@@ -309,7 +313,11 @@ export async function runAgentKit(
       };
     }
 
-    console.log(`🔧 AgentKit: Loaded ${tools.length} available actions across ${agent.plugins_required.length} plugins`);
+    if (tools.length === 0) {
+      console.log('🔧 AgentKit: Running in text-only mode (no tools)');
+    } else {
+      console.log(`🔧 AgentKit: Loaded ${tools.length} available actions across ${agent.plugins_required.length} plugins`);
+    }
     console.log('\n📊 AGENTKIT DEBUG - TOOLS AVAILABLE:', JSON.stringify(tools, null, 2));
 
     // STEP 2: Build enhanced system prompt with plugin context
@@ -933,8 +941,8 @@ async function summarizeExecutionAsync(
     // Get recent runs for comparison context
     const recentRuns = await memoryInjector.getRecentRunsForSummarization(agent.id, 5);
 
-    // Create summarizer
-    const summarizer = new MemorySummarizer(supabase, process.env.OPENAI_API_KEY);
+    // Create summarizer (uses service role client internally)
+    const summarizer = new MemorySummarizer();
 
     // Build summarization input
     const summarizationInput = {

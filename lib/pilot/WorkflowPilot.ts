@@ -42,6 +42,7 @@ import { updateAgentIntensityMetrics } from '@/lib/utils/updateAgentIntensity';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { SystemConfigService } from '@/lib/services/SystemConfigService';
+import { ExecutionEventEmitter } from '@/lib/execution/ExecutionEventEmitter';
 
 export class WorkflowPilot {
   private supabase: SupabaseClient;
@@ -92,9 +93,20 @@ export class WorkflowPilot {
     userId: string,
     userInput: string,
     inputValues: Record<string, any>,
-    sessionId: string
+    sessionId?: string,
+    stepEmitter?: {
+      onStepStarted?: (stepId: string, stepName: string) => void;
+      onStepCompleted?: (stepId: string, stepName: string) => void;
+      onStepFailed?: (stepId: string, stepName: string, error: string) => void;
+    }
   ): Promise<WorkflowExecutionResult> {
     console.log(`🚀 [WorkflowPilot] Starting execution for agent ${agent.id}: ${agent.agent_name}`);
+
+    // Generate sessionId if not provided (must be UUID format for database)
+    const finalSessionId = sessionId || crypto.randomUUID();
+
+    // Store stepEmitter in instance for use during execution
+    (this as any).stepEmitter = stepEmitter;
 
     // 0. Check if pilot is enabled (safeguard)
     const pilotEnabled = await SystemConfigService.getBoolean(
@@ -135,7 +147,14 @@ export class WorkflowPilot {
     console.log('✅ [WorkflowPilot] Pilot is enabled, proceeding with execution');
 
     // 1. Parse workflow
-    const workflowSteps = (agent.workflow_steps as WorkflowStep[]) || [];
+    // Pilot orchestration system prefers pilot_steps (normalized format)
+    // Falls back to workflow_steps for backward compatibility with old agents
+    const workflowSteps = (agent.pilot_steps as WorkflowStep[]) ||
+                         (agent.workflow_steps as WorkflowStep[]) ||
+                         [];
+
+    const usingPilotSteps = !!agent.pilot_steps;
+    console.log(`📋 [WorkflowPilot] Using ${usingPilotSteps ? 'pilot_steps (normalized)' : 'workflow_steps (legacy fallback)'} for execution`);
 
     if (workflowSteps.length === 0) {
       throw new ValidationError(
@@ -153,7 +172,7 @@ export class WorkflowPilot {
     const executionId = await this.stateManager.createExecution(
       agent,
       userId,
-      sessionId,
+      finalSessionId,
       executionPlan,
       inputValues
     );
@@ -162,7 +181,7 @@ export class WorkflowPilot {
       executionId,
       agent,
       userId,
-      sessionId,
+      finalSessionId,
       inputValues
     );
 
@@ -240,12 +259,27 @@ export class WorkflowPilot {
         console.error('❌ AIS update failed (non-critical):', err)
       );
 
-      // 11. Summarize for memory (async)
-      this.summarizeForMemory(agent.id, userId, executionId, context).catch(err =>
-        console.error('❌ Memory summarization failed (non-critical):', err)
-      );
+      // 11. Summarize for memory (SYNCHRONOUS - must wait to get token count)
+      let memoryTokens = 0;
+      try {
+        memoryTokens = await this.summarizeForMemory(agent.id, userId, executionId, context);
+        console.log(`✅ Memory summarization complete (${memoryTokens} tokens)`);
+      } catch (err) {
+        console.error('❌ Memory summarization failed (non-critical):', err);
+      }
+
+      // Add memory tokens to total
+      const totalTokensWithMemory = context.totalTokensUsed + memoryTokens;
+      console.log(`📊 [WorkflowPilot] Final token count: ${context.totalTokensUsed} (steps) + ${memoryTokens} (memory) = ${totalTokensWithMemory}`);
 
       console.log(`✅ [WorkflowPilot] Execution completed successfully: ${executionId}`);
+
+      // Emit execution complete event globally
+      ExecutionEventEmitter.emitExecutionComplete(executionId, agent.id, {
+        success: true,
+        results: finalOutput,
+        total_duration_ms: context.totalExecutionTime,
+      });
 
       return {
         success: true,
@@ -255,13 +289,23 @@ export class WorkflowPilot {
         stepsFailed: context.failedSteps.length,
         stepsSkipped: context.skippedSteps.length,
         totalExecutionTime: context.totalExecutionTime,
-        totalTokensUsed: context.totalTokensUsed,
+        totalTokensUsed: totalTokensWithMemory,
+        // Include step details for frontend visualization
+        completedStepIds: context.completedSteps,
+        failedStepIds: context.failedSteps,
+        skippedStepIds: context.skippedSteps,
       };
     } catch (error: any) {
       console.error(`❌ [WorkflowPilot] Execution failed:`, error);
 
       // Mark as failed
       await this.stateManager.failExecution(executionId, error, context);
+
+      // Emit execution error event globally
+      ExecutionEventEmitter.emitExecutionError(executionId, agent.id, {
+        error: error.message,
+        step_index: context.completedSteps.length,
+      });
 
       // Audit: Execution failed
       await this.auditTrail.log({
@@ -291,6 +335,10 @@ export class WorkflowPilot {
         error: error.message,
         errorStack: error.stack,
         failedStep: context.currentStep || undefined,
+        // Include step details for frontend visualization
+        completedStepIds: context.completedSteps,
+        failedStepIds: context.failedSteps,
+        skippedStepIds: context.skippedSteps,
       };
     }
   }
@@ -339,6 +387,22 @@ export class WorkflowPilot {
 
     console.log(`  → Executing: ${stepDef.id} (${stepDef.name})`);
 
+    // Get step emitter reference once at the beginning
+    const stepEmitter = (this as any).stepEmitter;
+
+    // Emit step started event (both local and global)
+    if (stepEmitter?.onStepStarted) {
+      stepEmitter.onStepStarted(stepDef.id, stepDef.name);
+    }
+    ExecutionEventEmitter.emitStepStarted(context.executionId, context.agentId, {
+      step_index: context.completedSteps.length,
+      step_name: stepDef.name,
+      step_id: stepDef.id,
+      operation: stepDef.name,
+      plugin: stepDef.type === 'action' ? (stepDef as any).plugin : undefined,
+      action: stepDef.type === 'action' ? (stepDef as any).action : undefined,
+    });
+
     // Check executeIf condition
     if (stepDef.executeIf) {
       const shouldExecute = this.conditionalEvaluator.evaluate(
@@ -349,6 +413,17 @@ export class WorkflowPilot {
       if (!shouldExecute) {
         console.log(`  ⏭  Skipping step ${stepDef.id} - condition not met`);
         context.markStepSkipped(stepDef.id);
+        // Emit step completed even for skipped steps (both local and global)
+        if (stepEmitter?.onStepCompleted) {
+          stepEmitter.onStepCompleted(stepDef.id, stepDef.name);
+        }
+        ExecutionEventEmitter.emitStepCompleted(context.executionId, context.agentId, {
+          step_index: context.completedSteps.length,
+          step_name: stepDef.name,
+          step_id: stepDef.id,
+          result: { skipped: true },
+          duration_ms: 0,
+        });
         return;
       }
     }
@@ -375,6 +450,10 @@ export class WorkflowPilot {
 
       console.log(`  ✓ Condition evaluated: ${result}`);
       await this.stateManager.checkpoint(context);
+      // Emit step completed event
+      if (stepEmitter?.onStepCompleted) {
+        stepEmitter.onStepCompleted(stepDef.id, stepDef.name);
+      }
       return;
     }
 
@@ -397,6 +476,10 @@ export class WorkflowPilot {
 
       console.log(`  ✓ Loop completed: ${results.length} iterations`);
       await this.stateManager.checkpoint(context);
+      // Emit step completed event
+      if (stepEmitter?.onStepCompleted) {
+        stepEmitter.onStepCompleted(stepDef.id, stepDef.name);
+      }
       return;
     }
 
@@ -421,6 +504,10 @@ export class WorkflowPilot {
 
       console.log(`  ✓ Scatter-gather completed in ${Date.now() - startTime}ms`);
       await this.stateManager.checkpoint(context);
+      // Emit step completed event
+      if (stepEmitter?.onStepCompleted) {
+        stepEmitter.onStepCompleted(stepDef.id, stepDef.name);
+      }
       return;
     }
 
@@ -451,6 +538,10 @@ export class WorkflowPilot {
       if (!result.success) {
         const onError = stepDef.onError || 'throw';
         if (onError === 'throw') {
+          // Emit step failed event
+          if (stepEmitter?.onStepFailed) {
+            stepEmitter.onStepFailed(stepDef.id, stepDef.name, result.error || 'Unknown error');
+          }
           throw new ExecutionError(
             `Sub-workflow ${stepDef.id} failed: ${result.error}`,
             'SUB_WORKFLOW_FAILED',
@@ -458,8 +549,17 @@ export class WorkflowPilot {
           );
         } else if (onError === 'continue') {
           console.log(`  ⚠️  Sub-workflow failed but continuing: ${result.error}`);
+          // Emit step completed event even for failed sub-workflows that continue
+          if (stepEmitter?.onStepCompleted) {
+            stepEmitter.onStepCompleted(stepDef.id, stepDef.name);
+          }
         }
         // 'return_error' - error is already in result.data
+      } else {
+        // Emit step completed event
+        if (stepEmitter?.onStepCompleted) {
+          stepEmitter.onStepCompleted(stepDef.id, stepDef.name);
+        }
       }
 
       return;
@@ -487,14 +587,23 @@ export class WorkflowPilot {
       console.log(`  ✓ Human approval completed in ${Date.now() - startTime}ms: ${result.approved ? 'APPROVED' : 'REJECTED'}`);
       await this.stateManager.checkpoint(context);
 
-      // If rejected, throw error to halt workflow
+      // Emit appropriate event
       if (!result.approved) {
+        // Emit step failed event
+        if (stepEmitter?.onStepFailed) {
+          stepEmitter.onStepFailed(stepDef.id, stepDef.name, 'Approval rejected');
+        }
         throw new ExecutionError(
           `Approval rejected for step ${stepDef.id}`,
           'APPROVAL_REJECTED',
           stepDef.id,
           { approvalId: result.approvalId, responses: result.responses }
         );
+      } else {
+        // Emit step completed event
+        if (stepEmitter?.onStepCompleted) {
+          stepEmitter.onStepCompleted(stepDef.id, stepDef.name);
+        }
       }
 
       return;
@@ -515,10 +624,33 @@ export class WorkflowPilot {
     // Checkpoint
     await this.stateManager.checkpoint(context);
 
+    // Emit appropriate event (both local and global)
     if (output.metadata.success) {
       console.log(`  ✓ Completed in ${output.metadata.executionTime}ms`);
+      // Emit step completed event
+      if (stepEmitter?.onStepCompleted) {
+        stepEmitter.onStepCompleted(stepDef.id, stepDef.name);
+      }
+      ExecutionEventEmitter.emitStepCompleted(context.executionId, context.agentId, {
+        step_index: context.completedSteps.length,
+        step_name: stepDef.name,
+        step_id: stepDef.id,
+        result: output.data,
+        duration_ms: output.metadata.executionTime || 0,
+      });
     } else {
       console.error(`  ✗ Failed: ${output.metadata.error}`);
+      // Emit step failed event
+      if (stepEmitter?.onStepFailed) {
+        stepEmitter.onStepFailed(stepDef.id, stepDef.name, output.metadata.error || 'Unknown error');
+      }
+      ExecutionEventEmitter.emitStepFailed(context.executionId, context.agentId, {
+        step_index: context.completedSteps.length,
+        step_name: stepDef.name,
+        step_id: stepDef.id,
+        error: output.metadata.error || 'Unknown error',
+        duration_ms: output.metadata.executionTime || 0,
+      });
 
       // Check if we should continue on error
       if (!stepDef.continueOnError && !this.options.continueOnError) {
@@ -833,31 +965,63 @@ export class WorkflowPilot {
     context: ExecutionContext,
     outputSchema: any
   ): any {
+    console.log('🔍 [buildFinalOutput] Starting output build');
+    console.log('🔍 [buildFinalOutput] outputSchema:', JSON.stringify(outputSchema, null, 2));
+
+    // Get all step outputs for debugging
+    const allStepOutputs = context.getAllStepOutputs();
+    console.log('🔍 [buildFinalOutput] All step outputs:', Array.from(allStepOutputs.entries()).map(([stepId, output]) => ({
+      stepId,
+      data: output.data
+    })));
+
     // If output schema specifies sources
     if (outputSchema && Array.isArray(outputSchema) && outputSchema.length > 0) {
+      console.log('🔍 [buildFinalOutput] Using outputSchema with', outputSchema.length, 'fields');
       const output: any = {};
 
       outputSchema.forEach((schema: any) => {
         if (schema.source) {
           // Get data from specific step
           try {
+            console.log(`🔍 [buildFinalOutput] Resolving field "${schema.name}" from source "${schema.source}"`);
             const value = context.resolveVariable(`{{${schema.source}}}`);
+            console.log(`🔍 [buildFinalOutput] Resolved value for "${schema.name}":`, value);
             output[schema.name] = value;
           } catch (error) {
             console.warn(`Failed to resolve output field ${schema.name} from ${schema.source}:`, error);
           }
+        } else {
+          // If no source is specified, try to find the last relevant step output
+          console.log(`🔍 [buildFinalOutput] No source specified for "${schema.name}", finding last relevant output`);
+
+          // For PluginAction type outputs, use the last step's output
+          const allOutputs = context.getAllStepOutputs();
+          const outputsArray = Array.from(allOutputs.entries());
+
+          if (outputsArray.length > 0) {
+            // Use the last step's output as the final result
+            const [lastStepId, lastOutput] = outputsArray[outputsArray.length - 1];
+            console.log(`🔍 [buildFinalOutput] Using output from last step "${lastStepId}"`);
+            output[schema.name] = lastOutput.data;
+          } else {
+            console.warn(`🔍 [buildFinalOutput] No step outputs available for "${schema.name}"`);
+          }
         }
       });
 
+      console.log('🔍 [buildFinalOutput] Final output (schema-based):', JSON.stringify(output, null, 2));
       return output;
     }
 
     // Default: return all step outputs
+    console.log('🔍 [buildFinalOutput] No output schema, returning all step outputs');
     const output: any = {};
     context.getAllStepOutputs().forEach((stepOutput, stepId) => {
       output[stepId] = stepOutput.data;
     });
 
+    console.log('🔍 [buildFinalOutput] Final output (all steps):', JSON.stringify(output, null, 2));
     return output;
   }
 
@@ -933,48 +1097,48 @@ export class WorkflowPilot {
 
   /**
    * Summarize execution for memory
+   * @returns Number of tokens used for memory summarization
    */
   private async summarizeForMemory(
     agentId: string,
     userId: string,
     executionId: string,
     context: ExecutionContext
-  ): Promise<void> {
+  ): Promise<number> {
     console.log(`🧠 [WorkflowPilot] Summarizing execution for memory`);
 
-    // Get run number from database
-    const { data: runData } = await this.supabase
-      .from('workflow_executions')
-      .select('id')
-      .eq('agent_id', agentId)
-      .eq('user_id', userId)
-      .order('started_at', { ascending: true });
+    // Create instance and call method (uses service role client internally)
+    const memorySummarizer = new MemorySummarizer();
 
-    const runNumber = (runData?.length || 0) + 1;
+    // Call memory summarization and capture token usage
+    // NOTE: run_number is calculated atomically inside MemorySummarizer to avoid race conditions
+    let memoryTokens = 0;
+    try {
+      const memoryResult = await memorySummarizer.summarizeExecution({
+        execution_id: executionId,
+        agent_id: agentId,
+        user_id: userId,
+        run_number: 0, // Placeholder - MemorySummarizer will calculate atomically
+        agent_name: context.agent.agent_name,
+        agent_description: context.agent.system_prompt || context.agent.user_prompt || '',
+        agent_mode: 'workflow_orchestrator',
+        input: context.inputValues,
+        output: this.buildFinalOutput(context, context.agent.output_schema),
+        status: context.failedSteps.length > 0 ? 'failed' : 'success',
+        model_used: 'workflow_orchestrator',
+        credits_consumed: 0, // Will be calculated after adding memory tokens
+        execution_time_ms: context.totalExecutionTime,
+      });
 
-    // Create instance and call method
-    const memorySummarizer = new MemorySummarizer(this.supabase);
+      memoryTokens = memoryResult.tokensUsed.total;
+      console.log(`✅ [WorkflowPilot] Memory summarization complete (${memoryTokens} tokens)`);
+    } catch (error: any) {
+      console.error(`⚠️  [WorkflowPilot] Memory summarization failed (non-critical):`, error.message);
+      // Don't throw - memory summarization is non-critical to workflow execution
+    }
 
-    // Calculate credits using database-driven token-to-credit conversion
-    const creditsConsumed = await tokensToPilotCredits(context.totalTokensUsed, this.supabase);
-
-    await memorySummarizer.summarizeExecution({
-      execution_id: executionId,
-      agent_id: agentId,
-      user_id: userId,
-      run_number: runNumber,
-      agent_name: context.agent.agent_name,
-      agent_description: context.agent.system_prompt || context.agent.user_prompt || '',
-      agent_mode: 'workflow_orchestrator',
-      input: context.inputValues,
-      output: this.buildFinalOutput(context, context.agent.output_schema),
-      status: context.failedSteps.length > 0 ? 'failed' : 'success',
-      model_used: 'workflow_orchestrator',
-      credits_consumed: creditsConsumed,
-      execution_time_ms: context.totalExecutionTime,
-    });
-
-    console.log(`✅ [WorkflowPilot] Memory summarization complete`);
+    // Return memory tokens so caller can add to total
+    return memoryTokens;
   }
 
   /**
@@ -1094,7 +1258,14 @@ export class WorkflowPilot {
         // Update context
         context.setStepOutput(step.id, result);
         context.completedSteps.push(step.id);
-        context.totalTokensUsed += result.metadata?.tokensUsed || 0;
+
+        // Handle both number and object formats for tokensUsed
+        const tokens = result.metadata?.tokensUsed;
+        if (typeof tokens === 'number') {
+          context.totalTokensUsed += tokens;
+        } else if (tokens && typeof tokens === 'object' && 'total' in tokens) {
+          context.totalTokensUsed += tokens.total;
+        }
 
         // Checkpoint after each step
         await this.stateManager.checkpoint(context);
@@ -1143,10 +1314,18 @@ export class WorkflowPilot {
         console.error('❌ AIS update failed (non-critical):', err)
       );
 
-      // 13. Summarize for memory (async)
-      this.summarizeForMemory(agent.id, context.userId, executionId, context).catch(err =>
-        console.error('❌ Memory summarization failed (non-critical):', err)
-      );
+      // 13. Summarize for memory (SYNCHRONOUS - must wait to get token count)
+      let memoryTokens = 0;
+      try {
+        memoryTokens = await this.summarizeForMemory(agent.id, context.userId, executionId, context);
+        console.log(`✅ Memory summarization complete (${memoryTokens} tokens)`);
+      } catch (err) {
+        console.error('❌ Memory summarization failed (non-critical):', err);
+      }
+
+      // Add memory tokens to total
+      const totalTokensWithMemory = context.totalTokensUsed + memoryTokens;
+      console.log(`📊 [WorkflowPilot] Final token count: ${context.totalTokensUsed} (steps) + ${memoryTokens} (memory) = ${totalTokensWithMemory}`);
 
       console.log(`✅ [WorkflowPilot] Resumed execution completed successfully: ${executionId}`);
 
@@ -1158,7 +1337,7 @@ export class WorkflowPilot {
         stepsFailed: context.failedSteps.length,
         stepsSkipped: context.skippedSteps.length,
         totalExecutionTime: context.totalExecutionTime,
-        totalTokensUsed: context.totalTokensUsed,
+        totalTokensUsed: totalTokensWithMemory,
       };
 
     } catch (error: any) {

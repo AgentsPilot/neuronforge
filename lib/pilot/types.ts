@@ -410,7 +410,7 @@ export interface StepOutputMetadata {
   executedAt: string;
   executionTime: number;
   itemCount?: number;
-  tokensUsed?: number;
+  tokensUsed?: number | { total: number; prompt: number; completion: number };
   error?: string;
   errorCode?: string;
   cacheHit?: boolean;
@@ -546,6 +546,11 @@ export interface WorkflowExecutionResult {
   totalExecutionTime: number;
   totalTokensUsed: number;
 
+  // Step details for visualization
+  completedStepIds?: string[];
+  failedStepIds?: string[];
+  skippedStepIds?: string[];
+
   // Error info (if failed)
   error?: string;
   errorStack?: string;
@@ -628,7 +633,8 @@ export interface Agent {
   user_prompt: string;
 
   // Workflow
-  workflow_steps?: WorkflowStep[];
+  workflow_steps?: WorkflowStep[];  // Legacy format (backward compatibility with old agents)
+  pilot_steps?: WorkflowStep[];     // Pilot format (default for all new agents)
 
   // Plugins
   plugins_required: string[];

@@ -2,6 +2,7 @@
 /* V2 specific global styles */
 
 @import url('../globals.css');
+@import "tailwindcss/theme" layer(theme);
 
 /* V2 CSS Variables */
 :root {
@@ -28,12 +29,57 @@
   --v2-error-text: #991B1B;
   --v2-error-icon: #DC2626;
 
+  /* Status colors for workflow steps - Light mode */
+  --v2-status-success-bg: #F0FDF4;
+  --v2-status-success-border: #BBF7D0;
+  --v2-status-success-text: #15803D;
+
+  --v2-status-executing-bg: #EFF6FF;
+  --v2-status-executing-border: #BFDBFE;
+  --v2-status-executing-text: #1E40AF;
+
+  --v2-status-error-bg: #FEF2F2;
+  --v2-status-error-border: #FECACA;
+  --v2-status-error-text: #991B1B;
+
+  --v2-status-warning-bg: #FFFBEB;
+  --v2-status-warning-border: #FDE68A;
+  --v2-status-warning-text: #92400E;
+
   --v2-radius-panel: 24px;
   --v2-radius-card: 16px;
   --v2-radius-button: 12px;
 
   --v2-shadow-card: 0 2px 16px rgba(0, 0, 0, 0.06);
   --v2-shadow-button: 0 4px 16px rgba(99, 102, 241, 0.3);
+}
+
+/* Dark mode overrides */
+.dark {
+  --v2-bg: #0F172A;
+  --v2-surface: #1E293B;
+  --v2-surface-hover: #334155;
+  --v2-border: #475569;
+  --v2-text-primary: #F1F5F9;
+  --v2-text-secondary: #CBD5E1;
+  --v2-text-muted: #94A3B8;
+
+  /* Status colors for workflow steps - Dark mode */
+  --v2-status-success-bg: #1E293B;
+  --v2-status-success-border: #15803D;
+  --v2-status-success-text: #86EFAC;
+
+  --v2-status-executing-bg: #1E293B;
+  --v2-status-executing-border: #1E40AF;
+  --v2-status-executing-text: #93C5FD;
+
+  --v2-status-error-bg: #1E293B;
+  --v2-status-error-border: #991B1B;
+  --v2-status-error-text: #FCA5A5;
+
+  --v2-status-warning-bg: #1E293B;
+  --v2-status-warning-border: #92400E;
+  --v2-status-warning-text: #FDE68A;
 }
 
 /* Smooth transitions for theme changes */

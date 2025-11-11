@@ -508,9 +508,29 @@ export class PluginManagerV2 {
   // Validate parameters against JSON Schema
   private validateParametersAgainstSchema(parameters: any, schema: any): string[] {
     if (this.debug) console.log('DEBUG: Validating parameters against schema');
-    
+
     const errors: string[] = [];
-    
+
+    // PREPROCESSING: Auto-fix stringified JSON objects/arrays (common with Claude API)
+    if (schema.properties && parameters) {
+      for (const [key, value] of Object.entries(parameters)) {
+        const propSchema = schema.properties[key];
+        if (propSchema && propSchema.type && typeof value === 'string') {
+          try {
+            // If schema expects object/array but got string, try parsing JSON
+            if ((propSchema.type === 'object' || propSchema.type === 'array') && value.trim().startsWith('{') || value.trim().startsWith('[')) {
+              const parsed = JSON.parse(value);
+              if (this.debug) console.log(`DEBUG: Auto-parsed parameter ${key} from string to ${propSchema.type}`);
+              parameters[key] = parsed;
+            }
+          } catch (e) {
+            // Parsing failed, let validation catch it
+            if (this.debug) console.log(`DEBUG: Failed to auto-parse parameter ${key}:`, e);
+          }
+        }
+      }
+    }
+
     // Check required fields
     if (schema.required) {
       for (const required of schema.required) {
@@ -519,7 +539,7 @@ export class PluginManagerV2 {
         }
       }
     }
-    
+
     // Basic type checking for properties
     if (schema.properties && parameters) {
       for (const [key, value] of Object.entries(parameters)) {
@@ -527,7 +547,7 @@ export class PluginManagerV2 {
         if (propSchema && propSchema.type) {
           const actualType = typeof value;
           const expectedType = propSchema.type;
-          
+
           if (expectedType === 'array' && !Array.isArray(value)) {
             errors.push(`Parameter ${key} should be an array`);
           } else if (expectedType === 'object' && (actualType !== 'object' || Array.isArray(value))) {

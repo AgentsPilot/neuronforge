@@ -10,16 +10,37 @@ import { supabase } from '@/lib/supabaseClient'
 import { DarkModeToggle } from '@/components/v2/DarkModeToggle'
 import {
   Clock,
-  Activity,
-  FileText,
   Plus,
-  TrendingUp
+  Globe,
+  Mail
 } from 'lucide-react'
+import {
+  SiGmail,
+  SiGooglecalendar,
+  SiGoogledrive,
+  SiGoogledocs,
+  SiGooglesheets,
+  SiGithub,
+  SiSlack,
+  SiHubspot,
+  SiWhatsapp,
+  SiTwilio,
+  SiAmazon,
+  SiOpenai
+} from 'react-icons/si'
+
+interface ConnectedPlugin {
+  plugin_key: string
+  plugin_name?: string
+  status: string
+}
 
 export function V2Footer() {
   const router = useRouter()
   const { user } = useAuth()
   const [lastRunTime, setLastRunTime] = useState<Date | null>(null)
+  const [connectedPlugins, setConnectedPlugins] = useState<ConnectedPlugin[]>([])
+  const [hoveredPlugin, setHoveredPlugin] = useState<string | null>(null)
 
   useEffect(() => {
     if (!user) return
@@ -42,7 +63,32 @@ export function V2Footer() {
       }
     }
 
+    const fetchConnectedPlugins = async () => {
+      try {
+        const { data: plugins, error } = await supabase
+          .from('plugin_connections')
+          .select('plugin_key, plugin_name, status')
+          .eq('user_id', user.id)
+          .eq('status', 'active')
+
+        if (!error && plugins) {
+          // Deduplicate plugins by plugin_key
+          const uniquePlugins = plugins.reduce((acc, plugin) => {
+            const existing = acc.find(p => p.plugin_key === plugin.plugin_key)
+            if (!existing) {
+              acc.push(plugin)
+            }
+            return acc
+          }, [] as ConnectedPlugin[])
+          setConnectedPlugins(uniquePlugins)
+        }
+      } catch (error) {
+        console.error('Error fetching connected plugins:', error)
+      }
+    }
+
     fetchLastRun()
+    fetchConnectedPlugins()
   }, [user])
 
   const getTimeAgo = (date: Date | null) => {
@@ -58,9 +104,40 @@ export function V2Footer() {
     return 'Just now'
   }
 
+  const getPluginDisplayName = (pluginKey: string) => {
+    // Extract readable name from plugin key (e.g., "google_gmail" -> "Gmail")
+    const name = pluginKey.split('_').pop() || pluginKey
+    return name.charAt(0).toUpperCase() + name.slice(1)
+  }
+
+  // Plugin icons mapping with real brand icons from react-icons/si (Simple Icons)
+  // Using authentic brand colors as seen in marketing page
+  const pluginIcons: Record<string, React.ReactNode> = {
+    'google-mail': <SiGmail className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#EA4335' }} />,
+    'gmail': <SiGmail className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#EA4335' }} />,
+    'google-calendar': <SiGooglecalendar className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#4285F4' }} />,
+    'google-drive': <SiGoogledrive className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#4285F4' }} />,
+    'google-docs': <SiGoogledocs className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#4285F4' }} />,
+    'google-sheets': <SiGooglesheets className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#0F9D58' }} />,
+    'github': <SiGithub className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#FFFFFF' }} />,
+    'slack': <SiSlack className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#4A154B' }} />,
+    'hubspot': <SiHubspot className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#FF7A59' }} />,
+    'outlook': <Mail className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#0078D4' }} />,
+    'whatsapp': <SiWhatsapp className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#25D366' }} />,
+    'whatsapp-business': <SiWhatsapp className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#25D366' }} />,
+    'twilio': <SiTwilio className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#F22F46' }} />,
+    'aws': <SiAmazon className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#FF9900' }} />,
+    'chatgpt-research': <SiOpenai className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#10A37F' }} />,
+  }
+
+  const getPluginIcon = (pluginKey: string) => {
+    return pluginIcons[pluginKey] || <Globe className="w-5 h-5 sm:w-6 sm:h-6 text-slate-400" />
+  }
+
   return (
     <div className="mt-6 sm:mt-8 lg:mt-10 pt-3 sm:pt-4 lg:pt-5">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-3">
+
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
         {/* Last Run */}
         <div className="flex items-center gap-2 text-sm text-[var(--v2-text-secondary)]">
           <Clock className="w-4 h-4 text-[var(--v2-text-muted)]" />
@@ -70,28 +147,64 @@ export function V2Footer() {
           </span>
         </div>
 
+        {/* Connected Plugin Icons - Center */}
+        {connectedPlugins.length > 0 && (
+          <div className="flex gap-2 sm:gap-3 flex-wrap justify-center">
+            {connectedPlugins.map((plugin) => (
+              <div
+                key={plugin.plugin_key}
+                className="relative w-12 h-12 sm:w-14 sm:h-14 bg-[var(--v2-surface)] flex items-center justify-center flex-shrink-0 cursor-pointer transition-all duration-200 hover:scale-110 border border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:shadow-lg"
+                style={{
+                  borderRadius: 'var(--v2-radius-button)',
+                  boxShadow: 'var(--v2-shadow-card)'
+                }}
+                onMouseEnter={() => setHoveredPlugin(plugin.plugin_key)}
+                onMouseLeave={() => setHoveredPlugin(null)}
+              >
+                {getPluginIcon(plugin.plugin_key)}
+                {/* Active indicator with V2 styling */}
+                <div
+                  className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-green-500 rounded-full border-2 shadow-sm"
+                  style={{ borderColor: 'var(--v2-bg)' }}
+                ></div>
+
+                {/* Tooltip with V2 design */}
+                {hoveredPlugin === plugin.plugin_key && (
+                  <div
+                    className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 px-3 py-2 text-xs font-semibold whitespace-nowrap pointer-events-none animate-fade-in"
+                    style={{
+                      backgroundColor: 'var(--v2-surface)',
+                      border: '1px solid var(--v2-border)',
+                      color: 'var(--v2-text-primary)',
+                      borderRadius: 'var(--v2-radius-button)',
+                      boxShadow: 'var(--v2-shadow-card)',
+                      zIndex: 1000
+                    }}
+                  >
+                    {plugin.plugin_name || getPluginDisplayName(plugin.plugin_key)}
+                    {/* Tooltip arrow */}
+                    <div
+                      className="absolute left-1/2 -translate-x-1/2"
+                      style={{
+                        top: '100%',
+                        width: 0,
+                        height: 0,
+                        borderLeft: '6px solid transparent',
+                        borderRight: '6px solid transparent',
+                        borderTop: '6px solid var(--v2-surface)'
+                      }}
+                    ></div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Action Buttons */}
-        <div className="flex gap-2 sm:gap-2.5 overflow-x-auto pb-2 sm:pb-0 w-full sm:w-auto">
+        <div className="flex gap-2 sm:gap-2.5">
           {/* Dark Mode Toggle */}
           <DarkModeToggle />
-
-          <button
-            onClick={() => router.push('/agents')}
-            className="w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] flex items-center justify-center hover:scale-105 transition-transform duration-200 flex-shrink-0"
-            style={{ borderRadius: 'var(--v2-radius-button)' }}
-            title="View Agents"
-          >
-            <Activity className="w-4.5 h-4.5 sm:w-5 sm:h-5 text-[#3B82F6]" />
-          </button>
-
-          <button
-            onClick={() => router.push('/integrations')}
-            className="w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] flex items-center justify-center hover:scale-105 transition-transform duration-200 flex-shrink-0"
-            style={{ borderRadius: 'var(--v2-radius-button)' }}
-            title="Integrations"
-          >
-            <FileText className="w-4.5 h-4.5 sm:w-5 sm:h-5 text-[#10B981]" />
-          </button>
 
           <button
             onClick={() => router.push('/agents/new')}
@@ -100,15 +213,6 @@ export function V2Footer() {
             title="Create New Agent"
           >
             <Plus className="w-4.5 h-4.5 sm:w-5 sm:h-5 text-[#3B82F6]" />
-          </button>
-
-          <button
-            onClick={() => router.push('/v2/monitoring')}
-            className="w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] flex items-center justify-center hover:scale-105 transition-transform duration-200 flex-shrink-0"
-            style={{ borderRadius: 'var(--v2-radius-button)' }}
-            title="Monitoring"
-          >
-            <TrendingUp className="w-4.5 h-4.5 sm:w-5 sm:h-5 text-[#10B981]" />
           </button>
         </div>
       </div>

@@ -84,7 +84,7 @@ export class StepExecutor {
       const resolvedParams = context.resolveAllVariables(step.params || {});
 
       let result: any;
-      let tokensUsed = 0;
+      let tokensUsed: number | { total: number; prompt: number; completion: number } = 0;
 
       // Route to appropriate executor based on step type
       switch (step.type) {
@@ -315,7 +315,7 @@ export class StepExecutor {
     step: LLMDecisionStep | AIProcessingStep,
     params: any,
     context: ExecutionContext
-  ): Promise<{ data: any; tokensUsed: number }> {
+  ): Promise<{ data: any; tokensUsed: { total: number; prompt: number; completion: number } }> {
     console.log(`[StepExecutor] Executing LLM decision: ${step.name}`);
 
     const stepStartTime = Date.now();
@@ -374,6 +374,58 @@ export class StepExecutor {
     // Build prompt with context
     const prompt = step.prompt || step.description || step.name;
 
+    // FIX: Extract variable references from prompt and resolve them into params
+    // This handles cases where Smart Agent Builder creates prompts like:
+    // "Analyze the following emails: {{step1.data}}"
+    // We need to extract step1.data and add it to params
+    console.log('🔍 [StepExecutor] Original params:', JSON.stringify(params, null, 2));
+    console.log('🔍 [StepExecutor] Prompt:', prompt);
+
+    const enrichedParams = { ...params };
+
+    // Extract all {{variable}} references from the prompt
+    const variablePattern = /\{\{([^}]+)\}\}/g;
+    const matches = prompt.match(variablePattern);
+
+    if (matches && matches.length > 0) {
+      console.log('🔍 [StepExecutor] Found variable references in prompt:', matches);
+
+      for (const match of matches) {
+        try {
+          const resolved = context.resolveVariable(match);
+
+          // Extract the variable name for use as a key
+          // e.g., "{{step1.data}}" -> "step1_data"
+          const varName = match.replace(/\{\{|\}\}/g, '').replace(/\./g, '_');
+
+          // Only add to params if it's not already there
+          if (!enrichedParams[varName]) {
+            enrichedParams[varName] = resolved;
+            console.log(`🔍 [StepExecutor] Added "${varName}" to params from prompt variable "${match}"`);
+          }
+        } catch (error: any) {
+          console.warn(`🔍 [StepExecutor] Could not resolve variable "${match}" from prompt:`, error.message);
+        }
+      }
+    }
+
+    // If params are still empty after enrichment, try to get data from previous step
+    if (Object.keys(enrichedParams).length === 0) {
+      console.log('🔍 [StepExecutor] Params still empty, checking for previous step outputs...');
+
+      const allOutputs = context.getAllStepOutputs();
+      if (allOutputs.size > 0) {
+        // Get the last step's output
+        const outputsArray = Array.from(allOutputs.entries());
+        const [lastStepId, lastOutput] = outputsArray[outputsArray.length - 1];
+
+        console.log(`🔍 [StepExecutor] Using output from previous step "${lastStepId}" as default params`);
+        enrichedParams.data = lastOutput.data;
+      }
+    }
+
+    console.log('🔍 [StepExecutor] Enriched params:', JSON.stringify(enrichedParams, null, 2));
+
     const contextSummary = this.buildContextSummary(context);
 
     const fullPrompt = `
@@ -383,16 +435,29 @@ ${prompt}
 ${contextSummary}
 
 ## Data for Analysis:
-${JSON.stringify(params, null, 2)}
+${JSON.stringify(enrichedParams, null, 2)}
 
 Please analyze the above and provide your decision/response.
     `.trim();
 
     // Use AgentKit for intelligent decision (with optional model override)
     // If a model was selected by routing, temporarily override the agent's model preference
-    const agentForExecution = selectedModel
-      ? { ...context.agent, model_preference: selectedModel }
-      : context.agent;
+
+    // IMPORTANT: For ai_processing steps, don't pass plugins
+    // ai_processing = text analysis/summarization (no tool use)
+    // llm_decision = intelligent decision-making with tools (has plugin access)
+    const isAIProcessing = step.type === 'ai_processing';
+
+    const agentForExecution: any = {
+      ...context.agent,
+      // Filter out plugins for ai_processing to prevent LLM from calling tools
+      plugins_required: isAIProcessing ? [] : context.agent.plugins_required
+    };
+
+    // Override model if selected by routing
+    if (selectedModel) {
+      agentForExecution.model_preference = selectedModel;
+    }
 
     const result = await runAgentKit(
       context.userId,
@@ -443,13 +508,33 @@ Please analyze the above and provide your decision/response.
       );
     }
 
+    // Return AI processing result with multiple field aliases for flexibility
+    // This allows users to reference the output semantically based on their use case:
+    // - {{stepX.data.result}} - generic, always works
+    // - {{stepX.data.summary}} - for summarization tasks
+    // - {{stepX.data.analysis}} - for analysis tasks
+    // - {{stepX.data.decision}} - for decision-making tasks
+    // - {{stepX.data.response}} - raw response
+    const aiResponse = result.response;
+
     return {
       data: {
-        decision: result.response,
-        reasoning: result.response,
+        // Generic aliases (always available)
+        result: aiResponse,
+        response: aiResponse,
+        output: aiResponse,
+
+        // Semantic aliases for common use cases
+        summary: aiResponse,
+        analysis: aiResponse,
+        decision: aiResponse,
+        reasoning: aiResponse,
+        classification: aiResponse,
+
+        // Additional metadata
         toolCalls: result.toolCalls,
       },
-      tokensUsed: result.tokensUsed.total,
+      tokensUsed: result.tokensUsed, // Return full breakdown {total, prompt, completion}
     };
   }
 

@@ -91,9 +91,14 @@ export class ExecutionContext {
       }
     }
 
-    // Update token count
+    // Update token count (handle both number and object formats)
     if (output.metadata.tokensUsed) {
-      this.totalTokensUsed += output.metadata.tokensUsed;
+      const tokens = output.metadata.tokensUsed;
+      if (typeof tokens === 'number') {
+        this.totalTokensUsed += tokens;
+      } else if (typeof tokens === 'object' && 'total' in tokens) {
+        this.totalTokensUsed += tokens.total;
+      }
     }
 
     // Update execution time

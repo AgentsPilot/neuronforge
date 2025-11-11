@@ -111,8 +111,8 @@ export class PerStepModelRouter {
       // Fetch system settings
       const { data: systemData, error: systemError } = await this.supabase
         .from('system_settings_config')
-        .select('setting_key, value')
-        .in('setting_key', [
+        .select('key, value')
+        .in('key', [
           'pilot_per_step_routing_enabled',
           'pilot_routing_default_strategy',
           'pilot_routing_strategy_conservative',
@@ -165,18 +165,18 @@ export class PerStepModelRouter {
 
       // Populate from system settings
       systemData?.forEach(item => {
-        if (item.setting_key === 'pilot_per_step_routing_enabled') {
+        if (item.key === 'pilot_per_step_routing_enabled') {
           config.enabled = item.value === true || item.value === 'true';
-        } else if (item.setting_key === 'pilot_routing_default_strategy') {
+        } else if (item.key === 'pilot_routing_default_strategy') {
           const strategy = String(item.value).replace(/"/g, '');
           config.defaultStrategy = strategy as any;
-        } else if (item.setting_key === 'pilot_routing_strategy_conservative') {
+        } else if (item.key === 'pilot_routing_strategy_conservative') {
           const weights = JSON.parse(item.value);
           config.strategies.conservative = weights;
-        } else if (item.setting_key === 'pilot_routing_strategy_balanced') {
+        } else if (item.key === 'pilot_routing_strategy_balanced') {
           const weights = JSON.parse(item.value);
           config.strategies.balanced = weights;
-        } else if (item.setting_key === 'pilot_routing_strategy_aggressive') {
+        } else if (item.key === 'pilot_routing_strategy_aggressive') {
           const weights = JSON.parse(item.value);
           config.strategies.aggressive = weights;
         }

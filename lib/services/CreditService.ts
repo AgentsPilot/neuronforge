@@ -191,7 +191,7 @@ export class CreditService {
       credits_delta: -finalCredits,
       balance_before: currentBalance.balance,
       balance_after: newBalance,
-      transaction_type: 'charge',
+      transaction_type: 'deduction', // DB constraint requires 'deduction' for charges
       activity_type: 'agent_execution',
       description: `Agent execution (${tokens} tokens × ${intensityMultiplier.toFixed(2)} intensity)`,
       metadata: {
@@ -249,7 +249,7 @@ export class CreditService {
       credits_delta: -credits,
       balance_before: currentBalance.balance,
       balance_after: newBalance,
-      transaction_type: 'charge',
+      transaction_type: 'deduction', // DB constraint requires 'deduction' for charges
       activity_type: 'agent_creation',
       description: `Agent creation (${tokens} tokens)`,
       metadata: { tokens }

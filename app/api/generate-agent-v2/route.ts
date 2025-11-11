@@ -170,6 +170,7 @@ export async function POST(req: Request) {
       operation: step.operation,
       plugin: step.plugin,
       plugin_action: step.plugin_action,
+      params: step.params || {}, // IMPORTANT: Preserve params from AI analysis
       validated: true,
       type: step.plugin === 'ai_processing' ? 'ai_processing' : 'plugin_action'
     }))
@@ -184,34 +185,11 @@ export async function POST(req: Request) {
 
     console.log(`🔧 Pilot system status: ${pilotEnabled ? 'enabled' : 'disabled'}`)
 
-    // Generate pilot_steps (CONDITIONAL - for Pilot execution)
-    let pilot_steps = null
-    if (pilotEnabled && requiresPilotFeatures(analysis, prompt)) {
-      pilot_steps = generatePilotSteps(analysis.workflow_steps, workflow_steps)
-      console.log(`🚀 Generated ${pilot_steps.length} pilot_steps for Pilot execution`)
-    }
-
-    // Helper function to detect if workflow needs Pilot features
-    function requiresPilotFeatures(analysis: any, prompt: string): boolean {
-      const reasoning = (analysis.reasoning || '').toLowerCase()
-      const promptLower = prompt.toLowerCase()
-
-      return (
-        // Check for advanced features in reasoning or prompt
-        reasoning.includes('approval') ||
-        reasoning.includes('conditional') ||
-        reasoning.includes('enrichment') ||
-        reasoning.includes('merge') ||
-        reasoning.includes('vip') ||
-        promptLower.includes('approval') ||
-        promptLower.includes('if') ||
-        promptLower.includes('condition') ||
-        promptLower.includes('when') ||
-        promptLower.includes('enrichment') ||
-        // Complex workflows (3+ steps likely need Pilot features)
-        analysis.workflow_steps?.length > 3
-      )
-    }
+    // Generate pilot_steps (ALWAYS - default format for all agents)
+    // pilot_steps is the normalized Pilot format, preferred for execution
+    // workflow_steps is kept for backward compatibility with old agents
+    const pilot_steps = generatePilotSteps(analysis.workflow_steps, workflow_steps)
+    console.log(`🚀 Generated ${pilot_steps.length} pilot_steps (normalized Pilot format)`)
 
     // Helper function to convert legacy format to Pilot format
     function generatePilotSteps(analysisSteps: any[], legacySteps: any[]): any[] {
@@ -235,11 +213,13 @@ export async function POST(req: Request) {
 
         // Convert ai_processing to Pilot ai_processing
         if (step.plugin === 'ai_processing' || legacySteps[idx]?.type === 'ai_processing') {
+          // Use prompt from params if available, otherwise use operation
+          const prompt = step.params?.prompt || step.operation
           return {
             ...base,
             type: 'ai_processing',
-            prompt: step.operation,
-            params: {},
+            prompt: prompt,
+            params: step.params || {},
           }
         }
 

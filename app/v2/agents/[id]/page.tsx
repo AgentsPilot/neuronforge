@@ -841,6 +841,50 @@ export default function V2AgentDetailPage() {
                     </div>
                   )}
 
+                  {/* Execution Summary for Workflow Executions */}
+                  {selectedExecution.logs?.workflowExecution && (
+                    <div className="border rounded-lg p-4" style={{ backgroundColor: 'var(--v2-status-executing-bg)', borderColor: 'var(--v2-status-executing-border)' }}>
+                      <h4 className="text-sm font-semibold mb-3 flex items-center gap-2" style={{ color: 'var(--v2-status-executing-text)' }}>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                        </svg>
+                        Workflow Execution Summary
+                      </h4>
+                      <div className="grid grid-cols-2 gap-3 text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-[var(--v2-text-secondary)]">Steps Completed:</span>
+                          <span className="font-bold text-[var(--v2-text-primary)]">{selectedExecution.logs.stepsCompleted || 0}</span>
+                        </div>
+                        {(selectedExecution.logs.stepsFailed || 0) > 0 && (
+                          <div className="flex justify-between">
+                            <span className="text-[var(--v2-text-secondary)]">Steps Failed:</span>
+                            <span className="font-bold text-red-600 dark:text-red-400">{selectedExecution.logs.stepsFailed}</span>
+                          </div>
+                        )}
+                        {(selectedExecution.logs.stepsSkipped || 0) > 0 && (
+                          <div className="flex justify-between">
+                            <span className="text-[var(--v2-text-secondary)]">Steps Skipped:</span>
+                            <span className="font-bold text-yellow-600 dark:text-yellow-400">{selectedExecution.logs.stepsSkipped}</span>
+                          </div>
+                        )}
+                        {selectedExecution.execution_duration_ms && (
+                          <div className="flex justify-between">
+                            <span className="text-[var(--v2-text-secondary)]">Duration:</span>
+                            <span className="font-bold text-[var(--v2-text-primary)]">{formatDuration(selectedExecution.execution_duration_ms)}</span>
+                          </div>
+                        )}
+                        {selectedExecution.logs.executionId && (
+                          <div className="col-span-2 pt-2 mt-2 border-t" style={{ borderColor: 'var(--v2-status-executing-border)' }}>
+                            <span className="text-[var(--v2-text-secondary)]">Execution ID:</span>
+                            <p className="font-mono text-[10px] text-[var(--v2-text-primary)] mt-1 break-all">
+                              {selectedExecution.logs.executionId}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Output */}
                   {selectedExecution.output && (
                     <div>
@@ -948,24 +992,64 @@ export default function V2AgentDetailPage() {
                   {(selectedExecution.logs?.model || selectedExecution.logs?.provider) && (
                     <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-4">
                       <h4 className="text-sm font-semibold text-[var(--v2-text-primary)] mb-3">
-                        AI Model Information
+                        {selectedExecution.logs.workflowExecution ? 'Execution Type' : 'AI Model Information'}
                       </h4>
                       <div className="space-y-2 text-xs">
-                        {selectedExecution.logs.model && (
-                          <div className="flex justify-between">
-                            <span className="text-[var(--v2-text-muted)]">Model:</span>
-                            <span className="text-[var(--v2-text-primary)] font-medium">
-                              {selectedExecution.logs.model}
-                            </span>
-                          </div>
-                        )}
-                        {selectedExecution.logs.provider && (
-                          <div className="flex justify-between">
-                            <span className="text-[var(--v2-text-muted)]">Provider:</span>
-                            <span className="text-[var(--v2-text-primary)] font-medium capitalize">
-                              {selectedExecution.logs.provider}
-                            </span>
-                          </div>
+                        {selectedExecution.logs.workflowExecution ? (
+                          <>
+                            <div className="flex justify-between">
+                              <span className="text-[var(--v2-text-muted)]">Type:</span>
+                              <span className="text-[var(--v2-text-primary)] font-medium">
+                                Workflow Orchestrator
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-[var(--v2-text-muted)]">Steps Completed:</span>
+                              <span className="text-[var(--v2-text-primary)] font-medium">
+                                {selectedExecution.logs.stepsCompleted || 0}
+                              </span>
+                            </div>
+                            {(selectedExecution.logs.stepsFailed || 0) > 0 && (
+                              <div className="flex justify-between">
+                                <span className="text-[var(--v2-text-muted)]">Steps Failed:</span>
+                                <span className="text-red-600 dark:text-red-400 font-medium">
+                                  {selectedExecution.logs.stepsFailed}
+                                </span>
+                              </div>
+                            )}
+                            {(selectedExecution.logs.stepsSkipped || 0) > 0 && (
+                              <div className="flex justify-between">
+                                <span className="text-[var(--v2-text-muted)]">Steps Skipped:</span>
+                                <span className="text-yellow-600 dark:text-yellow-400 font-medium">
+                                  {selectedExecution.logs.stepsSkipped}
+                                </span>
+                              </div>
+                            )}
+                            <div className="pt-2 mt-2 border-t border-[var(--v2-border)]">
+                              <p className="text-[10px] text-[var(--v2-text-muted)] italic">
+                                Uses dynamic model routing per step for optimal performance
+                              </p>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            {selectedExecution.logs.model && (
+                              <div className="flex justify-between">
+                                <span className="text-[var(--v2-text-muted)]">Model:</span>
+                                <span className="text-[var(--v2-text-primary)] font-medium">
+                                  {selectedExecution.logs.model}
+                                </span>
+                              </div>
+                            )}
+                            {selectedExecution.logs.provider && (
+                              <div className="flex justify-between">
+                                <span className="text-[var(--v2-text-muted)]">Provider:</span>
+                                <span className="text-[var(--v2-text-primary)] font-medium capitalize">
+                                  {selectedExecution.logs.provider}
+                                </span>
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     </div>
@@ -987,25 +1071,33 @@ export default function V2AgentDetailPage() {
                         </span>
                       </div>
 
-                      {/* Credit Breakdown */}
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-2">
-                          <div className="text-[10px] text-blue-600 dark:text-blue-400 mb-0.5">Input</div>
-                          <div className="text-sm font-bold text-blue-700 dark:text-blue-300">
-                            {selectedExecution.logs?.tokensUsed?.prompt
-                              ? Math.ceil(selectedExecution.logs.tokensUsed.prompt / 10).toLocaleString()
-                              : '0'}
+                      {/* Credit Breakdown - Show breakdown only if we have real data */}
+                      {selectedExecution.logs?.tokensUsed?.prompt && selectedExecution.logs?.tokensUsed?.completion ? (
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="bg-blue-50 dark:bg-slate-800 border border-blue-200 dark:border-blue-700 rounded-lg p-2">
+                            <div className="text-[10px] text-blue-600 dark:text-blue-400 mb-0.5">Input</div>
+                            <div className="text-sm font-bold text-blue-700 dark:text-blue-300">
+                              {Math.ceil(selectedExecution.logs.tokensUsed.prompt / 10).toLocaleString()}
+                            </div>
+                          </div>
+                          <div className="bg-purple-50 dark:bg-slate-800 border border-purple-200 dark:border-purple-700 rounded-lg p-2">
+                            <div className="text-[10px] text-purple-600 dark:text-purple-400 mb-0.5">Output</div>
+                            <div className="text-sm font-bold text-purple-700 dark:text-purple-300">
+                              {Math.ceil(selectedExecution.logs.tokensUsed.completion / 10).toLocaleString()}
+                            </div>
                           </div>
                         </div>
-                        <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-2">
-                          <div className="text-[10px] text-purple-600 dark:text-purple-400 mb-0.5">Output</div>
-                          <div className="text-sm font-bold text-purple-700 dark:text-purple-300">
-                            {selectedExecution.logs?.tokensUsed?.completion
-                              ? Math.ceil(selectedExecution.logs.tokensUsed.completion / 10).toLocaleString()
+                      ) : (
+                        <div className="border rounded-lg p-2 text-center" style={{ backgroundColor: 'var(--v2-bg)', borderColor: 'var(--v2-border)' }}>
+                          <div className="text-[10px] mb-0.5" style={{ color: 'var(--v2-text-muted)' }}>Tokens Used</div>
+                          <div className="text-sm font-bold" style={{ color: 'var(--v2-text-primary)' }}>
+                            {selectedExecution.logs?.tokensUsed?.total
+                              ? Math.ceil(selectedExecution.logs.tokensUsed.total / 10).toLocaleString()
                               : '0'}
                           </div>
+                          <div className="text-[9px] mt-0.5" style={{ color: 'var(--v2-text-muted)' }}>Total</div>
                         </div>
-                      </div>
+                      )}
                     </div>
                   </div>
 
