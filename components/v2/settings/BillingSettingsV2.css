@@ -1,0 +1,277 @@
+/* BillingSettingsV2.css - Apply V2 design system to V1 billing component */
+
+/* ===== GENERAL STYLING ===== */
+.billing-v2-wrapper {
+  /* Use V2 text colors */
+  color: var(--v2-text-primary);
+}
+
+/* ===== TABS STYLING ===== */
+.billing-v2-wrapper .flex.bg-gray-100\/80 {
+  background-color: var(--v2-surface) !important;
+  border: 1px solid rgba(156, 163, 175, 0.2);
+  box-shadow: var(--v2-shadow-card);
+  padding: 0.375rem;
+}
+
+.dark .billing-v2-wrapper .flex.bg-gray-100\/80 {
+  border-color: rgba(75, 85, 99, 0.3);
+}
+
+/* Tab buttons */
+.billing-v2-wrapper .flex.bg-gray-100\/80 button {
+  color: var(--v2-text-secondary);
+  border-radius: var(--v2-radius-button) !important;
+}
+
+.billing-v2-wrapper .flex.bg-gray-100\/80 button.bg-white {
+  background: linear-gradient(to right, var(--v2-primary), var(--v2-secondary)) !important;
+  color: white !important;
+  box-shadow: var(--v2-shadow-button);
+}
+
+.billing-v2-wrapper .flex.bg-gray-100\/80 button:not(.bg-white):hover {
+  background-color: var(--v2-bg);
+  color: var(--v2-text-primary);
+}
+
+/* ===== CARDS & CONTAINERS ===== */
+.billing-v2-wrapper .bg-white,
+.billing-v2-wrapper .bg-gradient-to-br {
+  background-color: var(--v2-surface) !important;
+  border-color: rgba(156, 163, 175, 0.2) !important;
+  border-radius: var(--v2-radius-card) !important;
+}
+
+.dark .billing-v2-wrapper .bg-white,
+.dark .billing-v2-wrapper .bg-gradient-to-br {
+  border-color: rgba(75, 85, 99, 0.3) !important;
+}
+
+/* Stats cards - preserve their gradients but adjust borders */
+.billing-v2-wrapper .bg-gradient-to-br.from-green-50,
+.billing-v2-wrapper .bg-gradient-to-br.from-blue-50,
+.billing-v2-wrapper .bg-gradient-to-br.from-orange-50,
+.billing-v2-wrapper .bg-gradient-to-br.from-yellow-50,
+.billing-v2-wrapper .bg-gradient-to-br.from-purple-50,
+.billing-v2-wrapper .bg-gradient-to-br.from-gray-50 {
+  border-radius: var(--v2-radius-card) !important;
+}
+
+/* Dark mode gradients for stats cards */
+.dark .billing-v2-wrapper .bg-gradient-to-br.from-green-50 {
+  background: linear-gradient(to bottom right, rgba(34, 197, 94, 0.1), rgba(16, 185, 129, 0.1)) !important;
+}
+
+.dark .billing-v2-wrapper .bg-gradient-to-br.from-blue-50 {
+  background: linear-gradient(to bottom right, rgba(59, 130, 246, 0.1), rgba(99, 102, 241, 0.1)) !important;
+}
+
+.dark .billing-v2-wrapper .bg-gradient-to-br.from-orange-50 {
+  background: linear-gradient(to bottom right, rgba(249, 115, 22, 0.1), rgba(239, 68, 68, 0.1)) !important;
+}
+
+.dark .billing-v2-wrapper .bg-gradient-to-br.from-yellow-50 {
+  background: linear-gradient(to bottom right, rgba(234, 179, 8, 0.1), rgba(245, 158, 11, 0.1)) !important;
+}
+
+.dark .billing-v2-wrapper .bg-gradient-to-br.from-purple-50 {
+  background: linear-gradient(to bottom right, rgba(168, 85, 247, 0.1), rgba(236, 72, 153, 0.1)) !important;
+}
+
+.dark .billing-v2-wrapper .bg-gradient-to-br.from-gray-50 {
+  background: linear-gradient(to bottom right, rgba(107, 114, 128, 0.1), rgba(100, 116, 139, 0.1)) !important;
+}
+
+/* ===== BUTTONS ===== */
+.billing-v2-wrapper button {
+  border-radius: var(--v2-radius-button) !important;
+  transition: all 200ms;
+}
+
+/* Primary buttons (gradient) */
+.billing-v2-wrapper button.bg-gradient-to-r {
+  box-shadow: var(--v2-shadow-button);
+}
+
+.billing-v2-wrapper button.bg-gradient-to-r:hover {
+  transform: scale(1.05);
+}
+
+/* Secondary buttons */
+.billing-v2-wrapper button.bg-slate-100,
+.billing-v2-wrapper button.border-slate-300 {
+  background-color: var(--v2-surface);
+  border-color: rgba(156, 163, 175, 0.3);
+  color: var(--v2-text-primary);
+}
+
+.dark .billing-v2-wrapper button.bg-slate-100,
+.dark .billing-v2-wrapper button.border-slate-300 {
+  border-color: rgba(75, 85, 99, 0.5);
+}
+
+.billing-v2-wrapper button.bg-slate-100:hover,
+.billing-v2-wrapper button.border-slate-300:hover {
+  background-color: var(--v2-bg);
+}
+
+/* ===== INPUTS & SLIDERS ===== */
+.billing-v2-wrapper input[type="range"] {
+  border-radius: var(--v2-radius-button);
+}
+
+/* ===== TEXT COLORS ===== */
+.billing-v2-wrapper .text-slate-900 {
+  color: var(--v2-text-primary) !important;
+}
+
+.billing-v2-wrapper .text-slate-600,
+.billing-v2-wrapper .text-slate-700 {
+  color: var(--v2-text-secondary) !important;
+}
+
+.billing-v2-wrapper .text-slate-500 {
+  color: var(--v2-text-muted) !important;
+}
+
+/* ===== MODALS ===== */
+.billing-v2-wrapper .fixed.inset-0 > div:not(.absolute) {
+  background-color: var(--v2-surface) !important;
+  border-radius: var(--v2-radius-card) !important;
+  border-color: rgba(156, 163, 175, 0.2) !important;
+}
+
+.dark .billing-v2-wrapper .fixed.inset-0 > div:not(.absolute) {
+  border-color: rgba(75, 85, 99, 0.3) !important;
+}
+
+/* Modal backdrop */
+.billing-v2-wrapper .fixed.inset-0 .absolute.inset-0 {
+  backdrop-filter: blur(12px);
+}
+
+/* ===== INFO BOXES ===== */
+.billing-v2-wrapper .bg-blue-50\/50 {
+  background-color: rgba(59, 130, 246, 0.1) !important;
+  border-color: rgba(59, 130, 246, 0.2) !important;
+  border-radius: var(--v2-radius-button) !important;
+}
+
+.dark .billing-v2-wrapper .bg-blue-50\/50 {
+  background-color: rgba(59, 130, 246, 0.15) !important;
+  border-color: rgba(59, 130, 246, 0.3) !important;
+}
+
+/* ===== PRICE BREAKDOWN CARD ===== */
+.billing-v2-wrapper .bg-gradient-to-br.from-blue-50\/50 {
+  background: rgba(59, 130, 246, 0.05) !important;
+  border-radius: var(--v2-radius-card) !important;
+}
+
+.dark .billing-v2-wrapper .bg-gradient-to-br.from-blue-50\/50 {
+  background: rgba(59, 130, 246, 0.1) !important;
+}
+
+/* ===== BOOST PACK CARDS ===== */
+.billing-v2-wrapper .bg-gradient-to-br.from-purple-50\/30 {
+  background: rgba(168, 85, 247, 0.05) !important;
+  border-color: rgba(168, 85, 247, 0.2) !important;
+  border-radius: var(--v2-radius-card) !important;
+}
+
+.dark .billing-v2-wrapper .bg-gradient-to-br.from-purple-50\/30 {
+  background: rgba(168, 85, 247, 0.1) !important;
+  border-color: rgba(168, 85, 247, 0.3) !important;
+}
+
+/* ===== CANCELLATION BANNER ===== */
+.billing-v2-wrapper .bg-gradient-to-br.from-orange-50 {
+  border-radius: var(--v2-radius-card) !important;
+}
+
+.dark .billing-v2-wrapper .bg-gradient-to-br.from-orange-50 {
+  background: linear-gradient(to bottom right, rgba(249, 115, 22, 0.15), rgba(239, 68, 68, 0.15)) !important;
+}
+
+/* ===== TABLE STYLING ===== */
+.billing-v2-wrapper table {
+  border-radius: var(--v2-radius-card);
+  overflow: hidden;
+}
+
+.billing-v2-wrapper thead {
+  background-color: var(--v2-bg);
+}
+
+.billing-v2-wrapper tbody tr {
+  border-bottom: 1px solid rgba(156, 163, 175, 0.2);
+}
+
+.dark .billing-v2-wrapper tbody tr {
+  border-bottom-color: rgba(75, 85, 99, 0.3);
+}
+
+.billing-v2-wrapper tbody tr:hover {
+  background-color: var(--v2-bg);
+}
+
+/* ===== PAGINATION ===== */
+.billing-v2-wrapper .bg-white\/80 {
+  background-color: var(--v2-surface) !important;
+  border-color: rgba(156, 163, 175, 0.2) !important;
+  border-radius: var(--v2-radius-card) !important;
+}
+
+.dark .billing-v2-wrapper .bg-white\/80 {
+  border-color: rgba(75, 85, 99, 0.3) !important;
+}
+
+/* ===== SUCCESS TOAST ===== */
+.billing-v2-wrapper .bg-green-50.border-2 {
+  background: rgba(34, 197, 94, 0.1) !important;
+  border-color: rgb(34, 197, 94) !important;
+  border-radius: var(--v2-radius-card) !important;
+}
+
+.dark .billing-v2-wrapper .bg-green-50.border-2 {
+  background: rgba(34, 197, 94, 0.2) !important;
+  border-color: rgb(74, 222, 128) !important;
+}
+
+/* ===== PLATFORM USAGE PROGRESS BARS ===== */
+.billing-v2-wrapper .w-full.bg-slate-200 {
+  background-color: var(--v2-bg) !important;
+  border-radius: var(--v2-radius-button);
+}
+
+/* ===== SHADOWS ===== */
+.billing-v2-wrapper .shadow-md,
+.billing-v2-wrapper .shadow-lg,
+.billing-v2-wrapper .shadow-xl,
+.billing-v2-wrapper .shadow-2xl {
+  box-shadow: var(--v2-shadow-card) !important;
+}
+
+/* ===== RESPONSIVE SPACING ===== */
+@media (max-width: 640px) {
+  .billing-v2-wrapper {
+    font-size: 0.95rem;
+  }
+}
+
+/* ===== DANGER ZONE (if exists) ===== */
+.billing-v2-wrapper .bg-red-50 {
+  border-radius: var(--v2-radius-card) !important;
+}
+
+.dark .billing-v2-wrapper .bg-red-50 {
+  background: rgba(239, 68, 68, 0.1) !important;
+}
+
+/* ===== ENSURE SMOOTH TRANSITIONS ===== */
+.billing-v2-wrapper * {
+  transition-property: background-color, border-color, color, fill, stroke;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 200ms;
+}

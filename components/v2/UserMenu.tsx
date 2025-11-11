@@ -135,11 +135,10 @@ export function UserMenu({ triggerIcon = 'avatar' }: UserMenuProps) {
       {/* User Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] hover:scale-105 transition-all duration-200"
-        style={{
-          borderRadius: 'var(--v2-radius-button)',
-          padding: triggerIcon === 'settings' ? '0.625rem' : '0.5rem'
-        }}
+        className={`flex items-center gap-2 bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] hover:scale-105 transition-all duration-200 ${
+          triggerIcon === 'settings' ? 'px-4 py-2.5' : 'p-2'
+        }`}
+        style={{ borderRadius: 'var(--v2-radius-button)' }}
       >
         {triggerIcon === 'settings' ? (
           /* Settings Icon */

@@ -33,6 +33,10 @@ export const v2Tokens = {
       DEFAULT: '#10B981',         // Green-500
       light: '#D1FAE5',           // Green-100 (background)
       dark: '#059669',            // Green-600
+      bg: '#ECFDF5',              // Success message background
+      border: '#BBF7D0',          // Success message border
+      text: '#065F46',            // Success message text
+      icon: '#059669',            // Success icon color
     },
 
     warning: {
@@ -45,6 +49,10 @@ export const v2Tokens = {
       DEFAULT: '#EF4444',         // Red-500
       light: '#FEE2E2',           // Red-100
       dark: '#DC2626',            // Red-600
+      bg: '#FEF2F2',              // Error message background
+      border: '#FECACA',          // Error message border
+      text: '#991B1B',            // Error message text
+      icon: '#DC2626',            // Error icon color
     },
 
     info: {

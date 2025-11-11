@@ -98,7 +98,7 @@ export default function CurrencySelector({
   if (loading) {
     return (
       <div className="animate-pulse">
-        <div className="h-10 bg-gray-200 rounded-lg w-48"></div>
+        <div className="h-10 bg-gray-200 dark:bg-gray-700 rounded-lg w-48"></div>
       </div>
     )
   }
@@ -108,24 +108,25 @@ export default function CurrencySelector({
       {/* Selected Currency Display */}
       <button
         onClick={() => setShowDropdown(!showDropdown)}
-        className="flex items-center gap-3 px-4 py-2.5 bg-white border border-gray-300 rounded-lg hover:border-indigo-500 transition-all duration-200 min-w-[200px]"
+        className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-surface)] text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-all duration-200 focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
+        style={{ borderRadius: 'var(--v2-radius-button)' }}
       >
-        <Globe className="w-5 h-5 text-indigo-600" />
+        <Globe className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
         <div className="flex-1 text-left">
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-gray-900">
+          <div className="flex items-center gap-1.5">
+            <span className="font-semibold text-[var(--v2-text-primary)]">
               {selectedRate?.currency_symbol || '$'}
             </span>
-            <span className="text-gray-900">
+            <span className="text-[var(--v2-text-primary)]">
               {selectedCurrency}
             </span>
           </div>
-          <div className="text-xs text-gray-500">
+          <div className="text-xs text-[var(--v2-text-secondary)]">
             {selectedRate?.currency_name || 'US Dollar'}
           </div>
         </div>
         <svg
-          className={`w-4 h-4 text-gray-500 transition-transform ${showDropdown ? 'rotate-180' : ''}`}
+          className={`w-3.5 h-3.5 text-[var(--v2-text-muted)] transition-transform ${showDropdown ? 'rotate-180' : ''}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -144,17 +145,18 @@ export default function CurrencySelector({
           />
 
           {/* Dropdown Panel */}
-          <div className="absolute top-full left-0 mt-2 w-[400px] bg-white border border-gray-200 rounded-xl shadow-2xl z-20 max-h-[500px] overflow-hidden flex flex-col">
+          <div className="absolute top-full left-0 mt-2 w-[400px] bg-[var(--v2-surface)] border border-gray-200 dark:border-gray-700 shadow-[var(--v2-shadow-card)] z-20 max-h-[500px] overflow-hidden flex flex-col" style={{ borderRadius: 'var(--v2-radius-card)' }}>
             {/* Search */}
-            <div className="p-3 border-b border-gray-200">
+            <div className="p-3 border-b border-gray-200 dark:border-gray-700">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-[var(--v2-text-muted)]" />
                 <input
                   type="text"
                   placeholder="Search currencies..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full pl-10 pr-4 py-2 border border-gray-200 dark:border-gray-700 bg-[var(--v2-surface)] text-[var(--v2-text-primary)] placeholder-[var(--v2-text-muted)] text-sm focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
                 />
               </div>
             </div>
@@ -164,7 +166,7 @@ export default function CurrencySelector({
               {/* Popular Currencies */}
               {!searchQuery && popularRates.length > 0 && (
                 <div className="p-2">
-                  <div className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  <div className="px-3 py-2 text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">
                     Popular
                   </div>
                   {popularRates.map((rate) => (
@@ -183,7 +185,7 @@ export default function CurrencySelector({
               {searchQuery ? (
                 <div className="p-2">
                   {filteredRates.length === 0 ? (
-                    <div className="px-3 py-8 text-center text-gray-500 text-sm">
+                    <div className="px-3 py-8 text-center text-[var(--v2-text-muted)] text-sm">
                       No currencies found matching "{searchQuery}"
                     </div>
                   ) : (
@@ -209,7 +211,7 @@ export default function CurrencySelector({
 
                     return (
                       <div key={group.region}>
-                        <div className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        <div className="px-3 py-2 text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">
                           {group.region}
                         </div>
                         {groupRates.map((rate) => (
@@ -229,11 +231,11 @@ export default function CurrencySelector({
             </div>
 
             {/* Footer Info */}
-            <div className="p-3 border-t border-gray-200 bg-gradient-to-r from-amber-50 to-orange-50">
-              <div className="flex items-start gap-2 text-xs text-gray-600">
+            <div className="p-3 border-t border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)]">
+              <div className="flex items-start gap-2 text-xs text-[var(--v2-text-secondary)]">
                 <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse mt-1 flex-shrink-0"></div>
                 <div>
-                  <div className="font-medium text-gray-700">Currency Calculator</div>
+                  <div className="font-medium text-[var(--v2-text-primary)]">Currency Calculator</div>
                   <div className="mt-1">
                     All charges are in USD. This preference shows you the equivalent amount in your local currency using live exchange rates.
                   </div>
@@ -260,29 +262,30 @@ function CurrencyOption({ rate, isSelected, onSelect, disabled }: CurrencyOption
     <button
       onClick={() => onSelect(rate.currency_code)}
       disabled={disabled}
-      className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg transition-all duration-150 ${
+      className={`w-full flex items-center justify-between px-3 py-2.5 transition-all duration-150 border ${
         isSelected
-          ? 'bg-indigo-50 border border-indigo-200'
-          : 'hover:bg-gray-50 border border-transparent'
+          ? 'bg-[var(--v2-bg)] border-[var(--v2-primary)]'
+          : 'hover:bg-[var(--v2-bg)] border-transparent'
       } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+      style={{ borderRadius: 'var(--v2-radius-button)' }}
     >
       <div className="flex items-center gap-3">
-        <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-semibold text-sm ${
-          isSelected ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700'
-        }`}>
+        <div className={`w-8 h-8 flex items-center justify-center font-semibold text-sm ${
+          isSelected ? 'bg-gradient-to-br from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white' : 'bg-[var(--v2-bg)] text-[var(--v2-text-primary)]'
+        }`} style={{ borderRadius: 'var(--v2-radius-button)' }}>
           {rate.currency_symbol}
         </div>
         <div className="text-left">
-          <div className="font-medium text-gray-900 text-sm">
+          <div className="font-medium text-[var(--v2-text-primary)] text-sm">
             {rate.currency_code}
           </div>
-          <div className="text-xs text-gray-500">
+          <div className="text-xs text-[var(--v2-text-secondary)]">
             {rate.currency_name}
           </div>
         </div>
       </div>
       {isSelected && (
-        <Check className="w-5 h-5 text-indigo-600" />
+        <Check className="w-5 h-5 text-[var(--v2-primary)]" />
       )}
     </button>
   )

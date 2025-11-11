@@ -28,19 +28,16 @@ export default function SecurityTabV2() {
   const handlePasswordChange = async () => {
     if (!passwordForm.currentPassword || !passwordForm.newPassword) {
       setErrorMessage('Please fill in all password fields.')
-      setTimeout(() => setErrorMessage(''), 5000)
       return
     }
 
     if (passwordForm.newPassword !== passwordForm.confirmPassword) {
       setErrorMessage('New passwords do not match.')
-      setTimeout(() => setErrorMessage(''), 5000)
       return
     }
 
     if (passwordForm.newPassword.length < 8) {
       setErrorMessage('Password must be at least 8 characters long.')
-      setTimeout(() => setErrorMessage(''), 5000)
       return
     }
 
@@ -82,11 +79,9 @@ export default function SecurityTabV2() {
 
       setSuccessMessage('Password updated successfully!')
       setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' })
-      setTimeout(() => setSuccessMessage(''), 5000)
     } catch (error) {
       console.error('Error changing password:', error)
       setErrorMessage('Failed to change password. Please try again.')
-      setTimeout(() => setErrorMessage(''), 5000)
     }
   }
 
@@ -127,12 +122,37 @@ export default function SecurityTabV2() {
       document.body.removeChild(link)
       URL.revokeObjectURL(url)
 
+      // AUDIT TRAIL: Log data export
+      try {
+        await fetch('/api/audit/log', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-id': user.id
+          },
+          body: JSON.stringify({
+            action: 'USER_DATA_EXPORTED',
+            entityType: 'user',
+            entityId: user.id,
+            userId: user.id,
+            resourceName: user.email || 'User Account',
+            details: {
+              timestamp: new Date().toISOString(),
+              export_type: 'full_account_data',
+              data_categories: ['profile', 'preferences', 'notifications', 'connections']
+            },
+            severity: 'medium',
+            complianceFlags: ['GDPR', 'CCPA']
+          })
+        })
+      } catch (auditError) {
+        console.error('Audit logging failed (non-critical):', auditError)
+      }
+
       setSuccessMessage('Data exported successfully! Check your downloads folder.')
-      setTimeout(() => setSuccessMessage(''), 5000)
     } catch (error) {
       console.error('Error exporting data:', error)
       setErrorMessage('Failed to export data. Please try again.')
-      setTimeout(() => setErrorMessage(''), 5000)
     }
   }
 
@@ -144,6 +164,33 @@ export default function SecurityTabV2() {
         try {
           setSuccessMessage('')
           setErrorMessage('')
+
+          // AUDIT TRAIL: Log account deletion attempt
+          try {
+            await fetch('/api/audit/log', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-user-id': user.id
+              },
+              body: JSON.stringify({
+                action: 'USER_ACCOUNT_DELETION_INITIATED',
+                entityType: 'user',
+                entityId: user.id,
+                userId: user.id,
+                resourceName: user.email || 'User Account',
+                details: {
+                  timestamp: new Date().toISOString(),
+                  method: 'user_initiated',
+                  deletion_scope: ['profiles', 'preferences', 'notifications', 'connections']
+                },
+                severity: 'critical',
+                complianceFlags: ['SOC2', 'GDPR', 'CCPA']
+              })
+            })
+          } catch (auditError) {
+            console.error('Audit logging failed (non-critical):', auditError)
+          }
 
           await Promise.all([
             supabase.from('profiles').delete().eq('id', user.id),
@@ -162,72 +209,71 @@ export default function SecurityTabV2() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Password & Authentication */}
-      <div className="space-y-4">
-        <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">Password & Authentication</h3>
+    <div className="space-y-4">
+      {/* Password & Authentication - Compact */}
+      <div className="space-y-3">
+        <h3 className="text-base font-semibold text-[var(--v2-text-primary)]">Password & Authentication</h3>
 
-        <div className="p-5 bg-[var(--v2-bg)] dark:bg-gray-800 border border-gray-200 dark:border-gray-700" style={{ borderRadius: 'var(--v2-radius-card)' }}>
-          <div className="mb-4">
-            <h4 className="font-semibold text-base text-[var(--v2-text-primary)] mb-1">Change Password</h4>
-            <p className="text-sm text-[var(--v2-text-secondary)]">Update your account password</p>
+        <div className="p-3 bg-[var(--v2-bg)] border border-gray-200 dark:border-gray-700" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+          <div className="mb-3">
+            <h4 className="font-semibold text-sm text-[var(--v2-text-primary)]">Change Password</h4>
           </div>
 
-          <div className="space-y-4">
+          <div className="space-y-2.5">
             <div>
-              <label className="block text-sm font-semibold text-[var(--v2-text-primary)] mb-2">Current Password</label>
+              <label className="block text-xs font-medium text-[var(--v2-text-primary)] mb-1">Current Password</label>
               <div className="relative">
-                <Lock className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-[var(--v2-text-muted)]" />
+                <Lock className="w-3.5 h-3.5 absolute left-2.5 top-1/2 transform -translate-y-1/2 text-[var(--v2-text-muted)]" />
                 <input
                   type={showCurrentPassword ? 'text' : 'password'}
                   value={passwordForm.currentPassword}
                   onChange={(e) => setPasswordForm(prev => ({ ...prev, currentPassword: e.target.value }))}
-                  className="w-full pl-10 pr-10 py-3 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-surface)] text-[var(--v2-text-primary)] placeholder-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)]"
+                  className="w-full pl-8 pr-8 py-2 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-surface)] text-[var(--v2-text-primary)] placeholder-[var(--v2-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                   placeholder="Enter current password"
                 />
                 <button
                   type="button"
                   onClick={() => setShowCurrentPassword(!showCurrentPassword)}
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]"
+                  className="absolute right-2.5 top-1/2 transform -translate-y-1/2 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]"
                 >
-                  {showCurrentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  {showCurrentPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                 </button>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
               <div>
-                <label className="block text-sm font-semibold text-[var(--v2-text-primary)] mb-2">New Password</label>
+                <label className="block text-xs font-medium text-[var(--v2-text-primary)] mb-1">New Password</label>
                 <div className="relative">
-                  <Lock className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-[var(--v2-text-muted)]" />
+                  <Lock className="w-3.5 h-3.5 absolute left-2.5 top-1/2 transform -translate-y-1/2 text-[var(--v2-text-muted)]" />
                   <input
                     type={showNewPassword ? 'text' : 'password'}
                     value={passwordForm.newPassword}
                     onChange={(e) => setPasswordForm(prev => ({ ...prev, newPassword: e.target.value }))}
-                    className="w-full pl-10 pr-10 py-3 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-surface)] text-[var(--v2-text-primary)] placeholder-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)]"
+                    className="w-full pl-8 pr-8 py-2 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-surface)] text-[var(--v2-text-primary)] placeholder-[var(--v2-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                     placeholder="Enter new password"
                   />
                   <button
                     type="button"
                     onClick={() => setShowNewPassword(!showNewPassword)}
-                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]"
+                    className="absolute right-2.5 top-1/2 transform -translate-y-1/2 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]"
                   >
-                    {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    {showNewPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                   </button>
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-[var(--v2-text-primary)] mb-2">Confirm Password</label>
+                <label className="block text-xs font-medium text-[var(--v2-text-primary)] mb-1">Confirm Password</label>
                 <div className="relative">
-                  <Lock className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-[var(--v2-text-muted)]" />
+                  <Lock className="w-3.5 h-3.5 absolute left-2.5 top-1/2 transform -translate-y-1/2 text-[var(--v2-text-muted)]" />
                   <input
                     type="password"
                     value={passwordForm.confirmPassword}
                     onChange={(e) => setPasswordForm(prev => ({ ...prev, confirmPassword: e.target.value }))}
-                    className="w-full pl-10 pr-4 py-3 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-surface)] text-[var(--v2-text-primary)] placeholder-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)]"
+                    className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-surface)] text-[var(--v2-text-primary)] placeholder-[var(--v2-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                     placeholder="Confirm new password"
                   />
@@ -235,87 +281,88 @@ export default function SecurityTabV2() {
               </div>
             </div>
 
-            <div className="flex gap-3 pt-2">
+            <div className="pt-1">
               <button
                 onClick={handlePasswordChange}
-                className="inline-flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white hover:scale-105 transition-transform duration-200 text-sm font-semibold shadow-[var(--v2-shadow-button)]"
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white hover:scale-105 transition-transform duration-200 text-sm font-semibold shadow-[var(--v2-shadow-button)]"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >
-                <Lock className="w-4 h-4" />
+                <Lock className="w-3.5 h-3.5" />
                 Update Password
-              </button>
-              <button
-                onClick={() => setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' })}
-                className="px-5 py-3 bg-[var(--v2-surface)] border border-gray-200 dark:border-gray-700 text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-all duration-300 text-sm font-semibold"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              >
-                Cancel
               </button>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Account Management */}
-      <div className="space-y-4">
-        <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">Account Management</h3>
+      {/* Account Management - Compact */}
+      <div className="space-y-3">
+        <h3 className="text-base font-semibold text-[var(--v2-text-primary)]">Account Management</h3>
 
-        <div className="flex items-center justify-between p-5 bg-[var(--v2-bg)] dark:bg-gray-800 border border-gray-200 dark:border-gray-700" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+        <div className="flex items-center justify-between p-3 bg-[var(--v2-bg)] border border-gray-200 dark:border-gray-700" style={{ borderRadius: 'var(--v2-radius-card)' }}>
           <div>
-            <h4 className="font-semibold text-base text-[var(--v2-text-primary)]">Export Account Data</h4>
-            <p className="text-sm text-[var(--v2-text-secondary)]">Download all your data</p>
+            <h4 className="font-semibold text-sm text-[var(--v2-text-primary)]">Export Account Data</h4>
+            <p className="text-xs text-[var(--v2-text-secondary)]">Download all your data</p>
           </div>
           <button
             onClick={handleExportData}
-            className="inline-flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white hover:scale-105 transition-transform duration-200 text-sm font-semibold shadow-[var(--v2-shadow-button)]"
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white hover:scale-105 transition-transform duration-200 text-sm font-semibold shadow-[var(--v2-shadow-button)]"
             style={{ borderRadius: 'var(--v2-radius-button)' }}
           >
-            <Download className="w-4 h-4" />
+            <Download className="w-3.5 h-3.5" />
             Export Data
           </button>
         </div>
 
-        {/* Danger Zone */}
-        <div className="border-2 border-red-300 dark:border-red-700 p-5 bg-red-50 dark:bg-red-900/20" style={{ borderRadius: 'var(--v2-radius-card)' }}>
-          <div className="flex items-start justify-between">
-            <div className="flex-1">
-              <h4 className="font-semibold text-base text-red-900 dark:text-red-100 mb-1">Delete Account</h4>
-              <p className="text-sm text-red-800 dark:text-red-200 mb-3">
+        {/* Danger Zone - Compact */}
+        <div className="border-2 p-3 danger-zone" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1 min-w-0">
+              <h4 className="font-semibold text-sm mb-1 danger-zone-title">Delete Account</h4>
+              <p className="text-xs mb-2 danger-zone-text">
                 Permanently delete your account and all data. This cannot be undone.
               </p>
-              <div className="bg-red-100 dark:bg-red-900/40 border border-red-200 dark:border-red-700 p-3" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-                <p className="text-xs text-red-700 dark:text-red-300 font-medium">
+              <div className="border p-2 danger-zone-warning" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                <p className="text-xs font-medium danger-zone-warning-text">
                   This will delete: All agents, conversations, plugin connections, and settings.
                 </p>
               </div>
             </div>
             <button
               onClick={handleDeleteAccount}
-              className="ml-3 inline-flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-red-600 to-red-700 text-white hover:scale-105 transition-transform duration-200 text-sm font-semibold shadow-md"
+              className="flex-shrink-0 inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-red-600 to-red-700 text-white hover:scale-105 transition-transform duration-200 text-sm font-semibold shadow-md"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
             >
-              <Trash2 className="w-4 h-4" />
+              <Trash2 className="w-3.5 h-3.5" />
               Delete
             </button>
           </div>
         </div>
       </div>
 
-      {/* Success/Error Messages */}
+      {/* Success/Error Messages - Compact */}
       {successMessage && (
-        <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-4" style={{ borderRadius: 'var(--v2-radius-card)' }}>
-          <div className="flex items-center gap-3">
-            <CheckCircle className="w-5 h-5 text-green-600 dark:text-green-400" />
-            <p className="text-sm font-semibold text-green-900 dark:text-green-100">{successMessage}</p>
+        <div className="p-2.5 border" style={{
+          backgroundColor: 'var(--v2-success-bg)',
+          borderColor: 'var(--v2-success-border)',
+          borderRadius: 'var(--v2-radius-card)'
+        }}>
+          <div className="flex items-center gap-2">
+            <CheckCircle className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--v2-success-icon)' }} />
+            <p className="text-xs font-medium" style={{ color: 'var(--v2-success-text)' }}>{successMessage}</p>
           </div>
         </div>
       )}
 
       {errorMessage && (
-        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-4" style={{ borderRadius: 'var(--v2-radius-card)' }}>
-          <div className="flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
-            <p className="text-sm font-semibold text-red-900 dark:text-red-100">{errorMessage}</p>
+        <div className="p-2.5 border" style={{
+          backgroundColor: 'var(--v2-error-bg)',
+          borderColor: 'var(--v2-error-border)',
+          borderRadius: 'var(--v2-radius-card)'
+        }}>
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--v2-error-icon)' }} />
+            <p className="text-xs font-medium" style={{ color: 'var(--v2-error-text)' }}>{errorMessage}</p>
           </div>
         </div>
       )}

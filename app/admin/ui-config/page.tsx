@@ -68,6 +68,14 @@ export default function UIConfigPage() {
       { name: 'secondary', value: customTokens.colors?.secondary || v2Tokens.colors.brand.secondary, description: 'Secondary brand color', category: 'color', editable: true },
       { name: 'textPrimary', value: customTokens.colors?.textPrimary || v2Tokens.colors.text.primary, description: 'Primary text color', category: 'color', editable: true },
       { name: 'textSecondary', value: customTokens.colors?.textSecondary || v2Tokens.colors.text.secondary, description: 'Secondary text color', category: 'color', editable: true },
+      { name: 'successBg', value: customTokens.colors?.successBg || v2Tokens.colors.success.bg, description: 'Success message background', category: 'color', editable: true },
+      { name: 'successBorder', value: customTokens.colors?.successBorder || v2Tokens.colors.success.border, description: 'Success message border', category: 'color', editable: true },
+      { name: 'successText', value: customTokens.colors?.successText || v2Tokens.colors.success.text, description: 'Success message text', category: 'color', editable: true },
+      { name: 'successIcon', value: customTokens.colors?.successIcon || v2Tokens.colors.success.icon, description: 'Success icon color', category: 'color', editable: true },
+      { name: 'errorBg', value: customTokens.colors?.errorBg || v2Tokens.colors.error.bg, description: 'Error message background', category: 'color', editable: true },
+      { name: 'errorBorder', value: customTokens.colors?.errorBorder || v2Tokens.colors.error.border, description: 'Error message border', category: 'color', editable: true },
+      { name: 'errorText', value: customTokens.colors?.errorText || v2Tokens.colors.error.text, description: 'Error message text', category: 'color', editable: true },
+      { name: 'errorIcon', value: customTokens.colors?.errorIcon || v2Tokens.colors.error.icon, description: 'Error icon color', category: 'color', editable: true },
     )
 
     // Border Radius

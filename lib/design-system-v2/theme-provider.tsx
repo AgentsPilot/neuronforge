@@ -31,9 +31,21 @@ const ThemeContext = createContext<ThemeContextValue | undefined>(undefined)
 const darkModeColors = {
   background: '#0F172A',      // Slate-900
   surface: '#1E293B',         // Slate-800
+  surfaceHover: '#334155',    // Slate-700
+  border: '#475569',          // Slate-600
   textPrimary: '#F1F5F9',     // Slate-100
   textSecondary: '#CBD5E1',   // Slate-300
   textMuted: '#94A3B8',       // Slate-400
+  // Success colors for dark mode
+  successBg: 'rgba(6, 95, 70, 0.15)',
+  successBorder: 'rgba(5, 150, 105, 0.3)',
+  successText: '#6EE7B7',
+  successIcon: '#34D399',
+  // Error colors for dark mode
+  errorBg: 'rgba(153, 27, 27, 0.15)',
+  errorBorder: 'rgba(220, 38, 38, 0.3)',
+  errorText: '#FCA5A5',
+  errorIcon: '#EF4444',
 }
 
 export function V2ThemeProvider({ children }: { children: React.ReactNode }) {
@@ -94,12 +106,16 @@ export function V2ThemeProvider({ children }: { children: React.ReactNode }) {
     const colors = isDark ? {
       bg: customTokens.colors?.background || darkModeColors.background,
       surface: customTokens.colors?.surface || darkModeColors.surface,
+      surfaceHover: customTokens.colors?.surfaceHover || darkModeColors.surfaceHover,
+      border: customTokens.colors?.border || darkModeColors.border,
       textPrimary: customTokens.colors?.textPrimary || darkModeColors.textPrimary,
       textSecondary: customTokens.colors?.textSecondary || darkModeColors.textSecondary,
       textMuted: customTokens.colors?.textMuted || darkModeColors.textMuted,
     } : {
       bg: customTokens.colors?.background || v2Tokens.colors.background,
       surface: customTokens.colors?.surface || v2Tokens.colors.surface,
+      surfaceHover: customTokens.colors?.surfaceHover || '#F9FAFB',
+      border: customTokens.colors?.border || '#E5E7EB',
       textPrimary: customTokens.colors?.textPrimary || v2Tokens.colors.text.primary,
       textSecondary: customTokens.colors?.textSecondary || v2Tokens.colors.text.secondary,
       textMuted: customTokens.colors?.textMuted || v2Tokens.colors.text.muted,
@@ -108,12 +124,48 @@ export function V2ThemeProvider({ children }: { children: React.ReactNode }) {
     // Colors
     root.style.setProperty('--v2-bg', colors.bg)
     root.style.setProperty('--v2-surface', colors.surface)
+    root.style.setProperty('--v2-surface-hover', colors.surfaceHover)
+    root.style.setProperty('--v2-border', colors.border)
     root.style.setProperty('--v2-primary', customTokens.colors?.primary || v2Tokens.colors.brand.primary)
     root.style.setProperty('--v2-primary-dark', customTokens.colors?.primaryDark || v2Tokens.colors.brand.primaryDark)
     root.style.setProperty('--v2-secondary', customTokens.colors?.secondary || v2Tokens.colors.brand.secondary)
     root.style.setProperty('--v2-text-primary', colors.textPrimary)
     root.style.setProperty('--v2-text-secondary', colors.textSecondary)
     root.style.setProperty('--v2-text-muted', colors.textMuted)
+
+    // Success/Error colors
+    const successColors = isDark ? {
+      bg: customTokens.colors?.successBg || darkModeColors.successBg,
+      border: customTokens.colors?.successBorder || darkModeColors.successBorder,
+      text: customTokens.colors?.successText || darkModeColors.successText,
+      icon: customTokens.colors?.successIcon || darkModeColors.successIcon,
+    } : {
+      bg: customTokens.colors?.successBg || v2Tokens.colors.success.bg,
+      border: customTokens.colors?.successBorder || v2Tokens.colors.success.border,
+      text: customTokens.colors?.successText || v2Tokens.colors.success.text,
+      icon: customTokens.colors?.successIcon || v2Tokens.colors.success.icon,
+    }
+
+    const errorColors = isDark ? {
+      bg: customTokens.colors?.errorBg || darkModeColors.errorBg,
+      border: customTokens.colors?.errorBorder || darkModeColors.errorBorder,
+      text: customTokens.colors?.errorText || darkModeColors.errorText,
+      icon: customTokens.colors?.errorIcon || darkModeColors.errorIcon,
+    } : {
+      bg: customTokens.colors?.errorBg || v2Tokens.colors.error.bg,
+      border: customTokens.colors?.errorBorder || v2Tokens.colors.error.border,
+      text: customTokens.colors?.errorText || v2Tokens.colors.error.text,
+      icon: customTokens.colors?.errorIcon || v2Tokens.colors.error.icon,
+    }
+
+    root.style.setProperty('--v2-success-bg', successColors.bg)
+    root.style.setProperty('--v2-success-border', successColors.border)
+    root.style.setProperty('--v2-success-text', successColors.text)
+    root.style.setProperty('--v2-success-icon', successColors.icon)
+    root.style.setProperty('--v2-error-bg', errorColors.bg)
+    root.style.setProperty('--v2-error-border', errorColors.border)
+    root.style.setProperty('--v2-error-text', errorColors.text)
+    root.style.setProperty('--v2-error-icon', errorColors.icon)
 
     // Border radius
     root.style.setProperty('--v2-radius-panel', customTokens.borderRadius?.panel || v2Tokens.borderRadius.panel)

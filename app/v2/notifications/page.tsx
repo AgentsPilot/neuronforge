@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 import { ArrowLeft } from 'lucide-react'
-import { UserMenu } from '@/components/v2/UserMenu'
+import { V2Header } from '@/components/v2/V2Header'
 import NotificationsTabV2 from '@/components/v2/settings/NotificationsTabV2'
 import { NotificationSettings } from '@/types/settings'
 
@@ -15,6 +15,8 @@ export default function V2NotificationsPage() {
   const [loading, setLoading] = useState(true)
   const [notifications, setNotifications] = useState<NotificationSettings | null>(null)
   const [notificationsForm, setNotificationsForm] = useState<Partial<NotificationSettings>>({})
+  const [successMessage, setSuccessMessage] = useState('')
+  const [errorMessage, setErrorMessage] = useState('')
 
   useEffect(() => {
     if (user?.id) {
@@ -47,9 +49,15 @@ export default function V2NotificationsPage() {
   }
 
   const saveNotifications = async () => {
-    if (!user) return
+    if (!user) {
+      setErrorMessage('User not authenticated')
+      return
+    }
 
     try {
+      setSuccessMessage('')
+      setErrorMessage('')
+
       const { error } = await supabase
         .from('notification_settings')
         .upsert({
@@ -62,14 +70,16 @@ export default function V2NotificationsPage() {
 
       if (error) {
         console.error('Error saving notifications:', error)
-        throw error
+        setErrorMessage('Failed to save notification settings. Please try again.')
+        return
       }
 
       await loadNotificationSettings()
+      setSuccessMessage('Notification settings updated successfully!')
       console.log('✅ Notifications saved successfully')
     } catch (error) {
       console.error('Error saving notifications:', error)
-      throw error
+      setErrorMessage('Failed to save notification settings. Please try again.')
     }
   }
 
@@ -85,44 +95,40 @@ export default function V2NotificationsPage() {
   }
 
   return (
-    <div className="relative">
-      {/* User Menu with Settings Icon */}
-      <div className="absolute top-0 right-0 z-10">
-        <UserMenu triggerIcon="settings" />
+    <div className="space-y-4 sm:space-y-5 lg:space-y-6">
+      {/* Top Bar: Back Button + Token Display + User Menu */}
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => router.push('/v2/dashboard')}
+          className="inline-flex items-center gap-2 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:scale-105 transition-all duration-200 text-sm font-medium shadow-[var(--v2-shadow-card)]"
+          style={{ borderRadius: 'var(--v2-radius-button)' }}
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to Dashboard
+        </button>
+        <V2Header />
       </div>
 
-      <div className="space-y-4 sm:space-y-5 lg:space-y-6">
-        {/* Back Button */}
-        <div>
-          <button
-            onClick={() => router.push('/v2/dashboard')}
-            className="inline-flex items-center gap-2 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:scale-105 transition-all duration-200 text-sm font-medium shadow-[var(--v2-shadow-card)]"
-            style={{ borderRadius: 'var(--v2-radius-button)' }}
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Dashboard
-          </button>
-        </div>
+      {/* Header */}
+      <div>
+        <h1 className="text-2xl sm:text-3xl lg:text-4xl font-semibold text-[var(--v2-text-primary)] mb-1 leading-tight">
+          Notifications
+        </h1>
+        <p className="text-base sm:text-lg text-[var(--v2-text-secondary)] font-normal">
+          Configure your notification preferences
+        </p>
+      </div>
 
-        {/* Header */}
-        <div className="pr-12 sm:pr-14">
-          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-semibold text-[var(--v2-text-primary)] mb-1 leading-tight">
-            Notifications
-          </h1>
-          <p className="text-base sm:text-lg text-[var(--v2-text-secondary)] font-normal">
-            Configure your notification preferences
-          </p>
-        </div>
-
-        {/* Main Content */}
-        <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] p-4 sm:p-5 lg:p-6" style={{ borderRadius: 'var(--v2-radius-card)' }}>
-          <NotificationsTabV2
-            notifications={notifications}
-            notificationsForm={notificationsForm}
-            setNotificationsForm={setNotificationsForm}
-            onSave={saveNotifications}
-          />
-        </div>
+      {/* Main Content */}
+      <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] p-4 sm:p-5 lg:p-6" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+        <NotificationsTabV2
+          notifications={notifications}
+          notificationsForm={notificationsForm}
+          setNotificationsForm={setNotificationsForm}
+          onSave={saveNotifications}
+          successMessage={successMessage}
+          errorMessage={errorMessage}
+        />
       </div>
     </div>
   )

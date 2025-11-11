@@ -5,16 +5,11 @@ import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 import { useSearchParams, useRouter } from 'next/navigation'
 import {
-  Settings,
-  RefreshCw,
-  PlugZap,
   User,
-  Bell,
   Shield,
-  BarChart3,
   ArrowLeft
 } from 'lucide-react'
-import { UserMenu } from '@/components/v2/UserMenu'
+import { V2Header } from '@/components/v2/V2Header'
 import ProfileTabV2 from '@/components/v2/settings/ProfileTabV2'
 import SecurityTabV2 from '@/components/v2/settings/SecurityTabV2'
 import { UserProfile, NotificationSettings, PluginConnection } from '@/types/settings'
@@ -28,13 +23,12 @@ export default function V2SettingsPage() {
   const [loading, setLoading] = useState(true)
 
   // Data states
-  const [profile, setProfile] = useState<UserProfile | null>(null)
-  const [notifications, setNotifications] = useState<NotificationSettings | null>(null)
-  const [connections, setConnections] = useState<PluginConnection[]>([])
+  const [, setProfile] = useState<UserProfile | null>(null)
+  const [, setNotifications] = useState<NotificationSettings | null>(null)
+  const [, setConnections] = useState<PluginConnection[]>([])
 
   // Form states
   const [profileForm, setProfileForm] = useState<Partial<UserProfile>>({})
-  const [notificationsForm, setNotificationsForm] = useState<Partial<NotificationSettings>>({})
 
   const tabs = [
     {
@@ -102,7 +96,6 @@ export default function V2SettingsPage() {
       // Set other data
       if (notificationsRes.data) {
         setNotifications(notificationsRes.data)
-        setNotificationsForm(notificationsRes.data)
       }
 
       if (connectionsRes.data) {
@@ -116,84 +109,6 @@ export default function V2SettingsPage() {
     }
   }
 
-  const saveProfile = async () => {
-    if (!user) return
-
-    try {
-      // Update profiles table (only profile-specific fields)
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .upsert({
-          id: user.id,
-          full_name: profileForm.full_name,
-          avatar_url: profileForm.avatar_url,
-          company: profileForm.company,
-          job_title: profileForm.job_title,
-          updated_at: new Date().toISOString()
-        }, {
-          onConflict: 'id'
-        })
-
-      if (profileError) {
-        console.error('Error saving profile:', profileError)
-        throw profileError
-      }
-
-      // Update user_preferences table for timezone and language (currency is handled separately by CurrencySelector)
-      if (profileForm.timezone || profileForm.language) {
-        const { error: prefsError } = await supabase
-          .from('user_preferences')
-          .upsert({
-            user_id: user.id,
-            timezone: profileForm.timezone,
-            preferred_language: profileForm.language,
-            updated_at: new Date().toISOString()
-          }, {
-            onConflict: 'user_id'
-          })
-
-        if (prefsError) {
-          console.error('Error saving preferences:', prefsError)
-          throw prefsError
-        }
-      }
-
-      // Reload data to confirm changes
-      await loadUserData()
-
-      console.log('✅ Profile saved successfully')
-    } catch (error) {
-      console.error('Error saving profile:', error)
-      throw error
-    }
-  }
-
-  const saveNotifications = async () => {
-    if (!user) return
-
-    try {
-      const { error } = await supabase
-        .from('notification_settings')
-        .upsert({
-          user_id: user.id,
-          ...notificationsForm,
-          updated_at: new Date().toISOString()
-        }, {
-          onConflict: 'user_id'
-        })
-
-      if (error) {
-        console.error('Error saving notifications:', error)
-        throw error
-      }
-
-      await loadUserData()
-      console.log('✅ Notifications saved successfully')
-    } catch (error) {
-      console.error('Error saving notifications:', error)
-      throw error
-    }
-  }
 
   if (loading) {
     return (
@@ -207,38 +122,33 @@ export default function V2SettingsPage() {
   }
 
   return (
-    <div className="relative">
-      {/* User Menu with Settings Icon */}
-      <div className="absolute top-0 right-0 z-10">
-        <UserMenu triggerIcon="settings" />
+    <div className="space-y-4 sm:space-y-5 lg:space-y-6">
+      {/* Top Bar: Back Button + Token Display + User Menu */}
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => router.push('/v2/dashboard')}
+          className="inline-flex items-center gap-2 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:scale-105 transition-all duration-200 text-sm font-medium shadow-[var(--v2-shadow-card)]"
+          style={{ borderRadius: 'var(--v2-radius-button)' }}
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to Dashboard
+        </button>
+        <V2Header />
       </div>
 
-      <div className="space-y-4 sm:space-y-5 lg:space-y-6">
-        {/* Back Button */}
-        <div>
-          <button
-            onClick={() => router.push('/v2/dashboard')}
-            className="inline-flex items-center gap-2 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:scale-105 transition-all duration-200 text-sm font-medium shadow-[var(--v2-shadow-card)]"
-            style={{ borderRadius: 'var(--v2-radius-button)' }}
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Dashboard
-          </button>
-        </div>
+      {/* Header */}
+      <div>
+        <h1 className="text-2xl sm:text-3xl lg:text-4xl font-semibold text-[var(--v2-text-primary)] mb-1 leading-tight">
+          Settings
+        </h1>
+        <p className="text-base sm:text-lg text-[var(--v2-text-secondary)] font-normal">
+          Manage your account, preferences, and billing
+        </p>
+      </div>
 
-        {/* Header */}
-        <div className="pr-12 sm:pr-14">
-          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-semibold text-[var(--v2-text-primary)] mb-1 leading-tight">
-            Settings
-          </h1>
-          <p className="text-base sm:text-lg text-[var(--v2-text-secondary)] font-normal">
-            Manage your account, preferences, and billing
-          </p>
-        </div>
-
-        {/* Tab Navigation */}
-        <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] p-1.5" style={{ borderRadius: 'var(--v2-radius-card)' }}>
-          <div className="flex flex-col sm:flex-row gap-1 overflow-x-auto">
+      {/* Tab Navigation */}
+      <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] p-1.5" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+        <div className="flex flex-col sm:flex-row gap-1 overflow-x-auto">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
@@ -254,33 +164,18 @@ export default function V2SettingsPage() {
                 <span>{tab.label}</span>
               </button>
             ))}
-          </div>
         </div>
+      </div>
 
-        {/* Refresh Button */}
-        <div className="flex justify-end">
-          <button
-            onClick={loadUserData}
-            className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white hover:scale-105 transition-transform duration-200 text-sm font-medium shadow-[var(--v2-shadow-button)]"
-            style={{ borderRadius: 'var(--v2-radius-button)' }}
-          >
-            <RefreshCw className="w-4 h-4" />
-            Refresh
-          </button>
-        </div>
-
-        {/* Main Content */}
-        <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] p-4 sm:p-5 lg:p-6" style={{ borderRadius: 'var(--v2-radius-card)' }}>
-          {activeTab === 'profile' && (
-            <ProfileTabV2
-              profile={profile}
-              profileForm={profileForm}
-              setProfileForm={setProfileForm}
-              onSave={saveProfile}
-            />
-          )}
-          {activeTab === 'security' && <SecurityTabV2 />}
-        </div>
+      {/* Main Content */}
+      <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] p-4 sm:p-5 lg:p-6" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+        {activeTab === 'profile' && (
+          <ProfileTabV2
+            profileForm={profileForm}
+            setProfileForm={setProfileForm}
+          />
+        )}
+        {activeTab === 'security' && <SecurityTabV2 />}
       </div>
     </div>
   )

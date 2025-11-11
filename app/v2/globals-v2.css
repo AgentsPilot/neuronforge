@@ -8,12 +8,25 @@
   /* These are set dynamically by ThemeProvider, but provide defaults */
   --v2-bg: #F5F5F7;
   --v2-surface: #FFFFFF;
+  --v2-surface-hover: #F9FAFB;
+  --v2-border: #E5E7EB;
   --v2-primary: #6366F1;
   --v2-primary-dark: #4F46E5;
   --v2-secondary: #8B5CF6;
   --v2-text-primary: #1F2937;
   --v2-text-secondary: #6B7280;
   --v2-text-muted: #9CA3AF;
+
+  /* Success & Error States - set dynamically by ThemeProvider */
+  --v2-success-bg: #ECFDF5;
+  --v2-success-border: #BBF7D0;
+  --v2-success-text: #065F46;
+  --v2-success-icon: #059669;
+
+  --v2-error-bg: #FEF2F2;
+  --v2-error-border: #FECACA;
+  --v2-error-text: #991B1B;
+  --v2-error-icon: #DC2626;
 
   --v2-radius-panel: 24px;
   --v2-radius-card: 16px;
@@ -98,4 +111,71 @@
 .dark .glass {
   background: rgba(30, 41, 59, 0.8);
   border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Force dark mode card backgrounds */
+.dark .bg-white {
+  background-color: rgb(30 41 59) !important; /* slate-800 */
+}
+
+.dark .border-gray-100 {
+  border-color: rgb(51 65 85) !important; /* slate-700 */
+}
+
+.dark .bg-gray-50 {
+  background-color: rgba(51, 65, 85, 0.5) !important; /* slate-700/50 */
+}
+
+.dark .bg-gray-50:hover,
+.dark .hover\:bg-gray-100:hover {
+  background-color: rgb(51 65 85) !important; /* slate-700 */
+}
+
+.dark .border-gray-200 {
+  border-color: rgb(71 85 105) !important; /* slate-600 */
+}
+
+/* Danger Zone Dark Mode Styles */
+.danger-zone {
+  border-color: rgb(252 165 165); /* red-300 */
+  background-color: rgb(254 242 242); /* red-50 */
+}
+
+.dark .danger-zone {
+  border-color: rgb(239 68 68) !important; /* red-500 */
+  background-color: rgba(127, 29, 29, 0.3) !important; /* red-900/30 */
+}
+
+.danger-zone-title {
+  color: rgb(127 29 29); /* red-900 */
+}
+
+.dark .danger-zone-title {
+  color: rgb(252 165 165) !important; /* red-300 */
+}
+
+.danger-zone-text {
+  color: rgb(153 27 27); /* red-800 */
+}
+
+.dark .danger-zone-text {
+  color: rgb(248 113 113) !important; /* red-400 */
+}
+
+.danger-zone-warning {
+  background-color: rgb(254 226 226); /* red-100 */
+  border-color: rgb(254 205 211); /* red-200 */
+}
+
+.dark .danger-zone-warning {
+  background-color: rgba(153, 27, 27, 0.4) !important; /* red-800/40 */
+  border-color: rgb(220 38 38) !important; /* red-600 */
+}
+
+.danger-zone-warning-text {
+  color: rgb(185 28 28); /* red-700 */
+}
+
+.dark .danger-zone-warning-text {
+  color: rgb(252 165 165) !important; /* red-300 */
 }
