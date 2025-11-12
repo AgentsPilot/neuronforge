@@ -64,6 +64,7 @@ export default function V2DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
   const [searchQuery, setSearchQuery] = useState('')
+  const [userName, setUserName] = useState<string>('')
 
   const fetchDashboardData = async () => {
     if (!user) return
@@ -84,7 +85,8 @@ export default function V2DashboardPage() {
         { count: memoriesCount },
         { data: subscriptionData },
         { data: recentRunsData },
-        { data: agentExecutionCounts }
+        { data: agentExecutionCounts },
+        { data: profileData }
       ] = await Promise.all([
         supabase
           .from('agent_stats')
@@ -126,8 +128,19 @@ export default function V2DashboardPage() {
           .from('agent_executions')
           .select('agent_id, started_at, agents!inner (agent_name, status)')
           .eq('agents.status', 'active')
-          .order('started_at', { ascending: false })
+          .order('started_at', { ascending: false }),
+        // Get user profile for full name
+        supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', user.id)
+          .single()
       ])
+
+      // Set user name from profile
+      if (profileData?.full_name) {
+        setUserName(profileData.full_name)
+      }
 
       // Count actual executions per agent
       const executionCountMap = new Map<string, number>()
@@ -237,8 +250,11 @@ export default function V2DashboardPage() {
     )
   }
 
-  const userName = user?.email?.split('@')[0] || 'there'
-  const capitalizedName = userName.charAt(0).toUpperCase() + userName.slice(1)
+  // Use full name from profile if available, otherwise fallback to email
+  const displayName = userName || user?.email?.split('@')[0] || 'there'
+  const capitalizedName = displayName.includes(' ')
+    ? displayName.split(' ')[0] // Use first name if full name exists
+    : displayName.charAt(0).toUpperCase() + displayName.slice(1)
 
   return (
     <div className="space-y-2 sm:space-y-3 lg:space-y-4">
@@ -376,11 +392,9 @@ export default function V2DashboardPage() {
               </div>
             </Card>
 
-          {/* Recent Runs Card - Activity Graph */}
+          {/* Recent Activity Card - Horizontal Bar List */}
           <Card
-            hoverable
-            onClick={() => router.push('/agents')}
-            className="cursor-pointer !p-4 !h-[280px] overflow-hidden !box-border"
+            className="!p-4 !h-[280px] overflow-hidden !box-border"
           >
               <div className="space-y-2">
               <div className="flex items-center gap-2">
@@ -390,164 +404,62 @@ export default function V2DashboardPage() {
                 </h3>
               </div>
               <p className="text-sm text-[var(--v2-text-secondary)]">
-                Agent execution trends
+                Top 3 most active agents
               </p>
-              <div className="pt-0 pb-0">
+              <div className="pt-2 pb-0">
                 {stats.agentStats.length > 0 ? (
-                  <div className="h-[140px] relative">
+                  <div className="space-y-3">
                     {(() => {
-                      // Sort active agents from low to high (already filtered for status='active' at query level)
-                      const sortedAgents = [...stats.agentStats]
-                        .sort((a, b) => a.count - b.count) // Low to high
-                        .slice(0, 8) // Show top 8 agents
+                      // Take top 3 agents by execution count
+                      const topAgents = [...stats.agentStats]
+                        .sort((a, b) => b.count - a.count)
+                        .slice(0, 3)
 
-                      const maxCount = Math.max(...sortedAgents.map(a => a.count), 1)
-                      const graphHeight = 105
-                      const graphWidth = 100
+                      const maxCount = Math.max(...topAgents.map(a => a.count))
 
-                      // Calculate points for line graph
-                      const pointSpacing = sortedAgents.length > 1 ? graphWidth / (sortedAgents.length - 1) : graphWidth / 2
+                      // Color palette for agents
+                      const colors = ['#8B5CF6', '#06B6D4', '#10B981', '#F59E0B', '#EF4444']
 
-                      const points = sortedAgents.map((agent, i) => {
-                        const x = sortedAgents.length > 1 ? i * pointSpacing : graphWidth / 2
-                        // Calculate y position: higher count = lower y value (closer to top)
-                        const normalizedHeight = (agent.count / maxCount) * (graphHeight * 0.8) // Use 80% of height for better visibility
-                        const y = graphHeight - normalizedHeight - (graphHeight * 0.1) // Add 10% padding at bottom
+                      return topAgents.map((agent, index) => {
+                        const widthPercent = maxCount > 0 ? (agent.count / maxCount) * 100 : 0
+                        const color = colors[index]
 
-                        return {
-                          x,
-                          y,
-                          count: agent.count,
-                          name: agent.name
-                        }
-                      })
-
-                      // Create smooth SVG path using cardinal splines for a truly flowing line
-                      const createSmoothPath = (points: any[]) => {
-                        if (points.length === 0) return ''
-                        if (points.length === 1) return `M ${points[0].x} ${points[0].y}`
-                        if (points.length === 2) return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`
-
-                        const tension = 0.3 // Smoothness factor (0-1, where 0.5 is balanced)
-                        let path = `M ${points[0].x} ${points[0].y}`
-
-                        for (let i = 0; i < points.length - 1; i++) {
-                          const p0 = points[Math.max(i - 1, 0)]
-                          const p1 = points[i]
-                          const p2 = points[i + 1]
-                          const p3 = points[Math.min(i + 2, points.length - 1)]
-
-                          // Calculate control points using Catmull-Rom to Bezier conversion
-                          const cp1x = p1.x + (p2.x - p0.x) / 6 * tension
-                          const cp1y = p1.y + (p2.y - p0.y) / 6 * tension
-                          const cp2x = p2.x - (p3.x - p1.x) / 6 * tension
-                          const cp2y = p2.y - (p3.y - p1.y) / 6 * tension
-
-                          path += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`
-                        }
-
-                        return path
-                      }
-
-                      const linePath = createSmoothPath(points)
-
-                      // Create smooth area path (filled area under the line)
-                      const areaPath = points.length > 0
-                        ? `${linePath} L ${points[points.length - 1].x} ${graphHeight} L ${points[0].x} ${graphHeight} Z`
-                        : ''
-
-                      return (
-                        <>
-                          {/* SVG Line Graph */}
-                          <svg className="w-full h-[105px]" viewBox={`0 0 ${graphWidth} ${graphHeight}`} preserveAspectRatio="none">
-                            {/* Gradient definition */}
-                            <defs>
-                              <linearGradient id="activityGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                                <stop offset="0%" stopColor="#8B5CF6" stopOpacity="0.2" />
-                                <stop offset="100%" stopColor="#8B5CF6" stopOpacity="0.02" />
-                              </linearGradient>
-                            </defs>
-
-                            {/* Area under the line - subtle fill */}
-                            <path
-                              d={areaPath}
-                              fill="url(#activityGradient)"
-                            />
-
-                            {/* Main line - smooth purple curve */}
-                            <path
-                              d={linePath}
-                              fill="none"
-                              stroke="#8B5CF6"
-                              strokeWidth="3"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              className="dark:opacity-90"
-                              style={{ filter: 'drop-shadow(0 1px 2px rgba(139, 92, 246, 0.3))' }}
-                            />
-
-                            {/* Data points - subtle */}
-                            {points.map((point, i) => (
-                              <g key={i}>
-                                <circle
-                                  cx={point.x}
-                                  cy={point.y}
-                                  r="3"
-                                  fill="#8B5CF6"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                  opacity="0.9"
-                                  className="dark:stroke-slate-700"
-                                  style={{ color: '#ffffff' }}
-                                />
-                              </g>
-                            ))}
-                          </svg>
-
-                          {/* Agent names and counts below */}
-                          <div className="flex justify-between mt-2 px-1 gap-0.5">
-                            {sortedAgents.map((agent, index) => (
-                              <div
-                                key={index}
-                                className="flex flex-col items-center flex-1 min-w-0 group relative"
-                              >
-                                <div className="text-[11px] font-bold text-[var(--v2-text-primary)] mb-0.5">
-                                  {agent.count}
-                                </div>
+                        return (
+                          <div key={index} className="space-y-1.5">
+                            {/* Agent name and count */}
+                            <div className="flex items-center justify-between text-xs">
+                              <div className="flex items-center gap-2 flex-1 min-w-0">
                                 <div
-                                  className="text-[9px] text-[var(--v2-text-muted)] truncate max-w-full w-full text-center px-0.5 cursor-help"
-                                  style={{
-                                    fontSize: sortedAgents.length > 5 ? '8px' : '9px',
-                                    lineHeight: '1.2'
-                                  }}
-                                >
-                                  {agent.name.length > (sortedAgents.length > 5 ? 8 : 12)
-                                    ? agent.name.substring(0, sortedAgents.length > 5 ? 8 : 12) + '...'
-                                    : agent.name}
-                                </div>
-
-                                {/* Tooltip - shows full agent name on hover */}
-                                <div className="absolute bottom-full mb-2 hidden group-hover:block z-50 pointer-events-none">
-                                  <div className="bg-gray-900 dark:bg-gray-700 text-white text-xs px-3 py-2 rounded-lg shadow-lg whitespace-nowrap">
-                                    {agent.name}
-                                    <div className="text-[10px] text-gray-300 mt-0.5">
-                                      {agent.count} {agent.count === 1 ? 'execution' : 'executions'}
-                                    </div>
-                                    {/* Arrow */}
-                                    <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-px">
-                                      <div className="border-4 border-transparent border-t-gray-900 dark:border-t-gray-700"></div>
-                                    </div>
-                                  </div>
-                                </div>
+                                  className="w-3 h-3 rounded-full flex-shrink-0"
+                                  style={{ backgroundColor: color }}
+                                />
+                                <span className="font-medium text-[var(--v2-text-primary)] truncate">
+                                  {agent.name}
+                                </span>
                               </div>
-                            ))}
+                              <span className="font-bold text-[var(--v2-text-primary)] ml-2">
+                                {agent.count}
+                              </span>
+                            </div>
+
+                            {/* Progress bar */}
+                            <div className="w-full bg-gray-100 dark:bg-gray-800 rounded-full h-2 overflow-hidden">
+                              <div
+                                className="h-full rounded-full transition-all duration-300"
+                                style={{
+                                  width: `${widthPercent}%`,
+                                  backgroundColor: color,
+                                  minWidth: agent.count > 0 ? '4px' : '0'
+                                }}
+                              />
+                            </div>
                           </div>
-                        </>
-                      )
+                        )
+                      })
                     })()}
                   </div>
                 ) : (
-                  <div className="flex items-center justify-center h-[140px] text-[var(--v2-text-muted)]">
+                  <div className="flex items-center justify-center h-[180px] text-[var(--v2-text-muted)]">
                     <div className="text-center">
                       <Activity className="w-12 h-12 opacity-20 mx-auto mb-2" />
                       <p className="text-xs">No agents created yet</p>

@@ -13,6 +13,7 @@ import { updateAgentIntensityMetrics } from '@/lib/utils/updateAgentIntensity'
 import type { AgentExecutionData } from '@/lib/types/intensity'
 import { WorkflowPilot } from '@/lib/pilot'
 import { SystemConfigService } from '@/lib/services/SystemConfigService'
+import { auditLog } from '@/lib/services/AuditTrailService'
 
 export const runtime = 'nodejs'
 
@@ -511,6 +512,36 @@ export async function POST(req: Request) {
         console.error('❌ [SPENDING] Failed to track token consumption:', spendingError);
         // Non-fatal error - continue execution
       }
+
+      // 📝 Audit Trail: Log agent execution (non-blocking)
+      auditLog({
+        action: 'AGENT_EXECUTED',
+        entityType: 'agent',
+        entityId: agent.id,
+        userId: user.id,
+        resourceName: agent.agent_name || 'Unnamed Agent',
+        details: {
+          execution_type: executionType,
+          success: normalizedResult.success,
+          tokens_used: normalizedResult.tokensUsed.total,
+          duration_ms: normalizedResult.executionTime,
+          manual: execution_type === 'manual',
+          has_inputs: Object.keys(inputValues || {}).length > 0,
+          // Execution-specific details
+          ...(executionType === 'pilot' ? {
+            steps_completed: executionResult.stepsCompleted,
+            steps_failed: executionResult.stepsFailed,
+            steps_skipped: executionResult.stepsSkipped
+          } : {
+            iterations: normalizedResult.iterations,
+            tool_calls_count: normalizedResult.toolCalls.length
+          })
+        },
+        severity: normalizedResult.success ? 'info' : 'warning'
+        // Note: request context not available (using standard Request, not NextRequest)
+      }).catch(err => {
+        console.error('⚠️ Audit log failed (non-blocking):', err);
+      });
 
       // Return unified response format
       return NextResponse.json({

@@ -1,9 +1,10 @@
 // lib/ai/providerFactory.ts
 // Factory pattern for AI provider instantiation
-// Manages singleton instances of OpenAI and Anthropic providers
+// Manages singleton instances of OpenAI, Anthropic, and Kimi providers
 
 import { OpenAIProvider } from './providers/openaiProvider';
 import { AnthropicProvider } from './providers/anthropicProvider';
+import { KimiProvider } from './providers/kimiProvider';
 import { BaseAIProvider } from './providers/baseProvider';
 import { AIAnalyticsService } from '../analytics/aiAnalytics';
 import { createClient } from '@supabase/supabase-js';
@@ -17,6 +18,7 @@ import { createClient } from '@supabase/supabase-js';
 export class ProviderFactory {
   private static openaiInstance: OpenAIProvider | null = null;
   private static anthropicInstance: AnthropicProvider | null = null;
+  private static kimiInstance: KimiProvider | null = null;
   private static aiAnalytics: AIAnalyticsService | null = null;
 
   /**
@@ -38,11 +40,11 @@ export class ProviderFactory {
   /**
    * Get provider instance by name
    *
-   * @param provider - Provider name ('openai' or 'anthropic')
+   * @param provider - Provider name ('openai', 'anthropic', or 'kimi')
    * @returns Provider instance
    * @throws Error if API key not configured
    */
-  static getProvider(provider: 'openai' | 'anthropic'): BaseAIProvider {
+  static getProvider(provider: 'openai' | 'anthropic' | 'kimi'): BaseAIProvider {
     switch (provider) {
       case 'openai':
         return this.getOpenAIProvider();
@@ -50,8 +52,11 @@ export class ProviderFactory {
       case 'anthropic':
         return this.getAnthropicProvider();
 
+      case 'kimi':
+        return this.getKimiProvider();
+
       default:
-        throw new Error(`Unknown provider: ${provider}. Supported providers: openai, anthropic`);
+        throw new Error(`Unknown provider: ${provider}. Supported providers: openai, anthropic, kimi`);
     }
   }
 
@@ -109,6 +114,33 @@ export class ProviderFactory {
   }
 
   /**
+   * Get Kimi provider instance (singleton)
+   *
+   * @private
+   * @returns Kimi provider instance
+   * @throws Error if KIMI_API_KEY not configured
+   */
+  private static getKimiProvider(): KimiProvider {
+    if (!this.kimiInstance) {
+      const apiKey = process.env.KIMI_API_KEY;
+
+      if (!apiKey) {
+        throw new Error(
+          'KIMI_API_KEY environment variable is not configured. ' +
+          'Please set it in your environment or .env file. ' +
+          'Get your API key from: https://platform.moonshot.ai'
+        );
+      }
+
+      console.log('🔧 Initializing Kimi Provider with analytics tracking');
+      const analytics = this.getAnalytics();
+      this.kimiInstance = new KimiProvider(apiKey, analytics);
+    }
+
+    return this.kimiInstance;
+  }
+
+  /**
    * Clear cached provider instances
    *
    * Useful for testing or when API keys change
@@ -117,6 +149,7 @@ export class ProviderFactory {
     console.log('🧹 Clearing provider instances');
     this.openaiInstance = null;
     this.anthropicInstance = null;
+    this.kimiInstance = null;
     this.aiAnalytics = null;
   }
 
@@ -126,12 +159,14 @@ export class ProviderFactory {
    * @param provider - Provider name to check
    * @returns true if provider is available, false otherwise
    */
-  static isProviderAvailable(provider: 'openai' | 'anthropic'): boolean {
+  static isProviderAvailable(provider: 'openai' | 'anthropic' | 'kimi'): boolean {
     switch (provider) {
       case 'openai':
         return !!process.env.OPENAI_API_KEY;
       case 'anthropic':
         return !!process.env.ANTHROPIC_API_KEY;
+      case 'kimi':
+        return !!process.env.KIMI_API_KEY;
       default:
         return false;
     }
@@ -142,8 +177,8 @@ export class ProviderFactory {
    *
    * @returns Array of available provider names
    */
-  static getAvailableProviders(): ('openai' | 'anthropic')[] {
-    const providers: ('openai' | 'anthropic')[] = [];
+  static getAvailableProviders(): ('openai' | 'anthropic' | 'kimi')[] {
+    const providers: ('openai' | 'anthropic' | 'kimi')[] = [];
 
     if (this.isProviderAvailable('openai')) {
       providers.push('openai');
@@ -151,6 +186,10 @@ export class ProviderFactory {
 
     if (this.isProviderAvailable('anthropic')) {
       providers.push('anthropic');
+    }
+
+    if (this.isProviderAvailable('kimi')) {
+      providers.push('kimi');
     }
 
     return providers;
@@ -170,6 +209,10 @@ export class ProviderFactory {
       anthropic: {
         available: this.isProviderAvailable('anthropic'),
         initialized: !!this.anthropicInstance
+      },
+      kimi: {
+        available: this.isProviderAvailable('kimi'),
+        initialized: !!this.kimiInstance
       }
     };
   }

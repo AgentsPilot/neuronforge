@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { auditLog } from '@/lib/services/AuditTrailService';
 
 // Initialize Supabase client
 const supabase = createClient(
@@ -220,6 +221,30 @@ export async function POST(request: NextRequest) {
       mode: data.mode,
       schedule_cron: data.schedule_cron,
       timezone: data.timezone
+    });
+
+    // 📝 Audit Trail: Log agent creation (non-blocking)
+    auditLog({
+      action: 'AGENT_CREATED',
+      entityType: 'agent',
+      entityId: data.id,
+      userId: agentUserIdToUse,
+      resourceName: data.agent_name || 'Unnamed Agent',
+      details: {
+        mode: data.mode,
+        plugins_count: data.plugins_required?.length || 0,
+        has_schedule: !!data.scheduled_time,
+        has_workflow: !!data.workflow_steps?.length,
+        workflow_steps_count: data.workflow_steps?.length || 0,
+        scheduled_cron: data.schedule_cron || null,
+        timezone: data.timezone || null,
+        status: data.status
+      },
+      severity: 'info',
+      request
+    }).catch(err => {
+      // Silent failure - don't block agent creation
+      console.error('⚠️ Audit log failed (non-blocking):', err);
     });
 
     // Track creation costs in AIS system now that agent exists in database

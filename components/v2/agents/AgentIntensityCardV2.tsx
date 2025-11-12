@@ -3,7 +3,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { Brain, Loader2 } from 'lucide-react'
 import { useAuth } from '@/components/UserProvider'
 import type { IntensityBreakdown } from '@/lib/types/intensity'
@@ -136,7 +136,7 @@ export function AgentIntensityCardV2({ agentId }: AgentIntensityCardV2Props) {
         {/* Creation Complexity */}
         <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-3">
           <div className="text-[10px] font-medium text-[var(--v2-text-muted)] mb-1">
-            Creation
+            Agent Creation
           </div>
           <div className="text-xl font-bold text-[var(--v2-text-primary)] mb-0.5">
             {breakdown.creation_score.toFixed(1)}
@@ -149,7 +149,7 @@ export function AgentIntensityCardV2({ agentId }: AgentIntensityCardV2Props) {
         {/* Runtime Complexity */}
         <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-3">
           <div className="text-[10px] font-medium text-[var(--v2-text-muted)] mb-1">
-            Runtime
+            Agent Execution
           </div>
           <div className="text-xl font-bold text-[var(--v2-text-primary)] mb-0.5">
             {breakdown.execution_score.toFixed(1)}
@@ -164,7 +164,7 @@ export function AgentIntensityCardV2({ agentId }: AgentIntensityCardV2Props) {
       <div className="grid grid-cols-2 gap-2">
         {/* Creation Credits */}
         <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-2">
-          <div className="text-[10px] text-[var(--v2-text-muted)] mb-0.5">Creation</div>
+          <div className="text-[10px] text-[var(--v2-text-muted)] mb-0.5">Pilot Credit Creation</div>
           <div className="text-base font-bold text-[var(--v2-text-primary)]">
             {breakdown.details?.creation_stats?.creation_tokens_used
               ? Math.ceil(breakdown.details.creation_stats.creation_tokens_used / 10).toLocaleString()
@@ -174,7 +174,7 @@ export function AgentIntensityCardV2({ agentId }: AgentIntensityCardV2Props) {
 
         {/* Execution Credits */}
         <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-2">
-          <div className="text-[10px] text-[var(--v2-text-muted)] mb-0.5">Execution</div>
+          <div className="text-[10px] text-[var(--v2-text-muted)] mb-0.5">Pilot Credit Execution</div>
           <div className="text-base font-bold text-[var(--v2-text-primary)]">
             {breakdown.details?.token_stats?.total_tokens
               ? Math.ceil(breakdown.details.token_stats.total_tokens / 10).toLocaleString()

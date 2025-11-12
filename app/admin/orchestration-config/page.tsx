@@ -139,6 +139,11 @@ const AVAILABLE_MODELS = {
     { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro', tier: 'powerful' },
     { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash', tier: 'balanced' },
     { value: 'gemini-pro', label: 'Gemini Pro', tier: 'balanced' },
+  ],
+  kimi: [
+    { value: 'kimi-k2-0905-preview', label: 'Kimi K2 0905 (Best Value) 💎', tier: 'balanced' },
+    { value: 'kimi-k2-thinking', label: 'Kimi K2 Thinking (Reasoning)', tier: 'balanced' },
+    { value: 'kimi-k2-0711-preview', label: 'Kimi K2 0711 (Legacy)', tier: 'balanced' },
   ]
 };
 
@@ -147,6 +152,7 @@ const ALL_MODELS = [
   ...AVAILABLE_MODELS.claude,
   ...AVAILABLE_MODELS.openai,
   ...AVAILABLE_MODELS.google,
+  ...AVAILABLE_MODELS.kimi,
 ];
 
 export default function OrchestrationConfigPage() {
@@ -616,6 +622,11 @@ export default function OrchestrationConfigPage() {
                         <option key={model.value} value={model.value}>{model.label}</option>
                       ))}
                     </optgroup>
+                    <optgroup label="Kimi Models (Moonshot AI)">
+                      {AVAILABLE_MODELS.kimi.map(model => (
+                        <option key={model.value} value={model.value}>{model.label}</option>
+                      ))}
+                    </optgroup>
                   </select>
                   <p className="text-xs text-slate-400 mt-2">Used for simple, straightforward tasks with complexity scores below the Fast Tier Max threshold. Examples: Basic data retrieval, simple API calls, data validation, format conversion, status checks. These tasks don't require advanced reasoning or extensive context understanding. Recommended models: claude-3-haiku (fastest, cheapest), gpt-4o-mini (good balance), claude-3-5-haiku (newest fast model). Fast tier handles 60-70% of typical workflow tasks at fraction of the cost.</p>
                 </div>
@@ -646,6 +657,11 @@ export default function OrchestrationConfigPage() {
                         <option key={model.value} value={model.value}>{model.label}</option>
                       ))}
                     </optgroup>
+                    <optgroup label="Kimi Models (Moonshot AI)">
+                      {AVAILABLE_MODELS.kimi.map(model => (
+                        <option key={model.value} value={model.value}>{model.label}</option>
+                      ))}
+                    </optgroup>
                   </select>
                   <p className="text-xs text-slate-400 mt-2">Used for moderate complexity tasks with scores between Fast Max and Balanced Max thresholds. Examples: Multi-step workflows, data transformation, moderate reasoning, summarization, business logic execution, error handling. These tasks require some reasoning capability but don't need flagship model power. Recommended models: claude-3-5-haiku (excellent capability-to-cost ratio), gpt-4o-mini, claude-3-sonnet. Balanced tier handles 25-30% of tasks and provides sweet spot for cost-performance.</p>
                 </div>
@@ -673,6 +689,11 @@ export default function OrchestrationConfigPage() {
                     </optgroup>
                     <optgroup label="Google Models">
                       {AVAILABLE_MODELS.google.map(model => (
+                        <option key={model.value} value={model.value}>{model.label}</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Kimi Models (Moonshot AI)">
+                      {AVAILABLE_MODELS.kimi.map(model => (
                         <option key={model.value} value={model.value}>{model.label}</option>
                       ))}
                     </optgroup>
@@ -921,6 +942,11 @@ export default function OrchestrationConfigPage() {
                     </optgroup>
                     <optgroup label="Google Models">
                       {AVAILABLE_MODELS.google.map(model => (
+                        <option key={model.value} value={model.value}>{model.label}</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Kimi Models (Moonshot AI)">
+                      {AVAILABLE_MODELS.kimi.map(model => (
                         <option key={model.value} value={model.value}>{model.label}</option>
                       ))}
                     </optgroup>

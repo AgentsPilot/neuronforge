@@ -7,8 +7,8 @@ import { createClient } from '@supabase/supabase-js';
 /**
  * Database schema for ai_model_pricing table:
  * - id: UUID
- * - provider: string (openai, anthropic, google)
- * - model_name: string (gpt-4o, claude-3-sonnet, etc.)
+ * - provider: string (openai, anthropic, google, kimi)
+ * - model_name: string (gpt-4o, claude-3-sonnet, kimi-k2-0905-preview, etc.)
  * - input_cost_per_token: decimal (cost per single token, not per 1000)
  * - output_cost_per_token: decimal (cost per single token, not per 1000)
  * - effective_date: date
@@ -58,6 +58,13 @@ const FALLBACK_PRICING = {
     'gemini-1.5-pro': { input: 0.00125, output: 0.005 },
     'gemini-1.5-flash': { input: 0.000075, output: 0.0003 },
     'gemini-1.0-pro': { input: 0.0005, output: 0.0015 },
+  },
+  'kimi': {
+    // Kimi K2 Base Models - Highly competitive pricing (as of 2025)
+    'kimi-k2-0711-preview': { input: 0.00015, output: 0.0025 },  // $0.15 per M input, $2.50 per M output
+    'kimi-k2-0905-preview': { input: 0.00015, output: 0.0025 },  // Same pricing as 0711
+    // Kimi K2 Thinking Model - Enhanced reasoning capabilities
+    'kimi-k2-thinking': { input: 0.0006, output: 0.0025 },        // $0.60 per M input, $2.50 per M output
   }
 } as const;
 

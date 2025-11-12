@@ -1,6 +1,8 @@
 // app/api/agents/[id]/route.ts - FIXED with timezone-safe schedule updates
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { auditLog } from '@/lib/services/AuditTrailService';
+import { generateDiff } from '@/lib/audit/diff';
 
 // Initialize Supabase client with Service Role Key
 const supabase = createClient(
@@ -309,6 +311,36 @@ export async function PUT(
 
     console.log(`Agent updated: ${updatedAgent.agent_name} by user ${userId}`);
 
+    // 📝 Audit Trail: Log agent update with change tracking (non-blocking)
+    try {
+      const changes = generateDiff(existingAgent, updatedAgent);
+      const hasChanges = Object.keys(changes).length > 0;
+
+      if (hasChanges) {
+        auditLog({
+          action: 'AGENT_UPDATED',
+          entityType: 'agent',
+          entityId: agentId,
+          userId: userId,
+          resourceName: updatedAgent.agent_name || 'Unnamed Agent',
+          changes, // Includes before/after for each field
+          details: {
+            fields_changed: Object.keys(changes).length,
+            critical_change: !!(changes.status || changes.schedule_cron || changes.mode),
+            status_changed: !!changes.status,
+            schedule_changed: !!changes.schedule_cron,
+            mode_changed: !!changes.mode
+          },
+          severity: (changes.status || changes.mode) ? 'warning' : 'info',
+          request
+        }).catch(err => {
+          console.error('⚠️ Audit log failed (non-blocking):', err);
+        });
+      }
+    } catch (auditError) {
+      console.error('⚠️ Audit trail error (non-blocking):', auditError);
+    }
+
     return NextResponse.json({
       success: true,
       agent: updatedAgent,
@@ -362,10 +394,10 @@ export async function DELETE(
 
     console.log(`Deleting agent ${agentId} for user ${userId}`);
 
-    // Verify the agent exists and user owns it
+    // Verify the agent exists and user owns it - fetch more details for audit trail
     const { data: existingAgent, error: fetchError } = await supabase
       .from('agents')
-      .select('id, user_id, agent_name')
+      .select('id, user_id, agent_name, mode, status, created_at')
       .eq('id', agentId)
       .eq('user_id', userId)
       .maybeSingle();
@@ -385,6 +417,12 @@ export async function DELETE(
       );
     }
 
+    // Get execution stats before deletion (for audit trail)
+    const { count: executionCount } = await supabase
+      .from('agent_executions')
+      .select('*', { count: 'exact', head: true })
+      .eq('agent_id', agentId);
+
     // Delete the agent
     const { error: deleteError } = await supabase
       .from('agents')
@@ -401,6 +439,26 @@ export async function DELETE(
     }
 
     console.log(`Agent deleted: ${agentId} by user ${userId}`);
+
+    // 📝 Audit Trail: Log agent deletion (non-blocking)
+    auditLog({
+      action: 'AGENT_DELETED',
+      entityType: 'agent',
+      entityId: agentId,
+      userId: userId,
+      resourceName: existingAgent.agent_name || 'Unnamed Agent',
+      details: {
+        mode: existingAgent.mode,
+        status: existingAgent.status,
+        total_executions: executionCount || 0,
+        created_at: existingAgent.created_at,
+        permanently_deleted: true
+      },
+      severity: 'warning', // Deletion is always a warning-level event
+      request
+    }).catch(err => {
+      console.error('⚠️ Audit log failed (non-blocking):', err);
+    });
 
     return NextResponse.json({
       success: true,

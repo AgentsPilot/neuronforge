@@ -12,7 +12,10 @@ import {
   Clock,
   Plus,
   Globe,
-  Mail
+  Mail,
+  MoreVertical,
+  List,
+  LayoutDashboard
 } from 'lucide-react'
 import {
   SiGmail,
@@ -41,6 +44,7 @@ export function V2Footer() {
   const [lastRunTime, setLastRunTime] = useState<Date | null>(null)
   const [connectedPlugins, setConnectedPlugins] = useState<ConnectedPlugin[]>([])
   const [hoveredPlugin, setHoveredPlugin] = useState<string | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   useEffect(() => {
     if (!user) return
@@ -214,6 +218,63 @@ export function V2Footer() {
           >
             <Plus className="w-4.5 h-4.5 sm:w-5 sm:h-5 text-[#3B82F6]" />
           </button>
+
+          {/* 3-dot menu */}
+          <div className="relative">
+            <button
+              onClick={() => setMenuOpen(!menuOpen)}
+              className="w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] flex items-center justify-center hover:scale-105 transition-transform duration-200 flex-shrink-0"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+              title="Menu"
+              aria-label="Menu"
+            >
+              <MoreVertical className="w-4.5 h-4.5 sm:w-5 sm:h-5 text-[var(--v2-text-secondary)]" />
+            </button>
+
+            {menuOpen && (
+              <>
+                {/* Backdrop to close menu */}
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setMenuOpen(false)}
+                />
+
+                {/* Dropdown menu */}
+                <div className="absolute right-0 bottom-full mb-2 w-48 bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] border border-[var(--v2-border)] z-50 overflow-hidden" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+                  <button
+                    onClick={() => {
+                      router.push('/v2/agent-list')
+                      setMenuOpen(false)
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                  >
+                    <List className="w-4 h-4 text-[var(--v2-text-secondary)]" />
+                    <span className="text-sm font-medium text-[var(--v2-text-primary)]">Agent List</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      router.push('/v2/dashboard')
+                      setMenuOpen(false)
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                  >
+                    <LayoutDashboard className="w-4 h-4 text-[var(--v2-text-secondary)]" />
+                    <span className="text-sm font-medium text-[var(--v2-text-primary)]">Dashboard</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      router.push('/agents/new')
+                      setMenuOpen(false)
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                  >
+                    <Plus className="w-4 h-4 text-[var(--v2-text-secondary)]" />
+                    <span className="text-sm font-medium text-[var(--v2-text-primary)]">Create Agent</span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </div>

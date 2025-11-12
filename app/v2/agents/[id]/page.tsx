@@ -871,14 +871,14 @@ export default function V2AgentDetailPage() {
                     </div>
                   )}
 
-                  {/* Execution Summary for Workflow Executions */}
-                  {selectedExecution.logs?.workflowExecution && (
+                  {/* Execution Summary for Smart Executions */}
+                  {selectedExecution.logs?.pilot && (
                     <div className="border rounded-lg p-4" style={{ backgroundColor: 'var(--v2-status-executing-bg)', borderColor: 'var(--v2-status-executing-border)' }}>
                       <h4 className="text-sm font-semibold mb-3 flex items-center gap-2" style={{ color: 'var(--v2-status-executing-text)' }}>
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                         </svg>
-                        Workflow Execution Summary
+                        Smart Execution Summary
                       </h4>
                       <div className="grid grid-cols-2 gap-3 text-xs">
                         <div className="flex justify-between">
@@ -943,7 +943,7 @@ export default function V2AgentDetailPage() {
                           ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400'
                           : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
                       }`}>
-                        {selectedExecution.logs.pilot ? 'Workflow Pilot' : 'AgentKit'}
+                        {selectedExecution.logs.pilot ? 'Smart Pilot' : 'AgentKit'}
                       </span>
                     </div>
                   )}
@@ -972,11 +972,11 @@ export default function V2AgentDetailPage() {
                     </div>
                   </div>
 
-                  {/* Workflow Progress (Pilot only) */}
+                  {/* Execution Progress (Pilot only) */}
                   {selectedExecution.logs?.pilot && selectedExecution.logs.totalSteps && (
                     <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-4">
                       <h4 className="text-sm font-semibold text-[var(--v2-text-primary)] mb-3">
-                        Workflow Progress
+                        Execution Progress
                       </h4>
                       <div className="space-y-3">
                         {/* Progress Bar */}
@@ -1022,15 +1022,15 @@ export default function V2AgentDetailPage() {
                   {(selectedExecution.logs?.model || selectedExecution.logs?.provider) && (
                     <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-4">
                       <h4 className="text-sm font-semibold text-[var(--v2-text-primary)] mb-3">
-                        {selectedExecution.logs.workflowExecution ? 'Execution Type' : 'AI Model Information'}
+                        {selectedExecution.logs.pilot ? 'Execution Type' : 'AI Model Information'}
                       </h4>
                       <div className="space-y-2 text-xs">
-                        {selectedExecution.logs.workflowExecution ? (
+                        {selectedExecution.logs.pilot ? (
                           <>
                             <div className="flex justify-between">
                               <span className="text-[var(--v2-text-muted)]">Type:</span>
                               <span className="text-[var(--v2-text-primary)] font-medium">
-                                Workflow Orchestrator
+                                Smart Orchestrator
                               </span>
                             </div>
                             <div className="flex justify-between">

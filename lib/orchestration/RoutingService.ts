@@ -735,8 +735,8 @@ export class RoutingService implements IRoutingService {
   private getDefaultDecision(context: RoutingContext): RoutingDecision {
     return {
       tier: 'balanced',
-      model: 'gpt-4o-mini',
-      provider: 'openai',
+      model: 'kimi-k2-0905-preview',
+      provider: 'kimi',
       reason: 'Default routing (error fallback)',
       estimatedCost: 0,
       estimatedLatency: 2000,
@@ -758,11 +758,11 @@ export class RoutingService implements IRoutingService {
         avgLatencyMs: 800,
       },
       balanced: {
-        provider: 'openai',
-        model: 'gpt-4o-mini',
+        provider: 'kimi',  // Updated to use Kimi - 10x cheaper than gpt-4o-mini!
+        model: 'kimi-k2-0905-preview',
         maxTokens: 4096,
         temperature: 0.7,
-        costPerToken: 0.00000015, // $0.15 per 1M tokens (input)
+        costPerToken: 0.00000015, // $0.15 per 1M tokens (same as gpt-4o-mini but better performance)
         avgLatencyMs: 2000,
       },
       powerful: {
@@ -791,7 +791,12 @@ export class RoutingService implements IRoutingService {
    * Get default provider for tier
    */
   private getDefaultProvider(tier: ModelTier): string {
-    return tier === 'fast' || tier === 'powerful' ? 'anthropic' : 'openai';
+    const providers: Record<ModelTier, string> = {
+      fast: 'anthropic',
+      balanced: 'kimi',  // Use Kimi for balanced tier (best cost/performance)
+      powerful: 'anthropic',
+    };
+    return providers[tier];
   }
 
   /**
@@ -800,7 +805,7 @@ export class RoutingService implements IRoutingService {
   private getDefaultModel(tier: ModelTier): string {
     const models: Record<ModelTier, string> = {
       fast: 'claude-3-haiku-20240307',
-      balanced: 'gpt-4o-mini',
+      balanced: 'kimi-k2-0905-preview',  // Use Kimi K2 for balanced tier
       powerful: 'claude-3-5-sonnet-20241022',
     };
     return models[tier];

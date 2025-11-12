@@ -4,6 +4,7 @@
 import type { Metadata } from 'next'
 import { V2ThemeProvider } from '@/lib/design-system-v2'
 import { V2Footer } from '@/components/v2/Footer'
+import { HelpBot } from '@/components/v2/HelpBot'
 import './globals-v2.css'
 
 export const metadata: Metadata = {
@@ -25,6 +26,9 @@ export default function V2RootLayout({
           {/* Global Footer */}
           <V2Footer />
         </div>
+
+        {/* Global Help Bot */}
+        <HelpBot />
       </div>
     </V2ThemeProvider>
   )

@@ -514,14 +514,14 @@ export default function V2RunAgentPage() {
               {result.agentkit || result.pilot ? (
                 // AgentKit or Pilot execution - display the message and metrics
                 <>
-                  {/* Workflow Output - Structured Display */}
+                  {/* Smart Execution Output - Structured Display */}
                   {result.pilot && result.data?.output && (
                     <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4" style={{ borderRadius: 'var(--v2-radius-button)' }}>
                       <div className="text-xs font-semibold text-[var(--v2-text-muted)] mb-3 uppercase tracking-wide flex items-center gap-2">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
-                        Workflow Output
+                        Execution Output
                       </div>
                       <div className="space-y-2">
                         {Object.entries(result.data.output).map(([key, value]) => (
@@ -589,7 +589,7 @@ export default function V2RunAgentPage() {
                     </div>
                   )}
 
-                  {/* Message Display (for non-workflow or AgentKit) */}
+                  {/* Message Display (for non-pilot or AgentKit) */}
                   {result.message && !result.pilot && (
                     <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4" style={{ borderRadius: 'var(--v2-radius-button)' }}>
                       <div className="prose prose-sm max-w-none dark:prose-invert">
@@ -725,7 +725,7 @@ export default function V2RunAgentPage() {
         </Card>
       </div>
 
-      {/* Workflow Steps Visualization Card */}
+      {/* Execution Steps Visualization Card */}
       {agent.workflow_steps && agent.workflow_steps.length > 0 && (() => {
         const steps = agent.workflow_steps!
 
@@ -757,7 +757,7 @@ export default function V2RunAgentPage() {
             <div className="flex items-center gap-2 mb-4">
               <GitBranch className="w-5 h-5 text-[var(--v2-primary)]" />
               <div>
-                <h3 className="text-sm font-semibold text-[var(--v2-text-primary)]">Workflow Steps</h3>
+                <h3 className="text-sm font-semibold text-[var(--v2-text-primary)]">Execution Steps</h3>
                 <p className="text-xs text-[var(--v2-text-muted)]">
                   {steps.length} steps
                   {(executing || result) && ` • ${executing ? completedStepsLive.size : completedSteps.length} completed, ${executing ? failedStepsLive.size : failedSteps.length} failed, ${skippedSteps.length} skipped`}
@@ -765,7 +765,7 @@ export default function V2RunAgentPage() {
               </div>
             </div>
 
-            {/* Workflow Steps - Wrapping Grid */}
+            {/* Execution Steps - Wrapping Grid */}
             <div className="flex flex-wrap gap-2">
               {steps.map((step: any, idx: number) => {
                 const stepId = step.id || `step${idx + 1}`
