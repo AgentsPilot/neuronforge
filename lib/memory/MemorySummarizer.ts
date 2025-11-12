@@ -210,10 +210,15 @@ export class MemorySummarizer {
       // 4. Calculate importance score
       const importanceScore = this.calculateImportance(memory, input, importanceConfig);
 
-      // 5. Save to database (embedding will be generated later in batch)
-      await this.saveMemory(input, memory, importanceScore);
+      // 5. Save to database and get memory ID
+      const memoryId = await this.saveMemory(input, memory, importanceScore);
 
       console.log(`💾 [MemorySummarizer] Memory saved for run #${input.run_number}`);
+
+      // 6. Generate embedding immediately (async, non-blocking)
+      this.generateEmbeddingAsync(memoryId, memory).catch((err) => {
+        console.error(`⚠️  [MemorySummarizer] Embedding generation failed (non-critical):`, err);
+      });
 
       // Audit: Memory created successfully
       await this.auditTrail.log({
@@ -459,12 +464,13 @@ Response (JSON only):`;
    * Save memory to database
    *
    * @private
+   * @returns The ID of the created memory record
    */
   private async saveMemory(
     input: SummarizationInput,
     memory: RunMemory,
     importanceScore: number
-  ): Promise<void> {
+  ): Promise<string> {
     const tokenCount = this.estimateTokens(memory.summary);
 
     // Retry logic to handle race conditions with run_number
@@ -484,7 +490,7 @@ Response (JSON only):`;
 
       console.log(`📊 [MemorySummarizer] Attempt ${attempt}/${maxRetries}: Calculated run_number=${runNumber} (previous max: ${maxRunData?.[0]?.run_number || 0})`);
 
-      const { error } = await this.supabase
+      const { data, error } = await this.supabase
         .from('run_memories')
         .insert({
           agent_id: input.agent_id,
@@ -509,14 +515,16 @@ Response (JSON only):`;
           execution_time_ms: input.execution_time_ms,
           ais_score: input.ais_score || null,
 
-          // Embedding will be generated later in batch
+          // Embedding will be generated immediately after save
           embedding: null
-        });
+        })
+        .select('id')
+        .single();
 
-      // Success - exit retry loop
-      if (!error) {
-        console.log(`✅ [MemorySummarizer] Memory saved successfully with run_number=${runNumber}`);
-        return;
+      // Success - exit retry loop and return ID
+      if (!error && data) {
+        console.log(`✅ [MemorySummarizer] Memory saved successfully with run_number=${runNumber}, id=${data.id}`);
+        return data.id;
       }
 
       // Check if it's a duplicate key error (23505)
@@ -638,6 +646,47 @@ Response (JSON only):`;
       }
     } catch (error) {
       console.error('❌ [MemorySummarizer] Error generating embedding:', error);
+    }
+  }
+
+  /**
+   * Generate embedding immediately after memory creation (async, non-blocking)
+   * Optimized version that doesn't need to re-fetch the memory
+   *
+   * @private
+   */
+  private async generateEmbeddingAsync(memoryId: string, memory: RunMemory): Promise<void> {
+    try {
+      console.log(`🔮 [MemorySummarizer] Generating embedding for memory ${memoryId}...`);
+
+      // Build text for embedding
+      const embeddingText = `${memory.summary} ${JSON.stringify(memory.key_outcomes)} ${JSON.stringify(memory.patterns_detected)}`;
+
+      // Load config
+      const config = await MemoryConfigService.getEmbeddingConfig(this.supabase);
+
+      // Generate embedding
+      const response = await this.openai.embeddings.create({
+        model: config.model,
+        input: embeddingText
+      });
+
+      const embedding = response.data[0].embedding;
+
+      // Save to database
+      const { error: updateError } = await this.supabase
+        .from('run_memories')
+        .update({ embedding })
+        .eq('id', memoryId);
+
+      if (updateError) {
+        console.error('❌ [MemorySummarizer] Error saving embedding:', updateError);
+      } else {
+        console.log(`✅ [MemorySummarizer] Embedding generated successfully for memory ${memoryId}`);
+      }
+    } catch (error) {
+      console.error('❌ [MemorySummarizer] Error generating embedding:', error);
+      throw error;
     }
   }
 }

@@ -373,6 +373,9 @@ export interface ExecutionContext {
   // Memory context
   memoryContext?: MemoryContext;
 
+  // Orchestration (Phase 4)
+  orchestrator?: any; // WorkflowOrchestrator instance
+
   // Timing
   startedAt: Date;
   completedAt?: Date;
@@ -414,6 +417,13 @@ export interface StepOutputMetadata {
   error?: string;
   errorCode?: string;
   cacheHit?: boolean;
+
+  // Orchestration metadata (Phase 4)
+  compressionApplied?: boolean;
+  tokensSaved?: number;
+  routedModel?: string;
+  orchestrated?: boolean;
+  subWorkflowStepCount?: number;
 }
 
 /**
@@ -550,6 +560,15 @@ export interface WorkflowExecutionResult {
   completedStepIds?: string[];
   failedStepIds?: string[];
   skippedStepIds?: string[];
+
+  // Orchestration metrics (Phase 4)
+  orchestrationMetrics?: {
+    totalTokensUsed: number;
+    totalTokensSaved: number;
+    savingsPercent: string;
+    totalCost: number;
+    budgetUtilization: string;
+  };
 
   // Error info (if failed)
   error?: string;

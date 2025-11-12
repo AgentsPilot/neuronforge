@@ -43,6 +43,8 @@ import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { SystemConfigService } from '@/lib/services/SystemConfigService';
 import { ExecutionEventEmitter } from '@/lib/execution/ExecutionEventEmitter';
+import { WorkflowOrchestrator } from '@/lib/orchestration';
+import { PilotConfigService } from './PilotConfigService';
 
 export class WorkflowPilot {
   private supabase: SupabaseClient;
@@ -56,33 +58,51 @@ export class WorkflowPilot {
   private auditTrail: AuditTrailService;
   private approvalTracker: ApprovalTracker;
   private notificationService: NotificationService;
-  private options: PilotOptions;
+  private options: PilotOptions | null = null;
+  private optionsOverride: PilotOptions | undefined;
 
   constructor(supabase: SupabaseClient, options?: PilotOptions) {
     this.supabase = supabase;
-    this.options = {
-      maxParallelSteps: 3,
-      defaultTimeout: 300000, // 5 minutes
-      enableCaching: false,
-      continueOnError: false,
-      enableProgressTracking: true,
-      enableRealTimeUpdates: false,
-      enableOptimizations: true,
-      cacheStepResults: false,
-      ...options,
-    };
+    this.optionsOverride = options; // Store for later merge with DB config
 
-    // Initialize components
+    // Initialize components (parallelExecutor will be initialized after loading config)
     this.parser = new WorkflowParser();
     this.stateManager = new StateManager(supabase);
     this.stepExecutor = new StepExecutor(supabase, this.stateManager); // Pass StateManager for step logging
-    this.parallelExecutor = new ParallelExecutor(this.stepExecutor, this.options.maxParallelSteps);
+    this.parallelExecutor = new ParallelExecutor(this.stepExecutor, 3); // Temporary, will be reinitialized
     this.conditionalEvaluator = new ConditionalEvaluator();
     this.errorRecovery = new ErrorRecovery();
     this.outputValidator = new OutputValidator();
     this.auditTrail = AuditTrailService.getInstance();
     this.approvalTracker = new ApprovalTracker(supabase);
     this.notificationService = new NotificationService();
+  }
+
+  /**
+   * Load Pilot configuration from database
+   * Called once at the start of execution
+   *
+   * @private
+   */
+  private async loadConfig(): Promise<PilotOptions> {
+    if (this.options !== null) {
+      return this.options;
+    }
+
+    // Load from database
+    const dbConfig = await PilotConfigService.loadPilotConfig(this.supabase);
+
+    // Merge with any constructor overrides
+    this.options = {
+      ...dbConfig,
+      ...this.optionsOverride,
+    };
+
+    // Reinitialize parallel executor with correct maxParallelSteps
+    this.parallelExecutor = new ParallelExecutor(this.stepExecutor, this.options.maxParallelSteps);
+
+    console.log('[WorkflowPilot] Configuration loaded:', this.options);
+    return this.options;
   }
 
   /**
@@ -108,7 +128,11 @@ export class WorkflowPilot {
     // Store stepEmitter in instance for use during execution
     (this as any).stepEmitter = stepEmitter;
 
-    // 0. Check if pilot is enabled (safeguard)
+    // 0a. Load Pilot configuration from database (with 5-min cache)
+    const options = await this.loadConfig();
+    console.log(`⚙️  [WorkflowPilot] Configuration: maxParallelSteps=${options.maxParallelSteps}, timeout=${options.defaultTimeout}ms, caching=${options.enableCaching}`);
+
+    // 0b. Check if pilot is enabled (safeguard)
     const pilotEnabled = await SystemConfigService.getBoolean(
       this.supabase,
       'pilot_enabled',
@@ -200,6 +224,27 @@ export class WorkflowPilot {
       console.warn(`⚠️  [WorkflowPilot] Failed to load memory (non-critical):`, error.message);
     }
 
+    // 3b. Initialize orchestration (Phase 4)
+    try {
+      const orchestrator = new WorkflowOrchestrator(this.supabase);
+      const orchestrationEnabled = await orchestrator.initialize(
+        executionId,  // Use executionId as workflowId
+        agent.id,
+        userId,
+        workflowSteps
+      );
+
+      if (orchestrationEnabled) {
+        console.log('🎯 [WorkflowPilot] Orchestration enabled for this execution');
+        context.orchestrator = orchestrator;
+      } else {
+        console.log('ℹ️  [WorkflowPilot] Orchestration disabled, using normal execution');
+      }
+    } catch (error: any) {
+      console.warn('⚠️  [WorkflowPilot] Orchestration initialization failed (non-critical):', error.message);
+      // Continue with normal execution
+    }
+
     // 4. Audit: Execution started
     await this.auditTrail.log({
       action: AUDIT_EVENTS.PILOT_EXECUTION_STARTED,
@@ -272,6 +317,22 @@ export class WorkflowPilot {
       const totalTokensWithMemory = context.totalTokensUsed + memoryTokens;
       console.log(`📊 [WorkflowPilot] Final token count: ${context.totalTokensUsed} (steps) + ${memoryTokens} (memory) = ${totalTokensWithMemory}`);
 
+      // 12. Complete orchestration and collect metrics (Phase 4)
+      let orchestrationMetrics: any = null;
+      if (context.orchestrator) {
+        try {
+          orchestrationMetrics = await context.orchestrator.complete();
+          if (orchestrationMetrics) {
+            console.log('🎯 [WorkflowPilot] Orchestration metrics:');
+            console.log(`   💰 Total tokens saved: ${orchestrationMetrics.totalTokensSaved}`);
+            console.log(`   💵 Total cost: $${orchestrationMetrics.totalCost.toFixed(4)}`);
+            console.log(`   📊 Budget utilization: ${(orchestrationMetrics.budgetUtilization * 100).toFixed(1)}%`);
+          }
+        } catch (error: any) {
+          console.warn('⚠️  [WorkflowPilot] Orchestration completion failed (non-critical):', error.message);
+        }
+      }
+
       console.log(`✅ [WorkflowPilot] Execution completed successfully: ${executionId}`);
 
       // Emit execution complete event globally
@@ -294,6 +355,16 @@ export class WorkflowPilot {
         completedStepIds: context.completedSteps,
         failedStepIds: context.failedSteps,
         skippedStepIds: context.skippedSteps,
+        // Orchestration metrics (Phase 4)
+        orchestrationMetrics: orchestrationMetrics ? {
+          totalTokensUsed: orchestrationMetrics.totalTokensUsed,
+          totalTokensSaved: orchestrationMetrics.totalTokensSaved,
+          savingsPercent: orchestrationMetrics.totalTokensUsed > 0
+            ? ((orchestrationMetrics.totalTokensSaved / orchestrationMetrics.totalTokensUsed) * 100).toFixed(1) + '%'
+            : '0%',
+          totalCost: orchestrationMetrics.totalCost,
+          budgetUtilization: (orchestrationMetrics.budgetUtilization * 100).toFixed(1) + '%',
+        } : undefined,
       };
     } catch (error: any) {
       console.error(`❌ [WorkflowPilot] Execution failed:`, error);
@@ -653,7 +724,7 @@ export class WorkflowPilot {
       });
 
       // Check if we should continue on error
-      if (!stepDef.continueOnError && !this.options.continueOnError) {
+      if (!stepDef.continueOnError && !options.continueOnError) {
         throw new ExecutionError(
           `Step ${stepDef.id} failed: ${output.metadata.error}`,
           output.metadata.errorCode || 'STEP_EXECUTION_FAILED',

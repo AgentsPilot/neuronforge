@@ -7,7 +7,6 @@ import type { ChatCompletionMessageParam } from 'openai/resources/chat/completio
 import { OpenAIProvider } from '@/lib/ai/providers/openaiProvider';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
-import { ModelRouter } from '@/lib/ai/modelRouter';
 import { ProviderFactory } from '@/lib/ai/providerFactory';
 import { SystemConfigService } from '@/lib/services/SystemConfigService';
 import { MemoryInjector } from '@/lib/memory/MemoryInjector';
@@ -227,17 +226,38 @@ export async function runAgentKit(
       console.log('🎯 Agent-Level Routing ENABLED - selecting optimal model based on AIS score');
 
       try {
-        const modelSelection = await ModelRouter.selectModel(agent.id, supabase, userId);
+        // Fetch AIS score from agent_intensity_metrics
+        const { data: aisData, error: aisError } = await supabase
+          .from('agent_intensity_metrics')
+          .select('overall_intensity_score')
+          .eq('agent_id', agent.id)
+          .single();
 
-        selectedModel = modelSelection.model;
-        selectedProvider = modelSelection.provider;
-        routingReasoning = modelSelection.reasoning;
+        const aisScore = aisData?.overall_intensity_score || 5.0; // Default to balanced tier
+
+        // Simple tier-based routing (matching orchestration config defaults)
+        if (aisScore < 3.0) {
+          // Fast tier
+          selectedModel = 'claude-3-haiku-20240307';
+          selectedProvider = 'anthropic';
+          routingReasoning = `Fast tier (AIS: ${aisScore.toFixed(1)}) - Simple task`;
+        } else if (aisScore < 6.5) {
+          // Balanced tier
+          selectedModel = 'gpt-4o-mini';
+          selectedProvider = 'openai';
+          routingReasoning = `Balanced tier (AIS: ${aisScore.toFixed(1)}) - Moderate complexity`;
+        } else {
+          // Powerful tier
+          selectedModel = 'claude-3-5-sonnet-20241022';
+          selectedProvider = 'anthropic';
+          routingReasoning = `Powerful tier (AIS: ${aisScore.toFixed(1)}) - Complex task`;
+        }
 
         console.log('🎯 Model Selected (Agent-Level):', {
           model: selectedModel,
           provider: selectedProvider,
           reasoning: routingReasoning,
-          intensity_score: modelSelection.intensity_score
+          intensity_score: aisScore
         });
       } catch (routingError) {
         // On error, fall back to default model

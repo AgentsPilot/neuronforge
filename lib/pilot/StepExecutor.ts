@@ -33,24 +33,25 @@ import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { ConditionalEvaluator } from './ConditionalEvaluator';
 import { DataOperations } from './DataOperations';
-import { TaskComplexityAnalyzer } from './TaskComplexityAnalyzer';
-import { PerStepModelRouter } from './PerStepModelRouter';
+// TODO: Implement these classes for per-step routing
+// import { TaskComplexityAnalyzer } from './TaskComplexityAnalyzer';
+// import { PerStepModelRouter } from './PerStepModelRouter';
 
 export class StepExecutor {
   private supabase: SupabaseClient;
   private auditTrail: AuditTrailService;
   private conditionalEvaluator: ConditionalEvaluator;
   private stateManager: any; // StateManager (avoiding circular dependency)
-  private complexityAnalyzer: TaskComplexityAnalyzer;
-  private modelRouter: PerStepModelRouter;
+  // private complexityAnalyzer: TaskComplexityAnalyzer;
+  // private modelRouter: PerStepModelRouter;
 
   constructor(supabase: SupabaseClient, stateManager?: any) {
     this.supabase = supabase;
     this.auditTrail = AuditTrailService.getInstance();
     this.conditionalEvaluator = new ConditionalEvaluator();
     this.stateManager = stateManager;
-    this.complexityAnalyzer = new TaskComplexityAnalyzer();
-    this.modelRouter = new PerStepModelRouter();
+    // this.complexityAnalyzer = new TaskComplexityAnalyzer();
+    // this.modelRouter = new PerStepModelRouter();
   }
 
   /**
@@ -63,6 +64,55 @@ export class StepExecutor {
     const startTime = Date.now();
 
     console.log(`[StepExecutor] Executing step ${step.id}: ${step.name} (type: ${step.type})`);
+
+    // === ORCHESTRATION INTEGRATION (Phase 4) ===
+    // Check if orchestration is active and route through handlers if enabled
+    if (context.orchestrator && context.orchestrator.isActive()) {
+      console.log(`🎯 [StepExecutor] Using orchestration for step ${step.id}`);
+
+      try {
+        // Execute via orchestration handlers
+        const orchestrationResult = await context.orchestrator.executeStep(
+          step.id,
+          {
+            step,
+            params: step.params,
+            context: context.variables,
+          },
+          context.memoryContext,
+          context.agent.plugins_required
+        );
+
+        if (orchestrationResult) {
+          // Return orchestrated result
+          console.log(`✅ [StepExecutor] Orchestration executed step ${step.id} successfully`);
+          console.log(`   Tokens: ${orchestrationResult.tokensUsed.total}, Saved: ${orchestrationResult.tokensSaved}`);
+
+          return {
+            stepId: step.id,
+            plugin: (step as any).plugin || 'system',
+            action: (step as any).action || step.type,
+            data: orchestrationResult.output,
+            metadata: {
+              success: true,
+              executedAt: new Date().toISOString(),
+              executionTime: orchestrationResult.executionTime,
+              tokensUsed: orchestrationResult.tokensUsed,
+              // Orchestration-specific metadata
+              compressionApplied: orchestrationResult.compressionApplied,
+              tokensSaved: orchestrationResult.tokensSaved,
+              routedModel: orchestrationResult.routedModel,
+              orchestrated: true,
+            },
+          };
+        }
+      } catch (orchestrationError: any) {
+        console.warn(`⚠️  [StepExecutor] Orchestration failed for step ${step.id}, falling back to normal execution:`, orchestrationError.message);
+        // Fall through to normal execution
+      }
+    }
+
+    // === NORMAL EXECUTION (Fallback or when orchestration is disabled) ===
 
     // Log step execution start to workflow_step_executions table
     if (this.stateManager) {
@@ -323,46 +373,48 @@ export class StepExecutor {
     let routingDecision: any;
 
     // === PER-STEP INTELLIGENT ROUTING ===
+    // TODO: Re-enable once TaskComplexityAnalyzer and PerStepModelRouter are implemented
     // Analyze step complexity and route to optimal model
     try {
-      const isRoutingEnabled = await this.modelRouter.isEnabled();
+      // const isRoutingEnabled = await this.modelRouter.isEnabled();
+      const isRoutingEnabled = false; // Disabled until classes are implemented
 
       if (isRoutingEnabled) {
         console.log(`🎯 [StepExecutor] Per-step routing enabled - analyzing complexity...`);
 
-        // Analyze step complexity
-        const complexityAnalysis = await this.complexityAnalyzer.analyzeStep(step, context);
-        console.log(`📊 [StepExecutor] Complexity: ${complexityAnalysis.complexityScore.toFixed(1)}/10`);
+        // // Analyze step complexity
+        // const complexityAnalysis = await this.complexityAnalyzer.analyzeStep(step, context);
+        // console.log(`📊 [StepExecutor] Complexity: ${complexityAnalysis.complexityScore.toFixed(1)}/10`);
 
-        // Get agent AIS (Agent Intensity Score)
-        const agentAIS = (context.agent as any).agent_intensity_score || 5.0;
+        // // Get agent AIS (Agent Intensity Score)
+        // const agentAIS = (context.agent as any).agent_intensity_score || 5.0;
 
-        // Route to optimal model (with memory-based learning)
-        routingDecision = await this.modelRouter.routeStep(
-          complexityAnalysis,
-          agentAIS,
-          (context.agent as any).model_preference,
-          context.agentId  // Pass agentId for memory lookup
-        );
+        // // Route to optimal model (with memory-based learning)
+        // routingDecision = await this.modelRouter.routeStep(
+        //   complexityAnalysis,
+        //   agentAIS,
+        //   (context.agent as any).model_preference,
+        //   context.agentId  // Pass agentId for memory lookup
+        // );
 
-        // Format model for AgentKit (provider:model)
-        selectedModel = `${routingDecision.selectedModel.provider}:${routingDecision.selectedModel.model}`;
+        // // Format model for AgentKit (provider:model)
+        // selectedModel = `${routingDecision.selectedModel.provider}:${routingDecision.selectedModel.model}`;
 
-        console.log(`✅ [StepExecutor] Selected model: ${selectedModel}`);
-        console.log(`   ${routingDecision.explanation}`);
+        // console.log(`✅ [StepExecutor] Selected model: ${selectedModel}`);
+        // console.log(`   ${routingDecision.explanation}`);
 
-        // Record routing decision to audit trail
-        const stepIndex = context.completedSteps.length;
-        await this.modelRouter.recordRoutingDecision(
-          context.agentId,
-          context.userId,
-          context.executionId,
-          stepIndex,
-          step.name,
-          step.type,
-          complexityAnalysis,
-          routingDecision
-        );
+        // // Record routing decision to audit trail
+        // const stepIndex = context.completedSteps.length;
+        // await this.modelRouter.recordRoutingDecision(
+        //   context.agentId,
+        //   context.userId,
+        //   context.executionId,
+        //   stepIndex,
+        //   step.name,
+        //   step.type,
+        //   complexityAnalysis,
+        //   routingDecision
+        // );
       } else {
         console.log(`ℹ️ [StepExecutor] Per-step routing disabled - using agent default model`);
       }
@@ -476,36 +528,37 @@ Please analyze the above and provide your decision/response.
     }
 
     // Update routing metrics if routing was used
+    // TODO: Re-enable once PerStepModelRouter and RoutingMemoryService are implemented
     if (routingDecision) {
       const executionTimeMs = Date.now() - stepStartTime;
       const stepIndex = context.completedSteps.length;
 
-      await this.modelRouter.updateRoutingMetrics(
-        context.executionId,
-        stepIndex,
-        result.tokensUsed.total,
-        executionTimeMs,
-        true,
-        undefined  // Cost calculation can be added later
-      );
+      // await this.modelRouter.updateRoutingMetrics(
+      //   context.executionId,
+      //   stepIndex,
+      //   result.tokensUsed.total,
+      //   executionTimeMs,
+      //   true,
+      //   undefined  // Cost calculation can be added later
+      // );
 
-      // === LEARN FROM THIS EXECUTION ===
-      // Feed the outcome back into routing memory for future optimization
-      const RoutingMemoryService = (await import('./RoutingMemoryService')).RoutingMemoryService;
-      const routingMemory = RoutingMemoryService.getInstance();
+      // // === LEARN FROM THIS EXECUTION ===
+      // // Feed the outcome back into routing memory for future optimization
+      // const RoutingMemoryService = (await import('./RoutingMemoryService')).RoutingMemoryService;
+      // const routingMemory = RoutingMemoryService.getInstance();
 
-      await routingMemory.learnFromExecution(
-        context.agentId,
-        context.userId,
-        context.executionId,
-        stepIndex,
-        step.type,
-        routingDecision.selectedModel.tier,
-        true, // success (since we got here without error)
-        result.tokensUsed.total,
-        executionTimeMs,
-        undefined // cost will be calculated in future
-      );
+      // await routingMemory.learnFromExecution(
+      //   context.agentId,
+      //   context.userId,
+      //   context.executionId,
+      //   stepIndex,
+      //   step.type,
+      //   routingDecision.selectedModel.tier,
+      //   true, // success (since we got here without error)
+      //   result.tokensUsed.total,
+      //   executionTimeMs,
+      //   undefined // cost will be calculated in future
+      // );
     }
 
     // Return AI processing result with multiple field aliases for flexibility

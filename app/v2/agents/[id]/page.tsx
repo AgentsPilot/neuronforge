@@ -32,7 +32,8 @@ import {
   Download,
   Share2,
   FlaskConical,
-  Rocket
+  Rocket,
+  Brain
 } from 'lucide-react'
 import {
   SiGmail,
@@ -138,6 +139,7 @@ export default function V2AgentDetailPage() {
   const [executionPage, setExecutionPage] = useState(1)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [memoryCount, setMemoryCount] = useState(0)
   const EXECUTIONS_PER_PAGE = 10
 
   useEffect(() => {
@@ -145,6 +147,23 @@ export default function V2AgentDetailPage() {
       fetchAgentData()
     }
   }, [user, agentId])
+
+  const fetchMemoryCount = async () => {
+    if (!agentId) return
+
+    try {
+      const { count, error } = await supabase
+        .from('run_memories')
+        .select('*', { count: 'exact', head: true })
+        .eq('agent_id', agentId)
+
+      if (!error && count !== null) {
+        setMemoryCount(count)
+      }
+    } catch (error) {
+      console.error('Error fetching memory count:', error)
+    }
+  }
 
   const fetchAgentData = async () => {
     if (!user || !agentId) return
@@ -184,6 +203,9 @@ export default function V2AgentDetailPage() {
           setSelectedExecution(allExecutionsData[0])
         }
       }
+
+      // Fetch memory count (non-blocking)
+      fetchMemoryCount()
     } catch (error) {
       console.error('Error fetching agent data:', error)
       router.push('/v2/agent-list')
@@ -426,13 +448,21 @@ export default function V2AgentDetailPage() {
           <Card className="!p-4 sm:!p-6">
             <div className="flex items-center gap-3 mb-4">
               <Bot className="w-7 h-7 sm:w-8 sm:h-8 text-[#10B981]" />
-              <div>
+              <div className="flex-1">
                 <h2 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)]">
                   {agent.agent_name}
                 </h2>
                 <p className="text-xs sm:text-sm text-[var(--v2-text-secondary)]">
                   {agent.mode === 'scheduled' ? 'Scheduled Agent' : 'On-Demand Agent'}
                 </p>
+                {memoryCount > 0 && (
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-purple-50 to-indigo-50 dark:from-purple-900/20 dark:to-indigo-900/20 border border-purple-200 dark:border-purple-700 shadow-sm mt-2">
+                    <Brain className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+                    <span className="font-semibold text-purple-700 dark:text-purple-300 text-xs">
+                      Learning Active
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
 

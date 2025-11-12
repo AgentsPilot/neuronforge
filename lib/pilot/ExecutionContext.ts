@@ -47,6 +47,9 @@ export class ExecutionContext {
   // Memory context (from MemoryInjector)
   public memoryContext?: MemoryContext;
 
+  // Orchestration (from WorkflowOrchestrator - Phase 4)
+  public orchestrator?: any; // WorkflowOrchestrator instance (avoiding circular dependency)
+
   // Timing
   public startedAt: Date;
   public completedAt?: Date;

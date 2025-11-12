@@ -83,7 +83,8 @@ export default function V2DashboardPage() {
         { count: failedCount },
         { count: memoriesCount },
         { data: subscriptionData },
-        { data: recentRunsData }
+        { data: recentRunsData },
+        { data: agentExecutionCounts }
       ] = await Promise.all([
         supabase
           .from('agent_stats')
@@ -119,17 +120,43 @@ export default function V2DashboardPage() {
           .eq('user_id', user.id)
           .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
           .order('created_at', { ascending: false })
-          .limit(200)
+          .limit(200),
+        // Get actual execution counts from agent_executions table
+        supabase
+          .from('agent_executions')
+          .select('agent_id, started_at, agents!inner (agent_name, status)')
+          .eq('agents.status', 'active')
+          .order('started_at', { ascending: false })
       ])
 
-      // Parse agent stats (already filtered for active agents at query level)
+      // Count actual executions per agent
+      const executionCountMap = new Map<string, number>()
+      const lastRunMap = new Map<string, string>()
+
+      if (agentExecutionCounts) {
+        agentExecutionCounts.forEach((exec: any) => {
+          const count = executionCountMap.get(exec.agent_id) || 0
+          executionCountMap.set(exec.agent_id, count + 1)
+
+          // Track last run (most recent execution)
+          const existingLastRun = lastRunMap.get(exec.agent_id)
+          if (!existingLastRun || exec.started_at > existingLastRun) {
+            lastRunMap.set(exec.agent_id, exec.started_at)
+          }
+        })
+      }
+
+      // Parse agent stats using ACTUAL execution counts from agent_executions table
       const parsedStats: AgentStat[] = agentStatsData?.map((s) => {
         const agentData = s.agents as any
+        const actualCount = executionCountMap.get(s.agent_id) || 0
+        const lastRun = lastRunMap.get(s.agent_id) || s.last_run_at
+
         return {
           id: s.agent_id,
           name: agentData?.agent_name ?? 'Unknown Agent',
-          count: s.run_count,
-          lastRun: s.last_run_at,
+          count: actualCount, // Use actual count from agent_executions
+          lastRun: lastRun,
         }
       }) || []
 

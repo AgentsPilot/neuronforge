@@ -80,11 +80,18 @@ export class MemoryInjector {
 
       // 3. Fetch semantically relevant memories (only if we have query)
       let relevantMemories: any[] = [];
-      if (currentInput) {
-        // Note: This requires embeddings to be pre-generated
-        // In initial implementation, skip semantic search
-        // TODO: Add semantic search once embeddings are generated
-        console.log(`🔍 [MemoryInjector] Semantic search not yet implemented`);
+      if (currentInput && config.semantic_search_limit > 0) {
+        try {
+          relevantMemories = await this.getSemanticMemories(
+            agentId,
+            currentInput,
+            config.semantic_search_limit,
+            config.semantic_threshold
+          );
+          console.log(`🔍 [MemoryInjector] Found ${relevantMemories.length} semantically similar memories`);
+        } catch (error) {
+          console.warn(`⚠️  [MemoryInjector] Semantic search failed (non-critical):`, error);
+        }
       }
 
       // 4. Build token-limited context
@@ -253,6 +260,111 @@ export class MemoryInjector {
     }
 
     return data || [];
+  }
+
+  /**
+   * Get semantically similar memories using pgvector
+   *
+   * @private
+   */
+  private async getSemanticMemories(
+    agentId: string,
+    query: any,
+    limit: number,
+    threshold: number
+  ): Promise<Array<any>> {
+    // Import OpenAI for embedding generation
+    const OpenAI = (await import('openai')).default;
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+    // Load embedding config
+    const { MemoryConfigService } = await import('./MemoryConfigService');
+    const embeddingConfig = await MemoryConfigService.getEmbeddingConfig(this.supabase);
+
+    // Build query string from input
+    const queryString = typeof query === 'string'
+      ? query
+      : JSON.stringify(query).substring(0, 1000);
+
+    // Generate embedding for query
+    const embeddingResponse = await openai.embeddings.create({
+      model: embeddingConfig.model,
+      input: queryString
+    });
+    const queryEmbedding = embeddingResponse.data[0].embedding;
+
+    // Search using pgvector cosine similarity
+    // Note: This uses the <=> operator for cosine distance (1 - similarity)
+    const { data, error } = await this.supabase.rpc('search_similar_memories', {
+      query_embedding: queryEmbedding,
+      query_agent_id: agentId,
+      match_threshold: 1 - threshold, // Convert similarity to distance
+      match_count: limit
+    });
+
+    if (error) {
+      // If RPC function doesn't exist, fall back to manual query
+      console.warn('⚠️  [MemoryInjector] RPC function not found, using manual query');
+
+      const { data: manualData, error: manualError } = await this.supabase
+        .from('run_memories')
+        .select('id, summary, key_outcomes, patterns_detected, importance_score, embedding')
+        .eq('agent_id', agentId)
+        .not('embedding', 'is', null)
+        .limit(100); // Get top 100 to filter locally
+
+      if (manualError || !manualData) {
+        throw manualError;
+      }
+
+      // Calculate cosine similarity locally
+      const results = manualData
+        .map((memory: any) => {
+          const similarity = this.cosineSimilarity(queryEmbedding, memory.embedding);
+          return {
+            content: memory.summary,
+            memory_type: 'run',
+            confidence: similarity,
+            importance_score: memory.importance_score,
+            patterns: memory.patterns_detected
+          };
+        })
+        .filter((m: any) => m.confidence >= threshold)
+        .sort((a: any, b: any) => b.confidence - a.confidence)
+        .slice(0, limit);
+
+      return results;
+    }
+
+    // Transform RPC results to expected format
+    return (data || []).map((row: any) => ({
+      content: row.summary,
+      memory_type: 'run',
+      confidence: row.similarity,
+      importance_score: row.importance_score,
+      patterns: row.patterns_detected
+    }));
+  }
+
+  /**
+   * Calculate cosine similarity between two vectors
+   *
+   * @private
+   */
+  private cosineSimilarity(a: number[], b: number[]): number {
+    if (a.length !== b.length) return 0;
+
+    let dotProduct = 0;
+    let normA = 0;
+    let normB = 0;
+
+    for (let i = 0; i < a.length; i++) {
+      dotProduct += a[i] * b[i];
+      normA += a[i] * a[i];
+      normB += b[i] * b[i];
+    }
+
+    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
   }
 
   /**
