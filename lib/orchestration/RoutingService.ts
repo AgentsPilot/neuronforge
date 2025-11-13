@@ -15,7 +15,6 @@
  * All thresholds configurable via system_settings_config
  */
 
-import { supabase as defaultSupabase } from '@/lib/supabaseClient';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
   RoutingContext,
@@ -81,8 +80,8 @@ export class RoutingService implements IRoutingService {
   private modelConfigs: Map<string, ModelConfig> = new Map();
   private complexityConfig: ComplexityConfig | null = null;
 
-  constructor(supabaseClient?: SupabaseClient) {
-    this.supabase = supabaseClient || defaultSupabase;
+  constructor(supabaseClient: SupabaseClient) {
+    this.supabase = supabaseClient;
   }
 
   /**
@@ -532,8 +531,14 @@ export class RoutingService implements IRoutingService {
       };
 
       console.log(
-        `[Routing] Selected ${decision.tier} tier (${decision.model}) ` +
-        `for effective complexity ${effectiveComplexity.toFixed(2)}`
+        `✅ [Routing] SELECTED MODEL FOR ${context.intent.toUpperCase()} INTENT:`,
+        `\n   📊 Tier: ${decision.tier}`,
+        `\n   🤖 Model: ${decision.model}`,
+        `\n   🏢 Provider: ${decision.provider}`,
+        `\n   💡 Reason: ${decision.reason}`,
+        `\n   📈 Effective Complexity: ${effectiveComplexity.toFixed(2)}/10`,
+        `\n   💰 Estimated Cost: $${estimatedCost.toFixed(6)}`,
+        `\n   ⏱️  Estimated Latency: ${estimatedLatency}ms`
       );
 
       return decision;
@@ -735,8 +740,8 @@ export class RoutingService implements IRoutingService {
   private getDefaultDecision(context: RoutingContext): RoutingDecision {
     return {
       tier: 'balanced',
-      model: 'kimi-k2-0905-preview',
-      provider: 'kimi',
+      model: 'gpt-4o-mini',  // ✅ Changed from suspended Kimi to OpenAI
+      provider: 'openai',  // ✅ Changed from Kimi to OpenAI
       reason: 'Default routing (error fallback)',
       estimatedCost: 0,
       estimatedLatency: 2000,
@@ -758,11 +763,11 @@ export class RoutingService implements IRoutingService {
         avgLatencyMs: 800,
       },
       balanced: {
-        provider: 'kimi',  // Updated to use Kimi - 10x cheaper than gpt-4o-mini!
-        model: 'kimi-k2-0905-preview',
+        provider: 'openai',  // ✅ Changed from suspended Kimi to OpenAI
+        model: 'gpt-4o-mini',  // ✅ Using gpt-4o-mini for balanced tier
         maxTokens: 4096,
         temperature: 0.7,
-        costPerToken: 0.00000015, // $0.15 per 1M tokens (same as gpt-4o-mini but better performance)
+        costPerToken: 0.00000015, // $0.15 per 1M tokens
         avgLatencyMs: 2000,
       },
       powerful: {
@@ -793,7 +798,7 @@ export class RoutingService implements IRoutingService {
   private getDefaultProvider(tier: ModelTier): string {
     const providers: Record<ModelTier, string> = {
       fast: 'anthropic',
-      balanced: 'kimi',  // Use Kimi for balanced tier (best cost/performance)
+      balanced: 'openai',  // ✅ Changed from suspended Kimi to OpenAI
       powerful: 'anthropic',
     };
     return providers[tier];
@@ -805,7 +810,7 @@ export class RoutingService implements IRoutingService {
   private getDefaultModel(tier: ModelTier): string {
     const models: Record<ModelTier, string> = {
       fast: 'claude-3-haiku-20240307',
-      balanced: 'kimi-k2-0905-preview',  // Use Kimi K2 for balanced tier
+      balanced: 'gpt-4o-mini',  // ✅ Changed from suspended Kimi to gpt-4o-mini
       powerful: 'claude-3-5-sonnet-20241022',
     };
     return models[tier];
@@ -892,5 +897,8 @@ export class RoutingService implements IRoutingService {
 
 /**
  * Singleton instance for convenient access
+ * @deprecated Use instance-based approach with proper Supabase client
+ * This singleton will fail on server-side because it requires a Supabase client
+ * Usage: Create instance via OrchestrationService.getRoutingService()
  */
-export const routingService = new RoutingService();
+// export const routingService = new RoutingService(); // Disabled - requires Supabase client

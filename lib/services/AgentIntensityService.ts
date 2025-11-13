@@ -109,8 +109,18 @@ export class AgentIntensityService {
       // Calculate combined score with predicted execution complexity
       // Use 5.0 as reasonable middle-ground estimate until first execution
       const execution_score_default = 5.0; // Default until first execution
-      const combined_score = (creation_score * combinedWeights.creation) +
+      let combined_score = (creation_score * combinedWeights.creation) +
                             (execution_score_default * combinedWeights.execution);
+
+      // ✅ Validate combined_score is not NaN before database insert
+      if (isNaN(combined_score)) {
+        console.error('[AIS] ⚠️ Combined score is NaN, using default 5.0:', {
+          creation_score,
+          execution_score_default,
+          weights: combinedWeights
+        });
+        combined_score = 5.0;
+      }
 
       console.log(`✅ [AIS] Creation score calculated:`, {
         tokens: creationData.tokens_used,
@@ -230,19 +240,53 @@ export class AgentIntensityService {
       // 4. Calculate new component scores using database ranges AND weights
       const componentScores = await this.calculateComponentScores(updated, ranges, supabaseClient);
 
-      // 5. Calculate overall intensity score
+      // 5. Calculate overall intensity score (old 4-component system)
       const intensity_score = this.calculateOverallScore(componentScores);
 
-      // 5. Update database
+      // NEW: Use intensity_score as execution_score (they represent the same thing: execution complexity)
+      // intensity_score is calculated from 4 execution dimensions: tokens, execution, plugins, workflow
+      const execution_score = intensity_score;
+
+      // Get creation_score from database (should already exist from trackCreationCosts)
+      const creation_score = existing?.creation_score || 5.0;
+
+      // Calculate combined score using database weights
+      const combinedWeights = await AISConfigService.getCombinedWeights(supabaseClient);
+      let combined_score = (creation_score * combinedWeights.creation) + (execution_score * combinedWeights.execution);
+
+      // ✅ Validate combined_score before database insert
+      if (isNaN(combined_score)) {
+        console.error('[AIS] ⚠️ Combined score is NaN during execution update:', {
+          creation_score,
+          execution_score,
+          weights: combinedWeights
+        });
+        combined_score = 5.0;
+      }
+
+      console.log(`✅ [AIS] Three-score system updated:`, {
+        creation: creation_score.toFixed(2),
+        execution: execution_score.toFixed(2),
+        combined: combined_score.toFixed(2)
+      });
+
+      // 5. Update database with ALL THREE SCORES
       const { data, error } = await supabaseClient
         .from('agent_intensity_metrics')
         .update({
           ...updated,
-          intensity_score,
+          intensity_score,  // Old 4-component score (for backward compatibility)
+
+          // NEW: Three-score system
+          execution_score,  // ✅ Now calculated on every execution
+          combined_score,   // ✅ Recalculated with latest execution_score
+
+          // Four component scores
           token_complexity_score: componentScores.token_complexity.score,
           execution_complexity_score: componentScores.execution_complexity.score,
           plugin_complexity_score: componentScores.plugin_complexity.score,
           workflow_complexity_score: componentScores.workflow_complexity.score,
+
           last_calculated_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })
@@ -825,11 +869,31 @@ export class AgentIntensityService {
    * Calculate overall intensity score from component scores
    */
   private static calculateOverallScore(components: IntensityComponentScores): number {
-    const overall =
-      components.token_complexity.weighted_score +
-      components.execution_complexity.weighted_score +
-      components.plugin_complexity.weighted_score +
-      components.workflow_complexity.weighted_score;
+    // ✅ Add NaN validation to prevent NULL constraint violations
+    const tokenScore = components.token_complexity.weighted_score;
+    const execScore = components.execution_complexity.weighted_score;
+    const pluginScore = components.plugin_complexity.weighted_score;
+    const workflowScore = components.workflow_complexity.weighted_score;
+
+    // Check for NaN values and provide fallback
+    if (isNaN(tokenScore) || isNaN(execScore) || isNaN(pluginScore) || isNaN(workflowScore)) {
+      console.error('[AIS] ⚠️ NaN detected in component scores:', {
+        token: tokenScore,
+        execution: execScore,
+        plugin: pluginScore,
+        workflow: workflowScore
+      });
+      // Return middle-ground default if any component is NaN
+      return 5.0;
+    }
+
+    const overall = tokenScore + execScore + pluginScore + workflowScore;
+
+    // ✅ Final NaN check before returning
+    if (isNaN(overall)) {
+      console.error('[AIS] ⚠️ Overall score is NaN, using default 5.0');
+      return 5.0;
+    }
 
     return this.clamp(overall, 0, 10);
   }
@@ -844,8 +908,27 @@ export class AgentIntensityService {
     outMin: number,
     outMax: number
   ): number {
+    // ✅ Handle edge cases that could cause NaN
+    if (isNaN(value)) {
+      console.warn('[AIS] normalizeToScale received NaN value, using outMin');
+      return outMin;
+    }
+
+    if (inMax === inMin) {
+      console.warn('[AIS] normalizeToScale: inMax === inMin, returning middle value');
+      return (outMin + outMax) / 2;
+    }
+
     const clamped = Math.max(inMin, Math.min(inMax, value));
-    return outMin + ((clamped - inMin) * (outMax - outMin)) / (inMax - inMin);
+    const normalized = outMin + ((clamped - inMin) * (outMax - outMin)) / (inMax - inMin);
+
+    // ✅ Check result for NaN
+    if (isNaN(normalized)) {
+      console.error('[AIS] normalizeToScale produced NaN:', { value, inMin, inMax, outMin, outMax });
+      return outMin;
+    }
+
+    return normalized;
   }
 
   /**

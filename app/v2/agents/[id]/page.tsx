@@ -193,14 +193,90 @@ export default function V2AgentDetailPage() {
       }
 
       if (allExecutionsData) {
-        setAllExecutions(allExecutionsData)
+        console.log(`[V2 Agent Page] Fetched ${allExecutionsData.length} executions for agent ${agentId}`);
+
+        // Enrich executions with token data from token_usage table when logs are missing
+        const enrichedExecutions = await Promise.all(
+          allExecutionsData.map(async (execution) => {
+            // Check if logs have complete token data
+            const hasCompleteTokenData =
+              execution.logs?.tokensUsed?.total &&
+              execution.logs?.tokensUsed?.prompt &&
+              execution.logs?.tokensUsed?.completion;
+
+            console.log(`[V2 Agent Page] Execution ${execution.id}:`, {
+              hasCompleteTokenData,
+              logsTokenData: execution.logs?.tokensUsed,
+              status: execution.status,
+              started_at: execution.started_at
+            });
+
+            if (!hasCompleteTokenData) {
+              console.log(`[V2 Agent Page] Execution ${execution.id} missing token data in logs, fetching from token_usage table...`);
+
+              // Fetch ALL token data records for this execution (classification, steps, memory, etc.)
+              const { data: tokenDataRecords, error: tokenError } = await supabase
+                .from('token_usage')
+                .select('input_tokens, output_tokens, activity_type')
+                .eq('execution_id', execution.id);
+
+              console.log(`[V2 Agent Page] Token usage query result for execution ${execution.id}:`, {
+                found: !!tokenDataRecords,
+                count: tokenDataRecords?.length || 0,
+                error: tokenError,
+                records: tokenDataRecords
+              });
+
+              if (!tokenError && tokenDataRecords && tokenDataRecords.length > 0) {
+                // Sum ALL token records for this execution (classification + steps + memory)
+                const inputTokens = tokenDataRecords.reduce((sum, record) => sum + (record.input_tokens || 0), 0);
+                const outputTokens = tokenDataRecords.reduce((sum, record) => sum + (record.output_tokens || 0), 0);
+                const totalTokens = inputTokens + outputTokens;
+
+                console.log(`[V2 Agent Page] ✅ Enriched execution ${execution.id} with token data (${tokenDataRecords.length} records):`, {
+                  input: inputTokens,
+                  output: outputTokens,
+                  total: totalTokens,
+                  source: 'token_usage_table_summed'
+                });
+
+                return {
+                  ...execution,
+                  logs: {
+                    ...(execution.logs || {}),
+                    tokensUsed: {
+                      prompt: inputTokens,
+                      completion: outputTokens,
+                      total: totalTokens,
+                      _source: 'token_usage_table_summed' // Debug flag
+                    }
+                  }
+                };
+              } else {
+                console.warn(`[V2 Agent Page] ⚠️ No token data found for execution ${execution.id} in either logs or token_usage table`);
+              }
+            } else {
+              console.log(`[V2 Agent Page] ✅ Execution ${execution.id} has complete token data in logs:`, execution.logs.tokensUsed);
+            }
+
+            return execution;
+          })
+        );
+
+        console.log(`[V2 Agent Page] Enrichment complete. Summary:`, {
+          totalExecutions: enrichedExecutions.length,
+          withTokenData: enrichedExecutions.filter(e => e.logs?.tokensUsed?.total).length,
+          withoutTokenData: enrichedExecutions.filter(e => !e.logs?.tokensUsed?.total).length
+        });
+
+        setAllExecutions(enrichedExecutions)
 
         // Set all executions for paginated display
-        setExecutions(allExecutionsData)
+        setExecutions(enrichedExecutions)
 
         // Set first execution as selected by default
-        if (allExecutionsData.length > 0) {
-          setSelectedExecution(allExecutionsData[0])
+        if (enrichedExecutions.length > 0) {
+          setSelectedExecution(enrichedExecutions[0])
         }
       }
 

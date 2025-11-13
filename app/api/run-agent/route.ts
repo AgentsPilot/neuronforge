@@ -289,6 +289,13 @@ export async function POST(req: Request) {
       // Pilot inserts via StateManager.completeExecution() with workflowExecution: true
       // Only AgentKit needs logging here since it doesn't use StateManager
       if (executionType !== 'pilot') {
+        console.log(`[RUN-AGENT] 💾 Recording AgentKit execution to agent_executions table:`, {
+          agent_id: agent.id,
+          execution_type: executionType,
+          tokensUsed: normalizedResult.tokensUsed,
+          status: normalizedResult.success ? 'completed' : 'failed'
+        });
+
         const { error: insertError } = await supabase.from('agent_executions').insert({
           agent_id: agent.id,
           user_id: user.id,
@@ -311,10 +318,12 @@ export async function POST(req: Request) {
         })
 
         if (insertError) {
-          console.error('Failed to log AgentKit execution:', insertError)
+          console.error('[RUN-AGENT] ❌ Failed to log AgentKit execution:', insertError)
+        } else {
+          console.log(`[RUN-AGENT] ✅ Successfully logged AgentKit execution with tokens in logs.tokensUsed:`, normalizedResult.tokensUsed);
         }
       } else {
-        console.log(`✅ Skipping agent_executions insert for pilot (StateManager already logged it)`);
+        console.log(`[RUN-AGENT] ⏭️  Skipping agent_executions insert for pilot (StateManager already logged it)`);
       }
 
       // 2. Log to agent_logs table for consistency with legacy system

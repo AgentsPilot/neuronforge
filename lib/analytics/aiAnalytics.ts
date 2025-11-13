@@ -7,7 +7,7 @@ export interface AICallData {
   input_tokens: number;
   output_tokens: number;
   cost_usd: number;
-  
+
   // Optional context fields
   session_id?: string;
   call_id?: string;
@@ -17,6 +17,7 @@ export interface AICallData {
   workflow_step?: string;
   request_type?: string;
   category?: string;
+  execution_id?: string;  // ✅ Add execution_id as top-level field for proper tracking
   
   // Performance metrics
   latency_ms?: number;
@@ -109,12 +110,24 @@ export class AIAnalyticsService {
     try {
       const call_id = callData.call_id || this.generateCallId();
 
-      // Validate session_id is a proper UUID, otherwise set to null
+      // Validate UUIDs
       const isValidUUID = (str: string | undefined) => {
         if (!str) return false;
         const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         return uuidRegex.test(str);
       };
+
+      // ✅ System user fallback for orchestration/system operations
+      const SYSTEM_USER_ID = process.env.SYSTEM_ADMIN_USER_ID || '00000000-0000-0000-0000-000000000000';
+
+      // Use system user if user_id is null/undefined/invalid
+      const finalUserId = callData.user_id && isValidUUID(callData.user_id)
+        ? callData.user_id
+        : SYSTEM_USER_ID;
+
+      if (callData.user_id && !isValidUUID(callData.user_id)) {
+        console.warn(`⚠️ Invalid user_id format: "${callData.user_id}", using SYSTEM_USER_ID`);
+      }
 
       const validSessionId = callData.session_id && isValidUUID(callData.session_id)
         ? callData.session_id
@@ -127,7 +140,7 @@ export class AIAnalyticsService {
       // Build the complete insert data using your full schema
       const insertData = {
         // Required fields
-        user_id: callData.user_id,
+        user_id: finalUserId,  // ✅ Always use a valid UUID
         model_name: callData.model_name,
         provider: callData.provider,
         input_tokens: callData.input_tokens,
@@ -138,13 +151,14 @@ export class AIAnalyticsService {
         request_type: callData.request_type || 'chat',
         session_id: validSessionId,
         category: callData.category || 'general',
-        
+
         // Enhanced tracking fields (now supported by your schema)
         call_id,
         endpoint: callData.endpoint,
         feature: callData.feature,
         component: callData.component,
         workflow_step: callData.workflow_step,
+        execution_id: callData.execution_id || (callData.metadata as any)?.execution_id,  // ✅ Add execution_id for agent execution correlation
         latency_ms: callData.latency_ms,
         response_size_bytes: callData.response_size_bytes,
         success: callData.success ?? true,
@@ -152,53 +166,67 @@ export class AIAnalyticsService {
         error_message: callData.error_message,
         request_payload: callData.request_payload,
         response_metadata: callData.response_metadata,
-        
+
         // Activity tracking fields
         activity_type: callData.activity_type,
         activity_name: callData.activity_name,
         agent_id: callData.agent_id,
         activity_step: callData.activity_step,
-        
+
         // Additional metadata in JSONB
         metadata: {
           timestamp: new Date().toISOString(),
           version: '2.0',
           tracked_by: 'ai_analytics_service',
+          execution_id: callData.execution_id || (callData.metadata as any)?.execution_id,  // Also keep in metadata for backward compatibility
           ...(callData.metadata || {})
         }
       };
 
-      console.log('📊 Inserting to token_usage table:', {
+      console.log('[AI ANALYTICS] 💾 Inserting to token_usage table:', {
         call_id,
         user_id: insertData.user_id,
         model_name: insertData.model_name,
+        input_tokens: insertData.input_tokens,
+        output_tokens: insertData.output_tokens,
+        total_tokens: insertData.input_tokens + insertData.output_tokens,
         feature: insertData.feature,
         component: insertData.component,
         activity_type: insertData.activity_type,
+        agent_id: insertData.agent_id,
+        execution_id: insertData.execution_id,  // ✅ Show the actual execution_id being inserted
         cost_usd: insertData.cost_usd,
         success: insertData.success
       });
-      
+
       const { data, error } = await this.supabase
         .from('token_usage')
         .insert(insertData)
-        .select('id, call_id, created_at'); // Return some data to confirm insert
+        .select('id, call_id, created_at, input_tokens, output_tokens'); // Return some data to confirm insert
 
       if (error) {
-        console.error('❌ Failed to track AI call - Database error:', error);
-        console.error('❌ Failed insert data sample:', {
+        console.error('[AI ANALYTICS] ❌ Failed to track AI call - Database error:', error);
+        console.error('[AI ANALYTICS] ❌ Failed insert data sample:', {
           user_id: insertData.user_id,
           model_name: insertData.model_name,
-          call_id: insertData.call_id
+          call_id: insertData.call_id,
+          tokens: `${insertData.input_tokens} + ${insertData.output_tokens} = ${insertData.input_tokens + insertData.output_tokens}`
         });
       } else {
-        console.log('✅ AI call tracked successfully in database');
-        console.log('📊 Database returned:', data);
-        console.log('📊 Tracked call summary:', {
+        console.log('[AI ANALYTICS] ✅ AI call tracked successfully in database');
+        console.log('[AI ANALYTICS] 📊 Database returned:', data);
+        console.log('[AI ANALYTICS] 📊 Tracked call summary:', {
           id: data?.[0]?.id,
           call_id: data?.[0]?.call_id,
           feature: callData.feature,
           activity_type: callData.activity_type,
+          agent_id: callData.agent_id,
+          execution_id: (callData.metadata as any)?.execution_id,
+          tokens: {
+            input: data?.[0]?.input_tokens,
+            output: data?.[0]?.output_tokens,
+            total: (data?.[0]?.input_tokens || 0) + (data?.[0]?.output_tokens || 0)
+          },
           cost: callData.cost_usd,
           created_at: data?.[0]?.created_at
         });

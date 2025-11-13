@@ -14,13 +14,15 @@ import type {
 } from '../types';
 import { CompressionService } from '../CompressionService';
 import { OrchestrationError } from '../types';
+import { ProviderFactory } from '@/lib/ai/providerFactory';
 
 export abstract class BaseHandler implements IntentHandler {
   abstract intent: IntentType;
-  protected compressionService: CompressionService;
+  protected compressionService: CompressionService | null = null;
 
   constructor() {
-    this.compressionService = new CompressionService();
+    // Note: CompressionService requires Supabase client - will be initialized when needed
+    // Compression is handled at orchestration level, not in individual handlers
   }
 
   /**
@@ -57,36 +59,27 @@ export abstract class BaseHandler implements IntentHandler {
 
   /**
    * Apply compression to input if enabled
+   * Note: Compression is handled at orchestration level before handler execution
+   * This method is kept for backward compatibility but compression should be done upstream
    */
   protected async compressInput(
     input: string,
     context: HandlerContext
   ): Promise<{ compressed: string; result: CompressionResult }> {
-    if (!context.compressionPolicy.enabled) {
-      const tokens = this.estimateTokenCount(input);
-      return {
-        compressed: input,
-        result: {
-          original: input,
-          compressed: input,
-          originalTokens: tokens,
-          compressedTokens: tokens,
-          ratio: 1.0,
-          qualityScore: 1.0,
-          strategy: 'none',
-        },
-      };
-    }
-
-    const result = await this.compressionService.compress(
-      input,
-      context.compressionPolicy,
-      context.intent
-    );
-
+    // Compression is disabled in handlers - it's done at orchestration level
+    // Return input as-is with no-op compression result
+    const tokens = this.estimateTokenCount(input);
     return {
-      compressed: result.compressed,
-      result,
+      compressed: input,
+      result: {
+        original: input,
+        compressed: input,
+        originalTokens: tokens,
+        compressedTokens: tokens,
+        ratio: 1.0,
+        qualityScore: 1.0,
+        strategy: 'none',
+      },
     };
   }
 
@@ -133,6 +126,98 @@ export abstract class BaseHandler implements IntentHandler {
       latency,
       metadata,
     };
+  }
+
+  /**
+   * Extract input data from context, excluding circular references
+   * stepInput structure: { step, params, context, executionContext }
+   * We want just the params for processing
+   */
+  protected extractInputData(context: HandlerContext): any {
+    const input = context.input;
+
+    // If input has params field (from StepExecutor), use that
+    if (input && typeof input === 'object' && 'params' in input) {
+      // Deep clone params to avoid any circular references from the original object
+      return this.deepClone(input.params);
+    }
+
+    // Otherwise return input as-is (may be direct data)
+    return input;
+  }
+
+  /**
+   * Deep clone an object, removing circular references and non-serializable values
+   */
+  private deepClone(obj: any, seen = new WeakSet()): any {
+    // Handle primitives
+    if (obj === null || typeof obj !== 'object') {
+      return obj;
+    }
+
+    // Handle circular references
+    if (seen.has(obj)) {
+      return undefined; // or return '[Circular]' for debugging
+    }
+    seen.add(obj);
+
+    // Handle Date
+    if (obj instanceof Date) {
+      return new Date(obj.getTime());
+    }
+
+    // Handle Array
+    if (Array.isArray(obj)) {
+      return obj.map(item => this.deepClone(item, seen));
+    }
+
+    // Handle Object
+    const cloned: any = {};
+    for (const key in obj) {
+      if (obj.hasOwnProperty(key)) {
+        // Skip functions and undefined
+        if (typeof obj[key] === 'function' || obj[key] === undefined) {
+          continue;
+        }
+        cloned[key] = this.deepClone(obj[key], seen);
+      }
+    }
+
+    return cloned;
+  }
+
+  /**
+   * Resolve variables in input using ExecutionContext
+   * Supports {{stepX.data.field}} and other variable patterns
+   *
+   * ✅ OPTIMIZED: Removed auto-context injection that bloated prompts with ALL step outputs
+   * StepExecutor already resolves variables before calling handlers
+   */
+  protected resolveInputVariables(context: HandlerContext): any {
+    let inputData = this.extractInputData(context);
+
+    // Check if executionContext is available for variable resolution
+    const executionContext = context.executionContext || context.input?.executionContext;
+
+    if (!executionContext || !executionContext.resolveAllVariables) {
+      console.warn(`[${this.intent}Handler] No execution context available for variable resolution, using input as-is`);
+      return inputData;
+    }
+
+    try {
+      // Use ExecutionContext's resolveAllVariables method
+      const resolved = executionContext.resolveAllVariables(inputData);
+      console.log(`[${this.intent}Handler] ✅ Successfully resolved variables in input`);
+
+      // Deep clone the resolved data to remove any circular references that might have been introduced
+      const cleanResolved = this.deepClone(resolved);
+
+      return cleanResolved;
+    } catch (error) {
+      console.error(`[${this.intent}Handler] ❌ Error resolving variables:`, error);
+      // Return original input if resolution fails
+      return inputData;
+    }
   }
 
   /**
@@ -255,6 +340,90 @@ export abstract class BaseHandler implements IntentHandler {
     prompt += 'INSTRUCTIONS: Use memory context to inform your response. Reference past patterns when relevant.\n';
 
     return prompt;
+  }
+
+  /**
+   * Call LLM using the provider specified in routing decision
+   * This is the unified method that all handlers should use instead of calling provider SDKs directly
+   */
+  protected async callLLM(
+    context: HandlerContext,
+    systemPrompt: string,
+    userPrompt: string,
+    temperature: number,
+    maxTokens?: number
+  ): Promise<{
+    text: string;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    cost: number;
+  }> {
+    try {
+      // ✅ Sanitize model name - remove any quotes that may have been added by JSON serialization
+      const sanitizedModel = context.routingDecision.model
+        .trim()
+        .replace(/^["']|["']$/g, '');  // Remove leading/trailing quotes
+
+      // Get provider from routing decision
+      const provider = ProviderFactory.getProvider(
+        context.routingDecision.provider as 'openai' | 'anthropic' | 'kimi'
+      );
+
+      console.log(
+        `🎯 [Handler:${this.intent}] Step ${context.stepId} - LLM Call:`,
+        `\n   🤖 Model: ${sanitizedModel}`,
+        `\n   🏢 Provider: ${context.routingDecision.provider}`,
+        `\n   📊 Tier: ${context.routingDecision.tier}`,
+        `\n   🎫 Token Budget: ${context.budget.remaining} remaining`,
+        `\n   🔥 Temperature: ${temperature}`
+      );
+
+      // Call provider's unified interface
+      const response = await provider.chatCompletion(
+        {
+          model: sanitizedModel,  // ✅ Use sanitized model name
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          temperature,
+          max_tokens: maxTokens || Math.min(context.budget.remaining, 4096),
+        },
+        {
+          userId: context.userId,  // ✅ Use userId from context (passed from WorkflowOrchestrator)
+          feature: 'orchestration',
+          component: `handler_${this.intent}`,
+          category: 'workflow_execution',
+          activity_type: 'llm_call',
+          activity_name: `Handler: ${this.intent}`,
+          workflow_step: context.stepId,
+          agent_id: context.agentId,  // ✅ Also add agentId for better tracking
+          execution_id: context.executionId,  // ✅ Pass execution_id as top-level field for proper DB tracking
+          metadata: {
+            execution_id: context.executionId,  // Also keep in metadata for backward compatibility
+            handler_intent: this.intent,
+            routing_tier: context.routingDecision.tier,
+          },
+        }
+      );
+
+      const text = response.choices[0]?.message?.content || '';
+
+      return {
+        text,
+        inputTokens: response.usage?.prompt_tokens || 0,
+        outputTokens: response.usage?.completion_tokens || 0,
+        totalTokens: response.usage?.total_tokens || 0,
+        cost: response.usage?.total_cost || 0,
+      };
+    } catch (error) {
+      console.error(`[Handler:${this.intent}] LLM call failed:`, error);
+      throw new Error(
+        `LLM call failed for ${context.routingDecision.provider}/${context.routingDecision.model}: ` +
+        `${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
   }
 
   /**

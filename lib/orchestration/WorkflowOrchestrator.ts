@@ -8,9 +8,8 @@
  * WorkflowOrchestrator handles server-side handler-based execution with full orchestration.
  */
 
-import { supabase as defaultSupabase } from '@/lib/supabaseClient';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { orchestrationService, handlerRegistry } from './index';
+import { OrchestrationService, handlerRegistry } from './index';
 import type {
   OrchestrationMetadata,
   HandlerContext,
@@ -37,11 +36,13 @@ export interface WorkflowOrchestrationResult {
 export class WorkflowOrchestrator {
   private supabase: SupabaseClient;
   private auditTrail: AuditTrailService;
+  private orchestrationService: OrchestrationService;
   private orchestrationMetadata: OrchestrationMetadata | null = null;
 
-  constructor(supabaseClient?: SupabaseClient) {
-    this.supabase = supabaseClient || defaultSupabase;
+  constructor(supabaseClient: SupabaseClient) {
+    this.supabase = supabaseClient;
     this.auditTrail = AuditTrailService.getInstance();
+    this.orchestrationService = new OrchestrationService(supabaseClient);
   }
 
   /**
@@ -58,7 +59,7 @@ export class WorkflowOrchestrator {
 
     try {
       // Initialize orchestration service
-      this.orchestrationMetadata = await orchestrationService.initialize(
+      this.orchestrationMetadata = await this.orchestrationService.initialize(
         workflowId,
         agentId,
         userId,
@@ -123,7 +124,7 @@ export class WorkflowOrchestrator {
       console.log(`[WorkflowOrchestrator] Executing step ${stepId} with intent: ${stepMeta.intent}`);
 
       // Check budget before execution
-      const canProceed = await orchestrationService.canStepProceed(
+      const canProceed = await this.orchestrationService.canStepProceed(
         stepId,
         stepMeta.budget.remaining
       );
@@ -152,7 +153,8 @@ export class WorkflowOrchestrator {
       let finalRoutingDecision = stepMeta.routingDecision;
       if (stepInput.step && this.orchestrationMetadata.featureFlags.aisRoutingEnabled) {
         try {
-          const { routingService } = await import('./index');
+          // Use the routing service instance from orchestrationService (with correct Supabase client)
+          const routingService = this.orchestrationService.getRoutingService();
           const enhancedRouting = await routingService.route(
             {
               agentId: this.orchestrationMetadata.agentId,
@@ -179,6 +181,8 @@ export class WorkflowOrchestrator {
       const handlerContext: HandlerContext = {
         stepId,
         agentId: this.orchestrationMetadata.agentId,
+        userId: this.orchestrationMetadata.userId,  // ✅ Add userId for token tracking
+        executionId: this.orchestrationMetadata.executionId,  // ✅ Add executionId for token correlation
         intent: stepMeta.intent,
         input: stepInput,
         budget: stepMeta.budget,
@@ -187,6 +191,7 @@ export class WorkflowOrchestrator {
         metadata: this.orchestrationMetadata,
         memory: memoryContext,
         plugins,
+        executionContext: stepInput.executionContext,  // ✅ Pass ExecutionContext for variable resolution (from StepExecutor)
       };
 
       // Execute handler
@@ -198,7 +203,7 @@ export class WorkflowOrchestrator {
       }
 
       // Track token usage
-      await orchestrationService.trackStepExecution(
+      await this.orchestrationService.trackStepExecution(
         this.orchestrationMetadata,
         stepId,
         result.tokensUsed.total,
@@ -208,7 +213,7 @@ export class WorkflowOrchestrator {
       // Track compression if applied
       if (result.compressed) {
         const tokensSaved = stepMeta.budget.compressed || 0;
-        orchestrationService.recordCompression(stepId, tokensSaved);
+        this.orchestrationService.recordCompression(stepId, tokensSaved);
       }
 
       // Audit: Step executed with orchestration
@@ -261,7 +266,7 @@ export class WorkflowOrchestrator {
           error: error instanceof Error ? error.message : 'Unknown error',
           executionTime: Date.now() - startTime,
         },
-        severity: 'error',
+        severity: 'critical',  // ✅ Changed from 'error' to 'critical' (valid constraint value)
       });
 
       throw error;
@@ -286,7 +291,7 @@ export class WorkflowOrchestrator {
 
     try {
       // Complete orchestration
-      const metrics = await orchestrationService.complete(this.orchestrationMetadata);
+      const metrics = await this.orchestrationService.complete(this.orchestrationMetadata);
 
       // Audit: Orchestration completed
       await this.auditTrail.log({

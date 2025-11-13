@@ -150,13 +150,54 @@ export class OrchestrationService {
       // Get agent AIS scores for routing and budget scaling
       const agentAIS = await this.getAgentAIS(agentId);
 
-      // Classify all steps by intent
+      // ✅ OPTIMIZATION: Skip classification for deterministic action steps (type=action with plugin_key)
+      // These steps will bypass orchestration handlers anyway, so classification is wasted
       console.log('[Orchestration] Classifying step intents...');
+      // Reset token counter for this workflow
+      this.intentClassifier.resetTokenCounter();
+
       const intentClassificationStart = Date.now();
-      const intents = await this.intentClassifier.classifyBatch(steps);
+
+      // Filter steps that need classification (non-action or action without plugin)
+      const stepsNeedingClassification: any[] = [];
+      const stepIndexMap: Map<number, number> = new Map(); // maps original index to filtered index
+
+      steps.forEach((step, originalIndex) => {
+        const isDeterministicAction = step.type === 'action' && step.plugin_key;
+        if (!isDeterministicAction) {
+          stepIndexMap.set(originalIndex, stepsNeedingClassification.length);
+          stepsNeedingClassification.push(step);
+        }
+      });
+
+      console.log(`[Orchestration] Skipping classification for ${steps.length - stepsNeedingClassification.length} deterministic action step(s)`);
+
+      // Classify only the steps that need it
+      const classifiedIntents = stepsNeedingClassification.length > 0
+        ? await this.intentClassifier.classifyBatch(stepsNeedingClassification)
+        : [];
+
+      // Build full intents array with placeholders for skipped steps
+      const intents = steps.map((step, originalIndex) => {
+        const isDeterministicAction = step.type === 'action' && step.plugin_key;
+        if (isDeterministicAction) {
+          // Use placeholder intent for action steps (won't be used since they skip orchestration)
+          return {
+            intent: 'extract' as const, // Default intent for actions (doesn't matter since it's skipped)
+            confidence: 1.0,
+            reasoning: 'Deterministic action step - classification skipped'
+          };
+        } else {
+          const filteredIndex = stepIndexMap.get(originalIndex)!;
+          return classifiedIntents[filteredIndex];
+        }
+      });
+
       const intentClassificationTime = Date.now() - intentClassificationStart;
 
-      console.log(`[Orchestration] Intent classification complete in ${intentClassificationTime}ms`);
+      // ✅ Get tokens used for classification (orchestration overhead)
+      const classificationTokens = this.intentClassifier.getClassificationTokensUsed();
+      console.log(`[Orchestration] Intent classification complete in ${intentClassificationTime}ms (${classificationTokens} tokens)`);
       console.log('[Orchestration] Intent distribution:', this.intentClassifier.getIntentDistribution(intents));
 
       // Allocate token budgets
@@ -264,7 +305,7 @@ export class OrchestrationService {
             stepsFailed: 0
           },
           cost: {
-            totalTokensUsed: 0,
+            totalTokensUsed: classificationTokens,  // ✅ Start with classification overhead tokens
             totalTokensSaved: 0,
             totalCost: 0,
             costSavings: 0,
@@ -405,6 +446,13 @@ export class OrchestrationService {
   }
 
   /**
+   * Get routing service instance (for enhanced routing in WorkflowOrchestrator)
+   */
+  getRoutingService(): RoutingService {
+    return this.routingService;
+  }
+
+  /**
    * Record compression savings for a step
    */
   recordCompression(stepId: string, tokensSaved: number): void {
@@ -440,5 +488,7 @@ export class OrchestrationService {
 
 /**
  * Singleton instance for convenient access
+ * @deprecated Use instance-based approach with proper Supabase client
+ * This singleton uses client-side Supabase and will not work on server
  */
 export const orchestrationService = new OrchestrationService();

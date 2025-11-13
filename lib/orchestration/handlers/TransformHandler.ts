@@ -7,17 +7,12 @@
 
 import { BaseHandler } from './BaseHandler';
 import type { HandlerContext, HandlerResult, IntentType } from '../types';
-import Anthropic from '@anthropic-ai/sdk';
 
 export class TransformHandler extends BaseHandler {
   intent: IntentType = 'transform';
-  private anthropic: Anthropic;
 
   constructor() {
     super();
-    this.anthropic = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY,
-    });
   }
 
   async handle(context: HandlerContext): Promise<HandlerResult> {
@@ -30,9 +25,12 @@ export class TransformHandler extends BaseHandler {
         return this.createErrorResult('Invalid handler context');
       }
 
+      // Resolve variables in input
+      const resolvedInput = this.resolveInputVariables(context);
+
       // Apply compression to input if enabled
-      const { compressed: input, result: compressionResult } = await this.compressInput(
-        JSON.stringify(context.input),
+      const { compressed: input, result: compressionResult} = await this.compressInput(
+        JSON.stringify(resolvedInput),
         context
       );
 
@@ -49,32 +47,26 @@ export class TransformHandler extends BaseHandler {
         context
       );
 
-      // Execute transformation using appropriate model
-      const model = this.getModelFromRouting(context);
-      const response = await this.anthropic.messages.create({
-        model,
-        max_tokens: Math.min(context.budget.remaining, 2048),
-        temperature: 0.3, // Low temperature for consistent transformation
+      // Execute transformation using provider-agnostic method
+      const llmResponse = await this.callLLM(
+        context,
         system,
-        messages: [
-          {
-            role: 'user',
-            content: user,
-          },
-        ],
-      });
+        user,
+        0.3, // Low temperature for consistent transformation
+        Math.min(context.budget.remaining, 2048)
+      );
 
       // Parse response
-      const output = response.content[0].type === 'text' ? response.content[0].text : '';
+      const output = llmResponse.text;
 
       // Calculate actual token usage
       const tokensUsed = {
-        input: response.usage.input_tokens,
-        output: response.usage.output_tokens,
+        input: llmResponse.inputTokens,
+        output: llmResponse.outputTokens,
       };
 
-      // Calculate cost
-      const cost = this.calculateCost(tokensUsed, context);
+      // Use cost from provider
+      const cost = llmResponse.cost;
 
       // Parse transformation result
       const transformResult = this.parseTransformResult(output, context);
@@ -88,7 +80,8 @@ export class TransformHandler extends BaseHandler {
         {
           compressionApplied: compressionResult.strategy !== 'none',
           compressionRatio: compressionResult.ratio,
-          model,
+          model: context.routingDecision.model,
+          provider: context.routingDecision.provider,
           transformationType: transformResult.type,
         }
       );
@@ -212,41 +205,5 @@ Return the transformed data in the requested format. If the format is structured
         },
       };
     }
-  }
-
-  /**
-   * Get model from routing decision
-   */
-  private getModelFromRouting(context: HandlerContext): string {
-    // Transform benefits from accuracy, use routed model
-    return context.routingDecision.model || 'claude-3-haiku-20240307';
-  }
-
-  /**
-   * Calculate cost based on token usage and routing
-   */
-  private calculateCost(
-    tokensUsed: { input: number; output: number },
-    context: HandlerContext
-  ): number {
-    const model = context.routingDecision.model;
-    let inputCost = 0;
-    let outputCost = 0;
-
-    if (model.includes('haiku')) {
-      inputCost = tokensUsed.input * 0.00000025;
-      outputCost = tokensUsed.output * 0.00000125;
-    } else if (model.includes('sonnet')) {
-      inputCost = tokensUsed.input * 0.000003;
-      outputCost = tokensUsed.output * 0.000015;
-    } else {
-      // Default estimation
-      const costPerToken = context.routingDecision.estimatedCost /
-                          (context.budget.allocated || 1000);
-      inputCost = tokensUsed.input * costPerToken;
-      outputCost = tokensUsed.output * costPerToken * 5;
-    }
-
-    return inputCost + outputCost;
   }
 }

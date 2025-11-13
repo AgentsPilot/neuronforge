@@ -7,17 +7,12 @@
 
 import { BaseHandler } from './BaseHandler';
 import type { HandlerContext, HandlerResult, IntentType } from '../types';
-import Anthropic from '@anthropic-ai/sdk';
 
 export class GenerateHandler extends BaseHandler {
   intent: IntentType = 'generate';
-  private anthropic: Anthropic;
 
   constructor() {
     super();
-    this.anthropic = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY,
-    });
   }
 
   async handle(context: HandlerContext): Promise<HandlerResult> {
@@ -30,9 +25,12 @@ export class GenerateHandler extends BaseHandler {
         return this.createErrorResult('Invalid handler context');
       }
 
+      // Resolve variables in input
+      const resolvedInput = this.resolveInputVariables(context);
+
       // Apply compression to input if enabled
       const { compressed: input, result: compressionResult } = await this.compressInput(
-        JSON.stringify(context.input),
+        JSON.stringify(resolvedInput),
         context
       );
 
@@ -49,34 +47,27 @@ export class GenerateHandler extends BaseHandler {
         context
       );
 
-      // Execute generation using appropriate model from routing decision
-      const model = this.getModelFromRouting(context);
+      // Execute generation using provider-agnostic method
       const temperature = this.getTemperature(context);
-
-      const response = await this.anthropic.messages.create({
-        model,
-        max_tokens: Math.min(context.budget.remaining, 4096), // Generation needs more tokens
-        temperature,
+      const llmResponse = await this.callLLM(
+        context,
         system,
-        messages: [
-          {
-            role: 'user',
-            content: user,
-          },
-        ],
-      });
+        user,
+        temperature,
+        Math.min(context.budget.remaining, 4096) // Generation needs more tokens
+      );
 
       // Parse response
-      const output = response.content[0].type === 'text' ? response.content[0].text : '';
+      const output = llmResponse.text;
 
       // Calculate actual token usage
       const tokensUsed = {
-        input: response.usage.input_tokens,
-        output: response.usage.output_tokens,
+        input: llmResponse.inputTokens,
+        output: llmResponse.outputTokens,
       };
 
-      // Calculate cost
-      const cost = this.calculateCost(tokensUsed, context);
+      // Use cost from provider
+      const cost = llmResponse.cost;
 
       // Assess quality if possible
       const quality = this.assessGenerationQuality(output, context);
@@ -94,7 +85,8 @@ export class GenerateHandler extends BaseHandler {
         {
           compressionApplied: compressionResult.strategy !== 'none',
           compressionRatio: compressionResult.ratio,
-          model,
+          model: context.routingDecision.model,
+          provider: context.routingDecision.provider,
           temperature,
         }
       );
@@ -191,21 +183,6 @@ INSTRUCTIONS:
   }
 
   /**
-   * Get model from routing decision
-   */
-  private getModelFromRouting(context: HandlerContext): string {
-    // Generation benefits from more powerful models
-    // Use routed model, prefer Sonnet for better quality
-    const model = context.routingDecision.model;
-
-    if (context.routingDecision.tier === 'powerful') {
-      return 'claude-3-5-sonnet-20241022';
-    }
-
-    return model || 'claude-3-haiku-20240307';
-  }
-
-  /**
    * Assess generation quality
    */
   private assessGenerationQuality(output: string, context: HandlerContext): number {
@@ -234,33 +211,5 @@ INSTRUCTIONS:
     }
 
     return Math.max(0, Math.min(1, quality));
-  }
-
-  /**
-   * Calculate cost based on token usage and routing
-   */
-  private calculateCost(
-    tokensUsed: { input: number; output: number },
-    context: HandlerContext
-  ): number {
-    const model = context.routingDecision.model;
-    let inputCost = 0;
-    let outputCost = 0;
-
-    if (model.includes('haiku')) {
-      inputCost = tokensUsed.input * 0.00000025;
-      outputCost = tokensUsed.output * 0.00000125;
-    } else if (model.includes('sonnet')) {
-      inputCost = tokensUsed.input * 0.000003;
-      outputCost = tokensUsed.output * 0.000015;
-    } else {
-      // Default estimation
-      const costPerToken = context.routingDecision.estimatedCost /
-                          (context.budget.allocated || 1000);
-      inputCost = tokensUsed.input * costPerToken;
-      outputCost = tokensUsed.output * costPerToken * 5;
-    }
-
-    return inputCost + outputCost;
   }
 }

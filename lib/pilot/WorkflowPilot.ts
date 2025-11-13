@@ -45,6 +45,7 @@ import { SystemConfigService } from '@/lib/services/SystemConfigService';
 import { ExecutionEventEmitter } from '@/lib/execution/ExecutionEventEmitter';
 import { WorkflowOrchestrator } from '@/lib/orchestration';
 import { PilotConfigService } from './PilotConfigService';
+import { StepCache } from './StepCache';
 
 export class WorkflowPilot {
   private supabase: SupabaseClient;
@@ -58,8 +59,10 @@ export class WorkflowPilot {
   private auditTrail: AuditTrailService;
   private approvalTracker: ApprovalTracker;
   private notificationService: NotificationService;
+  private stepCache: StepCache;
   private options: PilotOptions | null = null;
   private optionsOverride: PilotOptions | undefined;
+  private optimizationsEnabled: boolean = false;
 
   constructor(supabase: SupabaseClient, options?: PilotOptions) {
     this.supabase = supabase;
@@ -68,7 +71,8 @@ export class WorkflowPilot {
     // Initialize components (parallelExecutor will be initialized after loading config)
     this.parser = new WorkflowParser();
     this.stateManager = new StateManager(supabase);
-    this.stepExecutor = new StepExecutor(supabase, this.stateManager); // Pass StateManager for step logging
+    this.stepCache = new StepCache(false); // Will be configured after loading config
+    this.stepExecutor = new StepExecutor(supabase, this.stateManager, this.stepCache); // Pass StateManager and StepCache
     this.parallelExecutor = new ParallelExecutor(this.stepExecutor, 3); // Temporary, will be reinitialized
     this.conditionalEvaluator = new ConditionalEvaluator();
     this.errorRecovery = new ErrorRecovery();
@@ -100,6 +104,23 @@ export class WorkflowPilot {
 
     // Reinitialize parallel executor with correct maxParallelSteps
     this.parallelExecutor = new ParallelExecutor(this.stepExecutor, this.options.maxParallelSteps);
+
+    // Reinitialize state manager with progress tracking and real-time settings
+    this.stateManager = new StateManager(
+      this.supabase,
+      this.options.enableProgressTracking !== false,
+      this.options.enableRealTimeUpdates === true
+    );
+
+    // Configure step cache
+    const cacheEnabled = this.options.enableCaching === true || this.options.cacheStepResults === true;
+    this.stepCache.setEnabled(cacheEnabled);
+
+    // Configure optimizations
+    this.optimizationsEnabled = this.options.enableOptimizations !== false;
+    if (this.optimizationsEnabled) {
+      console.log('[WorkflowPilot] Performance optimizations enabled');
+    }
 
     console.log('[WorkflowPilot] Configuration loaded:', this.options);
     return this.options;
@@ -209,19 +230,23 @@ export class WorkflowPilot {
       inputValues
     );
 
-    // 3. Load memory context
-    try {
-      const memoryInjector = new MemoryInjector(this.supabase);
-      const memoryContext = await memoryInjector.buildMemoryContext(
-        agent.id,
-        userId,
-        { userInput, inputValues }
-      );
-      context.memoryContext = memoryContext;
+    // 3. Load memory context (skip if optimizations enabled for faster execution)
+    if (!this.optimizationsEnabled) {
+      try {
+        const memoryInjector = new MemoryInjector(this.supabase);
+        const memoryContext = await memoryInjector.buildMemoryContext(
+          agent.id,
+          userId,
+          { userInput, inputValues }
+        );
+        context.memoryContext = memoryContext;
 
-      console.log(`🧠 [WorkflowPilot] Loaded memory context: ${memoryContext.token_count} tokens`);
-    } catch (error: any) {
-      console.warn(`⚠️  [WorkflowPilot] Failed to load memory (non-critical):`, error.message);
+        console.log(`🧠 [WorkflowPilot] Loaded memory context: ${memoryContext.token_count} tokens`);
+      } catch (error: any) {
+        console.warn(`⚠️  [WorkflowPilot] Failed to load memory (non-critical):`, error.message);
+      }
+    } else {
+      console.log(`⚡ [WorkflowPilot] Optimizations enabled: Skipping memory context loading`);
     }
 
     // 3b. Initialize orchestration (Phase 4)
@@ -245,25 +270,35 @@ export class WorkflowPilot {
       // Continue with normal execution
     }
 
-    // 4. Audit: Execution started
-    await this.auditTrail.log({
-      action: AUDIT_EVENTS.PILOT_EXECUTION_STARTED,
-      entityType: 'agent',
-      entityId: executionId,
-      userId: userId,
-      resourceName: agent.agent_name,
-      details: {
-        agent_id: agent.id,
-        total_steps: executionPlan.totalSteps,
-        estimated_duration: executionPlan.estimatedDuration,
-        parallel_groups: executionPlan.parallelGroups.length,
-      },
-      severity: 'info',
-    });
+    // 4. Audit: Execution started (skip detailed logging if optimizations enabled)
+    if (!this.optimizationsEnabled) {
+      await this.auditTrail.log({
+        action: AUDIT_EVENTS.PILOT_EXECUTION_STARTED,
+        entityType: 'agent',
+        entityId: executionId,
+        userId: userId,
+        resourceName: agent.agent_name,
+        details: {
+          agent_id: agent.id,
+          total_steps: executionPlan.totalSteps,
+          estimated_duration: executionPlan.estimatedDuration,
+          parallel_groups: executionPlan.parallelGroups.length,
+        },
+        severity: 'info',
+      });
+    }
 
     try {
-      // 5. Execute steps
-      await this.executeSteps(executionPlan, context);
+      // 5. Execute steps with optional timeout
+      if (options.defaultTimeout && options.defaultTimeout > 0) {
+        await this.executeWithTimeout(
+          () => this.executeSteps(executionPlan, context),
+          options.defaultTimeout,
+          executionId
+        );
+      } else {
+        await this.executeSteps(executionPlan, context);
+      }
 
       // 6. Build final output
       const finalOutput = this.buildFinalOutput(context, agent.output_schema);
@@ -279,32 +314,8 @@ export class WorkflowPilot {
         // Don't fail execution, just log warning
       }
 
-      // 8. Mark as completed
-      await this.stateManager.completeExecution(executionId, finalOutput, context);
-
-      // 9. Audit: Execution completed
-      await this.auditTrail.log({
-        action: AUDIT_EVENTS.PILOT_EXECUTION_COMPLETED,
-        entityType: 'agent',
-        entityId: executionId,
-        userId: userId,
-        resourceName: agent.agent_name,
-        details: {
-          steps_completed: context.completedSteps.length,
-          steps_failed: context.failedSteps.length,
-          steps_skipped: context.skippedSteps.length,
-          total_execution_time: context.totalExecutionTime,
-          total_tokens_used: context.totalTokensUsed,
-        },
-        severity: 'info',
-      });
-
-      // 10. Update AIS metrics (async)
-      this.updateAISMetrics(agent.id, context).catch(err =>
-        console.error('❌ AIS update failed (non-critical):', err)
-      );
-
-      // 11. Summarize for memory (SYNCHRONOUS - must wait to get token count)
+      // 8. Summarize for memory (SYNCHRONOUS - must wait to get token count)
+      // ✅ CRITICAL: Calculate memory tokens BEFORE marking as completed
       let memoryTokens = 0;
       try {
         memoryTokens = await this.summarizeForMemory(agent.id, userId, executionId, context);
@@ -313,16 +324,16 @@ export class WorkflowPilot {
         console.error('❌ Memory summarization failed (non-critical):', err);
       }
 
-      // Add memory tokens to total
-      const totalTokensWithMemory = context.totalTokensUsed + memoryTokens;
-      console.log(`📊 [WorkflowPilot] Final token count: ${context.totalTokensUsed} (steps) + ${memoryTokens} (memory) = ${totalTokensWithMemory}`);
-
-      // 12. Complete orchestration and collect metrics (Phase 4)
+      // 9. Complete orchestration and collect metrics (Phase 4)
+      // ✅ CRITICAL: Calculate orchestration tokens BEFORE marking as completed
       let orchestrationMetrics: any = null;
+      let orchestrationTokens = 0;  // ✅ Track orchestration overhead tokens (classification, etc.)
+
       if (context.orchestrator) {
         try {
           orchestrationMetrics = await context.orchestrator.complete();
           if (orchestrationMetrics) {
+            orchestrationTokens = orchestrationMetrics.totalTokensUsed || 0;
             console.log('🎯 [WorkflowPilot] Orchestration metrics:');
             console.log(`   💰 Total tokens saved: ${orchestrationMetrics.totalTokensSaved}`);
             console.log(`   💵 Total cost: $${orchestrationMetrics.totalCost.toFixed(4)}`);
@@ -332,6 +343,70 @@ export class WorkflowPilot {
           console.warn('⚠️  [WorkflowPilot] Orchestration completion failed (non-critical):', error.message);
         }
       }
+
+      // 10. Calculate final token count with all components
+      // ✅ orchestrationTokens is classification overhead, context.totalTokensUsed is step execution
+      // We need BOTH: classification + steps + memory
+      const stepTokens = context.totalTokensUsed;  // Actual step execution tokens
+      const classificationTokens = orchestrationTokens;  // Classification overhead from orchestration
+      const totalTokensWithMemory = stepTokens + classificationTokens + memoryTokens;
+
+      if (classificationTokens > 0) {
+        console.log(`📊 [WorkflowPilot] Final token count: ${stepTokens} (steps) + ${classificationTokens} (classification) + ${memoryTokens} (memory) = ${totalTokensWithMemory}`);
+      } else {
+        console.log(`📊 [WorkflowPilot] Final token count: ${stepTokens} (steps) + ${memoryTokens} (memory) = ${totalTokensWithMemory}`);
+      }
+
+      // ✅ CRITICAL: Update context with final total BEFORE saving to database
+      context.totalTokensUsed = totalTokensWithMemory;
+
+      // 11. Mark as completed (now with correct total tokens in context)
+      await this.stateManager.completeExecution(executionId, finalOutput, context);
+
+      // 12. Audit: Execution completed (skip detailed logging if optimizations enabled)
+      if (!this.optimizationsEnabled) {
+        await this.auditTrail.log({
+          action: AUDIT_EVENTS.PILOT_EXECUTION_COMPLETED,
+          entityType: 'agent',
+          entityId: executionId,
+          userId: userId,
+          resourceName: agent.agent_name,
+          details: {
+            steps_completed: context.completedSteps.length,
+            steps_failed: context.failedSteps.length,
+            steps_skipped: context.skippedSteps.length,
+            total_execution_time: context.totalExecutionTime,
+            total_tokens_used: context.totalTokensUsed,  // Now includes all tokens
+          },
+          severity: 'info',
+        });
+      }
+
+      // 13. ✅ P0 FIX: Reconcile token counts (verify accuracy)
+      // This ensures token_usage table matches agent_executions.logs.tokensUsed
+      // Critical for revenue integrity
+      // Run async with delay to ensure database transaction completes
+      setTimeout(async () => {
+        try {
+          const { TokenReconciliationService } = await import('@/lib/services/TokenReconciliationService');
+          const reconciliationService = new TokenReconciliationService(this.supabase);
+          const reconciliationResult = await reconciliationService.reconcileExecution(executionId);
+
+          if (!reconciliationResult.isReconciled) {
+            console.error(`⚠️  [WorkflowPilot] Token discrepancy detected: ${reconciliationResult.discrepancy} tokens (${reconciliationResult.discrepancyPercentage.toFixed(2)}%)`);
+          } else {
+            console.log(`✅ [WorkflowPilot] Token reconciliation passed`);
+          }
+        } catch (reconciliationError: any) {
+          // Non-critical - log but don't fail execution
+          console.warn(`⚠️  [WorkflowPilot] Token reconciliation failed (non-critical):`, reconciliationError.message);
+        }
+      }, 1000); // Wait 1 second for DB transaction to complete
+
+      // 14. Update AIS metrics (async)
+      this.updateAISMetrics(agent.id, context).catch(err =>
+        console.error('❌ AIS update failed (non-critical):', err)
+      );
 
       console.log(`✅ [WorkflowPilot] Execution completed successfully: ${executionId}`);
 
@@ -680,12 +755,13 @@ export class WorkflowPilot {
       return;
     }
 
-    // Execute step with retry policy
+    // Execute step with retry policy (use step-level or default from config)
     context.currentStep = stepDef.id;
 
+    const retryPolicy = stepDef.retryPolicy || this.options?.defaultRetryPolicy;
     const output = await this.errorRecovery.executeWithRetry(
       () => this.stepExecutor.execute(stepDef, context),
-      stepDef.retryPolicy,
+      retryPolicy,
       stepDef.id
     );
 
@@ -1032,6 +1108,29 @@ export class WorkflowPilot {
   /**
    * Build final output from context
    */
+  /**
+   * Execute function with timeout
+   * @private
+   */
+  private async executeWithTimeout<T>(
+    fn: () => Promise<T>,
+    timeoutMs: number,
+    executionId: string
+  ): Promise<T> {
+    return Promise.race([
+      fn(),
+      new Promise<T>((_, reject) =>
+        setTimeout(() => {
+          reject(new ExecutionError(
+            `Workflow execution timeout after ${timeoutMs}ms`,
+            'EXECUTION_TIMEOUT',
+            executionId
+          ));
+        }, timeoutMs)
+      ),
+    ]);
+  }
+
   private buildFinalOutput(
     context: ExecutionContext,
     outputSchema: any
@@ -1362,23 +1461,25 @@ export class WorkflowPilot {
       // 10. Mark as completed
       await this.stateManager.completeExecution(executionId, finalOutput, context);
 
-      // 11. Audit: Execution completed
-      await this.auditTrail.log({
-        action: AUDIT_EVENTS.PILOT_EXECUTION_COMPLETED,
-        entityType: 'agent',
-        entityId: executionId,
-        userId: context.userId,
-        resourceName: agent.agent_name,
-        details: {
-          steps_completed: context.completedSteps.length,
-          steps_failed: context.failedSteps.length,
-          steps_skipped: context.skippedSteps.length,
-          total_execution_time: context.totalExecutionTime,
-          total_tokens_used: context.totalTokensUsed,
-          resumed: true,
-        },
-        severity: 'info',
-      });
+      // 11. Audit: Execution completed (skip detailed logging if optimizations enabled)
+      if (!this.optimizationsEnabled) {
+        await this.auditTrail.log({
+          action: AUDIT_EVENTS.PILOT_EXECUTION_COMPLETED,
+          entityType: 'agent',
+          entityId: executionId,
+          userId: context.userId,
+          resourceName: agent.agent_name,
+          details: {
+            steps_completed: context.completedSteps.length,
+            steps_failed: context.failedSteps.length,
+            steps_skipped: context.skippedSteps.length,
+            total_execution_time: context.totalExecutionTime,
+            total_tokens_used: context.totalTokensUsed,
+            resumed: true,
+          },
+          severity: 'info',
+        });
+      }
 
       // 12. Update AIS metrics (async)
       this.updateAISMetrics(agent.id, context).catch(err =>

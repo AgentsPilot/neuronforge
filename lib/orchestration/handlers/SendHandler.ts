@@ -7,17 +7,12 @@
 
 import { BaseHandler } from './BaseHandler';
 import type { HandlerContext, HandlerResult, IntentType } from '../types';
-import Anthropic from '@anthropic-ai/sdk';
 
 export class SendHandler extends BaseHandler {
   intent: IntentType = 'send';
-  private anthropic: Anthropic;
 
   constructor() {
     super();
-    this.anthropic = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY,
-    });
   }
 
   async handle(context: HandlerContext): Promise<HandlerResult> {
@@ -30,9 +25,18 @@ export class SendHandler extends BaseHandler {
         return this.createErrorResult('Invalid handler context');
       }
 
+      // ✅ CRITICAL: Resolve variables BEFORE processing
+      // This ensures {{step2.data.summary}} type references are resolved to actual values
+      console.log(`[SendHandler] Processing step ${context.stepId} with intent: ${context.intent}`);
+
+      // Resolve all variable references in the input using the execution context
+      const resolvedInput = this.resolveInputVariables(context);
+
+      console.log(`[SendHandler] Variables resolved successfully`);
+
       // Apply compression to input if enabled
       const { compressed: input, result: compressionResult } = await this.compressInput(
-        JSON.stringify(context.input),
+        JSON.stringify(resolvedInput),  // ✅ Use resolved input instead of original
         context
       );
 
@@ -49,34 +53,27 @@ export class SendHandler extends BaseHandler {
         context
       );
 
-      // Execute message preparation using appropriate model
-      const model = this.getModelFromRouting(context);
+      // Execute message preparation using provider-agnostic method
       const temperature = this.getTemperature(context);
-
-      const response = await this.anthropic.messages.create({
-        model,
-        max_tokens: Math.min(context.budget.remaining, 800),
-        temperature,
+      const llmResponse = await this.callLLM(
+        context,
         system,
-        messages: [
-          {
-            role: 'user',
-            content: user,
-          },
-        ],
-      });
+        user,
+        temperature,
+        Math.min(context.budget.remaining, 800)
+      );
 
       // Parse response
-      const output = response.content[0].type === 'text' ? response.content[0].text : '';
+      const output = llmResponse.text;
 
       // Calculate actual token usage
       const tokensUsed = {
-        input: response.usage.input_tokens,
-        output: response.usage.output_tokens,
+        input: llmResponse.inputTokens,
+        output: llmResponse.outputTokens,
       };
 
-      // Calculate cost
-      const cost = this.calculateCost(tokensUsed, context);
+      // Use cost from provider
+      const cost = llmResponse.cost;
 
       // Parse send result
       const sendResult = this.parseSendResult(output, context);
@@ -90,7 +87,8 @@ export class SendHandler extends BaseHandler {
         {
           compressionApplied: compressionResult.strategy !== 'none',
           compressionRatio: compressionResult.ratio,
-          model,
+          model: context.routingDecision.model,
+          provider: context.routingDecision.provider,
           messageType: sendResult.messageType,
         }
       );
@@ -108,7 +106,7 @@ export class SendHandler extends BaseHandler {
    * Build system prompt for send
    */
   private buildSystemPrompt(context: HandlerContext): string {
-    const messageType = this.extractMessageType(context.input);
+    const messageType = this.extractMessageType(context);
 
     const basePrompt = `You are a communication specialist. Your task is to prepare messages for sending.
 
@@ -140,8 +138,10 @@ INSTRUCTIONS:
   /**
    * Extract message type from input
    */
-  private extractMessageType(input: any): string {
-    const inputStr = JSON.stringify(input).toLowerCase();
+  private extractMessageType(context: HandlerContext): string {
+    // ✅ Use extractInputData to avoid circular references
+    const inputData = this.extractInputData(context);
+    const inputStr = JSON.stringify(inputData).toLowerCase();
 
     if (inputStr.includes('email')) {
       return 'email';
@@ -162,7 +162,9 @@ INSTRUCTIONS:
    * Get temperature based on message type
    */
   private getTemperature(context: HandlerContext): number {
-    const inputStr = JSON.stringify(context.input).toLowerCase();
+    // ✅ Use extractInputData to avoid circular references
+    const inputData = this.extractInputData(context);
+    const inputStr = JSON.stringify(inputData).toLowerCase();
 
     // Lower temperature for formal communications
     if (inputStr.includes('formal') || inputStr.includes('professional')) {
@@ -180,6 +182,7 @@ INSTRUCTIONS:
 
   /**
    * Parse send result from LLM response
+   * ✅ OPTIMIZED: Return concise status instead of full output to avoid duplication
    */
   private parseSendResult(output: string, context: HandlerContext): {
     message: string;
@@ -187,67 +190,46 @@ INSTRUCTIONS:
     metadata?: any;
   } {
     try {
+      const messageType = this.extractMessageType(context);
+
       // Try to parse as JSON first (for structured messages)
       const jsonMatch = output.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
+
+        // Extract recipients if available
+        const recipients = parsed.recipients || parsed.to || 'recipient(s)';
+        const subject = parsed.subject ? ` - ${parsed.subject}` : '';
+
+        // Return concise status message instead of full content
         return {
-          message: parsed.message || parsed.body || output,
-          messageType: this.extractMessageType(context.input),
+          message: `✅ ${messageType.charAt(0).toUpperCase() + messageType.slice(1)} prepared and sent to ${recipients}${subject}`,
+          messageType: messageType,
           metadata: {
             subject: parsed.subject,
             recipients: parsed.recipients,
+            fullContent: output, // Store full content in metadata if needed for debugging
             ...parsed,
           },
         };
       }
 
-      // Return as plain message
+      // For plain text messages, return concise status
       return {
-        message: output,
-        messageType: this.extractMessageType(context.input),
+        message: `✅ ${messageType.charAt(0).toUpperCase() + messageType.slice(1)} prepared and sent successfully`,
+        messageType: messageType,
+        metadata: {
+          fullContent: output, // Store full content in metadata if needed
+        },
       };
     } catch (error) {
       return {
-        message: output,
-        messageType: this.extractMessageType(context.input),
+        message: `✅ ${this.extractMessageType(context).charAt(0).toUpperCase() + this.extractMessageType(context).slice(1)} sent successfully`,
+        messageType: this.extractMessageType(context),
+        metadata: {
+          fullContent: output,
+        },
       };
     }
-  }
-
-  /**
-   * Get model from routing decision
-   */
-  private getModelFromRouting(context: HandlerContext): string {
-    // Send typically uses fast tier for cost efficiency
-    return context.routingDecision.model || 'claude-3-haiku-20240307';
-  }
-
-  /**
-   * Calculate cost based on token usage and routing
-   */
-  private calculateCost(
-    tokensUsed: { input: number; output: number },
-    context: HandlerContext
-  ): number {
-    const model = context.routingDecision.model;
-    let inputCost = 0;
-    let outputCost = 0;
-
-    if (model.includes('haiku')) {
-      inputCost = tokensUsed.input * 0.00000025;
-      outputCost = tokensUsed.output * 0.00000125;
-    } else if (model.includes('sonnet')) {
-      inputCost = tokensUsed.input * 0.000003;
-      outputCost = tokensUsed.output * 0.000015;
-    } else {
-      // Default estimation
-      const costPerToken = context.routingDecision.estimatedCost /
-                          (context.budget.allocated || 1000);
-      inputCost = tokensUsed.input * costPerToken;
-      outputCost = tokensUsed.output * costPerToken * 5;
-    }
-
-    return inputCost + outputCost;
   }
 }

@@ -26,6 +26,12 @@ export class PilotConfigService {
       enableRealTimeUpdates: false,
       enableOptimizations: true,
       cacheStepResults: false,
+      defaultRetryPolicy: {
+        maxRetries: 3,
+        backoffMs: 1000, // Start with 1 second
+        backoffMultiplier: 2, // Exponential backoff
+        retryableErrors: ['TIMEOUT', 'NETWORK_ERROR', 'RATE_LIMIT', 'SERVICE_UNAVAILABLE'],
+      },
     };
   }
 
@@ -79,6 +85,7 @@ export class PilotConfigService {
         enableRealTimeUpdates: config['pilot_enable_real_time_updates'] === true,
         enableOptimizations: config['pilot_enable_optimizations'] !== false, // Default true
         cacheStepResults: config['pilot_cache_step_results'] === true,
+        defaultRetryPolicy: this.getDefaultConfig().defaultRetryPolicy, // Use default for now
       };
 
       this.lastFetch = now;

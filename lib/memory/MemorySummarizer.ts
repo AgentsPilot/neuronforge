@@ -127,8 +127,8 @@ export class MemorySummarizer {
       const config = await MemoryConfigService.getSummarizationConfig(this.supabase);
       const importanceConfig = await MemoryConfigService.getImportanceConfig(this.supabase);
 
-      // 2. Build summarization prompt
-      const prompt = this.buildSummarizationPrompt(input);
+      // 2. Build summarization prompt with dynamic truncation
+      const prompt = this.buildSummarizationPrompt(input, config);
 
       // 3. Call LLM to generate memory
       console.log(`🤖 [MemorySummarizer] Calling ${config.model} for summarization...`);
@@ -307,79 +307,56 @@ export class MemorySummarizer {
    *
    * @private
    */
-  private buildSummarizationPrompt(input: SummarizationInput): string {
+  private buildSummarizationPrompt(input: SummarizationInput, config: any): string {
+    // ✅ OPTIMIZED: Use config to control history truncation
+    // Get truncation limits from config (with fallback defaults)
+    const inputTruncate = config.input_truncate_chars || 300;
+    const outputTruncate = config.output_truncate_chars || 400;
+    const historyCount = config.recent_history_count !== undefined ? config.recent_history_count : 2;
+    const historySummaryChars = config.recent_history_summary_chars || 100;
+
+    // Build recent history context with configured truncation
     const recentContext = input.recent_runs
-      ?.map((r) => `
-Run ${r.run_number}: ${r.summary}
-Result: ${r.key_outcomes.success ? '✅ Success' : '❌ Failed'}
-${r.patterns_detected.recurring_error ? '⚠️ ' + r.patterns_detected.recurring_error : ''}
-`)
-      .join('\n') || 'No recent history available';
+      ?.slice(-historyCount) // Use configured count (0 = no history)
+      ?.map((r) => `Run ${r.run_number}: ${r.summary.substring(0, historySummaryChars)}... [${r.key_outcomes.success ? 'OK' : 'FAIL'}]`)
+      .join('\n') || 'No history';
 
-    return `You are a memory summarization AI for NeuronForge agent system.
+    // ✅ OPTIMIZED: Condensed prompt - removed verbose examples and guidelines
+    return `Summarize this agent execution. Return JSON only.
 
-AGENT CONTEXT:
-Name: ${input.agent_name}
-Purpose: ${input.agent_description}
-${input.agent_mode ? `Mode: ${input.agent_mode}` : ''}
+Agent: ${input.agent_name}
+Recent: ${recentContext}
 
-RECENT HISTORY (for comparison):
-${recentContext}
-
-CURRENT EXECUTION:
+Execution:
 Status: ${input.status}
-Model: ${input.model_used}
-Credits: ${input.credits_consumed}
-Time: ${input.execution_time_ms}ms
-${input.ais_score ? `AIS Score: ${input.ais_score.toFixed(2)}` : ''}
+Credits: ${input.credits_consumed} | Time: ${input.execution_time_ms}ms
+Input: ${JSON.stringify(input.input).substring(0, inputTruncate)}
+Output: ${JSON.stringify(input.output).substring(0, outputTruncate)}
+${input.error_logs ? `Errors: ${input.error_logs.substring(0, 200)}` : ''}
 
-Input: ${JSON.stringify(input.input, null, 2).substring(0, 500)}
-Output: ${JSON.stringify(input.output, null, 2).substring(0, 1000)}
-${input.error_logs ? `Errors: ${input.error_logs.substring(0, 500)}` : ''}
-${input.user_feedback ? `User Feedback: ${input.user_feedback}` : ''}
-
-CREATE MEMORY (JSON only, no markdown):
+Return JSON:
 {
-  "summary": "2-3 sentences: WHAT CHANGED or WHAT'S IMPORTANT (compare to history)",
-  "sentiment": "positive" | "neutral" | "negative" | "mixed",
+  "summary": "2-3 sentences highlighting key outcomes and changes",
+  "sentiment": "positive|neutral|negative|mixed",
   "key_outcomes": {
     "success": boolean,
-    "items_processed": number | null,
-    "errors": ["specific error"] | null,
-    "warnings": ["specific warning"] | null
+    "items_processed": number|null,
+    "errors": [string]|null,
+    "warnings": [string]|null
   },
   "patterns_detected": {
-    "recurring_error": "specific description" | null,
-    "success_pattern": "what consistently works" | null,
-    "performance_issue": "bottleneck description" | null
+    "recurring_error": "description"|null,
+    "success_pattern": "description"|null,
+    "performance_issue": "description"|null
   },
   "suggestions": {
-    "improve_prompt": "specific improvement" | null,
-    "adjust_schedule": "timing recommendation" | null,
-    "optimize_config": "config change" | null
+    "improve_prompt": "specific"|null,
+    "adjust_schedule": "specific"|null,
+    "optimize_config": "specific"|null
   }
 }
 
-CRITICAL GUIDELINES:
-✅ ALWAYS include all objects (key_outcomes, patterns_detected, suggestions)
-✅ NEVER set objects to null - only individual fields can be null
-✅ Summary: 50-200 tokens, focus on CURRENT run vs HISTORY
-✅ Be specific: "Gmail API 429 rate limit on weekend" not "API error"
-✅ Only note NEW patterns or CHANGES
-✅ Actionable suggestions only
-✅ If no patterns detected: {"patterns_detected": {"recurring_error": null, "success_pattern": null, "performance_issue": null}}
-✅ If no suggestions: {"suggestions": {"improve_prompt": null, "adjust_schedule": null, "optimize_config": null}}
-❌ Don't repeat obvious info
-❌ Don't summarize all I/O, just key changes
-❌ NEVER return null for patterns_detected or suggestions objects themselves
-
-SENTIMENT RULES:
-✅ "positive": Complete success, no errors, met/exceeded expectations
-✅ "neutral": Routine success, nothing notable, expected outcome
-✅ "negative": Failed, errors occurred, didn't complete task
-✅ "mixed": Partial success (some items processed, some failed) OR success with warnings
-
-EXAMPLES:
+Rules: All objects required (never null). Only fields can be null. Be specific and concise.
 
 Good (pattern detected):
 {
@@ -603,6 +580,84 @@ Response (JSON only):`;
   }
 
   /**
+   * Generate embeddings in batch for multiple memories (uses batch_size config)
+   */
+  async generateEmbeddingsBatch(memoryIds: string[]): Promise<void> {
+    if (memoryIds.length === 0) {
+      return;
+    }
+
+    try {
+      console.log(`🔮 [MemorySummarizer] Generating embeddings for ${memoryIds.length} memories in batch...`);
+
+      // Load config
+      const config = await MemoryConfigService.getEmbeddingConfig(this.supabase);
+      const batchSize = config.batch_size || 100;
+
+      // Process in batches
+      for (let i = 0; i < memoryIds.length; i += batchSize) {
+        const batch = memoryIds.slice(i, Math.min(i + batchSize, memoryIds.length));
+
+        // Fetch batch of memories
+        const { data: memories, error: fetchError } = await this.supabase
+          .from('run_memories')
+          .select('id, summary, key_outcomes, patterns_detected')
+          .in('id', batch);
+
+        if (fetchError || !memories) {
+          console.error('❌ [MemorySummarizer] Error fetching memories batch:', fetchError);
+          continue;
+        }
+
+        // Build texts for batch embedding
+        const texts = memories.map(m =>
+          `${m.summary} ${JSON.stringify(m.key_outcomes)} ${JSON.stringify(m.patterns_detected)}`
+        );
+
+        // Generate embeddings in batch
+        const response = await this.openai.embeddings.create({
+          model: config.model,
+          input: texts
+        });
+
+        // Validate dimensions
+        const expectedDimensions = config.dimensions || 1536;
+        if (response.data[0].embedding.length !== expectedDimensions) {
+          console.warn(
+            `⚠️  [MemorySummarizer] Embedding dimension mismatch! ` +
+            `Expected ${expectedDimensions}, got ${response.data[0].embedding.length}. ` +
+            `Update memory_embedding_dimensions config to match model ${config.model}.`
+          );
+        }
+
+        // Save embeddings to database
+        const updates = memories.map((m, idx) => ({
+          id: m.id,
+          embedding: response.data[idx].embedding
+        }));
+
+        for (const update of updates) {
+          const { error: updateError } = await this.supabase
+            .from('run_memories')
+            .update({ embedding: update.embedding })
+            .eq('id', update.id);
+
+          if (updateError) {
+            console.error(`❌ [MemorySummarizer] Error saving embedding for ${update.id}:`, updateError);
+          }
+        }
+
+        console.log(`✅ [MemorySummarizer] Batch ${i / batchSize + 1}: Generated ${batch.length} embeddings`);
+      }
+
+      console.log(`✅ [MemorySummarizer] Batch embedding complete: ${memoryIds.length} total`);
+    } catch (error) {
+      console.error('❌ [MemorySummarizer] Error in batch embedding generation:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Generate embedding for existing memory (can be called in batch)
    */
   async generateEmbedding(memoryId: string): Promise<void> {
@@ -632,6 +687,16 @@ Response (JSON only):`;
       });
 
       const embedding = response.data[0].embedding;
+
+      // Validate dimensions
+      const expectedDimensions = config.dimensions || 1536;
+      if (embedding.length !== expectedDimensions) {
+        console.warn(
+          `⚠️  [MemorySummarizer] Embedding dimension mismatch! ` +
+          `Expected ${expectedDimensions}, got ${embedding.length}. ` +
+          `Update memory_embedding_dimensions config to match model ${config.model}.`
+        );
+      }
 
       // Save to database
       const { error: updateError } = await this.supabase
@@ -672,6 +737,16 @@ Response (JSON only):`;
       });
 
       const embedding = response.data[0].embedding;
+
+      // Validate dimensions
+      const expectedDimensions = config.dimensions || 1536;
+      if (embedding.length !== expectedDimensions) {
+        console.warn(
+          `⚠️  [MemorySummarizer] Embedding dimension mismatch! ` +
+          `Expected ${expectedDimensions}, got ${embedding.length}. ` +
+          `Update memory_embedding_dimensions config to match model ${config.model}.`
+        );
+      }
 
       // Save to database
       const { error: updateError } = await this.supabase

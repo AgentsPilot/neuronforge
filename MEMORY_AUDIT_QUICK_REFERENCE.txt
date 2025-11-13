@@ -1,0 +1,80 @@
+MEMORY CONFIGURATION PARAMETERS - QUICK REFERENCE TABLE
+========================================================
+
+INJECTION CONFIGURATION (5/5 USED)
+   1. max_tokens                     | memory_injection_max_tokens              | USED
+   2. min_recent_runs                | memory_injection_min_recent_runs         | USED
+   3. max_recent_runs                | memory_injection_max_recent_runs         | USED
+   4. semantic_search_limit          | memory_injection_semantic_search_limit   | USED
+   5. semantic_threshold             | memory_injection_semantic_threshold      | USED
+
+SUMMARIZATION CONFIGURATION (3/4 USED)
+   6. model                          | memory_summarization_model               | USED
+   7. temperature                    | memory_summarization_temperature         | USED
+   8. max_tokens                     | memory_summarization_max_tokens          | USED
+   9. async                          | memory_summarization_async               | UNUSED ***
+
+EMBEDDING CONFIGURATION (1/3 USED)
+  10. model                          | memory_embedding_model                   | USED
+  11. batch_size                     | memory_embedding_batch_size              | UNUSED ***
+  12. dimensions                     | memory_embedding_dimensions              | UNUSED ***
+
+IMPORTANCE SCORING (6/6 USED)
+  13. base_score                     | memory_importance_base_score             | USED
+  14. error_bonus                    | memory_importance_error_bonus            | USED
+  15. pattern_bonus                  | memory_importance_pattern_bonus          | USED
+  16. user_feedback_bonus            | memory_importance_user_feedback_bonus    | USED
+  17. first_run_bonus                | memory_importance_first_run_bonus        | USED
+  18. milestone_bonus                | memory_importance_milestone_bonus        | USED
+
+RETENTION CONFIGURATION (3/4 USED)
+  19. run_memories_days              | memory_retention_run_memories_days       | USED
+  20. low_importance_days            | memory_retention_low_importance_days     | USED
+  21. consolidation_threshold        | memory_retention_consolidation_threshold | USED
+  22. consolidation_frequency_days   | memory_retention_consolidation_frequency_days | UNUSED ***
+
+SUMMARY:
+  Total Parameters: 22
+  Fully Used: 18 (81.8%)
+  Unused: 4 (18.2%) ***
+  
+UNUSED PARAMETERS DETAILS:
+  *** memory_summarization_async
+      Reason: Always runs async (fire-and-forget pattern)
+      Location: MemoryEnhancedExecution.ts:140
+      Risk: LOW
+  
+  *** memory_embedding_batch_size
+      Reason: Only single embeddings are generated
+      Location: MemorySummarizer.ts:629-630, 669-670
+      Risk: MEDIUM
+  
+  *** memory_embedding_dimensions
+      Reason: Not validated or referenced in code
+      Location: Loaded but never used
+      Risk: MEDIUM
+  
+  *** memory_retention_consolidation_frequency_days
+      Reason: No scheduler implementation
+      Location: scripts/memory-maintenance.ts (manual cleanup only)
+      Risk: LOW
+
+CONFIGURATION CHAIN:
+  Database (system_settings_config) 
+    ↓
+  MemoryConfigService (5 getter methods)
+    ↓
+  Injector/Summarizer/Maintenance
+    ↓
+  Execution Logic
+
+ADMIN UI: app/admin/memory-config/page.tsx
+  - 5 sections (one per category)
+  - Fully functional controls
+  - Syncs to database via /api/admin/memory-config
+
+CACHE: 5 minutes (MemoryConfigService.CACHE_TTL_MS)
+
+DATE AUDITED: 2025-11-12
+AUDIT STATUS: COMPLETE
+CONFIDENCE: 100% (code-level verification)

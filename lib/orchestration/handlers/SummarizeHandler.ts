@@ -7,17 +7,12 @@
 
 import { BaseHandler } from './BaseHandler';
 import type { HandlerContext, HandlerResult, IntentType } from '../types';
-import Anthropic from '@anthropic-ai/sdk';
 
 export class SummarizeHandler extends BaseHandler {
   intent: IntentType = 'summarize';
-  private anthropic: Anthropic;
 
   constructor() {
     super();
-    this.anthropic = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY,
-    });
   }
 
   async handle(context: HandlerContext): Promise<HandlerResult> {
@@ -30,9 +25,12 @@ export class SummarizeHandler extends BaseHandler {
         return this.createErrorResult('Invalid handler context');
       }
 
+      // Resolve variables in input
+      const resolvedInput = this.resolveInputVariables(context);
+
       // Apply compression to input if enabled
       const { compressed: input, result: compressionResult } = await this.compressInput(
-        JSON.stringify(context.input),
+        JSON.stringify(resolvedInput),
         context
       );
 
@@ -49,37 +47,34 @@ export class SummarizeHandler extends BaseHandler {
         context
       );
 
-      // Execute summarization using appropriate model from routing decision
-      const model = this.getModelFromRouting(context);
-      const response = await this.anthropic.messages.create({
-        model,
-        max_tokens: Math.min(context.budget.remaining, 2048),
-        temperature: 0.5, // Moderate temperature for balanced creativity
+      // Execute summarization using provider-agnostic method
+      const llmResponse = await this.callLLM(
+        context,
         system,
-        messages: [
-          {
-            role: 'user',
-            content: user,
-          },
-        ],
-      });
+        user,
+        0.5, // Moderate temperature for balanced creativity
+        Math.min(context.budget.remaining, 2048)
+      );
 
       // Parse response
-      const output = response.content[0].type === 'text' ? response.content[0].text : '';
+      const output = llmResponse.text;
+
+      // Extract clean summary by removing meta-commentary and narrative
+      const cleanSummary = this.extractCleanSummary(output);
 
       // Calculate actual token usage
       const tokensUsed = {
-        input: response.usage.input_tokens,
-        output: response.usage.output_tokens,
+        input: llmResponse.inputTokens,
+        output: llmResponse.outputTokens,
       };
 
-      // Calculate cost
-      const cost = this.calculateCost(tokensUsed, context);
+      // Use cost from provider
+      const cost = llmResponse.cost;
 
       // Create success result
       const result = this.createSuccessResult(
         {
-          summary: output,
+          summary: cleanSummary,  // Use cleaned version instead of raw output
           originalLength: compressionResult.originalTokens,
           summaryLength: tokensUsed.output,
           compressionRatio: 1 - (tokensUsed.output / compressionResult.originalTokens),
@@ -90,7 +85,8 @@ export class SummarizeHandler extends BaseHandler {
         {
           compressionApplied: compressionResult.strategy !== 'none',
           compressionRatio: compressionResult.ratio,
-          model,
+          model: context.routingDecision.model,
+          provider: context.routingDecision.provider,
         }
       );
 
@@ -105,33 +101,44 @@ export class SummarizeHandler extends BaseHandler {
 
   /**
    * Build system prompt for summarization
+   * ✅ OPTIMIZED: Simplified to reduce token overhead (~150 tokens vs ~300)
+   * ✅ FIXED: Explicitly instruct to output ONLY the summary content
    */
   private buildSystemPrompt(context: HandlerContext): string {
-    // Extract target length if specified in input
-    const targetLength = this.extractTargetLength(context.input);
+    const targetLength = this.extractTargetLength(context);
 
-    return `You are a summarization specialist. Your task is to create concise, accurate summaries.
+    return `You are a summarization specialist. Create concise, accurate summaries.
 
-INSTRUCTIONS:
 - Preserve key information and main ideas
-- Remove redundancy and filler content
-- Maintain logical flow and coherence
+- Remove redundancy
 - Focus on actionable insights
-${targetLength ? `- Target length: ~${targetLength} words` : '- Keep summary concise but comprehensive'}
+${targetLength ? `- Target: ~${targetLength} words` : '- Be concise but comprehensive'}
 
-OUTPUT FORMAT:
-Provide a clear, well-structured summary. Use bullet points for multiple key points if appropriate.`;
+CRITICAL: Output ONLY the summary content itself. Do NOT include:
+- Meta-commentary about what you're doing
+- Phrases like "I will now...", "Let me...", "Executing..."
+- Any narrative about next steps or actions
+- Just the pure summary content
+
+Example of CORRECT output:
+"The analysis of the last 10 emails reveals... [summary content]"
+
+Example of INCORRECT output:
+"The analysis reveals... [summary]. I will now send this to the user."`;
   }
 
   /**
    * Extract target length from input if specified
    */
-  private extractTargetLength(input: any): number | null {
-    if (typeof input === 'object' && input.targetLength) {
-      return parseInt(input.targetLength);
+  private extractTargetLength(context: HandlerContext): number | null {
+    // ✅ Use extractInputData to avoid circular references
+    const inputData = this.extractInputData(context);
+
+    if (typeof inputData === 'object' && inputData.targetLength) {
+      return parseInt(inputData.targetLength);
     }
 
-    const inputStr = JSON.stringify(input);
+    const inputStr = JSON.stringify(inputData);
     const lengthMatch = inputStr.match(/(\d+)\s*(words?|tokens?)/i);
     if (lengthMatch) {
       return parseInt(lengthMatch[1]);
@@ -141,47 +148,56 @@ Provide a clear, well-structured summary. Use bullet points for multiple key poi
   }
 
   /**
-   * Get model from routing decision
+   * Extract clean summary content by removing meta-commentary and narrative
+   * ✅ CRITICAL FIX: Prevents duplicate summaries in email output
    */
-  private getModelFromRouting(context: HandlerContext): string {
-    // Summarization benefits from better models for quality
-    // Default to Sonnet if available, fallback to Haiku
-    const model = context.routingDecision.model;
+  private extractCleanSummary(output: string): string {
+    let cleaned = output;
 
-    if (context.routingDecision.tier === 'fast') {
-      return 'claude-3-haiku-20240307';
-    } else if (context.routingDecision.tier === 'powerful') {
-      return 'claude-3-5-sonnet-20241022';
+    // Remove leading meta-commentary patterns (from start of text)
+    const leadingPatterns = [
+      /^I will (now )?analyze[^\n]*(\n\n|\n)/i,
+      /^I will (now )?summarize[^\n]*(\n\n|\n)/i,
+      /^Let me (now )?analyze[^\n]*(\n\n|\n)/i,
+      /^Let me (now )?summarize[^\n]*(\n\n|\n)/i,
+      /^Now,? I will send[^\n]*(\n\n|\n)/i,
+      /^I will (now )?send[^\n]*(\n\n|\n)/i,
+      /^Executing[^\n]*(\n\n|\n)/i,
+      /^Processing[^\n]*(\n\n|\n)/i,
+    ];
+
+    for (const pattern of leadingPatterns) {
+      cleaned = cleaned.replace(pattern, '');
     }
 
-    return model || 'claude-3-haiku-20240307';
-  }
+    // Remove trailing meta-commentary patterns (from end of text)
+    // Split into sections first to avoid regex complexity
+    const sections = cleaned.split(/\n\n+/);
+    const cleanedSections = sections.filter(section => {
+      const lower = section.toLowerCase().trim();
+      // Remove sections that are purely narrative about sending
+      if (lower.startsWith('now,') && lower.includes('send')) return false;
+      if (lower.startsWith('i will') && lower.includes('send')) return false;
+      if (lower.startsWith('let me send')) return false;
+      if (lower.startsWith('### sending')) return false;
+      if (lower.startsWith('---') && lower.includes('send')) return false;
+      return true;
+    });
 
-  /**
-   * Calculate cost based on token usage and routing
-   */
-  private calculateCost(
-    tokensUsed: { input: number; output: number },
-    context: HandlerContext
-  ): number {
-    const model = context.routingDecision.model;
-    let inputCost = 0;
-    let outputCost = 0;
+    cleaned = cleanedSections.join('\n\n');
 
-    if (model.includes('haiku')) {
-      inputCost = tokensUsed.input * 0.00000025;
-      outputCost = tokensUsed.output * 0.00000125;
-    } else if (model.includes('sonnet')) {
-      inputCost = tokensUsed.input * 0.000003;
-      outputCost = tokensUsed.output * 0.000015;
-    } else {
-      // Default estimation
-      const costPerToken = context.routingDecision.estimatedCost /
-                          (context.budget.allocated || 1000);
-      inputCost = tokensUsed.input * costPerToken;
-      outputCost = tokensUsed.output * costPerToken * 5;
+    // Trim whitespace
+    cleaned = cleaned.trim();
+
+    // If the cleaning removed too much (less than 50 chars), return original
+    // This prevents over-aggressive cleaning
+    if (cleaned.length < 50) {
+      console.warn('[SummarizeHandler] Clean summary too short, using original output');
+      return output;
     }
 
-    return inputCost + outputCost;
+    console.log(`[SummarizeHandler] Cleaned summary: ${cleaned.length} chars (was ${output.length} chars)`);
+
+    return cleaned;
   }
 }

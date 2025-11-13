@@ -406,6 +406,48 @@ export interface StepOutput {
 }
 
 /**
+ * ✅ P1 FIX: Standardized token usage format
+ * All components should use this format for type safety and consistency
+ */
+export interface TokenUsage {
+  input: number;
+  output: number;
+  total: number;
+}
+
+/**
+ * ✅ P1 FIX: Utility to normalize token formats
+ * Converts both legacy number format and object format to standardized TokenUsage
+ */
+export function normalizeTokens(tokens: number | { total: number; prompt?: number; completion?: number; input?: number; output?: number } | TokenUsage | undefined): TokenUsage {
+  if (!tokens) {
+    return { input: 0, output: 0, total: 0 };
+  }
+
+  if (typeof tokens === 'number') {
+    // Legacy format - assume all tokens are total
+    return { input: 0, output: 0, total: tokens };
+  }
+
+  // Object format - handle multiple naming conventions
+  const input = tokens.input ?? tokens.prompt ?? 0;
+  const output = tokens.output ?? tokens.completion ?? 0;
+  const total = tokens.total ?? (input + output);
+
+  return { input, output, total };
+}
+
+/**
+ * ✅ P1 FIX: Extract total tokens from any format
+ * Backward compatible with existing code
+ */
+export function getTokenTotal(tokens: number | { total?: number; prompt?: number; completion?: number; input?: number; output?: number } | undefined): number {
+  if (!tokens) return 0;
+  if (typeof tokens === 'number') return tokens;
+  return tokens.total ?? ((tokens.input ?? tokens.prompt ?? 0) + (tokens.output ?? tokens.completion ?? 0));
+}
+
+/**
  * Step output metadata (privacy-compliant, persisted to DB)
  */
 export interface StepOutputMetadata {
@@ -413,7 +455,11 @@ export interface StepOutputMetadata {
   executedAt: string;
   executionTime: number;
   itemCount?: number;
-  tokensUsed?: number | { total: number; prompt: number; completion: number };
+  /**
+   * ✅ P1 UPDATE: Prefer TokenUsage format, but still support legacy number for backward compatibility
+   * Use normalizeTokens() utility to convert to standard format
+   */
+  tokensUsed?: TokenUsage | number | { total: number; prompt: number; completion: number };
   error?: string;
   errorCode?: string;
   cacheHit?: boolean;

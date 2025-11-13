@@ -33,6 +33,8 @@ import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { ConditionalEvaluator } from './ConditionalEvaluator';
 import { DataOperations } from './DataOperations';
+import { StepCache } from './StepCache';
+import { AISConfigService } from '@/lib/services/AISConfigService';
 // TODO: Implement these classes for per-step routing
 // import { TaskComplexityAnalyzer } from './TaskComplexityAnalyzer';
 // import { PerStepModelRouter } from './PerStepModelRouter';
@@ -42,14 +44,16 @@ export class StepExecutor {
   private auditTrail: AuditTrailService;
   private conditionalEvaluator: ConditionalEvaluator;
   private stateManager: any; // StateManager (avoiding circular dependency)
+  private stepCache: StepCache;
   // private complexityAnalyzer: TaskComplexityAnalyzer;
   // private modelRouter: PerStepModelRouter;
 
-  constructor(supabase: SupabaseClient, stateManager?: any) {
+  constructor(supabase: SupabaseClient, stateManager?: any, stepCache?: StepCache) {
     this.supabase = supabase;
     this.auditTrail = AuditTrailService.getInstance();
     this.conditionalEvaluator = new ConditionalEvaluator();
     this.stateManager = stateManager;
+    this.stepCache = stepCache || new StepCache(false);
     // this.complexityAnalyzer = new TaskComplexityAnalyzer();
     // this.modelRouter = new PerStepModelRouter();
   }
@@ -65,19 +69,40 @@ export class StepExecutor {
 
     console.log(`[StepExecutor] Executing step ${step.id}: ${step.name} (type: ${step.type})`);
 
+    // === CACHING CHECK ===
+    // Check cache before execution (for deterministic steps only)
+    const cacheableTypes = ['action', 'transform', 'validation', 'comparison'];
+    if (cacheableTypes.includes(step.type)) {
+      const cachedOutput = this.stepCache.get(step.id, step.type, step.params || {});
+      if (cachedOutput) {
+        console.log(`💾 [StepExecutor] Cache hit for step ${step.id}, skipping execution`);
+        return cachedOutput;
+      }
+    }
+
     // === ORCHESTRATION INTEGRATION (Phase 4) ===
-    // Check if orchestration is active and route through handlers if enabled
-    if (context.orchestrator && context.orchestrator.isActive()) {
-      console.log(`🎯 [StepExecutor] Using orchestration for step ${step.id}`);
+    // Check if step should use orchestration (only AI tasks, not deterministic plugin actions)
+    const shouldUseOrchestration = this.shouldUseOrchestration(step);
+
+    if (shouldUseOrchestration && context.orchestrator && context.orchestrator.isActive()) {
+      console.log(`🎯 [StepExecutor] Using orchestration for AI task: ${step.id} (type: ${step.type})`);
 
       try {
+        // ✅ CRITICAL: Resolve variables BEFORE passing to orchestration
+        // This ensures {{step1.data.emails}} is resolved to actual data for Step 2
+        const resolvedParams = context.resolveAllVariables(step.params || {});
+
+        console.log(`🔍 [StepExecutor] Orchestration step ${step.id} params BEFORE resolution:`, JSON.stringify(step.params, null, 2));
+        console.log(`🔍 [StepExecutor] Orchestration step ${step.id} params AFTER resolution:`, JSON.stringify(resolvedParams, null, 2));
+
         // Execute via orchestration handlers
         const orchestrationResult = await context.orchestrator.executeStep(
           step.id,
           {
             step,
-            params: step.params,
-            context: context.variables,
+            params: resolvedParams,  // ✅ Use resolved params instead of raw params
+            context: context.variables,  // Keep for backward compatibility
+            executionContext: context,  // ✅ Pass full ExecutionContext for variable resolution
           },
           context.memoryContext,
           context.agent.plugins_required
@@ -110,6 +135,8 @@ export class StepExecutor {
         console.warn(`⚠️  [StepExecutor] Orchestration failed for step ${step.id}, falling back to normal execution:`, orchestrationError.message);
         // Fall through to normal execution
       }
+    } else if (!shouldUseOrchestration && context.orchestrator?.isActive()) {
+      console.log(`⚡ [StepExecutor] Skipping orchestration for deterministic step: ${step.id} (type: ${step.type}) - executing plugin directly`);
     }
 
     // === NORMAL EXECUTION (Fallback or when orchestration is disabled) ===
@@ -133,13 +160,21 @@ export class StepExecutor {
       // Resolve parameters with variable substitution
       const resolvedParams = context.resolveAllVariables(step.params || {});
 
+      // 🔍 DEBUG: Log variable resolution
+      console.log(`🔍 [StepExecutor] Step ${step.id} params BEFORE resolution:`, JSON.stringify(step.params, null, 2));
+      console.log(`🔍 [StepExecutor] Step ${step.id} params AFTER resolution:`, JSON.stringify(resolvedParams, null, 2));
+
       let result: any;
       let tokensUsed: number | { total: number; prompt: number; completion: number } = 0;
 
       // Route to appropriate executor based on step type
       switch (step.type) {
         case 'action':
-          result = await this.executeAction(step as ActionStep, resolvedParams, context);
+          // ✅ P0 FIX: Capture plugin tokens from executeAction return value
+          const actionResult = await this.executeAction(step as ActionStep, resolvedParams, context);
+          result = actionResult.data;
+          tokensUsed = actionResult.pluginTokens || 0;
+          console.log(`📊 [StepExecutor] Plugin action returned ${tokensUsed} tokens`);
           break;
 
         case 'ai_processing':  // Smart Agent Builder uses this type
@@ -262,6 +297,13 @@ export class StepExecutor {
 
       console.log(`[StepExecutor] Step ${step.id} completed successfully in ${executionTime}ms`);
 
+      // === CACHE STORAGE ===
+      // Store in cache if step type is cacheable
+      if (cacheableTypes.includes(step.type)) {
+        this.stepCache.set(step.id, step.type, step.params || {}, output);
+        console.log(`💾 [StepExecutor] Cached result for step ${step.id}`);
+      }
+
       return output;
     } catch (error: any) {
       const executionTime = Date.now() - startTime;
@@ -320,6 +362,10 @@ export class StepExecutor {
 
   /**
    * Execute plugin action
+   *
+   * ✅ P0 FIX: Track execution time and cost for direct plugin actions
+   * Even though plugins don't consume LLM tokens, we track execution metadata
+   * for complete platform usage analytics and cost attribution
    */
   private async executeAction(
     step: ActionStep,
@@ -336,6 +382,8 @@ export class StepExecutor {
 
     console.log(`[StepExecutor] Executing plugin: ${step.plugin}.${step.action}`);
 
+    const actionStartTime = Date.now();
+
     // Execute via PluginExecuterV2 (use getInstance for singleton)
     const pluginExecuter = await PluginExecuterV2.getInstance();
     const result = await pluginExecuter.execute(
@@ -344,6 +392,8 @@ export class StepExecutor {
       step.action,
       params
     );
+
+    const actionDuration = Date.now() - actionStartTime;
 
     if (!result.success) {
       throw new ExecutionError(
@@ -354,7 +404,81 @@ export class StepExecutor {
       );
     }
 
-    return result.data;
+    // ✅ P0 FIX: Track plugin action execution in token_usage table
+    // Plugin actions don't consume LLM tokens directly, but we track equivalent token cost
+    // Fetches token pricing from ais_system_config.calculator_tokens_per_plugin (default: 400)
+    let pluginTokens = 0;
+    try {
+      // Fetch plugin token cost from database
+      pluginTokens = await AISConfigService.getSystemConfig(
+        this.supabase,
+        'calculator_tokens_per_plugin',
+        400 // Fallback default
+      );
+
+      await this.supabase.from('token_usage').insert({
+        user_id: context.userId,
+        agent_id: context.agentId,
+        execution_id: context.executionId,
+        session_id: context.sessionId,
+        input_tokens: pluginTokens,  // Plugin equivalent token cost
+        output_tokens: 0,  // All cost attributed to input for simplicity
+        cost_usd: 0,  // Cost calculated from tokens using model pricing
+        feature: 'pilot',
+        component: 'plugin_action',
+        activity_type: 'plugin_call',
+        model_name: `${step.plugin}.${step.action}`,
+        provider: 'plugin_registry_v2',
+        metadata: {
+          plugin: step.plugin,
+          action: step.action,
+          execution_time_ms: actionDuration,
+          step_id: step.id,
+          step_name: step.name,
+          success: true,
+          plugin_tokens: pluginTokens,
+        }
+      });
+
+      console.log(`✅ [StepExecutor] Tracked plugin action: ${step.plugin}.${step.action} (${actionDuration}ms, ${pluginTokens} tokens)`);
+    } catch (trackingError) {
+      // Token tracking failures should NOT fail plugin execution
+      console.warn(`⚠️  [StepExecutor] Failed to track plugin action (non-critical):`, trackingError);
+    }
+
+    // ✅ P0 FIX: Return plugin tokens so they flow through StepOutput → ExecutionContext
+    // This ensures tokens are properly tracked via setStepOutput() which handles retries correctly
+    return {
+      data: result.data,
+      pluginTokens: pluginTokens
+    };
+  }
+
+  /**
+   * Determine if a step should use orchestration
+   * Only AI tasks (summarize, analyze, decide) need orchestration
+   * Deterministic plugin actions should execute directly
+   */
+  private shouldUseOrchestration(step: WorkflowStep): boolean {
+    // AI processing steps NEED orchestration for LLM-based handling
+    if (step.type === 'ai_processing' || step.type === 'llm_decision') {
+      return true;
+    }
+
+    // Plugin action steps should NOT use orchestration
+    // These are direct API calls to external services - no LLM needed
+    if (step.type === 'action') {
+      return false;
+    }
+
+    // Transform, enrich, validation steps may benefit from orchestration
+    // but typically don't need it - default to false for efficiency
+    if (step.type === 'transform' || step.type === 'enrich' || step.type === 'validation') {
+      return false;
+    }
+
+    // Other types (switch, delay, comparison) don't need orchestration
+    return false;
   }
 
   /**

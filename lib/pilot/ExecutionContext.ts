@@ -18,7 +18,7 @@ import type {
   MemoryContext,
   VariableReference,
 } from './types';
-import { VariableResolutionError } from './types';
+import { VariableResolutionError, getTokenTotal } from './types';
 
 export class ExecutionContext {
   // Execution metadata
@@ -79,8 +79,36 @@ export class ExecutionContext {
 
   /**
    * Store step output
+   *
+   * ✅ P0 FIX: Token de-duplication for retries
+   * When a step is retried, we REPLACE the previous token count instead of adding
+   * This prevents over-charging users for failed attempts
    */
   setStepOutput(stepId: string, output: StepOutput): void {
+    // 🔍 DEBUG: Log what's being stored
+    console.log(`🔍 [ExecutionContext] Storing output for ${stepId}:`, JSON.stringify({
+      data: output.data,
+      plugin: output.plugin,
+      action: output.action
+    }, null, 2));
+
+    // ✅ P0 FIX: Check if this is a retry (step already executed)
+    const previousOutput = this.stepOutputs.get(stepId);
+    const isRetry = previousOutput !== undefined;
+
+    if (isRetry) {
+      console.log(`🔄 [ExecutionContext] Retry detected for ${stepId} - de-duplicating tokens`);
+
+      // ✅ P1: Use standardized getTokenTotal utility for consistent handling
+      const previousTokenTotal = getTokenTotal(previousOutput.metadata.tokensUsed);
+      this.totalTokensUsed -= previousTokenTotal;
+      console.log(`   Removed ${previousTokenTotal} tokens from previous attempt`);
+
+      // SUBTRACT previous execution time
+      this.totalExecutionTime -= previousOutput.metadata.executionTime;
+    }
+
+    // Store the new output (overwrites previous if retry)
     this.stepOutputs.set(stepId, output);
 
     // Update tracking arrays
@@ -88,23 +116,32 @@ export class ExecutionContext {
       if (!this.completedSteps.includes(stepId)) {
         this.completedSteps.push(stepId);
       }
+      // Remove from failed steps if this was a successful retry
+      const failedIndex = this.failedSteps.indexOf(stepId);
+      if (failedIndex > -1) {
+        this.failedSteps.splice(failedIndex, 1);
+      }
     } else {
       if (!this.failedSteps.includes(stepId)) {
         this.failedSteps.push(stepId);
       }
-    }
-
-    // Update token count (handle both number and object formats)
-    if (output.metadata.tokensUsed) {
-      const tokens = output.metadata.tokensUsed;
-      if (typeof tokens === 'number') {
-        this.totalTokensUsed += tokens;
-      } else if (typeof tokens === 'object' && 'total' in tokens) {
-        this.totalTokensUsed += tokens.total;
+      // Remove from completed steps if this retry failed
+      const completedIndex = this.completedSteps.indexOf(stepId);
+      if (completedIndex > -1) {
+        this.completedSteps.splice(completedIndex, 1);
       }
     }
 
-    // Update execution time
+    // ✅ P1: Use standardized getTokenTotal utility for consistent handling
+    const newTokenTotal = getTokenTotal(output.metadata.tokensUsed);
+    this.totalTokensUsed += newTokenTotal;
+
+    if (isRetry) {
+      console.log(`   Added ${newTokenTotal} tokens from new attempt`);
+      console.log(`   Total tokens after de-duplication: ${this.totalTokensUsed}`);
+    }
+
+    // Add NEW execution time
     this.totalExecutionTime += output.metadata.executionTime;
   }
 
@@ -235,6 +272,9 @@ export class ExecutionContext {
    * Resolve all variables in an object (recursive)
    */
   resolveAllVariables(obj: any): any {
+    // 🔍 DEBUG: Log available step outputs
+    console.log(`🔍 [ExecutionContext] Available step outputs:`, Array.from(this.stepOutputs.keys()));
+
     if (obj === null || obj === undefined) {
       return obj;
     }

@@ -151,6 +151,34 @@ async function buildIntensityBreakdown(
   metrics: AgentIntensityMetrics,
   agent: any
 ): Promise<IntensityBreakdown> {
+  // CRITICAL FIX: Get creation tokens from token_usage table
+  // agent_intensity_metrics.total_tokens_used only includes execution tokens
+  // We need to add creation tokens for accurate total
+  // ✅ FIX: Fetch ALL creation token records and sum them (not just one with .maybeSingle())
+  const { data: creationTokenRecords, error: creationError } = await supabase
+    .from('token_usage')
+    .select('input_tokens, output_tokens')
+    .eq('agent_id', agent.id)
+    .eq('activity_type', 'agent_creation');
+
+  console.log(`[Intensity API] Creation token records for agent ${agent.id}:`, {
+    found: !!creationTokenRecords,
+    count: creationTokenRecords?.length || 0,
+    error: creationError,
+    records: creationTokenRecords
+  });
+
+  // Sum ALL creation token records
+  const creationTokens = creationTokenRecords
+    ? creationTokenRecords.reduce((sum, record) => sum + (record.input_tokens || 0) + (record.output_tokens || 0), 0)
+    : 0;
+
+  if (creationError) {
+    console.warn('[Intensity API] Could not fetch creation tokens:', creationError);
+  } else {
+    console.log(`[Intensity API] ✅ Total creation tokens for agent ${agent.id}: ${creationTokens} (from ${creationTokenRecords?.length || 0} records)`);
+  }
+
   // Phase 6: Load weights from database (no more hardcoded constants!)
   const executionWeights = await AISConfigService.getExecutionWeights(supabase);
   const creationWeights = await AISConfigService.getCreationWeights(supabase);
@@ -287,7 +315,9 @@ async function buildIntensityBreakdown(
       token_stats: {
         avg_tokens_per_run: metrics.avg_tokens_per_run,
         peak_tokens: metrics.peak_tokens_single_run,
-        total_tokens: metrics.total_tokens_used,
+        total_tokens_execution_only: metrics.total_tokens_used, // Execution tokens only (old field)
+        total_tokens_creation: creationTokens, // Creation tokens from token_usage table
+        total_tokens: metrics.total_tokens_used + creationTokens, // ACCURATE TOTAL (execution + creation)
         input_output_ratio: metrics.input_output_ratio,
       },
       execution_stats: {

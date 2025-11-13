@@ -13,16 +13,96 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import type {
   ExecutionPlan,
-  ExecutionContext,
   WorkflowExecutionRecord,
   Agent,
 } from './types';
+import { ExecutionContext } from './ExecutionContext';
 
 export class StateManager {
   private supabase: SupabaseClient;
+  private progressTrackingEnabled: boolean;
+  private realTimeUpdatesEnabled: boolean;
+  private realTimeChannel: any | null = null;
 
-  constructor(supabase: SupabaseClient) {
+  constructor(
+    supabase: SupabaseClient,
+    progressTrackingEnabled: boolean = true,
+    realTimeUpdatesEnabled: boolean = false
+  ) {
     this.supabase = supabase;
+    this.progressTrackingEnabled = progressTrackingEnabled;
+    this.realTimeUpdatesEnabled = realTimeUpdatesEnabled;
+  }
+
+  /**
+   * Setup real-time broadcasting channel for execution updates
+   * @private
+   */
+  private setupRealTimeChannel(executionId: string): void {
+    if (!this.realTimeUpdatesEnabled) {
+      return;
+    }
+
+    try {
+      // Create a broadcast channel for this execution
+      this.realTimeChannel = this.supabase.channel(`workflow:${executionId}`, {
+        config: {
+          broadcast: { self: true },
+        },
+      });
+
+      // Subscribe to the channel
+      this.realTimeChannel.subscribe((status: string) => {
+        if (status === 'SUBSCRIBED') {
+          console.log(`[StateManager] Real-time channel subscribed for execution: ${executionId}`);
+        }
+      });
+    } catch (error) {
+      console.error('[StateManager] Failed to setup real-time channel:', error);
+      // Don't fail execution if real-time setup fails
+    }
+  }
+
+  /**
+   * Broadcast progress update via real-time channel
+   * @private
+   */
+  private async broadcastProgress(executionId: string, update: any): Promise<void> {
+    if (!this.realTimeUpdatesEnabled || !this.realTimeChannel) {
+      return;
+    }
+
+    try {
+      await this.realTimeChannel.send({
+        type: 'broadcast',
+        event: 'workflow:progress',
+        payload: {
+          execution_id: executionId,
+          timestamp: new Date().toISOString(),
+          ...update,
+        },
+      });
+      console.log(`[StateManager] Broadcasted progress update for execution: ${executionId}`);
+    } catch (error) {
+      console.error('[StateManager] Failed to broadcast progress:', error);
+      // Don't fail execution if broadcast fails
+    }
+  }
+
+  /**
+   * Cleanup real-time channel
+   * @private
+   */
+  private async cleanupRealTimeChannel(): Promise<void> {
+    if (this.realTimeChannel) {
+      try {
+        await this.supabase.removeChannel(this.realTimeChannel);
+        this.realTimeChannel = null;
+        console.log('[StateManager] Real-time channel cleaned up');
+      } catch (error) {
+        console.error('[StateManager] Failed to cleanup real-time channel:', error);
+      }
+    }
   }
 
   /**
@@ -35,7 +115,7 @@ export class StateManager {
     executionPlan: ExecutionPlan,
     inputValues: Record<string, any>
   ): Promise<string> {
-    const { data, error } = await this.supabase
+    const { data, error} = await this.supabase
       .from('workflow_executions')
       .insert({
         agent_id: agent.id,
@@ -69,6 +149,17 @@ export class StateManager {
     }
 
     console.log(`[StateManager] Created execution record: ${data.id}`);
+
+    // Setup real-time channel if enabled
+    this.setupRealTimeChannel(data.id);
+
+    // Broadcast initial status
+    await this.broadcastProgress(data.id, {
+      status: 'running',
+      total_steps: executionPlan.totalSteps,
+      completed_steps: 0,
+    });
+
     return data.id;
   }
 
@@ -76,6 +167,12 @@ export class StateManager {
    * Checkpoint execution state after each step
    */
   async checkpoint(context: ExecutionContext): Promise<void> {
+    // Skip checkpointing if progress tracking is disabled
+    if (!this.progressTrackingEnabled) {
+      console.log('[StateManager] Progress tracking disabled, skipping checkpoint');
+      return;
+    }
+
     const summary = context.getSummary();
     const executionTrace = context.getExecutionTrace();
 
@@ -100,6 +197,18 @@ export class StateManager {
         // Don't throw - checkpoint failures should not stop execution
       } else {
         console.log(`[StateManager] Checkpointed execution: ${context.executionId}`);
+
+        // Broadcast progress update if real-time updates enabled
+        await this.broadcastProgress(context.executionId, {
+          status: summary.status,
+          current_step: summary.currentStep,
+          completed_steps: summary.stepCount.completed,
+          failed_steps: summary.stepCount.failed,
+          skipped_steps: summary.stepCount.skipped,
+          total_steps: summary.stepCount.total,
+          total_tokens_used: summary.totalTokensUsed,
+          total_execution_time: summary.totalExecutionTime,
+        });
       }
     } catch (err) {
       console.error('[StateManager] Checkpoint error:', err);
@@ -141,6 +250,20 @@ export class StateManager {
     }
 
     console.log(`[StateManager] Marked execution as completed: ${executionId}`);
+
+    // Broadcast final completion update
+    await this.broadcastProgress(executionId, {
+      status: 'completed',
+      completed_steps: summary.stepCount.completed,
+      failed_steps: summary.stepCount.failed,
+      skipped_steps: summary.stepCount.skipped,
+      total_steps: summary.stepCount.total,
+      total_tokens_used: summary.totalTokensUsed,
+      total_execution_time: summary.totalExecutionTime,
+    });
+
+    // Cleanup real-time channel
+    await this.cleanupRealTimeChannel();
 
     // Also log to agent_executions table for UI display
     // This ensures executions appear in the agent page analytics tab

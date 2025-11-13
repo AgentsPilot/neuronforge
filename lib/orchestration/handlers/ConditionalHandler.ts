@@ -7,17 +7,12 @@
 
 import { BaseHandler } from './BaseHandler';
 import type { HandlerContext, HandlerResult, IntentType } from '../types';
-import Anthropic from '@anthropic-ai/sdk';
 
 export class ConditionalHandler extends BaseHandler {
   intent: IntentType = 'conditional';
-  private anthropic: Anthropic;
 
   constructor() {
     super();
-    this.anthropic = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY,
-    });
   }
 
   async handle(context: HandlerContext): Promise<HandlerResult> {
@@ -30,9 +25,12 @@ export class ConditionalHandler extends BaseHandler {
         return this.createErrorResult('Invalid handler context');
       }
 
+      // Resolve variables in input
+      const resolvedInput = this.resolveInputVariables(context);
+
       // Apply compression to input if enabled
       const { compressed: input, result: compressionResult } = await this.compressInput(
-        JSON.stringify(context.input),
+        JSON.stringify(resolvedInput),
         context
       );
 
@@ -49,32 +47,26 @@ export class ConditionalHandler extends BaseHandler {
         context
       );
 
-      // Execute conditional evaluation using fast model (Haiku)
-      const model = 'claude-3-haiku-20240307'; // Always use fast model for conditionals
-      const response = await this.anthropic.messages.create({
-        model,
-        max_tokens: Math.min(context.budget.remaining, 512), // Very small output
-        temperature: 0.1, // Extremely low temperature for deterministic logic
+      // Execute conditional evaluation using provider-agnostic method
+      const llmResponse = await this.callLLM(
+        context,
         system,
-        messages: [
-          {
-            role: 'user',
-            content: user,
-          },
-        ],
-      });
+        user,
+        0.1, // Extremely low temperature for deterministic logic
+        Math.min(context.budget.remaining, 512) // Very small output
+      );
 
       // Parse response
-      const output = response.content[0].type === 'text' ? response.content[0].text : '';
+      const output = llmResponse.text;
 
       // Calculate actual token usage
       const tokensUsed = {
-        input: response.usage.input_tokens,
-        output: response.usage.output_tokens,
+        input: llmResponse.inputTokens,
+        output: llmResponse.outputTokens,
       };
 
-      // Calculate cost
-      const cost = this.calculateCost(tokensUsed);
+      // Use cost from provider
+      const cost = llmResponse.cost;
 
       // Parse conditional result
       const conditionalResult = this.parseConditionalResult(output);
@@ -88,7 +80,8 @@ export class ConditionalHandler extends BaseHandler {
         {
           compressionApplied: compressionResult.strategy !== 'none',
           compressionRatio: compressionResult.ratio,
-          model,
+          model: context.routingDecision.model,
+          provider: context.routingDecision.provider,
           conditionMet: conditionalResult.result,
         }
       );
@@ -175,15 +168,5 @@ Return a JSON object with:
         branch: 'else',
       };
     }
-  }
-
-  /**
-   * Calculate cost for Haiku usage
-   */
-  private calculateCost(tokensUsed: { input: number; output: number }): number {
-    // Haiku pricing: $0.25/$1.25 per 1M tokens
-    const inputCost = tokensUsed.input * 0.00000025;
-    const outputCost = tokensUsed.output * 0.00000125;
-    return inputCost + outputCost;
   }
 }

@@ -14,7 +14,6 @@
  * - Database configuration (all budgets configurable via admin UI)
  */
 
-import { supabase } from '@/lib/supabaseClient';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
   TokenBudget,
@@ -33,8 +32,8 @@ export class TokenBudgetManager implements ITokenBudgetManager {
   private constraints: BudgetConstraints | null = null;
   private intentBudgets: Map<IntentType, number> | null = null;
 
-  constructor(supabaseClient?: SupabaseClient) {
-    this.supabase = supabaseClient || supabase;
+  constructor(supabaseClient: SupabaseClient) {
+    this.supabase = supabaseClient;
   }
 
   /**
@@ -632,5 +631,8 @@ export class TokenBudgetManager implements ITokenBudgetManager {
 
 /**
  * Singleton instance for convenient access
+ * @deprecated Use instance-based approach with proper Supabase client
+ * This singleton will fail on server-side because it requires a Supabase client
+ * Usage: Create instance via OrchestrationService (already has TokenBudgetManager instance)
  */
-export const tokenBudgetManager = new TokenBudgetManager();
+// export const tokenBudgetManager = new TokenBudgetManager(); // Disabled - requires Supabase client

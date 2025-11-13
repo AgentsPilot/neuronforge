@@ -11,7 +11,6 @@
  * Configurable via system_settings_config table
  */
 
-import { supabase as defaultSupabase } from '@/lib/supabaseClient';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import Anthropic from '@anthropic-ai/sdk';
 import type {
@@ -33,8 +32,8 @@ export class CompressionService implements ICompressionService {
   private policyCache: Map<IntentType, CompressionPolicy> = new Map();
   private configCache: Map<string, any> = new Map();
 
-  constructor(supabaseClient?: SupabaseClient) {
-    this.supabase = supabaseClient || defaultSupabase;
+  constructor(supabaseClient: SupabaseClient) {
+    this.supabase = supabaseClient;
     this.anthropic = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY,
     });
@@ -617,5 +616,8 @@ Compress the following content:`;
 
 /**
  * Singleton instance for convenient access
+ * @deprecated Use instance-based approach with proper Supabase client
+ * This singleton will fail on server-side because it requires a Supabase client
+ * Usage: Create instance via OrchestrationService (already has CompressionService instance)
  */
-export const compressionService = new CompressionService();
+// export const compressionService = new CompressionService(); // Disabled - requires Supabase client

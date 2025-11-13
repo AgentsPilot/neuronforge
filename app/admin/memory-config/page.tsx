@@ -30,6 +30,10 @@ interface MemoryConfig {
     temperature: number;
     max_tokens: number;
     async: boolean;
+    input_truncate_chars: number;
+    output_truncate_chars: number;
+    recent_history_count: number;
+    recent_history_summary_chars: number;
   };
   embedding: {
     model: string;
@@ -77,7 +81,11 @@ export default function MemoryConfigPage() {
       model: 'gpt-4o-mini',
       temperature: 0.3,
       max_tokens: 1000,
-      async: true
+      async: true,
+      input_truncate_chars: 300,
+      output_truncate_chars: 400,
+      recent_history_count: 2,
+      recent_history_summary_chars: 100
     },
     embedding: {
       model: 'text-embedding-3-small',
@@ -448,6 +456,64 @@ export default function MemoryConfigPage() {
                   </div>
 
                   <div>
+                    <label className="block text-white font-medium mb-2">Input Truncate (chars)</label>
+                    <input
+                      type="number"
+                      value={config.summarization.input_truncate_chars}
+                      onChange={(e) => setConfig({
+                        ...config,
+                        summarization: { ...config.summarization, input_truncate_chars: parseInt(e.target.value) }
+                      })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Maximum characters of execution INPUT to include in summarization prompt. Limits how much of the agent's input data (user query, form data, etc.) is sent to the summarization LLM. Lower values reduce token costs but may lose context. Recommended: 300 for concise context (saves tokens), 500 for balanced context, 200 for minimal context. This directly affects memory token usage (1 char ≈ 0.25 tokens).</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-white font-medium mb-2">Output Truncate (chars)</label>
+                    <input
+                      type="number"
+                      value={config.summarization.output_truncate_chars}
+                      onChange={(e) => setConfig({
+                        ...config,
+                        summarization: { ...config.summarization, output_truncate_chars: parseInt(e.target.value) }
+                      })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Maximum characters of execution OUTPUT to include in summarization prompt. Limits how much of the agent's result data is sent to the summarization LLM. Lower values significantly reduce token costs (output is usually much larger than input). Recommended: 400 for balanced summary quality, 600 for detailed context, 200 for aggressive token savings. Output often contains full email content or large JSON responses, so this is critical for token optimization.</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-white font-medium mb-2">Recent History Count</label>
+                    <input
+                      type="number"
+                      value={config.summarization.recent_history_count}
+                      onChange={(e) => setConfig({
+                        ...config,
+                        summarization: { ...config.summarization, recent_history_count: parseInt(e.target.value) }
+                      })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      min="0"
+                      max="5"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Number of recent execution summaries to include in memory prompt for comparison. More history provides better context for pattern detection but significantly increases token usage. Each summary adds ~100-200 tokens. Recommended: 2 for optimal token savings, 3-5 for better pattern detection. Use 0 to disable history (saves ~200-800 tokens).</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-white font-medium mb-2">History Summary Truncate (chars)</label>
+                    <input
+                      type="number"
+                      value={config.summarization.recent_history_summary_chars}
+                      onChange={(e) => setConfig({
+                        ...config,
+                        summarization: { ...config.summarization, recent_history_summary_chars: parseInt(e.target.value) }
+                      })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Maximum characters of each historical summary to include. Truncates long summaries to save tokens while preserving key context. Lower values reduce memory token usage proportionally. Recommended: 100 for concise history (saves ~400-600 tokens), 200 for detailed history, 50 for aggressive savings. Works with Recent History Count to control total history token cost.</p>
+                  </div>
+
+                  <div className="md:col-span-2">
                     <label className="flex items-center gap-3 p-4 bg-slate-800/50 rounded-xl cursor-pointer hover:bg-slate-800 transition-colors">
                       <input
                         type="checkbox"

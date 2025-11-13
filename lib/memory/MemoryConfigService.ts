@@ -61,7 +61,11 @@ export class MemoryConfigService {
       model: 'gpt-4o-mini',
       temperature: 0.3,
       max_tokens: 500,
-      async: true
+      async: true,
+      input_truncate_chars: 300,
+      output_truncate_chars: 400,
+      recent_history_count: 2,
+      recent_history_summary_chars: 100
     });
   }
 

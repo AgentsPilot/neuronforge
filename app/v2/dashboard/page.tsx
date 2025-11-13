@@ -286,7 +286,7 @@ export default function V2DashboardPage() {
             className="flex-1 bg-transparent border-none outline-none text-sm sm:text-base text-[var(--v2-text-secondary)] placeholder:text-[var(--v2-text-muted)]"
             onKeyDown={(e) => {
               if (e.key === 'Enter' && searchQuery.trim()) {
-                router.push(`/agents/new?prompt=${encodeURIComponent(searchQuery)}`)
+                router.push(`/v2/agents/new?prompt=${encodeURIComponent(searchQuery)}`)
               }
             }}
           />
@@ -298,7 +298,7 @@ export default function V2DashboardPage() {
           <Card
             hoverable
             onClick={() => router.push('/v2/agent-list')}
-            className="cursor-pointer !p-4 !h-[280px] overflow-hidden !box-border"
+            className="cursor-pointer !p-3 sm:!p-4 !h-[280px] overflow-hidden !box-border active:scale-[0.98] transition-transform"
           >
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
@@ -330,7 +330,7 @@ export default function V2DashboardPage() {
                           e.stopPropagation()
                           router.push(`/v2/agents/${agent.id}`)
                         }}
-                        className="flex items-center justify-between py-2 px-3 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors duration-200 cursor-pointer"
+                        className="flex items-center justify-between py-2.5 sm:py-2 px-3 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 active:scale-[0.98] transition-all duration-200 cursor-pointer"
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
                       >
                         <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -369,7 +369,7 @@ export default function V2DashboardPage() {
           <Card
             hoverable
             onClick={() => router.push('/v2/analytics')}
-            className="cursor-pointer !p-4 !h-[280px] overflow-hidden !box-border"
+            className="cursor-pointer !p-3 sm:!p-4 !h-[280px] overflow-hidden !box-border active:scale-[0.98] transition-transform"
           >
               <div className="space-y-2">
               <div className="flex items-center gap-2">
@@ -394,7 +394,7 @@ export default function V2DashboardPage() {
 
           {/* Recent Activity Card - Horizontal Bar List */}
           <Card
-            className="!p-4 !h-[280px] overflow-hidden !box-border"
+            className="!p-3 sm:!p-4 !h-[280px] overflow-hidden !box-border"
           >
               <div className="space-y-2">
               <div className="flex items-center gap-2">
@@ -474,7 +474,7 @@ export default function V2DashboardPage() {
           <Card
             hoverable
             onClick={() => router.push('/v2/billing')}
-            className="cursor-pointer !p-4 !h-[280px] overflow-hidden !box-border"
+            className="cursor-pointer !p-3 sm:!p-4 !h-[280px] overflow-hidden !box-border active:scale-[0.98] transition-transform"
           >
               <div className="space-y-2">
               <div className="flex items-center gap-2">
@@ -487,20 +487,20 @@ export default function V2DashboardPage() {
                 Monitor your credit consumption
               </p>
 
-              {/* Content: Text on left, Gauge on right */}
-              <div className="flex items-center justify-between gap-4 pt-0 pb-0">
+              {/* Content: Stack vertically on mobile, side by side on larger screens */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4 pt-0 pb-0">
                 {/* Left side - Stats */}
-                <div className="flex-1 space-y-2">
-                  <div>
-                    <div className="text-xs text-[var(--v2-text-muted)] mb-1">Available</div>
+                <div className="flex-1 w-full sm:w-auto space-y-2">
+                  <div className="flex items-center justify-between sm:block">
+                    <div className="text-xs text-[var(--v2-text-muted)] mb-0 sm:mb-1">Available</div>
                     <div className="text-2xl sm:text-3xl font-bold text-[var(--v2-text-primary)]">
                       {stats.creditBalance >= 1000
                         ? `${(stats.creditBalance / 1000).toFixed(1)}K`
                         : stats.creditBalance.toLocaleString()}
                     </div>
                   </div>
-                  <div>
-                    <div className="text-xs text-[var(--v2-text-muted)] mb-1">Used</div>
+                  <div className="flex items-center justify-between sm:block">
+                    <div className="text-xs text-[var(--v2-text-muted)] mb-0 sm:mb-1">Used</div>
                     <div className="text-lg font-semibold text-[var(--v2-text-secondary)]">
                       {stats.totalSpent >= 1000
                         ? `${(stats.totalSpent / 1000).toFixed(1)}K`
@@ -509,11 +509,11 @@ export default function V2DashboardPage() {
                   </div>
                 </div>
 
-                {/* Right side - Speedometer Gauge */}
-                <div className="flex-shrink-0 w-[260px]">
+                {/* Right side - Speedometer Gauge - Responsive sizing */}
+                <div className="flex-shrink-0 w-full sm:w-[240px] md:w-[260px] max-w-[280px]">
                   <div className="relative" style={{ height: '165px' }}>
                     {/* Recharts Gauge Arc */}
-                    <ResponsiveContainer width={260} height={165}>
+                    <ResponsiveContainer width="100%" height={165}>
                       <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
                         <Pie
                           data={[

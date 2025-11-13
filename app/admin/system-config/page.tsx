@@ -1527,8 +1527,8 @@ export default function SystemConfigPage() {
                     className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <div className="text-xs text-slate-400 leading-relaxed">
-                    <p className="text-blue-300 font-medium mb-1">Plugin Token Cost (default: 800)</p>
-                    <p className="text-slate-400">How many extra tokens each connected plugin adds to the agent's usage. Includes plugin metadata and orchestration overhead.</p>
+                    <p className="text-blue-300 font-medium mb-1">Plugin Token Cost (default: 400)</p>
+                    <p className="text-slate-400">Token equivalent charged per plugin action call. This is added to the total execution cost and tracked in token_usage table. Includes API call overhead and operational costs.</p>
                   </div>
                 </div>
 

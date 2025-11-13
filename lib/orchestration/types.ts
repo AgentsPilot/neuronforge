@@ -207,6 +207,8 @@ export interface IntentHandler {
 export interface HandlerContext {
   stepId: string;
   agentId: string;
+  userId: string;  // ✅ User ID for token tracking and analytics
+  executionId: string;  // ✅ Execution ID for token correlation with agent_executions
   intent: IntentType;
   input: any;
   budget: TokenBudget;
@@ -215,6 +217,7 @@ export interface HandlerContext {
   metadata: OrchestrationMetadata;
   memory?: any;  // Memory context if available
   plugins?: any; // Available plugins
+  executionContext?: any;  // ✅ ExecutionContext for variable resolution (from Pilot)
 }
 
 /**
@@ -366,7 +369,7 @@ export interface OrchestrationAuditLog {
   timestamp: Date;
   actor: 'system' | 'user' | 'orchestrator';
   data: Record<string, any>;
-  severity: 'info' | 'warning' | 'error';
+  severity: 'info' | 'warning' | 'critical';  // ✅ Changed 'error' to 'critical' to match DB constraint
 }
 
 // ============================================================================

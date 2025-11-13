@@ -47,7 +47,11 @@ export async function GET() {
         model: 'gpt-4o-mini',
         temperature: 0.3,
         max_tokens: 1000,
-        async: true
+        async: true,
+        input_truncate_chars: 300,
+        output_truncate_chars: 400,
+        recent_history_count: 2,
+        recent_history_summary_chars: 100
       },
       embedding: {
         model: 'text-embedding-3-small',
@@ -95,6 +99,10 @@ export async function GET() {
         if (key === 'memory_summarization_temperature') config.summarization.temperature = parsedValue;
         if (key === 'memory_summarization_max_tokens') config.summarization.max_tokens = parsedValue;
         if (key === 'memory_summarization_async') config.summarization.async = parsedValue === 'true' || parsedValue === true;
+        if (key === 'memory_summarization_input_truncate_chars') config.summarization.input_truncate_chars = parsedValue;
+        if (key === 'memory_summarization_output_truncate_chars') config.summarization.output_truncate_chars = parsedValue;
+        if (key === 'memory_summarization_recent_history_count') config.summarization.recent_history_count = parsedValue;
+        if (key === 'memory_summarization_recent_history_summary_chars') config.summarization.recent_history_summary_chars = parsedValue;
 
         if (key === 'memory_embedding_model') config.embedding.model = parsedValue;
         if (key === 'memory_embedding_batch_size') config.embedding.batch_size = parsedValue;
@@ -157,6 +165,10 @@ export async function PUT(request: NextRequest) {
       { key: 'memory_summarization_temperature', value: config.summarization.temperature.toString(), category: 'memory', description: 'Model temperature (0.0-2.0)' },
       { key: 'memory_summarization_max_tokens', value: config.summarization.max_tokens.toString(), category: 'memory', description: 'Maximum tokens for summary' },
       { key: 'memory_summarization_async', value: config.summarization.async.toString(), category: 'memory', description: 'Process summarization asynchronously' },
+      { key: 'memory_summarization_input_truncate_chars', value: config.summarization.input_truncate_chars.toString(), category: 'memory', description: 'Maximum characters of input to include in summarization' },
+      { key: 'memory_summarization_output_truncate_chars', value: config.summarization.output_truncate_chars.toString(), category: 'memory', description: 'Maximum characters of output to include in summarization' },
+      { key: 'memory_summarization_recent_history_count', value: config.summarization.recent_history_count.toString(), category: 'memory', description: 'Number of recent runs to include in history' },
+      { key: 'memory_summarization_recent_history_summary_chars', value: config.summarization.recent_history_summary_chars.toString(), category: 'memory', description: 'Maximum characters of each historical summary' },
 
       // Embedding configuration
       { key: 'memory_embedding_model', value: JSON.stringify(config.embedding.model), category: 'memory', description: 'Embedding model to use' },

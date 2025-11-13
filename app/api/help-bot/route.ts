@@ -13,6 +13,76 @@ const supabase = createClient(
 
 const aiAnalytics = new AIAnalyticsService(supabase)
 
+// Search for agents by name (fuzzy matching)
+async function searchAgents(query: string, userId: string | null): Promise<Array<{id: string, name: string, status: string}>> {
+  if (!userId) return []
+
+  try {
+    const { data: agents, error } = await supabase
+      .from('agents')
+      .select('id, agent_name, status')
+      .eq('user_id', userId)
+      .ilike('agent_name', `%${query}%`)
+      .limit(5)
+
+    if (error) {
+      console.error('Agent search error:', error)
+      return []
+    }
+
+    return agents?.map(a => ({ id: a.id, name: a.agent_name, status: a.status })) || []
+  } catch (error) {
+    console.error('Agent search error:', error)
+    return []
+  }
+}
+
+// Detect if user is asking about a specific agent
+function detectAgentSearchQuery(query: string): string | null {
+  const lowerQuery = query.toLowerCase()
+
+  // Don't trigger agent search for ONLY "all agents" without any descriptive terms
+  // e.g., "show me all agents" → null, but "find all email agents" → "email"
+  if (lowerQuery.match(/^(?:find|search|show|locate|open|view|see)\s+(?:me\s+)?(?:my\s+)?(?:all\s+)?agents?\s*$/i)) {
+    return null  // Just asking for all agents, no specific name
+  }
+
+  // Patterns that indicate user is searching for a specific agent
+  const searchPatterns = [
+    // "find me all [agent name] agent(s)" - captures agent name even with "all"
+    /(?:find|search|show|locate|open|view|see)\s+me\s+(?:all\s+)?(?:my\s+)?([^"'?]+?)\s*agents?$/i,
+    // "find all [agent name] agent(s)" or "find [agent name] agent(s)"
+    /(?:find|search|show|where is|locate|open|view|see)\s+(?:all\s+)?(?:my\s+)?([^"'?]+?)\s*agents?$/i,
+    // "find agent named [name]" or "find agent called [name]"
+    /(?:find|search|show|locate|open|view|see)\s+(?:my\s+)?(?:agent|bot)\s+(?:named|called)\s+["']?([^"'?]+?)["']?$/i,
+    // "[agent name]" in quotes
+    /(?:agent|bot)?\s*["']([^"']+)["']/i,
+    // "what/where is my [agent name] agent"
+    /(?:what|where)\s+(?:is\s+)?(?:my\s+)?([^"'?]+?)\s*(?:agent|bot)/i,
+  ]
+
+  for (const pattern of searchPatterns) {
+    const match = query.match(pattern)
+    if (match && match[1] && match[1].trim().length > 0) {
+      let agentName = match[1].trim()
+
+      // Clean up common filler words (but NOT "all" if it's part of the agent name)
+      agentName = agentName.replace(/\b(my|the|an?)\b/gi, '').trim()
+
+      // Remove standalone "all" at the beginning
+      agentName = agentName.replace(/^all\s+/i, '').trim()
+
+      // Ignore if the captured text is too generic or empty after cleanup
+      if (agentName.length > 0 && !['all', 'agents', 'agent', 'every'].includes(agentName.toLowerCase())) {
+        console.log('[Help Bot] Extracted agent name:', agentName)
+        return agentName
+      }
+    }
+  }
+
+  return null
+}
+
 // Predefined Q&A database - no AI needed, zero cost
 // Each entry can have multiple keywords (separated by |)
 const QA_DATABASE: Record<string, Record<string, string>> = {
@@ -20,14 +90,15 @@ const QA_DATABASE: Record<string, Record<string, string>> = {
     'three agents|only three|top 3|top three|limited agents|show more agents|all agents|why only|see all|showing few': 'The **Active Agents** card shows only the **top 3 most active agents** to save space. Click the card or "+X more" text to view all agents. To see your complete agent list, visit the [Agent List](/v2/agent-list) page.',
     'agent statistics|view agents|agent count|execution count|runs|executions|agent list|list agents': 'The **Active Agents** card shows your running agents with execution counts. Each agent displays its total number of runs. For a detailed view of all agents, go to the [Agent List](/v2/agent-list) page.',
     'credit metrics|credits|pilot credits|balance|tokens|how many|gauge|percentage|usage|remaining': '**Pilot Credits** are your usage currency. The circular gauge shows: **Left** = available credits, **Right** = used credits, **Percentage** = usage. 1 credit = 10 tokens by default. Click the gauge or visit [Billing](/v2/billing) to manage your credits.',
-    'create agent|new agent|add agent|make agent|build agent|start|setup agent|configure agent': 'There are 2 ways to create agents:\n1. Click the **+ button** in the bottom-right footer\n2. Use the **search bar** at the top - describe what you want to automate\n\nYou can also go directly to [Create Agent](/agents/new).',
+    'create agent|new agent|add agent|make agent|build agent|start|setup agent|configure agent': 'There are 2 ways to create agents:\n1. Click the **+ button** in the bottom-right footer\n2. Use the **search bar** at the top - describe what you want to automate and press Enter\n\nYou can also go directly to [Create Agent](/v2/agents/new).',
     'system alerts|failures|errors|problems|issues|failed|alerts card|error card': 'The **System Alerts** card shows agent failures in the last 24 hours:\n- **Green** (0) = All systems operational ✓\n- **Red** (>0) = Issues detected\nClick the card or visit [Analytics](/v2/analytics) to view detailed error logs.',
     'recent activity|activity|top agents|most active|progress bars|activity card|running agents': 'The **Recent Activity** card displays your top 3 most active agents with progress bars. Bar length shows relative execution count. This helps identify which agents are running most frequently.',
     'last run|when run|execution time|last execution|recent run|last execution time': 'The **Last Run** time in the footer shows when your most recent agent completed. Times are displayed as relative (e.g., "2h ago", "5m ago", "just now"). Updates automatically after each execution.',
     'cards|sections|navigate|overview|dashboard layout|dashboard structure': 'The dashboard has 4 main cards:\n1. **Active Agents** - View running agents ([Agent List](/v2/agent-list))\n2. **System Alerts** - Monitor failures ([Analytics](/v2/analytics))\n3. **Recent Activity** - Top 3 agents by execution\n4. **Credit Usage** - Track spending ([Billing](/v2/billing))',
-    'search|find|look for|locate|where is|where can|navigation|go to': 'You can navigate to different sections:\n- [Agent List](/v2/agent-list): View all agents\n- [Analytics](/v2/analytics): Performance metrics\n- [Billing](/v2/billing): Manage credits\n- [Create Agent](/agents/new): Build new agent\n- [Settings](/v2/settings): Configure account',
+    'search|find|look for|locate|where is|where can|navigation|go to': 'You can navigate to different sections:\n- [Agent List](/v2/agent-list): View all agents\n- [Analytics](/v2/analytics): Performance metrics\n- [Billing](/v2/billing): Manage credits\n- [Create Agent](/v2/agents/new): Build new agent\n- [Settings](/v2/settings): Configure account',
     'footer|bottom|buttons|menu|three dots|3 dots|dots menu': 'The **footer** at the bottom has several features:\n- **Last Run**: Shows when your most recent agent executed\n- **Connected Plugins**: Displays active integrations with colorful icons\n- **Dark Mode**: Toggle light/dark theme\n- **+ Button**: Create a new agent\n- **3-dot Menu**: Quick access to Agent List, Dashboard, and Create Agent',
     'plugins|integrations|connected|connections|gmail|slack|github': 'The footer displays your **connected plugins** as colorful icons (Gmail, Slack, GitHub, etc.). These show which integrations are actively connected. A green dot indicates the plugin is active. Hover over an icon to see the plugin name.',
+    'find agent|search agent|locate agent|where is my agent|show agent|open agent': 'To find a specific agent, you can:\n1. Ask me directly: "find my [agent name]" and I\'ll search for it\n2. Visit the [Agent List](/v2/agent-list) and use the search bar\n3. Use the search functionality at the top of the dashboard',
     'default': 'The dashboard provides an overview of your agents, credits, and activity. Use the cards to navigate to specific sections.',
   },
   '/v2/agent-list': {
@@ -181,6 +252,7 @@ Your role:
 - If you mention UI elements, describe where they are located
 - For navigation questions, provide step-by-step instructions
 - **IMPORTANT**: When users ask about specific pages or features, include clickable navigation links using this format: [Link Text](/path)
+- **AGENT SEARCH**: If users ask to find a specific agent (e.g., "find my email agent"), the system will automatically search and provide direct links to matching agents
 
 Available pages (use these exact paths for links):
 - Dashboard (/v2/dashboard): Overview of agents, credits, system alerts, and activity
@@ -188,7 +260,7 @@ Available pages (use these exact paths for links):
 - Analytics (/v2/analytics): Track performance, costs, and usage metrics
 - Billing (/v2/billing): Manage credits, subscriptions, and payment methods
 - Settings (/v2/settings): Configure API keys, integrations, and preferences
-- Create Agent (/agents/new): Build a new AI agent
+- Create Agent (/v2/agents/new): Build a new AI agent with conversational builder
 
 Common UI elements:
 - **Footer**: Contains Last Run time, Connected Plugins icons, Dark Mode toggle, + button (create agent), and 3-dot menu (navigation)
@@ -201,7 +273,7 @@ Examples of good responses with links:
 - "You can view all your agents on the [Agent List](/v2/agent-list) page."
 - "To manage your subscription, visit [Billing](/v2/billing)."
 - "Check your performance metrics in [Analytics](/v2/analytics)."
-- "To create a new agent, click [here](/agents/new) or use the + button in the footer."
+- "To create a new agent, click [here](/v2/agents/new) or use the search bar on the dashboard."
 
 Answer the user's question based on the current page context. Be helpful and guide them to accomplish their goals.`
 }
@@ -232,9 +304,33 @@ export async function POST(request: NextRequest) {
     // Extract userId from request headers or use null for anonymous users
     const userId = request.headers.get('x-user-id') || null
 
+    // Check if user is searching for a specific agent
+    const agentSearchQuery = detectAgentSearchQuery(lastMessage.content)
+    let foundAgents: Array<{id: string, name: string, status: string}> = []
+
+    if (agentSearchQuery && userId) {
+      console.log('[Help Bot] Agent search detected:', agentSearchQuery)
+      foundAgents = await searchAgents(agentSearchQuery, userId)
+      console.log('[Help Bot] Found agents:', foundAgents)
+    }
+
     let response: string
 
-    if (useGroq) {
+    // If agents were found, return them with links
+    if (foundAgents.length > 0) {
+      console.log('[Help Bot] Returning agent search results')
+      if (foundAgents.length === 1) {
+        const agent = foundAgents[0]
+        response = `I found your agent **${agent.name}**! You can view it here: [${agent.name}](/v2/agents/${agent.id})\n\nStatus: **${agent.status}**`
+      } else {
+        response = `I found ${foundAgents.length} agents matching "${agentSearchQuery}":\n\n` +
+          foundAgents.map(a => `- [${a.name}](/v2/agents/${a.id}) (${a.status})`).join('\n') +
+          '\n\nClick any agent name to view its details.'
+      }
+    } else if (agentSearchQuery && userId) {
+      // User searched for an agent but none were found
+      response = `I couldn't find any agents matching "${agentSearchQuery}". You can view all your agents on the [Agent List](/v2/agent-list) page, or [create a new agent](/agents/new).`
+    } else if (useGroq) {
       // Use Groq AI (FREE & FAST!) for intelligent responses
       try {
         const systemPrompt = buildSystemPrompt(pageContext)

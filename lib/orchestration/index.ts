@@ -13,12 +13,12 @@
 export { OrchestrationService, orchestrationService } from './OrchestrationService';
 
 // Core components
-export { IntentClassifier, intentClassifier } from './IntentClassifier';
-export { TokenBudgetManager, tokenBudgetManager } from './TokenBudgetManager';
+export { IntentClassifier } from './IntentClassifier'; // Note: intentClassifier singleton deprecated
+export { TokenBudgetManager } from './TokenBudgetManager'; // Note: tokenBudgetManager singleton deprecated
 
 // Phase 2 services
-export { CompressionService, compressionService } from './CompressionService';
-export { RoutingService, routingService } from './RoutingService';
+export { CompressionService } from './CompressionService'; // Note: compressionService singleton deprecated
+export { RoutingService } from './RoutingService'; // Note: routingService singleton deprecated - use OrchestrationService.getRoutingService()
 export { MemoryCompressor, memoryCompressor } from './MemoryCompressor';
 
 // Phase 4 - WorkflowPilot integration
