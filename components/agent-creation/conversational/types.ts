@@ -111,6 +111,7 @@ export interface UseConversationalFlowReturn {
   handleAcceptPrompt: () => Promise<void>;
   handleRevisePrompt: () => Promise<void>;
   handleSendMessage: (message: string) => Promise<void>;
+  handleResumeThread: (threadId: string) => Promise<void>;
 }
 
 // Message component props

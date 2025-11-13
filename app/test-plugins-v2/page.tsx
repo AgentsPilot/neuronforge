@@ -12,7 +12,7 @@ interface DebugLog {
   message: string;
 }
 
-type TabType = 'plugins' | 'ai-services';
+type TabType = 'plugins' | 'ai-services' | 'thread-conversation';
 
 const PARAMETER_TEMPLATES = {
   "google-mail": {
@@ -474,7 +474,25 @@ export default function TestPluginsPage() {
   const [selectedAIService, setSelectedAIService] = useState<string>('');
   const [aiServiceRequestBody, setAiServiceRequestBody] = useState<string>('{}');
   const [aiServiceResponse, setAiServiceResponse] = useState<any>(null);
-  
+
+  // Thread Conversation state
+  const [threadId, setThreadId] = useState<string | null>(null);
+  const [currentPhase, setCurrentPhase] = useState<1 | 2 | 3>(1);
+  const [initialPrompt, setInitialPrompt] = useState('');
+  const [conversationHistory, setConversationHistory] = useState<Array<{
+    role: 'user' | 'assistant';
+    content: string;
+    data?: any;
+  }>>([]);
+  const [currentQuestions, setCurrentQuestions] = useState<any[]>([]);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [userAnswer, setUserAnswer] = useState('');
+  const [clarificationAnswers, setClarificationAnswers] = useState<Record<string, string>>({});
+  const [enhancedPrompt, setEnhancedPrompt] = useState<any>(null);
+  const [clarityScore, setClarityScore] = useState(0);
+  const [analysisData, setAnalysisData] = useState<any>(null);
+  const [missingPlugins, setMissingPlugins] = useState<string[]>([]);
+
   // Debug logging
   const [debugLogs, setDebugLogs] = useState<DebugLog[]>([]);
   const addDebugLog = (type: 'info' | 'error' | 'success', message: string) => {
@@ -757,6 +775,235 @@ export default function TestPluginsPage() {
     }
   }, [selectedAIService]);
 
+  // Thread Conversation Functions
+  const startThread = async () => {
+    if (!userId || !initialPrompt.trim()) {
+      addDebugLog('error', 'User ID and initial prompt are required');
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      addDebugLog('info', 'Starting new thread...');
+
+      const response = await fetch('/api/agent-creation/init-thread', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: userId,
+          userPrompt: initialPrompt,
+          userContext: {
+            full_name: 'Test User',
+            email: userId + '@example.com'
+          }
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.thread_id) {
+        setThreadId(data.thread_id);
+        setCurrentPhase(1);
+
+        // Add user message to history
+        setConversationHistory([{
+          role: 'user',
+          content: initialPrompt,
+          data: null
+        }]);
+
+        addDebugLog('success', `Thread created: ${data.thread_id}`);
+
+        // Process Phase 1 - pass threadId directly since state hasn't updated yet
+        await processMessage(1, undefined, data.thread_id);
+      } else {
+        const errorMsg = data.error || 'Unknown error';
+        const errorDetails = data.details ? ` - ${data.details}` : '';
+        addDebugLog('error', `Failed to create thread: ${errorMsg}${errorDetails}`);
+      }
+    } catch (error: any) {
+      addDebugLog('error', `Thread creation error: ${error.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const processMessage = async (phase: number, answers?: Record<string, string>, explicitThreadId?: string) => {
+    const currentThreadId = explicitThreadId || threadId;
+
+    if (!currentThreadId) {
+      addDebugLog('error', 'No active thread');
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      addDebugLog('info', `Processing Phase ${phase}...`);
+
+      const requestBody: any = {
+        thread_id: currentThreadId,
+        phase: phase
+      };
+
+      // Phase 1 requires user_prompt
+      if (phase === 1) {
+        requestBody.user_prompt = initialPrompt;
+      }
+
+      // Phase 2 can optionally include enhanced_prompt for refinement (V7 feature)
+      if (phase === 2 && enhancedPrompt) {
+        requestBody.enhanced_prompt = enhancedPrompt;
+      }
+
+      // Phase 3 requires clarification_answers
+      if (phase === 3 && answers) {
+        requestBody.clarification_answers = answers;
+      }
+
+      const response = await fetch('/api/agent-creation/process-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        // Store analysis data
+        if (data.analysis) {
+          setAnalysisData(data.analysis);
+        }
+
+        // Update clarity score and missing plugins
+        if (data.clarityScore !== undefined) {
+          setClarityScore(data.clarityScore);
+        }
+        if (data.missingPlugins) {
+          setMissingPlugins(data.missingPlugins);
+        }
+
+        // Handle Phase 1 response - show analysis and proceed to Phase 2 if needed
+        if (phase === 1) {
+          // Add AI analysis to history
+          setConversationHistory(prev => [...prev, {
+            role: 'assistant',
+            content: data.conversationalSummary || 'Analysis complete',
+            data: { analysis: data.analysis, clarityScore: data.clarityScore }
+          }]);
+
+          addDebugLog('success', `Phase 1 complete - Clarity Score: ${data.clarityScore}%`);
+
+          // If clarification is needed, proceed to Phase 2
+          if (data.needsClarification) {
+            addDebugLog('info', 'Clarification needed, proceeding to Phase 2...');
+            await processMessage(2, undefined, currentThreadId);
+          } else {
+            // If no clarification needed, go directly to Phase 3
+            addDebugLog('info', 'No clarification needed, proceeding to Phase 3...');
+            await processMessage(3, {}, currentThreadId);
+          }
+        }
+        // Handle Phase 2 response with questions
+        else if (phase === 2 && data.questionsSequence && data.questionsSequence.length > 0) {
+          setCurrentQuestions(data.questionsSequence);
+          setCurrentQuestionIndex(0);
+          setCurrentPhase(2);
+
+          // Add AI response to history
+          setConversationHistory(prev => [...prev, {
+            role: 'assistant',
+            content: data.conversationalSummary || 'Let me ask you some questions...',
+            data: { questions: data.questionsSequence, analysis: data.analysis }
+          }]);
+
+          addDebugLog('success', `Phase 2 complete - ${data.questionsSequence.length} questions generated`);
+        }
+        // Handle Phase 3 response with enhanced prompt
+        else if (phase === 3 && data.enhanced_prompt) {
+          setEnhancedPrompt(data.enhanced_prompt);
+          setCurrentPhase(3);
+
+          // Add AI response to history
+          setConversationHistory(prev => [...prev, {
+            role: 'assistant',
+            content: data.conversationalSummary || 'Here is your automation plan...',
+            data: { enhanced_prompt: data.enhanced_prompt, analysis: data.analysis }
+          }]);
+
+          addDebugLog('success', `Phase 3 complete - Enhanced prompt generated`);
+        }
+      } else {
+        addDebugLog('error', `Phase ${phase} failed: ${data.error || 'Unknown error'}`);
+      }
+    } catch (error: any) {
+      addDebugLog('error', `Process message error: ${error.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleAnswerSubmit = () => {
+    if (!userAnswer.trim()) {
+      addDebugLog('error', 'Please provide an answer');
+      return;
+    }
+
+    const currentQuestion = currentQuestions[currentQuestionIndex];
+    const updatedAnswers = {
+      ...clarificationAnswers,
+      [currentQuestion.id]: userAnswer
+    };
+
+    setClarificationAnswers(updatedAnswers);
+
+    // Add answer to conversation history
+    setConversationHistory(prev => [...prev, {
+      role: 'user',
+      content: `Q: ${currentQuestion.question}\nA: ${userAnswer}`,
+      data: null
+    }]);
+
+    if (currentQuestionIndex < currentQuestions.length - 1) {
+      // Move to next question
+      setCurrentQuestionIndex(currentQuestionIndex + 1);
+      setUserAnswer('');
+      addDebugLog('info', `Question ${currentQuestionIndex + 2} of ${currentQuestions.length}`);
+    } else {
+      // All questions answered, proceed to Phase 3
+      setUserAnswer('');
+      addDebugLog('info', 'All questions answered, generating enhanced prompt...');
+      processMessage(3, updatedAnswers);
+    }
+  };
+
+  const handleRefinePlan = () => {
+    addDebugLog('info', 'Refining plan - going back to Phase 2...');
+    setCurrentQuestionIndex(0);
+    setUserAnswer('');
+    processMessage(2);
+  };
+
+  const handleAcceptPlan = () => {
+    addDebugLog('success', 'Plan accepted! Ready for implementation.');
+    // In the real flow, this would trigger agent creation
+  };
+
+  const resetThreadConversation = () => {
+    setThreadId(null);
+    setCurrentPhase(1);
+    setInitialPrompt('');
+    setConversationHistory([]);
+    setCurrentQuestions([]);
+    setCurrentQuestionIndex(0);
+    setUserAnswer('');
+    setClarificationAnswers({});
+    setEnhancedPrompt(null);
+    setClarityScore(0);
+    setAnalysisData(null);
+    setMissingPlugins([]);
+    addDebugLog('info', 'Thread conversation reset');
+  };
+
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px', fontFamily: 'monospace' }}>
       <h1>Plugin System Testing Interface</h1>
@@ -783,6 +1030,7 @@ export default function TestPluginsPage() {
           onClick={() => setActiveTab('ai-services')}
           style={{
             padding: '10px 20px',
+            marginRight: '5px',
             backgroundColor: activeTab === 'ai-services' ? '#007bff' : '#f8f9fa',
             color: activeTab === 'ai-services' ? 'white' : '#333',
             border: 'none',
@@ -793,6 +1041,21 @@ export default function TestPluginsPage() {
           }}
         >
           AI Services
+        </button>
+        <button
+          onClick={() => setActiveTab('thread-conversation')}
+          style={{
+            padding: '10px 20px',
+            backgroundColor: activeTab === 'thread-conversation' ? '#007bff' : '#f8f9fa',
+            color: activeTab === 'thread-conversation' ? 'white' : '#333',
+            border: 'none',
+            borderBottom: activeTab === 'thread-conversation' ? '3px solid #0056b3' : 'none',
+            cursor: 'pointer',
+            fontSize: '16px',
+            fontWeight: activeTab === 'thread-conversation' ? 'bold' : 'normal'
+          }}
+        >
+          Thread Conversation
         </button>
       </div>
 
@@ -1140,6 +1403,269 @@ export default function TestPluginsPage() {
             </>
           )}
         </>
+      )}
+
+      {/* Thread Conversation Tab */}
+      {activeTab === 'thread-conversation' && (
+        <div>
+          {/* Session Info */}
+          <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #28a745', borderRadius: '5px', backgroundColor: '#f0f9f0' }}>
+            <h2>Thread Session Info</h2>
+            <div style={{ fontSize: '14px', color: '#333' }}>
+              <div><strong>Thread ID:</strong> {threadId || 'Not started'}</div>
+              <div><strong>Current Phase:</strong> {currentPhase}</div>
+              <div><strong>Clarity Score:</strong> {clarityScore}%</div>
+              {missingPlugins.length > 0 && (
+                <div><strong>Missing Plugins:</strong> {missingPlugins.join(', ')}</div>
+              )}
+            </div>
+          </div>
+
+          {/* Initial Prompt Input */}
+          {!threadId && (
+            <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
+              <h2>Start New Thread</h2>
+              <div style={{ marginBottom: '15px' }}>
+                <label htmlFor="initialPrompt" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                  Initial Prompt:
+                </label>
+                <textarea
+                  id="initialPrompt"
+                  value={initialPrompt}
+                  onChange={(e) => setInitialPrompt(e.target.value)}
+                  placeholder="Example: Send me weekly email summaries of my boss's emails to Slack"
+                  style={{
+                    width: '100%',
+                    height: '100px',
+                    padding: '10px',
+                    fontSize: '14px',
+                    fontFamily: 'monospace',
+                    border: '1px solid #ccc',
+                    borderRadius: '3px'
+                  }}
+                />
+              </div>
+              <button
+                onClick={startThread}
+                disabled={isLoading || !userId || !initialPrompt.trim()}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: !userId || !initialPrompt.trim() ? '#ccc' : '#28a745',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '3px',
+                  cursor: !userId || !initialPrompt.trim() ? 'not-allowed' : 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 'bold'
+                }}
+              >
+                {isLoading ? 'Starting...' : 'Start Thread'}
+              </button>
+            </div>
+          )}
+
+          {/* Conversation History */}
+          {conversationHistory.length > 0 && (
+            <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
+              <h2>Conversation History</h2>
+              <div style={{
+                maxHeight: '400px',
+                overflowY: 'auto',
+                padding: '10px',
+                backgroundColor: '#f8f9fa',
+                borderRadius: '3px'
+              }}>
+                {conversationHistory.map((msg, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      marginBottom: '15px',
+                      padding: '10px',
+                      backgroundColor: msg.role === 'user' ? '#e3f2fd' : '#fff3cd',
+                      borderLeft: `4px solid ${msg.role === 'user' ? '#2196f3' : '#ffc107'}`,
+                      borderRadius: '3px'
+                    }}
+                  >
+                    <div style={{ fontWeight: 'bold', marginBottom: '5px', color: '#333' }}>
+                      {msg.role === 'user' ? 'User' : 'Assistant'}
+                    </div>
+                    <div style={{ whiteSpace: 'pre-wrap', fontSize: '14px' }}>
+                      {msg.content}
+                    </div>
+                    {msg.data && (
+                      <details style={{ marginTop: '10px' }}>
+                        <summary style={{ cursor: 'pointer', color: '#007bff' }}>View Data</summary>
+                        <pre style={{ fontSize: '11px', marginTop: '5px', overflow: 'auto' }}>
+                          {JSON.stringify(msg.data, null, 2)}
+                        </pre>
+                      </details>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Current Question (Phase 2) */}
+          {currentPhase === 2 && currentQuestions.length > 0 && currentQuestionIndex < currentQuestions.length && (
+            <div style={{ marginBottom: '30px', padding: '15px', border: '2px solid #007bff', borderRadius: '5px', backgroundColor: '#f0f8ff' }}>
+              <h2>Question {currentQuestionIndex + 1} of {currentQuestions.length}</h2>
+              <div style={{ marginBottom: '15px' }}>
+                <div style={{ fontWeight: 'bold', marginBottom: '10px', fontSize: '16px' }}>
+                  {currentQuestions[currentQuestionIndex].question}
+                </div>
+                <div style={{ fontSize: '12px', color: '#666', marginBottom: '10px' }}>
+                  Dimension: {currentQuestions[currentQuestionIndex].dimension}
+                </div>
+                <textarea
+                  value={userAnswer}
+                  onChange={(e) => setUserAnswer(e.target.value)}
+                  placeholder="Type your answer here..."
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleAnswerSubmit();
+                    }
+                  }}
+                  style={{
+                    width: '100%',
+                    height: '80px',
+                    padding: '10px',
+                    fontSize: '14px',
+                    fontFamily: 'monospace',
+                    border: '1px solid #ccc',
+                    borderRadius: '3px'
+                  }}
+                />
+              </div>
+              <button
+                onClick={handleAnswerSubmit}
+                disabled={isLoading || !userAnswer.trim()}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: !userAnswer.trim() ? '#ccc' : '#007bff',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '3px',
+                  cursor: !userAnswer.trim() ? 'not-allowed' : 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 'bold'
+                }}
+              >
+                {isLoading ? 'Submitting...' : 'Submit Answer'}
+              </button>
+            </div>
+          )}
+
+          {/* Enhanced Prompt Preview (Phase 3) */}
+          {currentPhase === 3 && enhancedPrompt && (
+            <div style={{ marginBottom: '30px', padding: '15px', border: '2px solid #28a745', borderRadius: '5px', backgroundColor: '#f0fff0' }}>
+              <h2>Enhanced Prompt (Phase 3)</h2>
+              <div style={{ marginBottom: '15px' }}>
+                <h3>{enhancedPrompt.plan_title || 'Automation Plan'}</h3>
+                <p style={{ fontSize: '14px', color: '#666' }}>
+                  {enhancedPrompt.plan_description || 'No description available'}
+                </p>
+              </div>
+
+              {/* JSON Preview */}
+              <details style={{ marginBottom: '15px' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: '#007bff' }}>
+                  View Full Enhanced Prompt JSON
+                </summary>
+                <pre style={{
+                  backgroundColor: '#f8f9fa',
+                  padding: '15px',
+                  borderRadius: '3px',
+                  overflow: 'auto',
+                  fontSize: '12px',
+                  maxHeight: '400px',
+                  marginTop: '10px'
+                }}>
+                  {JSON.stringify(enhancedPrompt, null, 2)}
+                </pre>
+              </details>
+
+              {/* Analysis Data */}
+              {analysisData && (
+                <details style={{ marginBottom: '15px' }}>
+                  <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: '#007bff' }}>
+                    View Analysis Data
+                  </summary>
+                  <pre style={{
+                    backgroundColor: '#f8f9fa',
+                    padding: '15px',
+                    borderRadius: '3px',
+                    overflow: 'auto',
+                    fontSize: '12px',
+                    maxHeight: '400px',
+                    marginTop: '10px'
+                  }}>
+                    {JSON.stringify(analysisData, null, 2)}
+                  </pre>
+                </details>
+              )}
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  onClick={handleAcceptPlan}
+                  disabled={isLoading}
+                  style={{
+                    padding: '12px 24px',
+                    backgroundColor: '#28a745',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                    fontSize: '16px',
+                    fontWeight: 'bold'
+                  }}
+                >
+                  Accept Plan
+                </button>
+                <button
+                  onClick={handleRefinePlan}
+                  disabled={isLoading}
+                  style={{
+                    padding: '12px 24px',
+                    backgroundColor: '#ffc107',
+                    color: '#333',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                    fontSize: '16px',
+                    fontWeight: 'bold'
+                  }}
+                >
+                  Refine Further (V7 Feature)
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Reset Button */}
+          {threadId && (
+            <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
+              <h2>Testing Controls</h2>
+              <button
+                onClick={resetThreadConversation}
+                disabled={isLoading}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#dc3545',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '3px',
+                  cursor: isLoading ? 'not-allowed' : 'pointer',
+                  fontSize: '14px'
+                }}
+              >
+                Reset Thread
+              </button>
+            </div>
+          )}
+        </div>
       )}
 
       {/* Control Panel */}

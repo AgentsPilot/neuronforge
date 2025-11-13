@@ -29,7 +29,7 @@ export function useConversationalFlow({
   const { user } = useAuth();
 
   // Thread management
-  const { useThreadFlow, initializeThread, processMessageInThread } = useThreadManagement();
+  const { useThreadFlow, initializeThread, processMessageInThread, resumeThread } = useThreadManagement();
 
   // Initialize state
   const [state, setState] = useState<ConversationalFlowState>({
@@ -787,6 +787,64 @@ export function useConversationalFlow({
     }
   }, [state.currentStage, state.originalPrompt, addMessage, handleInitialPrompt]);
 
+  // ==========================================
+  // THREAD RESUME
+  // ==========================================
+
+  const handleResumeThread = useCallback(async (threadId: string) => {
+    console.log('🔄 Resuming thread:', threadId);
+
+    if (!useThreadFlow) {
+      console.warn('⚠️ Thread-based flow is disabled, cannot resume');
+      return;
+    }
+
+    setState(prev => ({ ...prev, isProcessing: true }));
+
+    try {
+      const resumeData = await resumeThread(threadId);
+
+      if (!resumeData) {
+        throw new Error('Failed to resume thread - no data returned');
+      }
+
+      console.log('✅ Thread resume data received:', {
+        phase: resumeData.thread.current_phase,
+        messageCount: resumeData.messages.length,
+        status: resumeData.thread.status
+      });
+
+      // TODO: Reconstruct state from thread metadata and messages
+      // This would involve:
+      // 1. Parsing messages to rebuild conversation history
+      // 2. Extracting state from thread.metadata
+      // 3. Determining current stage based on thread.current_phase
+      // 4. Restoring questions, answers, and enhanced prompt if available
+
+      setState(prev => ({
+        ...prev,
+        threadId: threadId,
+        isProcessing: false
+      }));
+
+      addMessage({
+        type: 'ai',
+        messageType: 'text',
+        content: '✅ Conversation resumed! Continuing where we left off...'
+      });
+
+    } catch (error: any) {
+      console.error('❌ Failed to resume thread:', error);
+      setState(prev => ({ ...prev, isProcessing: false }));
+
+      addMessage({
+        type: 'ai',
+        messageType: 'text',
+        content: `Failed to resume conversation: ${error.message}. Please start a new session.`
+      });
+    }
+  }, [useThreadFlow, resumeThread, addMessage]);
+
   return {
     messages: state.messages,
     confidenceScore: state.confidenceScore,
@@ -801,5 +859,6 @@ export function useConversationalFlow({
     handleAcceptPrompt,
     handleRevisePrompt,
     handleSendMessage,
+    handleResumeThread,
   };
 }

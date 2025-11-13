@@ -12,7 +12,8 @@ import type {
 } from '@/components/agent-creation/types/agent-prompt-threads';
 
 //const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v5";
-const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v6-chatgpt";
+//const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v6-chatgpt";
+const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v7-chatgpt";
 
 // Initialize Supabase client
 const supabase = createClient(

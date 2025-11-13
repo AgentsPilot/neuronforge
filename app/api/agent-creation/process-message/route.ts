@@ -16,79 +16,6 @@ import type {
   UserContext
 } from '@/components/agent-creation/types/agent-prompt-threads';
 
-/**
- * Adds a standard error handling question to Phase 2 if one doesn't already exist.
- * This ensures users are always asked how they want to be notified about failures.
- *
- * @param aiResponse - The AI response from Phase 2 containing questionsSequence
- * @param userPrompt - The original user prompt to check if they mentioned error handling
- * @returns The modified aiResponse with error handling question added if needed
- */
-function addStandardErrorHandlingQuestion(
-  aiResponse: ProcessMessageResponse,
-  userPrompt: string
-): ProcessMessageResponse {
-  // Only apply to Phase 2 with valid questionsSequence
-  if (!aiResponse.questionsSequence || !Array.isArray(aiResponse.questionsSequence)) {
-    return aiResponse;
-  }
-
-  // Check if AI already generated an error handling question
-  const hasErrorHandling = aiResponse.questionsSequence.some((q) =>
-    q.dimension === 'error_handling' ||
-    (q.question && (
-      q.question.toLowerCase().includes('error') ||
-      q.question.toLowerCase().includes('problem') ||
-      q.question.toLowerCase().includes('fail')
-    ))
-  );
-
-  // Check if user already mentioned error handling in their original prompt
-  const userMentionedErrorHandling = userPrompt && (
-    userPrompt.toLowerCase().includes('error') ||
-    userPrompt.toLowerCase().includes('fail') ||
-    userPrompt.toLowerCase().includes('retry') ||
-    userPrompt.toLowerCase().includes('notification')
-  );
-
-  // TO FIX!!! - need to remove or move!
-  // Add standard error handling question if not already covered
-  if (!hasErrorHandling && !userMentionedErrorHandling) {
-    console.log('📋 Adding standard error handling question to Phase 2');
-
-    const errorHandlingQuestion: ClarificationQuestion = {
-      id: 'error_handling_standard',
-      question: 'If something goes wrong, how should I be notified?',
-      type: 'select',
-      required: true,
-      dimension: 'error_handling',
-      placeholder: 'Choose notification method',
-      options: [
-        {
-          value: 'email_me',
-          label: 'Email me',
-          description: 'Send an email notification when there\'s an issue'
-        },
-        {
-          value: 'alert_me',
-          label: 'Alert me',
-          description: 'Show a dashboard alert when there\'s a problem'
-        },
-        {
-          value: 'retry_once',
-          label: 'Retry (one time)',
-          description: 'Try the automation once more before stopping'
-        }
-      ],
-      allowCustom: false
-    };
-
-    aiResponse.questionsSequence.push(errorHandlingQuestion);
-    console.log('✅ Standard error handling question added');
-  }
-
-  return aiResponse;
-}
 
 // Initialize Supabase client
 const supabase = createClient(
@@ -220,37 +147,26 @@ export async function POST(request: NextRequest) {
     console.log('✅ User Context (server):', serverUserContext);
     console.log('✅ User Context (merged with client):', mergedUserContext);
 
-    let user_connected_services: ConnectedService[] = [];
+    let user_connected_services: string[] = [];
     let user_available_services: ConnectedService[] = [];
     console.log('✅ Connected plugins retrieved from client side:', connected_services);
 
-    // Step 4: Get User's Connected Plugins (just populate name, context/actions come from available_services)
+    // Step 4: Get User's Connected Plugins (simple string array of plugin keys)
     if (!connected_services || connected_services.length === 0)
     {
       console.log('❌ No connected_services received from client for user:', user.id);
       try {
         const pluginManager = await PluginManagerV2.getInstance();
         const userConnectedPlugins = await pluginManager.getUserActionablePlugins(user.id);
-        const connectedPluginKeys = Object.keys(userConnectedPlugins);
-
-        // Only populate name field - full details are in available_services
-        user_connected_services = connectedPluginKeys.map(key => ({
-          name: key,
-          context: "",
-          key_actions: []
-        }));
-        console.log('✅ Connected plugin keys retrieved:', connectedPluginKeys);
+        user_connected_services = Object.keys(userConnectedPlugins);
+        console.log('✅ Connected plugin keys retrieved:', user_connected_services);
       } catch (error: any) {
         console.log('UNEXPECTED_ERROR', error)
       }
     } else {
-      // If connected_services passed from client, ensure only name is populated
+      // If connected_services passed from client, ensure it's a string array
       user_connected_services = Array.isArray(connected_services)
-        ? connected_services.map((s: any) => ({
-            name: typeof s === 'string' ? s : s.name,
-            context: "",
-            key_actions: []
-          }))
+        ? connected_services.map((s: any) => typeof s === 'string' ? s : s.name)
         : [];
     }
 
@@ -273,8 +189,7 @@ export async function POST(request: NextRequest) {
         .map((p: PluginDefinitionContext) => p.toShortLLMContext())
         .map((p: any) => ({
           name: p.key,
-          context: p.context,
-          key_actions: p.capabilities
+          context: p.context
         }));
       console.log('✅ Available services formatted for LLM:', user_available_services.length, 'total');
     } catch (error: any) {
@@ -345,9 +260,8 @@ export async function POST(request: NextRequest) {
       userMessage = {
         phase: 3,
         clarification_answers: clarification_answers || {},
-        metadata: metadata || {},
-        connected_services: user_connected_services
-        // Note: available_services already in thread context from Phase 1, no need to resend
+        metadata: metadata || {}
+        // Note: connected_services and available_services already in thread context from Phase 1, no need to resend
       };
     }
 
@@ -478,15 +392,11 @@ export async function POST(request: NextRequest) {
 
       // Step 12.4: Enrich Phase 1 response with connectedPlugins
       if (phase === 1) {
-        // Return the list of connected plugin keys to frontend
-        aiResponse.connectedPlugins = user_connected_services.map(s => s.name);
+        // Return the list of connected plugin keys to frontend (already strings)
+        aiResponse.connectedPlugins = user_connected_services;
         console.log('✅ Phase 1 - Returning connected plugins to frontend:', aiResponse.connectedPlugins);
       }
 
-      // Step 12.5: Add standard error handling question if Phase 2 and missing
-      if (phase === 2) {
-        aiResponse = addStandardErrorHandlingQuestion(aiResponse, user_prompt || '');
-      }
 
       // Step 12.6: Log Phase 3 OAuth gate details
       if (phase === 3) {

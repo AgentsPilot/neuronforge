@@ -22,7 +22,7 @@ export interface AgentPromptThread {
 export interface ThreadMetadata {
   user_prompt?: string;
   analysis?: AnalysisObject;
-  connected_services?: ConnectedService[];
+  connected_services?: string[]; // Simple array of plugin keys
   clarification_answers?: Record<string, any>;
   user_context?: UserContext;
   [key: string]: any; // Allow additional metadata
@@ -39,7 +39,6 @@ export interface UserContext {
 export interface ConnectedService {
   name: string;
   context: string;
-  key_actions: string[];
 }
 
 export interface AnalysisObject {
@@ -88,8 +87,8 @@ export interface ProcessMessageRequest {
   user_prompt: string;
   user_context: UserContext;
   analysis: AnalysisObject | null;
-  connected_services: ConnectedService[];
-  available_services?: ConnectedService[]; // All plugins available in the system (same structure as connected_services)
+  connected_services: string[]; // Simple array of connected plugin keys
+  available_services?: ConnectedService[]; // All plugins available in the system with full context
   clarification_answers?: Record<string, any>;
   metadata?: {
     declined_plugins?: string[]; // Plugins user explicitly declined to connect
@@ -160,6 +159,18 @@ export interface EnhancedPrompt {
     user_inputs_required: string[];
     trigger_scope: string;
   };
+}
+
+// Thread resume response type
+export interface ThreadResumeResponse {
+  success: boolean;
+  thread: AgentPromptThread;
+  messages: Array<{
+    id: string;
+    role: 'user' | 'assistant';
+    content: string;
+    created_at: number;
+  }>;
 }
 
 // Error response type

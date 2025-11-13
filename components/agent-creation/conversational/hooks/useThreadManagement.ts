@@ -9,13 +9,11 @@
 
 import { useRef, useCallback } from 'react';
 import { useThreadBasedAgentCreation } from '@/lib/utils/featureFlags';
-
-interface InitThreadResponse {
-  success: boolean;
-  thread_id: string;
-  created_at: string;
-  message: string;
-}
+import type {
+  InitThreadResponse,
+  ThreadResumeResponse,
+  ThreadErrorResponse
+} from '@/components/agent-creation/types/agent-prompt-threads';
 
 interface ProcessMessageRequest {
   thread_id: string;
@@ -51,11 +49,6 @@ interface ProcessMessageResponse {
   conversationalSummary?: string; // LLM-generated friendly summary
 }
 
-interface ThreadErrorResponse {
-  success: false;
-  error: string;
-  details: string;
-}
 
 export function useThreadManagement() {
   const threadId = useRef<string | null>(null);
@@ -184,6 +177,48 @@ export function useThreadManagement() {
   }, []);
 
   /**
+   * Resume an existing thread by loading its state
+   */
+  const resumeThread = useCallback(async (existingThreadId: string): Promise<ThreadResumeResponse | null> => {
+    if (!useThreadFlow) {
+      console.log('⚠️ Thread-based flow is disabled, skipping thread resume');
+      return null;
+    }
+
+    try {
+      console.log('🔄 Resuming thread:', existingThreadId);
+
+      const response = await fetch(`/api/agent-creation/thread/${existingThreadId}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        const errorData: ThreadErrorResponse = await response.json();
+        throw new Error(errorData.error || 'Failed to resume thread');
+      }
+
+      const data: ThreadResumeResponse = await response.json();
+
+      if (!data.success || !data.thread) {
+        throw new Error('Thread resume returned invalid response');
+      }
+
+      // Set the thread ID for continued use
+      threadId.current = existingThreadId;
+      console.log('✅ Thread resumed:', existingThreadId, '- Phase:', data.thread.current_phase);
+
+      return data;
+
+    } catch (error: any) {
+      console.error('❌ Thread resume failed:', error);
+      throw new Error(`Thread resume failed: ${error.message}`);
+    }
+  }, [useThreadFlow]);
+
+  /**
    * Reset thread (for new conversation)
    */
   const resetThread = useCallback(() => {
@@ -196,6 +231,7 @@ export function useThreadManagement() {
     useThreadFlow,
     initializeThread,
     processMessageInThread,
+    resumeThread,
     getThreadId,
     resetThread,
   };

@@ -235,11 +235,7 @@ export function useConversationalBuilder(params: {
           email: user?.email || ''
         },
         analysis: null,
-        connected_services: (projectState.connectedPluginsData || []).map(p => ({
-          name: p.displayName || p.key,
-          context: `${p.displayName || p.key} - ${p.category || 'service'}`,
-          key_actions: (p.capabilities || [])
-        }))
+        connected_services: (projectState.connectedPluginsData || []).map(p => p.key)
       };
 
       if (phase === 3 && clarificationAnswers) {
