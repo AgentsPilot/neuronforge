@@ -49,7 +49,7 @@
     "next": "^14.2.33",
     "next-auth": "^4.24.11",
     "nodemailer": "^7.0.10",
-    "openai": "^5.9.0",
+    "openai": "^5.23.2",
     "pdf-parse": "^1.1.1",
     "pdfjs-dist": "^5.4.54",
     "react": "^18.3.1",

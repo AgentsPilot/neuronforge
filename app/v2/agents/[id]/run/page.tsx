@@ -6,6 +6,7 @@ import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 import { V2Header } from '@/components/v2/V2Header'
 import { Card } from '@/components/v2/ui/card'
+import InputHelpButton from '@/components/v2/InputHelpButton'
 import {
   ArrowLeft,
   ArrowRight,
@@ -364,7 +365,6 @@ export default function V2RunAgentPage() {
               safeInputSchema.map((field) => (
                 <div key={field.name}>
                   <label className="block">
-                    {/* Label */}
                     <div className="flex items-center gap-1.5 mb-1.5">
                       <span className="text-sm font-medium text-[var(--v2-text-primary)]">
                         {formatFieldName(field.name)}
@@ -381,57 +381,63 @@ export default function V2RunAgentPage() {
                       </p>
                     )}
 
-                    {/* Input Field */}
-                    {field.type === 'select' || field.type === 'enum' ? (
-                      <select
-                        value={formData[field.name] || ''}
-                        onChange={(e) => handleInputChange(field.name, e.target.value)}
-                        className="w-full px-3 py-2 border text-sm focus:outline-none focus:ring-1 bg-[var(--v2-surface)] border-[var(--v2-border)] focus:ring-[var(--v2-primary)] focus:border-[var(--v2-primary)] text-[var(--v2-text-primary)]"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                        required={field.required}
-                      >
-                        <option value="">
-                          {field.placeholder || 'Select an option...'}
-                        </option>
-                        {(field.options || field.enum || []).map((option) => (
-                          <option key={option} value={option}>
-                            {option}
-                          </option>
-                        ))}
-                      </select>
-                    ) : field.type === 'boolean' ? (
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          id={`field-${field.name}`}
-                          checked={formData[field.name] || false}
-                          onChange={(e) => handleInputChange(field.name, e.target.checked)}
-                          className="rounded border-[var(--v2-border)] h-4 w-4 text-[var(--v2-primary)] focus:ring-1 focus:ring-[var(--v2-primary)]"
-                        />
-                        <label htmlFor={`field-${field.name}`} className="text-sm text-[var(--v2-text-secondary)] cursor-pointer">
-                          {field.placeholder || `Enable ${formatFieldName(field.name)}`}
-                        </label>
+                    {/* Input Field with Help Button */}
+                    <div className="flex items-center">
+                      <div className="flex-1">
+                        {field.type === 'select' || field.type === 'enum' ? (
+                          <select
+                            value={formData[field.name] || ''}
+                            onChange={(e) => handleInputChange(field.name, e.target.value)}
+                            className="w-full px-3 py-2 border text-sm focus:outline-none focus:ring-1 bg-[var(--v2-surface)] border-[var(--v2-border)] focus:ring-[var(--v2-primary)] focus:border-[var(--v2-primary)] text-[var(--v2-text-primary)]"
+                            style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            required={field.required}
+                          >
+                            <option value="">
+                              {field.placeholder || 'Select an option...'}
+                            </option>
+                            {(field.options || field.enum || []).map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            type={
+                              field.type === 'number' ? 'number' :
+                              field.type === 'date' ? 'date' :
+                              field.type === 'email' ? 'email' :
+                              field.type === 'time' ? 'time' :
+                              'text'
+                            }
+                            value={formData[field.name] || ''}
+                            onChange={(e) => handleInputChange(field.name, e.target.value)}
+                            placeholder={field.placeholder || `Enter ${formatFieldName(field.name).toLowerCase()}...`}
+                            required={field.required}
+                            className="w-full px-3 py-2 border text-sm focus:outline-none focus:ring-1 bg-[var(--v2-surface)] border-[var(--v2-border)] focus:ring-[var(--v2-primary)] focus:border-[var(--v2-primary)] text-[var(--v2-text-primary)] placeholder-[var(--v2-text-muted)]"
+                            style={{ borderRadius: 'var(--v2-radius-button)' }}
+                          />
+                        )}
                       </div>
-                    ) : (
-                      <input
-                        type={
-                          field.type === 'number' ? 'number' :
-                          field.type === 'date' ? 'date' :
-                          field.type === 'email' ? 'email' :
-                          field.type === 'time' ? 'time' :
-                          'text'
-                        }
-                        value={formData[field.name] || ''}
-                        onChange={(e) => handleInputChange(field.name, e.target.value)}
-                        placeholder={
-                          field.type === 'time' ? 'HH:MM' :
-                          field.placeholder || `Enter ${formatFieldName(field.name).toLowerCase()}...`
-                        }
-                        required={field.required}
-                        className="w-full px-3 py-2 border text-sm focus:outline-none focus:ring-1 bg-[var(--v2-surface)] border-[var(--v2-border)] focus:ring-[var(--v2-primary)] focus:border-[var(--v2-primary)] text-[var(--v2-text-primary)] placeholder-[var(--v2-text-muted)]"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      />
-                    )}
+
+                      {/* InputHelpButton aligned to the right */}
+                      <div className="ml-2">
+                        <InputHelpButton
+                          agentId={agent.id}
+                          fieldName={field.name}
+                          plugin={agent.plugins_required?.[0]}
+                          expectedType={field.type}
+                          onClick={() => openChatbot({
+                            mode: 'input_help',
+                            agentId: agent.id,
+                            fieldName: field.name,
+                            plugin: agent.plugins_required?.[0],
+                            expectedType: field.type
+                          })}
+                          onFill={(value) => handleInputChange(field.name, value)}
+                        />
+                      </div>
+                    </div>
                   </label>
                 </div>
               ))
@@ -639,7 +645,7 @@ export default function V2RunAgentPage() {
                         {result.pilot && result.data.totalSteps !== undefined && (
                           <div className="bg-[var(--v2-bg)] dark:bg-slate-800 border border-[var(--v2-border)] p-3" style={{ borderRadius: 'var(--v2-radius-button)' }}>
                             <div className="text-xs text-[var(--v2-text-muted)] mb-1">Total Steps</div>
-                            <div className="font-semibold text-[var(--v2-text-primary)]">{result.data.totalSteps}</div>
+                            <div className="font-semibold text-[var(--v2-text-primary]">{result.data.totalSteps}</div>
                           </div>
                         )}
                         {result.pilot && result.data.executionId && (
@@ -880,3 +886,4 @@ export default function V2RunAgentPage() {
     </div>
   )
 }
+
