@@ -26,6 +26,14 @@ export interface AISRanges {
   loops: AISRange;
   parallel: AISRange;
 
+  // Memory metrics (Phase 4 - database-driven)
+  memory_ratio_min: number;      // Memory token ratio min (default: 0.0)
+  memory_ratio_max: number;      // Memory token ratio max (default: 0.9)
+  memory_diversity_min: number;  // Memory type diversity min (default: 0)
+  memory_diversity_max: number;  // Memory type diversity max (default: 3)
+  memory_volume_min: number;     // Memory entry count min (default: 0)
+  memory_volume_max: number;     // Memory entry count max (default: 20)
+
   // Creation-specific metrics (design complexity)
   creation_workflow_steps: AISRange;
   creation_plugins: AISRange;
@@ -141,6 +149,14 @@ export class AISConfigService {
       loops: map.loops ?? { min: 0, max: 50 },
       parallel: map.parallel ?? { min: 0, max: 5 },
 
+      // Memory ranges (Phase 4 - database-driven)
+      memory_ratio_min: map.memory_ratio?.min ?? 0.0,
+      memory_ratio_max: map.memory_ratio?.max ?? 0.9,
+      memory_diversity_min: map.memory_diversity?.min ?? 0,
+      memory_diversity_max: map.memory_diversity?.max ?? 3,
+      memory_volume_min: map.memory_volume?.min ?? 0,
+      memory_volume_max: map.memory_volume?.max ?? 20,
+
       // Creation ranges (use same as execution if not explicitly defined)
       creation_workflow_steps: map.creation_workflow_steps ?? map.workflow_steps ?? { min: 1, max: 10 },
       creation_plugins: map.creation_plugins ?? map.plugin_count ?? { min: 1, max: 5 },
@@ -186,6 +202,14 @@ export class AISConfigService {
       branches: { min: 0, max: 10 },
       loops: { min: 0, max: 50 },
       parallel: { min: 0, max: 5 },
+
+      // Memory ranges (Phase 4 fallback)
+      memory_ratio_min: 0.0,
+      memory_ratio_max: 0.9,
+      memory_diversity_min: 0,
+      memory_diversity_max: 3,
+      memory_volume_min: 0,
+      memory_volume_max: 20,
 
       // Creation ranges
       creation_workflow_steps: { min: 1, max: 10 },
@@ -372,5 +396,430 @@ export class AISConfigService {
       cached: true,
       age_ms: Date.now() - this.cacheTimestamp
     };
+  }
+
+  /**
+   * Get execution dimension weights from database
+   * Returns the 5 main dimension weights that determine execution_score
+   *
+   * Database keys:
+   * - ais_weight_tokens (default: 0.30)
+   * - ais_weight_execution (default: 0.25)
+   * - ais_weight_plugins (default: 0.20)
+   * - ais_weight_workflow (default: 0.15)
+   * - ais_weight_memory (default: 0.10)
+   *
+   * ELIMINATES: lib/types/intensity.ts EXECUTION_WEIGHTS constant
+   */
+  static async getExecutionWeights(
+    supabase: SupabaseClient
+  ): Promise<{
+    tokens: number;
+    execution: number;
+    plugins: number;
+    workflow: number;
+    memory: number;
+  }> {
+    try {
+      const { data, error } = await supabase
+        .from('ais_system_config')
+        .select('config_key, config_value')
+        .in('config_key', [
+          'ais_weight_tokens',
+          'ais_weight_execution',
+          'ais_weight_plugins',
+          'ais_weight_workflow',
+          'ais_weight_memory'
+        ]);
+
+      if (error || !data || data.length === 0) {
+        console.warn('⚠️ [AIS Config] Failed to fetch execution weights, using fallback defaults');
+        console.warn('⚠️ [AIS Config] Error:', error?.message);
+        return {
+          tokens: 0.30,
+          execution: 0.25,
+          plugins: 0.20,
+          workflow: 0.15,
+          memory: 0.10
+        };
+      }
+
+      // Convert to map
+      const weightMap: Record<string, number> = {};
+      data.forEach(row => {
+        weightMap[row.config_key] = Number(row.config_value);
+      });
+
+      const weights = {
+        tokens: weightMap['ais_weight_tokens'] ?? 0.30,
+        execution: weightMap['ais_weight_execution'] ?? 0.25,
+        plugins: weightMap['ais_weight_plugins'] ?? 0.20,
+        workflow: weightMap['ais_weight_workflow'] ?? 0.15,
+        memory: weightMap['ais_weight_memory'] ?? 0.10
+      };
+
+      console.log('✅ [AIS Config] Loaded execution weights from database:', weights);
+      return weights;
+
+    } catch (error) {
+      console.error('❌ [AIS Config] Exception fetching execution weights:', error);
+      return {
+        tokens: 0.30,
+        execution: 0.25,
+        plugins: 0.20,
+        workflow: 0.15,
+        memory: 0.10
+      };
+    }
+  }
+
+  /**
+   * Get combined score weights from database
+   * Returns the creation/execution blend weights
+   *
+   * Database keys:
+   * - ais_weight_creation (default: 0.3)
+   * - ais_weight_execution_blend (default: 0.7)
+   *
+   * ELIMINATES: lib/types/intensity.ts COMBINED_WEIGHTS constant
+   */
+  static async getCombinedWeights(
+    supabase: SupabaseClient
+  ): Promise<{
+    creation: number;
+    execution: number;
+  }> {
+    try {
+      const { data, error } = await supabase
+        .from('ais_system_config')
+        .select('config_key, config_value')
+        .in('config_key', [
+          'ais_weight_creation',
+          'ais_weight_execution_blend'
+        ]);
+
+      if (error || !data || data.length === 0) {
+        console.warn('⚠️ [AIS Config] Failed to fetch combined weights, using fallback defaults');
+        console.warn('⚠️ [AIS Config] Error:', error?.message);
+        return {
+          creation: 0.3,
+          execution: 0.7
+        };
+      }
+
+      // Convert to map
+      const weightMap: Record<string, number> = {};
+      data.forEach(row => {
+        weightMap[row.config_key] = Number(row.config_value);
+      });
+
+      const weights = {
+        creation: weightMap['ais_weight_creation'] ?? 0.3,
+        execution: weightMap['ais_weight_execution_blend'] ?? 0.7
+      };
+
+      console.log('✅ [AIS Config] Loaded combined weights from database:', weights);
+      return weights;
+
+    } catch (error) {
+      console.error('❌ [AIS Config] Exception fetching combined weights:', error);
+      return {
+        creation: 0.3,
+        execution: 0.7
+      };
+    }
+  }
+
+  /**
+   * Get execution subdimension weights from database
+   * Controls how execution complexity is calculated from iterations, duration, failures, retries
+   *
+   * Database keys:
+   * - ais_execution_iterations_weight (default: 0.35)
+   * - ais_execution_duration_weight (default: 0.30)
+   * - ais_execution_failure_weight (default: 0.20)
+   * - ais_execution_retry_weight (default: 0.15)
+   */
+  static async getExecutionSubWeights(
+    supabase: SupabaseClient
+  ): Promise<{
+    iterations: number;
+    duration: number;
+    failure: number;
+    retry: number;
+  }> {
+    try {
+      const { data, error } = await supabase
+        .from('ais_system_config')
+        .select('config_key, config_value')
+        .in('config_key', [
+          'ais_execution_iterations_weight',
+          'ais_execution_duration_weight',
+          'ais_execution_failure_weight',
+          'ais_execution_retry_weight'
+        ]);
+
+      if (error || !data || data.length === 0) {
+        console.warn('⚠️ [AIS Config] Failed to fetch execution sub-weights, using fallback defaults');
+        return { iterations: 0.35, duration: 0.30, failure: 0.20, retry: 0.15 };
+      }
+
+      const weightMap: Record<string, number> = {};
+      data.forEach(row => {
+        weightMap[row.config_key] = Number(row.config_value);
+      });
+
+      return {
+        iterations: weightMap['ais_execution_iterations_weight'] ?? 0.35,
+        duration: weightMap['ais_execution_duration_weight'] ?? 0.30,
+        failure: weightMap['ais_execution_failure_weight'] ?? 0.20,
+        retry: weightMap['ais_execution_retry_weight'] ?? 0.15
+      };
+    } catch (error) {
+      console.error('❌ [AIS Config] Exception fetching execution sub-weights:', error);
+      return { iterations: 0.35, duration: 0.30, failure: 0.20, retry: 0.15 };
+    }
+  }
+
+  /**
+   * Get plugin subdimension weights from database
+   * Controls how plugin complexity is calculated from count, usage, and overhead
+   *
+   * Database keys:
+   * - ais_plugin_count_weight (default: 0.4)
+   * - ais_plugin_usage_weight (default: 0.35)
+   * - ais_plugin_overhead_weight (default: 0.25)
+   */
+  static async getPluginSubWeights(
+    supabase: SupabaseClient
+  ): Promise<{
+    count: number;
+    usage: number;
+    overhead: number;
+  }> {
+    try {
+      const { data, error } = await supabase
+        .from('ais_system_config')
+        .select('config_key, config_value')
+        .in('config_key', [
+          'ais_plugin_count_weight',
+          'ais_plugin_usage_weight',
+          'ais_plugin_overhead_weight'
+        ]);
+
+      if (error || !data || data.length === 0) {
+        console.warn('⚠️ [AIS Config] Failed to fetch plugin sub-weights, using fallback defaults');
+        return { count: 0.4, usage: 0.35, overhead: 0.25 };
+      }
+
+      const weightMap: Record<string, number> = {};
+      data.forEach(row => {
+        weightMap[row.config_key] = Number(row.config_value);
+      });
+
+      return {
+        count: weightMap['ais_plugin_count_weight'] ?? 0.4,
+        usage: weightMap['ais_plugin_usage_weight'] ?? 0.35,
+        overhead: weightMap['ais_plugin_overhead_weight'] ?? 0.25
+      };
+    } catch (error) {
+      console.error('❌ [AIS Config] Exception fetching plugin sub-weights:', error);
+      return { count: 0.4, usage: 0.35, overhead: 0.25 };
+    }
+  }
+
+  /**
+   * Get workflow subdimension weights from database
+   * Controls how workflow complexity is calculated from steps, branches, loops, parallel
+   *
+   * Database keys:
+   * - ais_workflow_steps_weight (default: 0.4)
+   * - ais_workflow_branches_weight (default: 0.25)
+   * - ais_workflow_loops_weight (default: 0.20)
+   * - ais_workflow_parallel_weight (default: 0.15)
+   */
+  static async getWorkflowSubWeights(
+    supabase: SupabaseClient
+  ): Promise<{
+    steps: number;
+    branches: number;
+    loops: number;
+    parallel: number;
+  }> {
+    try {
+      const { data, error } = await supabase
+        .from('ais_system_config')
+        .select('config_key, config_value')
+        .in('config_key', [
+          'ais_workflow_steps_weight',
+          'ais_workflow_branches_weight',
+          'ais_workflow_loops_weight',
+          'ais_workflow_parallel_weight'
+        ]);
+
+      if (error || !data || data.length === 0) {
+        console.warn('⚠️ [AIS Config] Failed to fetch workflow sub-weights, using fallback defaults');
+        return { steps: 0.4, branches: 0.25, loops: 0.20, parallel: 0.15 };
+      }
+
+      const weightMap: Record<string, number> = {};
+      data.forEach(row => {
+        weightMap[row.config_key] = Number(row.config_value);
+      });
+
+      return {
+        steps: weightMap['ais_workflow_steps_weight'] ?? 0.4,
+        branches: weightMap['ais_workflow_branches_weight'] ?? 0.25,
+        loops: weightMap['ais_workflow_loops_weight'] ?? 0.20,
+        parallel: weightMap['ais_workflow_parallel_weight'] ?? 0.15
+      };
+    } catch (error) {
+      console.error('❌ [AIS Config] Exception fetching workflow sub-weights:', error);
+      return { steps: 0.4, branches: 0.25, loops: 0.20, parallel: 0.15 };
+    }
+  }
+
+  /**
+   * Get memory subdimension weights from database
+   * Controls how memory complexity is calculated from ratio, diversity, and volume
+   *
+   * Database keys:
+   * - ais_memory_ratio_weight (default: 0.5)
+   * - ais_memory_diversity_weight (default: 0.3)
+   * - ais_memory_volume_weight (default: 0.2)
+   */
+  static async getMemorySubWeights(
+    supabase: SupabaseClient
+  ): Promise<{
+    ratio: number;
+    diversity: number;
+    volume: number;
+  }> {
+    try {
+      const { data, error } = await supabase
+        .from('ais_system_config')
+        .select('config_key, config_value')
+        .in('config_key', [
+          'ais_memory_ratio_weight',
+          'ais_memory_diversity_weight',
+          'ais_memory_volume_weight'
+        ]);
+
+      if (error || !data || data.length === 0) {
+        console.warn('⚠️ [AIS Config] Failed to fetch memory sub-weights, using fallback defaults');
+        return { ratio: 0.5, diversity: 0.3, volume: 0.2 };
+      }
+
+      const weightMap: Record<string, number> = {};
+      data.forEach(row => {
+        weightMap[row.config_key] = Number(row.config_value);
+      });
+
+      return {
+        ratio: weightMap['ais_memory_ratio_weight'] ?? 0.5,
+        diversity: weightMap['ais_memory_diversity_weight'] ?? 0.3,
+        volume: weightMap['ais_memory_volume_weight'] ?? 0.2
+      };
+    } catch (error) {
+      console.error('❌ [AIS Config] Exception fetching memory sub-weights:', error);
+      return { ratio: 0.5, diversity: 0.3, volume: 0.2 };
+    }
+  }
+
+  /**
+   * Get model routing configuration from database (Phase 3 Refactoring)
+   * Controls which models are used for low/medium/high complexity routing
+   *
+   * Database table: model_routing_config
+   * Rows:
+   * - low: { model: 'gpt-4o-mini', provider: 'openai' }
+   * - medium: { model: 'claude-3-5-haiku-20241022', provider: 'anthropic' }
+   * - high: { model: 'gpt-4o', provider: 'openai' }
+   *
+   * ELIMINATES: Hardcoded DEFAULT_CONFIG in ModelRouter
+   */
+  static async getModelRoutingConfig(
+    supabase: SupabaseClient
+  ): Promise<{
+    low: { model: string; provider: 'openai' | 'anthropic' };
+    medium: { model: string; provider: 'openai' | 'anthropic' };
+    high: { model: string; provider: 'openai' | 'anthropic' };
+  }> {
+    const fallbackConfig = {
+      low: { model: 'gpt-4o-mini', provider: 'openai' as const },
+      medium: { model: 'claude-3-5-haiku-20241022', provider: 'anthropic' as const },
+      high: { model: 'gpt-4o', provider: 'openai' as const }
+    };
+
+    try {
+      const { data, error } = await supabase
+        .from('model_routing_config')
+        .select('complexity_tier, model_name, provider');
+
+      if (error || !data || data.length === 0) {
+        console.warn('⚠️ [AIS Config] Failed to fetch model routing config, using fallback defaults');
+        return fallbackConfig;
+      }
+
+      // Build config object from rows
+      const config: any = {
+        low: fallbackConfig.low,
+        medium: fallbackConfig.medium,
+        high: fallbackConfig.high
+      };
+
+      data.forEach(row => {
+        if (row.complexity_tier === 'low' || row.complexity_tier === 'medium' || row.complexity_tier === 'high') {
+          config[row.complexity_tier] = {
+            model: row.model_name,
+            provider: row.provider as 'openai' | 'anthropic'
+          };
+        }
+      });
+
+      console.log('✅ [AIS Config] Loaded model routing config from database:', config);
+      return config;
+    } catch (error) {
+      console.error('❌ [AIS Config] Exception fetching model routing config:', error);
+      return fallbackConfig;
+    }
+  }
+
+  /**
+   * Get creation component weights from database (Phase 5)
+   * Controls how creation score is calculated from workflow, plugin, and I/O complexity
+   *
+   * @returns Object with workflow, plugins, io_schema weights (should sum to 1.0)
+   */
+  static async getCreationWeights(supabase: SupabaseClient): Promise<{
+    workflow: number;
+    plugins: number;
+    io_schema: number;
+  }> {
+    const fallbackWeights = {
+      workflow: 0.5,
+      plugins: 0.3,
+      io_schema: 0.2
+    };
+
+    try {
+      const [workflowWeight, pluginWeight, ioWeight] = await Promise.all([
+        this.getSystemConfig(supabase, 'ais_creation_workflow_weight', 0.5),
+        this.getSystemConfig(supabase, 'ais_creation_plugin_weight', 0.3),
+        this.getSystemConfig(supabase, 'ais_creation_io_weight', 0.2)
+      ]);
+
+      const weights = {
+        workflow: workflowWeight,
+        plugins: pluginWeight,
+        io_schema: ioWeight
+      };
+
+      console.log('✅ [AIS Config] Loaded creation weights from database:', weights);
+      return weights;
+    } catch (error) {
+      console.warn('⚠️ [AIS Config] Failed to load creation weights, using fallback:', fallbackWeights);
+      return fallbackWeights;
+    }
   }
 }

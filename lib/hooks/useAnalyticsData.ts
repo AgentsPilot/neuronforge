@@ -66,12 +66,12 @@ export const useAnalyticsData = (timeFilter: TimeFilter) => {
 
       const { data: allAgents, error: agentError } = await supabase
         .from('agents')
-        .select('id, agent_name, created_at, is_archived')
+        .select('id, agent_name, created_at, is_archived, status')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
       let agentNameMap: Record<string, string> = {};
-      let allAgentsList: Array<{ id: string; agent_name: string; created_at: string; is_archived?: boolean }> = [];
+      let allAgentsList: Array<{ id: string; agent_name: string; created_at: string; is_archived?: boolean; status?: string }> = [];
 
       if (agentError) {
         console.error('Error fetching agents:', agentError);
@@ -173,11 +173,28 @@ export const useAnalyticsData = (timeFilter: TimeFilter) => {
 
     setRawData(filtered);
 
-    // Process the filtered data
-    const allAgentsList = (window as any).__allAgentsList || [];
-    const processed = processAnalyticsData(filtered, allAgentsList);
-    setProcessedData(processed);
+    // Process the filtered data asynchronously
+    let cancelled = false;
 
+    (async () => {
+      try {
+        const allAgentsList = (window as any).__allAgentsList || [];
+        const processed = await processAnalyticsData(filtered, allAgentsList);
+
+        if (!cancelled) {
+          setProcessedData(processed);
+        }
+      } catch (error) {
+        console.error('Error processing analytics data:', error);
+        if (!cancelled) {
+          setProcessedData(null);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [timeFilter, allRawData]);
 
   // Helper function to export data

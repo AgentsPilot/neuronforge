@@ -18,7 +18,10 @@ import {
   Download,
   ChevronUp,
   ChevronDown,
-  Brain
+  Brain,
+  Clock,
+  CreditCard,
+  Cpu
 } from 'lucide-react';
 
 interface SystemSetting {
@@ -49,24 +52,54 @@ export default function SystemConfigPage() {
 
   const [pricingModels, setPricingModels] = useState<ModelPricing[]>([]);
 
-  // Routing configuration state
-  const [routingEnabled, setRoutingEnabled] = useState(false);
-  const [lowThreshold, setLowThreshold] = useState(3.9);
-  const [mediumThreshold, setMediumThreshold] = useState(6.9);
-  const [minSuccessRate, setMinSuccessRate] = useState(85);
-  const [anthropicEnabled, setAnthropicEnabled] = useState(true);
-
   // Pricing editing state
   const [editingPricing, setEditingPricing] = useState<string | null>(null);
   const [editedInputCost, setEditedInputCost] = useState<number>(0);
   const [editedOutputCost, setEditedOutputCost] = useState<number>(0);
 
   // Collapse state for sections (all collapsed by default)
-  const [routingExpanded, setRoutingExpanded] = useState(false);
   const [pricingExpanded, setPricingExpanded] = useState(false);
   const [calcExpanded, setCalcExpanded] = useState(false);
-  const [memoryExpanded, setMemoryExpanded] = useState(false);
   const [advancedExpanded, setAdvancedExpanded] = useState(false);
+  const [billingExpanded, setBillingExpanded] = useState(false);
+
+  // Billing configuration state (loaded from database)
+  const [billingConfig, setBillingConfig] = useState({
+    paymentGracePeriodDays: 3
+  });
+
+  // Boost pack management state
+  interface BoostPack {
+    id?: string;
+    pack_key: string;
+    pack_name: string;
+    display_name: string;
+    description: string;
+    price_usd: number;
+    bonus_percentage: number;
+    credits_amount: number;
+    bonus_credits: number;
+    badge_text: string | null;
+    is_active: boolean;
+  }
+
+  const [boostPacks, setBoostPacks] = useState<BoostPack[]>([]);
+  const [editingBoostPack, setEditingBoostPack] = useState<string | null>(null);
+  const [deletingBoostPack, setDeletingBoostPack] = useState<string | null>(null);
+  const [newBoostPack, setNewBoostPack] = useState<BoostPack>({
+    pack_key: '',
+    pack_name: '',
+    display_name: '',
+    description: '',
+    price_usd: 10,
+    bonus_percentage: 0,
+    credits_amount: 0,
+    bonus_credits: 0,
+    badge_text: null,
+    is_active: true
+  });
+  const [showAddBoostPack, setShowAddBoostPack] = useState(false);
+  const [pilotCreditCostUsd, setPilotCreditCostUsd] = useState(0.00048);
 
   // Calculator configuration state (loaded from database)
   const [calcConfig, setCalcConfig] = useState({
@@ -93,42 +126,6 @@ export default function SystemConfigPage() {
     systemOverheadPerRun: 0,
     executionStepMultiplier: 0,
     freeTierCredits: 0
-  });
-
-  // Memory configuration state (loaded from database)
-  const [memoryConfig, setMemoryConfig] = useState({
-    summarization: {
-      model: '',
-      temperature: 0,
-      max_tokens: 0,
-      async: false
-    },
-    embedding: {
-      model: '',
-      batch_size: 0,
-      dimensions: 0
-    },
-    injection: {
-      max_tokens: 0,
-      min_recent_runs: 0,
-      max_recent_runs: 0,
-      semantic_search_limit: 0,
-      semantic_threshold: 0
-    },
-    importance: {
-      base_score: 0,
-      error_bonus: 0,
-      pattern_bonus: 0,
-      user_feedback_bonus: 0,
-      first_run_bonus: 0,
-      milestone_bonus: 0
-    },
-    retention: {
-      run_memories_days: 0,
-      low_importance_days: 0,
-      consolidation_threshold: 0,
-      consolidation_frequency_days: 0
-    }
   });
 
   useEffect(() => {
@@ -163,27 +160,33 @@ export default function SystemConfigPage() {
         throw new Error(settingsResult.error || 'API returned unsuccessful response');
       }
 
-      // Parse routing settings
-      const routingSettings = settingsResult.data.filter((s: SystemSetting) => s.category === 'routing');
-      routingSettings.forEach((setting: SystemSetting) => {
-        switch (setting.key) {
-          case 'intelligent_routing_enabled':
-            setRoutingEnabled(setting.value === true || setting.value === 'true');
-            break;
-          case 'routing_low_threshold':
-            setLowThreshold(parseFloat(setting.value));
-            break;
-          case 'routing_medium_threshold':
-            setMediumThreshold(parseFloat(setting.value));
-            break;
-          case 'routing_min_success_rate':
-            setMinSuccessRate(parseInt(setting.value));
-            break;
-          case 'anthropic_provider_enabled':
-            setAnthropicEnabled(setting.value === true || setting.value === 'true');
-            break;
+      // Parse billing settings
+      const billingSettings = settingsResult.data.filter((s: SystemSetting) => s.category === 'billing');
+      billingSettings.forEach((setting: SystemSetting) => {
+        if (setting.key === 'payment_grace_period_days') {
+          setBillingConfig({ paymentGracePeriodDays: parseInt(setting.value as string) || 3 });
+        }
+        if (setting.key === 'pilot_credit_cost_usd') {
+          setPilotCreditCostUsd(parseFloat(setting.value as string) || 0.00048);
         }
       });
+
+      // Fetch boost packs
+      try {
+        const boostPacksResponse = await fetch('/api/admin/boost-packs', {
+          method: 'GET',
+          cache: 'no-store'
+        });
+
+        if (boostPacksResponse.ok) {
+          const boostPacksResult = await boostPacksResponse.json();
+          if (boostPacksResult.success) {
+            setBoostPacks(boostPacksResult.data);
+          }
+        }
+      } catch (boostPacksError) {
+        console.error('Failed to fetch boost packs:', boostPacksError);
+      }
 
       // Fetch AI model pricing
       try {
@@ -257,31 +260,6 @@ export default function SystemConfigPage() {
         console.error('Failed to fetch calculator config:', calcError);
       }
 
-      // Fetch memory configuration
-      try {
-        const memoryResponse = await fetch('/api/admin/memory-config', {
-          method: 'GET',
-          cache: 'no-store'
-        });
-
-        if (memoryResponse.ok) {
-          const memoryResult = await memoryResponse.json();
-          console.log('[SystemConfig] Memory config API response:', memoryResult);
-
-          if (memoryResult.success && memoryResult.configs) {
-            console.log('[SystemConfig] Setting memory config state:', memoryResult.configs);
-            setMemoryConfig(memoryResult.configs);
-            console.log('[SystemConfig] ✅ Memory config loaded successfully');
-          } else {
-            console.error('[SystemConfig] ❌ Memory config API returned unsuccessful or missing configs');
-          }
-        } else {
-          console.error('[SystemConfig] ❌ Memory config API returned non-OK status:', memoryResponse.status);
-        }
-      } catch (memoryError) {
-        console.error('[SystemConfig] ❌ Failed to fetch memory config:', memoryError);
-      }
-
     } catch (error) {
       console.error('Error fetching data:', error);
       setError(error instanceof Error ? error.message : 'Unknown error occurred');
@@ -289,52 +267,6 @@ export default function SystemConfigPage() {
       if (!silent) {
         setLoading(false);
       }
-    }
-  };
-
-  const handleSaveRoutingConfig = async () => {
-    try {
-      setSaving(true);
-      setError(null);
-      setSuccess(null);
-
-      const updates = {
-        intelligent_routing_enabled: routingEnabled,
-        routing_low_threshold: lowThreshold,
-        routing_medium_threshold: mediumThreshold,
-        routing_min_success_rate: minSuccessRate,
-        anthropic_provider_enabled: anthropicEnabled
-      };
-
-      const response = await fetch('/api/admin/system-config', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ updates })
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to update system configuration');
-      }
-
-      const result = await response.json();
-
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to update configuration');
-      }
-
-      setSuccess('Configuration saved successfully!');
-
-      // Note: Don't refresh data after save - local state already has updated values
-
-      setTimeout(() => setSuccess(null), 3000);
-
-    } catch (error) {
-      console.error('Error saving configuration:', error);
-      setError(error instanceof Error ? error.message : 'Unknown error occurred');
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -465,50 +397,133 @@ export default function SystemConfigPage() {
     }
   };
 
-  const handleSaveMemoryConfig = async (configKey: string) => {
+  const handleSaveBillingConfig = async () => {
     try {
       setSaving(true);
       setError(null);
       setSuccess(null);
 
-      const configValue = (memoryConfig as any)[configKey];
-      console.log(`[SystemConfig] 💾 Saving memory config: ${configKey}`, configValue);
+      const updates = {
+        payment_grace_period_days: billingConfig.paymentGracePeriodDays
+      };
 
-      const response = await fetch('/api/admin/memory-config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'update',
-          configKey,
-          configValue
-        })
+      const response = await fetch('/api/admin/system-config', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ updates })
       });
 
-      console.log(`[SystemConfig] Response status: ${response.status}`);
-
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`[SystemConfig] ❌ API error:`, errorText);
-        throw new Error(`Failed to update ${configKey} configuration: ${response.status}`);
+        throw new Error('Failed to update billing configuration');
       }
 
       const result = await response.json();
-      console.log(`[SystemConfig] API result:`, result);
 
       if (!result.success) {
-        throw new Error(result.error || `Failed to update ${configKey} configuration`);
+        throw new Error(result.error || 'Failed to update billing configuration');
       }
 
-      const successMessage = `Memory ${configKey} configuration saved successfully!`;
-      console.log(`[SystemConfig] ✅ ${successMessage}`);
-      setSuccess(successMessage);
-
-      // Note: Don't refresh data after save - local state already has updated values
-      // and database may have caching delays
+      setSuccess('Billing configuration saved successfully!');
 
       setTimeout(() => setSuccess(null), 3000);
+
     } catch (error) {
-      console.error('[SystemConfig] ❌ Error saving memory config:', error);
+      console.error('Error saving billing configuration:', error);
+      setError(error instanceof Error ? error.message : 'Unknown error occurred');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Boost pack management functions
+  const calculateBoostPackCredits = (price_usd: number, bonus_percentage: number) => {
+    const baseCredits = Math.round(price_usd / pilotCreditCostUsd);
+    const bonusCredits = Math.round(baseCredits * (bonus_percentage / 100));
+    return { baseCredits, bonusCredits };
+  };
+
+  const handleSaveBoostPack = async (pack: BoostPack) => {
+    try {
+      setSaving(true);
+      setError(null);
+      setSuccess(null);
+
+      // Calculate credits before saving
+      const { baseCredits, bonusCredits } = calculateBoostPackCredits(pack.price_usd, pack.bonus_percentage);
+
+      const packToSave = {
+        ...pack,
+        credits_amount: baseCredits,
+        bonus_credits: bonusCredits
+      };
+
+      const response = await fetch('/api/admin/boost-packs', {
+        method: pack.id ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(packToSave)
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save boost pack');
+      }
+
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to save boost pack');
+      }
+
+      setSuccess(`Boost pack "${pack.pack_name}" saved successfully!`);
+      setEditingBoostPack(null);
+      setShowAddBoostPack(false);
+
+      // Refresh boost packs
+      await fetchData(true);
+
+      setTimeout(() => setSuccess(null), 3000);
+
+    } catch (error) {
+      console.error('Error saving boost pack:', error);
+      setError(error instanceof Error ? error.message : 'Unknown error occurred');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteBoostPack = async (packId: string) => {
+    try {
+      setSaving(true);
+      setError(null);
+      setSuccess(null);
+
+      const response = await fetch('/api/admin/boost-packs', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: packId })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to delete boost pack');
+      }
+
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to delete boost pack');
+      }
+
+      setSuccess('Boost pack deleted successfully!');
+      setDeletingBoostPack(null);
+
+      // Refresh boost packs
+      await fetchData(true);
+
+      setTimeout(() => setSuccess(null), 3000);
+
+    } catch (error) {
+      console.error('Error deleting boost pack:', error);
       setError(error instanceof Error ? error.message : 'Unknown error occurred');
     } finally {
       setSaving(false);
@@ -541,14 +556,14 @@ export default function SystemConfigPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-white mb-2 flex items-center gap-3">
-            <Settings className="w-8 h-8 text-blue-400" />
-            System Configuration
+            <DollarSign className="w-8 h-8 text-green-400" />
+            Pricing & Billing Configuration
           </h1>
-          <p className="text-slate-400">Manage system-wide settings and AI model routing</p>
+          <p className="text-slate-400">Manage AI model pricing, billing settings, boost packs, and cost calculator parameters</p>
         </div>
 
         <button
-          onClick={fetchData}
+          onClick={() => fetchData()}
           disabled={loading}
           className="p-2 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors disabled:opacity-50"
         >
@@ -578,217 +593,6 @@ export default function SystemConfigPage() {
           <p className="text-red-400">{error}</p>
         </motion.div>
       )}
-
-      {/* Intelligent Routing Configuration */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="bg-slate-800/50 backdrop-blur-xl rounded-xl border border-white/10"
-      >
-        <div className="p-6 border-b border-white/10">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-semibold text-white flex items-center gap-2">
-                <Zap className="w-5 h-5 text-yellow-400" />
-                Intelligent Model Routing
-              </h2>
-              <p className="text-sm text-slate-400 mt-1">
-                Route agents to cost-efficient AI models based on complexity scores. Reduces costs by up to 94%.
-              </p>
-            </div>
-            <button
-              onClick={() => setRoutingExpanded(!routingExpanded)}
-              className="p-2 bg-slate-700/50 hover:bg-slate-600/50 rounded-lg transition-colors"
-            >
-              {routingExpanded ? (
-                <ChevronUp className="w-4 h-4 text-slate-400" />
-              ) : (
-                <ChevronDown className="w-4 h-4 text-slate-400" />
-              )}
-            </button>
-          </div>
-        </div>
-
-        {routingExpanded && (
-          <div className="p-6 space-y-6">
-          {/* Info Box */}
-          <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4">
-            <div className="flex items-start gap-3">
-              <Zap className="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" />
-              <div className="space-y-2">
-                <p className="text-yellow-400 font-medium text-sm">How Intelligent Routing Works</p>
-                <p className="text-slate-300 text-sm leading-relaxed">
-                  The system analyzes each agent's complexity score (0-10) and routes it to the most cost-effective AI model.
-                  <strong className="text-white"> Low complexity agents</strong> (≤ threshold) use cheap models like GPT-4o-mini (94% savings).
-                  <strong className="text-white"> Medium complexity</strong> uses mid-tier models like Claude Haiku (88% savings).
-                  <strong className="text-white"> High complexity</strong> uses premium GPT-4o for reliability.
-                  New agents default to cheap models until they reach the minimum execution count, then the system routes based on actual performance data.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Master Toggle */}
-          <div className="flex items-center justify-between p-4 bg-slate-700/30 rounded-lg">
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1">
-                <h3 className="font-medium text-white">Enable Intelligent Routing</h3>
-                {routingEnabled ? (
-                  <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs rounded-full">Active</span>
-                ) : (
-                  <span className="px-2 py-0.5 bg-slate-600/50 text-slate-400 text-xs rounded-full">Disabled</span>
-                )}
-              </div>
-              <p className="text-sm text-slate-400">
-                When enabled, the system will automatically select the most cost-effective AI model based on agent complexity scores
-              </p>
-            </div>
-            <button
-              onClick={() => setRoutingEnabled(!routingEnabled)}
-              className={`relative w-16 h-8 rounded-full transition-colors duration-300 ${
-                routingEnabled ? 'bg-green-500' : 'bg-slate-600'
-              }`}
-            >
-              <motion.div
-                className="absolute top-1 left-1 w-6 h-6 bg-white rounded-full shadow-lg"
-                animate={{ x: routingEnabled ? 32 : 0 }}
-                transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-              />
-            </button>
-          </div>
-
-          {/* Routing Thresholds */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-300">
-                Low Complexity Threshold
-              </label>
-              <div className="flex items-center gap-3">
-                <input
-                  type="number"
-                  value={lowThreshold}
-                  onChange={(e) => setLowThreshold(parseFloat(e.target.value))}
-                  step="0.1"
-                  min="0"
-                  max="10"
-                  className="flex-1 px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
-                />
-                <span className="text-slate-400 text-sm">≤ {lowThreshold}</span>
-              </div>
-              <p className="text-xs text-slate-500">Agents scoring below this use the cheapest model (GPT-4o-mini). Higher = more agents use cheap model.</p>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-300">
-                Medium Complexity Threshold
-              </label>
-              <div className="flex items-center gap-3">
-                <input
-                  type="number"
-                  value={mediumThreshold}
-                  onChange={(e) => setMediumThreshold(parseFloat(e.target.value))}
-                  step="0.1"
-                  min="0"
-                  max="10"
-                  className="flex-1 px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
-                />
-                <span className="text-slate-400 text-sm">≤ {mediumThreshold}</span>
-              </div>
-              <p className="text-xs text-slate-500">Agents scoring below this use mid-tier model (Claude Haiku). Scores above use premium GPT-4o.</p>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-300">
-                Minimum Success Rate (%)
-              </label>
-              <input
-                type="number"
-                value={minSuccessRate}
-                onChange={(e) => setMinSuccessRate(parseInt(e.target.value))}
-                min="0"
-                max="100"
-                className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
-              />
-              <p className="text-xs text-slate-500">Failing agents (below this %) automatically upgrade to premium model for better reliability.</p>
-            </div>
-          </div>
-
-          {/* Anthropic Provider Toggle */}
-          <div className="flex items-center justify-between p-4 bg-slate-700/30 rounded-lg">
-            <div className="flex-1">
-              <h3 className="font-medium text-white mb-1">Enable Anthropic Claude</h3>
-              <p className="text-sm text-slate-400">
-                Use Claude 3 Haiku for medium complexity tasks (88% savings vs GPT-4o)
-              </p>
-            </div>
-            <button
-              onClick={() => setAnthropicEnabled(!anthropicEnabled)}
-              className={`relative w-16 h-8 rounded-full transition-colors duration-300 ${
-                anthropicEnabled ? 'bg-green-500' : 'bg-slate-600'
-              }`}
-            >
-              <motion.div
-                className="absolute top-1 left-1 w-6 h-6 bg-white rounded-full shadow-lg"
-                animate={{ x: anthropicEnabled ? 32 : 0 }}
-                transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-              />
-            </button>
-          </div>
-
-          {/* Routing Tier Visualization */}
-          <div className="bg-slate-700/30 rounded-lg p-4">
-            <h3 className="font-medium text-white mb-4 flex items-center gap-2">
-              <Sliders className="w-4 h-4 text-blue-400" />
-              Routing Strategy
-            </h3>
-            <div className="space-y-3">
-              <div className="flex items-center gap-3">
-                <div className="w-32 text-sm text-slate-300">Low (0-{lowThreshold})</div>
-                <div className="flex-1 h-8 bg-green-500/20 border border-green-500/50 rounded-lg flex items-center px-3">
-                  <span className="text-sm text-green-400 font-medium">gpt-4o-mini</span>
-                  <span className="ml-auto text-xs text-green-400">94% savings</span>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="w-32 text-sm text-slate-300">Medium ({lowThreshold + 0.1}-{mediumThreshold})</div>
-                <div className="flex-1 h-8 bg-blue-500/20 border border-blue-500/50 rounded-lg flex items-center px-3">
-                  <span className="text-sm text-blue-400 font-medium">claude-3-haiku</span>
-                  <span className="ml-auto text-xs text-blue-400">88% savings</span>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="w-32 text-sm text-slate-300">High ({mediumThreshold + 0.1}-10.0)</div>
-                <div className="flex-1 h-8 bg-purple-500/20 border border-purple-500/50 rounded-lg flex items-center px-3">
-                  <span className="text-sm text-purple-400 font-medium">gpt-4o</span>
-                  <span className="ml-auto text-xs text-purple-400">Premium quality</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Save Button */}
-          <div className="flex justify-end pt-4 border-t border-white/10">
-            <button
-              onClick={handleSaveRoutingConfig}
-              disabled={saving}
-              className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors flex items-center gap-2"
-            >
-              {saving ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  Saving...
-                </>
-              ) : (
-                <>
-                  <Save className="w-4 h-4" />
-                  Save Configuration
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-        )}
-      </motion.div>
 
       {/* AI Model Pricing Table */}
       <motion.div
@@ -846,13 +650,31 @@ export default function SystemConfigPage() {
             <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4">
               <div className="flex items-start gap-3">
                 <DollarSign className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
-                <div className="space-y-2">
+                <div className="space-y-3">
                   <p className="text-green-400 font-medium text-sm">About Model Pricing</p>
                   <p className="text-slate-300 text-sm leading-relaxed">
-                    This table shows the cost per token for each AI model's input (prompts) and output (responses). Prices are measured in fractions of a cent.
-                    <strong className="text-white"> Sync Latest Pricing</strong> updates costs from OpenAI and Anthropic APIs automatically.
-                    You can manually edit prices if needed. Lower costs enable more aggressive intelligent routing to save money.
+                    This table defines the cost per token for each AI model's input (prompts) and output (responses). These prices directly impact cost calculations, billing, and intelligent routing decisions. Accurate pricing ensures reliable cost estimates and optimal model selection.
                   </p>
+                  <div className="space-y-2 text-xs leading-relaxed">
+                    <p className="text-slate-300">
+                      <strong className="text-green-300">Input Cost:</strong> Price per 1,000 input tokens (prompts, context, memory). Measured in USD. Example: $0.00015 = 15 cents per 1M tokens.
+                    </p>
+                    <p className="text-slate-300">
+                      <strong className="text-green-300">Output Cost:</strong> Price per 1,000 output tokens (AI responses, generated content). Typically 2-3x higher than input. Example: $0.0006 = 60 cents per 1M tokens.
+                    </p>
+                    <p className="text-slate-300">
+                      <strong className="text-green-300">Sync Latest Pricing:</strong> Automatically fetches current rates from OpenAI and Anthropic APIs. Keeps system aligned with provider pricing changes. Run monthly or when providers announce updates.
+                    </p>
+                    <p className="text-slate-300">
+                      <strong className="text-green-300">Manual Edits:</strong> Override prices for custom contracts, volume discounts, or testing. Changes affect cost calculations immediately but don't alter provider billing.
+                    </p>
+                  </div>
+                  <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3 mt-2">
+                    <p className="text-green-300 text-xs font-medium mb-1">Impact on Intelligent Routing</p>
+                    <p className="text-slate-300 text-xs leading-relaxed">
+                      Lower model costs increase routing priority. If GPT-4o-mini price drops, more agents route there. If Claude Haiku becomes cheaper than GPT-4o-mini, <strong className="text-white">medium complexity agents automatically switch</strong> to maximize savings.
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1006,6 +828,602 @@ export default function SystemConfigPage() {
         )}
       </motion.div>
 
+      {/* Billing Configuration */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.12 }}
+        className="bg-slate-800/50 backdrop-blur-xl rounded-xl border border-white/10"
+      >
+        <div className="p-6 border-b border-white/10">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+                <CreditCard className="w-5 h-5 text-green-400" />
+                Billing Configuration
+              </h2>
+              <p className="text-sm text-slate-400 mt-1">
+                Configure billing, payment, and subscription settings for Stripe integration
+              </p>
+            </div>
+            <button
+              onClick={() => setBillingExpanded(!billingExpanded)}
+              className="p-2 bg-slate-700/50 hover:bg-slate-600/50 rounded-lg transition-colors"
+            >
+              {billingExpanded ? (
+                <ChevronUp className="w-4 h-4 text-slate-400" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-slate-400" />
+              )}
+            </button>
+          </div>
+        </div>
+
+        {billingExpanded && (
+          <div className="p-6 space-y-6">
+            {/* Info Box */}
+            <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <CreditCard className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
+                <div className="space-y-3">
+                  <p className="text-green-400 font-medium text-sm">About Billing Configuration</p>
+                  <p className="text-slate-300 text-sm leading-relaxed">
+                    Billing configuration controls payment grace periods, Stripe subscription management, and Pilot Credit boost packs. These settings integrate with Stripe for subscription billing, handle payment failures gracefully, and manage one-time credit purchases.
+                  </p>
+                  <div className="space-y-2 text-xs leading-relaxed">
+                    <p className="text-slate-300">
+                      <strong className="text-green-300">Payment Grace Period:</strong> When subscription payment fails, users get X days to update payment method before agents pause. Prevents workflow interruption for temporary card issues. Agents run normally during grace period.
+                    </p>
+                    <p className="text-slate-300">
+                      <strong className="text-green-300">Boost Packs:</strong> One-time Pilot Credit purchases via Stripe. Users buy credit bundles (e.g., 10,000 credits for $5) when subscription allowance runs out. Includes bonus percentage incentive (e.g., buy 10K, get 11K).
+                    </p>
+                    <p className="text-slate-300">
+                      <strong className="text-green-300">Pilot Credit Cost:</strong> Conversion rate from USD to Pilot Credits. Example: $0.0005 per credit = $5 buys 10,000 credits. Affects both subscription value and boost pack pricing.
+                    </p>
+                    <p className="text-slate-300">
+                      <strong className="text-green-300">Stripe Integration:</strong> All payments processed through Stripe. Subscriptions = recurring monthly credits. Boost packs = one-time payments. Webhook-driven for real-time credit allocation.
+                    </p>
+                  </div>
+                  <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3 mt-2">
+                    <p className="text-green-300 text-xs font-medium mb-1">Grace Period Example</p>
+                    <p className="text-slate-300 text-xs leading-relaxed">
+                      With <strong className="text-white">3-day grace period</strong>: Payment fails on Monday → user notified immediately → agents keep running → grace expires Thursday morning → agents auto-pause → user updates card → agents resume within minutes.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Payment Grace Period Configuration */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-green-400" />
+                  <h3 className="text-base font-medium text-white">Payment Grace Period</h3>
+                </div>
+                <button
+                  onClick={handleSaveBillingConfig}
+                  disabled={saving}
+                  className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                >
+                  {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  Save
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300">
+                    Grace Period (Days)
+                  </label>
+                  <input
+                    type="number"
+                    value={billingConfig.paymentGracePeriodDays}
+                    onChange={(e) => setBillingConfig({
+                      ...billingConfig,
+                      paymentGracePeriodDays: parseInt(e.target.value) || 3
+                    })}
+                    min="0"
+                    max="30"
+                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-green-500"
+                  />
+                  <p className="text-xs text-slate-500">
+                    Number of days to wait after a payment failure before pausing agents.
+                    Default is 3 days. Set to 0 to pause agents immediately after payment failure.
+                    Maximum is 30 days. This applies to all subscription renewals and recurring payments.
+                  </p>
+                </div>
+              </div>
+
+              {/* Grace Period Examples */}
+              <div className="bg-slate-700/30 rounded-lg p-4 space-y-3">
+                <div className="text-sm font-medium text-slate-300">Example Scenarios:</div>
+                <div className="space-y-2 text-xs">
+                  <div className="flex items-start gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0 mt-1.5"></div>
+                    <div>
+                      <span className="text-slate-400">Grace Period = 0 days:</span>
+                      <span className="text-slate-300"> Agents pause immediately when payment fails. Strictest setting for critical payment enforcement.</span>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0 mt-1.5"></div>
+                    <div>
+                      <span className="text-slate-400">Grace Period = 3 days (default):</span>
+                      <span className="text-slate-300"> Agents continue running for 3 days after payment failure. User has 3 days to update payment method before interruption.</span>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0 mt-1.5"></div>
+                    <div>
+                      <span className="text-slate-400">Grace Period = 7 days:</span>
+                      <span className="text-slate-300"> Extended grace period for more flexible payment management. Agents run for a full week after payment failure.</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Technical Notes */}
+              <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
+                  <div className="space-y-2">
+                    <p className="text-blue-400 font-medium text-xs">Technical Details</p>
+                    <ul className="text-slate-300 text-xs space-y-1 list-disc list-inside">
+                      <li>Grace period starts counting from the billing period end date, not the failed payment date</li>
+                      <li>Stripe automatically retries failed payments according to your Stripe Dashboard settings</li>
+                      <li>Users can update their payment method via the Customer Portal at any time during grace period</li>
+                      <li>When payment succeeds during grace period, agents remain active and grace period resets</li>
+                      <li>System checks grace period expiration when processing <code className="text-blue-300">invoice.payment_failed</code> webhook events</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Boost Pack Management */}
+            <div className="space-y-4 pt-6 border-t border-white/10">
+              <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                <div className="flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-yellow-400" />
+                  <h3 className="text-base font-medium text-white">Boost Pack Management</h3>
+                </div>
+                <button
+                  onClick={() => setShowAddBoostPack(true)}
+                  className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                >
+                  <Zap className="w-4 h-4" />
+                  Add Boost Pack
+                </button>
+              </div>
+
+              <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" />
+                  <div className="space-y-2">
+                    <p className="text-yellow-400 font-medium text-sm">How Boost Packs Work</p>
+                    <p className="text-slate-300 text-sm leading-relaxed">
+                      Boost packs are one-time credit purchases. Set the price (USD) and bonus percentage,
+                      and the system automatically calculates the Pilot Credits. All calculations are saved
+                      to the database - the UI simply reads the pre-calculated values for optimal performance.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Boost Pack List */}
+              <div className="space-y-3">
+                {boostPacks.length === 0 ? (
+                  <div className="text-center py-8 text-slate-400">
+                    <Zap className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                    <p>No boost packs configured yet</p>
+                    <p className="text-sm mt-1">Click "Add Boost Pack" to create one</p>
+                  </div>
+                ) : (
+                  boostPacks.map((pack) => {
+                    const { baseCredits, bonusCredits } = calculateBoostPackCredits(pack.price_usd, pack.bonus_percentage);
+                    const isEditing = editingBoostPack === pack.id;
+
+                    return (
+                      <div key={pack.id} className="bg-slate-700/30 rounded-lg p-4 space-y-3">
+                        {isEditing ? (
+                          // Edit Mode
+                          <div className="space-y-3">
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="text-xs text-slate-400">Pack Key</label>
+                                <input
+                                  type="text"
+                                  value={pack.pack_key}
+                                  onChange={(e) => setBoostPacks(boostPacks.map(p =>
+                                    p.id === pack.id ? { ...p, pack_key: e.target.value } : p
+                                  ))}
+                                  className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                                  placeholder="boost_quick"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-xs text-slate-400">Pack Name</label>
+                                <input
+                                  type="text"
+                                  value={pack.pack_name}
+                                  onChange={(e) => setBoostPacks(boostPacks.map(p =>
+                                    p.id === pack.id ? { ...p, pack_name: e.target.value } : p
+                                  ))}
+                                  className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                                  placeholder="Quick Boost"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="text-xs text-slate-400">Display Name</label>
+                                <input
+                                  type="text"
+                                  value={pack.display_name}
+                                  onChange={(e) => setBoostPacks(boostPacks.map(p =>
+                                    p.id === pack.id ? { ...p, display_name: e.target.value } : p
+                                  ))}
+                                  className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                                  placeholder="Quick Boost"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-xs text-slate-400">Badge Text (Optional)</label>
+                                <input
+                                  type="text"
+                                  value={pack.badge_text || ''}
+                                  onChange={(e) => setBoostPacks(boostPacks.map(p =>
+                                    p.id === pack.id ? { ...p, badge_text: e.target.value || null } : p
+                                  ))}
+                                  className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                                  placeholder="POPULAR"
+                                />
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="text-xs text-slate-400">Description</label>
+                              <input
+                                type="text"
+                                value={pack.description}
+                                onChange={(e) => setBoostPacks(boostPacks.map(p =>
+                                  p.id === pack.id ? { ...p, description: e.target.value } : p
+                                ))}
+                                className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                                placeholder="Perfect for a quick credit refill"
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="text-xs text-slate-400">Price (USD)</label>
+                                <input
+                                  type="number"
+                                  value={pack.price_usd}
+                                  onChange={(e) => setBoostPacks(boostPacks.map(p =>
+                                    p.id === pack.id ? { ...p, price_usd: parseFloat(e.target.value) || 0 } : p
+                                  ))}
+                                  step="0.01"
+                                  min="0"
+                                  className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-xs text-slate-400">Bonus (%)</label>
+                                <input
+                                  type="number"
+                                  value={pack.bonus_percentage}
+                                  onChange={(e) => setBoostPacks(boostPacks.map(p =>
+                                    p.id === pack.id ? { ...p, bonus_percentage: parseFloat(e.target.value) || 0 } : p
+                                  ))}
+                                  step="1"
+                                  min="0"
+                                  max="100"
+                                  className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="bg-slate-800/50 rounded-lg p-3 space-y-2">
+                              <div className="text-xs text-slate-400">Calculated Credits (will be saved to database):</div>
+                              <div className="flex items-center gap-4 text-sm">
+                                <div>
+                                  <span className="text-slate-400">Base:</span>
+                                  <span className="text-white font-semibold ml-2">{baseCredits.toLocaleString()}</span>
+                                </div>
+                                <div>
+                                  <span className="text-slate-400">Bonus:</span>
+                                  <span className="text-green-400 font-semibold ml-2">+{bonusCredits.toLocaleString()}</span>
+                                </div>
+                                <div>
+                                  <span className="text-slate-400">Total:</span>
+                                  <span className="text-blue-400 font-semibold ml-2">{(baseCredits + bonusCredits).toLocaleString()}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <label className="flex items-center gap-2 text-sm text-slate-300">
+                                <input
+                                  type="checkbox"
+                                  checked={pack.is_active}
+                                  onChange={(e) => setBoostPacks(boostPacks.map(p =>
+                                    p.id === pack.id ? { ...p, is_active: e.target.checked } : p
+                                  ))}
+                                  className="rounded"
+                                />
+                                Active (visible to users)
+                              </label>
+                            </div>
+
+                            <div className="flex items-center gap-2 pt-2">
+                              <button
+                                onClick={() => handleSaveBoostPack(pack)}
+                                disabled={saving}
+                                className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                              >
+                                {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                                Save
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setEditingBoostPack(null);
+                                  setDeletingBoostPack(null);
+                                }}
+                                className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                              >
+                                <X className="w-4 h-4" />
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          // View Mode
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-3 mb-2">
+                                <h4 className="text-white font-semibold">{pack.pack_name}</h4>
+                                {pack.badge_text && (
+                                  <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-400 text-xs font-semibold rounded">
+                                    {pack.badge_text}
+                                  </span>
+                                )}
+                                {!pack.is_active && (
+                                  <span className="px-2 py-0.5 bg-slate-500/20 text-slate-400 text-xs font-semibold rounded">
+                                    INACTIVE
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-sm text-slate-400 mb-2">{pack.description}</p>
+                              <div className="flex items-center gap-4 text-sm">
+                                <div>
+                                  <span className="text-slate-400">Price:</span>
+                                  <span className="text-white font-semibold ml-2">${pack.price_usd.toFixed(2)}</span>
+                                </div>
+                                <div>
+                                  <span className="text-slate-400">Credits:</span>
+                                  <span className="text-white font-semibold ml-2">{pack.credits_amount.toLocaleString()}</span>
+                                </div>
+                                {pack.bonus_credits > 0 && (
+                                  <div>
+                                    <span className="text-slate-400">Bonus:</span>
+                                    <span className="text-green-400 font-semibold ml-2">+{pack.bonus_credits.toLocaleString()}</span>
+                                  </div>
+                                )}
+                                <div>
+                                  <span className="text-slate-400">Bonus %:</span>
+                                  <span className="text-yellow-400 font-semibold ml-2">{pack.bonus_percentage}%</span>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {deletingBoostPack === pack.id ? (
+                                // Delete confirmation buttons
+                                <div className="flex items-center gap-2 bg-red-500/10 px-3 py-1 rounded border border-red-500/30">
+                                  <span className="text-xs text-red-400 font-medium">Delete?</span>
+                                  <button
+                                    onClick={() => handleDeleteBoostPack(pack.id!)}
+                                    disabled={saving}
+                                    className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:bg-red-800 text-white rounded text-xs transition-colors"
+                                  >
+                                    Yes
+                                  </button>
+                                  <button
+                                    onClick={() => setDeletingBoostPack(null)}
+                                    className="px-2 py-1 bg-slate-600 hover:bg-slate-500 text-white rounded text-xs transition-colors"
+                                  >
+                                    No
+                                  </button>
+                                </div>
+                              ) : (
+                                // Normal edit/delete buttons
+                                <>
+                                  <button
+                                    onClick={() => {
+                                      setEditingBoostPack(pack.id!);
+                                      setDeletingBoostPack(null);
+                                    }}
+                                    className="p-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
+                                    title="Edit"
+                                  >
+                                    <Edit className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => setDeletingBoostPack(pack.id!)}
+                                    className="p-2 bg-red-600 hover:bg-red-700 text-white rounded transition-colors"
+                                    title="Delete"
+                                  >
+                                    <X className="w-4 h-4" />
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Add New Boost Pack Modal/Form */}
+              {showAddBoostPack && (
+                <div className="bg-slate-700/50 rounded-lg p-4 space-y-3 border-2 border-yellow-500/30">
+                  <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                    <h4 className="text-white font-semibold flex items-center gap-2">
+                      <Zap className="w-4 h-4 text-yellow-400" />
+                      Add New Boost Pack
+                    </h4>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-slate-400">Pack Key *</label>
+                      <input
+                        type="text"
+                        value={newBoostPack.pack_key}
+                        onChange={(e) => setNewBoostPack({ ...newBoostPack, pack_key: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                        placeholder="boost_quick"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-400">Pack Name *</label>
+                      <input
+                        type="text"
+                        value={newBoostPack.pack_name}
+                        onChange={(e) => setNewBoostPack({ ...newBoostPack, pack_name: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                        placeholder="Quick Boost"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-slate-400">Display Name *</label>
+                      <input
+                        type="text"
+                        value={newBoostPack.display_name}
+                        onChange={(e) => setNewBoostPack({ ...newBoostPack, display_name: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                        placeholder="Quick Boost"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-400">Badge Text (Optional)</label>
+                      <input
+                        type="text"
+                        value={newBoostPack.badge_text || ''}
+                        onChange={(e) => setNewBoostPack({ ...newBoostPack, badge_text: e.target.value || null })}
+                        className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                        placeholder="POPULAR"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-slate-400">Description *</label>
+                    <input
+                      type="text"
+                      value={newBoostPack.description}
+                      onChange={(e) => setNewBoostPack({ ...newBoostPack, description: e.target.value })}
+                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                      placeholder="Perfect for a quick credit refill"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-slate-400">Price (USD) *</label>
+                      <input
+                        type="number"
+                        value={newBoostPack.price_usd}
+                        onChange={(e) => setNewBoostPack({ ...newBoostPack, price_usd: parseFloat(e.target.value) || 0 })}
+                        step="0.01"
+                        min="0"
+                        className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-400">Bonus (%) *</label>
+                      <input
+                        type="number"
+                        value={newBoostPack.bonus_percentage}
+                        onChange={(e) => setNewBoostPack({ ...newBoostPack, bonus_percentage: parseFloat(e.target.value) || 0 })}
+                        step="1"
+                        min="0"
+                        max="100"
+                        className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-800/50 rounded-lg p-3 space-y-2">
+                    <div className="text-xs text-slate-400">Calculated Credits (will be saved to database):</div>
+                    <div className="flex items-center gap-4 text-sm">
+                      {(() => {
+                        const { baseCredits, bonusCredits } = calculateBoostPackCredits(newBoostPack.price_usd, newBoostPack.bonus_percentage);
+                        return (
+                          <>
+                            <div>
+                              <span className="text-slate-400">Base:</span>
+                              <span className="text-white font-semibold ml-2">{baseCredits.toLocaleString()}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400">Bonus:</span>
+                              <span className="text-green-400 font-semibold ml-2">+{bonusCredits.toLocaleString()}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400">Total:</span>
+                              <span className="text-blue-400 font-semibold ml-2">{(baseCredits + bonusCredits).toLocaleString()}</span>
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-2">
+                    <button
+                      onClick={() => handleSaveBoostPack(newBoostPack)}
+                      disabled={saving || !newBoostPack.pack_key || !newBoostPack.pack_name}
+                      className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                    >
+                      {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                      Create Boost Pack
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowAddBoostPack(false);
+                        setNewBoostPack({
+                          pack_key: '',
+                          pack_name: '',
+                          display_name: '',
+                          description: '',
+                          price_usd: 10,
+                          bonus_percentage: 0,
+                          credits_amount: 0,
+                          bonus_credits: 0,
+                          badge_text: null,
+                          is_active: true
+                        });
+                      }}
+                      className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                    >
+                      <X className="w-4 h-4" />
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </motion.div>
+
       {/* Calculator Configuration */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -1043,15 +1461,28 @@ export default function SystemConfigPage() {
             <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4">
               <div className="flex items-start gap-3">
                 <Sliders className="w-5 h-5 text-purple-400 flex-shrink-0 mt-0.5" />
-                <div className="space-y-2">
+                <div className="space-y-3">
                   <p className="text-purple-400 font-medium text-sm">About Calculator Configuration</p>
                   <p className="text-slate-300 text-sm leading-relaxed">
-                    These parameters power the Pilot Credit calculator that estimates usage costs for users when they design agents.
-                    <strong className="text-white"> Token parameters</strong> estimate AI model costs.
-                    <strong className="text-white"> Execution parameters</strong> estimate runtime complexity.
-                    <strong className="text-white"> Pricing parameters</strong> convert estimates into Pilot Credit costs.
-                    Adjust these values to match your actual infrastructure costs and desired pricing model. Changes affect what users see in the calculator, not actual billing.
+                    These parameters power the Pilot Credit calculator that estimates usage costs for users when they design agents. The calculator provides cost transparency during agent creation, helping users understand resource requirements before deployment.
                   </p>
+                  <div className="space-y-2 text-xs leading-relaxed">
+                    <p className="text-slate-300">
+                      <strong className="text-purple-300">Token Parameters:</strong> Estimate AI model token usage based on agent complexity (plugins, workflow steps, iterations). Affects predicted LLM costs.
+                    </p>
+                    <p className="text-slate-300">
+                      <strong className="text-purple-300">Execution Parameters:</strong> Estimate runtime behavior (iterations, duration, retry rates). Determines execution complexity multipliers.
+                    </p>
+                    <p className="text-slate-300">
+                      <strong className="text-purple-300">Pricing Parameters:</strong> Convert technical estimates into Pilot Credit costs. Includes base fees, plugin overhead, system infrastructure costs.
+                    </p>
+                  </div>
+                  <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3 mt-2">
+                    <p className="text-purple-300 text-xs font-medium mb-1">Important Note</p>
+                    <p className="text-slate-300 text-xs leading-relaxed">
+                      These settings only affect the <strong className="text-white">cost estimator shown to users</strong>. Actual billing is calculated from real execution metrics. Adjust these values to match your infrastructure costs and desired pricing model.
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1064,7 +1495,8 @@ export default function SystemConfigPage() {
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
+                  <label className="text-sm font-medium text-blue-300 flex items-center gap-1.5">
+                    <Zap className="w-3.5 h-3.5" />
                     Base Tokens
                   </label>
                   <input
@@ -1075,11 +1507,15 @@ export default function SystemConfigPage() {
                     step="100"
                     className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
-                  <p className="text-xs text-slate-500">Starting token count for basic agent with no plugins. Affects cost estimation.</p>
+                  <div className="text-xs text-slate-400 leading-relaxed">
+                    <p className="text-blue-300 font-medium mb-1">Foundation Tokens (default: 5000)</p>
+                    <p className="text-slate-400">Starting token count for basic agent with no plugins. Affects cost estimation baseline for all agent calculations.</p>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
+                  <label className="text-sm font-medium text-blue-300 flex items-center gap-1.5">
+                    <Database className="w-3.5 h-3.5" />
                     Tokens Per Plugin
                   </label>
                   <input
@@ -1090,11 +1526,15 @@ export default function SystemConfigPage() {
                     step="50"
                     className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
-                  <p className="text-xs text-slate-500">How many extra tokens each connected plugin adds to the agent's usage.</p>
+                  <div className="text-xs text-slate-400 leading-relaxed">
+                    <p className="text-blue-300 font-medium mb-1">Plugin Token Cost (default: 400)</p>
+                    <p className="text-slate-400">Token equivalent charged per plugin action call. This is added to the total execution cost and tracked in token_usage table. Includes API call overhead and operational costs.</p>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
+                  <label className="text-sm font-medium text-purple-300 flex items-center gap-1.5">
+                    <Zap className="w-3.5 h-3.5" />
                     Peak Multiplier
                   </label>
                   <input
@@ -1106,11 +1546,15 @@ export default function SystemConfigPage() {
                     step="0.1"
                     className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
-                  <p className="text-xs text-slate-500">Burst factor when agent hits maximum usage (e.g., 1.5 = 50% spike above average).</p>
+                  <div className="text-xs text-slate-400 leading-relaxed">
+                    <p className="text-purple-300 font-medium mb-1">Burst Factor (default: 1.5)</p>
+                    <p className="text-slate-400">Maximum usage spike multiplier. 1.5 means peak usage can be 50% higher than average during complex operations.</p>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
+                  <label className="text-sm font-medium text-green-300 flex items-center gap-1.5">
+                    <Sliders className="w-3.5 h-3.5" />
                     Plugin Usage Rate
                   </label>
                   <input
@@ -1122,11 +1566,15 @@ export default function SystemConfigPage() {
                     step="0.1"
                     className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
-                  <p className="text-xs text-slate-500">What % of connected plugins actually get used per run (0.8 = 80% active usage rate).</p>
+                  <div className="text-xs text-slate-400 leading-relaxed">
+                    <p className="text-green-300 font-medium mb-1">Active Usage Percentage (default: 0.8)</p>
+                    <p className="text-slate-400">What percentage of connected plugins actually get used per run. 0.8 = 80% active usage rate across agent executions.</p>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
+                  <label className="text-sm font-medium text-yellow-300 flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5" />
                     Orchestration Overhead (ms)
                   </label>
                   <input
@@ -1137,11 +1585,15 @@ export default function SystemConfigPage() {
                     step="100"
                     className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
-                  <p className="text-xs text-slate-500">Extra time (in ms) spent coordinating between plugins during execution.</p>
+                  <div className="text-xs text-slate-400 leading-relaxed">
+                    <p className="text-yellow-300 font-medium mb-1">Coordination Time (default: 500ms)</p>
+                    <p className="text-slate-400">Extra time spent coordinating between plugins during execution. Includes API calls and data transformation overhead.</p>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
+                  <label className="text-sm font-medium text-cyan-300 flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5" />
                     Estimated Duration (ms)
                   </label>
                   <input
@@ -1152,11 +1604,15 @@ export default function SystemConfigPage() {
                     step="1000"
                     className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
-                  <p className="text-xs text-slate-500">How long (in ms) a typical agent execution takes from start to finish.</p>
+                  <div className="text-xs text-slate-400 leading-relaxed">
+                    <p className="text-cyan-300 font-medium mb-1">Average Execution Time (default: 15000ms)</p>
+                    <p className="text-slate-400">How long a typical agent execution takes from start to finish. Used for timeout and resource allocation estimates.</p>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
+                  <label className="text-sm font-medium text-red-300 flex items-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5" />
                     Estimated Failure Rate (%)
                   </label>
                   <input
@@ -1168,11 +1624,15 @@ export default function SystemConfigPage() {
                     step="1"
                     className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
-                  <p className="text-xs text-slate-500">Expected % of agent runs that fail. Used to calculate retry overhead in cost estimates.</p>
+                  <div className="text-xs text-slate-400 leading-relaxed">
+                    <p className="text-red-300 font-medium mb-1">Error Rate (default: 5%)</p>
+                    <p className="text-slate-400">Expected percentage of agent runs that fail. Used to calculate retry overhead and reliability margins in cost estimates.</p>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
+                  <label className="text-sm font-medium text-orange-300 flex items-center gap-1.5">
+                    <RefreshCw className="w-3.5 h-3.5" />
                     Estimated Retry Rate
                   </label>
                   <input
@@ -1183,11 +1643,15 @@ export default function SystemConfigPage() {
                     step="0.1"
                     className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
-                  <p className="text-xs text-slate-500">How many times agents retry on failure (0.5 = half of failures retry once).</p>
+                  <div className="text-xs text-slate-400 leading-relaxed">
+                    <p className="text-orange-300 font-medium mb-1">Retry Multiplier (default: 0.3)</p>
+                    <p className="text-slate-400">How many times agents retry on failure. 0.3 means 30% of failures result in one retry attempt.</p>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
+                  <label className="text-sm font-medium text-indigo-300 flex items-center gap-1.5">
+                    <Sliders className="w-3.5 h-3.5" />
                     I/O Ratio
                   </label>
                   <input
@@ -1198,7 +1662,10 @@ export default function SystemConfigPage() {
                     step="0.1"
                     className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
-                  <p className="text-xs text-slate-500">Ratio of tokens generated vs consumed (2.0 = agent generates twice as much as it reads).</p>
+                  <div className="text-xs text-slate-400 leading-relaxed">
+                    <p className="text-indigo-300 font-medium mb-1">Output/Input Token Ratio (default: 2.0)</p>
+                    <p className="text-slate-400">Ratio of tokens generated vs consumed. 2.0 means agent generates twice as many tokens as it reads from inputs.</p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1211,7 +1678,8 @@ export default function SystemConfigPage() {
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
+                  <label className="text-sm font-medium text-yellow-300 flex items-center gap-1.5">
+                    <Zap className="w-3.5 h-3.5" />
                     Base Iterations
                   </label>
                   <input
@@ -1223,11 +1691,15 @@ export default function SystemConfigPage() {
                     step="1"
                     className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
-                  <p className="text-xs text-slate-500">Fewest loops/cycles a simple agent runs before completing its task.</p>
+                  <div className="text-xs text-slate-400 leading-relaxed">
+                    <p className="text-yellow-300 font-medium mb-1">Minimum Cycles (default: 3)</p>
+                    <p className="text-slate-400">Fewest loops/cycles a simple agent runs before completing its task. Affects baseline runtime estimation.</p>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
+                  <label className="text-sm font-medium text-red-300 flex items-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5" />
                     Max Iterations
                   </label>
                   <input
@@ -1239,7 +1711,10 @@ export default function SystemConfigPage() {
                     step="1"
                     className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
-                  <p className="text-xs text-slate-500">Safety limit: max loops/cycles before stopping complex agents to prevent infinite runs.</p>
+                  <div className="text-xs text-slate-400 leading-relaxed">
+                    <p className="text-red-300 font-medium mb-1">Safety Limit (default: 15)</p>
+                    <p className="text-slate-400">Maximum loops/cycles before stopping complex agents. Prevents infinite runs and runaway costs.</p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1252,7 +1727,8 @@ export default function SystemConfigPage() {
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
+                  <label className="text-sm font-medium text-blue-300 flex items-center gap-1.5">
+                    <Sliders className="w-3.5 h-3.5" />
                     Runs Per Agent Per Month
                   </label>
                   <input
@@ -1264,11 +1740,15 @@ export default function SystemConfigPage() {
                     step="1"
                     className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
-                  <p className="text-xs text-slate-500">Average monthly usage: How many times users run each agent per month.</p>
+                  <div className="text-xs text-slate-400 leading-relaxed">
+                    <p className="text-blue-300 font-medium mb-1">Average Monthly Usage (default: 30)</p>
+                    <p className="text-slate-400">How many times users run each agent per month. Used to calculate monthly cost projections in the calculator.</p>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
+                  <label className="text-sm font-medium text-purple-300 flex items-center gap-1.5">
+                    <CreditCard className="w-3.5 h-3.5" />
                     Agent Creation Cost (Pilot Credits)
                   </label>
                   <input
@@ -1279,11 +1759,15 @@ export default function SystemConfigPage() {
                     step="100"
                     className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
-                  <p className="text-xs text-slate-500">Pilot Credits charged when user first creates an agent (one-time fee).</p>
+                  <div className="text-xs text-slate-400 leading-relaxed">
+                    <p className="text-purple-300 font-medium mb-1">One-Time Creation Fee (default: 1000)</p>
+                    <p className="text-slate-400">Pilot Credits charged when user first creates an agent. One-time setup fee to cover AI-assisted agent building.</p>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
+                  <label className="text-sm font-medium text-green-300 flex items-center gap-1.5">
+                    <DollarSign className="w-3.5 h-3.5" />
                     Credit Cost (USD)
                   </label>
                   <input
@@ -1294,11 +1778,15 @@ export default function SystemConfigPage() {
                     step="0.00001"
                     className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500 font-mono"
                   />
-                  <p className="text-xs text-slate-500">Real money value: How much 1 Pilot Credit costs in actual USD (e.g., $0.00048).</p>
+                  <div className="text-xs text-slate-400 leading-relaxed">
+                    <p className="text-green-300 font-medium mb-1">Real Money Value (default: $0.00048)</p>
+                    <p className="text-slate-400">How much 1 Pilot Credit costs in actual USD. Controls the conversion rate for billing calculations.</p>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
+                  <label className="text-sm font-medium text-amber-300 flex items-center gap-1.5">
+                    <DollarSign className="w-3.5 h-3.5" />
                     Minimum Monthly Cost (USD)
                   </label>
                   <input
@@ -1309,11 +1797,15 @@ export default function SystemConfigPage() {
                     step="1"
                     className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
-                  <p className="text-xs text-slate-500">Floor price: Minimum USD charged per month regardless of usage (e.g., $10).</p>
+                  <div className="text-xs text-slate-400 leading-relaxed">
+                    <p className="text-amber-300 font-medium mb-1">Floor Price (default: $0)</p>
+                    <p className="text-slate-400">Minimum USD charged per month regardless of usage. Set to 0 for pure usage-based pricing.</p>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
+                  <label className="text-sm font-medium text-cyan-300 flex items-center gap-1.5">
+                    <Zap className="w-3.5 h-3.5" />
                     Base Credits Per Run
                   </label>
                   <input
@@ -1324,11 +1816,15 @@ export default function SystemConfigPage() {
                     step="10"
                     className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
-                  <p className="text-xs text-slate-500">Flat Pilot Credit cost for every agent run, before adding plugin overhead.</p>
+                  <div className="text-xs text-slate-400 leading-relaxed">
+                    <p className="text-cyan-300 font-medium mb-1">Flat Fee Per Run (default: 50)</p>
+                    <p className="text-slate-400">Flat Pilot Credit cost for every agent run, before adding plugin overhead. Covers base AI model usage.</p>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
+                  <label className="text-sm font-medium text-indigo-300 flex items-center gap-1.5">
+                    <Database className="w-3.5 h-3.5" />
                     Plugin Overhead Per Run
                   </label>
                   <input
@@ -1339,11 +1835,15 @@ export default function SystemConfigPage() {
                     step="10"
                     className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
-                  <p className="text-xs text-slate-500">Extra Pilot Credits charged for each active plugin used during a run.</p>
+                  <div className="text-xs text-slate-400 leading-relaxed">
+                    <p className="text-indigo-300 font-medium mb-1">Plugin Fee (default: 20)</p>
+                    <p className="text-slate-400">Extra Pilot Credits charged for each active plugin used during a run. Covers API calls and data processing.</p>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
+                  <label className="text-sm font-medium text-slate-300 flex items-center gap-1.5">
+                    <Settings className="w-3.5 h-3.5" />
                     System Overhead Per Run
                   </label>
                   <input
@@ -1354,11 +1854,15 @@ export default function SystemConfigPage() {
                     step="5"
                     className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
-                  <p className="text-xs text-slate-500">Platform infrastructure fee: Credits for hosting, monitoring, and system resources per run.</p>
+                  <div className="text-xs text-slate-400 leading-relaxed">
+                    <p className="text-slate-300 font-medium mb-1">Infrastructure Fee (default: 10)</p>
+                    <p className="text-slate-400">Platform infrastructure cost per run. Credits for hosting, monitoring, logging, and system resources.</p>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
+                  <label className="text-sm font-medium text-purple-300 flex items-center gap-1.5">
+                    <Sliders className="w-3.5 h-3.5" />
                     Execution Step Multiplier
                   </label>
                   <input
@@ -1369,11 +1873,15 @@ export default function SystemConfigPage() {
                     step="0.1"
                     className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
-                  <p className="text-xs text-slate-500">Complexity multiplier: Increases cost per iteration (1.3 = 30% more credits per loop).</p>
+                  <div className="text-xs text-slate-400 leading-relaxed">
+                    <p className="text-purple-300 font-medium mb-1">Complexity Multiplier (default: 1.2)</p>
+                    <p className="text-slate-400">Increases cost per iteration. 1.2 = 20% more credits per loop to account for increasing complexity.</p>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
+                  <label className="text-sm font-medium text-green-300 flex items-center gap-1.5">
+                    <CreditCard className="w-3.5 h-3.5" />
                     Free Tier Credits
                   </label>
                   <input
@@ -1384,7 +1892,10 @@ export default function SystemConfigPage() {
                     step="100"
                     className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
-                  <p className="text-xs text-slate-500">Welcome bonus: Pilot Credits given to each new user for free trial (e.g., 1000 credits).</p>
+                  <div className="text-xs text-slate-400 leading-relaxed">
+                    <p className="text-green-300 font-medium mb-1">Welcome Bonus (default: 1000)</p>
+                    <p className="text-slate-400">Pilot Credits given to each new user for free trial. Enables testing before purchasing boost packs.</p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1408,521 +1919,6 @@ export default function SystemConfigPage() {
                   </>
                 )}
               </button>
-            </div>
-          </div>
-        )}
-      </motion.div>
-
-      {/* Memory System Configuration */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.15 }}
-        className="bg-slate-800/50 backdrop-blur-xl rounded-xl border border-white/10"
-      >
-        <div className="p-6 border-b border-white/10">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-semibold text-white flex items-center gap-2">
-                <Brain className="w-5 h-5 text-teal-400" />
-                Memory System Configuration
-              </h2>
-              <p className="text-sm text-slate-400 mt-1">
-                Configure AI memory system for agent execution context, summarization, and learning
-              </p>
-            </div>
-            <button
-              onClick={() => setMemoryExpanded(!memoryExpanded)}
-              className="p-2 bg-slate-700/50 hover:bg-slate-600/50 rounded-lg transition-colors"
-            >
-              {memoryExpanded ? (
-                <ChevronUp className="w-4 h-4 text-slate-400" />
-              ) : (
-                <ChevronDown className="w-4 h-4 text-slate-400" />
-              )}
-            </button>
-          </div>
-        </div>
-
-        {memoryExpanded && (
-          <div className="p-6 space-y-6">
-            {/* Info Box */}
-            <div className="bg-teal-500/10 border border-teal-500/20 rounded-lg p-4">
-              <div className="flex items-start gap-3">
-                <Brain className="w-5 h-5 text-teal-400 flex-shrink-0 mt-0.5" />
-                <div className="space-y-2">
-                  <p className="text-teal-400 font-medium text-sm">How Memory System Works</p>
-                  <p className="text-slate-300 text-sm leading-relaxed">
-                    The memory system enhances agent executions with context from past runs.
-                    <strong className="text-white"> Before execution</strong>, relevant memories are loaded (recent runs, user preferences, learned patterns) within a token budget.
-                    <strong className="text-white"> After execution</strong>, gpt-4o-mini asynchronously creates a concise summary for future reference.
-                    <strong className="text-white"> Integration</strong>: Works seamlessly with ModelRouter - memory context helps agents make better decisions while AIS routes to cost-efficient models.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Token Budget & Injection Settings */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-medium text-white">Memory Injection Settings</h3>
-                <button
-                  onClick={() => handleSaveMemoryConfig('injection')}
-                  disabled={saving}
-                  className="px-4 py-2 bg-teal-600 hover:bg-teal-700 disabled:bg-slate-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
-                >
-                  {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  Save
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
-                    Max Memory Tokens
-                  </label>
-                  <input
-                    type="number"
-                    value={memoryConfig.injection.max_tokens}
-                    onChange={(e) => setMemoryConfig({
-                      ...memoryConfig,
-                      injection: { ...memoryConfig.injection, max_tokens: parseInt(e.target.value) }
-                    })}
-                    min="100"
-                    max="2000"
-                    step="50"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
-                  />
-                  <p className="text-xs text-slate-500">Maximum tokens allocated for memory context. Higher values provide more context but consume more of the model's context window (recommended: 800).</p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
-                    Min Recent Runs
-                  </label>
-                  <input
-                    type="number"
-                    value={memoryConfig.injection.min_recent_runs}
-                    onChange={(e) => setMemoryConfig({
-                      ...memoryConfig,
-                      injection: { ...memoryConfig.injection, min_recent_runs: parseInt(e.target.value) }
-                    })}
-                    min="1"
-                    max="10"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
-                  />
-                  <p className="text-xs text-slate-500">Minimum number of recent execution memories to always include, even if token budget is tight (recommended: 3).</p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
-                    Max Recent Runs
-                  </label>
-                  <input
-                    type="number"
-                    value={memoryConfig.injection.max_recent_runs}
-                    onChange={(e) => setMemoryConfig({
-                      ...memoryConfig,
-                      injection: { ...memoryConfig.injection, max_recent_runs: parseInt(e.target.value) }
-                    })}
-                    min="3"
-                    max="20"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
-                  />
-                  <p className="text-xs text-slate-500">Maximum number of recent runs to fetch and consider for injection (space permitting within token budget).</p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
-                    Semantic Search Limit
-                  </label>
-                  <input
-                    type="number"
-                    value={memoryConfig.injection.semantic_search_limit}
-                    onChange={(e) => setMemoryConfig({
-                      ...memoryConfig,
-                      injection: { ...memoryConfig.injection, semantic_search_limit: parseInt(e.target.value) }
-                    })}
-                    min="0"
-                    max="10"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
-                  />
-                  <p className="text-xs text-slate-500">Maximum number of semantically similar memories to retrieve using vector search (requires embeddings to be generated).</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Summarization Settings */}
-            <div className="space-y-4 pt-6 border-t border-white/10">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-medium text-white">Memory Summarization Settings</h3>
-                <button
-                  onClick={() => handleSaveMemoryConfig('summarization')}
-                  disabled={saving}
-                  className="px-4 py-2 bg-teal-600 hover:bg-teal-700 disabled:bg-slate-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
-                >
-                  {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  Save
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
-                    Summarization Model
-                  </label>
-                  <select
-                    value={memoryConfig.summarization.model}
-                    onChange={(e) => setMemoryConfig({
-                      ...memoryConfig,
-                      summarization: { ...memoryConfig.summarization, model: e.target.value }
-                    })}
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
-                  >
-                    <option value="gpt-4o-mini">gpt-4o-mini (recommended)</option>
-                    <option value="gpt-4o">gpt-4o</option>
-                    <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
-                  </select>
-                  <p className="text-xs text-slate-500">LLM model used to analyze executions and create concise memory summaries. gpt-4o-mini provides good quality at ~$0.0003 per run.</p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
-                    Temperature
-                  </label>
-                  <input
-                    type="number"
-                    value={memoryConfig.summarization.temperature}
-                    onChange={(e) => setMemoryConfig({
-                      ...memoryConfig,
-                      summarization: { ...memoryConfig.summarization, temperature: parseFloat(e.target.value) }
-                    })}
-                    min="0"
-                    max="1"
-                    step="0.1"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
-                  />
-                  <p className="text-xs text-slate-500">Controls randomness in summary generation. Lower values (0.3) produce more consistent, focused summaries. Higher values (0.7+) add creativity.</p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
-                    Max Tokens
-                  </label>
-                  <input
-                    type="number"
-                    value={memoryConfig.summarization.max_tokens}
-                    onChange={(e) => setMemoryConfig({
-                      ...memoryConfig,
-                      summarization: { ...memoryConfig.summarization, max_tokens: parseInt(e.target.value) }
-                    })}
-                    min="100"
-                    max="1000"
-                    step="50"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
-                  />
-                  <p className="text-xs text-slate-500">Maximum length of generated memory summaries in tokens. Higher values allow more detailed summaries but increase cost (recommended: 500).</p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
-                    Async Summarization
-                  </label>
-                  <div className="flex items-center h-[42px]">
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={memoryConfig.summarization.async}
-                        onChange={(e) => setMemoryConfig({
-                          ...memoryConfig,
-                          summarization: { ...memoryConfig.summarization, async: e.target.checked }
-                        })}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-teal-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal-600"></div>
-                      <span className="ml-3 text-sm text-slate-300">{memoryConfig.summarization.async ? 'Enabled' : 'Disabled'}</span>
-                    </label>
-                  </div>
-                  <p className="text-xs text-slate-500">When enabled, memory summarization runs in the background after agent execution completes. Prevents blocking user response (recommended: enabled).</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Importance Scoring Settings */}
-            <div className="space-y-4 pt-6 border-t border-white/10">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-medium text-white">Importance Scoring Weights</h3>
-                <button
-                  onClick={() => handleSaveMemoryConfig('importance')}
-                  disabled={saving}
-                  className="px-4 py-2 bg-teal-600 hover:bg-teal-700 disabled:bg-slate-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
-                >
-                  {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  Save
-                </button>
-              </div>
-              <p className="text-xs text-slate-400">These weights determine memory importance scores (1-10), which affect retention and priority. Higher importance memories are kept longer and loaded first.</p>
-
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">Base Score</label>
-                  <input
-                    type="number"
-                    value={memoryConfig.importance.base_score}
-                    onChange={(e) => setMemoryConfig({
-                      ...memoryConfig,
-                      importance: { ...memoryConfig.importance, base_score: parseInt(e.target.value) }
-                    })}
-                    min="1"
-                    max="10"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
-                  />
-                  <p className="text-xs text-slate-500">Starting importance for all memories</p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">Error Bonus</label>
-                  <input
-                    type="number"
-                    value={memoryConfig.importance.error_bonus}
-                    onChange={(e) => setMemoryConfig({
-                      ...memoryConfig,
-                      importance: { ...memoryConfig.importance, error_bonus: parseInt(e.target.value) }
-                    })}
-                    min="0"
-                    max="5"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
-                  />
-                  <p className="text-xs text-slate-500">Added for failed executions (learn from errors)</p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">Pattern Bonus</label>
-                  <input
-                    type="number"
-                    value={memoryConfig.importance.pattern_bonus}
-                    onChange={(e) => setMemoryConfig({
-                      ...memoryConfig,
-                      importance: { ...memoryConfig.importance, pattern_bonus: parseInt(e.target.value) }
-                    })}
-                    min="0"
-                    max="5"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
-                  />
-                  <p className="text-xs text-slate-500">Added when recurring patterns detected</p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">User Feedback Bonus</label>
-                  <input
-                    type="number"
-                    value={memoryConfig.importance.user_feedback_bonus}
-                    onChange={(e) => setMemoryConfig({
-                      ...memoryConfig,
-                      importance: { ...memoryConfig.importance, user_feedback_bonus: parseInt(e.target.value) }
-                    })}
-                    min="0"
-                    max="5"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
-                  />
-                  <p className="text-xs text-slate-500">Added when user provides explicit feedback</p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">First Run Bonus</label>
-                  <input
-                    type="number"
-                    value={memoryConfig.importance.first_run_bonus}
-                    onChange={(e) => setMemoryConfig({
-                      ...memoryConfig,
-                      importance: { ...memoryConfig.importance, first_run_bonus: parseInt(e.target.value) }
-                    })}
-                    min="0"
-                    max="5"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
-                  />
-                  <p className="text-xs text-slate-500">Added for agent's first execution (baseline)</p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">Milestone Bonus</label>
-                  <input
-                    type="number"
-                    value={memoryConfig.importance.milestone_bonus}
-                    onChange={(e) => setMemoryConfig({
-                      ...memoryConfig,
-                      importance: { ...memoryConfig.importance, milestone_bonus: parseInt(e.target.value) }
-                    })}
-                    min="0"
-                    max="5"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
-                  />
-                  <p className="text-xs text-slate-500">Added every 10th run (checkpoints)</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Retention Policy */}
-            <div className="space-y-4 pt-6 border-t border-white/10">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-medium text-white">Memory Retention Policy</h3>
-                <button
-                  onClick={() => handleSaveMemoryConfig('retention')}
-                  disabled={saving}
-                  className="px-4 py-2 bg-teal-600 hover:bg-teal-700 disabled:bg-slate-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
-                >
-                  {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  Save
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
-                    Run Memories (Days)
-                  </label>
-                  <input
-                    type="number"
-                    value={memoryConfig.retention.run_memories_days}
-                    onChange={(e) => setMemoryConfig({
-                      ...memoryConfig,
-                      retention: { ...memoryConfig.retention, run_memories_days: parseInt(e.target.value) }
-                    })}
-                    min="7"
-                    max="365"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
-                  />
-                  <p className="text-xs text-slate-500">Retention period for medium-importance memories (score 5-7). Balances context availability with database growth (recommended: 90 days).</p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
-                    Low Importance (Days)
-                  </label>
-                  <input
-                    type="number"
-                    value={memoryConfig.retention.low_importance_days}
-                    onChange={(e) => setMemoryConfig({
-                      ...memoryConfig,
-                      retention: { ...memoryConfig.retention, low_importance_days: parseInt(e.target.value) }
-                    })}
-                    min="1"
-                    max="90"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
-                  />
-                  <p className="text-xs text-slate-500">Retention period for low-importance memories (score 1-4). Routine successes without insights cleaned up sooner (recommended: 30 days).</p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
-                    Consolidation Threshold
-                  </label>
-                  <input
-                    type="number"
-                    value={memoryConfig.retention.consolidation_threshold}
-                    onChange={(e) => setMemoryConfig({
-                      ...memoryConfig,
-                      retention: { ...memoryConfig.retention, consolidation_threshold: parseInt(e.target.value) }
-                    })}
-                    min="10"
-                    max="200"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
-                  />
-                  <p className="text-xs text-slate-500">Number of memories that triggers consolidation. When agent accumulates this many memories, similar patterns merge into consolidated insights (recommended: 50).</p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
-                    Consolidation Frequency (Days)
-                  </label>
-                  <input
-                    type="number"
-                    value={memoryConfig.retention.consolidation_frequency_days}
-                    onChange={(e) => setMemoryConfig({
-                      ...memoryConfig,
-                      retention: { ...memoryConfig.retention, consolidation_frequency_days: parseInt(e.target.value) }
-                    })}
-                    min="1"
-                    max="30"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
-                  />
-                  <p className="text-xs text-slate-500">How often to run memory consolidation job. Lower frequency keeps memories fresher but uses more compute (recommended: 7 days).</p>
-                </div>
-              </div>
-              <p className="text-xs text-slate-400">Note: High-importance memories (score 8-10) with critical patterns, errors, or user feedback are kept indefinitely.</p>
-            </div>
-
-            {/* Embedding Settings */}
-            <div className="space-y-4 pt-6 border-t border-white/10">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-medium text-white">Embedding Configuration</h3>
-                <button
-                  onClick={() => handleSaveMemoryConfig('embedding')}
-                  disabled={saving}
-                  className="px-4 py-2 bg-teal-600 hover:bg-teal-700 disabled:bg-slate-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
-                >
-                  {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  Save
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
-                    Embedding Model
-                  </label>
-                  <select
-                    value={memoryConfig.embedding.model}
-                    onChange={(e) => setMemoryConfig({
-                      ...memoryConfig,
-                      embedding: { ...memoryConfig.embedding, model: e.target.value }
-                    })}
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
-                  >
-                    <option value="text-embedding-3-small">text-embedding-3-small (recommended)</option>
-                    <option value="text-embedding-3-large">text-embedding-3-large</option>
-                    <option value="text-embedding-ada-002">text-embedding-ada-002</option>
-                  </select>
-                  <p className="text-xs text-slate-500">OpenAI model for generating vector embeddings. Used for semantic search to find similar memories based on meaning (recommended: text-embedding-3-small).</p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
-                    Batch Size
-                  </label>
-                  <input
-                    type="number"
-                    value={memoryConfig.embedding.batch_size}
-                    onChange={(e) => setMemoryConfig({
-                      ...memoryConfig,
-                      embedding: { ...memoryConfig.embedding, batch_size: parseInt(e.target.value) }
-                    })}
-                    min="1"
-                    max="500"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
-                  />
-                  <p className="text-xs text-slate-500">Number of memories to process in a single batch when generating embeddings. Higher values are more efficient but use more memory (recommended: 100).</p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">
-                    Dimensions
-                  </label>
-                  <input
-                    type="number"
-                    value={memoryConfig.embedding.dimensions}
-                    onChange={(e) => setMemoryConfig({
-                      ...memoryConfig,
-                      embedding: { ...memoryConfig.embedding, dimensions: parseInt(e.target.value) }
-                    })}
-                    min="256"
-                    max="3072"
-                    step="256"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-teal-500"
-                  />
-                  <p className="text-xs text-slate-500">Vector embedding dimension size. Higher dimensions provide better semantic accuracy but require more storage (recommended: 1536 for text-embedding-3-small).</p>
-                </div>
-              </div>
             </div>
           </div>
         )}
@@ -1972,14 +1968,6 @@ export default function SystemConfigPage() {
               </div>
               <pre className="text-xs text-slate-300 bg-slate-950 p-4 rounded-lg overflow-x-auto border border-slate-800">
                 {JSON.stringify({
-                  routing: {
-                    intelligent_routing_enabled: routingEnabled,
-                    routing_low_threshold: lowThreshold,
-                    routing_medium_threshold: mediumThreshold,
-                    routing_min_success_rate: minSuccessRate,
-                    anthropic_provider_enabled: anthropicEnabled,
-                    note: "Routing threshold controlled by min_executions_for_score in AIS Config"
-                  },
                   calculator: calcConfig,
                   pricing_models: pricingModels.map(m => ({
                     provider: m.provider,

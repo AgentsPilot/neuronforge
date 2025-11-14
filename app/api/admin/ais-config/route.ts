@@ -202,18 +202,35 @@ export async function GET() {
 
     console.log('✅ [AIS Config] Categories:', Object.keys(rangesByCategory));
 
-    // Fetch system limits and AIS weights
-    console.log('🔍 [AIS Config] Fetching system limits and AIS weights...');
-    const { data: configData, error: configError } = await supabaseServiceRole
+    // Fetch system limits, AIS weights, and per-step routing config
+    console.log('🔍 [AIS Config] Fetching system limits, AIS weights, and per-step routing config...');
+    const { data: configData, error: configError} = await supabaseServiceRole
       .from('ais_system_config')
       .select('config_key, config_value')
       .in('config_key', [
         'min_agent_intensity', 'max_agent_intensity', 'min_executions_for_score',
-        'ais_weight_tokens', 'ais_weight_execution', 'ais_weight_plugins', 'ais_weight_workflow',
+        // Main dimension weights
+        'ais_weight_tokens', 'ais_weight_execution', 'ais_weight_plugins', 'ais_weight_workflow', 'ais_weight_memory',
+        // Token subdimension weights
         'ais_token_volume_weight', 'ais_token_peak_weight', 'ais_token_io_weight',
+        // Execution subdimension weights
         'ais_execution_iterations_weight', 'ais_execution_duration_weight', 'ais_execution_failure_weight', 'ais_execution_retry_weight',
+        // Plugin subdimension weights
         'ais_plugin_count_weight', 'ais_plugin_usage_weight', 'ais_plugin_overhead_weight',
-        'ais_workflow_steps_weight', 'ais_workflow_branches_weight', 'ais_workflow_loops_weight', 'ais_workflow_parallel_weight'
+        // Workflow subdimension weights
+        'ais_workflow_steps_weight', 'ais_workflow_branches_weight', 'ais_workflow_loops_weight', 'ais_workflow_parallel_weight',
+        // Memory subdimension weights (Phase 4)
+        'ais_memory_ratio_weight', 'ais_memory_diversity_weight', 'ais_memory_volume_weight',
+        // Creation component weights (Phase 5)
+        'ais_creation_workflow_weight', 'ais_creation_plugin_weight', 'ais_creation_io_weight',
+        // Combined blend weights (Phase 6)
+        'ais_weight_creation', 'ais_weight_execution_blend',
+        // Per-step routing configuration
+        'pilot_routing_complexity_thresholds', 'pilot_routing_tier1_model', 'pilot_routing_tier2_model', 'pilot_routing_tier3_model',
+        'pilot_complexity_weights_llm_decision', 'pilot_complexity_weights_transform', 'pilot_complexity_weights_conditional',
+        'pilot_complexity_weights_action', 'pilot_complexity_weights_api_call', 'pilot_complexity_weights_default',
+        'pilot_complexity_thresholds_prompt_length', 'pilot_complexity_thresholds_data_size',
+        'pilot_complexity_thresholds_condition_count', 'pilot_complexity_thresholds_context_depth'
       ]);
 
     if (configError) {
@@ -246,7 +263,17 @@ export async function GET() {
       workflow_steps: 0.4,
       workflow_branches: 0.25,
       workflow_loops: 0.20,
-      workflow_parallel: 0.15
+      workflow_parallel: 0.15,
+      memory_ratio: 0.5,
+      memory_diversity: 0.3,
+      memory_volume: 0.2
+    };
+
+    // Phase 5: Creation component weights
+    const creationWeights = {
+      workflow: 0.5,
+      plugins: 0.3,
+      io_schema: 0.2
     };
 
     configData?.forEach(item => {
@@ -324,11 +351,95 @@ export async function GET() {
         case 'ais_workflow_parallel_weight':
           aisWeights.workflow_parallel = value;
           break;
+        // Memory subdimensions
+        case 'ais_memory_ratio_weight':
+          aisWeights.memory_ratio = value;
+          break;
+        case 'ais_memory_diversity_weight':
+          aisWeights.memory_diversity = value;
+          break;
+        case 'ais_memory_volume_weight':
+          aisWeights.memory_volume = value;
+          break;
+        // Phase 5: Creation component weights
+        case 'ais_creation_workflow_weight':
+          creationWeights.workflow = value;
+          break;
+        case 'ais_creation_plugin_weight':
+          creationWeights.plugins = value;
+          break;
+        case 'ais_creation_io_weight':
+          creationWeights.io_schema = value;
+          break;
       }
     });
 
     console.log('✅ [AIS Config] System limits:', systemLimits);
     console.log('✅ [AIS Config] AIS weights loaded');
+
+    // Parse per-step routing configuration
+    const perStepRouting: any = {
+      tier1Max: 3.9,
+      tier2Max: 6.9,
+      tier1Model: 'gpt-4o-mini',
+      tier1Provider: 'openai',
+      tier2Model: 'claude-3-5-haiku-20241022',
+      tier2Provider: 'anthropic',
+      tier3Model: 'gpt-4o',
+      tier3Provider: 'openai',
+      llmDecision: { promptLength: 0.15, dataSize: 0.10, conditionCount: 0.15, contextDepth: 0.15, reasoningDepth: 0.30, outputComplexity: 0.15 },
+      transform: { promptLength: 0.15, dataSize: 0.30, conditionCount: 0.10, contextDepth: 0.15, reasoningDepth: 0.15, outputComplexity: 0.15 },
+      conditional: { promptLength: 0.15, dataSize: 0.10, conditionCount: 0.30, contextDepth: 0.15, reasoningDepth: 0.20, outputComplexity: 0.10 },
+      action: { promptLength: 0.20, dataSize: 0.15, conditionCount: 0.15, contextDepth: 0.15, reasoningDepth: 0.20, outputComplexity: 0.15 },
+      apiCall: { promptLength: 0.20, dataSize: 0.20, conditionCount: 0.15, contextDepth: 0.15, reasoningDepth: 0.15, outputComplexity: 0.15 },
+      default: { promptLength: 0.20, dataSize: 0.15, conditionCount: 0.15, contextDepth: 0.15, reasoningDepth: 0.20, outputComplexity: 0.15 },
+      promptLengthThresholds: { low: 200, medium: 500, high: 1000 },
+      dataSizeThresholds: { low: 1024, medium: 10240, high: 51200 },
+      conditionCountThresholds: { low: 2, medium: 5, high: 10 },
+      contextDepthThresholds: { low: 2, medium: 5, high: 10 }
+    };
+
+    configData?.forEach(item => {
+      if (item.config_key === 'pilot_routing_complexity_thresholds') {
+        const thresholds = JSON.parse(item.config_value);
+        perStepRouting.tier1Max = thresholds.tier1_max || 3.9;
+        perStepRouting.tier2Max = thresholds.tier2_max || 6.9;
+      } else if (item.config_key === 'pilot_routing_tier1_model') {
+        const tier1 = JSON.parse(item.config_value);
+        perStepRouting.tier1Model = tier1.model || 'gpt-4o-mini';
+        perStepRouting.tier1Provider = tier1.provider || 'openai';
+      } else if (item.config_key === 'pilot_routing_tier2_model') {
+        const tier2 = JSON.parse(item.config_value);
+        perStepRouting.tier2Model = tier2.model || 'claude-3-5-haiku-20241022';
+        perStepRouting.tier2Provider = tier2.provider || 'anthropic';
+      } else if (item.config_key === 'pilot_routing_tier3_model') {
+        const tier3 = JSON.parse(item.config_value);
+        perStepRouting.tier3Model = tier3.model || 'gpt-4o';
+        perStepRouting.tier3Provider = tier3.provider || 'openai';
+      } else if (item.config_key === 'pilot_complexity_weights_llm_decision') {
+        perStepRouting.llmDecision = JSON.parse(item.config_value);
+      } else if (item.config_key === 'pilot_complexity_weights_transform') {
+        perStepRouting.transform = JSON.parse(item.config_value);
+      } else if (item.config_key === 'pilot_complexity_weights_conditional') {
+        perStepRouting.conditional = JSON.parse(item.config_value);
+      } else if (item.config_key === 'pilot_complexity_weights_action') {
+        perStepRouting.action = JSON.parse(item.config_value);
+      } else if (item.config_key === 'pilot_complexity_weights_api_call') {
+        perStepRouting.apiCall = JSON.parse(item.config_value);
+      } else if (item.config_key === 'pilot_complexity_weights_default') {
+        perStepRouting.default = JSON.parse(item.config_value);
+      } else if (item.config_key === 'pilot_complexity_thresholds_prompt_length') {
+        perStepRouting.promptLengthThresholds = JSON.parse(item.config_value);
+      } else if (item.config_key === 'pilot_complexity_thresholds_data_size') {
+        perStepRouting.dataSizeThresholds = JSON.parse(item.config_value);
+      } else if (item.config_key === 'pilot_complexity_thresholds_condition_count') {
+        perStepRouting.conditionCountThresholds = JSON.parse(item.config_value);
+      } else if (item.config_key === 'pilot_complexity_thresholds_context_depth') {
+        perStepRouting.contextDepthThresholds = JSON.parse(item.config_value);
+      }
+    });
+
+    console.log('✅ [AIS Config] Per-step routing config loaded');
 
     const response = {
       success: true,
@@ -348,7 +459,9 @@ export async function GET() {
         ranges: rangesByCategory,
         systemLimits,
         aisWeights,
-        growthThresholds
+        creationWeights, // Phase 5
+        growthThresholds,
+        perStepRouting
       }
     };
 
@@ -568,6 +681,159 @@ export async function POST(req: Request) {
         success: true,
         message: 'Growth thresholds updated successfully'
       });
+    }
+
+    if (action === 'update_per_step_routing') {
+      const { perStepRouting } = body;
+
+      if (!perStepRouting) {
+        return NextResponse.json({ error: 'Missing per-step routing data' }, { status: 400 });
+      }
+
+      console.log('🔄 [AIS Config] Updating per-step routing configuration:', perStepRouting);
+
+      try {
+        // Update complexity thresholds
+        await supabaseServiceRole
+          .from('ais_system_config')
+          .upsert({
+            config_key: 'pilot_routing_complexity_thresholds',
+            config_value: JSON.stringify({
+              tier1_max: perStepRouting.tier1Max,
+              tier2_max: perStepRouting.tier2Max
+            }),
+            description: 'Complexity score thresholds for model tier assignment in per-step routing'
+          }, { onConflict: 'config_key' });
+
+        // Update tier models
+        await supabaseServiceRole
+          .from('ais_system_config')
+          .upsert({
+            config_key: 'pilot_routing_tier1_model',
+            config_value: JSON.stringify({
+              model: perStepRouting.tier1Model,
+              provider: perStepRouting.tier1Provider
+            }),
+            description: 'Tier 1 model configuration: Low complexity tasks (0-3.9)'
+          }, { onConflict: 'config_key' });
+
+        await supabaseServiceRole
+          .from('ais_system_config')
+          .upsert({
+            config_key: 'pilot_routing_tier2_model',
+            config_value: JSON.stringify({
+              model: perStepRouting.tier2Model,
+              provider: perStepRouting.tier2Provider
+            }),
+            description: 'Tier 2 model configuration: Medium complexity tasks (4.0-6.9)'
+          }, { onConflict: 'config_key' });
+
+        await supabaseServiceRole
+          .from('ais_system_config')
+          .upsert({
+            config_key: 'pilot_routing_tier3_model',
+            config_value: JSON.stringify({
+              model: perStepRouting.tier3Model,
+              provider: perStepRouting.tier3Provider
+            }),
+            description: 'Tier 3 model configuration: High complexity tasks (7.0-10.0)'
+          }, { onConflict: 'config_key' });
+
+        // Update complexity factor weights for each step type
+        await supabaseServiceRole
+          .from('ais_system_config')
+          .upsert({
+            config_key: 'pilot_complexity_weights_llm_decision',
+            config_value: JSON.stringify(perStepRouting.llmDecision),
+            description: 'Complexity factor weights for LLM decision steps (highest reasoning weight)'
+          }, { onConflict: 'config_key' });
+
+        await supabaseServiceRole
+          .from('ais_system_config')
+          .upsert({
+            config_key: 'pilot_complexity_weights_transform',
+            config_value: JSON.stringify(perStepRouting.transform),
+            description: 'Complexity factor weights for transform steps (highest data size weight)'
+          }, { onConflict: 'config_key' });
+
+        await supabaseServiceRole
+          .from('ais_system_config')
+          .upsert({
+            config_key: 'pilot_complexity_weights_conditional',
+            config_value: JSON.stringify(perStepRouting.conditional),
+            description: 'Complexity factor weights for conditional steps (highest condition count weight)'
+          }, { onConflict: 'config_key' });
+
+        await supabaseServiceRole
+          .from('ais_system_config')
+          .upsert({
+            config_key: 'pilot_complexity_weights_action',
+            config_value: JSON.stringify(perStepRouting.action),
+            description: 'Complexity factor weights for action steps (balanced weights)'
+          }, { onConflict: 'config_key' });
+
+        await supabaseServiceRole
+          .from('ais_system_config')
+          .upsert({
+            config_key: 'pilot_complexity_weights_api_call',
+            config_value: JSON.stringify(perStepRouting.apiCall),
+            description: 'Complexity factor weights for API call steps (lower reasoning weight)'
+          }, { onConflict: 'config_key' });
+
+        await supabaseServiceRole
+          .from('ais_system_config')
+          .upsert({
+            config_key: 'pilot_complexity_weights_default',
+            config_value: JSON.stringify(perStepRouting.default),
+            description: 'Complexity factor weights for default/unknown step types (balanced weights)'
+          }, { onConflict: 'config_key' });
+
+        // Update complexity scoring thresholds
+        await supabaseServiceRole
+          .from('ais_system_config')
+          .upsert({
+            config_key: 'pilot_complexity_thresholds_prompt_length',
+            config_value: JSON.stringify(perStepRouting.promptLengthThresholds),
+            description: 'Character count thresholds for prompt length complexity scoring'
+          }, { onConflict: 'config_key' });
+
+        await supabaseServiceRole
+          .from('ais_system_config')
+          .upsert({
+            config_key: 'pilot_complexity_thresholds_data_size',
+            config_value: JSON.stringify(perStepRouting.dataSizeThresholds),
+            description: 'Byte count thresholds for data size complexity scoring'
+          }, { onConflict: 'config_key' });
+
+        await supabaseServiceRole
+          .from('ais_system_config')
+          .upsert({
+            config_key: 'pilot_complexity_thresholds_condition_count',
+            config_value: JSON.stringify(perStepRouting.conditionCountThresholds),
+            description: 'Number of conditions thresholds for conditional complexity scoring'
+          }, { onConflict: 'config_key' });
+
+        await supabaseServiceRole
+          .from('ais_system_config')
+          .upsert({
+            config_key: 'pilot_complexity_thresholds_context_depth',
+            config_value: JSON.stringify(perStepRouting.contextDepthThresholds),
+            description: 'Context reference count thresholds for context depth complexity scoring'
+          }, { onConflict: 'config_key' });
+
+        console.log('✅ [AIS Config] Per-step routing configuration updated successfully');
+
+        return NextResponse.json({
+          success: true,
+          message: 'Per-step routing configuration updated successfully'
+        });
+      } catch (error: any) {
+        console.error('❌ [AIS Config] Error updating per-step routing:', error);
+        return NextResponse.json({
+          success: false,
+          error: 'Failed to update per-step routing configuration: ' + error.message
+        }, { status: 500 });
+      }
     }
 
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });

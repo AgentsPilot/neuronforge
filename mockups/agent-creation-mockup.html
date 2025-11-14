@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Creation Mockup</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+      background: #F5F5F7;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+    }
+
+    .container {
+      max-width: 1400px;
+      width: 100%;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+    }
+
+    .panel {
+      background: white;
+      border-radius: 24px;
+      padding: 32px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+      display: flex;
+      flex-direction: column;
+      min-height: 600px;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 32px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #F0F0F0;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .back-button {
+      width: 32px;
+      height: 32px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      transition: background 0.2s;
+    }
+
+    .back-button:hover {
+      background: #F5F5F7;
+    }
+
+    .back-icon {
+      width: 20px;
+      height: 20px;
+      fill: #1F2937;
+    }
+
+    .panel-title {
+      font-size: 28px;
+      font-weight: 600;
+      color: #1F2937;
+    }
+
+    .minimize-button {
+      width: 32px;
+      height: 32px;
+      border: none;
+      background: #F5F5F7;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      transition: background 0.2s;
+    }
+
+    .minimize-button:hover {
+      background: #E5E7EB;
+    }
+
+    .minimize-icon {
+      width: 20px;
+      height: 2px;
+      background: #6B7280;
+    }
+
+    .chat-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      overflow-y: auto;
+    }
+
+    .message {
+      max-width: 85%;
+      padding: 16px 20px;
+      border-radius: 16px;
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    .message.assistant {
+      background: white;
+      border: 1px solid #E5E7EB;
+      color: #1F2937;
+      align-self: flex-start;
+    }
+
+    .message.user {
+      background: #E9D5FF;
+      color: #1F2937;
+      align-self: flex-end;
+    }
+
+    .message ul {
+      margin-top: 12px;
+      padding-left: 20px;
+    }
+
+    .message li {
+      margin-bottom: 6px;
+    }
+
+    /* Connections Panel */
+    .connections-content {
+      display: flex;
+      flex-direction: column;
+      gap: 32px;
+    }
+
+    .connection-card {
+      background: #F9FAFB;
+      border-radius: 16px;
+      padding: 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      border: 2px solid transparent;
+      transition: all 0.2s;
+      cursor: pointer;
+    }
+
+    .connection-card:hover {
+      border-color: #8B5CF6;
+      background: #F5F3FF;
+    }
+
+    .connection-icon {
+      width: 48px;
+      height: 48px;
+      background: white;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .docs-icon {
+      width: 32px;
+      height: 32px;
+      fill: #4285F4;
+    }
+
+    .connection-name {
+      font-size: 20px;
+      font-weight: 600;
+      color: #1F2937;
+    }
+
+    .section-title {
+      font-size: 20px;
+      font-weight: 600;
+      color: #1F2937;
+      margin-bottom: 16px;
+    }
+
+    .io-card {
+      background: white;
+      border: 1px solid #E5E7EB;
+      border-radius: 16px;
+      padding: 20px;
+      transition: all 0.2s;
+    }
+
+    .io-card:hover {
+      border-color: #8B5CF6;
+      box-shadow: 0 4px 12px rgba(139, 92, 246, 0.1);
+    }
+
+    .io-header {
+      font-size: 16px;
+      font-weight: 600;
+      color: #1F2937;
+      margin-bottom: 12px;
+    }
+
+    .io-flow {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #9CA3AF;
+      font-size: 14px;
+    }
+
+    .arrow {
+      width: 20px;
+      height: 2px;
+      background: #E5E7EB;
+      position: relative;
+    }
+
+    .arrow::after {
+      content: '';
+      position: absolute;
+      right: -4px;
+      top: -3px;
+      width: 8px;
+      height: 8px;
+      border-right: 2px solid #E5E7EB;
+      border-bottom: 2px solid #E5E7EB;
+      transform: rotate(-45deg);
+    }
+
+    /* Summary Panel */
+    .summary-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .summary-text {
+      flex: 1;
+      font-size: 16px;
+      line-height: 1.8;
+      color: #374151;
+      margin-bottom: 32px;
+    }
+
+    .create-button {
+      width: 100%;
+      padding: 18px;
+      background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%);
+      color: white;
+      border: none;
+      border-radius: 16px;
+      font-size: 18px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 0 4px 16px rgba(139, 92, 246, 0.3);
+    }
+
+    .create-button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(139, 92, 246, 0.4);
+    }
+
+    .create-button:active {
+      transform: translateY(0);
+    }
+
+    @media (max-width: 1200px) {
+      .container {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Agent Creation Panel -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="header-left">
+          <button class="back-button">
+            <svg class="back-icon" viewBox="0 0 24 24">
+              <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+            </svg>
+          </button>
+          <h2 class="panel-title">Agent Creation</h2>
+        </div>
+        <button class="minimize-button">
+          <div class="minimize-icon"></div>
+        </button>
+      </div>
+
+      <div class="chat-container">
+        <div class="message assistant">
+          What would you like the agent to do?
+        </div>
+
+        <div class="message user">
+          Summarize meeting notes and save to Google Docs
+        </div>
+
+        <div class="message assistant">
+          Understood. Could you provide an example of meeting notes?
+        </div>
+
+        <div class="message user">
+          Sure! Here's a sample set of notes
+          <ul>
+            <li>Discussed project timeline</li>
+            <li>Set deadline for next milestone</li>
+            <li>Assigned tasks to team</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Connections Panel -->
+    <div class="panel">
+      <div class="panel-header">
+        <h2 class="panel-title">Connections</h2>
+      </div>
+
+      <div class="connections-content">
+        <!-- Google Docs Connection -->
+        <div>
+          <div class="connection-card">
+            <div class="connection-icon">
+              <svg class="docs-icon" viewBox="0 0 24 24">
+                <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+              </svg>
+            </div>
+            <span class="connection-name">Google Docs</span>
+          </div>
+        </div>
+
+        <!-- Input/Output Section -->
+        <div>
+          <h3 class="section-title">Input / Output</h3>
+          <div class="io-card">
+            <div class="io-header">Meeting notes</div>
+            <div class="io-flow">
+              <span>Summary</span>
+              <div class="arrow"></div>
+              <div class="arrow"></div>
+              <span>ry</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Summary Panel -->
+    <div class="panel">
+      <div class="panel-header">
+        <h2 class="panel-title">Agent Summary</h2>
+      </div>
+
+      <div class="summary-content">
+        <p class="summary-text">
+          This agent is designed to summarize meeting notes provided by the user and save the generated summaries to Google Docs.
+        </p>
+
+        <button class="create-button">
+          Create Agent
+        </button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Command Center - FlowOS</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+      background: #F5F5F7;
+      min-height: 100vh;
+      padding: 40px 20px;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+
+    .main-title {
+      font-size: 48px;
+      font-weight: 600;
+      color: #1F2937;
+      margin-bottom: 8px;
+    }
+
+    .subtitle {
+      font-size: 24px;
+      color: #6B7280;
+      font-weight: 400;
+    }
+
+    .container {
+      max-width: 1600px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 320px 1fr 380px;
+      gap: 24px;
+    }
+
+    .panel {
+      background: white;
+      border-radius: 24px;
+      padding: 32px;
+      box-shadow: 0 2px 16px rgba(0, 0, 0, 0.06);
+    }
+
+    /* Left Panel - Agent Health */
+    .agent-card {
+      margin-bottom: 32px;
+    }
+
+    .agent-name {
+      font-size: 18px;
+      font-weight: 600;
+      color: #1F2937;
+      margin-bottom: 16px;
+    }
+
+    .agent-icons {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .icon-badge {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+
+    .icon-badge.add {
+      background: #10B981;
+      color: white;
+    }
+
+    .schedule-text {
+      font-size: 14px;
+      color: #6B7280;
+      margin-bottom: 24px;
+    }
+
+    .health-gauge {
+      position: relative;
+      width: 160px;
+      height: 160px;
+      margin: 0 auto 24px;
+    }
+
+    .gauge-svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    .gauge-score {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 56px;
+      font-weight: 700;
+      color: #1F2937;
+    }
+
+    .gauge-range {
+      position: absolute;
+      bottom: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 14px;
+      color: #9CA3AF;
+      display: flex;
+      width: 100%;
+      justify-content: space-between;
+      padding: 0 20px;
+    }
+
+    .health-stats {
+      font-size: 14px;
+      color: #374151;
+      line-height: 2;
+    }
+
+    .health-label {
+      color: #6B7280;
+    }
+
+    .reliability-dots {
+      display: inline-flex;
+      gap: 4px;
+      margin-left: 8px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #10B981;
+    }
+
+    /* Middle Panel - Recent Executions */
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+
+    .panel-title {
+      font-size: 24px;
+      font-weight: 600;
+      color: #1F2937;
+    }
+
+    .trend-icon {
+      width: 24px;
+      height: 24px;
+      stroke: #9CA3AF;
+      fill: none;
+      stroke-width: 2;
+    }
+
+    .chart-container {
+      height: 100px;
+      margin-bottom: 32px;
+      position: relative;
+    }
+
+    .chart-svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    .execution-list {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .execution-item {
+      padding: 16px;
+      background: #F9FAFB;
+      border-radius: 12px;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 16px;
+      align-items: center;
+      transition: all 0.2s;
+    }
+
+    .execution-item:hover {
+      background: #F3F4F6;
+      transform: translateX(4px);
+    }
+
+    .run-number {
+      font-size: 15px;
+      font-weight: 600;
+      color: #1F2937;
+    }
+
+    .status-badge {
+      font-size: 13px;
+      font-weight: 500;
+      padding: 4px 12px;
+      border-radius: 6px;
+      display: inline-block;
+    }
+
+    .status-badge.success {
+      background: #D1FAE5;
+      color: #059669;
+    }
+
+    .status-badge.timeout {
+      background: #FEF3C7;
+      color: #D97706;
+    }
+
+    .execution-details {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      font-size: 13px;
+      color: #6B7280;
+    }
+
+    .info-icon {
+      width: 16px;
+      height: 16px;
+      fill: #9CA3AF;
+    }
+
+    .duration {
+      font-size: 14px;
+      color: #6B7280;
+      font-weight: 500;
+    }
+
+    .view-log-link {
+      text-align: center;
+      margin-top: 16px;
+    }
+
+    .view-log-link a {
+      color: #6366F1;
+      text-decoration: none;
+      font-size: 15px;
+      font-weight: 500;
+    }
+
+    .view-log-link a:hover {
+      text-decoration: underline;
+    }
+
+    /* Right Panel - Results */
+    .tabs {
+      display: flex;
+      gap: 24px;
+      margin-bottom: 32px;
+      border-bottom: 2px solid #F0F0F0;
+    }
+
+    .tab {
+      font-size: 18px;
+      font-weight: 500;
+      color: #6B7280;
+      padding-bottom: 12px;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .tab.active {
+      color: #6366F1;
+      border-bottom-color: #6366F1;
+    }
+
+    .tab:hover {
+      color: #4F46E5;
+    }
+
+    .result-title {
+      font-size: 20px;
+      font-weight: 600;
+      color: #1F2937;
+      margin-bottom: 20px;
+    }
+
+    .result-list {
+      list-style: none;
+      margin-bottom: 32px;
+    }
+
+    .result-list li {
+      padding: 10px 0;
+      color: #374151;
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    .result-list li::before {
+      content: "• ";
+      color: #6366F1;
+      font-weight: bold;
+      margin-right: 8px;
+    }
+
+    .action-button {
+      width: 100%;
+      padding: 16px;
+      background: linear-gradient(135deg, #6366F1 0%, #4F46E5 100%);
+      color: white;
+      border: none;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+      margin-bottom: 32px;
+    }
+
+    .action-button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4);
+    }
+
+    .sub-tabs {
+      display: flex;
+      gap: 32px;
+      margin-bottom: 24px;
+      border-bottom: 1px solid #E5E7EB;
+    }
+
+    .sub-tab {
+      font-size: 15px;
+      font-weight: 500;
+      color: #6B7280;
+      padding-bottom: 8px;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .sub-tab.active {
+      color: #1F2937;
+      border-bottom-color: #1F2937;
+    }
+
+    .action-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .action-item {
+      padding: 12px 16px;
+      background: #F9FAFB;
+      border-radius: 8px;
+      color: #374151;
+      font-size: 14px;
+      transition: all 0.2s;
+      cursor: pointer;
+    }
+
+    .action-item:hover {
+      background: #F3F4F6;
+    }
+
+    @media (max-width: 1400px) {
+      .container {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1 class="main-title">Agent Command Center</h1>
+    <p class="subtitle">FlowOS</p>
+  </div>
+
+  <div class="container">
+    <!-- Left Panel - Agent Health -->
+    <div class="panel">
+      <div class="agent-card">
+        <h3 class="agent-name">Weekly Client Sentiment Monitor</h3>
+
+        <div class="agent-icons">
+          <div class="icon-badge add">+</div>
+          <div class="icon-badge" style="background: #FEF3C7;">📊</div>
+          <div class="icon-badge" style="background: #DBEAFE;">G</div>
+        </div>
+
+        <p class="schedule-text">Scheduled · 4 hours ago</p>
+
+        <div class="health-gauge">
+          <svg class="gauge-svg" viewBox="0 0 160 160">
+            <defs>
+              <linearGradient id="healthGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#6366F1;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#8B5CF6;stop-opacity:1" />
+              </linearGradient>
+            </defs>
+            <!-- Background arc -->
+            <path d="M 20 80 A 60 60 0 1 1 140 80"
+                  stroke="#E5E7EB"
+                  stroke-width="12"
+                  fill="none"
+                  stroke-linecap="round"/>
+            <!-- Progress arc (about 80% for score of 4) -->
+            <path d="M 20 80 A 60 60 0 1 1 140 80"
+                  stroke="url(#healthGradient)"
+                  stroke-width="12"
+                  fill="none"
+                  stroke-linecap="round"
+                  stroke-dasharray="190 237"
+                  transform="rotate(-90 80 80)"/>
+          </svg>
+          <div class="gauge-score">4</div>
+          <div class="gauge-range">
+            <span>A – 5</span>
+            <span>5</span>
+          </div>
+        </div>
+
+        <div class="health-stats">
+          <div><span class="health-label">Health Status:</span> <strong>Stable</strong></div>
+          <div><span class="health-label">Average runtime:</span> <strong>15s</strong></div>
+          <div><span class="health-label">Token efficiency:</span> <strong>High</strong></div>
+          <div>
+            <span class="health-label">Plugin reliability:</span>
+            <span class="reliability-dots">
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <span class="dot"></span>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Middle Panel - Recent Executions -->
+    <div class="panel">
+      <div class="panel-header">
+        <h2 class="panel-title">Recent Executions</h2>
+        <svg class="trend-icon" viewBox="0 0 24 24">
+          <path d="M3 17L9 11L13 15L21 7" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+
+      <!-- Execution Chart -->
+      <div class="chart-container">
+        <svg class="chart-svg" viewBox="0 0 400 100" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="chartGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" style="stop-color:#6366F1;stop-opacity:0.3" />
+              <stop offset="100%" style="stop-color:#8B5CF6;stop-opacity:0.3" />
+            </linearGradient>
+          </defs>
+          <!-- Line chart with dots -->
+          <circle cx="0" cy="65" r="6" fill="#6366F1"/>
+          <circle cx="100" cy="55" r="6" fill="#6366F1"/>
+          <circle cx="200" cy="45" r="6" fill="#6366F1"/>
+          <circle cx="300" cy="50" r="6" fill="#6366F1"/>
+          <circle cx="400" cy="30" r="6" fill="#6366F1"/>
+
+          <path d="M 0 65 Q 50 60, 100 55 T 200 45 T 300 50 T 400 30"
+                stroke="#6366F1"
+                stroke-width="3"
+                fill="none"
+                stroke-linecap="round"
+                stroke-linejoin="round"/>
+        </svg>
+      </div>
+
+      <!-- Execution List -->
+      <div class="execution-list">
+        <!-- Run 125 -->
+        <div class="execution-item">
+          <div>
+            <div class="run-number">Run #125</div>
+          </div>
+          <div class="execution-details">
+            <span class="status-badge success">Success</span>
+          </div>
+          <div class="duration">12s</div>
+        </div>
+
+        <!-- Run 124 -->
+        <div class="execution-item">
+          <div>
+            <div class="run-number">Run #124</div>
+            <div class="status-badge success">Success</div>
+          </div>
+          <div class="execution-details">
+            <span class="status-badge timeout">Plugin timeout (Gmail)</span>
+            <svg class="info-icon" viewBox="0 0 24 24">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+            </svg>
+          </div>
+          <div class="duration"></div>
+        </div>
+
+        <!-- Run 123 -->
+        <div class="execution-item">
+          <div>
+            <div class="run-number">Run #123</div>
+            <div class="status-badge success" style="color: #DC2626; background: #FEE2E2;">Success</div>
+          </div>
+          <div class="execution-details">
+            <span class="status-badge timeout">Plugin timeout</span>
+          </div>
+          <div class="duration">10s</div>
+        </div>
+
+        <!-- Run 122 -->
+        <div class="execution-item">
+          <div>
+            <div class="run-number">Run #122</div>
+            <div class="status-badge success">Success</div>
+          </div>
+          <div class="execution-details">
+            <span class="status-badge success">Success</span>
+          </div>
+          <div class="duration">10s</div>
+        </div>
+      </div>
+
+      <div class="view-log-link">
+        <a href="#">View Full Log</a>
+      </div>
+    </div>
+
+    <!-- Right Panel - Results & Analytics -->
+    <div class="panel">
+      <div class="tabs">
+        <div class="tab active">Results</div>
+        <div class="tab">Analytics</div>
+      </div>
+
+      <h3 class="result-title">Summary of Client Emails (Last 7 Days)</h3>
+
+      <ul class="result-list">
+        <li>Total emails analyzed</li>
+        <li>Negative tone: 3</li>
+        <li>Positive tone: 18</li>
+        <li>Neutral: 4</li>
+      </ul>
+
+      <button class="action-button">Open Detailed Report</button>
+
+      <div class="sub-tabs">
+        <div class="sub-tab active">Analytics</div>
+        <div class="sub-tab">Issues</div>
+      </div>
+
+      <div class="sub-tabs" style="border: none; margin-bottom: 16px;">
+        <div class="sub-tab active">Recun ⌄</div>
+        <div class="sub-tab" style="font-style: italic;">€jisrt</div>
+      </div>
+
+      <div class="action-list">
+        <div class="action-item">Open Details</div>
+        <div class="action-item">Action</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

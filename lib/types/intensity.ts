@@ -327,6 +327,15 @@ export const CREATION_WEIGHTS = {
 
 /**
  * Execution score weights (5 components)
+ *
+ * @deprecated DO NOT USE - These constants are deprecated as of Phase 6.
+ * Load weights from database using AISConfigService.getExecutionWeights() instead.
+ *
+ * These values are kept only for backward compatibility and type definitions.
+ * They will be removed in v2.0.
+ *
+ * @see AISConfigService.getExecutionWeights() for database-driven weights
+ *
  * UPDATED: Rebalanced to include memory complexity
  */
 export const EXECUTION_WEIGHTS = {
@@ -339,6 +348,14 @@ export const EXECUTION_WEIGHTS = {
 
 /**
  * Combined score weights (creation + execution)
+ *
+ * @deprecated DO NOT USE - These constants are deprecated as of Phase 6.
+ * Load weights from database using AISConfigService.getCombinedWeights() instead.
+ *
+ * These values are kept only for backward compatibility and type definitions.
+ * They will be removed in v2.0.
+ *
+ * @see AISConfigService.getCombinedWeights() for database-driven weights
  */
 export const COMBINED_WEIGHTS = {
   CREATION: 0.3,               // 30% weight (creation score)

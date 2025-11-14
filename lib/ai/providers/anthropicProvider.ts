@@ -134,7 +134,7 @@ export class AnthropicProvider extends BaseAIProvider {
    * @private
    */
   private convertMessagesToClaudeFormat(
-    messages: Array<{ role: string; content: string; tool_call_id?: string }>
+    messages: Array<{ role: string; content: string; tool_call_id?: string; tool_calls?: any[] }>
   ): Anthropic.MessageParam[] {
     return messages.map(m => {
       // Handle tool results (OpenAI: role='tool', Claude: role='user' with tool_result block)
@@ -146,6 +146,34 @@ export class AnthropicProvider extends BaseAIProvider {
             tool_use_id: m.tool_call_id,
             content: m.content
           }]
+        };
+      }
+
+      // Handle assistant messages with tool calls
+      if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0) {
+        const content: any[] = [];
+
+        // Add text content if present
+        if (m.content && m.content.trim()) {
+          content.push({
+            type: 'text' as const,
+            text: m.content
+          });
+        }
+
+        // Add tool_use blocks
+        m.tool_calls.forEach(toolCall => {
+          content.push({
+            type: 'tool_use' as const,
+            id: toolCall.id,
+            name: toolCall.function.name,
+            input: JSON.parse(toolCall.function.arguments)
+          });
+        });
+
+        return {
+          role: 'assistant' as const,
+          content
         };
       }
 
@@ -182,10 +210,10 @@ export class AnthropicProvider extends BaseAIProvider {
     const toolCalls: any[] = [];
     let textContent = '';
 
-    response.content.forEach((block, index) => {
+    response.content.forEach((block) => {
       if (block.type === 'tool_use') {
         toolCalls.push({
-          id: `call_${block.id}`,
+          id: block.id, // Use Claude's original ID (no prefix needed)
           type: 'function',
           function: {
             name: block.name,

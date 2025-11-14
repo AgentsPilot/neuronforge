@@ -162,6 +162,78 @@ export async function POST(req: Request) {
       user.email  // NEW: Pass user email for notifications
     )
 
+    // ========================================
+    // 🚀 PILOT DUAL-FORMAT GENERATION
+    // ========================================
+    // Generate workflow_steps (ALWAYS - for UI animation)
+    const workflow_steps = analysis.workflow_steps.map(step => ({
+      operation: step.operation,
+      plugin: step.plugin,
+      plugin_action: step.plugin_action,
+      params: step.params || {}, // IMPORTANT: Preserve params from AI analysis
+      validated: true,
+      type: step.plugin === 'ai_processing' ? 'ai_processing' : 'plugin_action'
+    }))
+
+    // Check if Pilot is enabled
+    const { SystemConfigService } = await import('@/lib/services/SystemConfigService')
+    const pilotEnabled = await SystemConfigService.getBoolean(
+      supabaseServiceRole,
+      'pilot_enabled',
+      false
+    )
+
+    console.log(`🔧 Pilot system status: ${pilotEnabled ? 'enabled' : 'disabled'}`)
+
+    // Generate pilot_steps (ALWAYS - default format for all agents)
+    // pilot_steps is the normalized Pilot format, preferred for execution
+    // workflow_steps is kept for backward compatibility with old agents
+    const pilot_steps = generatePilotSteps(analysis.workflow_steps, workflow_steps)
+    console.log(`🚀 Generated ${pilot_steps.length} pilot_steps (normalized Pilot format)`)
+
+    // Helper function to convert legacy format to Pilot format
+    function generatePilotSteps(analysisSteps: any[], legacySteps: any[]): any[] {
+      return analysisSteps.map((step, idx) => {
+        const base = {
+          id: `step${idx + 1}`,
+          name: step.operation || `Step ${idx + 1}`,
+          dependencies: idx > 0 ? [`step${idx}`] : [],
+        }
+
+        // Convert legacy plugin_action to Pilot action
+        if (step.plugin && step.plugin_action) {
+          return {
+            ...base,
+            type: 'action',
+            plugin: step.plugin,
+            action: step.plugin_action,
+            params: step.params || {},
+          }
+        }
+
+        // Convert ai_processing to Pilot ai_processing
+        if (step.plugin === 'ai_processing' || legacySteps[idx]?.type === 'ai_processing') {
+          // Use prompt from params if available, otherwise use operation
+          const prompt = step.params?.prompt || step.operation
+          return {
+            ...base,
+            type: 'ai_processing',
+            prompt: prompt,
+            params: step.params || {},
+          }
+        }
+
+        // Fallback: generic action
+        return {
+          ...base,
+          type: 'action',
+          plugin: step.plugin || 'unknown',
+          action: step.plugin_action || 'process',
+          params: step.params || {},
+        }
+      })
+    }
+
     // Build agent data from AgentKit's intelligent analysis
     const agentData = {
       user_id: user.id,
@@ -186,13 +258,8 @@ export async function POST(req: Request) {
       ai_reasoning: `${analysis.reasoning}. Confidence: ${Math.round(analysis.confidence * 100)}%`,
       ai_confidence: Math.round(analysis.confidence * 100),
       ai_generated_at: new Date().toISOString(),
-      workflow_steps: analysis.workflow_steps.map(step => ({
-        operation: step.operation,
-        plugin: step.plugin,
-        plugin_action: step.plugin_action,
-        validated: true,
-        type: step.plugin === 'ai_processing' ? 'ai_processing' : 'plugin_action'
-      })),
+      workflow_steps: workflow_steps,  // Use pre-generated workflow_steps
+      pilot_steps: pilot_steps,         // NEW: Pilot execution steps (NULL if not needed)
       trigger_conditions: {
         error_handling: {
           on_failure: 'email',
@@ -223,6 +290,7 @@ export async function POST(req: Request) {
         input_schema: analysis.required_inputs,
         output_schema: outputInference.outputs,
         workflow_steps: analysis.workflow_steps,
+        pilot_steps: pilot_steps,  // NEW: Include pilot_steps in agent_config
         plugins_required: analysis.suggested_plugins,
         connected_plugins: analysis.suggested_plugins,
         system_prompt: analysis.system_prompt,  // Use AI-generated execution-optimized system prompt
@@ -230,7 +298,9 @@ export async function POST(req: Request) {
           reasoning: analysis.reasoning,
           confidence: Math.round(analysis.confidence * 100),
           workflow_type: analysis.workflow_type,
-          generation_method: 'agentkit_direct_v3'
+          generation_method: 'agentkit_direct_v3',
+          pilot_enabled: pilotEnabled,  // NEW: Track if Pilot was enabled during generation
+          pilot_steps_generated: !!pilot_steps  // NEW: Track if pilot_steps were generated
         }
       }
     }
@@ -240,7 +310,9 @@ export async function POST(req: Request) {
       plugins_count: agentData.plugins_required.length,
       plugins: agentData.plugins_required,
       inputs_count: agentData.input_schema.length,
-      steps_count: agentData.workflow_steps.length
+      steps_count: agentData.workflow_steps.length,
+      pilot_steps_count: pilot_steps?.length || 0,  // NEW: Log pilot_steps count
+      pilot_enabled: pilotEnabled
     })
 
     // Log successful generation to audit trail

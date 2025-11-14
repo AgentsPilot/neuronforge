@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useState, useMemo } from 'react'
 import { Session, User } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabaseClient'
 
@@ -119,10 +119,13 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
   }, [])
 
   // Create enhanced user object with connectedPlugins
-  const enhancedUser = user ? {
-    ...user,
-    connectedPlugins
-  } : null
+  // Use useMemo to prevent unnecessary re-renders when user object reference doesn't actually change
+  const enhancedUser = useMemo(() => {
+    return user ? {
+      ...user,
+      connectedPlugins
+    } : null
+  }, [user, connectedPlugins])
 
   return (
     <AuthContext.Provider value={{ 

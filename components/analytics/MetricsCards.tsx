@@ -23,7 +23,7 @@ interface MetricsCardsProps {
 }
 
 export const MetricsCards: React.FC<MetricsCardsProps> = ({ data, onViewChange }) => {
-  const { metrics, agents, activities, costBreakdown } = data;
+  const { metrics, agents, activities, costBreakdown, pilotCreditConfig } = data;
 
   // Count real agents (exclude system operations)
   const realAgents = agents.filter(a =>
@@ -35,15 +35,21 @@ export const MetricsCards: React.FC<MetricsCardsProps> = ({ data, onViewChange }
   const activeAgents = realAgents.filter(a => a.isActive && !a.isArchived).length;
   const totalAgents = realAgents.length;
 
-  // Calculate cost of agent creation (not count)
+  // Helper function to convert tokens to Pilot Credit cost
+  const calculatePilotCreditCost = (tokens: number): number => {
+    const pilotCredits = Math.ceil(tokens / pilotCreditConfig.tokensPerCredit);
+    return pilotCredits * pilotCreditConfig.pilotCreditCostUsd;
+  };
+
+  // Calculate cost of agent creation using Pilot Credit pricing (not LLM cost_usd)
   const agentCreationCost = data.rawActivities?.filter(activity =>
     activity.activity_type === 'agent_creation' || activity.activity_type === 'agent_generation'
-  ).reduce((sum, activity) => sum + (activity.cost_usd || 0), 0) || 0;
+  ).reduce((sum, activity) => sum + calculatePilotCreditCost(activity.total_tokens || 0), 0) || 0;
 
-  // Calculate cost of agent executions (not count)
+  // Calculate cost of agent executions using Pilot Credit pricing (not LLM cost_usd)
   const agentExecutionCost = data.rawActivities?.filter(activity =>
     activity.activity_type === 'agent_execution'
-  ).reduce((sum, activity) => sum + (activity.cost_usd || 0), 0) || 0;
+  ).reduce((sum, activity) => sum + calculatePilotCreditCost(activity.total_tokens || 0), 0) || 0;
 
   // Top activity type by cost - just use percentage, not count (count is unreliable due to name matching)
   const topActivity = costBreakdown[0];

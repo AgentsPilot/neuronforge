@@ -85,76 +85,6 @@ export default function AgentSandbox(props: AgentSandboxProps) {
 
   return (
     <div className="space-y-4">
-      {/* Header Controls - More Compact */}
-      <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-gradient-to-r from-blue-50 via-purple-50 to-pink-50 rounded-xl border border-blue-200">
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center shadow-md">
-              <Rocket className="h-4 w-4 text-white" />
-            </div>
-            {loading && (
-              <div className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-green-400 rounded-full animate-pulse">
-                <div className="w-full h-full bg-green-500 rounded-full animate-ping"></div>
-              </div>
-            )}
-          </div>
-          <div>
-            <h2 className="text-sm font-bold text-slate-900">
-              {executionContext === 'test' ? 'Test Your Agent' : 'Configure Agent'}
-            </h2>
-            <p className="text-slate-600 text-xs">
-              {executionContext === 'test'
-                ? "Let's see what magic it can do!"
-                : "Set up your agent for activation"
-              }
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {/* Configuration Status Indicator */}
-          {isConfigurationSaved && (
-            <div className="flex items-center gap-1 px-2 py-1 bg-green-100 rounded-lg border border-green-200">
-              <CheckCircle2 className="h-3 w-3 text-green-600" />
-              <span className="text-green-700 font-medium text-xs">Configured</span>
-            </div>
-          )}
-
-          {/* Mode Toggle - Clickable */}
-          <div className="flex items-center bg-white rounded-lg border border-slate-200 overflow-hidden">
-            <button
-              onClick={() => setExecutionContext('test')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 transition-all duration-200 ${
-                executionContext === 'test'
-                  ? 'bg-blue-100 text-blue-700'
-                  : 'text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              <Play className="h-3.5 w-3.5" />
-              <span className="font-semibold text-xs">Test</span>
-            </button>
-            <button
-              onClick={() => setExecutionContext('configure')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 transition-all duration-200 ${
-                executionContext === 'configure'
-                  ? 'bg-emerald-100 text-emerald-700'
-                  : 'text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              <Settings className="h-3.5 w-3.5" />
-              <span className="font-semibold text-xs">Configure</span>
-            </button>
-          </div>
-
-          {executionTime && (
-            <div className="flex items-center gap-1 px-2 py-1 bg-white rounded-lg border border-green-200 text-green-700">
-              <Timer className="h-3 w-3" />
-              <span className="font-medium text-xs">{formatDuration(executionTime)}</span>
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* Configuration Warning for Configure Mode */}
       {executionContext === 'configure' && !hasRequiredFieldsInConfigureMode() && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
@@ -209,42 +139,6 @@ export default function AgentSandbox(props: AgentSandboxProps) {
               </div>
             </div>
           </div>
-
-          {/* Context Information */}
-          {expandedSections.inputs && (
-            <div className={`border-b p-3 ${
-              executionContext === 'test'
-                ? 'bg-blue-50 border-blue-200'
-                : 'bg-green-50 border-green-200'
-            }`}>
-              <div className="flex items-center gap-2">
-                <div className={`w-6 h-6 rounded-lg flex items-center justify-center ${
-                  executionContext === 'test' ? 'bg-blue-100' : 'bg-green-100'
-                }`}>
-                  {executionContext === 'test' ? (
-                    <Info className="h-3 w-3 text-blue-600" />
-                  ) : (
-                    <Save className="h-3 w-3 text-green-600" />
-                  )}
-                </div>
-                <div>
-                  <h4 className={`font-medium text-sm ${
-                    executionContext === 'test' ? 'text-blue-900' : 'text-green-900'
-                  }`}>
-                    {executionContext === 'test' ? 'Test Mode Active' : 'Configuration Mode Active'}
-                  </h4>
-                  <p className={`text-xs ${
-                    executionContext === 'test' ? 'text-blue-700' : 'text-green-700'
-                  }`}>
-                    {executionContext === 'test'
-                      ? 'Fill in the inputs your agent needs to run properly. Missing required information may cause the agent to fail or produce incorrect results.'
-                      : 'Please fill out all required fields. These values will be saved and used when your agent is activated.'
-                    }
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
 
           {expandedSections.inputs && (
             <div className="p-4">
@@ -681,7 +575,7 @@ export default function AgentSandbox(props: AgentSandboxProps) {
         </div>
       )}
 
-      {/* Results Display */}
+      {/* Results Display - Only shown in test mode */}
       {result && executionContext === 'test' && (
         <div className={`border rounded-xl overflow-hidden ${
           result.error

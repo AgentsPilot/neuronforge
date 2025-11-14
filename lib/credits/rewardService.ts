@@ -203,7 +203,7 @@ export class RewardService {
         .insert({
           user_id: userId,
           credits_delta: rewardConfig.credits_amount,  // Changed from pilot_credits_amount
-          transaction_type: 'reward',  // Changed from 'credit' to 'reward'
+          transaction_type: 'credit',  // Using 'credit' as DB constraint doesn't support 'reward'
           activity_type: 'reward_credit',
           reward_config_id: rewardConfig.id,
           description: rewardConfig.display_name || rewardConfig.reward_name,

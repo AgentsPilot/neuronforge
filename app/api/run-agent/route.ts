@@ -11,6 +11,9 @@ import { addManualExecution } from '@/lib/queues/qstashQueue'
 import { runAgentKit } from '@/lib/agentkit/runAgentKit' // NEW: AgentKit execution
 import { updateAgentIntensityMetrics } from '@/lib/utils/updateAgentIntensity'
 import type { AgentExecutionData } from '@/lib/types/intensity'
+import { WorkflowPilot } from '@/lib/pilot'
+import { SystemConfigService } from '@/lib/services/SystemConfigService'
+import { auditLog } from '@/lib/services/AuditTrailService'
 
 export const runtime = 'nodejs'
 
@@ -23,6 +26,7 @@ interface RunAgentRequest {
   use_agentkit?: boolean; // NEW: Use OpenAI AgentKit for execution
   execution_type?: string; // NEW: 'manual' (test mode) vs other types
   user_id?: string; // For queue-based execution
+  session_id?: string; // NEW: For SSE correlation - pass to WorkflowPilot
 }
 
 /**
@@ -38,7 +42,8 @@ export async function POST(req: Request) {
     use_queue = false, // Default to immediate execution for backward compatibility
     use_agentkit = false, // NEW: Default to false (use old system)
     execution_type, // NEW: Track if this is test mode from AgentSandbox
-    user_id: provided_user_id
+    user_id: provided_user_id,
+    session_id: provided_session_id // NEW: For SSE correlation
   } = body
 
   const cookieStore = await cookies()
@@ -72,14 +77,100 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
   }
 
-  // **NEW: AGENTKIT EXECUTION PATH**
-  if (use_agentkit) {
+  // **UNIFIED EXECUTION PATH**
+  // Determine which executor to use and execute
+  let executionResult: any = null;
+  let executionType: 'pilot' | 'agentkit' = 'agentkit';
+  let shouldExecute = true;
+  let inputValues: Record<string, any> = {}; // Shared across both execution paths
+  let inputSchema: any = null;
+
+  // Check if agent has workflow_steps AND pilot is enabled
+  const hasWorkflowSteps = agent.workflow_steps && Array.isArray(agent.workflow_steps) && agent.workflow_steps.length > 0;
+
+  if (hasWorkflowSteps) {
+    console.log(`🔍 Agent has ${agent.workflow_steps.length} workflow steps - checking pilot status...`);
+
+    // Check if pilot is enabled in system config
+    const pilotEnabled = await SystemConfigService.getBoolean(
+      supabase,
+      'pilot_enabled',
+      false // Default: disabled for safety
+    );
+
+    if (pilotEnabled && !use_agentkit) {
+      console.log(`🎯 Using Workflow Pilot for agent "${agent.agent_name}" (${agent_id})`);
+
+      try {
+        const userInput = override_user_prompt || agent.user_prompt;
+
+        // Determine input source based on execution type (same logic as AgentKit)
+        if (execution_type === 'test') {
+          // TEST MODE: Use values from UI
+          inputValues = input_variables || {};
+          inputSchema = agent.input_schema;
+          console.log(`📋 Pilot TEST MODE: Using ${Object.keys(inputValues).length} input values from UI`);
+        } else {
+          // RUN MODE: Fetch saved configuration
+          const { data: agentConfig } = await supabase
+            .from('agent_configurations')
+            .select('input_values, input_schema')
+            .eq('agent_id', agent_id)
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+
+          inputValues = agentConfig?.input_values || {};
+          inputSchema = agent.input_schema || agentConfig?.input_schema;
+          console.log(`📋 Pilot RUN MODE: Using ${Object.keys(inputValues).length} input values from saved configuration`);
+        }
+
+        // Use provided session_id for SSE correlation, or generate new one
+        const sessionId = provided_session_id || uuidv4();
+        console.log(`📋 Using session_id: ${sessionId} ${provided_session_id ? '(from request)' : '(generated)'}`);
+
+        // Execute using WorkflowPilot
+        const pilot = new WorkflowPilot(supabase);
+        executionResult = await pilot.execute(
+          agent, // Pass full agent object
+          user.id,
+          userInput,
+          inputValues,
+          sessionId
+        );
+
+        executionType = 'pilot';
+        shouldExecute = false; // Don't execute AgentKit
+
+      } catch (error: any) {
+        console.error('❌ WorkflowPilot execution error:', error);
+
+        // If pilot is disabled, fall through to AgentKit
+        if (error.message?.includes('disabled in system configuration')) {
+          console.warn('⚠️  Pilot disabled - falling back to AgentKit');
+          // Fall through to AgentKit execution below
+        } else {
+          return NextResponse.json({
+            success: false,
+            error: error.message || 'Workflow pilot execution failed',
+            pilot: true,
+          }, { status: 500 });
+        }
+      }
+    } else if (!pilotEnabled) {
+      console.warn(`⚠️  Agent has workflow_steps but pilot is disabled - falling back to AgentKit`);
+      // Fall through to AgentKit execution
+    }
+  }
+
+  // **AGENTKIT EXECUTION PATH**
+  // Execute with AgentKit if pilot didn't execute (shouldExecute is still true)
+  if (shouldExecute) {
     console.log(`🤖 Using AgentKit execution for agent "${agent.agent_name}" (${agent_id})`)
 
     try {
       const userInput = override_user_prompt || agent.user_prompt
-      let inputValues = {}
-      let inputSchema = null
 
       // CRITICAL FIX: Determine input source based on execution type
       //
@@ -112,7 +203,7 @@ export async function POST(req: Request) {
       const sessionId = uuidv4()
 
       // Execute using OpenAI AgentKit with V2 Plugin System
-      const result = await runAgentKit(
+      executionResult = await runAgentKit(
         user.id,
         {
           id: agent.id,
@@ -130,17 +221,50 @@ export async function POST(req: Request) {
         sessionId // Pass session ID for analytics tracking
       )
 
+      executionType = 'agentkit';
+      shouldExecute = false; // Execution complete
+
       // Check if agent should send email notification based on trigger_condintion
       const triggerConfig = agent.trigger_condintion?.error_handling || {};
       const shouldSendEmail = triggerConfig.on_failure === 'email';
 
-      if (shouldSendEmail && result.success) {
+      if (shouldSendEmail && executionResult.success) {
         console.log('📧 AgentKit: Sending result via email as per trigger_condintion');
 
         // The result already contains the response - no need to send it again
         // The email should have been sent by the agent itself during execution
         // Just log that email delivery was configured
       }
+
+    } catch (error: any) {
+      console.error('❌ AgentKit execution error:', error)
+      return NextResponse.json({
+        success: false,
+        error: error.message || 'AgentKit execution failed',
+        agentkit: true
+      }, { status: 500 })
+    }
+  }
+
+  // **UNIFIED LOGGING AND STATS TRACKING**
+  // This section handles logging for BOTH pilot and agentkit executions
+  if (executionResult) {
+    // Normalize result format for both execution types (outside try so catch can access it)
+    const normalizedResult = executionType === 'pilot' ? {
+      success: executionResult.success,
+      error: executionResult.error,
+      executionTime: executionResult.totalExecutionTime,
+      tokensUsed: { total: executionResult.totalTokensUsed, prompt: 0, completion: executionResult.totalTokensUsed },
+      iterations: 1,
+      toolCalls: [], // Pilot doesn't expose toolCalls array
+      response: executionResult.output?.message || 'Workflow completed',
+      model: 'workflow_pilot',
+      provider: 'neuronforge',
+      memoryData: undefined
+    } : executionResult;
+
+    try {
+      const now = new Date().toISOString();
 
       // Sanitize toolCalls to remove client data (keep metadata only)
       const sanitizeToolCalls = (toolCalls: any[]) => {
@@ -160,92 +284,128 @@ export async function POST(req: Request) {
         }));
       };
 
-      // Log execution to agent_executions table
-      const now = new Date().toISOString()
-      const { error: insertError } = await supabase.from('agent_executions').insert({
-        agent_id: agent.id,
-        user_id: user.id,
-        execution_type: 'manual',
-        status: result.success ? 'completed' : 'failed',
-        scheduled_at: now, // Required field - use current time for manual executions
-        started_at: new Date(Date.now() - result.executionTime).toISOString(),
-        completed_at: now,
-        execution_duration_ms: result.executionTime,
-        error_message: result.error || null,
-        logs: {
-          agentkit: true,
-          iterations: result.iterations,
-          toolCalls: sanitizeToolCalls(result.toolCalls), // SANITIZED - metadata only
-          tokensUsed: result.tokensUsed,
-          model: result.model || 'gpt-4o', // Use actual model from intelligent routing
-          provider: result.provider || 'openai',
-          inputValuesUsed: Object.keys(inputValues).length
-        }
-      })
+      // 1. Log execution to agent_executions table
+      // IMPORTANT: Skip this for pilot executions - StateManager already logs to agent_executions
+      // Pilot inserts via StateManager.completeExecution() with workflowExecution: true
+      // Only AgentKit needs logging here since it doesn't use StateManager
+      if (executionType !== 'pilot') {
+        console.log(`[RUN-AGENT] 💾 Recording AgentKit execution to agent_executions table:`, {
+          agent_id: agent.id,
+          execution_type: executionType,
+          tokensUsed: normalizedResult.tokensUsed,
+          status: normalizedResult.success ? 'completed' : 'failed'
+        });
 
-      if (insertError) {
-        console.error('Failed to log AgentKit execution:', insertError)
+        const { error: insertError } = await supabase.from('agent_executions').insert({
+          agent_id: agent.id,
+          user_id: user.id,
+          execution_type: 'manual',
+          status: normalizedResult.success ? 'completed' : 'failed',
+          scheduled_at: now,
+          started_at: new Date(Date.now() - normalizedResult.executionTime).toISOString(),
+          completed_at: now,
+          execution_duration_ms: normalizedResult.executionTime,
+          error_message: normalizedResult.error || null,
+          logs: {
+            agentkit: true,
+            iterations: normalizedResult.iterations,
+            toolCalls: sanitizeToolCalls(normalizedResult.toolCalls),
+            tokensUsed: normalizedResult.tokensUsed,
+            model: normalizedResult.model || 'gpt-4o',
+            provider: normalizedResult.provider || 'openai',
+            inputValuesUsed: Object.keys(inputValues || {}).length
+          }
+        })
+
+        if (insertError) {
+          console.error('[RUN-AGENT] ❌ Failed to log AgentKit execution:', insertError)
+        } else {
+          console.log(`[RUN-AGENT] ✅ Successfully logged AgentKit execution with tokens in logs.tokensUsed:`, normalizedResult.tokensUsed);
+        }
+      } else {
+        console.log(`[RUN-AGENT] ⏭️  Skipping agent_executions insert for pilot (StateManager already logged it)`);
       }
 
-      // ALSO log to agent_logs table for consistency with legacy system
-      console.log('🪵 Inserting AgentKit result to agent_logs...')
+      // 2. Log to agent_logs table for consistency with legacy system
+      console.log(`🪵 Inserting ${executionType} result to agent_logs...`);
       const { data: logData, error: logInsertError } = await supabase
         .from('agent_logs')
         .insert({
           agent_id: agent.id,
           user_id: user.id,
-          run_output: JSON.stringify({
-            // SANITIZED: No actual response content (may contain client data)
-            success: result.success,
-            agentkit: true,
-            iterations: result.iterations,
-            toolCallsCount: result.toolCalls.length,
-            tokensUsed: result.tokensUsed.total,
-            executionTimeMs: result.executionTime,
-            model: result.model || 'gpt-4o', // Include actual model used
-            provider: result.provider || 'openai'
-            // response: result.response ← REMOVED (contains client data summaries)
-          }),
-          full_output: {
-            // SANITIZED: No message content
-            agentkit_metadata: {
-              model: result.model || 'gpt-4o', // Use actual model from intelligent routing
-              provider: result.provider || 'openai',
-              iterations: result.iterations,
-              toolCalls: sanitizeToolCalls(result.toolCalls), // SANITIZED - metadata only (actions only, no synthetic LLM steps)
-              tokensUsed: result.tokensUsed
+          run_output: JSON.stringify(
+            executionType === 'pilot' ? {
+              success: normalizedResult.success,
+              pilot: true,
+              stepsCompleted: executionResult.stepsCompleted,
+              stepsFailed: executionResult.stepsFailed,
+              stepsSkipped: executionResult.stepsSkipped,
+              totalSteps: executionResult.stepsCompleted + executionResult.stepsFailed + executionResult.stepsSkipped,
+              tokensUsed: normalizedResult.tokensUsed.total,
+              executionTimeMs: normalizedResult.executionTime,
+              executionId: executionResult.executionId
+            } : {
+              success: normalizedResult.success,
+              agentkit: true,
+              iterations: normalizedResult.iterations,
+              toolCallsCount: normalizedResult.toolCalls.length,
+              tokensUsed: normalizedResult.tokensUsed.total,
+              executionTimeMs: normalizedResult.executionTime,
+              model: normalizedResult.model || 'gpt-4o',
+              provider: normalizedResult.provider || 'openai'
             }
-            // message: result.response ← REMOVED (contains client data summaries)
+          ),
+          full_output: executionType === 'pilot' ? {
+            pilot_metadata: {
+              executionId: executionResult.executionId,
+              stepsCompleted: executionResult.stepsCompleted,
+              stepsFailed: executionResult.stepsFailed,
+              stepsSkipped: executionResult.stepsSkipped,
+              totalSteps: executionResult.stepsCompleted + executionResult.stepsFailed + executionResult.stepsSkipped,
+              tokensUsed: normalizedResult.tokensUsed
+            }
+          } : {
+            agentkit_metadata: {
+              model: normalizedResult.model || 'gpt-4o',
+              provider: normalizedResult.provider || 'openai',
+              iterations: normalizedResult.iterations,
+              toolCalls: sanitizeToolCalls(normalizedResult.toolCalls),
+              tokensUsed: normalizedResult.tokensUsed
+            }
           },
-          status: result.success ? '✅ AgentKit execution completed successfully' : '❌ AgentKit execution failed',
-          created_at: now,
+          status: normalizedResult.success ? 'completed' : 'failed',
+          // status_message: REMOVED - Column doesn't exist in agent_logs schema
+          // execution_type: REMOVED - Column doesn't exist in schema yet
+          created_at: now
         })
         .select('id')
-        .single()
+        .single();
 
       if (logInsertError) {
-        console.error('❌ Failed to insert AgentKit log into agent_logs:', logInsertError)
+        console.error(`❌ Failed to insert ${executionType} log into agent_logs:`, logInsertError);
       } else {
-        console.log('✅ AgentKit log inserted successfully')
+        console.log(`✅ ${executionType} log inserted successfully`);
       }
 
-      // Update agent_stats with accurate success tracking
+      // 3. Update agent_stats with accurate success tracking
+      console.log('📊 Updating agent_stats...');
       const { error: statsError } = await supabase.rpc('increment_agent_stats', {
-        agent_id_input: agent.id,
+         agent_id_input: agent.id,
         user_id_input: user.id,
-        success: result.success, // Use AgentKit's clean success boolean
+        success: normalizedResult.success,
       })
 
       if (statsError) {
-        console.error('❌ Failed to update agent_stats:', statsError)
+        console.error('❌ Failed to update agent_stats:', statsError);
       } else {
-        console.log('✅ agent_stats updated successfully')
+        console.log('✅ agent_stats updated successfully');
       }
 
-      // Track intensity metrics for dynamic pricing
+      // 4. Track intensity metrics for dynamic pricing
+      let intensityScore = 5.0; // Default medium intensity
       try {
         console.log('📊 [INTENSITY] Starting update for agent:', agent.id);
-        console.log('📊 [INTENSITY] Tokens used:', result.tokensUsed.total);
+        console.log('📊 [INTENSITY] Tokens used:', normalizedResult.tokensUsed.total);
 
         // Parse workflow complexity from agent definition
         const workflowSteps = agent.workflow_steps || [];
@@ -259,66 +419,186 @@ export async function POST(req: Request) {
         const executionData: AgentExecutionData = {
           agent_id: agent.id,
           user_id: user.id,
-          tokens_used: result.tokensUsed.total,
-          input_tokens: result.tokensUsed.prompt,
-          output_tokens: result.tokensUsed.completion,
-          execution_duration_ms: result.executionTime,
-          iterations_count: result.iterations,
-          was_successful: result.success,
-          // Hardcoded: AgentKit doesn't implement retry logic yet (feature planned)
+          tokens_used: normalizedResult.tokensUsed.total,
+          input_tokens: normalizedResult.tokensUsed.prompt || 0,
+          output_tokens: normalizedResult.tokensUsed.completion || normalizedResult.tokensUsed.total,
+          execution_duration_ms: normalizedResult.executionTime,
+          iterations_count: normalizedResult.iterations,
+          was_successful: normalizedResult.success,
           retry_count: 0,
           plugins_used: agent.plugins_required || [],
-          tool_calls_count: result.toolCalls.length,
-          // Hardcoded: Per-tool timing instrumentation not implemented (low priority)
-          tool_orchestration_time_ms: 0,
+          tool_calls_count: executionType === 'pilot' ?
+            (executionResult.stepsCompleted || 0) : normalizedResult.toolCalls.length,
+          tool_orchestration_time_ms: executionType === 'pilot' ?
+            normalizedResult.executionTime : 0,
           workflow_steps: workflowComplexity.steps,
           conditional_branches: workflowComplexity.branches,
           loop_iterations: workflowComplexity.loops,
           parallel_executions: workflowComplexity.parallel,
-          // Memory data for AIS tracking (NEW)
-          memory_tokens: result.memoryData?.tokens || 0,
-          memory_entry_count: result.memoryData?.entryCount || 0,
-          memory_types: result.memoryData?.types || [],
+          memory_tokens: normalizedResult.memoryData?.tokens || 0,
+          memory_entry_count: normalizedResult.memoryData?.entryCount || 0,
+          memory_types: normalizedResult.memoryData?.types || [],
         };
 
         const aisResult = await updateAgentIntensityMetrics(supabase, executionData);
         if (aisResult.success) {
-          console.log('✅ [INTENSITY] Update SUCCESS - Combined Score:', aisResult.combined_score.toFixed(2));
-          // Store AIS score for potential use in response or logging
-          (result as any).ais_score = aisResult.combined_score;
+          intensityScore = aisResult.combined_score;
+          console.log('✅ [INTENSITY] Update SUCCESS - Combined Score:', intensityScore.toFixed(2));
         } else {
-          console.log('❌ [INTENSITY] Update FAILED');
+          console.log('❌ [INTENSITY] Update FAILED - using default score:', intensityScore);
         }
       } catch (intensityError) {
         console.error('❌ Failed to update intensity metrics:', intensityError);
+        console.log('⚠️  Using default intensity score:', intensityScore);
         // Non-fatal error - continue execution
       }
 
+      // 5. Track token spending (stored as tokens in DB, displayed as Pilot Credits in UI)
+      try {
+        console.log('💰 [SPENDING] Tracking token consumption for execution');
+        const tokensUsed = normalizedResult.tokensUsed.total;
+
+        // Calculate what these tokens represent for display purposes (tokens stored in DB)
+        const intensityMultiplier = 1.0 + (intensityScore / 10);
+        const adjustedTokens = Math.ceil(tokensUsed * intensityMultiplier);
+
+        console.log('💰 [SPENDING] Token calculation:', {
+          rawTokens: tokensUsed,
+          intensityScore,
+          intensityMultiplier,
+          adjustedTokens
+        });
+
+        // Get current total_spent (stored as tokens)
+        const { data: currentSub } = await supabase
+          .from('user_subscriptions')
+          .select('total_spent')
+          .eq('user_id', user.id)
+          .single();
+
+        const currentTotalSpent = currentSub?.total_spent || 0;
+        const newTotalSpent = currentTotalSpent + adjustedTokens;
+
+        // Update total_spent with tokens (UI will convert to Pilot Credits for display)
+        const { error: updateError } = await supabase
+          .from('user_subscriptions')
+          .update({ total_spent: newTotalSpent })
+          .eq('user_id', user.id);
+
+        if (updateError) {
+          console.error('❌ [SPENDING] Failed to update total_spent:', updateError);
+        } else {
+          console.log(`✅ [SPENDING] Token spending tracked: ${adjustedTokens} tokens (Total: ${currentTotalSpent} → ${newTotalSpent} tokens)`);
+        }
+
+        // Log transaction for audit trail (stored as tokens)
+        const { error: txError } = await supabase.from('credit_transactions').insert({
+          user_id: user.id,
+          agent_id: agent.id,
+          credits_delta: -adjustedTokens, // Stored as tokens
+          balance_before: currentTotalSpent,
+          balance_after: newTotalSpent,
+          transaction_type: 'deduction', // DB constraint requires 'deduction' for charges
+          activity_type: 'agent_execution',
+          description: `${executionType === 'pilot' ? 'Pilot' : 'AgentKit'} execution: ${tokensUsed} tokens × ${intensityMultiplier.toFixed(2)} intensity`,
+          metadata: {
+            execution_type: executionType,
+            raw_tokens: tokensUsed,
+            intensity_score: intensityScore,
+            multiplier: intensityMultiplier,
+            adjusted_tokens: adjustedTokens,
+            agent_name: agent.agent_name
+          }
+        });
+
+        if (txError) {
+          console.error('❌ [SPENDING] Failed to log transaction:', txError);
+        } else {
+          console.log('✅ [SPENDING] Transaction logged successfully');
+        }
+
+      } catch (spendingError) {
+        console.error('❌ [SPENDING] Failed to track token consumption:', spendingError);
+        // Non-fatal error - continue execution
+      }
+
+      // 📝 Audit Trail: Log agent execution (non-blocking)
+      auditLog({
+        action: 'AGENT_EXECUTED',
+        entityType: 'agent',
+        entityId: agent.id,
+        userId: user.id,
+        resourceName: agent.agent_name || 'Unnamed Agent',
+        details: {
+          execution_type: executionType,
+          success: normalizedResult.success,
+          tokens_used: normalizedResult.tokensUsed.total,
+          duration_ms: normalizedResult.executionTime,
+          manual: execution_type === 'manual',
+          has_inputs: Object.keys(inputValues || {}).length > 0,
+          // Execution-specific details
+          ...(executionType === 'pilot' ? {
+            steps_completed: executionResult.stepsCompleted,
+            steps_failed: executionResult.stepsFailed,
+            steps_skipped: executionResult.stepsSkipped
+          } : {
+            iterations: normalizedResult.iterations,
+            tool_calls_count: normalizedResult.toolCalls.length
+          })
+        },
+        severity: normalizedResult.success ? 'info' : 'warning'
+        // Note: request context not available (using standard Request, not NextRequest)
+      }).catch(err => {
+        console.error('⚠️ Audit log failed (non-blocking):', err);
+      });
+
+      // Return unified response format
       return NextResponse.json({
-        success: result.success,
-        message: result.response,
-        data: {
+        success: normalizedResult.success,
+        message: normalizedResult.response,
+        data: executionType === 'pilot' ? {
+          agent_id: agent.id,
+          agent_name: agent.agent_name,
+          execution_type: 'workflow_pilot',
+          executionId: executionResult.executionId,
+          stepsCompleted: executionResult.stepsCompleted,
+          stepsFailed: executionResult.stepsFailed,
+          stepsSkipped: executionResult.stepsSkipped,
+          totalSteps: executionResult.stepsCompleted + executionResult.stepsFailed + executionResult.stepsSkipped,
+          tokens_used: normalizedResult.tokensUsed.total,
+          execution_time_ms: normalizedResult.executionTime,
+          output: executionResult.output,
+          // Include step IDs for visualization
+          completedStepIds: executionResult.completedStepIds || [],
+          failedStepIds: executionResult.failedStepIds || [],
+          skippedStepIds: executionResult.skippedStepIds || [],
+        } : {
           agent_id: agent.id,
           agent_name: agent.agent_name,
           execution_type: 'agentkit',
-          tool_calls_count: result.toolCalls.length,
-          successful_tool_calls: result.toolCalls.filter(tc => tc.success).length,
-          failed_tool_calls: result.toolCalls.filter(tc => !tc.success).length,
-          tokens_used: result.tokensUsed.total,
-          execution_time_ms: result.executionTime,
-          iterations: result.iterations,
-          input_values_used: Object.keys(inputValues).length
+          tool_calls_count: normalizedResult.toolCalls.length,
+          successful_tool_calls: normalizedResult.toolCalls.filter((tc: any) => tc.success).length,
+          failed_tool_calls: normalizedResult.toolCalls.filter((tc: any) => !tc.success).length,
+          tokens_used: normalizedResult.tokensUsed.total,
+          execution_time_ms: normalizedResult.executionTime,
+          iterations: normalizedResult.iterations,
+          input_values_used: Object.keys(inputValues || {}).length
         },
-        agentkit: true
-      })
+        [executionType]: true
+      });
 
     } catch (error: any) {
-      console.error('❌ AgentKit execution error:', error)
-      return NextResponse.json({
-        success: false,
-        error: error.message || 'AgentKit execution failed',
-        agentkit: true
-      }, { status: 500 })
+      console.error(`❌ ${executionType} logging error:`, error);
+      // Even if logging fails, return success if execution succeeded
+      if (executionResult && normalizedResult.success) {
+        return NextResponse.json({
+          success: normalizedResult.success,
+          message: normalizedResult.response,
+          warning: 'Execution succeeded but logging failed',
+          [executionType]: true
+        });
+      }
+      throw error; // Re-throw if execution itself failed
     }
   }
 
@@ -599,6 +879,10 @@ export async function POST(req: Request) {
     }
 
     console.log('🪵 Inserting agent log...')
+    // Determine standardized status from descriptive send_status
+    const isSuccess = send_status?.startsWith('✅') || send_status?.startsWith('📧') || send_status?.startsWith('🚨');
+    const standardizedStatus = isSuccess ? 'completed' : 'failed';
+
     const { data: logData, error: logInsertError } = await supabase
       .from('agent_logs')
       .insert({
@@ -606,7 +890,9 @@ export async function POST(req: Request) {
         user_id: user.id,
         run_output: parsed_output ? JSON.stringify(parsed_output) : null,
         full_output: message ? { message } : null,
-        status: send_status,
+        status: standardizedStatus, // Standardized: 'completed' or 'failed'
+        status_message: send_status, // Descriptive message for display
+        execution_type: 'agentkit_legacy', // Mark as legacy AgentKit execution
         created_at: new Date().toISOString(),
       })
       .select('id')
@@ -624,7 +910,7 @@ export async function POST(req: Request) {
     const { error: statsError } = await supabase.rpc('increment_agent_stats', {
       agent_id_input: agent_id,
       user_id_input: user.id,
-      success: send_status?.startsWith('✅') || send_status?.startsWith('📧') || send_status?.startsWith('🚨'),
+      success: isSuccess,
     })
 
     if (statsError) {

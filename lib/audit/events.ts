@@ -48,6 +48,9 @@ export const AUDIT_EVENTS = {
   AGENTKIT_PLUGIN_FAILED: 'AGENTKIT_PLUGIN_FAILED',
   AGENTKIT_ITERATION_COMPLETED: 'AGENTKIT_ITERATION_COMPLETED',
   AGENTKIT_MAX_ITERATIONS_REACHED: 'AGENTKIT_MAX_ITERATIONS_REACHED',
+  AGENTKIT_LOOP_DETECTED: 'AGENTKIT_LOOP_DETECTED',
+  AGENTKIT_ITERATION_TOKEN_LIMIT_EXCEEDED: 'AGENTKIT_ITERATION_TOKEN_LIMIT_EXCEEDED',
+  AGENTKIT_CIRCUIT_BREAKER_TRIGGERED: 'AGENTKIT_CIRCUIT_BREAKER_TRIGGERED',
 
   // AI Model Routing events
   MODEL_ROUTING_DECISION: 'MODEL_ROUTING_DECISION',
@@ -75,6 +78,7 @@ export const AUDIT_EVENTS = {
   // ==========================================
   SETTINGS_PROFILE_UPDATED: 'SETTINGS_PROFILE_UPDATED',
   SETTINGS_PREFERENCES_UPDATED: 'SETTINGS_PREFERENCES_UPDATED',
+  SETTINGS_CURRENCY_CHANGED: 'SETTINGS_CURRENCY_CHANGED',
   SETTINGS_NOTIFICATIONS_UPDATED: 'SETTINGS_NOTIFICATIONS_UPDATED',
   SETTINGS_SECURITY_UPDATED: 'SETTINGS_SECURITY_UPDATED',
   SETTINGS_API_KEY_CREATED: 'SETTINGS_API_KEY_CREATED',
@@ -162,6 +166,39 @@ export const AUDIT_EVENTS = {
   USER_MEMORY_SAVED: 'USER_MEMORY_SAVED', // User preference saved to database
   USER_MEMORY_UPDATED: 'USER_MEMORY_UPDATED', // User preference updated
   USER_MEMORY_INJECTED: 'USER_MEMORY_INJECTED', // User context injected into execution
+
+  // ==========================================
+  // WORKFLOW PILOT EVENTS
+  // ==========================================
+  PILOT_EXECUTION_STARTED: 'PILOT_EXECUTION_STARTED', // Workflow execution began
+  PILOT_EXECUTION_COMPLETED: 'PILOT_EXECUTION_COMPLETED', // Workflow completed successfully
+  PILOT_EXECUTION_FAILED: 'PILOT_EXECUTION_FAILED', // Workflow failed
+  PILOT_EXECUTION_PAUSED: 'PILOT_EXECUTION_PAUSED', // Workflow paused
+  PILOT_EXECUTION_RESUMED: 'PILOT_EXECUTION_RESUMED', // Workflow resumed
+  PILOT_EXECUTION_CANCELLED: 'PILOT_EXECUTION_CANCELLED', // Workflow cancelled
+  PILOT_STEP_EXECUTED: 'PILOT_STEP_EXECUTED', // Individual step executed
+  PILOT_STEP_FAILED: 'PILOT_STEP_FAILED', // Individual step failed
+  PILOT_STEP_RETRIED: 'PILOT_STEP_RETRIED', // Step retried after failure
+  PILOT_DISABLED: 'PILOT_DISABLED', // Pilot disabled - execution blocked
+  PILOT_CONFIG_UPDATED: 'PILOT_CONFIG_UPDATED', // Pilot settings changed
+
+  // Per-Step Intelligent Routing events
+  PILOT_ROUTING_DECISION: 'PILOT_ROUTING_DECISION', // Model selected for step
+  PILOT_ROUTING_ENABLED: 'PILOT_ROUTING_ENABLED', // Per-step routing enabled
+  PILOT_ROUTING_DISABLED: 'PILOT_ROUTING_DISABLED', // Per-step routing disabled
+  PILOT_ROUTING_CONFIG_UPDATED: 'PILOT_ROUTING_CONFIG_UPDATED', // Routing config changed
+
+  // Workflow Generation events
+  WORKFLOW_GENERATED: 'WORKFLOW_GENERATED', // Workflow generated successfully
+  WORKFLOW_GENERATION_FALLBACK: 'WORKFLOW_GENERATION_FALLBACK', // Fallback to secondary orchestrator
+
+  // Human-in-the-Loop Approval Events (Phase 6)
+  APPROVAL_REQUESTED: 'APPROVAL_REQUESTED', // Approval request created
+  APPROVAL_APPROVED: 'APPROVAL_APPROVED', // User approved request
+  APPROVAL_REJECTED: 'APPROVAL_REJECTED', // User rejected request
+  APPROVAL_TIMEOUT: 'APPROVAL_TIMEOUT', // Approval timed out
+  APPROVAL_ESCALATED: 'APPROVAL_ESCALATED', // Approval escalated to higher authority
+  APPROVAL_DELEGATED: 'APPROVAL_DELEGATED', // Approval delegated to another user
 
   // ==========================================
   // SECURITY EVENTS
@@ -274,6 +311,21 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     complianceFlags: ['SOC2'],
     description: 'AgentKit reached maximum iteration limit',
   },
+  [AUDIT_EVENTS.AGENTKIT_LOOP_DETECTED]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2'],
+    description: 'AgentKit detected infinite loop - execution stopped to prevent credit exhaustion',
+  },
+  [AUDIT_EVENTS.AGENTKIT_ITERATION_TOKEN_LIMIT_EXCEEDED]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2'],
+    description: 'AgentKit iteration exceeded token limit - execution stopped to prevent credit exhaustion',
+  },
+  [AUDIT_EVENTS.AGENTKIT_CIRCUIT_BREAKER_TRIGGERED]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2'],
+    description: 'AgentKit circuit breaker triggered - total execution tokens exceeded limit',
+  },
 
   // User events - critical for security
   [AUDIT_EVENTS.USER_LOGIN]: {
@@ -317,6 +369,16 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['GDPR'],
     description: 'User profile settings updated',
+  },
+  [AUDIT_EVENTS.SETTINGS_PREFERENCES_UPDATED]: {
+    severity: 'info',
+    complianceFlags: ['GDPR'],
+    description: 'User preferences updated (timezone, language)',
+  },
+  [AUDIT_EVENTS.SETTINGS_CURRENCY_CHANGED]: {
+    severity: 'info',
+    complianceFlags: ['GDPR', 'SOC2'],
+    description: 'User preferred currency changed',
   },
   [AUDIT_EVENTS.SETTINGS_NOTIFICATIONS_UPDATED]: {
     severity: 'info',
@@ -585,6 +647,99 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: 'AI model pricing synced from external source',
+  },
+
+  // Workflow Pilot events
+  [AUDIT_EVENTS.PILOT_EXECUTION_STARTED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Workflow execution started',
+  },
+  [AUDIT_EVENTS.PILOT_EXECUTION_COMPLETED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Workflow execution completed successfully',
+  },
+  [AUDIT_EVENTS.PILOT_EXECUTION_FAILED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'Workflow execution failed',
+  },
+  [AUDIT_EVENTS.PILOT_EXECUTION_PAUSED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Workflow execution paused',
+  },
+  [AUDIT_EVENTS.PILOT_EXECUTION_RESUMED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Workflow execution resumed',
+  },
+
+  // Per-Step Intelligent Routing events
+  [AUDIT_EVENTS.PILOT_ROUTING_DECISION]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'AI model selected for workflow step based on complexity analysis',
+  },
+  [AUDIT_EVENTS.PILOT_ROUTING_ENABLED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Per-step intelligent model routing enabled',
+  },
+  [AUDIT_EVENTS.PILOT_ROUTING_DISABLED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Per-step intelligent model routing disabled',
+  },
+  [AUDIT_EVENTS.PILOT_ROUTING_CONFIG_UPDATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Per-step routing configuration updated',
+  },
+
+  // Workflow Generation events
+  [AUDIT_EVENTS.WORKFLOW_GENERATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Workflow successfully generated by orchestrator',
+  },
+  [AUDIT_EVENTS.WORKFLOW_GENERATION_FALLBACK]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'Workflow generation fallback triggered',
+  },
+
+  // Human-in-the-Loop Approval events (Phase 6)
+  [AUDIT_EVENTS.APPROVAL_REQUESTED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Human approval requested for workflow step',
+  },
+  [AUDIT_EVENTS.APPROVAL_APPROVED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Workflow approval granted by user',
+  },
+  [AUDIT_EVENTS.APPROVAL_REJECTED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'Workflow approval rejected by user',
+  },
+  [AUDIT_EVENTS.APPROVAL_TIMEOUT]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'Workflow approval timed out',
+  },
+  [AUDIT_EVENTS.APPROVAL_ESCALATED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'Workflow approval escalated to higher authority',
+  },
+  [AUDIT_EVENTS.APPROVAL_DELEGATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Workflow approval delegated to another user',
   },
 };
 

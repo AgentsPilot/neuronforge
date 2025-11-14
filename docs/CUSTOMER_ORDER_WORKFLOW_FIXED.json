@@ -1,0 +1,188 @@
+[
+  {
+    "id": "step1",
+    "name": "Monitor Gmail for order confirmation emails",
+    "type": "action",
+    "plugin": "google-mail",
+    "action": "search_emails",
+    "params": {},
+    "dependencies": []
+  },
+  {
+    "id": "step2",
+    "name": "Parse email body to extract order details",
+    "type": "ai_processing",
+    "prompt": "Parse email body to extract order details (customer name, email, order total)",
+    "params": {},
+    "dependencies": ["step1"]
+  },
+  {
+    "id": "step3",
+    "name": "Look up customer information",
+    "type": "action",
+    "plugin": "external_service",
+    "action": "lookup_customer",
+    "params": {
+      "customer_email": "{{step2.data.email}}"
+    },
+    "dependencies": ["step2"]
+  },
+  {
+    "id": "check_vip",
+    "name": "Check if customer is VIP",
+    "type": "conditional",
+    "condition": {
+      "field": "step3.data.is_vip",
+      "operator": "==",
+      "value": true
+    },
+    "dependencies": ["step3"]
+  },
+  {
+    "id": "step4_vip",
+    "name": "Create high-priority task for VIP",
+    "type": "action",
+    "plugin": "google-drive",
+    "action": "create_document",
+    "params": {
+      "title": "VIP Order - {{step2.data.customer_name}}",
+      "priority": "high"
+    },
+    "executeIf": {
+      "field": "check_vip.data.result",
+      "operator": "==",
+      "value": true
+    },
+    "dependencies": ["check_vip"]
+  },
+  {
+    "id": "step5_vip",
+    "name": "Send urgent VIP notification",
+    "type": "action",
+    "plugin": "google-mail",
+    "action": "send_email",
+    "params": {
+      "to": "{{step2.data.email}}",
+      "subject": "VIP Order Confirmed",
+      "template": "vip_confirmation"
+    },
+    "executeIf": {
+      "field": "check_vip.data.result",
+      "operator": "==",
+      "value": true
+    },
+    "dependencies": ["step4_vip"]
+  },
+  {
+    "id": "check_existing",
+    "name": "Check if customer exists",
+    "type": "conditional",
+    "condition": {
+      "and": [
+        {
+          "field": "step3.data.customer_exists",
+          "operator": "==",
+          "value": true
+        },
+        {
+          "field": "step3.data.is_vip",
+          "operator": "==",
+          "value": false
+        }
+      ]
+    },
+    "dependencies": ["step3"]
+  },
+  {
+    "id": "step6_upgrade",
+    "name": "Upgrade customer to VIP",
+    "type": "action",
+    "plugin": "external_service",
+    "action": "update_customer_status",
+    "params": {
+      "customer_id": "{{step3.data.customer_id}}",
+      "status": "vip"
+    },
+    "executeIf": {
+      "field": "check_existing.data.result",
+      "operator": "==",
+      "value": true
+    },
+    "dependencies": ["check_existing"]
+  },
+  {
+    "id": "step7_thank_you",
+    "name": "Create VIP upgrade thank you document",
+    "type": "action",
+    "plugin": "google-drive",
+    "action": "create_document",
+    "params": {
+      "title": "VIP Upgrade - {{step2.data.customer_name}}",
+      "template": "vip_upgrade"
+    },
+    "executeIf": {
+      "field": "check_existing.data.result",
+      "operator": "==",
+      "value": true
+    },
+    "dependencies": ["step6_upgrade"]
+  },
+  {
+    "id": "check_new",
+    "name": "Check if new customer",
+    "type": "conditional",
+    "condition": {
+      "field": "step3.data.customer_exists",
+      "operator": "==",
+      "value": false
+    },
+    "dependencies": ["step3"]
+  },
+  {
+    "id": "step8_add_customer",
+    "name": "Add new customer to database",
+    "type": "action",
+    "plugin": "external_service",
+    "action": "add_customer",
+    "params": {
+      "name": "{{step2.data.customer_name}}",
+      "email": "{{step2.data.email}}",
+      "order_total": "{{step2.data.order_total}}"
+    },
+    "executeIf": {
+      "field": "check_new.data.result",
+      "operator": "==",
+      "value": true
+    },
+    "dependencies": ["check_new"]
+  },
+  {
+    "id": "step9_welcome",
+    "name": "Create welcome document for new customer",
+    "type": "action",
+    "plugin": "google-drive",
+    "action": "create_document",
+    "params": {
+      "title": "Welcome - {{step2.data.customer_name}}",
+      "template": "new_customer_welcome"
+    },
+    "executeIf": {
+      "field": "check_new.data.result",
+      "operator": "==",
+      "value": true
+    },
+    "dependencies": ["step8_add_customer"]
+  },
+  {
+    "id": "step10",
+    "name": "Log all actions",
+    "type": "action",
+    "plugin": "google-drive",
+    "action": "update_document",
+    "params": {
+      "document_id": "order_processing_log",
+      "append": true
+    },
+    "dependencies": ["step5_vip", "step7_thank_you", "step9_welcome"]
+  }
+]

@@ -1,5 +1,5 @@
-import { Connection } from '../../components/orchestration/types/workflow'
-import { IOItem } from '../../components/orchestration/types/connections'
+import { Connection } from '../../components/orchestration-NOT-USED/types/workflow'
+import { IOItem } from '../../components/orchestration-NOT-USED/types/connections'
 
 /**
  * Validate if a connection is valid

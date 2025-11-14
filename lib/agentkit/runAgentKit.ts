@@ -7,7 +7,6 @@ import type { ChatCompletionMessageParam } from 'openai/resources/chat/completio
 import { OpenAIProvider } from '@/lib/ai/providers/openaiProvider';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
-import { ModelRouter } from '@/lib/ai/modelRouter';
 import { ProviderFactory } from '@/lib/ai/providerFactory';
 import { SystemConfigService } from '@/lib/services/SystemConfigService';
 import { MemoryInjector } from '@/lib/memory/MemoryInjector';
@@ -173,48 +172,107 @@ export async function runAgentKit(
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
-  // Fetch routing configuration from database
+  // ROUTING DECISION HIERARCHY:
+  // 1st Priority: agent.model_preference (per-step routing from Pilot workflows)
+  // 2nd Priority: ModelRouter.selectModel() (agent-level routing based on AIS)
+  // 3rd Priority: AGENTKIT_CONFIG.model (default: gpt-4o)
+
+  // Declare ROUTING_ENABLED at function scope so it's accessible throughout
   let ROUTING_ENABLED = false;
-  try {
-    ROUTING_ENABLED = await SystemConfigService.getBoolean(
-      supabase,
-      'intelligent_routing_enabled',
-      false
-    );
-  } catch (configError) {
-    console.error('⚠️  Failed to fetch routing config, defaulting to disabled:', configError);
-    ROUTING_ENABLED = false;
-  }
 
-  if (ROUTING_ENABLED) {
-    console.log('🎯 Intelligent Routing ENABLED - selecting optimal model based on AIS score');
+  // Check if per-step routing (Pilot workflows) already selected a model
+  if (agent.model_preference) {
+    // Per-step routing has already made a decision - respect it
+    console.log('🎯 Per-Step Routing Decision (Pilot workflow) - using pre-selected model');
 
+    const preference = agent.model_preference;
+
+    // Parse model_preference format: "provider:model" or just "model"
+    if (preference.includes(':')) {
+      const [provider, model] = preference.split(':');
+      selectedModel = model;
+      selectedProvider = (provider as 'openai' | 'anthropic');
+    } else {
+      // Legacy format: just model name
+      selectedModel = preference;
+      selectedProvider = 'openai'; // Default to OpenAI if no provider specified
+    }
+
+    routingReasoning = 'Per-step routing selection (Pilot workflow)';
+
+    console.log('🎯 Model Selected (Per-Step):', {
+      model: selectedModel,
+      provider: selectedProvider,
+      reasoning: routingReasoning,
+      source: 'pilot_per_step_routing'
+    });
+  } else {
+    // No per-step routing decision - check agent-level routing
+
+    // Fetch routing configuration from database
     try {
-      const modelSelection = await ModelRouter.selectModel(agent.id, supabase, userId);
+      ROUTING_ENABLED = await SystemConfigService.getBoolean(
+        supabase,
+        'intelligent_routing_enabled',
+        false
+      );
+    } catch (configError) {
+      console.error('⚠️  Failed to fetch routing config, defaulting to disabled:', configError);
+      ROUTING_ENABLED = false;
+    }
 
-      selectedModel = modelSelection.model;
-      selectedProvider = modelSelection.provider;
-      routingReasoning = modelSelection.reasoning;
+    if (ROUTING_ENABLED) {
+      // Agent-level routing (AIS-based) is enabled
+      console.log('🎯 Agent-Level Routing ENABLED - selecting optimal model based on AIS score');
 
-      console.log('🎯 Model Selected:', {
-        model: selectedModel,
-        provider: selectedProvider,
-        reasoning: routingReasoning,
-        intensity_score: modelSelection.intensity_score
-      });
-    } catch (routingError) {
-      // On error, fall back to default model
-      console.error('⚠️  Routing error, falling back to default GPT-4o:', routingError);
+      try {
+        // Fetch AIS score from agent_intensity_metrics
+        const { data: aisData, error: aisError } = await supabase
+          .from('agent_intensity_metrics')
+          .select('overall_intensity_score')
+          .eq('agent_id', agent.id)
+          .single();
+
+        const aisScore = aisData?.overall_intensity_score || 5.0; // Default to balanced tier
+
+        // Simple tier-based routing (matching orchestration config defaults)
+        if (aisScore < 3.0) {
+          // Fast tier
+          selectedModel = 'claude-3-haiku-20240307';
+          selectedProvider = 'anthropic';
+          routingReasoning = `Fast tier (AIS: ${aisScore.toFixed(1)}) - Simple task`;
+        } else if (aisScore < 6.5) {
+          // Balanced tier
+          selectedModel = 'gpt-4o-mini';
+          selectedProvider = 'openai';
+          routingReasoning = `Balanced tier (AIS: ${aisScore.toFixed(1)}) - Moderate complexity`;
+        } else {
+          // Powerful tier
+          selectedModel = 'claude-3-5-sonnet-20241022';
+          selectedProvider = 'anthropic';
+          routingReasoning = `Powerful tier (AIS: ${aisScore.toFixed(1)}) - Complex task`;
+        }
+
+        console.log('🎯 Model Selected (Agent-Level):', {
+          model: selectedModel,
+          provider: selectedProvider,
+          reasoning: routingReasoning,
+          intensity_score: aisScore
+        });
+      } catch (routingError) {
+        // On error, fall back to default model
+        console.error('⚠️  Routing error, falling back to default GPT-4o:', routingError);
+        selectedModel = AGENTKIT_CONFIG.model;
+        selectedProvider = 'openai';
+        routingReasoning = 'Routing error - using default model';
+      }
+    } else {
+      // Both routing systems disabled - use default model
+      console.log('🎯 All Routing DISABLED - using default GPT-4o');
       selectedModel = AGENTKIT_CONFIG.model;
       selectedProvider = 'openai';
-      routingReasoning = 'Routing error - using default model';
+      routingReasoning = 'All routing disabled - using system default';
     }
-  } else {
-    // Routing disabled - use default model
-    console.log('🎯 Intelligent Routing DISABLED - using default GPT-4o');
-    selectedModel = AGENTKIT_CONFIG.model;
-    selectedProvider = 'openai';
-    routingReasoning = 'Routing disabled via database config';
   }
 
   // Get appropriate provider instance
@@ -260,8 +318,10 @@ export async function runAgentKit(
     // STEP 1: Convert V2 plugins to OpenAI tools
     const tools = await convertPluginsToTools(userId, agent.plugins_required);
 
-    if (tools.length === 0) {
-      console.warn('⚠️ AgentKit: No plugins are connected');
+    // Only error if plugins were expected but couldn't be loaded
+    // Allow zero tools if plugins_required is empty (text-only processing for ai_processing steps)
+    if (tools.length === 0 && agent.plugins_required && agent.plugins_required.length > 0) {
+      console.warn('⚠️ AgentKit: No plugins are connected, but plugins were required');
       return {
         success: false,
         response: "No plugins are connected. Please connect the required plugins in Settings → Connected Apps to use this agent.",
@@ -273,7 +333,11 @@ export async function runAgentKit(
       };
     }
 
-    console.log(`🔧 AgentKit: Loaded ${tools.length} available actions across ${agent.plugins_required.length} plugins`);
+    if (tools.length === 0) {
+      console.log('🔧 AgentKit: Running in text-only mode (no tools)');
+    } else {
+      console.log(`🔧 AgentKit: Loaded ${tools.length} available actions across ${agent.plugins_required.length} plugins`);
+    }
     console.log('\n📊 AGENTKIT DEBUG - TOOLS AVAILABLE:', JSON.stringify(tools, null, 2));
 
     // STEP 2: Build enhanced system prompt with plugin context
@@ -355,6 +419,19 @@ Please use these input values when executing the task.`;
     let totalTokens = { prompt: 0, completion: 0, total: 0 };
     const pluginExecuter = await PluginExecuterV2.getInstance();
 
+    // LOOP DETECTION: Track tool calls to detect infinite loops
+    const recentToolCalls: string[] = [];
+    const LOOP_DETECTION_WINDOW = await SystemConfigService.getNumber(
+      supabase,
+      'loop_detection_window',
+      3 // Default: Check last 3 calls
+    );
+    const MAX_SAME_TOOL_REPEATS = await SystemConfigService.getNumber(
+      supabase,
+      'max_same_tool_repeats',
+      3 // Default: same tool called 3 times in a row = loop
+    );
+
     while (iteration < AGENTKIT_CONFIG.maxIterations) {
       iteration++;
       console.log(`\n🔄 AgentKit: Iteration ${iteration}/${AGENTKIT_CONFIG.maxIterations}`);
@@ -398,6 +475,90 @@ Please use these input values when executing the task.`;
         totalTokens.prompt += completion.usage.prompt_tokens;
         totalTokens.completion += completion.usage.completion_tokens;
         totalTokens.total += completion.usage.total_tokens;
+
+        // PER-ITERATION TOKEN LIMIT: Check if this iteration exceeded safe limits
+        const MAX_TOKENS_PER_ITERATION = await SystemConfigService.getNumber(
+          supabase,
+          'max_tokens_per_iteration',
+          50000 // Default: 50K tokens per iteration (safe threshold)
+        );
+
+        if (completion.usage.total_tokens > MAX_TOKENS_PER_ITERATION) {
+          console.error(`🔴 ITERATION TOKEN LIMIT EXCEEDED: ${completion.usage.total_tokens} tokens (limit: ${MAX_TOKENS_PER_ITERATION})`);
+          console.error(`   This iteration alone consumed ${completion.usage.total_tokens} tokens!`);
+
+          // Log token limit exceeded to audit trail
+          await auditTrail.log({
+            action: AUDIT_EVENTS.AGENTKIT_ITERATION_TOKEN_LIMIT_EXCEEDED,
+            entityType: 'agent',
+            entityId: agent.id,
+            userId: userId,
+            resourceName: agent.agent_name,
+            details: {
+              sessionId: sessionId,
+              iteration: iteration,
+              tokens_this_iteration: completion.usage.total_tokens,
+              token_limit: MAX_TOKENS_PER_ITERATION,
+              total_tokens_so_far: totalTokens.total,
+              prompt_tokens: completion.usage.prompt_tokens,
+              completion_tokens: completion.usage.completion_tokens
+            },
+            severity: 'critical'
+          });
+
+          // Return error result to prevent further credit exhaustion
+          return {
+            success: false,
+            response: '',
+            error: `Iteration ${iteration} exceeded token limit: ${completion.usage.total_tokens} tokens (limit: ${MAX_TOKENS_PER_ITERATION}). Execution stopped to prevent credit exhaustion.`,
+            iterations: iteration,
+            tokensUsed: totalTokens,
+            toolCalls: toolCalls,
+            executionTime: Date.now() - startTime
+          };
+        }
+
+        // CIRCUIT BREAKER: Check total execution tokens across all iterations
+        const MAX_TOTAL_EXECUTION_TOKENS = await SystemConfigService.getNumber(
+          supabase,
+          'max_total_execution_tokens',
+          200000 // Default: 200K tokens total (emergency stop)
+        );
+
+        if (totalTokens.total > MAX_TOTAL_EXECUTION_TOKENS) {
+          console.error(`🔴 CIRCUIT BREAKER TRIGGERED: ${totalTokens.total} total tokens (limit: ${MAX_TOTAL_EXECUTION_TOKENS})`);
+          console.error(`   Execution consumed ${totalTokens.total} tokens across ${iteration} iterations!`);
+
+          // Log circuit breaker triggered to audit trail
+          await auditTrail.log({
+            action: AUDIT_EVENTS.AGENTKIT_CIRCUIT_BREAKER_TRIGGERED,
+            entityType: 'agent',
+            entityId: agent.id,
+            userId: userId,
+            resourceName: agent.agent_name,
+            details: {
+              sessionId: sessionId,
+              iteration: iteration,
+              total_tokens: totalTokens.total,
+              token_limit: MAX_TOTAL_EXECUTION_TOKENS,
+              prompt_tokens: totalTokens.prompt,
+              completion_tokens: totalTokens.completion,
+              estimated_cost_usd: (totalTokens.total / 1000000) * 3 // Rough estimate at $3/1M tokens
+            },
+            severity: 'critical'
+          });
+
+          // Return error result to prevent further credit exhaustion
+          return {
+            success: false,
+            response: '',
+            error: `Circuit breaker triggered: Total execution consumed ${totalTokens.total} tokens (limit: ${MAX_TOTAL_EXECUTION_TOKENS}). Execution stopped to prevent credit exhaustion.`,
+            iterations: iteration,
+            tokensUsed: totalTokens,
+            toolCalls: toolCalls,
+            executionTime: Date.now() - startTime
+          };
+        }
       }
 
       const message = completion.choices[0].message;
@@ -605,11 +766,84 @@ Please use these input values when executing the task.`;
             success: result.success
           });
 
+          // LOOP DETECTION: Prevent infinite loops by tracking recent tool calls
+          const toolSignature = `${pluginKey}.${actionName}`;
+          recentToolCalls.push(toolSignature);
+
+          // Keep only the last N calls (sliding window)
+          if (recentToolCalls.length > LOOP_DETECTION_WINDOW) {
+            recentToolCalls.shift();
+          }
+
+          // Check if we're in a loop (same tool called repeatedly)
+          if (recentToolCalls.length >= MAX_SAME_TOOL_REPEATS) {
+            const lastNCalls = recentToolCalls.slice(-MAX_SAME_TOOL_REPEATS);
+            const allSame = lastNCalls.every(call => call === toolSignature);
+
+            if (allSame) {
+              console.error(`🔴 LOOP DETECTED: ${toolSignature} called ${MAX_SAME_TOOL_REPEATS} times in a row!`);
+              console.error(`   Recent calls: ${recentToolCalls.join(' → ')}`);
+
+              // Log loop detection to audit trail
+              await auditTrail.log({
+                action: AUDIT_EVENTS.AGENTKIT_LOOP_DETECTED,
+                entityType: 'agent',
+                entityId: agent.id,
+                userId: userId,
+                resourceName: agent.agent_name,
+                details: {
+                  sessionId: sessionId,
+                  loop_tool: toolSignature,
+                  consecutive_calls: MAX_SAME_TOOL_REPEATS,
+                  recent_calls: recentToolCalls,
+                  iteration: iteration,
+                  tokens_used_before_stop: totalTokens.total
+                },
+                severity: 'critical'
+              });
+
+              // Return error result to prevent credit exhaustion
+              return {
+                success: false,
+                response: '',
+                error: `Loop detected: ${toolSignature} called ${MAX_SAME_TOOL_REPEATS} times consecutively. Execution stopped to prevent credit exhaustion.`,
+                iterations: iteration,
+                tokensUsed: totalTokens,
+                toolCalls: toolCalls,
+                executionTime: Date.now() - startTime
+              };
+            }
+          }
+
           // Add tool result to conversation so OpenAI can use it
+          // CRITICAL: Truncate large responses to prevent token explosion
+          const resultString = JSON.stringify(result);
+
+          // Get max response size from system config
+          const MAX_TOOL_RESPONSE_CHARS = await SystemConfigService.getNumber(
+            supabase,
+            'max_tool_response_chars',
+            8000 // Default: 8000 chars = ~2000 tokens
+          );
+
+          let truncatedContent = resultString;
+          if (resultString.length > MAX_TOOL_RESPONSE_CHARS) {
+            // Intelligently truncate while preserving structure
+            const truncated = resultString.substring(0, MAX_TOOL_RESPONSE_CHARS);
+            const itemCount = result.data?.emails?.length || result.data?.items?.length || result.data?.length || 'multiple';
+
+            truncatedContent = truncated + `\n\n...[Response truncated for token efficiency. Original size: ${resultString.length} chars (${Math.ceil(resultString.length / 4)} tokens). Showing first ${MAX_TOOL_RESPONSE_CHARS} chars. Full data contains ${itemCount} items. Use your AI capabilities to process and analyze this data without requesting the full response again.]`;
+
+            console.warn(`⚠️  Tool response truncated to prevent token explosion:`);
+            console.warn(`    Original: ${resultString.length} chars (~${Math.ceil(resultString.length / 4)} tokens)`);
+            console.warn(`    Truncated: ${MAX_TOOL_RESPONSE_CHARS} chars (~${Math.ceil(MAX_TOOL_RESPONSE_CHARS / 4)} tokens)`);
+            console.warn(`    Saved: ~${Math.ceil((resultString.length - MAX_TOOL_RESPONSE_CHARS) / 4)} tokens`);
+          }
+
           messages.push({
             role: "tool",
             tool_call_id: toolCall.id,
-            content: JSON.stringify(result)
+            content: truncatedContent
           });
 
         } catch (error: any) {
@@ -727,8 +961,8 @@ async function summarizeExecutionAsync(
     // Get recent runs for comparison context
     const recentRuns = await memoryInjector.getRecentRunsForSummarization(agent.id, 5);
 
-    // Create summarizer
-    const summarizer = new MemorySummarizer(supabase, process.env.OPENAI_API_KEY);
+    // Create summarizer (uses service role client internally)
+    const summarizer = new MemorySummarizer();
 
     // Build summarization input
     const summarizationInput = {

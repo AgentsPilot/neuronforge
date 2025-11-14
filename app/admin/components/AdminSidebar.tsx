@@ -15,7 +15,12 @@ import {
   Gift,
   FileText,
   Sliders,
-  Brain
+  Brain,
+  Activity,
+  Palette,
+  Database,
+  BarChart3,
+  DollarSign
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -51,8 +56,14 @@ const navigationItems = [
   {
     name: 'Memory System',
     href: '/admin/learning-system',
-    icon: Brain,
-    description: 'Agent Memory & ROI'
+    icon: BarChart3,
+    description: 'Monitoring & ROI'
+  },
+  {
+    name: 'Memory Config',
+    href: '/admin/memory-config',
+    icon: Database,
+    description: 'Memory Settings'
   },
   {
     name: 'User Management',
@@ -61,16 +72,34 @@ const navigationItems = [
     description: 'Platform Users'
   },
   {
+    name: 'System Flow',
+    href: '/admin/system-flow',
+    icon: Activity,
+    description: 'Live System Visualization'
+  },
+  {
     name: 'System Config',
     href: '/admin/system-config',
-    icon: Sliders,
-    description: 'AI Routing & Pricing'
+    icon: DollarSign,
+    description: 'Pricing & Billing'
+  },
+  {
+    name: 'Orchestration',
+    href: '/admin/orchestration-config',
+    icon: Brain,
+    description: 'Routing & Workflows'
   },
   {
     name: 'AIS Config',
     href: '/admin/ais-config',
     icon: Settings,
     description: 'Intensity System Settings'
+  },
+  {
+    name: 'UI Config',
+    href: '/admin/ui-config',
+    icon: Palette,
+    description: 'Design System & Version'
   },
   {
     name: 'Reward Config',
@@ -106,51 +135,51 @@ export default function AdminSidebar({ isOpen, onClose }: AdminSidebarProps) {
 
       {/* Sidebar - Always visible on desktop, toggleable on mobile */}
       <div className={`
-        fixed left-0 top-0 bottom-0 w-72 z-50 
+        fixed left-0 top-0 bottom-0 w-64 z-50
         lg:static lg:z-auto lg:translate-x-0
         ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
         transition-transform duration-300 ease-in-out
       `}>
         <div className="h-full bg-slate-900/95 backdrop-blur-xl border-r border-white/10 flex flex-col">
           {/* Header */}
-          <div className="p-6 border-b border-white/10">
+          <div className="p-4 border-b border-white/10">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
-                  <Bot className="w-6 h-6 text-white" />
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                  <Bot className="w-5 h-5 text-white" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-bold text-white">AgentPilot</h2>
-                  <p className="text-xs text-slate-400">Admin Console</p>
+                  <h2 className="text-base font-bold text-white">AgentPilot</h2>
+                  <p className="text-xs text-slate-400">Admin</p>
                 </div>
               </div>
-              
+
               <button
                 onClick={onClose}
-                className="lg:hidden p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+                className="lg:hidden p-1.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
           </div>
 
           {/* Navigation */}
-          <nav className="flex-1 p-4 space-y-2">
+          <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
             {navigationItems.map((item, index) => {
               const isActive = pathname === item.href;
               const Icon = item.icon;
-              
+
               return (
                 <motion.div
                   key={item.name}
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.3, delay: index * 0.1 }}
+                  transition={{ duration: 0.3, delay: index * 0.05 }}
                 >
                   <Link
                     href={item.href}
                     onClick={onClose}
-                    className={`relative group flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 ${
+                    className={`relative group flex items-center gap-2.5 px-3 py-2 rounded-lg transition-all duration-200 ${
                       isActive
                         ? 'bg-gradient-to-r from-blue-500/20 to-purple-500/20 text-white border border-blue-400/30'
                         : 'text-slate-300 hover:text-white hover:bg-white/5'
@@ -160,32 +189,25 @@ export default function AdminSidebar({ isOpen, onClose }: AdminSidebarProps) {
                     {isActive && (
                       <motion.div
                         layoutId="activeIndicator"
-                        className="absolute left-0 w-1 h-8 bg-gradient-to-b from-blue-400 to-purple-400 rounded-r-full"
+                        className="absolute left-0 w-1 h-6 bg-gradient-to-b from-blue-400 to-purple-400 rounded-r-full"
                         transition={{ type: "spring", duration: 0.6 }}
                       />
                     )}
-                    
-                    <div className={`p-2 rounded-lg transition-colors ${
-                      isActive 
-                        ? 'bg-blue-500/20' 
+
+                    <div className={`p-1.5 rounded-md transition-colors ${
+                      isActive
+                        ? 'bg-blue-500/20'
                         : 'bg-slate-800/50 group-hover:bg-slate-700/50'
                     }`}>
-                      <Icon className="w-5 h-5" />
+                      <Icon className="w-4 h-4" />
                     </div>
-                    
-                    <div className="flex-1">
-                      <p className="font-medium">{item.name}</p>
-                      <p className="text-xs text-slate-400 group-hover:text-slate-300">
+
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{item.name}</p>
+                      <p className="text-xs text-slate-400 group-hover:text-slate-300 truncate">
                         {item.description}
                       </p>
                     </div>
-
-                    {/* Hover effect */}
-                    <div className={`w-2 h-2 rounded-full transition-all duration-300 ${
-                      isActive 
-                        ? 'bg-blue-400' 
-                        : 'bg-transparent group-hover:bg-slate-400'
-                    }`} />
                   </Link>
                 </motion.div>
               );
@@ -193,25 +215,25 @@ export default function AdminSidebar({ isOpen, onClose }: AdminSidebarProps) {
           </nav>
 
           {/* System Status */}
-          <div className="p-4 border-t border-white/10">
-            <div className="bg-slate-800/50 rounded-xl p-4">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-                <span className="text-sm font-medium text-white">System Status</span>
+          <div className="p-3 border-t border-white/10">
+            <div className="bg-slate-800/50 rounded-lg p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
+                <span className="text-xs font-medium text-white">System</span>
               </div>
-              
-              <div className="space-y-2 text-xs text-slate-400">
+
+              <div className="space-y-1 text-xs text-slate-400">
                 <div className="flex justify-between">
-                  <span>API Health</span>
-                  <span className="text-green-400">Healthy</span>
+                  <span>API</span>
+                  <span className="text-green-400">OK</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Queue Status</span>
-                  <span className="text-green-400">Active</span>
+                  <span>Queue</span>
+                  <span className="text-green-400">OK</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Database</span>
-                  <span className="text-green-400">Connected</span>
+                  <span>DB</span>
+                  <span className="text-green-400">OK</span>
                 </div>
               </div>
             </div>

@@ -518,7 +518,7 @@ export class PluginManagerV2 {
     if (this.debug) console.log('DEBUG: Validating parameters against schema');
 
     const errors: string[] = [];
-
+    
     // Check required fields
     if (schema.required) {
       for (const required of schema.required) {
@@ -527,23 +527,15 @@ export class PluginManagerV2 {
         }
       }
     }
-
-    // Basic type checking for properties with type coercion
+    
+    // Basic type checking for properties
     if (schema.properties && parameters) {
       for (const [key, value] of Object.entries(parameters)) {
         const propSchema = schema.properties[key];
         if (propSchema && propSchema.type) {
           const actualType = typeof value;
           const expectedType = propSchema.type;
-
-          // Type coercion for integers - convert numeric strings to numbers
-          if (expectedType === 'integer' && actualType === 'string' && /^\d+$/.test(value as string)) {
-            parameters[key] = parseInt(value as string, 10);
-            if (this.debug) console.log(`DEBUG: Coerced ${key} from string "${value}" to integer ${parameters[key]}`);
-            continue; // Skip validation after coercion
-          }
-
-          // Validate types
+          
           if (expectedType === 'array' && !Array.isArray(value)) {
             errors.push(`Parameter ${key} should be array, got ${actualType}`);
           } else if (expectedType === 'object' && (actualType !== 'object' || Array.isArray(value) || value === null)) {

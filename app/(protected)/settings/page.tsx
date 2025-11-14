@@ -3,15 +3,15 @@
 import React, { useState, useEffect } from 'react'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
-import { 
-  Settings, 
-  RefreshCw, 
-  PlugZap, 
-  User, 
-  Bell, 
-  Shield, 
+import { useSearchParams } from 'next/navigation'
+import {
+  Settings,
+  RefreshCw,
+  PlugZap,
+  User,
+  Bell,
+  Shield,
   BarChart3,
-  Sparkles,
   Check,
   Clock,
   Globe
@@ -21,12 +21,13 @@ import ProfileTab from '@/components/settings/ProfileTab'
 import NotificationsTab from '@/components/settings/NotificationsTab'
 import SecurityTab from '@/components/settings/SecurityTab'
 import BillingSettings from '@/components/settings/BillingSettings'
-import UsageAnalytics from '@/components/settings/UsageAnalytics'
-import { UserProfile, UserPreferences, NotificationSettings, PluginConnection } from '@/types/settings'
+import { UserProfile, NotificationSettings, PluginConnection } from '@/types/settings'
 
 export default function SettingsPage() {
   const { user } = useAuth()
-  const [activeTab, setActiveTab] = useState('profile')
+  const searchParams = useSearchParams()
+  const tabParam = searchParams.get('tab')
+  const [activeTab, setActiveTab] = useState(tabParam || 'profile')
   const [loading, setLoading] = useState(true)
   
   // Data states
@@ -46,18 +47,6 @@ export default function SettingsPage() {
       description: 'Personal information and settings'
     },
     {
-      id: 'plugins',
-      label: 'Plugins',
-      icon: <PlugZap className="w-4 h-4" />,
-      description: 'Manage integrations and connections'
-    },
-    {
-      id: 'notifications',
-      label: 'Notifications',
-      icon: <Bell className="w-4 h-4" />,
-      description: 'Configure alerts and updates'
-    },
-    {
       id: 'security',
       label: 'Security',
       icon: <Shield className="w-4 h-4" />,
@@ -67,21 +56,35 @@ export default function SettingsPage() {
       id: 'billing',
       label: 'Billing',
       icon: <BarChart3 className="w-4 h-4" />,
-      description: 'Manage credits, plans, and invoices'
+      description: 'Manage credits, plans, invoices, and usage'
     },
     {
-      id: 'usage',
-      label: 'Usage',
-      icon: <Sparkles className="w-4 h-4" />,
-      description: 'View credit usage analytics'
+      id: 'notifications',
+      label: 'Notifications',
+      icon: <Bell className="w-4 h-4" />,
+      description: 'Configure alerts and updates'
+    },
+    {
+      id: 'plugins',
+      label: 'Plugins',
+      icon: <PlugZap className="w-4 h-4" />,
+      description: 'Manage integrations and connections'
     }
   ]
 
   useEffect(() => {
-    if (user) {
+    if (user?.id) {
       loadUserData()
     }
-  }, [user])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]) // Only reload when user ID changes, not the entire user object
+
+  // Handle tab parameter from URL
+  useEffect(() => {
+    if (tabParam) {
+      setActiveTab(tabParam)
+    }
+  }, [tabParam])
 
   const loadUserData = async () => {
     if (!user) return
@@ -90,16 +93,24 @@ export default function SettingsPage() {
       setLoading(true)
       
       // Load all data in parallel
-      const [profileRes, notificationsRes, connectionsRes] = await Promise.all([
+      const [profileRes, preferencesRes, notificationsRes, connectionsRes] = await Promise.all([
         supabase.from('profiles').select('*').eq('id', user.id).single(),
+        supabase.from('user_preferences').select('*').eq('user_id', user.id).single(),
         supabase.from('notification_settings').select('*').eq('user_id', user.id).single(),
         supabase.from('plugin_connections').select('*').eq('user_id', user.id).neq('status', 'disconnected').order('connected_at', { ascending: false })
       ])
 
-      // Set profile data
+      // Set profile data - merge profile and preferences
       if (profileRes.data) {
-        setProfile(profileRes.data)
-        setProfileForm(profileRes.data)
+        const profileData = {
+          ...profileRes.data,
+          // Add preferences data
+          preferred_currency: preferencesRes.data?.preferred_currency || 'USD',
+          timezone: preferencesRes.data?.timezone,
+          preferred_language: preferencesRes.data?.preferred_language
+        }
+        setProfile(profileData)
+        setProfileForm(profileData)
       } else {
         const defaultProfile = {
           id: user.id,
@@ -124,6 +135,85 @@ export default function SettingsPage() {
       console.error('Error loading user data:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const saveProfile = async () => {
+    if (!user) return
+
+    try {
+      // Update profiles table (only profile-specific fields)
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .upsert({
+          id: user.id,
+          full_name: profileForm.full_name,
+          avatar_url: profileForm.avatar_url,
+          company: profileForm.company,
+          job_title: profileForm.job_title,
+          updated_at: new Date().toISOString()
+        }, {
+          onConflict: 'id'
+        })
+
+      if (profileError) {
+        console.error('Error saving profile:', profileError)
+        throw profileError
+      }
+
+      // Update user_preferences table for timezone and language (currency is handled separately by CurrencySelector)
+      if (profileForm.timezone || profileForm.language) {
+        const { error: prefsError } = await supabase
+          .from('user_preferences')
+          .upsert({
+            user_id: user.id,
+            timezone: profileForm.timezone,
+            preferred_language: profileForm.language,
+            updated_at: new Date().toISOString()
+          }, {
+            onConflict: 'user_id'
+          })
+
+        if (prefsError) {
+          console.error('Error saving preferences:', prefsError)
+          throw prefsError
+        }
+      }
+
+      // Reload data to confirm changes
+      await loadUserData()
+
+      console.log('✅ Profile saved successfully')
+    } catch (error) {
+      console.error('Error saving profile:', error)
+      throw error
+    }
+  }
+
+  const saveNotifications = async () => {
+    if (!user) return
+
+    try {
+      const { error } = await supabase
+        .from('notification_settings')
+        .upsert({
+          user_id: user.id,
+          ...notificationsForm,
+          updated_at: new Date().toISOString()
+        }, {
+          onConflict: 'user_id'
+        })
+
+      if (error) {
+        console.error('Error saving notifications:', error)
+        throw error
+      }
+
+      await loadUserData()
+      console.log('✅ Notifications saved successfully')
+    } catch (error) {
+      console.error('Error saving notifications:', error)
+      throw error
     }
   }
 
@@ -156,57 +246,6 @@ export default function SettingsPage() {
         <p className="text-gray-600 mt-2">
           Manage your account, plugins, and preferences
         </p>
-      </div>
-
-      {/* Metrics Cards - Horizontal Compact */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="bg-white/80 backdrop-blur-sm p-3 rounded-xl border border-gray-200/50 shadow-lg hover:shadow-xl transition-all duration-300">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-lg">
-              <PlugZap className="h-5 w-5 text-white" />
-            </div>
-            <div>
-              <p className="text-xs text-gray-600 font-medium">Plugins</p>
-              <p className="text-xl font-bold text-gray-900">{connections.length}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white/80 backdrop-blur-sm p-3 rounded-xl border border-gray-200/50 shadow-lg hover:shadow-xl transition-all duration-300">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-lg">
-              <Check className="h-5 w-5 text-white" />
-            </div>
-            <div>
-              <p className="text-xs text-gray-600 font-medium">Sections</p>
-              <p className="text-xl font-bold text-gray-900">{tabs.length}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white/80 backdrop-blur-sm p-3 rounded-xl border border-gray-200/50 shadow-lg hover:shadow-xl transition-all duration-300">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-lg">
-              <Clock className="h-5 w-5 text-white" />
-            </div>
-            <div>
-              <p className="text-xs text-gray-600 font-medium">Updated</p>
-              <p className="text-xl font-bold text-gray-900">Today</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white/80 backdrop-blur-sm p-3 rounded-xl border border-gray-200/50 shadow-lg hover:shadow-xl transition-all duration-300">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-orange-500 to-red-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-lg">
-              <Globe className="h-5 w-5 text-white" />
-            </div>
-            <div>
-              <p className="text-xs text-gray-600 font-medium">Status</p>
-              <p className="text-xl font-bold text-gray-900">Active</p>
-            </div>
-          </div>
-        </div>
       </div>
 
       {/* Controls Card - Like Analytics */}
@@ -252,7 +291,7 @@ export default function SettingsPage() {
             profile={profile}
             profileForm={profileForm}
             setProfileForm={setProfileForm}
-            onSave={() => {/* handle save */}}
+            onSave={saveProfile}
           />
         )}
         {activeTab === 'plugins' && (
@@ -266,12 +305,11 @@ export default function SettingsPage() {
             notifications={notifications}
             notificationsForm={notificationsForm}
             setNotificationsForm={setNotificationsForm}
-            onSave={() => {/* handle save */}}
+            onSave={saveNotifications}
           />
         )}
         {activeTab === 'security' && <SecurityTab />}
         {activeTab === 'billing' && <BillingSettings />}
-        {activeTab === 'usage' && <UsageAnalytics />}
       </div>
     </div>
   )

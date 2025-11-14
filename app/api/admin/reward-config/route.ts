@@ -51,8 +51,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    console.log('🔍 [GET] Raw rewards data:', JSON.stringify(rewards, null, 2));
-
+    
     // Flatten the settings into the reward object for easier access
     const rewardsWithSettings = rewards?.map(reward => {
       console.log(`🔍 [GET] Processing reward ${reward.reward_key}:`, {
@@ -80,7 +79,7 @@ export async function GET(request: NextRequest) {
       };
     }) || [];
 
-    console.log('🔍 [GET] Rewards with flattened settings:', JSON.stringify(rewardsWithSettings, null, 2));
+    //console.log('🔍 [GET] Rewards with flattened settings:', JSON.stringify(rewardsWithSettings, null, 2));
 
     // Fetch default credits from pricing_config
     const { data: defaultCreditsData } = await supabase
@@ -97,7 +96,7 @@ export async function GET(request: NextRequest) {
       defaultCredits
     });
   } catch (error: any) {
-    console.error('Exception in GET /api/admin/reward-config:', error);
+    //console.error('Exception in GET /api/admin/reward-config:', error);
     return NextResponse.json(
       { success: false, error: error.message },
       { status: 500 }

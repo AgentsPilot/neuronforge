@@ -325,17 +325,16 @@ const AgentExecutionHistory = ({ agent }: { agent: Agent }) => {
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
   const fetchHistory = async () => {
     if (!expanded || loading) return;
-    
+
     setLoading(true);
     setError(null);
-    
+
     try {
       const response = await fetch(`/api/run-agent?agent_id=${agent.id}&limit=5`);
       const data = await response.json();
-      
+
       if (data.success && data.executions) {
         setHistory(data.executions);
       } else {
@@ -445,14 +444,14 @@ const AgentExecutionHistory = ({ agent }: { agent: Agent }) => {
           </div>
           <div>
             <span className="text-xs font-medium text-gray-800">Recent Activity</span>
-            {history.length > 0 && !loading && (
+            {history.length > 0 && !loading && getSuccessRate() > 0 && (
               <div className="text-xs text-emerald-600 font-medium">
                 {getSuccessRate()}% success
               </div>
             )}
           </div>
         </div>
-        
+
         <ChevronDown className={`w-3 h-3 text-gray-400 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
       </button>
 
@@ -480,27 +479,34 @@ const AgentExecutionHistory = ({ agent }: { agent: Agent }) => {
 
           {!loading && !error && history.length > 0 && (
             <>
-              <div className="grid grid-cols-3 gap-2 p-2 bg-gray-50 rounded text-center">
-                <div>
-                  <div className="text-sm font-semibold text-gray-900">{history.length}</div>
-                  <div className="text-xs text-gray-600">Runs</div>
-                </div>
-                <div>
-                  <div className="text-sm font-semibold text-emerald-600">{getSuccessRate()}%</div>
-                  <div className="text-xs text-gray-600">Success</div>
-                </div>
-                <div>
-                  <div className="text-sm font-semibold text-blue-600">
-                    {formatDuration(
-                      history
-                        .filter(h => h.execution_duration_ms)
-                        .reduce((sum, h) => sum + (h.execution_duration_ms || 0), 0) / 
-                      (history.filter(h => h.execution_duration_ms).length || 1)
-                    )}
+              {/* Only show stats if there's actual history */}
+              {history.length > 0 && (
+                <div className={`grid ${getSuccessRate() > 0 ? 'grid-cols-3' : 'grid-cols-2'} gap-2 p-2 bg-gray-50 rounded text-center`}>
+                  <div>
+                    <div className="text-sm font-semibold text-gray-900">{history.length}</div>
+                    <div className="text-xs text-gray-600">Runs</div>
                   </div>
-                  <div className="text-xs text-gray-600">Avg</div>
+                  {getSuccessRate() > 0 && (
+                    <div>
+                      <div className="text-sm font-semibold text-emerald-600">
+                        {getSuccessRate()}%
+                      </div>
+                      <div className="text-xs text-gray-600">Success</div>
+                    </div>
+                  )}
+                  <div>
+                    <div className="text-sm font-semibold text-blue-600">
+                      {formatDuration(
+                        history
+                          .filter(h => h.execution_duration_ms)
+                          .reduce((sum, h) => sum + (h.execution_duration_ms || 0), 0) /
+                        (history.filter(h => h.execution_duration_ms).length || 1)
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-600">Avg</div>
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div className="space-y-1">
                 {history.map((execution) => {
@@ -692,13 +698,9 @@ const useAgentExecutionStatus = (agentId: string, agentStatus: string, forceRefr
 const ExecutionStatusBadge = ({ agent, forceRefresh }: { agent: Agent; forceRefresh?: number }) => {
   const { executionStatus, loading } = useAgentExecutionStatus(agent.id, agent.status, forceRefresh);
 
+  // Hide while loading to avoid showing "0" or placeholder
   if (loading) {
-    return (
-      <div className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-gray-50 text-gray-500 border border-gray-200">
-        <Loader2 className="w-3 h-3 animate-spin" />
-        <span>...</span>
-      </div>
-    );
+    return null;
   }
 
   if (!executionStatus?.latestExecution) return null;
@@ -1275,7 +1277,7 @@ export default function AgentList() {
                   )}
 
                   {/* Learning indicator - only show if agent has memories */}
-                  {agent.memory_count && agent.memory_count > 0 && (
+                  {agent.memory_count > 0 && (
                     <div className="flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-purple-50 text-purple-700 border border-purple-200">
                       <Brain className="w-3 h-3" />
                       <span>Learning</span>

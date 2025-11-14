@@ -457,7 +457,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
               </div>
               <div>
                 <h1 className="text-xl font-bold bg-gradient-to-r from-slate-800 to-slate-600 bg-clip-text text-transparent">
-                  AgentPilot
+                  AgentsPilot
                 </h1>
                 <p className="text-xs text-slate-500 font-medium">AI Automation Platform</p>
               </div>
@@ -565,43 +565,43 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         </div>
       )}
 
-      {/* Navigation */}
-      <nav className="flex-1 space-y-6">
+      {/* Navigation - Scrollable */}
+      <nav className="flex-1 overflow-y-auto space-y-6 pr-2">
         <SidebarSection title="Main" isCollapsed={isCollapsed}>
-          <SidebarLink 
-            href="/dashboard" 
-            label="Dashboard" 
+          <SidebarLink
+            href="/dashboard"
+            label="Dashboard"
             icon={LayoutDashboard}
             isActive={pathname === '/dashboard'}
             onClick={() => setIsMobileOpen(false)}
             isCollapsed={isCollapsed}
           />
-          <SidebarLink 
-            href="/agents" 
-            label="Agents" 
+          <SidebarLink
+            href="/agents"
+            label="Agents"
             icon={Bot}
             badge={agentCount !== null ? agentCount : undefined}
             isActive={pathname === '/agents'}
             onClick={() => setIsMobileOpen(false)}
             isCollapsed={isCollapsed}
           />
-          <SidebarLink 
-            href="/analytic" 
-            label="Analytics" 
+          <SidebarLink
+            href="/analytic"
+            label="Analytics"
             icon={BarChart3}
             isActive={pathname === '/analytic'}
             onClick={() => setIsMobileOpen(false)}
             isCollapsed={isCollapsed}
           />
-          <SidebarLink 
-            href="/templates" 
-            label="Templates" 
+          <SidebarLink
+            href="/templates"
+            label="Templates"
             icon={Workflow}
             badge={templateCount !== null ? templateCount : undefined}
             isActive={pathname === '/templates'}
             onClick={() => setIsMobileOpen(false)}
             isCollapsed={isCollapsed}
-          />          
+          />
           <SidebarLink
             href="/monitoring"
             label="Audit Trail"
@@ -632,8 +632,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         </SidebarSection>
       </nav>
 
-      {/* User Profile */}
-      <div className="border-t border-slate-200/50 pt-6 mt-6">
+      {/* User Profile - Fixed at Bottom */}
+      <div className="flex-shrink-0 border-t border-slate-200/50 pt-6 mt-6">
         {!isCollapsed ? (
           <div className="space-y-3">
             <div className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-white/50 backdrop-blur-sm border border-slate-200/50">
@@ -745,7 +745,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
       {/* Sidebar */}
       <aside className={clsx(
-        'fixed lg:static inset-y-0 left-0 z-50 bg-white/80 backdrop-blur-xl border-r border-slate-200/50 shadow-xl transition-all duration-300 flex flex-col',
+        'fixed inset-y-0 left-0 z-50 bg-white/80 backdrop-blur-xl border-r border-slate-200/50 shadow-xl transition-all duration-300 flex flex-col h-screen',
         isCollapsed ? 'w-20' : 'w-72',
         isMobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
       )}>
@@ -757,7 +757,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
           <X className="h-5 w-5 text-slate-500" />
         </button>
 
-        <div className="p-6 flex-1 flex flex-col">
+        <div className="p-6 flex-1 flex flex-col min-h-0">
           {sidebarContent}
         </div>
       </aside>
@@ -765,7 +765,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       {/* Main content */}
       <main className={clsx(
         'flex-1 transition-all duration-300',
-        'lg:ml-0 pt-20 lg:pt-0'
+        'pt-20 lg:pt-0',
+        isCollapsed ? 'lg:ml-20' : 'lg:ml-72'
       )}>
         <div className="p-8 lg:p-10 h-full">
           <div className="bg-white/60 backdrop-blur-sm rounded-3xl shadow-sm border border-white/50 p-8 h-full min-h-[calc(100vh-5rem)] lg:min-h-[calc(100vh-2.5rem)]">

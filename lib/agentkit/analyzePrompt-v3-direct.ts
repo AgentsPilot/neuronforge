@@ -5,10 +5,26 @@ import { openai, AGENTKIT_CONFIG } from './agentkitClient';
 import { convertPluginsToTools, getPluginContextPrompt } from './convertPlugins';
 
 export interface AnalyzedWorkflowStep {
+  id: string;
   operation: string;
+  type: 'plugin_action' | 'ai_processing' | 'conditional' | 'transform' | 'human_approval';
   plugin: string;
   plugin_action: string;
+  params?: Record<string, any>; // Parameters to pass to plugin action
+  dependencies: string[];
   reasoning: string;
+  // Conditional-specific fields
+  condition?: {
+    field: string;
+    operator: string;
+    value: any;
+  };
+  // Conditional execution
+  executeIf?: {
+    field: string;
+    operator: string;
+    value: any;
+  };
 }
 
 export interface AnalyzedInput {
@@ -209,21 +225,44 @@ Return a JSON object with:
   ],
   "workflow_steps": [
     {
+      "id": "step1",
       "operation": "Read last 10 emails",
+      "type": "plugin_action",
       "plugin": "google-mail",
       "plugin_action": "search_emails",
+      "params": {
+        "query": "in:inbox",
+        "max_results": 10
+      },
+      "dependencies": [],
       "reasoning": "User requested last 10 emails"
     },
     {
+      "id": "step2",
       "operation": "Summarize email content",
+      "type": "ai_processing",
       "plugin": "ai_processing",
       "plugin_action": "process",
+      "params": {
+        "prompt": "Summarize these emails: {{step1.data.emails}}",
+        "output_format": "summary"
+      },
+      "dependencies": ["step1"],
       "reasoning": "Summarization is AI processing"
     },
     {
+      "id": "step3",
       "operation": "Append summary to Google Sheet",
+      "type": "plugin_action",
       "plugin": "google-sheets",
       "plugin_action": "append_rows",
+      "params": {
+        "spreadsheet_id": "{{input.spreadsheet_id}}",
+        "values": [[
+          "{{step2.data.summary}}"
+        ]]
+      },
+      "dependencies": ["step2"],
       "reasoning": "User wants to send to sheet"
     }
   ],
@@ -248,6 +287,63 @@ Return a JSON object with:
   "reasoning": "Explain your analysis",
   "confidence": 0.95
 }
+
+# ⚡ CONDITIONAL WORKFLOWS - WHEN TO USE ⚡
+Use conditional branching when the workflow has DECISION POINTS based on data:
+
+**WHEN TO USE CONDITIONALS:**
+- "If customer is VIP, do X, otherwise do Y"
+- "Check if field exists, then process accordingly"
+- "Route based on priority/status/type"
+- "Different actions for new vs existing records"
+
+**CONDITIONAL STEP FORMAT:**
+{
+  "id": "check_vip",
+  "operation": "Check if customer is VIP",
+  "type": "conditional",
+  "condition": {
+    "field": "step1.data.is_vip",
+    "operator": "==",
+    "value": true
+  },
+  "dependencies": ["step1"],
+  "reasoning": "Decision point based on VIP status"
+}
+
+**CONDITIONAL EXECUTION (executeIf):**
+Steps that should only run when a condition is true must include "executeIf":
+{
+  "id": "step_vip",
+  "operation": "Create VIP task",
+  "type": "plugin_action",
+  "plugin": "google-drive",
+  "plugin_action": "create_document",
+  "executeIf": {
+    "field": "check_vip.data.result",
+    "operator": "==",
+    "value": true
+  },
+  "dependencies": ["check_vip"],
+  "reasoning": "Only for VIP customers"
+}
+
+**EXAMPLE - Customer Order Workflow:**
+[
+  {"id": "step1", "operation": "Extract order data", "type": "ai_processing", "dependencies": []},
+  {"id": "step2", "operation": "Lookup customer info", "type": "plugin_action", "plugin": "database", "plugin_action": "query", "dependencies": ["step1"]},
+  {"id": "check_vip", "operation": "Check if VIP", "type": "conditional", "condition": {"field": "step2.data.is_vip", "operator": "==", "value": true}, "dependencies": ["step2"]},
+  {"id": "step3_vip", "operation": "Create VIP priority task", "type": "plugin_action", "plugin": "google-drive", "plugin_action": "create_document", "executeIf": {"field": "check_vip.data.result", "operator": "==", "value": true}, "dependencies": ["check_vip"]},
+  {"id": "step3_normal", "operation": "Create standard task", "type": "plugin_action", "plugin": "google-drive", "plugin_action": "create_document", "executeIf": {"field": "check_vip.data.result", "operator": "==", "value": false}, "dependencies": ["check_vip"]}
+]
+
+**IMPORTANT STEP RULES:**
+1. Every step MUST have "id", "operation", "type", "dependencies"
+2. Use "type": "conditional" for decision points
+3. Use "executeIf" on steps that should only run when conditions are met
+4. Available operators: "==", "!=", ">", "<", ">=", "<=", "contains", "not_contains"
+5. Sequential steps should have dependencies on previous step (e.g., step2 depends on step1)
+6. Conditional branches should depend on the conditional step
 
 # ⚡ CRITICAL - ALWAYS DETECT OUTPUT FORMAT ⚡
 EVERY SummaryBlock output MUST have a "format" field. Analyze the user's prompt and detect their desired format:
@@ -274,14 +370,41 @@ User says: "Send me bullet points"
 - DO NOT create error notification outputs - these are added automatically by the system
 - Focus on the main deliverable outputs only
 
-# IMPORTANT - Input Detection:
+# IMPORTANT - Input Detection & Parameter Mapping:
 For each plugin action in workflow_steps:
 1. Check what parameters it requires (see Connected Services above)
-2. If parameter value is NOT in the user's prompt, add it to required_inputs
-3. Example: append_rows needs "spreadsheet_id", "range", "values"
-   - "values" comes from AI summary
-   - "spreadsheet_id" NOT in prompt → add to required_inputs
-   - "range" could default to sheet name, but better to ask → add to required_inputs`;
+2. Add a "params" field that maps inputs and previous step outputs to plugin parameters
+3. If parameter value is NOT in the user's prompt, add it to required_inputs
+4. Use variable interpolation syntax:
+   - {{input.field_name}} for user inputs
+   - {{step1.data.field_name}} for previous step outputs (plugin actions)
+   - {{step2.data.X}} for AI processing results (see below for available fields)
+
+Example: append_rows needs "spreadsheet_id", "range", "values"
+   - "values" comes from AI summary → "params": {"values": [[{{step2.data.summary}}]]}
+   - "spreadsheet_id" NOT in prompt → add to required_inputs + use {{input.spreadsheet_id}} in params
+   - "range" → use {{input.range}} or default value in params
+
+AI PROCESSING STEPS - FLEXIBLE OUTPUT REFERENCES:
+AI processing steps return the same result under MULTIPLE field names for flexibility.
+Choose the most semantic field name based on what the AI is doing:
+
+Common field names (all contain the same value):
+- {{stepX.data.result}} - Generic, always works for any AI processing task
+- {{stepX.data.summary}} - Use for summarization tasks (most intuitive)
+- {{stepX.data.analysis}} - Use for analysis tasks
+- {{stepX.data.decision}} - Use for decision-making tasks
+- {{stepX.data.classification}} - Use for classification tasks
+- {{stepX.data.response}} - Raw AI response
+
+Example workflows:
+- Summarize emails → reference as {{step2.data.summary}}
+- Analyze data → reference as {{step3.data.analysis}}
+- Make decision → reference as {{step1.data.decision}}
+
+The "prompt" in params should include variable references: "Summarize these: {{step1.data.emails}}"
+
+CRITICAL: Every plugin_action step MUST have a "params" field with proper variable mapping!`;
 
     const completion = await openai.chat.completions.create({
       model: AGENTKIT_CONFIG.model,
@@ -366,10 +489,13 @@ For each plugin action in workflow_steps:
     console.error('❌ AgentKit Direct: Analysis failed:', error);
 
     // Fallback workflow steps
-    const fallbackSteps = [{
+    const fallbackSteps: AnalyzedWorkflowStep[] = [{
+      id: 'step1',
       operation: 'Process user request',
+      type: 'ai_processing',
       plugin: 'ai_processing',
       plugin_action: 'process',
+      dependencies: [],
       reasoning: 'Fallback due to analysis error'
     }];
 

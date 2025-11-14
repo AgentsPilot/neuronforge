@@ -30,6 +30,7 @@ export interface AgentSandboxProps {
   initialContext?: 'test' | 'configure'
   locked?: boolean  // When true, prevents mode switching (hides toggle)
   onExecutionComplete?: (executionId: string | null) => void
+  onExecutionStart?: (executionId: string) => void
   onFormCompletionChange?: (isComplete: boolean) => void
 }
 

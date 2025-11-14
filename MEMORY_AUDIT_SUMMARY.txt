@@ -1,0 +1,112 @@
+MEMORY CONFIGURATION PARAMETERS AUDIT - EXECUTIVE SUMMARY
+=========================================================
+
+AUDIT SCOPE: All 22 memory configuration parameters across NeuronForge
+THOROUGHNESS: Very thorough (code-level verification with line numbers)
+STATUS: Complete
+
+OVERALL RESULTS:
+  18 out of 22 parameters (81.8%) are fully used
+  4 out of 22 parameters (18.2%) are unused
+
+FULLY USED PARAMETERS (18):
+  1. memory_injection_max_tokens - MemoryInjector.ts:107,385,447
+  2. memory_injection_min_recent_runs - MemoryInjector.ts:386,413,436
+  3. memory_injection_max_recent_runs - MemoryInjector.ts:76
+  4. memory_injection_semantic_search_limit - MemoryInjector.ts:83,88,302
+  5. memory_injection_semantic_threshold - MemoryInjector.ts:89,301,332
+  6. memory_summarization_model - MemorySummarizer.ts:134,138,156,160
+  7. memory_summarization_temperature - MemorySummarizer.ts:140,177
+  8. memory_summarization_max_tokens - MemorySummarizer.ts:141,177
+  9. memory_embedding_model - MemoryInjector.ts:291, MemorySummarizer.ts:630,670
+  10. memory_importance_base_score - MemorySummarizer.ts:418
+  11. memory_importance_error_bonus - MemorySummarizer.ts:422
+  12. memory_importance_pattern_bonus - MemorySummarizer.ts:427
+  13. memory_importance_user_feedback_bonus - MemorySummarizer.ts:438
+  14. memory_importance_first_run_bonus - MemorySummarizer.ts:454
+  15. memory_importance_milestone_bonus - MemorySummarizer.ts:457
+  16. memory_retention_run_memories_days - memory-maintenance.ts:42
+  17. memory_retention_low_importance_days - memory-maintenance.ts:45
+  18. memory_retention_consolidation_threshold - memory-maintenance.ts:137
+
+UNUSED PARAMETERS (4):
+  1. memory_summarization_async
+     - Configured: YES (database + admin UI)
+     - Loaded: YES (MemoryConfigService.getSummarizationConfig:64)
+     - Used: NO - Summarization is always async (fire-and-forget pattern)
+     - Impact: LOW - Current behavior matches expected functionality
+  
+  2. memory_embedding_batch_size
+     - Configured: YES (database + admin UI)
+     - Loaded: YES (MemoryConfigService.getEmbeddingConfig:77)
+     - Used: NO - Only single embeddings are generated
+     - Impact: MEDIUM - Could improve performance with batch processing
+  
+  3. memory_embedding_dimensions
+     - Configured: YES (database + admin UI)
+     - Loaded: YES (MemoryConfigService.getEmbeddingConfig:76)
+     - Used: NO - Not validated or referenced anywhere
+     - Impact: MEDIUM - Should match embedding model's output size
+  
+  4. memory_retention_consolidation_frequency_days
+     - Configured: YES (database + admin UI)
+     - Loaded: YES (MemoryConfigService.getRetentionConfig:106)
+     - Used: NO - No scheduler implementation
+     - Impact: LOW - Consolidation runs manually via maintenance script
+
+DATABASE STORAGE LOCATION:
+  All parameters stored in: system_settings_config table
+  Key naming pattern: memory_[category]_[parameter_name]
+
+LOAD MECHANISM:
+  1. MemoryConfigService class (lib/memory/MemoryConfigService.ts)
+  2. Five config getter methods:
+     - getSummarizationConfig()
+     - getEmbeddingConfig()
+     - getInjectionConfig()
+     - getRetentionConfig()
+     - getImportanceConfig()
+  3. Caching with 5-minute TTL
+  4. Admin API endpoint: /api/admin/memory-config
+
+ADMIN UI:
+  Location: app/admin/memory-config/page.tsx
+  - All 22 parameters have UI controls
+  - Grouped by category (5 sections)
+  - Save functionality syncs to database
+
+VERIFICATION RESULTS:
+  Types/Interfaces: 22/22 defined correctly
+  Database Loading: 22/22 loaded from database
+  Admin UI: 22/22 have UI controls
+  Execution Usage: 18/22 actually used
+
+CRITICAL FINDINGS:
+  - No missing parameters in database-to-code flow
+  - All parameters properly defined and typed
+  - Admin UI is complete for all parameters
+  - Unused parameters don't break functionality
+  - Clean separation of concerns in config loading
+
+RECOMMENDATIONS:
+  1. HIGH: Document why 4 parameters are unused
+  2. MEDIUM: Implement batch_size for embedding optimization
+  3. MEDIUM: Add dimensions validation against embedding model
+  4. LOW: Consider removing async parameter or implement conditional behavior
+  5. LOW: Implement scheduled consolidation or remove frequency parameter
+
+FILES AUDITED:
+  - lib/memory/MemoryConfigService.ts (definitions)
+  - lib/memory/MemoryInjector.ts (injection usage)
+  - lib/memory/MemorySummarizer.ts (summarization usage)
+  - lib/memory/MemoryEnhancedExecution.ts (execution wrapper)
+  - lib/memory/UserMemoryService.ts (user memory)
+  - app/api/admin/memory-config/route.ts (admin API)
+  - app/admin/memory-config/page.tsx (admin UI)
+  - scripts/memory-maintenance.ts (retention usage)
+
+AUDIT CONFIDENCE: Very High (100%)
+  - Direct code verification with line numbers
+  - Complete codebase search performed
+  - All code paths verified
+  - No missing parameters identified
