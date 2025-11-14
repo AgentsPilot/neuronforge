@@ -48,6 +48,98 @@ export interface IntentClassification {
 }
 
 // ============================================================================
+// BULLETPROOF CLASSIFICATION (Phase 1)
+// ============================================================================
+
+/**
+ * Classification method/tier used
+ * Tier 1: Pattern matching (fast, free)
+ * Tier 2: LLM classification (moderate cost)
+ * Tier 3: Enhanced with context (higher cost, better accuracy)
+ */
+export type ClassificationMethod = 'pattern' | 'llm' | 'enhanced' | 'fallback';
+
+/**
+ * Classification tier for escalation tracking
+ */
+export type ClassificationTier = 1 | 2 | 3;
+
+/**
+ * Validation result for cross-checking classifications
+ */
+export interface ClassificationValidation {
+  primary: IntentClassification;
+  verification?: IntentClassification;
+  agreement: boolean;
+  confidenceDelta: number;
+  needsEscalation: boolean;
+  method: ClassificationMethod;
+  tier: ClassificationTier;
+}
+
+/**
+ * Ambiguity detection for multi-intent conflicts
+ */
+export interface AmbiguityDetection {
+  isAmbiguous: boolean;
+  conflictingIntents: Array<{
+    intent: IntentType;
+    confidence: number;
+    reasoning: string;
+  }>;
+  recommendation: 'use_primary' | 'escalate' | 'split_step';
+  ambiguityScore: number; // 0-1, higher = more ambiguous
+}
+
+/**
+ * Workflow context for context-aware classification (Tier 3)
+ */
+export interface WorkflowContext {
+  workflowId: string;
+  workflowGoal?: string;
+  currentStepIndex: number;
+  totalSteps: number;
+  previousSteps: Array<{
+    stepId: string;
+    intent: IntentType;
+    summary: string;
+  }>;
+  nextSteps: Array<{
+    stepId: string;
+    description: string;
+  }>;
+}
+
+/**
+ * Classification telemetry for monitoring accuracy
+ */
+export interface ClassificationTelemetry {
+  stepId: string;
+  workflowId: string;
+  agentId: string;
+  method: ClassificationMethod;
+  tier: ClassificationTier;
+  intent: IntentType;
+  confidence: number;
+  latencyMs: number;
+  tokensUsed: number;
+  cost: number;
+  wasValidated: boolean;
+  wasAmbiguous: boolean;
+  timestamp: Date;
+}
+
+/**
+ * Confidence thresholds for tier escalation
+ */
+export interface ClassificationThresholds {
+  tier1MinConfidence: number;  // Below this → escalate to Tier 2 (default: 0.9)
+  tier2MinConfidence: number;  // Below this → escalate to Tier 3 (default: 0.7)
+  tier3MinConfidence: number;  // Below this → use fallback (default: 0.6)
+  validationDisagreementThreshold: number; // Above this delta → escalate (default: 0.3)
+}
+
+// ============================================================================
 // TOKEN BUDGET MANAGEMENT
 // ============================================================================
 
@@ -432,7 +524,16 @@ export type OrchestrationConfigKey =
   // Thresholds
   | 'orchestration_intent_classification_confidence_threshold'
   | 'orchestration_quality_score_minimum'
-  | 'orchestration_max_retry_attempts';
+  | 'orchestration_max_retry_attempts'
+
+  // Bulletproof Classification (Phase 1)
+  | 'orchestration_bulletproof_classification_enabled'
+  | 'orchestration_validation_enabled'
+  | 'orchestration_ambiguity_detection_enabled'
+  | 'orchestration_tier1_min_confidence'
+  | 'orchestration_tier2_min_confidence'
+  | 'orchestration_tier3_min_confidence'
+  | 'orchestration_validation_disagreement_threshold';
 
 /**
  * Configuration value retrieved from database

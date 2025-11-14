@@ -763,12 +763,12 @@ export class RoutingService implements IRoutingService {
         avgLatencyMs: 800,
       },
       balanced: {
-        provider: 'openai',  // ✅ Changed from suspended Kimi to OpenAI
-        model: 'gpt-4o-mini',  // ✅ Using gpt-4o-mini for balanced tier
+        provider: 'anthropic',  // ✅ Using Anthropic for Claude Haiku
+        model: 'claude-3-haiku-20240307',  // ✅ Claude Haiku for balanced tier
         maxTokens: 4096,
         temperature: 0.7,
-        costPerToken: 0.00000015, // $0.15 per 1M tokens
-        avgLatencyMs: 2000,
+        costPerToken: 0.00000025, // $0.25 per 1M tokens (Claude Haiku pricing)
+        avgLatencyMs: 800,  // Haiku is faster than gpt-4o-mini
       },
       powerful: {
         provider: 'anthropic',
@@ -798,7 +798,7 @@ export class RoutingService implements IRoutingService {
   private getDefaultProvider(tier: ModelTier): string {
     const providers: Record<ModelTier, string> = {
       fast: 'anthropic',
-      balanced: 'openai',  // ✅ Changed from suspended Kimi to OpenAI
+      balanced: 'anthropic',  // ✅ Using Anthropic for Claude Haiku
       powerful: 'anthropic',
     };
     return providers[tier];
@@ -810,7 +810,7 @@ export class RoutingService implements IRoutingService {
   private getDefaultModel(tier: ModelTier): string {
     const models: Record<ModelTier, string> = {
       fast: 'claude-3-haiku-20240307',
-      balanced: 'gpt-4o-mini',  // ✅ Changed from suspended Kimi to gpt-4o-mini
+      balanced: 'claude-3-haiku-20240307',  // ✅ Claude Haiku for balanced tier
       powerful: 'claude-3-5-sonnet-20241022',
     };
     return models[tier];
@@ -834,7 +834,7 @@ export class RoutingService implements IRoutingService {
   private getDefaultCostPerToken(tier: ModelTier): string {
     const costs: Record<ModelTier, string> = {
       fast: '0.00000025',
-      balanced: '0.00000015',
+      balanced: '0.00000025',  // Claude Haiku pricing
       powerful: '0.000003',
     };
     return costs[tier];
@@ -846,7 +846,7 @@ export class RoutingService implements IRoutingService {
   private getDefaultLatency(tier: ModelTier): number {
     const latencies: Record<ModelTier, number> = {
       fast: 800,
-      balanced: 2000,
+      balanced: 800,  // Haiku latency
       powerful: 5000,
     };
     return latencies[tier];

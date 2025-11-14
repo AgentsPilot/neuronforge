@@ -694,19 +694,27 @@ Please analyze the above and provide your decision/response.
     // - {{stepX.data.response}} - raw response
     const aiResponse = result.response;
 
+    // ✅ FIX: Clean summarization output to remove meta-commentary and narrative
+    // Apply cleaning for summarization steps to prevent duplicate content in emails
+    const shouldClean = step.name?.toLowerCase().includes('summarize') ||
+                       step.prompt?.toLowerCase().includes('summarize') ||
+                       step.description?.toLowerCase().includes('summarize');
+
+    const cleanedResponse = shouldClean ? this.cleanSummaryOutput(aiResponse) : aiResponse;
+
     return {
       data: {
         // Generic aliases (always available)
-        result: aiResponse,
-        response: aiResponse,
-        output: aiResponse,
+        result: cleanedResponse,
+        response: cleanedResponse,
+        output: cleanedResponse,
 
         // Semantic aliases for common use cases
-        summary: aiResponse,
-        analysis: aiResponse,
-        decision: aiResponse,
-        reasoning: aiResponse,
-        classification: aiResponse,
+        summary: cleanedResponse,
+        analysis: cleanedResponse,
+        decision: cleanedResponse,
+        reasoning: cleanedResponse,
+        classification: cleanedResponse,
 
         // Additional metadata
         toolCalls: result.toolCalls,
@@ -1161,5 +1169,55 @@ ${inputValues || 'None'}
 - Failed: ${context.failedSteps.length}
 - Skipped: ${context.skippedSteps.length}
     `.trim();
+  }
+
+  /**
+   * Clean summary output by removing meta-commentary and narrative
+   * Same logic as SummarizeHandler to ensure consistency across orchestrated and fallback paths
+   * @private
+   */
+  private cleanSummaryOutput(output: string): string {
+    let cleaned = output;
+
+    // Remove leading meta-commentary patterns (from start of text)
+    const leadingPatterns = [
+      /^I will (now )?analyze[^\n]*(\n\n|\n)/i,
+      /^I will (now )?summarize[^\n]*(\n\n|\n)/i,
+      /^Let me (now )?analyze[^\n]*(\n\n|\n)/i,
+      /^Let me (now )?summarize[^\n]*(\n\n|\n)/i,
+      /^Now,? I will send[^\n]*(\n\n|\n)/i,
+      /^I will (now )?send[^\n]*(\n\n|\n)/i,
+      /^Executing[^\n]*(\n\n|\n)/i,
+      /^Processing[^\n]*(\n\n|\n)/i,
+    ];
+
+    for (const pattern of leadingPatterns) {
+      cleaned = cleaned.replace(pattern, '');
+    }
+
+    // Remove trailing meta-commentary patterns (from end of text)
+    const sections = cleaned.split(/\n\n+/);
+    const cleanedSections = sections.filter(section => {
+      const lower = section.toLowerCase().trim();
+      // Remove sections that are purely narrative about sending
+      if (lower.startsWith('now,') && lower.includes('send')) return false;
+      if (lower.startsWith('i will') && lower.includes('send')) return false;
+      if (lower.startsWith('let me send')) return false;
+      if (lower.startsWith('### sending')) return false;
+      if (lower.startsWith('---') && lower.includes('send')) return false;
+      return true;
+    });
+
+    cleaned = cleanedSections.join('\n\n');
+    cleaned = cleaned.trim();
+
+    // If the cleaning removed too much (less than 50 chars), return original
+    if (cleaned.length < 50) {
+      console.warn('[StepExecutor] Clean summary too short, using original output');
+      return output;
+    }
+
+    console.log(`[StepExecutor] Cleaned summary: ${cleaned.length} chars (was ${output.length} chars)`);
+    return cleaned;
   }
 }

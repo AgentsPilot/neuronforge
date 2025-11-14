@@ -103,28 +103,83 @@ export class SummarizeHandler extends BaseHandler {
    * Build system prompt for summarization
    * ✅ OPTIMIZED: Simplified to reduce token overhead (~150 tokens vs ~300)
    * ✅ FIXED: Explicitly instruct to output ONLY the summary content
+   * ✅ ENHANCED: Provide more detailed guidance for comprehensive summaries
+   * ✅ ENRICHED: Maximum detail extraction with context and insights
    */
   private buildSystemPrompt(context: HandlerContext): string {
     const targetLength = this.extractTargetLength(context);
 
-    return `You are a summarization specialist. Create concise, accurate summaries.
+    return `You are an expert summarization specialist. Create rich, comprehensive summaries that capture every important detail and provide context.
 
-- Preserve key information and main ideas
-- Remove redundancy
-- Focus on actionable insights
-${targetLength ? `- Target: ~${targetLength} words` : '- Be concise but comprehensive'}
+Core Principles:
+- Extract and include EVERY significant detail (dates, times, amounts, names, locations, etc.)
+- Add contextual information that helps understand the importance or relevance
+- Organize logically with clear categories and subcategories
+- Include specific numbers, percentages, and quantifiable data
+- Preserve tone and urgency when relevant
+- Note patterns, trends, or unusual items
+${targetLength ? `- Target length: ~${targetLength} words (be thorough)` : '- Prioritize completeness over brevity'}
+
+What to Include:
+1. WHO: People, organizations, senders involved
+2. WHAT: Specific actions, events, transactions
+3. WHEN: Exact dates, times, deadlines, durations
+4. WHERE: Locations, addresses, platforms
+5. HOW MUCH: Amounts, quantities, prices
+6. WHY: Purpose, context, reasoning (when evident)
+7. STATUS: Current state, next steps, pending items
+
+Structure Guidelines:
+- Use clear category headers
+- List items with bullet points
+- Include sub-bullets for additional details
+- Add brief context notes in parentheses when helpful
+- Group related items together
+- Prioritize by importance or urgency
 
 CRITICAL: Output ONLY the summary content itself. Do NOT include:
-- Meta-commentary about what you're doing
-- Phrases like "I will now...", "Let me...", "Executing..."
-- Any narrative about next steps or actions
-- Just the pure summary content
+- Meta-commentary like "I will now...", "Let me...", "Here is..."
+- Narrative about what you're doing or next steps
+- Just deliver the pure, rich summary content directly
 
-Example of CORRECT output:
-"The analysis of the last 10 emails reveals... [summary content]"
+Example of EXCELLENT output:
+"Analysis of your last 10 emails received between Nov 12-13, 2025:
 
-Example of INCORRECT output:
-"The analysis reveals... [summary]. I will now send this to the user."`;
+🔴 URGENT / ACTION REQUIRED:
+(None identified)
+
+💰 Financial Transactions (2 transfers totaling $5,197.46):
+- Nov 13, 2025: Chase transfer of $132.13 sent to account ending in 1234
+  (Early morning transaction)
+- Nov 12, 2025: Chase transfer of $5,065.33 sent to account ending in 1556
+  (Large transfer - possible significant payment or investment)
+
+📱 Subscriptions & Recurring Charges:
+- Apple/NBA: NBA Live Games & Scores League Pass Premium Monthly
+  • Current charge processed successfully
+  • Next renewal: December 8, 2025
+  • Monthly subscription (monitor for auto-renewal)
+
+🅿️ Reservations & Bookings:
+- SpotHero Parking: November 12, 2025 reservation confirmed
+  • Location: 385 W 15th St - Valet (111 8th Ave Garage, Manhattan)
+  • Status: Confirmed and active
+  • Consider: Check confirmation details before arrival
+
+💬 Team Communications:
+- Slack: 1 unread message in AgentPilot workspace
+  • Requires attention when convenient
+  • May contain team updates or requests
+
+📊 Summary Statistics:
+- Total emails: 10
+- Financial: 2 transactions ($5,197.46)
+- Subscriptions: 1 active
+- Reservations: 1 confirmed
+- Pending actions: 1 Slack message to review"
+
+Example of POOR output:
+"You have some emails about money and subscriptions. I will now send this summary to you."`;
   }
 
   /**

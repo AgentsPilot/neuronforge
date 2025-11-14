@@ -345,17 +345,23 @@ export class WorkflowPilot {
       }
 
       // 10. Calculate final token count with all components
-      // ✅ orchestrationTokens is classification overhead, context.totalTokensUsed is step execution
-      // We need BOTH: classification + steps + memory
-      const stepTokens = context.totalTokensUsed;  // Actual step execution tokens
-      const classificationTokens = orchestrationTokens;  // Classification overhead from orchestration
-      const totalTokensWithMemory = stepTokens + classificationTokens + memoryTokens;
+      // ✅ FIXED: orchestrationMetrics.totalTokensUsed ALREADY includes all step tokens
+      // It's not "classification overhead" - it's the total from all orchestrated steps
+      // We should NOT add it to context.totalTokensUsed because that would double-count
+      const stepTokens = context.totalTokensUsed;  // All step execution tokens
+      const totalTokensWithMemory = stepTokens + memoryTokens;  // Steps + memory only
 
-      if (classificationTokens > 0) {
-        console.log(`📊 [WorkflowPilot] Final token count: ${stepTokens} (steps) + ${classificationTokens} (classification) + ${memoryTokens} (memory) = ${totalTokensWithMemory}`);
-      } else {
-        console.log(`📊 [WorkflowPilot] Final token count: ${stepTokens} (steps) + ${memoryTokens} (memory) = ${totalTokensWithMemory}`);
+      // Log orchestration metrics separately (for transparency)
+      if (orchestrationTokens > 0 && orchestrationMetrics) {
+        console.log('🎯 [WorkflowPilot] Orchestration metrics breakdown:');
+        console.log(`   📊 Steps tracked by orchestration: ${orchestrationTokens} tokens`);
+        console.log(`   📊 Steps tracked by pilot: ${stepTokens} tokens`);
+        if (orchestrationTokens !== stepTokens) {
+          console.warn(`   ⚠️  Discrepancy detected: ${Math.abs(orchestrationTokens - stepTokens)} tokens difference`);
+        }
       }
+
+      console.log(`📊 [WorkflowPilot] Final token count: ${stepTokens} (steps) + ${memoryTokens} (memory) = ${totalTokensWithMemory}`);
 
       // ✅ CRITICAL: Update context with final total BEFORE saving to database
       context.totalTokensUsed = totalTokensWithMemory;

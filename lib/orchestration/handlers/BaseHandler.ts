@@ -132,14 +132,71 @@ export abstract class BaseHandler implements IntentHandler {
    * Extract input data from context, excluding circular references
    * stepInput structure: { step, params, context, executionContext }
    * We want just the params for processing
+   *
+   * ✅ HYBRID EXECUTION FIX: When params is empty but executionContext has step outputs,
+   * automatically include previous step data. This handles agents configured with
+   * prompt-based variable resolution ({{step1.data.emails}}) running through orchestration.
    */
   protected extractInputData(context: HandlerContext): any {
     const input = context.input;
 
+    // 🔍 DEBUG: Log input structure
+    console.log(`🔍 [${this.intent}Handler] extractInputData called`);
+    console.log(`🔍 [${this.intent}Handler] input has 'params'?`, input && typeof input === 'object' && 'params' in input);
+    console.log(`🔍 [${this.intent}Handler] input.params:`, JSON.stringify(input && typeof input === 'object' && 'params' in input ? input.params : 'N/A'));
+    console.log(`🔍 [${this.intent}Handler] input has 'executionContext'?`, input && typeof input === 'object' && 'executionContext' in input);
+
     // If input has params field (from StepExecutor), use that
     if (input && typeof input === 'object' && 'params' in input) {
+      const params = input.params;
+
+      // ✅ FIX: If params is empty or just has empty step refs, try to populate from executionContext
+      const isEmptyParams = !params ||
+                           Object.keys(params).length === 0 ||
+                           (Object.keys(params).length === 1 && params.step1 && Object.keys(params.step1).length === 0);
+
+      if (isEmptyParams && input.executionContext) {
+        const executionContext = input.executionContext;
+
+        // 🔍 DEBUG: Log executionContext structure
+        console.log(`🔍 [${this.intent}Handler] executionContext.variables keys:`, Object.keys(executionContext.variables || {}));
+        console.log(`🔍 [${this.intent}Handler] executionContext has getStepOutput?`, !!executionContext.getStepOutput);
+        console.log(`🔍 [${this.intent}Handler] executionContext has getAllStepOutputs?`, !!executionContext.getAllStepOutputs);
+
+        // ✅ CRITICAL FIX: Check stepOutputs Map instead of variables object
+        // ExecutionContext stores step results in stepOutputs Map, NOT in variables object
+        let availableSteps: string[] = [];
+
+        if (executionContext.getAllStepOutputs) {
+          // Get all step outputs from the Map
+          const allStepOutputs = executionContext.getAllStepOutputs();
+          availableSteps = Array.from(allStepOutputs.keys()).filter(k => k.startsWith('step'));
+          console.log(`🔍 [${this.intent}Handler] Found ${availableSteps.length} steps in stepOutputs Map:`, availableSteps);
+        } else if (executionContext.getStepOutput) {
+          // Fallback: try to find step outputs in variables object (legacy)
+          availableSteps = Object.keys(executionContext.variables || {}).filter(k => k.startsWith('step'));
+          console.log(`🔍 [${this.intent}Handler] Found ${availableSteps.length} steps in variables (legacy):`, availableSteps);
+        }
+
+        if (availableSteps.length > 0) {
+          console.log(`🔄 [${this.intent}Handler] Params empty, auto-populating from previous steps: ${availableSteps.join(', ')}`);
+
+          // Build enriched params with all available step outputs
+          const enrichedParams: any = {};
+          for (const stepKey of availableSteps) {
+            const stepOutput = executionContext.getStepOutput(stepKey);
+            if (stepOutput) {
+              enrichedParams[stepKey] = stepOutput;
+            }
+          }
+
+          console.log(`✅ [${this.intent}Handler] Enriched params with ${Object.keys(enrichedParams).length} step output(s)`);
+          return this.deepClone(enrichedParams);
+        }
+      }
+
       // Deep clone params to avoid any circular references from the original object
-      return this.deepClone(input.params);
+      return this.deepClone(params);
     }
 
     // Otherwise return input as-is (may be direct data)
