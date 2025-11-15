@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useState, useMemo } from 'react'
 import { Session, User } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabaseClient'
+import { getPluginAPIClient } from '@/lib/client/plugin-api-client'
 
 type AuthContextType = {
   user: User | null
@@ -28,33 +29,45 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
   const [loading, setLoading] = useState(true)
   const [connectedPlugins, setConnectedPlugins] = useState<Record<string, any> | null>(null)
 
-  // Fetch user plugins from the enhanced API
+  // Fetch user plugins from the V2 API (using cookie auth, no userId needed)
   const fetchUserPlugins = async (currentUser: User) => {
     try {
-            
-      const response = await fetch('/api/user/plugins', {
-        headers: {
-          'x-user-id': currentUser.id
-        }
-      })
+      const apiClient = getPluginAPIClient()
 
-      if (!response.ok) {
-        throw new Error(`Plugin fetch failed: ${response.status}`)
+      // Use V2 endpoint with cookie auth (no userId needed - uses session)
+      const status = await apiClient.getUserPluginStatus()
+
+      // Transform array format to object format for backward compatibility
+      // connected: [{ key: "google-mail", ... }] -> { "google-mail": { ... } }
+      const connectedPluginsMap: Record<string, any> = {}
+
+      if (status.connected && status.connected.length > 0) {
+        status.connected.forEach((plugin) => {
+          connectedPluginsMap[plugin.key] = {
+            key: plugin.key,
+            name: plugin.name,
+            displayName: plugin.name, // V2 API doesn't have displayName, use name
+            label: plugin.name,
+            isConnected: true,
+            capabilities: [], // V2 API has actions instead, could map if needed
+            category: 'integration', // Default category
+            icon: '', // Not provided by V2 API
+            // V2 specific fields
+            description: plugin.description,
+            actions: plugin.actions,
+            action_count: plugin.action_count,
+            username: plugin.username,
+            email: plugin.email,
+            connected_at: plugin.connected_at,
+            last_used: plugin.last_used,
+          }
+        })
       }
 
-      const data = await response.json()
-      if (data._meta) {
-      }
-      
-      // Extract enhanced plugin data from API response
-      if (data._meta && data._meta.connectedPlugins) {
-        setConnectedPlugins(data._meta.connectedPlugins)
-        
-      } else {
-        setConnectedPlugins({})
-      }
+      setConnectedPlugins(connectedPluginsMap)
 
     } catch (error) {
+      console.error('Error fetching user plugins:', error)
       // Set empty object on error rather than leaving as null
       setConnectedPlugins({})
     }
@@ -71,7 +84,7 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
     const getSession = async () => {
       try {
         const { data, error } = await supabase.auth.getSession()
-        
+
         if (error) {
           console.error('Error getting session:', error)
           setSession(null)
@@ -80,11 +93,15 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
         } else {
           setSession(data.session)
           setUser(data.session?.user ?? null)
-          
-          // Fetch plugins if user is authenticated
-          if (data.session?.user) {
+
+          // Only fetch plugins if user is authenticated AND not on Settings/Connections page
+          // Settings page fetches its own data to avoid duplicate API calls
+          const isOnSettingsPage = typeof window !== 'undefined' &&
+            window.location.pathname.includes('/settings/connections')
+
+          if (data.session?.user && !isOnSettingsPage) {
             await fetchUserPlugins(data.session.user)
-          } else {
+          } else if (!data.session?.user) {
             setConnectedPlugins({})
           }
         }
@@ -99,17 +116,20 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
     getSession()
 
     const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      
+
       setSession(session)
       setUser(session?.user ?? null)
-      
-      // Fetch plugins when user signs in
-      if (session?.user) {
+
+      // Only fetch plugins when user signs in if not on Settings page
+      const isOnSettingsPage = typeof window !== 'undefined' &&
+        window.location.pathname.includes('/settings/connections')
+
+      if (session?.user && !isOnSettingsPage) {
         await fetchUserPlugins(session.user)
-      } else {
+      } else if (!session?.user) {
         setConnectedPlugins({})
       }
-      
+
       setLoading(false)
     })
 

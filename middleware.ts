@@ -31,7 +31,8 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/pricing') ||
     pathname.startsWith('/blog') ||
     pathname.startsWith('/contact') ||
-    pathname.startsWith('/use-cases')
+    pathname.startsWith('/use-cases') ||
+    pathname.startsWith('/test-plugins-v2')
   ) {
     return NextResponse.next()
   }

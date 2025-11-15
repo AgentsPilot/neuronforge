@@ -1,7 +1,12 @@
 // app/api/user/plugins/route.ts
+// ⚠️ DEPRECATED: This endpoint is deprecated and will be removed in a future version.
+// Please use /api/plugins/user-status instead for:
+// - Better performance (~90% faster)
+// - Cookie-based authentication
+// - Richer plugin data (connection details, action lists)
+// - Clean V2 response format
 
-import { cookies } from 'next/headers'
-import { createServerClient } from '@supabase/ssr'
+import { createAuthenticatedServerClient } from '@/lib/supabaseServer'
 import { pluginList } from '@/lib/plugins/pluginList'
 
 // Import PluginManagerV2 for enhanced plugin management
@@ -9,21 +14,10 @@ import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2'
 import { PluginDefinitionContext } from '@/lib/types/plugin-definition-context'
 
 export async function GET() {
+  console.warn('⚠️ DEPRECATED: /api/user/plugins is deprecated. Please migrate to /api/plugins/user-status')
   console.log('API: /api/user/plugins called')
-  
-  const cookieStore = await cookies()
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get: (name) => cookieStore.get(name)?.value,
-        set: async () => {},
-        remove: async () => {},
-      },
-    }
-  )
+  const supabase = await createAuthenticatedServerClient()
 
   const {
     data: { user },
@@ -41,7 +35,7 @@ export async function GET() {
 
     // Fetch all plugin connections for this user
     const pluginManager = await PluginManagerV2.getInstance();
-    const userConnectedPlugins = await pluginManager.getUserActionablePlugins(userId);
+    const userConnectedPlugins = await pluginManager.getConnectedPlugins(userId);
     connectedPluginKeys = Object.keys(userConnectedPlugins);
     
     // Get full plugin metadata for LLM context    

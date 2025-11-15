@@ -158,7 +158,7 @@ export async function POST(request: NextRequest) {
       console.log('❌ No connected_services received from client for user:', user.id);
       try {
         const pluginManager = await PluginManagerV2.getInstance();
-        const userConnectedPlugins = await pluginManager.getUserActionablePlugins(user.id);
+        const userConnectedPlugins = await pluginManager.getConnectedPlugins(user.id);
         user_connected_services = Object.keys(userConnectedPlugins);
         console.log('✅ Connected plugin keys retrieved:', user_connected_services);
       } catch (error: any) {
