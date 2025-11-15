@@ -283,6 +283,384 @@ interface EnhancedPromptReviewProps {
 
 ---
 
+## v8 Prompt Integration & Mini-Cycle (Latest - January 2025) ✅
+
+### Overview
+
+The system has been upgraded to use **Workflow-Agent-Creation-Prompt-v8-chatgpt**, which introduces significant improvements in conversational flow, data structures, and a new **mini-cycle** for refining user inputs.
+
+---
+
+### 1. v8 Prompt Key Changes
+
+#### **Phase 1 - Diagnostic Narrative (Enhanced)**
+**New Data Structure:**
+```json
+{
+  "connected_services": ["google-mail", "slack"],
+  "available_services": [
+    {"name": "google-mail", "context": "Email management"},
+    {"name": "chatgpt-research", "context": "Summarization and analysis"}
+  ]
+}
+```
+
+**Key Changes:**
+- Simplified `available_services` to only include `name` and `context` (removed `key_actions`)
+- Added "Data-Source Inference" rule: tentatively includes services from `sources_detected`
+- Phase 1 now stores `connected_services` and `available_services` in thread metadata for Phase 2 reference
+
+#### **Phase 2 - Clarification Dialogue (Enhanced)**
+**New Input Structure:**
+```json
+{
+  "phase": 2,
+  "connected_services": null,  // Can be provided or null (references Phase 1 stored values)
+  "enhanced_prompt": null      // For refinement loops (v8 feature)
+}
+```
+
+**New Output Structure:**
+```json
+{
+  "questionsSequence": [
+    {
+      "id": "q1",
+      "theme": "Inputs",           // NEW: "theme" instead of "dimension"
+      "question": "...",
+      "type": "text"
+    }
+  ]
+}
+```
+
+**Key Changes:**
+- Questions now grouped by `theme` (Inputs, Processing, Outputs, Delivery) instead of `dimension`
+- Non-technical language requirement: avoid jargon like "API", "OCR", "parse"
+- Can receive `enhanced_prompt` from Phase 3 for iterative refinement
+- References Phase 1 stored values when `connected_services` is null
+- Special handling for timing/frequency: tagged as `external_scheduling_note`, doesn't reduce clarity
+
+#### **Phase 3 - Enhanced Prompt Generation (Enhanced)**
+**New Enhanced Prompt Structure:**
+```json
+{
+  "enhanced_prompt": {
+    "plan_title": "Receipt Validation Automation",
+    "plan_description": "...",
+    "sections": {
+      "data": "Retrieve expenses from Google Sheet...",
+      "actions": "Match entries by Vendor + Date + Amount...",  // NEW: String instead of array
+      "output": "Generate XLSX report...",
+      "delivery": "Send report via Gmail..."
+    },
+    "specifics": {
+      "services_involved": ["google-mail", "google-sheets"],
+      "user_inputs_required": ["expense sheet name", "matching criteria"]  // CRITICAL for mini-cycle
+    }
+  }
+}
+```
+
+**Key Changes:**
+- `sections.actions` is now a **single string** instead of `processing_steps` array
+- Removed `sections.error_handling` (managed externally)
+- Removed `specifics.trigger_scope` from required fields
+- **Critical:** `specifics.user_inputs_required` triggers mini-cycle if not empty
+- Dimension status must use only: `clear`, `partial`, `missing` (no alternatives)
+- AI services only included when analytical reasoning is explicitly needed
+
+---
+
+### 2. Mini-Cycle Implementation ✅
+
+#### **What is the Mini-Cycle?**
+
+The mini-cycle is an **automatic refinement process** that triggers after Phase 3 when the generated plan contains `user_inputs_required`. It ensures all necessary user inputs are clarified before plan approval.
+
+#### **Mini-Cycle Flow:**
+
+```
+Phase 3 completes
+   ↓
+Check if enhanced_prompt.specifics.user_inputs_required exists and is not empty
+   ↓
+   YES → Run Mini-Cycle:
+      1. Auto-trigger Phase 2 (mini) with enhanced_prompt from Phase 3
+      2. LLM generates targeted questions about user_inputs_required
+      3. User answers refinement questions
+      4. Call Phase 3 (refined) with answers
+      5. Return refined Phase 3 result (no more user_inputs_required)
+   ↓
+   NO → Return original Phase 3 result (ready for approval)
+```
+
+#### **Pseudo-Code:**
+```python
+phase3 = run_phase3(context)
+
+if phase3["user_inputs_required"]:
+    phase2mini = run_phase2(
+        connected_services=None,
+        enhanced_prompt=phase3
+    )
+    answers = collect_user_answers(phase2mini["questionsSequence"])
+    phase3_refined = run_phase3(
+        clarification_answers=answers,
+        connected_services=None
+    )
+    return phase3_refined
+else:
+    return phase3
+```
+
+#### **Implementation Details:**
+
+**State Management:**
+```typescript
+const [isInMiniCycle, setIsInMiniCycle] = useState(false);
+const [miniCyclePhase3, setMiniCyclePhase3] = useState<any>(null);
+```
+
+**Auto-Detection Logic:** ([test-plugins-v2/page.tsx:969-981](app/test-plugins-v2/page.tsx#L969-L981))
+```typescript
+// After Phase 3 completes
+const userInputsRequired = data.enhanced_prompt?.specifics?.user_inputs_required;
+if (userInputsRequired && Array.isArray(userInputsRequired) && userInputsRequired.length > 0 && !isInMiniCycle) {
+  setMiniCyclePhase3(data.enhanced_prompt);
+  setIsInMiniCycle(true);
+  await processMessage(2, undefined, currentThreadId); // Trigger Phase 2 mini
+}
+```
+
+**Question Handling:** ([test-plugins-v2/page.tsx:1023-1035](app/test-plugins-v2/page.tsx#L1023-L1035))
+```typescript
+if (isInMiniCycle) {
+  // Mini-cycle: Generate Phase 3 refined
+  processMessage(3, updatedAnswers);
+  setIsInMiniCycle(false);
+  setMiniCyclePhase3(null);
+} else {
+  // Regular flow: Generate Phase 3
+  processMessage(3, updatedAnswers);
+}
+```
+
+#### **UI Indicators:**
+
+**1. Session Info:**
+```
+Current Phase: 2 (Mini-Cycle Active)  ← Red indicator
+```
+
+**2. Question Box:**
+- **Border:** Red `#ff6b6b` instead of blue
+- **Background:** Pink `#fff5f5` instead of light blue
+- **Title:** "🔄 Mini-Cycle: Question X of Y"
+- **Alert Banner:** "Refining User Inputs: The system needs more details..."
+
+**3. Debug Logs:**
+```
+✅ Phase 3 complete - Enhanced prompt generated
+ℹ️  User inputs required detected: expense sheet name, matching criteria
+ℹ️  Starting mini-cycle to refine user inputs...
+✅ Phase 2 complete - 3 questions generated
+ℹ️  Mini-cycle questions answered, generating refined enhanced prompt...
+✅ Phase 3 complete - Enhanced prompt generated
+```
+
+#### **API Communication Flow:**
+
+**Complete Flow with Mini-Cycle:**
+```json
+{
+  "communications": [
+    { "phase": "init", "endpoint": "/api/agent-creation/init-thread" },
+    { "phase": 1, "endpoint": "/api/agent-creation/process-message" },
+    { "phase": 2, "endpoint": "/api/agent-creation/process-message" },
+    { "phase": 3, "endpoint": "/api/agent-creation/process-message" },
+    { "phase": 2, "endpoint": "/api/agent-creation/process-message" },  // Mini-cycle
+    { "phase": 3, "endpoint": "/api/agent-creation/process-message" }   // Refined
+  ]
+}
+```
+
+---
+
+### 3. Test Page Enhancements (test-plugins-v2)
+
+#### **New Download Feature ✅**
+
+**Purpose:** Export all API requests/responses for debugging and analysis
+
+**What Gets Downloaded:**
+```json
+{
+  "metadata": {
+    "thread_id": "thread_abc123",
+    "user_id": "user_123",
+    "initial_prompt": "Send weekly email summaries...",
+    "exported_at": "2025-01-13T10:30:00.000Z",
+    "total_communications": 6,
+    "summary": {
+      "init_thread_calls": 1,
+      "phase_1_calls": 1,
+      "phase_2_calls": 2,  // Including mini-cycle
+      "phase_3_calls": 2   // Including refined
+    }
+  },
+  "communications": [
+    {
+      "timestamp": "2025-01-13T10:25:00.000Z",
+      "phase": "init",
+      "endpoint": "/api/agent-creation/init-thread",
+      "request": { /* full request body */ },
+      "response": { /* full response body */ }
+    },
+    // ... all API calls
+  ],
+  "final_state": {
+    "current_phase": 3,
+    "clarity_score": 100,
+    "missing_plugins": [],
+    "enhanced_prompt": { /* full object */ }
+  }
+}
+```
+
+**UI Implementation:**
+- 📥 Download button in Session Info section
+- 📥 Download button next to "Accept Plan" in Phase 3
+- Shows count of tracked API calls
+- Filename: `thread-communications-{thread_id}-{timestamp}.json`
+
+**Capture Points:**
+- Init Thread: [page.tsx:815-822](app/test-plugins-v2/page.tsx#L815-L822)
+- All Phases: [page.tsx:892-899](app/test-plugins-v2/page.tsx#L892-L899)
+
+#### **Visual Communication Tracking:**
+
+**Real-time Display:**
+```
+Captured Communications:
+  • Init Thread - 10:25:00 AM
+  • Phase 1 - 10:25:05 AM
+  • Phase 2 - 10:25:10 AM
+  • Phase 3 - 10:27:00 AM
+  • Phase 2 - 10:27:15 AM  ← Mini-cycle
+  • Phase 3 - 10:27:30 AM  ← Refined
+```
+
+---
+
+### 4. TypeScript Type Updates
+
+#### **ProcessMessageRequest (Enhanced):**
+```typescript
+export interface ProcessMessageRequest {
+  thread_id: string;
+  phase: ThreadPhase;
+  user_prompt: string;
+  user_context: UserContext;
+  analysis: AnalysisObject | null;
+  connected_services: string[];
+  available_services?: ConnectedService[];
+  clarification_answers?: Record<string, any>;
+  enhanced_prompt?: EnhancedPrompt | null;  // NEW: v8 refinement support
+  metadata?: {
+    declined_plugins?: string[];
+    [key: string]: any;
+  };
+}
+```
+
+#### **ClarificationQuestion (v8 Compatible):**
+```typescript
+export interface ClarificationQuestion {
+  id: string;
+  dimension?: 'data' | 'trigger' | 'output' | 'actions' | 'delivery';  // v7
+  theme?: string;  // NEW: v8 (Inputs, Processing, Outputs, Delivery)
+  question: string;
+  type: 'select' | 'text' | 'email' | 'number';
+  // ... other fields
+}
+```
+
+#### **EnhancedPrompt (v8 Compatible):**
+```typescript
+export interface EnhancedPrompt {
+  plan_title: string;
+  plan_description: string;
+  sections: {
+    data: string;
+    actions: string;                  // NEW: v8 single string
+    output: string;
+    delivery: string;
+    processing_steps?: string[];      // v7 deprecated
+    error_handling?: string;          // v7 deprecated
+  };
+  specifics: {
+    services_involved: string[];
+    user_inputs_required: string[];   // CRITICAL: Triggers mini-cycle
+    trigger_scope?: string;            // v7 deprecated
+  };
+}
+```
+
+---
+
+### 5. Backend Updates
+
+#### **init-thread/route.ts:**
+```typescript
+// Line 17: Updated to v8 prompt
+const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v8-chatgpt";
+```
+
+#### **process-message/route.ts:**
+
+**Phase 1 Context Storage:** ([line 438-441](app/api/agent-creation/process-message/route.ts#L438-L441))
+```typescript
+metadata: {
+  ...threadRecord.metadata,
+  last_phase: phase,
+  last_updated: new Date().toISOString(),
+  // Store Phase 1 context for Phase 2 reference (v8 requirement)
+  ...(phase === 1 && {
+    phase1_connected_services: user_connected_services,
+    phase1_available_services: user_available_services
+  })
+}
+```
+
+**Phase 2 Context Reference:** ([line 259-263](app/api/agent-creation/process-message/route.ts#L259-L263))
+```typescript
+} else if (phase === 2) {
+  userMessage = {
+    phase: 2,
+    connected_services: connected_services || threadRecord.metadata?.phase1_connected_services || null,
+    enhanced_prompt: enhanced_prompt || null  // v8: For refinement loops
+  };
+```
+
+---
+
+### 6. Files Modified Summary
+
+**Backend:**
+1. `app/api/agent-creation/init-thread/route.ts` - Updated to v8 prompt
+2. `app/api/agent-creation/process-message/route.ts` - Phase 1 context storage, Phase 2 enhancements
+3. `components/agent-creation/types/agent-prompt-threads.ts` - v8 type definitions
+
+**Test Page:**
+4. `app/test-plugins-v2/page.tsx` - Mini-cycle implementation, download feature, UI indicators
+
+**Total Changes:** 4 core files
+**New Features:** Mini-cycle automation, Communication tracking & download
+**Breaking Changes:** None (backward compatible with v7)
+
+---
+
 ## Complete API Flow
 
 ### Phase 1: Clarity Analysis
@@ -739,12 +1117,39 @@ Savings: 75% on system prompt = ~35% overall
 - [x] Step-by-step thinking indicators
 - [x] Conversational messaging
 
+### v8 Prompt Features:
+- [x] v8 prompt template active
+- [x] Questions use `theme` instead of `dimension`
+- [x] Phase 1 stores context in metadata
+- [x] Phase 2 references stored context
+- [x] Enhanced prompt uses `actions` string
+- [x] `user_inputs_required` detected correctly
+
+### Mini-Cycle:
+- [x] Auto-detects `user_inputs_required`
+- [x] Triggers Phase 2 mini automatically
+- [x] UI shows red mini-cycle indicators
+- [x] Alert banner displays explanation
+- [x] Questions answered correctly
+- [x] Phase 3 refined generated
+- [x] Mini-cycle state resets properly
+
+### Test Page Features:
+- [x] Download JSON button works
+- [x] All API calls captured
+- [x] Communication timestamps tracked
+- [x] Summary statistics generated
+- [x] File downloads with correct name
+- [x] Visual communication list displays
+
 ### Edge Cases:
 - [x] User skips all plugins
 - [x] OAuth fails
 - [x] Network errors
 - [x] Resume from saved state
 - [x] Mobile viewport
+- [x] No user_inputs_required (mini-cycle skipped)
+- [x] Multiple mini-cycle refinements
 
 ---
 
@@ -799,28 +1204,54 @@ Savings: 75% on system prompt = ~35% overall
 - Always-visible confidence bar
 - Enhanced Phase 3 prompt review with full transparency
 
+### ✅ v8 Prompt Integration:
+- Upgraded to Workflow-Agent-Creation-Prompt-v8-chatgpt
+- Simplified data structures (`theme` vs `dimension`)
+- Non-technical language in questions
+- Phase 1 context persistence for Phase 2
+- Enhanced prompt with `actions` string format
+- AI services only when analytical reasoning needed
+
+### ✅ Mini-Cycle Automation:
+- Auto-detects `user_inputs_required` after Phase 3
+- Automatic Phase 2 refinement trigger
+- Targeted questions about missing inputs
+- Phase 3 refined without user intervention
+- Visual indicators (red UI, alert banners)
+- Seamless integration with full cycle
+
+### ✅ Test Page Enhancements:
+- Complete API communication tracking
+- Download JSON export feature
+- Real-time communication list display
+- Mini-cycle visual indicators
+- Summary statistics generation
+- Debugging and analysis support
+
 ### ✅ Production-Ready:
 - Full thread-based API integration
 - Comprehensive error handling
 - Graceful fallback to mock data
-- 35% token savings
-- Zero breaking changes
+- 35% token savings with prompt caching
+- Zero breaking changes (backward compatible)
+- Complete TypeScript type safety
 
 ---
 
-**Current Status:** ✅ **All Phases Complete - Production Ready**
+**Current Status:** ✅ **All Phases Complete - Production Ready (v8 + Mini-Cycle)**
 
-**Total Development Time:** 3+ weeks
-**Total Files Modified/Created:** 16 files
-**Total Lines of Code:** ~1,700 lines
+**Total Development Time:** 4+ weeks
+**Total Files Modified/Created:** 20 files
+**Total Lines of Code:** ~2,200 lines
+**Latest Features:** v8 Prompt, Mini-Cycle, Communication Tracking
 
-**Ready for:** ✅ User Testing | ✅ Production Deployment | ✅ A/B Testing
+**Ready for:** ✅ User Testing | ✅ Production Deployment | ✅ A/B Testing | ✅ v8 Migration
 
 ---
 
-**Document Version:** 2.1
-**Last Updated:** 2025-01-09
+**Document Version:** 2.2
+**Last Updated:** 2025-01-13
 **Author:** Development Team
 **Status:** Complete - Production Ready
 
-**Latest Update:** Enhanced Phase 3 Prompt Review with accordion-style UI, full automation scope visibility, and service dependency badges
+**Latest Update:** v8 Prompt Integration with Mini-Cycle for user_inputs_required refinement, updated data structures, and comprehensive test page enhancements

@@ -493,6 +493,19 @@ export default function TestPluginsPage() {
   const [analysisData, setAnalysisData] = useState<any>(null);
   const [missingPlugins, setMissingPlugins] = useState<string[]>([]);
 
+  // Mini-cycle state (for user_inputs_required refinement)
+  const [isInMiniCycle, setIsInMiniCycle] = useState(false);
+  const [miniCyclePhase3, setMiniCyclePhase3] = useState<any>(null);
+
+  // Communication tracking for download
+  const [apiCommunications, setApiCommunications] = useState<Array<{
+    timestamp: string;
+    phase: number | string;
+    endpoint: string;
+    request: any;
+    response: any;
+  }>>([]);
+
   // Debug logging
   const [debugLogs, setDebugLogs] = useState<DebugLog[]>([]);
   const addDebugLog = (type: 'info' | 'error' | 'success', message: string) => {
@@ -786,20 +799,31 @@ export default function TestPluginsPage() {
       setIsLoading(true);
       addDebugLog('info', 'Starting new thread...');
 
+      const initThreadRequest = {
+        userId: userId,
+        userPrompt: initialPrompt,
+        userContext: {
+          full_name: 'Test User',
+          email: userId + '@example.com'
+        }
+      };
+
       const response = await fetch('/api/agent-creation/init-thread', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: userId,
-          userPrompt: initialPrompt,
-          userContext: {
-            full_name: 'Test User',
-            email: userId + '@example.com'
-          }
-        })
+        body: JSON.stringify(initThreadRequest)
       });
 
       const data = await response.json();
+
+      // Capture init-thread communication
+      setApiCommunications(prev => [...prev, {
+        timestamp: new Date().toISOString(),
+        phase: 'init',
+        endpoint: '/api/agent-creation/init-thread',
+        request: initThreadRequest,
+        response: data
+      }]);
 
       if (response.ok && data.thread_id) {
         setThreadId(data.thread_id);
@@ -850,9 +874,10 @@ export default function TestPluginsPage() {
         requestBody.user_prompt = initialPrompt;
       }
 
-      // Phase 2 can optionally include enhanced_prompt for refinement (V7 feature)
-      if (phase === 2 && enhancedPrompt) {
-        requestBody.enhanced_prompt = enhancedPrompt;
+      // Phase 2 can optionally include enhanced_prompt and connected_services for refinement (v8 feature)
+      if (phase === 2) {
+        requestBody.enhanced_prompt = enhancedPrompt || null;
+        requestBody.connected_services = null; // Can be populated if user connects new service
       }
 
       // Phase 3 requires clarification_answers
@@ -867,6 +892,15 @@ export default function TestPluginsPage() {
       });
 
       const data = await response.json();
+
+      // Capture process-message communication
+      setApiCommunications(prev => [...prev, {
+        timestamp: new Date().toISOString(),
+        phase: phase,
+        endpoint: '/api/agent-creation/process-message',
+        request: requestBody,
+        response: data
+      }]);
 
       if (response.ok) {
         // Store analysis data
@@ -931,6 +965,20 @@ export default function TestPluginsPage() {
           }]);
 
           addDebugLog('success', `Phase 3 complete - Enhanced prompt generated`);
+
+          // Check if mini-cycle is needed (user_inputs_required exists and not empty)
+          const userInputsRequired = data.enhanced_prompt?.specifics?.user_inputs_required;
+          if (userInputsRequired && Array.isArray(userInputsRequired) && userInputsRequired.length > 0 && !isInMiniCycle) {
+            addDebugLog('info', `User inputs required detected: ${userInputsRequired.join(', ')}`);
+            addDebugLog('info', 'Starting mini-cycle to refine user inputs...');
+
+            // Store Phase 3 result for mini-cycle
+            setMiniCyclePhase3(data.enhanced_prompt);
+            setIsInMiniCycle(true);
+
+            // Trigger Phase 2 mini with enhanced_prompt
+            await processMessage(2, undefined, currentThreadId);
+          }
         }
       } else {
         addDebugLog('error', `Phase ${phase} failed: ${data.error || 'Unknown error'}`);
@@ -971,8 +1019,19 @@ export default function TestPluginsPage() {
     } else {
       // All questions answered, proceed to Phase 3
       setUserAnswer('');
-      addDebugLog('info', 'All questions answered, generating enhanced prompt...');
-      processMessage(3, updatedAnswers);
+
+      if (isInMiniCycle) {
+        addDebugLog('info', 'Mini-cycle questions answered, generating refined enhanced prompt...');
+        // Mini-cycle: Generate Phase 3 refined
+        processMessage(3, updatedAnswers);
+        // Reset mini-cycle state after Phase 3 completes
+        setIsInMiniCycle(false);
+        setMiniCyclePhase3(null);
+      } else {
+        addDebugLog('info', 'All questions answered, generating enhanced prompt...');
+        // Regular flow: Generate Phase 3
+        processMessage(3, updatedAnswers);
+      }
     }
   };
 
@@ -1001,7 +1060,54 @@ export default function TestPluginsPage() {
     setClarityScore(0);
     setAnalysisData(null);
     setMissingPlugins([]);
+    setApiCommunications([]);
+    setIsInMiniCycle(false);
+    setMiniCyclePhase3(null);
     addDebugLog('info', 'Thread conversation reset');
+  };
+
+  const downloadCommunicationHistory = () => {
+    // Group communications by type for summary
+    const initThreadComms = apiCommunications.filter(c => c.phase === 'init');
+    const phase1Comms = apiCommunications.filter(c => c.phase === 1);
+    const phase2Comms = apiCommunications.filter(c => c.phase === 2);
+    const phase3Comms = apiCommunications.filter(c => c.phase === 3);
+
+    const communicationData = {
+      metadata: {
+        thread_id: threadId,
+        user_id: userId,
+        initial_prompt: initialPrompt,
+        exported_at: new Date().toISOString(),
+        total_communications: apiCommunications.length,
+        summary: {
+          init_thread_calls: initThreadComms.length,
+          phase_1_calls: phase1Comms.length,
+          phase_2_calls: phase2Comms.length,
+          phase_3_calls: phase3Comms.length
+        }
+      },
+      communications: apiCommunications,
+      final_state: {
+        current_phase: currentPhase,
+        clarity_score: clarityScore,
+        missing_plugins: missingPlugins,
+        enhanced_prompt: enhancedPrompt,
+        analysis_data: analysisData
+      }
+    };
+
+    const jsonString = JSON.stringify(communicationData, null, 2);
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `thread-communications-${threadId || 'unknown'}-${Date.now()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    addDebugLog('success', 'Communication history downloaded');
   };
 
   return (
@@ -1410,11 +1516,44 @@ export default function TestPluginsPage() {
         <div>
           {/* Session Info */}
           <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #28a745', borderRadius: '5px', backgroundColor: '#f0f9f0' }}>
-            <h2>Thread Session Info</h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
+              <h2 style={{ margin: 0 }}>Thread Session Info</h2>
+              {threadId && (
+                <button
+                  onClick={downloadCommunicationHistory}
+                  disabled={apiCommunications.length === 0}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: apiCommunications.length === 0 ? '#ccc' : '#17a2b8',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: apiCommunications.length === 0 ? 'not-allowed' : 'pointer',
+                    fontSize: '14px'
+                  }}
+                  title={`Download all API communications (${apiCommunications.length} calls)`}
+                >
+                  📥 Download JSON ({apiCommunications.length})
+                </button>
+              )}
+            </div>
             <div style={{ fontSize: '14px', color: '#333' }}>
               <div><strong>Thread ID:</strong> {threadId || 'Not started'}</div>
-              <div><strong>Current Phase:</strong> {currentPhase}</div>
+              <div><strong>Current Phase:</strong> {currentPhase} {isInMiniCycle && <span style={{ color: '#ff6b6b', fontWeight: 'bold' }}>(Mini-Cycle Active)</span>}</div>
               <div><strong>Clarity Score:</strong> {clarityScore}%</div>
+              <div><strong>API Calls Tracked:</strong> {apiCommunications.length}</div>
+              {apiCommunications.length > 0 && (
+                <div style={{ marginTop: '10px', padding: '8px', backgroundColor: '#e7f3ff', borderRadius: '3px' }}>
+                  <strong>Captured Communications:</strong>
+                  <div style={{ marginTop: '5px', fontSize: '12px' }}>
+                    {apiCommunications.map((comm, idx) => (
+                      <div key={idx} style={{ marginBottom: '3px' }}>
+                        • {comm.phase === 'init' ? 'Init Thread' : `Phase ${comm.phase}`} - {new Date(comm.timestamp).toLocaleTimeString()}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {missingPlugins.length > 0 && (
                 <div><strong>Missing Plugins:</strong> {missingPlugins.join(', ')}</div>
               )}
@@ -1508,14 +1647,25 @@ export default function TestPluginsPage() {
 
           {/* Current Question (Phase 2) */}
           {currentPhase === 2 && currentQuestions.length > 0 && currentQuestionIndex < currentQuestions.length && (
-            <div style={{ marginBottom: '30px', padding: '15px', border: '2px solid #007bff', borderRadius: '5px', backgroundColor: '#f0f8ff' }}>
-              <h2>Question {currentQuestionIndex + 1} of {currentQuestions.length}</h2>
+            <div style={{ marginBottom: '30px', padding: '15px', border: `2px solid ${isInMiniCycle ? '#ff6b6b' : '#007bff'}`, borderRadius: '5px', backgroundColor: isInMiniCycle ? '#fff5f5' : '#f0f8ff' }}>
+              <h2>
+                {isInMiniCycle && '🔄 Mini-Cycle: '}
+                Question {currentQuestionIndex + 1} of {currentQuestions.length}
+              </h2>
+              {isInMiniCycle && (
+                <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#ffe0e0', borderRadius: '3px', fontSize: '14px', color: '#d63031' }}>
+                  <strong>Refining User Inputs:</strong> The system needs more details about the required user inputs to make the workflow fully executable.
+                </div>
+              )}
               <div style={{ marginBottom: '15px' }}>
                 <div style={{ fontWeight: 'bold', marginBottom: '10px', fontSize: '16px' }}>
                   {currentQuestions[currentQuestionIndex].question}
                 </div>
                 <div style={{ fontSize: '12px', color: '#666', marginBottom: '10px' }}>
-                  Dimension: {currentQuestions[currentQuestionIndex].dimension}
+                  {currentQuestions[currentQuestionIndex].theme ?
+                    `Theme: ${currentQuestions[currentQuestionIndex].theme}` :
+                    `Dimension: ${currentQuestions[currentQuestionIndex].dimension}`
+                  }
                 </div>
                 <textarea
                   value={userAnswer}
@@ -1566,6 +1716,70 @@ export default function TestPluginsPage() {
                 <p style={{ fontSize: '14px', color: '#666' }}>
                   {enhancedPrompt.plan_description || 'No description available'}
                 </p>
+
+                {/* Display sections if available (v8 format) */}
+                {enhancedPrompt.sections && (
+                  <div style={{ marginTop: '15px', padding: '10px', backgroundColor: '#f8f9fa', borderRadius: '3px' }}>
+                    <h4 style={{ marginTop: 0 }}>Workflow Sections:</h4>
+                    {enhancedPrompt.sections.data && (
+                      <div style={{ marginBottom: '10px' }}>
+                        <strong>Data:</strong> {enhancedPrompt.sections.data}
+                      </div>
+                    )}
+                    {enhancedPrompt.sections.actions && (
+                      <div style={{ marginBottom: '10px' }}>
+                        <strong>Actions:</strong> {enhancedPrompt.sections.actions}
+                      </div>
+                    )}
+                    {enhancedPrompt.sections.processing_steps && Array.isArray(enhancedPrompt.sections.processing_steps) && (
+                      <div style={{ marginBottom: '10px' }}>
+                        <strong>Processing Steps:</strong>
+                        <ul style={{ marginTop: '5px', marginBottom: 0 }}>
+                          {enhancedPrompt.sections.processing_steps.map((step: string, idx: number) => (
+                            <li key={idx}>{step}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {enhancedPrompt.sections.output && (
+                      <div style={{ marginBottom: '10px' }}>
+                        <strong>Output:</strong> {enhancedPrompt.sections.output}
+                      </div>
+                    )}
+                    {enhancedPrompt.sections.delivery && (
+                      <div style={{ marginBottom: '10px' }}>
+                        <strong>Delivery:</strong> {enhancedPrompt.sections.delivery}
+                      </div>
+                    )}
+                    {enhancedPrompt.sections.error_handling && (
+                      <div style={{ marginBottom: '10px' }}>
+                        <strong>Error Handling:</strong> {enhancedPrompt.sections.error_handling}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Display specifics if available (v8 format) */}
+                {enhancedPrompt.specifics && (
+                  <div style={{ marginTop: '15px', padding: '10px', backgroundColor: '#fff3cd', borderRadius: '3px' }}>
+                    <h4 style={{ marginTop: 0 }}>Specifics:</h4>
+                    {enhancedPrompt.specifics.services_involved && enhancedPrompt.specifics.services_involved.length > 0 && (
+                      <div style={{ marginBottom: '10px' }}>
+                        <strong>Services Involved:</strong> {enhancedPrompt.specifics.services_involved.join(', ')}
+                      </div>
+                    )}
+                    {enhancedPrompt.specifics.user_inputs_required && enhancedPrompt.specifics.user_inputs_required.length > 0 && (
+                      <div style={{ marginBottom: '10px' }}>
+                        <strong>User Inputs Required:</strong> {enhancedPrompt.specifics.user_inputs_required.join(', ')}
+                      </div>
+                    )}
+                    {enhancedPrompt.specifics.trigger_scope && (
+                      <div>
+                        <strong>Trigger Scope:</strong> {enhancedPrompt.specifics.trigger_scope}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* JSON Preview */}
@@ -1607,7 +1821,7 @@ export default function TestPluginsPage() {
               )}
 
               {/* Action Buttons */}
-              <div style={{ display: 'flex', gap: '10px' }}>
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                 <button
                   onClick={handleAcceptPlan}
                   disabled={isLoading}
@@ -1638,7 +1852,24 @@ export default function TestPluginsPage() {
                     fontWeight: 'bold'
                   }}
                 >
-                  Refine Further (V7 Feature)
+                  Refine Further (v8 Feature)
+                </button>
+                <button
+                  onClick={downloadCommunicationHistory}
+                  disabled={apiCommunications.length === 0}
+                  style={{
+                    padding: '12px 24px',
+                    backgroundColor: apiCommunications.length === 0 ? '#ccc' : '#17a2b8',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: apiCommunications.length === 0 ? 'not-allowed' : 'pointer',
+                    fontSize: '16px',
+                    fontWeight: 'bold'
+                  }}
+                  title={`Download all API communications (${apiCommunications.length} calls)`}
+                >
+                  📥 Download JSON ({apiCommunications.length})
                 </button>
               </div>
             </div>
