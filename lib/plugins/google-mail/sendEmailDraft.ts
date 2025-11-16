@@ -1,4 +1,4 @@
-import { refreshIfNeeded } from '../refreshIfNeeded'
+import { getPluginConnection } from '@/lib/plugins/helpers/getPluginConnection'
 import { generatePDF } from '@/lib/pdf/generatePDF'
 
 type SendEmailOptions = {
@@ -38,7 +38,10 @@ export async function sendEmailDraft({
   includePdf = false,
 }: SendEmailOptions) {
   const pluginKey = 'google-mail'
-  const { access_token } = await refreshIfNeeded(userId, pluginKey)
+
+  // Get connection with auto-refresh
+  const connection = await getPluginConnection(userId, pluginKey)
+  const access_token = connection.access_token
   const htmlBody = wrapInHtml(body)
 
   if (!includePdf) {
