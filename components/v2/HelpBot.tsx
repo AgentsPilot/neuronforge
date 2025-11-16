@@ -33,6 +33,7 @@ interface InputHelpContext {
   mode: 'input_help'
   agentId: string
   fieldName: string
+  fieldLabel?: string
   plugin?: string
   expectedType?: string
 }
@@ -46,6 +47,8 @@ type HelpBotProps = {
 
 function renderMarkdown(text: string) {
   let processed = text.replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-[var(--v2-text-primary)]">$1</strong>')
+
+  // Convert markdown links first
   processed = processed.replace(
     /\[([^\]]+)\]\(([^)]+)\)/g,
     (match, linkText, url) => {
@@ -54,16 +57,26 @@ function renderMarkdown(text: string) {
       return match
     }
   )
+
+  // Convert bare URLs to links, but only if they're not already inside an href or other HTML tag
+  // Use negative lookbehind to avoid matching URLs inside href="..." or other attributes
   processed = processed.replace(
-    /(https?:\/\/[^\s<]+)/g,
+    /(?<!href="|src="|content=")(https?:\/\/[^\s<"']+)(?!")/g,
     '<a href="$1" target="_blank" rel="noopener noreferrer" class="text-[var(--v2-primary)] hover:underline">$1</a>'
   )
+
+  // Convert line breaks to <br> tags (double line breaks to paragraphs, single to br)
+  processed = processed.replace(/\n\n/g, '</p><p class="mt-3">')
+  processed = processed.replace(/\n/g, '<br>')
+  processed = `<p>${processed}</p>`
+
   return processed
 }
 
 // ---- MAIN COMPONENT ----
 export function HelpBot(props: HelpBotProps) {
   const { isOpen: controlledOpen, context, onFill, onClose } = props
+
   const pathname = usePathname()
   const router = useRouter()
   const { user } = useAuth()
@@ -72,6 +85,8 @@ export function HelpBot(props: HelpBotProps) {
   const isInputHelp = !!context && context.mode === 'input_help'
   const isOpen = controlledOpen !== undefined ? controlledOpen : isOpenInternal
 
+  // Persist messages across page refreshes using sessionStorage
+  // Initialize as empty - useEffect will load the correct messages
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -83,32 +98,170 @@ export function HelpBot(props: HelpBotProps) {
   }
 
   // ---- MODAL/FIELD-HELP WELCOME & CONTEXT ----
+  // Track if we've initialized this session to prevent resets
+  // Use ref to persist across re-renders even when parent re-renders
+  const sessionIdRef = useRef<string | null>(null)
+  const [sessionInitialized, setSessionInitialized] = useState(false)
+
+  // Save messages to sessionStorage when they change (input help mode only)
   useEffect(() => {
-    if (!isOpen) return
-    if (isInputHelp) {
+    if (typeof window !== 'undefined' && isInputHelp && context && messages.length > 0) {
+      // Only save if the current session matches the context
+      const currentSessionId = `input_help_${context.agentId}_${context.fieldName}`
+      if (sessionIdRef.current === currentSessionId) {
+        const storageKey = `helpBot_messages_${context.agentId}_${context.fieldName}`
+        sessionStorage.setItem(storageKey, JSON.stringify(messages))
+      }
+    }
+  }, [messages, isInputHelp, context?.agentId, context?.fieldName])
+
+  useEffect(() => {
+    console.log('[HelpBot Init Effect] TRIGGERED - isOpen:', isOpen, 'isInputHelp:', isInputHelp, 'context?.fieldName:', context?.fieldName || 'null', 'sessionInitialized:', sessionInitialized)
+    console.log('[HelpBot Init Effect] Current messages count:', messages.length)
+    console.log('[HelpBot Init Effect] Context object:', context)
+
+    if (!isOpen) {
+      // Only reset when explicitly closed, not on re-renders
+      if (sessionInitialized) {
+        console.log('[HelpBot Init Effect] Chatbot closed, resetting session')
+        setSessionInitialized(false)
+        sessionIdRef.current = null
+      }
+      return
+    }
+
+    // Create unique session ID based on context
+    const currentSessionId = isInputHelp && context
+      ? `input_help_${context.agentId}_${context.fieldName}`
+      : 'general_help'
+
+    console.log('[HelpBot Init Effect] SESSION CHECK:')
+    console.log('  - currentSessionId:', currentSessionId)
+    console.log('  - sessionIdRef.current:', sessionIdRef.current)
+    console.log('  - Are they equal?', sessionIdRef.current === currentSessionId)
+    console.log('  - isInputHelp:', isInputHelp)
+    console.log('  - context exists:', !!context)
+
+    // Only initialize if this is a NEW session
+    if (sessionIdRef.current === currentSessionId) {
+      console.log('[HelpBot Init Effect] ❌ Same session, skipping initialization')
+      return // Same session, don't reinitialize
+    }
+
+    console.log('[HelpBot Init Effect] ✅ NEW SESSION DETECTED! Switching conversations...')
+
+    // New session - initialize
+    // Update session ref IMMEDIATELY to prevent re-runs
+    const previousSessionId = sessionIdRef.current
+    sessionIdRef.current = currentSessionId
+    setSessionInitialized(false) // Reset flag for new session
+
+    console.log('[HelpBot Init Effect] New session! previous:', previousSessionId, 'current:', currentSessionId)
+
+    if (isInputHelp && context) {
+      // Input help mode - load field-specific conversation
+      console.log('[HelpBot Init Effect] Loading input help for field:', context.fieldName)
+      if (typeof window !== 'undefined') {
+        const storageKey = `helpBot_messages_${context.agentId}_${context.fieldName}`
+        const saved = sessionStorage.getItem(storageKey)
+
+        if (saved) {
+          // Load existing conversation for this field
+          let savedMessages = JSON.parse(saved)
+          console.log('[HelpBot Init Effect] Loaded saved conversation:', savedMessages.length, 'messages')
+
+          const displayLabel = context.fieldLabel || context.fieldName
+
+          // Clean up old format
+          savedMessages = savedMessages.map((msg: Message, index: number) => {
+            // Replace full URLs in user messages with placeholder
+            if (msg.role === 'user' && msg.content.includes('http')) {
+              if (!msg.content.includes('[Link provided]')) {
+                return { ...msg, content: '🔗 [Link provided]' }
+              }
+            }
+
+            if (msg.role === 'assistant') {
+              // Update the first assistant message (welcome) if it uses old field name format
+              if (index === 0 && msg.content.includes('field')) {
+                // Check if it contains any underscore-based field name (e.g., spreadsheet_id, database_id, etc.)
+                if (msg.content.match(/[a-z]+_[a-z]+/i)) {
+                  return {
+                    ...msg,
+                    content: `I'm here to help you fill the **${displayLabel}** field. Just send me the link or info, I'll extract only what's needed and fill it for you!`
+                  }
+                }
+              }
+
+              // Update old success messages that don't show the extracted value
+              if (msg.content.includes("I've filled") && msg.content.includes("with the extracted value")) {
+                // This is an old success message - remove it so a new one will be shown
+                // Mark for removal by returning null (we'll filter it out below)
+                return null
+              }
+            }
+
+            return msg
+          }).filter(Boolean) as Message[]  // Remove null entries
+
+          // Force a new array reference to ensure React detects the change
+          setMessages([...savedMessages])
+        } else {
+          // New field - show welcome message
+          console.log('[HelpBot Init Effect] New field conversation, showing welcome')
+          const displayLabel = context.fieldLabel || context.fieldName
+          setMessages([
+            {
+              role: 'assistant',
+              content: `I'm here to help you fill the **${displayLabel}** field. Just send me the link or info, I'll extract only what's needed and fill it for you!`,
+            },
+          ])
+        }
+      }
+      setSessionInitialized(true)
+    } else {
+      // General help mode
+      console.log('[HelpBot Init Effect] Loading general help mode')
       setMessages([
         {
           role: 'assistant',
-          content: `I'm here to help you fill the field **${context?.fieldName}**. Just send me the link or info, I’ll extract only what’s needed and fill it for you!`,
+          content: `Hi! I'm your **${pageContext.title}** assistant.
+
+I can help you with:
+
+${pageContext.helpTopics.map((topic, i) => `**${i + 1}.** ${topic}`).join('\n\n')}
+
+What would you like to know?`,
         },
       ])
-    } else if (messages.length === 0) {
-      setMessages([
-        {
-          role: 'assistant',
-          content: `Hi! I'm your **${pageContext.title}** assistant. I can help you with:\n\n${pageContext.helpTopics.map((topic, i) => `${i + 1}. ${topic}`).join('\n')}\n\nWhat would you like to know?`,
-        },
-      ])
+      setSessionInitialized(true)
     }
     // eslint-disable-next-line
-  }, [isOpen, isInputHelp, context])
+  }, [isOpen, context?.agentId, context?.fieldName])
 
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+  useEffect(() => {
+    console.log('[HelpBot] Messages state updated:', messages.length, 'messages')
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
 
   // ---- SEND HANDLER: PASSES SPECIAL CONTEXT IF PRESENT, DETECTS FILL ACTION ----
   const handleSend = async () => {
     if (!input.trim() || isLoading) return
-    const userMessage: Message = { role: 'user', content: input }
+
+    // Store the original input for later
+    const originalInput = input.trim()
+
+    // Check if this is a URL being pasted for ID extraction
+    const isUrl = /^https?:\/\/.+/.test(originalInput)
+    const isIdField = context?.fieldName && /_id$|^id$/i.test(context.fieldName)
+
+    // If it's a URL for an ID field, show placeholder immediately instead of the full URL
+    const displayContent = (isInputHelp && isUrl && isIdField)
+      ? '🔗 [Link provided]'
+      : originalInput
+
+    const userMessage: Message = { role: 'user', content: displayContent }
+    const apiMessage: Message = { role: 'user', content: originalInput } // Always send original to API
     setMessages((prev) => [...prev, userMessage])
     setInput('')
     setIsLoading(true)
@@ -116,8 +269,8 @@ export function HelpBot(props: HelpBotProps) {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
       if (user?.id) headers['x-user-id'] = user.id
       const body = isInputHelp
-        ? { messages: [...messages, userMessage], context }
-        : { messages: [...messages, userMessage], pageContext: { ...pageContext, path: pathname } }
+        ? { messages: [...messages, apiMessage], context }
+        : { messages: [...messages, apiMessage], pageContext: { ...pageContext, path: pathname } }
       const response = await fetch('/api/help-bot-v2', {
         method: 'POST',
         headers,
@@ -136,7 +289,37 @@ export function HelpBot(props: HelpBotProps) {
           isInputHelp
         ) {
           onFill(maybeJSON.value)
-          if (onClose) onClose()
+
+          // Add success message
+          // Note: If it was a URL for an ID field, the placeholder was already shown
+          // Otherwise, the URL is still visible (e.g., for range fields that need guidance)
+          setMessages((prev) => {
+            const lastMessage = prev[prev.length - 1]
+            // If the last message already shows the placeholder, just add success message
+            if (lastMessage.content === '🔗 [Link provided]') {
+              return [
+                ...prev,
+                {
+                  role: 'assistant',
+                  content: `✓ Extracted and filled: **${maybeJSON.value}**\n\nNeed help with anything else?`,
+                },
+              ]
+            }
+            // Otherwise, replace the URL with placeholder and add success message
+            return [
+              ...prev.slice(0, -1),
+              {
+                role: 'user',
+                content: '🔗 [Link provided]',
+              },
+              {
+                role: 'assistant',
+                content: `✓ Extracted and filled: **${maybeJSON.value}**\n\nNeed help with anything else?`,
+              },
+            ]
+          })
+          setIsLoading(false)
+          return // Skip adding the JSON response to messages
         }
       } catch { /* ignore parse errors */ }
       setMessages((prev) => [
@@ -186,6 +369,7 @@ export function HelpBot(props: HelpBotProps) {
       Cache: { icon: Database, label: 'Cache', color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-900/20' },
       Groq: { icon: Zap, label: 'AI', color: 'text-purple-600 dark:text-purple-400', bg: 'bg-purple-50 dark:bg-purple-900/20' },
       AgentSearch: { icon: MessageCircle, label: 'Search', color: 'text-orange-600 dark:text-orange-400', bg: 'bg-orange-50 dark:bg-orange-900/20' },
+      InputHelp: { icon: Zap, label: 'AI', color: 'text-purple-600 dark:text-purple-400', bg: 'bg-purple-50 dark:bg-purple-900/20' },
     }
     const badge = badges[source as keyof typeof badges]
     if (!badge) return null
@@ -211,26 +395,18 @@ export function HelpBot(props: HelpBotProps) {
     }
   }
 
+  console.log('[HelpBot] Rendering with messages:', messages.length, 'messages for field:', context?.fieldName)
+  messages.forEach((msg, idx) => {
+    console.log(`  Message ${idx} (${msg.role}):`, msg.content.substring(0, 100))
+  })
+
   return (
     <>
-      {/* ---- FLOATING BUTTON: hides in modal/input_help mode ---- */}
-      {!isOpen && !controlledOpen && !isInputHelp && (
-        <button
-          onClick={() => setIsOpenInternal(true)}
-          className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 w-14 h-14 sm:w-16 sm:h-16 bg-gradient-to-br from-[var(--v2-primary)] to-purple-600 text-white shadow-[var(--v2-shadow-card)] hover:shadow-2xl hover:scale-110 active:scale-95 transition-all duration-300 flex items-center justify-center z-50 group"
-          style={{ borderRadius: 'var(--v2-radius-card)' }}
-          title="Help & Support"
-        >
-          <MessageCircle className="w-6 h-6 sm:w-7 sm:h-7 group-hover:rotate-12 transition-transform duration-300" />
-          <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white dark:border-gray-900 animate-pulse"></div>
-          <Sparkles className="absolute top-1 right-1 w-3 h-3 text-yellow-300 animate-pulse" />
-        </button>
-      )}
-
-      {(isOpen || (isInputHelp && context)) && (
-        <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 w-[calc(100vw-2rem)] sm:w-[440px] h-[calc(100vh-8rem)] sm:h-[680px] max-h-[calc(100vh-2rem)] bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] z-50 flex flex-col border border-[var(--v2-border)] backdrop-blur-xl animate-in slide-in-from-bottom-4 duration-300" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+      {/* Only render the window when open - parent controls the floating button */}
+      {isOpen && (
+        <div className="fixed bottom-20 left-2 right-2 sm:bottom-28 sm:left-auto sm:right-6 sm:w-[440px] h-[calc(100vh-10rem)] sm:h-[calc(100vh-11rem)] max-h-[600px] sm:max-h-[500px] bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] z-50 flex flex-col border border-[var(--v2-border)] backdrop-blur-xl animate-in slide-in-from-bottom-4 duration-300 rounded-[16px] overflow-hidden">
           {/* Header */}
-          <div className="flex items-center justify-between px-4 sm:px-5 py-4 border-b border-[var(--v2-border)]/50 bg-gradient-to-r from-[var(--v2-primary)] via-purple-600 to-[var(--v2-primary)] text-white backdrop-blur-xl">
+          <div className="flex items-center justify-between px-4 sm:px-5 py-4 border-b border-[var(--v2-border)]/50 bg-gradient-to-r from-[var(--v2-primary)] via-purple-600 to-[var(--v2-primary)] text-white backdrop-blur-xl rounded-t-[16px]">
             <div className="flex items-center gap-3">
               <div className="relative">
                 <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center ring-2 ring-white/30 shadow-lg">
@@ -240,7 +416,7 @@ export function HelpBot(props: HelpBotProps) {
               </div>
               <div>
                 <div className="font-semibold text-sm sm:text-base tracking-tight">
-                  {isInputHelp ? `Help With: ${context?.fieldName}` : `${pageContext.title} Assistant`}
+                  {isInputHelp ? `Help With: ${context?.fieldLabel || context?.fieldName}` : `${pageContext.title} Assistant`}
                 </div>
                 <div className="text-xs opacity-90 flex items-center gap-1.5 mt-0.5">
                   <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></div>
@@ -257,9 +433,9 @@ export function HelpBot(props: HelpBotProps) {
             </button>
           </div>
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-4 bg-gradient-to-b from-gray-50/50 to-transparent dark:from-gray-900/20" onClick={handleMessageClick}>
+          <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 space-y-4 bg-gradient-to-b from-gray-50/50 to-transparent dark:from-gray-900/20" onClick={handleMessageClick}>
             {messages.map((message, index) => (
-              <div key={index} className={`flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
+              <div key={`${sessionIdRef.current}-${index}`} className={`flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
                 <div className={`max-w-[85%] sm:max-w-[80%] px-4 py-3 shadow-sm ${
                   message.role === 'user'
                     ? 'bg-gradient-to-br from-[var(--v2-primary)] to-purple-600 text-white'
@@ -269,7 +445,7 @@ export function HelpBot(props: HelpBotProps) {
                     borderRadius: message.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
                   }}>
                   <div
-                    className={`text-sm leading-relaxed ${message.role === 'user' ? 'text-white' : ''}`}
+                    className={`text-sm leading-relaxed break-words overflow-hidden ${message.role === 'user' ? 'text-white' : ''}`}
                     dangerouslySetInnerHTML={{
                       __html: message.role === 'assistant' ? renderMarkdown(message.content) : message.content
                     }}

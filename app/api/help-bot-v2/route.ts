@@ -5,6 +5,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { GroqProvider } from '@/lib/ai/providers/groqProvider'
 import { createClient } from '@supabase/supabase-js'
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics'
+import { UrlParserService } from '@/lib/utils/UrlParserService'
+import { SystemConfigService } from '@/lib/services/SystemConfigService'
+import { EmbeddingService } from '@/lib/services/EmbeddingService'
+import * as fs from 'fs'
+import * as path from 'path'
 import crypto from 'crypto'
 
 const supabase = createClient(
@@ -194,34 +199,213 @@ async function searchFAQ(
 }
 
 // ============================================================================
-// Layer 2: Cache Lookup
+// Layer 2: Cache Lookup (Hybrid: Exact Hash + Semantic Search)
 // ============================================================================
 
-async function searchCache(questionHash: string): Promise<{ answer: string; id: string } | null> {
+async function searchCache(
+  question: string,
+  questionHash: string,
+  pageContext?: string
+): Promise<{ answer: string; id: string; matchType: 'exact' | 'semantic' } | null> {
   try {
-    const { data, error } = await supabase
+    // Step 1: Try exact hash match first (fastest, most reliable)
+    const { data: exactMatch, error: exactError } = await supabase
       .from('support_cache')
       .select('*')
       .eq('question_hash', questionHash)
       .single()
 
-    if (error || !data) return null
+    if (exactMatch) {
+      // Update hit count and last_seen
+      await supabase
+        .from('support_cache')
+        .update({
+          hit_count: exactMatch.hit_count + 1,
+          last_seen: new Date().toISOString(),
+        })
+        .eq('id', exactMatch.id)
 
-    // Update hit count and last_seen
-    await supabase
-      .from('support_cache')
-      .update({
-        hit_count: data.hit_count + 1,
-        last_seen: new Date().toISOString(),
+      console.log(`[HelpBot] Exact cache hit: ${exactMatch.question.substring(0, 50)}... (${exactMatch.hit_count} hits)`)
+      return { answer: exactMatch.answer, id: exactMatch.id, matchType: 'exact' }
+    }
+
+    // Step 2: Check if semantic search is enabled
+    const semanticEnabled = await SystemConfigService.getBoolean(
+      supabase,
+      'helpbot_semantic_search_enabled',
+      true
+    )
+
+    if (!semanticEnabled) {
+      return null // Semantic search disabled, no match found
+    }
+
+    // Step 3: Try semantic search
+    const embeddingService = new EmbeddingService(process.env.OPENAI_API_KEY!, supabase)
+
+    // Generate embedding for the question
+    const { embedding, cost: embeddingCost } = await embeddingService.generateEmbedding(question)
+
+    // Get similarity threshold from config
+    const similarityThreshold = await SystemConfigService.getNumber(
+      supabase,
+      'helpbot_semantic_threshold',
+      0.85
+    )
+
+    // Search using the database function
+    const { data: semanticMatches, error: semanticError } = await supabase
+      .rpc('search_support_cache_semantic', {
+        query_embedding: JSON.stringify(embedding),
+        similarity_threshold: similarityThreshold,
+        result_limit: 1,
+        p_page_context: pageContext || null,
       })
-      .eq('id', data.id)
 
-    console.log(`[HelpBot] Cache hit: ${data.question.substring(0, 50)}... (${data.hit_count} hits)`)
-    return { answer: data.answer, id: data.id }
+    if (semanticError) {
+      console.error('[HelpBot] Semantic search error:', semanticError)
+      return null
+    }
+
+    if (semanticMatches && semanticMatches.length > 0) {
+      const match = semanticMatches[0]
+
+      // Update hit count and last_seen
+      await supabase
+        .from('support_cache')
+        .update({
+          hit_count: match.hit_count + 1,
+          last_seen: new Date().toISOString(),
+        })
+        .eq('id', match.id)
+
+      console.log(`[HelpBot] Semantic cache hit: ${match.question.substring(0, 50)}... (similarity: ${match.similarity.toFixed(3)}, ${match.hit_count} hits)`)
+      console.log(`[HelpBot] Embedding cost: $${embeddingCost.toFixed(6)}`)
+
+      return { answer: match.answer, id: match.id, matchType: 'semantic' }
+    }
+
+    // No match found
+    return null
   } catch (error) {
     console.error('[HelpBot] Cache search error:', error)
     return null
   }
+}
+
+// ============================================================================
+// Input Help Mode: URL Extraction and Field Assistance
+// ============================================================================
+
+async function handleInputHelp(
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+  context: any
+): Promise<string> {
+  const lastMessage = messages[messages.length - 1]
+  const userInput = lastMessage.content
+
+  console.log('[InputHelp] Processing input:', {
+    fieldName: context.fieldName,
+    plugin: context.plugin,
+    expectedType: context.expectedType,
+    userInput: userInput.substring(0, 100),
+  })
+
+  // Check if user provided a URL
+  if (UrlParserService.isValidUrl(userInput)) {
+    // Try to extract ID from URL
+    const extraction = UrlParserService.extractForField(
+      userInput,
+      context.plugin,
+      context.expectedType,
+      context.fieldName  // Pass field name for special handling
+    )
+
+    console.log('[InputHelp] Extraction result:', extraction)
+
+    if (extraction.success && extraction.value) {
+      // Return JSON action to fill the field
+      return JSON.stringify({
+        action: 'fill_agent_input',
+        agentId: context.agentId,
+        fieldName: context.fieldName,
+        value: extraction.value,
+      })
+    } else if (extraction.error === 'NEEDS_AI_GUIDANCE') {
+      // Special case: Field needs conversational guidance (e.g., range field)
+      // Let AI explain how to find the value
+      return await callGroqForInputHelp(messages, context)
+    } else {
+      // Extraction failed - provide helpful error
+      return extraction.error || 'Could not extract the value from this URL. Please check the format.'
+    }
+  }
+
+  // User didn't provide a URL - use AI to guide them
+  return await callGroqForInputHelp(messages, context)
+}
+
+async function callGroqForInputHelp(
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+  context: any
+): Promise<string> {
+  // Load input assistant prompt template
+  const templatePath = path.join(process.cwd(), 'app/api/prompt-templates/Input-Assistant-Prompt-v1.txt')
+  let systemPrompt = ''
+
+  try {
+    systemPrompt = fs.readFileSync(templatePath, 'utf-8')
+
+    // Replace placeholders
+    systemPrompt = systemPrompt
+      .replace(/\{\{agentId\}\}/g, context.agentId || 'unknown')
+      .replace(/\{\{agentName\}\}/g, context.agentName || 'your agent')
+      .replace(/\{\{fieldName\}\}/g, context.fieldName || 'this field')
+      .replace(/\{\{expectedType\}\}/g, context.expectedType || 'string')
+      .replace(/\{\{plugin\}\}/g, context.plugin || 'the service')
+  } catch (error) {
+    console.error('[InputHelp] Failed to load prompt template:', error)
+    // Fallback prompt
+    systemPrompt = `You are helping a user fill the field "${context.fieldName}" for their automation agent. Ask them to provide the normal URL/link, not technical IDs. When they provide a URL, respond with: {"action": "fill_agent_input", "agentId": "${context.agentId}", "fieldName": "${context.fieldName}", "value": "<extracted_value>"}`
+  }
+
+  const aiMessages = [
+    { role: 'system' as const, content: systemPrompt },
+    ...messages.slice(-5).map((msg: any) => ({
+      role: msg.role as 'user' | 'assistant',
+      content: msg.content,
+    })),
+  ]
+
+  const callContext = {
+    userId: 'system',
+    user_id: 'system',
+    feature: 'input_help_bot',
+    component: 'input-assistant',
+    category: 'agent_input',
+    activity_type: 'field_assistance',
+    activity_name: 'Input field help',
+    workflow_step: 'groq_guidance',
+  }
+
+  const groqProvider = new GroqProvider(process.env.GROQ_API_KEY!, aiAnalytics)
+
+  // Fetch dynamic config from database
+  const model = await SystemConfigService.getString(supabase, 'helpbot_input_model', 'llama-3.1-8b-instant')
+  const temperature = await SystemConfigService.getNumber(supabase, 'helpbot_input_temperature', 0.3)
+  const maxTokens = await SystemConfigService.getNumber(supabase, 'helpbot_input_max_tokens', 400)
+
+  const response = await groqProvider.chatCompletion(
+    {
+      model,
+      messages: aiMessages,
+      temperature,
+      max_tokens: maxTokens,
+    },
+    callContext
+  )
+
+  return response.choices[0]?.message?.content || 'I can help you fill this field. Just paste the link!'
 }
 
 // ============================================================================
@@ -244,6 +428,14 @@ Your role:
 - Keep responses under 150 words
 - When mentioning navigation, use this format: [Link Text](/path)
 
+FORMATTING REQUIREMENTS:
+- Use double line breaks between sections for better readability
+- Break down complex information into clear, digestible paragraphs
+- Use bullet points with proper spacing (add line break before and after lists)
+- Use bold numbers for step-by-step instructions (e.g., **1.**, **2.**)
+- Add line breaks before and after important sections
+- Keep paragraphs short (2-3 sentences max)
+
 Available pages:
 - Dashboard (/v2/dashboard): Overview of agents, credits, system alerts
 - Agent List (/v2/agent-list): View and manage all agents
@@ -263,6 +455,7 @@ Answer the user's question based on the current page context.`
   ]
 
   const callContext = {
+    userId: 'system',
     user_id: 'system',
     feature: 'help_bot_v2',
     component: 'support-bot-groq',
@@ -274,12 +467,17 @@ Answer the user's question based on the current page context.`
 
   const groqProvider = new GroqProvider(process.env.GROQ_API_KEY!, aiAnalytics)
 
+  // Fetch dynamic config from database
+  const model = await SystemConfigService.getString(supabase, 'helpbot_general_model', 'llama-3.1-8b-instant')
+  const temperature = await SystemConfigService.getNumber(supabase, 'helpbot_general_temperature', 0.2)
+  const maxTokens = await SystemConfigService.getNumber(supabase, 'helpbot_general_max_tokens', 300)
+
   const response = await groqProvider.chatCompletion(
     {
-      model: 'llama-3.1-8b-instant',
+      model,
       messages: aiMessages,
-      temperature: 0.2, // Lower temperature for more deterministic answers
-      max_tokens: 300,
+      temperature,
+      max_tokens: maxTokens,
     },
     callContext
   )
@@ -299,6 +497,30 @@ async function storeInCache(
   pageContext: string
 ): Promise<void> {
   try {
+    // Generate embedding for the question
+    let embedding: number[] | null = null
+    let embeddingCost = 0
+
+    const semanticEnabled = await SystemConfigService.getBoolean(
+      supabase,
+      'helpbot_semantic_search_enabled',
+      true
+    )
+
+    if (semanticEnabled) {
+      try {
+        const embeddingService = new EmbeddingService(process.env.OPENAI_API_KEY!, supabase)
+        const result = await embeddingService.generateEmbedding(question)
+        embedding = result.embedding
+        embeddingCost = result.cost
+        console.log(`[HelpBot] Generated embedding for cache ($${embeddingCost.toFixed(6)})`)
+      } catch (error) {
+        console.error('[HelpBot] Failed to generate embedding:', error)
+        // Continue without embedding - cache will still work with exact matching
+      }
+    }
+
+    // Store in cache with embedding
     await supabase.from('support_cache').insert({
       question_hash: questionHash,
       question,
@@ -306,6 +528,7 @@ async function storeInCache(
       source,
       page_context: pageContext,
       hit_count: 1,
+      embedding: embedding,
     })
 
     console.log(`[HelpBot] Stored in cache: ${question.substring(0, 50)}...`)
@@ -341,7 +564,7 @@ export async function POST(request: NextRequest) {
   const startTime = Date.now()
 
   try {
-    const { messages, pageContext } = await request.json()
+    const { messages, pageContext, context } = await request.json()
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return NextResponse.json({ error: 'Invalid request: messages required' }, { status: 400 })
@@ -352,10 +575,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Last message must be from user' }, { status: 400 })
     }
 
+    // ========================================================================
+    // Check if this is INPUT HELP mode (field-specific assistance)
+    // ========================================================================
+    if (context && context.mode === 'input_help') {
+      console.log('[HelpBot] Input help mode activated for field:', context.fieldName)
+      const response = await handleInputHelp(messages, context)
+      await updateAnalytics('InputHelp', Date.now() - startTime)
+      return NextResponse.json({ response, source: 'InputHelp' })
+    }
+
     const userId = request.headers.get('x-user-id') || null
     const question = lastMessage.content
     const questionHash = hashQuestion(question)
-    const pagePath = pageContext.path || '/v2/dashboard'
+    const pagePath = pageContext?.path || '/v2/dashboard'
 
     // ========================================================================
     // Step 1: Check if user is searching for a specific agent
@@ -386,15 +619,20 @@ export async function POST(request: NextRequest) {
     }
 
     // ========================================================================
-    // Step 3: Try cache lookup (free, instant)
+    // Step 3: Try cache lookup (hybrid: exact hash + semantic search)
     // ========================================================================
-    const cachedResult = await searchCache(questionHash)
+    const cachedResult = await searchCache(question, questionHash, pagePath)
     if (cachedResult) {
+      // Track whether it was exact or semantic match in analytics
+      const isSemanticHit = cachedResult.matchType === 'semantic'
+      const isExactHit = cachedResult.matchType === 'exact'
+
       await updateAnalytics('Cache', Date.now() - startTime)
       return NextResponse.json({
         response: cachedResult.answer,
         source: 'Cache',
         cacheId: cachedResult.id,
+        matchType: cachedResult.matchType, // 'exact' or 'semantic'
       })
     }
 

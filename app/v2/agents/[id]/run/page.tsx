@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabaseClient'
 import { V2Header } from '@/components/v2/V2Header'
 import { Card } from '@/components/v2/ui/card'
 import InputHelpButton from '@/components/v2/InputHelpButton'
+import { HelpBot } from '@/components/v2/HelpBot'
 import {
   ArrowLeft,
   ArrowRight,
@@ -25,6 +26,7 @@ import {
 type Field = {
   name: string
   type: 'string' | 'number' | 'boolean' | 'date' | 'enum' | 'file' | 'email' | 'time' | 'select'
+  label?: string
   enum?: string[]
   options?: string[]
   description?: string
@@ -57,6 +59,38 @@ export default function V2RunAgentPage() {
   const [formData, setFormData] = useState<Record<string, any>>({})
   const [result, setResult] = useState<any>(null)
   const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
+
+  // HelpBot state - persist across page refreshes
+  const [helpBotOpen, setHelpBotOpen] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = sessionStorage.getItem('helpBotOpen')
+      console.log('[Parent INIT] Loading helpBotOpen from sessionStorage:', saved)
+      return saved === 'true'
+    }
+    return false
+  })
+  const [helpBotContext, setHelpBotContext] = useState<any>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = sessionStorage.getItem('helpBotContext')
+      console.log('[Parent INIT] Loading helpBotContext from sessionStorage:', saved)
+      return saved ? JSON.parse(saved) : null
+    }
+    return null
+  })
+
+  // Save to sessionStorage when state changes
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('helpBotOpen', String(helpBotOpen))
+      if (helpBotContext) {
+        sessionStorage.setItem('helpBotContext', JSON.stringify(helpBotContext))
+      } else {
+        sessionStorage.removeItem('helpBotContext')
+      }
+    }
+  }, [helpBotOpen, helpBotContext])
 
   // Real-time step tracking for SSE
   const [executingSteps, setExecutingSteps] = useState<Set<string>>(new Set())
@@ -84,13 +118,16 @@ export default function V2RunAgentPage() {
       if (agentError) throw agentError
       setAgent(agentData)
 
-      // Load saved configuration
+      // Load saved configuration (most recent 'configured' entry)
       const { data: configData } = await supabase
         .from('agent_configurations')
         .select('input_values')
         .eq('agent_id', agentId)
         .eq('user_id', user.id)
-        .single()
+        .eq('status', 'configured')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
 
       if (configData?.input_values) {
         setFormData(configData.input_values)
@@ -105,6 +142,143 @@ export default function V2RunAgentPage() {
 
   const handleInputChange = (name: string, value: any) => {
     setFormData(prev => ({ ...prev, [name]: value }))
+  }
+
+  const handleSaveInputs = async () => {
+    if (!agent || !user) return
+
+    setSaving(true)
+    setSaveMessage(null)
+
+    try {
+      const response = await fetch('/api/agent-configurations/save-inputs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent_id: agent.id,
+          input_values: formData,
+          input_schema: agent.input_schema
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to save input values')
+      }
+
+      setSaveMessage({ type: 'success', text: 'Input values saved successfully!' })
+
+      // Clear success message after 3 seconds
+      setTimeout(() => setSaveMessage(null), 3000)
+    } catch (err: any) {
+      console.error('Error saving input values:', err)
+      setSaveMessage({ type: 'error', text: err.message || 'Failed to save input values' })
+
+      // Clear error message after 5 seconds
+      setTimeout(() => setSaveMessage(null), 5000)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // Open chatbot for field help OR general help
+  const openChatbot = (context?: any) => {
+    console.log('[Parent] openChatbot called with context:', context?.fieldName || 'general')
+    console.log('[Parent] Current helpBotContext:', helpBotContext?.fieldName || 'none')
+    console.log('[Parent] helpBotOpen:', helpBotOpen)
+
+    // If chatbot is already open with a different context, update it
+    if (helpBotOpen && context && helpBotContext?.fieldName !== context?.fieldName) {
+      console.log('[Parent] Switching context from', helpBotContext?.fieldName, 'to', context.fieldName)
+    }
+
+    setHelpBotContext(context || null) // null = general help mode
+    setHelpBotOpen(true)
+  }
+
+  // Toggle chatbot (for general help button)
+  const toggleChatbot = () => {
+    if (helpBotOpen) {
+      setHelpBotOpen(false)
+      setHelpBotContext(null)
+    } else {
+      openChatbot() // Open in general help mode
+    }
+  }
+
+  // Handle chatbot filling a field
+  const handleChatbotFill = (value: string) => {
+    if (helpBotContext?.fieldName) {
+      handleInputChange(helpBotContext.fieldName, value)
+    }
+  }
+
+  // Infer plugin from field name
+  const inferPluginFromFieldName = (fieldName: string): string | undefined => {
+    const fieldLower = fieldName.toLowerCase()
+
+    // Special case: "range" field is for manual text input (e.g., "A1:B10"), not URL extraction
+    // So we still detect it as Sheets but with special handling in the parser
+
+    // Google Sheets patterns (includes fields that need URL extraction)
+    if (
+      fieldLower.includes('sheet') ||
+      fieldLower.includes('spreadsheet') ||
+      fieldLower.includes('range') ||       // Cell range field (manual input, but Sheets-related)
+      fieldLower.includes('cell') ||
+      fieldLower.includes('row') ||
+      fieldLower.includes('column') ||
+      fieldLower.includes('tab') ||
+      fieldLower.includes('worksheet')
+    ) {
+      return 'google-sheets'
+    }
+
+    // Gmail patterns
+    if (
+      fieldLower.includes('email') ||
+      fieldLower.includes('gmail') ||
+      fieldLower.includes('message') ||
+      fieldLower.includes('inbox') ||
+      fieldLower.includes('subject') ||
+      fieldLower.includes('recipient')
+    ) {
+      return 'google-mail'
+    }
+
+    // Google Drive patterns
+    if (
+      fieldLower.includes('drive') ||
+      fieldLower.includes('file') ||
+      fieldLower.includes('folder') ||
+      fieldLower.includes('document') ||
+      fieldLower.includes('doc')
+    ) {
+      return 'google-drive'
+    }
+
+    // Notion patterns
+    if (
+      fieldLower.includes('notion') ||
+      fieldLower.includes('database') ||
+      fieldLower.includes('page') ||
+      fieldLower.includes('block')
+    ) {
+      return 'notion'
+    }
+
+    // Slack patterns
+    if (
+      fieldLower.includes('slack') ||
+      fieldLower.includes('channel') ||
+      fieldLower.includes('workspace')
+    ) {
+      return 'slack'
+    }
+
+    // Fallback to first plugin in agent's requirements
+    return agent?.plugins_required?.[0]
   }
 
   const handleRun = async () => {
@@ -367,7 +541,7 @@ export default function V2RunAgentPage() {
                   <label className="block">
                     <div className="flex items-center gap-1.5 mb-1.5">
                       <span className="text-sm font-medium text-[var(--v2-text-primary)]">
-                        {formatFieldName(field.name)}
+                        {field.label || formatFieldName(field.name)}
                       </span>
                       {field.required && (
                         <span className="text-red-500 dark:text-red-400 text-sm">*</span>
@@ -425,16 +599,16 @@ export default function V2RunAgentPage() {
                         <InputHelpButton
                           agentId={agent.id}
                           fieldName={field.name}
-                          plugin={agent.plugins_required?.[0]}
+                          plugin={inferPluginFromFieldName(field.name)}
                           expectedType={field.type}
                           onClick={() => openChatbot({
                             mode: 'input_help',
                             agentId: agent.id,
                             fieldName: field.name,
-                            plugin: agent.plugins_required?.[0],
+                            fieldLabel: field.label || formatFieldName(field.name),
+                            plugin: inferPluginFromFieldName(field.name),
                             expectedType: field.type
                           })}
-                          onFill={(value) => handleInputChange(field.name, value)}
                         />
                       </div>
                     </div>
@@ -443,25 +617,75 @@ export default function V2RunAgentPage() {
               ))
             )}
 
-            {/* Run Button */}
-            <button
-              onClick={handleRun}
-              disabled={executing || agent.status !== 'active' || !isFormValid()}
-              className="w-full px-6 py-3 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white font-semibold hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-            >
-              {executing ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  Running Agent...
-                </>
-              ) : (
-                <>
-                  <Play className="w-5 h-5" />
-                  Run Agent
-                </>
-              )}
-            </button>
+            {/* Save Message */}
+            {saveMessage && (
+              <div
+                className={`p-3 border ${
+                  saveMessage.type === 'success'
+                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                    : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+                }`}
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                <div className="flex items-center gap-2">
+                  {saveMessage.type === 'success' ? (
+                    <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-400" />
+                  ) : (
+                    <XCircle className="w-4 h-4 text-red-600 dark:text-red-400" />
+                  )}
+                  <p className={`text-sm ${
+                    saveMessage.type === 'success'
+                      ? 'text-green-700 dark:text-green-300'
+                      : 'text-red-700 dark:text-red-300'
+                  }`}>
+                    {saveMessage.text}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Save and Run Buttons */}
+            <div className="flex gap-3">
+              {/* Save Inputs Button */}
+              <button
+                onClick={handleSaveInputs}
+                disabled={saving || !isFormValid()}
+                className="flex-1 px-6 py-3 bg-[var(--v2-surface)] border-2 border-[var(--v2-primary)] text-[var(--v2-primary)] font-semibold hover:bg-[var(--v2-primary)] hover:text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                {saving ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Settings className="w-5 h-5" />
+                    Save Inputs
+                  </>
+                )}
+              </button>
+
+              {/* Run Button */}
+              <button
+                onClick={handleRun}
+                disabled={executing || agent.status !== 'active' || !isFormValid()}
+                className="flex-1 px-6 py-3 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white font-semibold hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                {executing ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Running Agent...
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-5 h-5" />
+                    Run Agent
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </Card>
 
@@ -881,6 +1105,46 @@ export default function V2RunAgentPage() {
               })}
             </div>
           </Card>
+        )
+      })()}
+
+      {/* Floating Help Button */}
+      <button
+        onClick={toggleChatbot}
+        className={`fixed bottom-4 right-4 sm:bottom-6 sm:right-6 w-12 h-12 sm:w-14 sm:h-14 text-white shadow-lg hover:shadow-2xl hover:scale-110 active:scale-95 transition-all duration-300 flex items-center justify-center z-50 group ${
+          helpBotOpen
+            ? 'bg-gray-600 hover:bg-gray-700'
+            : 'bg-gradient-to-br from-[var(--v2-primary)] to-purple-600'
+        }`}
+        style={{ borderRadius: 'var(--v2-radius-card)' }}
+        title={helpBotOpen ? "Close Help" : "Help & Support"}
+      >
+        {helpBotOpen ? (
+          <XCircle className="w-5 h-5 sm:w-6 sm:h-6" />
+        ) : (
+          <>
+            <Bot className="w-5 h-5 sm:w-6 sm:h-6 group-hover:rotate-12 transition-transform duration-300" />
+            <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white dark:border-gray-900 animate-pulse"></div>
+            <Sparkles className="absolute top-1 right-1 w-2.5 h-2.5 text-yellow-300 animate-pulse" />
+          </>
+        )}
+      </button>
+
+      {/* HelpBot Window - ONE window for both general and input help */}
+      {helpBotOpen && (() => {
+        const botKey = helpBotContext ? `${helpBotContext.agentId}-${helpBotContext.fieldName}` : 'general'
+        console.log('[Parent] Rendering HelpBot with key:', botKey)
+        return (
+          <HelpBot
+            key={botKey}
+            isOpen={helpBotOpen}
+            context={helpBotContext}
+            onFill={handleChatbotFill}
+            onClose={() => {
+              setHelpBotOpen(false)
+              setHelpBotContext(null)
+            }}
+          />
         )
       })()}
     </div>

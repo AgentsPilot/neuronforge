@@ -246,6 +246,7 @@ export async function POST(req: Request) {
       input_schema: analysis.required_inputs.map(input => ({
         name: input.name,
         type: input.type,
+        label: input.label,
         required: input.required,
         description: input.description,
         placeholder: input.placeholder || ''

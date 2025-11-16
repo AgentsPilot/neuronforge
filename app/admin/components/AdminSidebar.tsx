@@ -20,7 +20,8 @@ import {
   Palette,
   Database,
   BarChart3,
-  DollarSign
+  DollarSign,
+  MessageCircle
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -100,6 +101,12 @@ const navigationItems = [
     href: '/admin/ui-config',
     icon: Palette,
     description: 'Design System & Version'
+  },
+  {
+    name: 'HelpBot Config',
+    href: '/admin/helpbot-config',
+    icon: MessageCircle,
+    description: 'AI Assistant Settings'
   },
   {
     name: 'Reward Config',

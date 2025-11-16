@@ -30,6 +30,7 @@ export interface AnalyzedWorkflowStep {
 export interface AnalyzedInput {
   name: string;
   type: 'text' | 'email' | 'number' | 'file' | 'select' | 'url' | 'date' | 'textarea';
+  label?: string;
   required: boolean;
   description: string;
   placeholder?: string;
@@ -193,6 +194,7 @@ ${pluginContext}
 4. **If a parameter is missing, add it as a required input**
 5. **DO NOT use chatgpt-research for basic summarization - use ai_processing instead**
 6. **ONLY use chatgpt-research when user asks to "research" or "find information about" topics**
+7. **ALWAYS provide user-friendly labels for input fields** - see Label Generation Rules below
 
 # Plugin Selection Examples:
 - "Summarize my emails" → google-mail ONLY (ai_processing handles summary)
@@ -206,6 +208,31 @@ ${pluginContext}
 - Summarize, analyze, process existing data → ai_processing (NO plugin needed)
 - Research topics, find information online → chatgpt-research plugin
 
+# Label Generation Rules (REQUIRED for all input fields):
+Each input field MUST have a user-friendly "label" that non-technical users can understand.
+
+**Label Conversion Rules:**
+- "spreadsheet_id" → "Spreadsheet ID"
+- "database_id" → "Database ID"
+- "folder_id" → "Folder ID"
+- "recipient_email" → "Recipient Email"
+- "sender_email" → "Sender Email"
+- "range" → "Cell Range"
+- "sheet_name" → "Sheet Name"
+- "file_name" → "File Name"
+- "query" → "Search Query"
+- "subject" → "Email Subject"
+- "message" → "Message"
+- "workspace_id" → "Workspace ID"
+- "channel_id" → "Channel ID"
+
+**General Rules:**
+1. Convert underscores/hyphens to spaces: "user_name" → "User Name"
+2. Capitalize each word: "email address" → "Email Address"
+3. Keep "ID" uppercase: "spreadsheet_id" → "Spreadsheet ID" (NOT "Spreadsheet Id")
+4. Make labels descriptive and clear for non-technical users
+5. Keep labels concise (2-4 words maximum)
+
 # Response Format:
 Return a JSON object with:
 {
@@ -217,6 +244,7 @@ Return a JSON object with:
     {
       "name": "spreadsheet_id",
       "type": "text",
+      "label": "Spreadsheet ID",
       "required": true,
       "description": "Google Sheet ID to write to",
       "placeholder": "Enter spreadsheet ID or URL",
