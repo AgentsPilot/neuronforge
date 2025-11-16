@@ -378,3 +378,58 @@ export async function logAISScoresBulkRecalculated(
     severity: 'warning',
   });
 }
+
+/**
+ * Log per-step routing decision (Per-Step AIS Enhancement)
+ */
+export async function logStepRoutingDecision(
+  agentId: string,
+  agentName: string,
+  userId: string,
+  executionId: string,
+  stepId: string,
+  stepName: string,
+  stepType: string,
+  complexity: number,
+  agentAIS: number,
+  effectiveComplexity: number,
+  tier: string,
+  model: string,
+  provider: string,
+  reason: string
+): Promise<void> {
+  await auditLog({
+    userId,
+    action: 'STEP_ROUTING_DECISION',
+    entityType: 'workflow_step',
+    entityId: stepId,
+    resourceName: stepName,
+    details: {
+      agent: {
+        id: agentId,
+        name: agentName,
+        ais_score: agentAIS,
+      },
+      execution: {
+        id: executionId,
+        step_id: stepId,
+        step_name: stepName,
+        step_type: stepType,
+      },
+      complexity: {
+        step_score: complexity,
+        agent_score: agentAIS,
+        effective_score: effectiveComplexity,
+        weighting: '60% agent + 40% step',
+      },
+      routing: {
+        tier,
+        model,
+        provider,
+        reason,
+      },
+      timestamp: new Date().toISOString(),
+    },
+    severity: 'info',
+  });
+}

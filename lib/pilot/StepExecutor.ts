@@ -460,8 +460,22 @@ export class StepExecutor {
    * Deterministic plugin actions should execute directly
    */
   private shouldUseOrchestration(step: WorkflowStep): boolean {
-    // AI processing steps NEED orchestration for LLM-based handling
-    if (step.type === 'ai_processing' || step.type === 'llm_decision') {
+    // LLM-based steps that need intelligent routing through orchestration
+    // These steps require:
+    // - Token budgeting per intent
+    // - Model routing based on AIS + complexity scores
+    // - Per-step execution tracking
+    // - Compression policies
+    const llmStepTypes = [
+      'ai_processing',   // AI processing tasks
+      'llm_decision',    // LLM-based decisions
+      'summarize',       // Content summarization
+      'extract',         // Information extraction
+      'transform',       // Complex data transformation (LLM-based)
+      'generate'         // Content generation
+    ];
+
+    if (llmStepTypes.includes(step.type)) {
       return true;
     }
 
@@ -471,13 +485,8 @@ export class StepExecutor {
       return false;
     }
 
-    // Transform, enrich, validation steps may benefit from orchestration
-    // but typically don't need it - default to false for efficiency
-    if (step.type === 'transform' || step.type === 'enrich' || step.type === 'validation') {
-      return false;
-    }
-
-    // Other types (switch, delay, comparison) don't need orchestration
+    // Enrich, validation, comparison - default to false for efficiency
+    // These are typically deterministic operations
     return false;
   }
 

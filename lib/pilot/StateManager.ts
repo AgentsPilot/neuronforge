@@ -600,6 +600,19 @@ export class StateManager {
       // Database constraint only allows: action, llm_decision, conditional, loop, transform, delay, parallel_group
       const normalizedStepType = this.normalizeStepType(stepType);
 
+      // Check if record already exists (might have been created by WorkflowOrchestrator)
+      const { data: existing } = await this.supabase
+        .from('workflow_step_executions')
+        .select('id')
+        .eq('workflow_execution_id', workflowExecutionId)
+        .eq('step_id', stepId)
+        .single();
+
+      if (existing) {
+        console.log(`[StateManager] Step execution record already exists for ${stepId}, skipping INSERT`);
+        return;
+      }
+
       const { error } = await this.supabase
         .from('workflow_step_executions')
         .insert({

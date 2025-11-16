@@ -893,6 +893,158 @@ export class RoutingService implements IRoutingService {
   getTierThresholds(): { fast: number; balanced: number } {
     return this.tierThresholds || { fast: 3.0, balanced: 6.5 };
   }
+
+  // ============================================================================
+  // PER-STEP ROUTING TRACKING (Phase: AIS Enhancement)
+  // ============================================================================
+
+  /**
+   * Map 6-factor complexity to 4 AIS dimensions
+   * Provides consistency between step-level and agent-level scoring
+   */
+  private mapComplexityToAIS(analysis: StepComplexityAnalysis): {
+    token_complexity: number;
+    execution_complexity: number;
+    workflow_complexity: number;
+    memory_complexity: number;
+  } {
+    return {
+      // Token complexity: Average of prompt length and data size
+      token_complexity: (analysis.factors.promptLength + analysis.factors.dataSize) / 2,
+
+      // Execution complexity: Average of reasoning depth and output complexity
+      execution_complexity: (analysis.factors.reasoningDepth + analysis.factors.outputComplexity) / 2,
+
+      // Workflow complexity: Condition count directly maps
+      workflow_complexity: analysis.factors.conditionCount,
+
+      // Memory complexity: Context depth directly maps
+      memory_complexity: analysis.factors.contextDepth,
+    };
+  }
+
+  /**
+   * Log step routing decision to database
+   * Stores routing intelligence in workflow_step_executions table
+   */
+  async logStepRouting(
+    workflowExecutionId: string,
+    stepId: string,
+    stepName: string,
+    stepType: string,
+    stepIndex: number,
+    stepAnalysis: StepComplexityAnalysis,
+    agentAIS: number,
+    effectiveComplexity: number,
+    decision: RoutingDecision
+  ): Promise<void> {
+    try {
+      // Check if tracking is enabled
+      const { data: configData } = await this.supabase
+        .from('system_settings_config')
+        .select('value')
+        .eq('key', 'orchestration_per_step_tracking_enabled')
+        .single();
+
+      const trackingEnabled = configData?.value ?? true;
+      if (!trackingEnabled) {
+        console.log('[RoutingService] Per-step tracking disabled, skipping log');
+        return;
+      }
+
+      // Map complexity to AIS dimensions
+      const aisDimensions = this.mapComplexityToAIS(stepAnalysis);
+
+      // Update workflow_step_executions with routing data
+      // RLS policies now allow anon role to UPDATE workflow_step_executions
+      const { error } = await this.supabase
+        .from('workflow_step_executions')
+        .update({
+          // 6-factor complexity scores
+          complexity_score: stepAnalysis.complexityScore,
+          prompt_length_score: stepAnalysis.factors.promptLength,
+          data_size_score: stepAnalysis.factors.dataSize,
+          condition_count_score: stepAnalysis.factors.conditionCount,
+          context_depth_score: stepAnalysis.factors.contextDepth,
+          reasoning_depth_score: stepAnalysis.factors.reasoningDepth,
+          output_complexity_score: stepAnalysis.factors.outputComplexity,
+
+          // AIS-mapped dimensions (for consistency)
+          ais_token_complexity: aisDimensions.token_complexity,
+          ais_execution_complexity: aisDimensions.execution_complexity,
+          ais_workflow_complexity: aisDimensions.workflow_complexity,
+          ais_memory_complexity: aisDimensions.memory_complexity,
+
+          // Routing decision
+          agent_ais_score: agentAIS,
+          effective_complexity: effectiveComplexity,
+          selected_tier: decision.tier,
+          selected_model: decision.model,
+          selected_provider: decision.provider,
+          routing_reason: decision.reason,
+          estimated_cost_usd: decision.estimatedCost,
+          estimated_latency_ms: decision.estimatedLatency,
+
+          // Raw measurements (for debugging)
+          raw_prompt_length: stepAnalysis.rawMeasurements.promptLength,
+          raw_data_size: stepAnalysis.rawMeasurements.dataSize,
+          raw_condition_count: stepAnalysis.rawMeasurements.conditionCount,
+          raw_context_depth: stepAnalysis.rawMeasurements.contextDepth,
+
+          // Timestamp
+          routed_at: new Date().toISOString(),
+        })
+        .eq('workflow_execution_id', workflowExecutionId)
+        .eq('step_id', stepId);
+
+      if (error) {
+        console.error('[RoutingService] Failed to log step routing:', error);
+        // Don't throw - routing logging failures should not stop execution
+      } else {
+        console.log(
+          `✅ [RoutingService] Logged routing for step ${stepId}: ` +
+          `complexity=${stepAnalysis.complexityScore.toFixed(1)}, ` +
+          `tier=${decision.tier}, model=${decision.model}`
+        );
+      }
+    } catch (err) {
+      console.error('[RoutingService] Step routing logging error:', err);
+      // Don't throw - non-critical failure
+    }
+  }
+
+  /**
+   * Update step routing metrics with actual execution results
+   * Call this after step execution completes
+   */
+  async updateStepRoutingMetrics(
+    workflowExecutionId: string,
+    stepId: string,
+    actualTokensUsed: number,
+    actualExecutionTime: number,
+    actualCost: number,
+    success: boolean,
+    errorMessage?: string
+  ): Promise<void> {
+    try {
+      // Note: tokens_used, execution_time, success, error_message
+      // are already updated by StateManager.updateStepExecution()
+      // This method is here for future enhancements if needed
+
+      // For now, we'll just log confirmation
+      console.log(
+        `✅ [RoutingService] Step ${stepId} execution metrics: ` +
+        `tokens=${actualTokensUsed}, time=${actualExecutionTime}ms, ` +
+        `cost=$${actualCost.toFixed(6)}, success=${success}`
+      );
+
+      // Future: Could add comparison logic here (predicted vs actual)
+      // Future: Could update routing memory / ML model with outcome
+    } catch (err) {
+      console.error('[RoutingService] Step metrics update error:', err);
+      // Don't throw - non-critical
+    }
+  }
 }
 
 /**

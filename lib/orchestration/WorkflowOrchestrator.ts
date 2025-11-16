@@ -123,6 +123,25 @@ export class WorkflowOrchestrator {
 
       console.log(`[WorkflowOrchestrator] Executing step ${stepId} with intent: ${stepMeta.intent}`);
 
+      // ✅ Create workflow_step_executions row BEFORE execution
+      // This must happen BEFORE logStepRouting() tries to UPDATE the row
+      // RLS policies now allow anon role to INSERT/UPDATE workflow_step_executions
+      const { StateManager } = await import('../pilot/StateManager');
+      const sm = new StateManager(this.supabase);
+      await sm.logStepExecution(
+        this.orchestrationMetadata.executionId,
+        stepId,
+        stepMeta.name || stepId,
+        stepInput.step?.type || stepMeta.intent,
+        'running',
+        {
+          started_at: new Date().toISOString(),
+          intent: stepMeta.intent,
+          orchestrated: true,
+        }
+      );
+      console.log(`✅ [WorkflowOrchestrator] Created step execution record for ${stepId}`);
+
       // Check budget before execution
       const canProceed = await this.orchestrationService.canStepProceed(
         stepId,
@@ -151,10 +170,25 @@ export class WorkflowOrchestrator {
       // Re-route with step complexity analysis (enhanced routing)
       // This overrides the initialization-time routing with actual step data
       let finalRoutingDecision = stepMeta.routingDecision;
+      let stepAnalysis: any = null;
+      let effectiveComplexity: number | undefined;
+
       if (stepInput.step && this.orchestrationMetadata.featureFlags.aisRoutingEnabled) {
         try {
           // Use the routing service instance from orchestrationService (with correct Supabase client)
           const routingService = this.orchestrationService.getRoutingService();
+
+          // Analyze step complexity FIRST (needed for logging)
+          stepAnalysis = await routingService.analyzeStepComplexity(
+            stepInput.step,
+            stepInput.executionContext
+          );
+
+          // Calculate effective complexity (60% agent + 40% step)
+          const agentAIS = this.orchestrationMetadata.agentAIS?.combined_score || 5.0;
+          effectiveComplexity = (agentAIS * 0.6) + (stepAnalysis.complexityScore * 0.4);
+
+          // Route to appropriate model
           const enhancedRouting = await routingService.route(
             {
               agentId: this.orchestrationMetadata.agentId,
@@ -171,6 +205,48 @@ export class WorkflowOrchestrator {
           console.log(
             `[WorkflowOrchestrator] Enhanced routing: ${enhancedRouting.tier} tier (${enhancedRouting.model}) - ${enhancedRouting.reason}`
           );
+
+          // ✅ NEW: Log routing decision to database (per-step AIS tracking)
+          if (stepAnalysis && effectiveComplexity !== undefined) {
+            const stepIndex = this.orchestrationMetadata.steps.findIndex(s => s.stepId === stepId);
+            await routingService.logStepRouting(
+              this.orchestrationMetadata.executionId,
+              stepId,
+              stepMeta.name || stepId,
+              stepInput.step.type || stepMeta.intent,
+              stepIndex,
+              stepAnalysis,
+              this.orchestrationMetadata.agentAIS?.combined_score || 5.0,
+              effectiveComplexity,
+              finalRoutingDecision
+            );
+            console.log(`✅ [WorkflowOrchestrator] Logged per-step routing for ${stepId}`);
+
+            // ✅ NEW: Audit trail for routing decision
+            const { logStepRoutingDecision } = await import('@/lib/audit/ais-helpers');
+            const { data: agentData } = await this.supabase
+              .from('agents')
+              .select('agent_name')
+              .eq('id', this.orchestrationMetadata.agentId)
+              .single();
+
+            await logStepRoutingDecision(
+              this.orchestrationMetadata.agentId,
+              agentData?.agent_name || 'Unknown Agent',
+              this.orchestrationMetadata.userId,
+              this.orchestrationMetadata.executionId,
+              stepId,
+              stepMeta.name || stepId,
+              stepInput.step.type || stepMeta.intent,
+              stepAnalysis.complexityScore,
+              this.orchestrationMetadata.agentAIS?.combined_score || 5.0,
+              effectiveComplexity,
+              finalRoutingDecision.tier,
+              finalRoutingDecision.model,
+              finalRoutingDecision.provider,
+              finalRoutingDecision.reason
+            );
+          }
         } catch (routingError) {
           console.warn(`[WorkflowOrchestrator] Enhanced routing failed, using default:`, routingError);
           // Keep original routing decision
