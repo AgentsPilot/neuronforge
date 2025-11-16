@@ -49,7 +49,17 @@ interface DashboardStats {
 
 export default function V2DashboardPage() {
   const router = useRouter()
-  const { user } = useAuth()
+  const { user, loading: authLoading } = useAuth()
+
+  //console.log('🔍 V2Dashboard - Auth State:', { user: !!user, authLoading })
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.push('/login?redirect=/v2/dashboard')
+    }
+  }, [user, authLoading, router])
+
   const [stats, setStats] = useState<DashboardStats>({
     creditBalance: 0,
     totalSpent: 0,

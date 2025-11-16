@@ -7,6 +7,52 @@ import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 // Force dynamic rendering for this route
 export const dynamic = 'force-dynamic';
 
+// Simple in-memory response cache with automatic cleanup
+class ResponseCache {
+  private cache = new Map<string, { data: any; timestamp: number }>();
+  private TTL = 30000; // 30 seconds cache TTL
+
+  get(key: string) {
+    const entry = this.cache.get(key);
+    if (!entry) return null;
+
+    // Check if expired
+    if (Date.now() - entry.timestamp > this.TTL) {
+      this.cache.delete(key);
+      return null;
+    }
+
+    return entry.data;
+  }
+
+  set(key: string, data: any) {
+    this.cache.set(key, { data, timestamp: Date.now() });
+
+    // Cleanup old entries to prevent memory leaks
+    if (this.cache.size > 100) {
+      const now = Date.now();
+      for (const [k, v] of this.cache.entries()) {
+        if (now - v.timestamp > this.TTL) {
+          this.cache.delete(k);
+        }
+      }
+    }
+  }
+
+  invalidate(key: string) {
+    this.cache.delete(key);
+    console.log(`DEBUG: Cache invalidated for key: ${key}`);
+  }
+
+  clear() {
+    this.cache.clear();
+    console.log('DEBUG: All cache entries cleared');
+  }
+}
+
+// Export cache instance for use in other routes (connect/disconnect)
+export const pluginStatusCache = new ResponseCache();
+
 // GET /api/plugins/user-status?userId={userId} (optional)
 // Returns user's plugin connection status (connected vs available)
 // Auth: Cookie-based (primary) or userId query param (backward compatibility)
@@ -34,6 +80,20 @@ export async function GET(request: NextRequest) {
           error: 'Authentication required. Please log in or provide userId parameter.'
         }, { status: 401 });
       }
+    }
+
+    // Check cache first before doing any expensive operations
+    const cacheKey = `plugin-status-${userId}`;
+    const cachedResponse = pluginStatusCache.get(cacheKey);
+
+    if (cachedResponse) {
+      console.log(`DEBUG: API - Returning CACHED plugin status for user ${userId}`);
+      return NextResponse.json(cachedResponse, {
+        headers: {
+          'X-Cache': 'HIT',
+          'Cache-Control': 'public, max-age=30, stale-while-revalidate=60'
+        }
+      });
     }
 
     console.log(`DEBUG: API - Getting plugin status for user ${userId} (auth: ${authMethod})`);
@@ -96,7 +156,8 @@ export async function GET(request: NextRequest) {
 
     console.log(`DEBUG: API - User ${userId} has ${connected.length} connected, ${activeExpiredKeys.length} active expired, ${disconnected.length} disconnected plugins`);
 
-    return NextResponse.json({
+    // Build response data
+    const responseData = {
       success: true,
       user_id: userId,
       connected,
@@ -107,6 +168,16 @@ export async function GET(request: NextRequest) {
         active_expired_count: activeExpiredKeys.length,
         disconnected_count: disconnected.length,
         total_available: connected.length + disconnected.length
+      }
+    };
+
+    // Store in cache for future requests
+    pluginStatusCache.set(cacheKey, responseData);
+
+    return NextResponse.json(responseData, {
+      headers: {
+        'X-Cache': 'MISS',
+        'Cache-Control': 'public, max-age=30, stale-while-revalidate=60'
       }
     });
 

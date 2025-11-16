@@ -7,6 +7,7 @@ import { googleDriveStrategy } from '@/lib/plugins/strategies/googleDrivePluginS
 //import { googleSheetsStrategy } from '@/lib/plugins/strategies/googleSheetsPluginStrategy'
 //import { googleDocsStrategy } from '@/lib/plugins/strategies/googleDocsPluginStrategy'
 import { createServerClient } from '@supabase/ssr'
+import { pluginStatusCache } from '@/app/api/plugins/user-status/route'
 
 // Mark this route as dynamic since it uses request.url and searchParams
 export const dynamic = 'force-dynamic'
@@ -47,6 +48,18 @@ export async function GET(request: NextRequest) {
       }
     )
 
+    // Extract user_id from state for cache invalidation
+    // State is typically base64 encoded or contains user_id
+    let userId: string | null = null;
+    try {
+      // Try to parse state as JSON (if it contains user_id)
+      const stateData = JSON.parse(Buffer.from(state, 'base64').toString());
+      userId = stateData.userId || stateData.user_id || null;
+    } catch {
+      // If parsing fails, state might be the user_id itself
+      userId = state;
+    }
+
     // Handle Gmail plugin
     if (plugin === 'google-mail') {
       const result = await gmailStrategy.handleOAuthCallback({
@@ -54,6 +67,12 @@ export async function GET(request: NextRequest) {
         state,
         supabase
       })
+
+      // Invalidate cache after successful OAuth
+      if (userId) {
+        pluginStatusCache.invalidate(`plugin-status-${userId}`)
+        console.log(`DEBUG: API - Cache invalidated for user ${userId} after OAuth connection`)
+      }
 
       return NextResponse.json({ success: true, data: result })
     }
@@ -66,6 +85,11 @@ export async function GET(request: NextRequest) {
         supabase
       })
 
+      // Invalidate cache after successful OAuth
+      if (userId) {
+        pluginStatusCache.invalidate(`plugin-status-${userId}`)
+        console.log(`DEBUG: API - Cache invalidated for user ${userId} after OAuth connection`)
+      }
 
       return NextResponse.json({ success: true, data: result })
     }
@@ -78,6 +102,11 @@ export async function GET(request: NextRequest) {
         supabase
       })
 
+      // Invalidate cache after successful OAuth
+      if (userId) {
+        pluginStatusCache.invalidate(`plugin-status-${userId}`)
+        console.log(`DEBUG: API - Cache invalidated for user ${userId} after OAuth connection`)
+      }
 
       return NextResponse.json({ success: true, data: result })
     }

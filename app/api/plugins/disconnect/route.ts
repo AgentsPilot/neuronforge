@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { UserPluginConnections } from '@/lib/server/user-plugin-connections';
+import { pluginStatusCache } from '../user-status/route';
 
 // POST /api/plugins/disconnect
 // Disconnects a plugin for a user
@@ -30,10 +31,14 @@ export async function POST(request: NextRequest) {
 
     // Disconnect the plugin (pass request for audit trail)
     const success = await userConnections.disconnectPlugin(userId, pluginKey, request);
-    
+
     if (success) {
       console.log(`DEBUG: API - Successfully disconnected ${pluginKey} for user ${userId}`);
-      
+
+      // Invalidate cache so next request gets fresh data
+      pluginStatusCache.invalidate(`plugin-status-${userId}`);
+      console.log(`DEBUG: API - Cache invalidated for user ${userId} after disconnect`);
+
       return NextResponse.json({
         success: true,
         message: `${pluginKey} disconnected successfully`,

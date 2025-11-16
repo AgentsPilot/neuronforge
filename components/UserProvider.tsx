@@ -41,6 +41,7 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
       // connected: [{ key: "google-mail", ... }] -> { "google-mail": { ... } }
       const connectedPluginsMap: Record<string, any> = {}
 
+      // Add connected plugins (with valid tokens)
       if (status.connected && status.connected.length > 0) {
         status.connected.forEach((plugin) => {
           connectedPluginsMap[plugin.key] = {
@@ -49,6 +50,7 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
             displayName: plugin.name, // V2 API doesn't have displayName, use name
             label: plugin.name,
             isConnected: true,
+            is_expired: false,
             capabilities: [], // V2 API has actions instead, could map if needed
             category: 'integration', // Default category
             icon: '', // Not provided by V2 API
@@ -60,6 +62,26 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
             email: plugin.email,
             connected_at: plugin.connected_at,
             last_used: plugin.last_used,
+          }
+        })
+      }
+
+      // Add active but expired plugins (need to reconnect)
+      if (status.active_expired && status.active_expired.length > 0) {
+        status.active_expired.forEach((pluginKey: string) => {
+          // Only add if not already in the map (connected takes precedence)
+          if (!connectedPluginsMap[pluginKey]) {
+            connectedPluginsMap[pluginKey] = {
+              key: pluginKey,
+              name: pluginKey, // Use key as name for expired plugins
+              displayName: pluginKey,
+              label: pluginKey,
+              isConnected: true,
+              is_expired: true, // Mark as expired
+              capabilities: [],
+              category: 'integration',
+              icon: '',
+            }
           }
         })
       }

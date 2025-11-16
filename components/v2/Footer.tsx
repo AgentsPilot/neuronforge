@@ -7,7 +7,6 @@ import React, { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
-import { getPluginAPIClient } from '@/lib/client/plugin-api-client'
 import { DarkModeToggle } from '@/components/v2/DarkModeToggle'
 import {
   Clock,
@@ -43,9 +42,9 @@ interface ConnectedPlugin {
 
 export function V2Footer() {
   const router = useRouter()
-  const { user } = useAuth()
+  const { user, connectedPlugins: connectedPluginsFromContext } = useAuth()
   const [lastRunTime, setLastRunTime] = useState<Date | null>(null)
-  const [connectedPlugins, setConnectedPlugins] = useState<ConnectedPlugin[]>([])
+  const [displayPlugins, setDisplayPlugins] = useState<ConnectedPlugin[]>([])
   const [hoveredPlugin, setHoveredPlugin] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -70,49 +69,20 @@ export function V2Footer() {
       }
     }
 
-    const fetchConnectedPlugins = async () => {
-      try {
-        // Use PluginAPIClient for request deduplication
-        const apiClient = getPluginAPIClient()
-        const status = await apiClient.getUserPluginStatus()
-
-        console.log('Footer - API response:', status)
-        console.log('Footer - active_expired:', status.active_expired)
-
-        // Transform connected plugins
-        const connected = status.connected?.map((plugin: any) => ({
-          plugin_key: plugin.key,
-          plugin_name: plugin.name,
-          status: 'active',
-          is_expired: false
-        })) || []
-
-        // Transform expired plugins from active_expired array
-        const expiredKeys = status.active_expired || []
-        console.log('Footer - expiredKeys:', expiredKeys)
-
-        const expired = expiredKeys.map((pluginKey: string) => ({
-          plugin_key: pluginKey,
-          plugin_name: pluginKey, // Will be formatted by getPluginDisplayName
-          status: 'expired',
-          is_expired: true
-        }))
-
-        console.log('Footer - connected:', connected)
-        console.log('Footer - expired:', expired)
-        console.log('Footer - combined:', [...connected, ...expired])
-
-        // Combine both lists
-        setConnectedPlugins([...connected, ...expired])
-      } catch (error) {
-        console.error('Error fetching connected plugins:', error)
-        setConnectedPlugins([])
-      }
+    // Transform connected plugins from UserProvider context
+    if (connectedPluginsFromContext) {
+      const plugins: ConnectedPlugin[] = Object.values(connectedPluginsFromContext).map((plugin: any) => ({
+        plugin_key: plugin.key,
+        plugin_name: plugin.name || plugin.displayName,
+        status: plugin.is_expired ? 'expired' : 'active',
+        is_expired: plugin.is_expired || false
+      }))
+      setDisplayPlugins(plugins)
+      console.log('Footer - Using plugins from context:', plugins)
     }
 
     fetchLastRun()
-    fetchConnectedPlugins()
-  }, [user])
+  }, [user, connectedPluginsFromContext])
 
   const getTimeAgo = (date: Date | null) => {
     if (!date) return 'Never'
@@ -172,9 +142,9 @@ export function V2Footer() {
         </div>
 
         {/* Connected Plugin Icons - Center */}
-        {connectedPlugins.length > 0 && (
+        {displayPlugins.length > 0 && (
           <div className="flex gap-2 sm:gap-3 flex-wrap justify-center">
-            {connectedPlugins.map((plugin) => (
+            {displayPlugins.map((plugin) => (
               <div
                 key={plugin.plugin_key}
                 className="relative w-12 h-12 sm:w-14 sm:h-14 bg-[var(--v2-surface)] flex items-center justify-center flex-shrink-0 cursor-pointer transition-all duration-200 hover:scale-110 border border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:shadow-lg"
