@@ -4,11 +4,13 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { useAuth } from '@/components/UserProvider'
 import { generatePDF } from '@/lib/pdf/generatePDF'
-import { sendEmailDraft } from '@/lib/plugins/google-mail/sendEmailDraft'
-import { 
-  AgentSandboxProps, Field, ExecutionLog, DynamicPhase, ExecutionMetrics, 
-  ExpandedSections, BLOCKED_FIELDS_BY_PLUGIN, OPTIONAL_IN_TEST_MODE_FIELDS, 
-  PHASE_PATTERNS 
+// Temporarily disabled during plugin-manager-v2 migration
+// TODO: Migrate to use API route instead of direct import
+// import { sendEmailDraft } from '@/lib/plugins/google-mail/sendEmailDraft'
+import {
+  AgentSandboxProps, Field, ExecutionLog, DynamicPhase, ExecutionMetrics,
+  ExpandedSections, BLOCKED_FIELDS_BY_PLUGIN, OPTIONAL_IN_TEST_MODE_FIELDS,
+  PHASE_PATTERNS
 } from './types'
 
 // Helper function to format schedule display
@@ -1083,21 +1085,27 @@ export function useAgentSandbox({
   }
 
   const handleSendEmail = async () => {
-    if (result && result.to && result.subject && result.body) {
-      try {
-        await sendEmailDraft({
-          userId: user?.id!,
-          to: result.to,
-          subject: result.subject,
-          body: result.body
-        })
-        setSendStatus('Email sent successfully via Gmail.')
-      } catch (error) {
-        setSendStatus('Failed to send email.')
-      }
-    } else {
-      alert('Missing required email fields.')
-    }
+    // Temporarily disabled during plugin-manager-v2 migration
+    // TODO: Implement via API route: POST /api/plugins/google-mail/send-email
+    setSendStatus('Email functionality temporarily disabled during plugin system migration.')
+    console.warn('handleSendEmail: Feature disabled - needs migration to API route')
+
+    // Original implementation (commented out):
+    // if (result && result.to && result.subject && result.body) {
+    //   try {
+    //     await sendEmailDraft({
+    //       userId: user?.id!,
+    //       to: result.to,
+    //       subject: result.subject,
+    //       body: result.body
+    //     })
+    //     setSendStatus('Email sent successfully via Gmail.')
+    //   } catch (error) {
+    //     setSendStatus('Failed to send email.')
+    //   }
+    // } else {
+    //   alert('Missing required email fields.')
+    // }
   }
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, name: string) => {
