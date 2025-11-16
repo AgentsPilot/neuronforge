@@ -90,6 +90,7 @@ export interface ProcessMessageRequest {
   connected_services: string[]; // Simple array of connected plugin keys
   available_services?: ConnectedService[]; // All plugins available in the system with full context
   clarification_answers?: Record<string, any>;
+  enhanced_prompt?: EnhancedPrompt | null; // Phase 2: Previous Phase 3 output for refinement (v8)
   metadata?: {
     declined_plugins?: string[]; // Plugins user explicitly declined to connect
     [key: string]: any; // Allow additional metadata
@@ -128,7 +129,8 @@ export interface ProcessMessageResponse {
 
 export interface ClarificationQuestion {
   id: string;
-  dimension: 'data' | 'trigger' | 'output' | 'actions' | 'delivery' | 'error_handling';
+  dimension?: 'data' | 'trigger' | 'output' | 'actions' | 'delivery' | 'error_handling'; // v7 and below
+  theme?: string; // v8: Inputs, Processing, Outputs, Delivery
   question: string;
   type: 'select' | 'text' | 'email' | 'number';
   options?: ClarificationOption[];
@@ -149,15 +151,16 @@ export interface EnhancedPrompt {
   plan_description: string;
   sections: {
     data: string;
-    processing_steps: string[];
+    actions: string; // v8: single string instead of array
     output: string;
     delivery: string;
-    error_handling: string;
+    processing_steps?: string[]; // v7 and below (deprecated in v8)
+    error_handling?: string; // v7 and below (not in v8)
   };
   specifics: {
     services_involved: string[];
     user_inputs_required: string[];
-    trigger_scope: string;
+    trigger_scope?: string; // v7 and below (not in v8)
   };
 }
 

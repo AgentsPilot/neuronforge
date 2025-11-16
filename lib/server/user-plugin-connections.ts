@@ -9,6 +9,9 @@ let userConnectionsInstance: UserPluginConnections | null = null;
 export class UserPluginConnections {
   private supabase: any;
   private debug = process.env.NODE_ENV === 'development';
+  // Cache for token validation to avoid redundant logs and calculations
+  private tokenValidationCache = new Map<string, { isValid: boolean, checkedAt: number }>();
+  private readonly TOKEN_CACHE_TTL = 1000; // 1 second cache
 
   constructor() {
     // Create client for read operations (server-side with service role key for better permissions)
@@ -41,14 +44,12 @@ export class UserPluginConnections {
     return userConnectionsInstance;
   }
 
-  // Get all connected plugin keys for user (only valid connections)
-  async getConnectedPluginKeys(userId: string): Promise<string[]> {
-    if (this.debug) console.log(`DEBUG: Getting connected plugin keys for user ${userId}`);
-    
+  // Private helper: Fetch active plugin connections from database
+  private async fetchActiveConnections(userId: string): Promise<UserConnection[]> {
     try {
       const { data: connections, error } = await this.supabase
         .from('plugin_connections')
-        .select('plugin_key, expires_at')
+        .select('*')
         .eq('user_id', userId)
         .eq('status', 'active');
 
@@ -57,12 +58,56 @@ export class UserPluginConnections {
         return [];
       }
 
-      // Filter out expired connections
-      const validConnections = connections?.filter(conn => this.isTokenValid(conn.expires_at)) || [];
-      const pluginKeys = validConnections.map(conn => conn.plugin_key);
-      
+      return connections || [];
+    } catch (error) {
+      console.error('DEBUG: Error fetching active connections:', error);
+      return [];
+    }
+  }
+
+  // Get all active plugin connections (including expired tokens that can be refreshed)
+  // NOTE: This returns ALL active plugins, even with expired tokens
+  // Use this for execution flows where tokens can be refreshed
+  async getAllActivePlugins(userId: string): Promise<UserConnection[]> {
+    if (this.debug) console.log(`DEBUG: Getting all active plugins for user ${userId} (including expired tokens)`);
+
+    const allConnections = await this.fetchActiveConnections(userId);
+
+    if (this.debug) {
+      const expiredCount = allConnections.filter(conn => !this.isTokenValid(conn.expires_at)).length;
+      console.log(`DEBUG: Found ${allConnections.length} active plugins (${expiredCount} with expired tokens)`);
+    }
+
+    return allConnections;
+  }
+
+  // Get all connected plugin connections for user (only active plugins with valid tokens)
+  // NOTE: This function does NOT refresh tokens - it only pulls active connections from the database
+  // Use this for status display and operations that don't require token refresh
+  async getConnectedPlugins(userId: string): Promise<UserConnection[]> {
+    if (this.debug) console.log(`DEBUG: Getting connected plugins for user ${userId}`);
+
+    const connections = await this.fetchActiveConnections(userId);
+
+    // Filter out expired connections
+    const validConnections = connections.filter(conn => this.isTokenValid(conn.expires_at));
+
+    if (this.debug) console.log(`DEBUG: Found ${validConnections.length} valid connected plugins`);
+
+    return validConnections;
+  }
+
+  // Get all connected plugin keys for user (only valid connections)
+  async getConnectedPluginKeys(userId: string): Promise<string[]> {
+    if (this.debug) console.log(`DEBUG: Getting connected plugin keys for user ${userId}`);
+
+    try {
+      // Use getConnectedPlugins and extract just the keys
+      const connections = await this.getConnectedPlugins(userId);
+      const pluginKeys = connections.map(conn => conn.plugin_key);
+
       if (this.debug) console.log(`DEBUG: Found ${pluginKeys.length} valid connected plugins:`, pluginKeys);
-      
+
       return pluginKeys;
     } catch (error) {
       console.error('DEBUG: Error getting connected plugin keys:', error);
@@ -71,28 +116,23 @@ export class UserPluginConnections {
   }
 
   // Get all disconnected plugin keys for user (non-active connections)
-  async getDisconnectedPluginKeys(userId: string, availablePluginKeys: string[]): Promise<string[]> {
+  // @param connectedKeys - Optional pre-fetched connected keys to avoid duplicate DB query
+  async getDisconnectedPluginKeys(
+    userId: string,
+    availablePluginKeys: string[],
+    connectedKeys?: string[]
+  ): Promise<string[]> {
     if (this.debug) console.log(`DEBUG: Getting disconnected plugin keys for user ${userId}`);
 
     try {
-      // Get all active connections
-      const { data: activeConnections, error } = await this.supabase
-        .from('plugin_connections')
-        .select('plugin_key')
-        .eq('user_id', userId)
-        .eq('status', 'active');
-
-      if (error) {
-        console.error('DEBUG: Database error fetching active connections:', error);
-        // If error, assume all available plugins are disconnected
-        return availablePluginKeys;
-      }
+      // Use provided connectedKeys if available, otherwise fetch them
+      const keys = connectedKeys ?? await this.getConnectedPluginKeys(userId);
 
       // Create a set of connected plugin keys for fast lookup
-      const connectedKeys = new Set(activeConnections?.map((conn: any) => conn.plugin_key) || []);
+      const connectedSet = new Set(keys);
 
       // Filter available plugins to find disconnected ones
-      const disconnectedKeys = availablePluginKeys.filter(key => !connectedKeys.has(key));
+      const disconnectedKeys = availablePluginKeys.filter(key => !connectedSet.has(key));
 
       if (this.debug) console.log(`DEBUG: Found ${disconnectedKeys.length} disconnected plugins out of ${availablePluginKeys.length} available`);
 
@@ -731,15 +771,28 @@ export class UserPluginConnections {
   // Check if token is still valid
   public isTokenValid(expiresAt: string | null): boolean {
     if (!expiresAt) {
-      if (this.debug) console.log(`DEBUG: Token has no expiry, considered valid`);
       return true; // No expiry means it doesn't expire
     }
 
-    const expiryDate = new Date(expiresAt);
-    const now = new Date();
-    const isValid = expiryDate.getTime() > now.getTime();
+    const now = Date.now();
+    const cacheKey = expiresAt;
 
-    if (this.debug) console.log(`DEBUG: Token valid: ${isValid}, expires: ${expiryDate.toISOString()}`);
+    // Check cache first to avoid redundant calculations and logs
+    const cached = this.tokenValidationCache.get(cacheKey);
+    if (cached && (now - cached.checkedAt) < this.TOKEN_CACHE_TTL) {
+      return cached.isValid;
+    }
+
+    const expiryDate = new Date(expiresAt);
+    const isValid = expiryDate.getTime() > now;
+
+    // Only log once per unique token expiry (not on every call)
+    if (!cached && this.debug) {
+      console.log(`DEBUG: Token valid: ${isValid}, expires: ${expiryDate.toISOString()}`);
+    }
+
+    // Cache the result
+    this.tokenValidationCache.set(cacheKey, { isValid, checkedAt: now });
 
     return isValid;
   }

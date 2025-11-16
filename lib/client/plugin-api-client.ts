@@ -2,6 +2,7 @@
 
 import { OAuthHandler } from './oauth-handler';
 import { PluginInfo, UserPluginStatus, LLMContext, ExecutionResult, ApiResponse } from '@/lib/types/plugin-types'
+import { requestDeduplicator } from '@/lib/utils/request-deduplication';
 
 export class PluginAPIClient {
   private baseUrl: string;
@@ -34,26 +35,39 @@ export class PluginAPIClient {
   }
 
   // Get user's plugin status (connected vs disconnected)
-  async getUserPluginStatus(userId: string): Promise<UserPluginStatus> {
-    if (this.debug) console.log(`DEBUG: Client - Getting plugin status for user ${userId}`);
+  // userId is optional - if not provided, will use cookie-based authentication
+  async getUserPluginStatus(userId?: string): Promise<UserPluginStatus> {
+    // Create unique cache key based on userId
+    const cacheKey = `plugin-status-${userId || 'current-user'}`;
 
-    try {
-      const response = await fetch(`${this.baseUrl}/api/plugins/user-status?userId=${userId}`);
-      const result = await response.json();
+    // Wrap the entire fetch operation in deduplication
+    return requestDeduplicator.deduplicate(cacheKey, async () => {
+      if (this.debug) console.log(`DEBUG: Client - Getting plugin status${userId ? ` for user ${userId}` : ' (using cookie auth)'}`);
 
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to get user plugin status');
+      try {
+        // Use cookie auth if userId not provided, otherwise use query param for backward compatibility
+        const url = userId
+          ? `${this.baseUrl}/api/plugins/user-status?userId=${userId}`
+          : `${this.baseUrl}/api/plugins/user-status`;
+
+        const response = await fetch(url);
+        const result = await response.json();
+
+        if (!result.success) {
+          throw new Error(result.error || 'Failed to get user plugin status');
+        }
+
+        return {
+          connected: result.connected,
+          active_expired: result.active_expired || [],
+          disconnected: result.disconnected,
+          summary: result.summary
+        };
+      } catch (error: any) {
+        console.error('DEBUG: Client - Error getting user plugin status:', error);
+        throw error;
       }
-
-      return {
-        connected: result.connected,
-        disconnected: result.disconnected,
-        summary: result.summary
-      };
-    } catch (error: any) {
-      console.error('DEBUG: Client - Error getting user plugin status:', error);
-      throw error;
-    }
+    });
   }
 
   // Connect a plugin (initiate OAuth flow)

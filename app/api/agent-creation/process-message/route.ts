@@ -92,6 +92,7 @@ export async function POST(request: NextRequest) {
       user_context,
       connected_services,
       clarification_answers,
+      enhanced_prompt,
       metadata
     } = requestBody;
 
@@ -157,7 +158,7 @@ export async function POST(request: NextRequest) {
       console.log('❌ No connected_services received from client for user:', user.id);
       try {
         const pluginManager = await PluginManagerV2.getInstance();
-        const userConnectedPlugins = await pluginManager.getUserActionablePlugins(user.id);
+        const userConnectedPlugins = await pluginManager.getConnectedPlugins(user.id);
         user_connected_services = Object.keys(userConnectedPlugins);
         console.log('✅ Connected plugin keys retrieved:', user_connected_services);
       } catch (error: any) {
@@ -253,8 +254,12 @@ export async function POST(request: NextRequest) {
         available_services: user_available_services
       };
     } else if (phase === 2) {
+      // v8: Phase 2 can receive connected_services and enhanced_prompt for refinement
+      // If null, reference Phase 1 stored values from thread metadata
       userMessage = {
-        phase: 2
+        phase: 2,
+        connected_services: connected_services || threadRecord.metadata?.phase1_connected_services || null,
+        enhanced_prompt: enhanced_prompt || null
       };
     } else if (phase === 3) {
       userMessage = {
@@ -432,7 +437,12 @@ export async function POST(request: NextRequest) {
       metadata: {
         ...threadRecord.metadata,
         last_phase: phase,
-        last_updated: new Date().toISOString()
+        last_updated: new Date().toISOString(),
+        // Store Phase 1 context for Phase 2 reference (v8 requirement)
+        ...(phase === 1 && {
+          phase1_connected_services: user_connected_services,
+          phase1_available_services: user_available_services
+        })
       }
     };
 

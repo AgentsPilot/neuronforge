@@ -7,8 +7,10 @@ import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 /**
  * Converts V2 plugin definitions to OpenAI function tools
  *
- * Uses PluginManagerV2.getUserActionablePlugins() to get only CONNECTED plugins with valid tokens.
+ * Uses PluginManagerV2.getExecutablePlugins() to get CONNECTED plugins with VALID TOKENS.
  * Each action in the plugin definition becomes a separate OpenAI function.
+ *
+ * This function is used for EXECUTION, so tokens are validated/refreshed before returning.
  *
  * @param userId - The user ID to get connected plugins for
  * @param pluginKeys - Array of plugin keys from agent.plugins_required
@@ -40,7 +42,7 @@ export async function convertPluginsToTools(
   pluginKeys: string[]
 ): Promise<ChatCompletionTool[]> {
   const pluginManager = await PluginManagerV2.getInstance();
-  const userPlugins = await pluginManager.getUserActionablePlugins(userId);
+  const userPlugins = await pluginManager.getExecutablePlugins(userId);
   const allPlugins = pluginManager.getAvailablePlugins();
 
   const tools: ChatCompletionTool[] = [];
@@ -108,6 +110,9 @@ export async function convertPluginsToTools(
  * Uses PluginDefinitionContext.toLongLLMContext() to generate rich context
  * about available plugins and their capabilities.
  *
+ * This function is used for CONTEXT GENERATION only, so it uses getConnectedPlugins()
+ * for fast status checks without token refresh operations.
+ *
  * @param userId - The user ID to get connected plugins for
  * @param pluginKeys - Array of plugin keys from agent.plugins_required
  * @returns Formatted string describing available plugins and actions
@@ -117,7 +122,7 @@ export async function getPluginContextPrompt(
   pluginKeys: string[]
 ): Promise<string> {
   const pluginManager = await PluginManagerV2.getInstance();
-  const userPlugins = await pluginManager.getUserActionablePlugins(userId);
+  const userPlugins = await pluginManager.getConnectedPlugins(userId);
 
   const contextLines: string[] = [
     "# Connected Services",

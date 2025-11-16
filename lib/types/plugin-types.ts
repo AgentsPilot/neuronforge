@@ -176,6 +176,7 @@ export interface ConnectedPluginInfo extends PluginInfo {
 // User plugin status (API response format)
 export interface UserPluginStatus {
   connected: ConnectedPluginInfo[];  // ← Changed from PluginInfo[]
+  active_expired: string[];  // Plugin keys with expired tokens that can be refreshed
   disconnected: (PluginInfo & {
     status: string;
     reason: string;
@@ -183,6 +184,7 @@ export interface UserPluginStatus {
   })[];
   summary: {
     connected_count: number;
+    active_expired_count: number;
     disconnected_count: number;
     total_available: number;
   };

@@ -180,117 +180,199 @@ export class PluginManagerV2 {
     return systemPlugins;
   }
   
-  // Get user's actionable plugins (connected with valid tokens)
-  async getUserActionablePlugins(userId: string, options = { skipTokenRefresh: false }): Promise<Record<string, ActionablePlugin>> {
-    if (this.debug) console.log(`DEBUG: Getting actionable plugins for user ${userId} (skipTokenRefresh: ${options.skipTokenRefresh})`);
+  // Get user's connected plugins (active status only, no token refresh - FAST)
+  // Use for: UI display, status checks, listing connected services
+  // @param userId - The user ID to get connected plugins for
+  // @param options.includeSystemPlugins - Whether to include system plugins (default: true)
+  async getConnectedPlugins(
+    userId: string,
+    options: { includeSystemPlugins?: boolean } = {}
+  ): Promise<Record<string, ActionablePlugin>> {
+    const { includeSystemPlugins = true } = options;
 
-    // Get all user connections with full details
-    const allConnections = await this.userConnections.getAllUserConnections(userId);
-    if (this.debug) console.log(`DEBUG: Found ${allConnections.length} total connections for user ${userId}`);
+    if (this.debug) console.log(`DEBUG: Getting connected plugins (status only) for user ${userId}, includeSystemPlugins: ${includeSystemPlugins}`);
 
-    // Filter for active connections and attempt to refresh expired tokens
-    const actionableConnections: UserConnection[] = [];
+    const actionablePlugins: Record<string, ActionablePlugin> = {};
 
-    for (const conn of allConnections) {
-      // Skip non-active connections
-      if (conn.status !== 'active') {
-        if (this.debug) console.log(`DEBUG: Skipping ${conn.plugin_key} - status is ${conn.status}`);
+    // Get connected plugin connections (simple query, no token operations)
+    const connections = await this.userConnections.getConnectedPlugins(userId);
+
+    if (this.debug) console.log(`DEBUG: Found ${connections.length} connected plugins`);
+
+    // Build actionable plugins from connections
+    for (const connection of connections) {
+      const pluginKey = connection.plugin_key;
+      const definition = this.plugins.get(pluginKey);
+
+      if (!definition) {
+        if (this.debug) console.log(`DEBUG: Plugin ${pluginKey} connected but not in registry, skipping`);
         continue;
       }
 
-      // Check if token needs refresh (expires within 5 minutes or already expired)
+      actionablePlugins[pluginKey] = {
+        definition,
+        connection
+      };
+      if (this.debug) console.log(`DEBUG: Plugin ${pluginKey} is connected (status='active')`);
+    }
+
+    // Add system plugins (no database connection required, always available)
+    // Only if includeSystemPlugins is true (default)
+    if (includeSystemPlugins) {
+      const systemPlugins = this.getActionableSystemPlugins(userId);
+      for (const [pluginKey, systemPlugin] of Object.entries(systemPlugins)) {
+        // Only add if not already present (OAuth connection takes precedence)
+        if (!actionablePlugins[pluginKey]) {
+          actionablePlugins[pluginKey] = systemPlugin;
+          if (this.debug) console.log(`DEBUG: Added system plugin ${pluginKey} to connected plugins`);
+        }
+      }
+
+      if (this.debug) console.log(`DEBUG: Returning ${Object.keys(actionablePlugins).length} connected plugins (${connections.length} OAuth + ${Object.keys(systemPlugins).length} system)`);
+    } else {
+      if (this.debug) console.log(`DEBUG: Returning ${Object.keys(actionablePlugins).length} connected plugins (${connections.length} OAuth, system plugins excluded)`);
+    }
+
+    return actionablePlugins;
+  }
+
+  // Get plugins with expired tokens (active but need refresh)
+  // Returns plugin keys that are active in DB but have expired tokens
+  async getActiveExpiredPluginKeys(userId: string): Promise<string[]> {
+    if (this.debug) console.log(`DEBUG: Getting active expired plugin keys for user ${userId}`);
+
+    // Get all active connections (including expired)
+    const allActive = await this.userConnections.getAllActivePlugins(userId);
+
+    // Get valid connected plugins (expired filtered out)
+    const validConnected = await this.userConnections.getConnectedPlugins(userId);
+    const validKeys = new Set(validConnected.map(conn => conn.plugin_key));
+
+    // Find plugins that are active but not in valid list (meaning expired)
+    const expiredKeys = allActive
+      .filter(conn => !validKeys.has(conn.plugin_key))
+      .map(conn => conn.plugin_key);
+
+    if (this.debug) console.log(`DEBUG: Found ${expiredKeys.length} active plugins with expired tokens`);
+
+    return expiredKeys;
+  }
+
+  // Get user's executable plugins (with valid refreshed tokens - SLOW but READY)
+  // Use for: Before actual plugin execution, ensuring tokens are valid
+  async getExecutablePlugins(userId: string, options = { forceRefresh: false }): Promise<Record<string, ActionablePlugin>> {
+    if (this.debug) console.log(`DEBUG: Getting executable plugins for user ${userId} (forceRefresh: ${options.forceRefresh})`);
+
+    // Get ALL active plugins (including expired ones) so we can refresh them
+    const allActiveConnections = await this.userConnections.getAllActivePlugins(userId);
+    const executablePlugins: Record<string, ActionablePlugin> = {};
+
+    // Process each connection to ensure token validity for execution
+    for (const conn of allActiveConnections) {
+      const pluginKey = conn.plugin_key;
+      const definition = this.plugins.get(pluginKey);
+
+      if (!definition) {
+        if (this.debug) console.log(`DEBUG: Plugin ${pluginKey} connected but not in registry, skipping`);
+        continue;
+      }
+
+      // System plugins are always executable (no tokens needed)
+      if (definition.plugin.isSystem) {
+        executablePlugins[pluginKey] = {
+          definition,
+          connection: conn
+        };
+        if (this.debug) console.log(`DEBUG: System plugin ${pluginKey} is always executable`);
+        continue;
+      }
+
+      // Check if token is expired or needs refresh
       if (conn.expires_at) {
-        const shouldRefresh = this.userConnections.shouldRefreshToken(conn.expires_at, 5);
+        const isExpired = !this.userConnections.isTokenValid(conn.expires_at);
+        const shouldRefresh = options.forceRefresh ||
+                             isExpired ||
+                             this.userConnections.shouldRefreshToken(conn.expires_at, 5);
 
         if (shouldRefresh) {
-          // OPTIMIZATION: Skip expensive token refresh for status checks (UI display)
-          // Token refresh will happen automatically on actual plugin execution
-          if (options.skipTokenRefresh) {
-            // Only include if token is still valid (not expired)
-            // Use existing isTokenValid method to check if token is actually expired
-            if (!this.userConnections.isTokenValid(conn.expires_at)) {
-              if (this.debug) console.log(`DEBUG: Token expired for ${conn.plugin_key}, excluding from status check`);
-              continue;
-            }
-            // Token expires soon but still valid - include it
-            if (this.debug) console.log(`DEBUG: Token needs refresh for ${conn.plugin_key}, skipping (status check only)`);
-            actionableConnections.push(conn);
-            continue;
-          }
-
           const minutesUntilExpiry = Math.floor((new Date(conn.expires_at).getTime() - Date.now()) / 60000);
-          console.log(`🔄 Smart Refresh: Token for ${conn.plugin_key} expires in ${minutesUntilExpiry} minutes, proactively refreshing...`);
 
-          // Get plugin definition to access auth config
-          const definition = this.plugins.get(conn.plugin_key);
-
-          if (!definition) {
-            console.error(`❌ Cannot refresh ${conn.plugin_key} - plugin definition not found in registry`);
-            continue;
+          if (isExpired) {
+            console.log(`🔄 Token Refresh: ${pluginKey} token EXPIRED (${-minutesUntilExpiry} minutes ago), attempting refresh...`);
+          } else {
+            console.log(`🔄 Token Refresh: ${pluginKey} token expires in ${minutesUntilExpiry} minutes, refreshing for execution...`);
           }
 
-          // Extract auth config from plugin definition
+          // Get auth config for token refresh
           const authConfig = definition.plugin.auth_config;
 
-          // Attempt to refresh the token with auth config
+          // Attempt to refresh the token
           const refreshedConnection = await this.userConnections.refreshToken(conn, authConfig);
 
           if (refreshedConnection) {
-            console.log(`✅ Smart Refresh Success: ${conn.plugin_key} token refreshed proactively`);
-            actionableConnections.push(refreshedConnection);
+            console.log(`✅ Token Refresh Success: ${pluginKey} is now executable`);
+            executablePlugins[pluginKey] = {
+              definition,
+              connection: refreshedConnection
+            };
           } else {
-            console.error(`❌ Smart Refresh Failed: ${conn.plugin_key} - user needs to reconnect`);
-            // Skip this plugin - token refresh failed
+            console.error(`❌ Token Refresh Failed: ${pluginKey} - user needs to reconnect, skipping from executable list`);
+            // Plugin not executable - skip it
           }
           continue;
         }
       }
 
-      // Token is still valid
-      actionableConnections.push(conn);
+      // Token is valid or doesn't expire - plugin is executable
+      executablePlugins[pluginKey] = {
+        definition,
+        connection: conn
+      };
+      if (this.debug) console.log(`DEBUG: Plugin ${pluginKey} token is valid, executable`);
     }
 
-    if (this.debug) console.log(`DEBUG: Found ${actionableConnections.length} actionable connections (after auto-refresh)`);
+    if (this.debug) console.log(`DEBUG: Returning ${Object.keys(executablePlugins).length} executable plugins out of ${allActiveConnections.length} active`);
 
-    const actionablePlugins: Record<string, ActionablePlugin> = {};
-
-    // Add OAuth-based plugins (from database connections)
-    for (const connection of actionableConnections) {
-      const definition = this.plugins.get(connection.plugin_key);
-      if (definition) {
-        actionablePlugins[connection.plugin_key] = {
-          definition,
-          connection
-        };
-        if (this.debug) console.log(`DEBUG: Plugin ${connection.plugin_key} is actionable`);
-      } else {
-        if (this.debug) console.log(`DEBUG: Plugin ${connection.plugin_key} connected but not found in registry`);
-      }
-    }
-
-    // Add system plugins (no database connection required)
-    const systemPlugins = this.getActionableSystemPlugins(userId);
-    for (const [pluginKey, systemPlugin] of Object.entries(systemPlugins)) {
-      // Only add if not already present (OAuth connection takes precedence)
-      if (!actionablePlugins[pluginKey]) {
-        actionablePlugins[pluginKey] = systemPlugin;
-        if (this.debug) console.log(`DEBUG: Added system plugin ${pluginKey} to actionable plugins`);
-      }
-    }
-
-    if (this.debug) console.log(`DEBUG: Returning ${Object.keys(actionablePlugins).length} actionable plugins (${actionableConnections.length} OAuth + ${Object.keys(systemPlugins).length} system)`);
-    return actionablePlugins;
+    return executablePlugins;
   }
 
-  // Get disconnected plugins (available but not connected)
-  async getDisconnectedPlugins(userId: string): Promise<Record<string, { plugin: PluginDefinition; reason: string; auth_url: string }>> {
+  /**
+   * @deprecated Use getConnectedPlugins() for status checks or getExecutablePlugins() for execution
+   * This method will be removed in v3.0
+   *
+   * Migration guide:
+   * - For UI display / status checks: use getConnectedPlugins(userId)
+   * - For plugin execution: use getExecutablePlugins(userId)
+   */
+  async getUserActionablePlugins(userId: string, options = { skipTokenRefresh: false }): Promise<Record<string, ActionablePlugin>> {
+    if (this.debug) console.log(`DEBUG: [DEPRECATED] getUserActionablePlugins called (skipTokenRefresh: ${options.skipTokenRefresh})`);
+    console.warn('⚠️ DEPRECATION WARNING: getUserActionablePlugins() is deprecated. Use getConnectedPlugins() for status or getExecutablePlugins() for execution.');
+
+    // Redirect to new methods based on option
+    if (options.skipTokenRefresh) {
+      return this.getConnectedPlugins(userId);
+    } else {
+      return this.getExecutablePlugins(userId);
+    }
+  }
+
+  // Get disconnected plugins (plugins available but not connected)
+  // @param connectedKeys - Optional pre-fetched connected keys to avoid duplicate DB query
+  async getDisconnectedPlugins(
+    userId: string,
+    connectedKeys?: string[]
+  ): Promise<Record<string, { plugin: PluginDefinition; reason: string; auth_url: string }>> {
     if (this.debug) console.log(`DEBUG: Getting disconnected plugins for user ${userId}`);
 
     const allPlugins = this.getAvailablePlugins();
     const availablePluginKeys = Object.keys(allPlugins);
 
-    // Get disconnected plugin keys (simple DB query, no token refresh)
-    const disconnectedKeys = await this.userConnections.getDisconnectedPluginKeys(userId, availablePluginKeys);
+    // Get disconnected plugin keys, passing connectedKeys if available to avoid duplicate query
+    const disconnectedKeys = await this.userConnections.getDisconnectedPluginKeys(
+      userId,
+      availablePluginKeys,
+      connectedKeys
+    );
 
     if (this.debug) console.log(`DEBUG: Found ${disconnectedKeys.length} disconnected plugin keys`);
 

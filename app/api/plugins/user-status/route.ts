@@ -1,42 +1,68 @@
 // app/api/plugins/user-status/route.ts
 
 import { NextRequest, NextResponse } from 'next/server';
+import { createAuthenticatedServerClient } from '@/lib/supabaseServer';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 
 // Force dynamic rendering for this route
 export const dynamic = 'force-dynamic';
 
-// GET /api/plugins/user-status?userId={userId}
+// GET /api/plugins/user-status?userId={userId} (optional)
 // Returns user's plugin connection status (connected vs available)
+// Auth: Cookie-based (primary) or userId query param (backward compatibility)
 export async function GET(request: NextRequest) {
   try {
-    // Get userId from query parameters
-    const { searchParams } = new URL(request.url);
-    const userId = searchParams.get('userId');
+    // Try cookie-based authentication first (preferred method)
+    let userId: string | null = null;
+    let authMethod = 'query-param'; // for logging
 
-    if (!userId) {
-      return NextResponse.json({
-        success: false,
-        error: 'Missing userId parameter'
-      }, { status: 400 });
+    const supabase = await createAuthenticatedServerClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (user && !authError) {
+      // Cookie auth successful
+      userId = user.id;
+      authMethod = 'cookie';
+    } else {
+      // Fall back to query parameter for backward compatibility
+      const { searchParams } = new URL(request.url);
+      userId = searchParams.get('userId');
+
+      if (!userId) {
+        return NextResponse.json({
+          success: false,
+          error: 'Authentication required. Please log in or provide userId parameter.'
+        }, { status: 401 });
+      }
     }
 
-    console.log(`DEBUG: API - Getting plugin status for user ${userId}`);
+    console.log(`DEBUG: API - Getting plugin status for user ${userId} (auth: ${authMethod})`);
 
     // Get plugin manager instance
     const pluginManager = await PluginManagerV2.getInstance();
 
-    // Get user's actionable plugins (connected with valid tokens)
-    // Enable token refresh to ensure we show accurate connection status
-    const actionablePlugins = await pluginManager.getUserActionablePlugins(userId, { skipTokenRefresh: false });
+    // Get user's connected plugins (status display - no token refresh needed)
+    // Using getConnectedPlugins() for fast status checks without OAuth operations
+    const connectedPlugins = await pluginManager.getConnectedPlugins(userId);
 
-    // Get disconnected plugins (available but not connected)
-    const disconnectedPlugins = await pluginManager.getDisconnectedPlugins(userId);
+    // Extract connected plugin keys to pass to getDisconnectedPlugins (avoid duplicate DB query)
+    const connectedKeys = Object.keys(connectedPlugins);
+
+    // Get plugins with expired tokens (active in DB but need refresh)
+    const activeExpiredKeys = await pluginManager.getActiveExpiredPluginKeys(userId);
+
+    // Get disconnected plugins, passing all active keys to avoid counting expired as disconnected
+    const allActiveKeys = [...connectedKeys, ...activeExpiredKeys];
+    const disconnectedPlugins = await pluginManager.getDisconnectedPlugins(userId, allActiveKeys);
         
     // Format connected plugins with connection details
-    const connected = Object.entries(actionablePlugins).map(([key, actionablePlugin]) => {
-      const { definition, connection } = actionablePlugin;      
-      console.log(`DEBUG: API - Formatting plugin ${key} with connection details`);      
+    const connected = Object.entries(connectedPlugins).map(([key, connectedPlugin]) => {
+      const { definition, connection } = connectedPlugin;
+      console.log(`DEBUG: API - Formatting plugin ${key} with connection details`);
+
+      // Check if this is a system plugin
+      const isSystemPlugin = definition.plugin.isSystem || false;
+
       return {
         key,
         name: definition.plugin.name,
@@ -45,6 +71,7 @@ export async function GET(request: NextRequest) {
         version: definition.plugin.version,
         auth_type: definition.plugin.auth_config.auth_type,
         status: 'connected',
+        is_system: isSystemPlugin,
         actions: Object.keys(definition.actions),
         action_count: Object.keys(definition.actions).length,
         // Connection details
@@ -67,15 +94,17 @@ export async function GET(request: NextRequest) {
       action_count: Object.keys(data.plugin.actions).length
     }));
 
-    console.log(`DEBUG: API - User ${userId} has ${connected.length} connected, ${disconnected.length} disconnected plugins`);
+    console.log(`DEBUG: API - User ${userId} has ${connected.length} connected, ${activeExpiredKeys.length} active expired, ${disconnected.length} disconnected plugins`);
 
     return NextResponse.json({
       success: true,
       user_id: userId,
       connected,
+      active_expired: activeExpiredKeys,
       disconnected,
       summary: {
         connected_count: connected.length,
+        active_expired_count: activeExpiredKeys.length,
         disconnected_count: disconnected.length,
         total_available: connected.length + disconnected.length
       }
