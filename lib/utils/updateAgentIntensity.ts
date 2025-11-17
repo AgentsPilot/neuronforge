@@ -117,9 +117,9 @@ async function updateExistingMetrics(
   const avg_iterations_per_run = total_iterations / total_executions;
 
   const avg_execution_duration_ms = Math.round(
-    (current.avg_execution_duration_ms * current.total_executions + execution.execution_duration_ms) / total_executions
+    (current.avg_execution_duration_ms * current.total_executions + (execution.execution_duration_ms || 0)) / total_executions
   );
-  const peak_execution_duration_ms = Math.max(current.peak_execution_duration_ms, execution.execution_duration_ms);
+  const peak_execution_duration_ms = Math.max(current.peak_execution_duration_ms, execution.execution_duration_ms || 0);
 
   // Update plugin statistics
   const total_plugin_calls = current.total_plugin_calls + execution.tool_calls_count;
@@ -222,6 +222,11 @@ async function updateExistingMetrics(
         execution_score * combinedWeights.execution
       );
 
+  // Log component scores for debugging
+  console.log(`📊 [AIS] Component scores for agent ${execution.agent_id}:`);
+  console.log(`   Token: ${token_complexity_score}, Execution: ${execution_complexity_score}, Plugin: ${plugin_complexity_score}`);
+  console.log(`   Workflow: ${workflow_complexity_score}, Memory: ${memory_complexity_score}`);
+
   console.log(`📊 [AIS] Score calculation for agent ${execution.agent_id}:`);
   console.log(`   Total executions: ${total_executions}, Threshold: ${minExecutionsForScore}`);
   console.log(`   Database Execution Weights: tokens=${executionWeights.tokens}, execution=${executionWeights.execution}, plugins=${executionWeights.plugins}, workflow=${executionWeights.workflow}, memory=${executionWeights.memory}`);
@@ -229,6 +234,13 @@ async function updateExistingMetrics(
   console.log(`   Creation: ${creation_score.toFixed(2)}, Execution: ${execution_score.toFixed(2)}`);
   console.log(`   Combined: ${combined_score.toFixed(2)} (${total_executions < minExecutionsForScore ? 'creation-only' : 'weighted blend'})`);
 
+  // Validate scores are not NaN or null
+  if (isNaN(execution_score) || isNaN(combined_score)) {
+    console.error(`❌ [AIS] Invalid score calculation - execution_score: ${execution_score}, combined_score: ${combined_score}`);
+    console.error(`   Component scores: token=${token_complexity_score}, execution=${execution_complexity_score}, plugin=${plugin_complexity_score}, workflow=${workflow_complexity_score}, memory=${memory_complexity_score}`);
+    console.error(`   Weights: executionWeights=${JSON.stringify(executionWeights)}, combinedWeights=${JSON.stringify(combinedWeights)}`);
+    return { success: false };
+  }
 
   // DEPRECATED: Keep intensity_score synced with combined_score for backward compatibility
   const intensity_score = combined_score;
@@ -509,6 +521,11 @@ async function calculateExecutionComplexity(
   const failureRateScore = AISConfigService.normalize(100 - successRate, ranges.failure_rate);
   const retryScore = AISConfigService.normalize(retryRate, ranges.retry_rate);
 
+  // Debug logging for NaN detection
+  console.log(`🔍 [Execution Debug] Inputs: avgIterations=${avgIterations}, avgDuration=${avgDuration}, successRate=${successRate}, retryRate=${retryRate}`);
+  console.log(`🔍 [Execution Debug] Scores: iteration=${iterationScore}, duration=${durationScore}, failure=${failureRateScore}, retry=${retryScore}`);
+  console.log(`🔍 [Execution Debug] Weights: iterations=${execWeights.iterations}, duration=${execWeights.duration}, failure=${execWeights.failure}, retry=${execWeights.retry}`);
+
   const score = clamp(
     iterationScore * execWeights.iterations +
     durationScore * execWeights.duration +
@@ -518,6 +535,7 @@ async function calculateExecutionComplexity(
   );
 
   console.log(`⚙️  [Execution Weights] iterations=${execWeights.iterations}, duration=${execWeights.duration}, failure=${execWeights.failure}, retry=${execWeights.retry}`);
+  console.log(`⚙️  [Execution Score] Final score: ${score}`);
 
   return score;
 }

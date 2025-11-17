@@ -272,9 +272,6 @@ export class ExecutionContext {
    * Resolve all variables in an object (recursive)
    */
   resolveAllVariables(obj: any): any {
-    // 🔍 DEBUG: Log available step outputs
-    console.log(`🔍 [ExecutionContext] Available step outputs:`, Array.from(this.stepOutputs.keys()));
-
     if (obj === null || obj === undefined) {
       return obj;
     }

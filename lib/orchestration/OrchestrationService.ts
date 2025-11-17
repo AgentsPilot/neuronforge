@@ -130,7 +130,7 @@ export class OrchestrationService {
    * Returns null if orchestration is disabled
    */
   async initialize(
-    workflowId: string,
+    executionId: string,
     agentId: string,
     userId: string,
     steps: any[]
@@ -144,7 +144,7 @@ export class OrchestrationService {
       return null;
     }
 
-    console.log(`[Orchestration] Initializing for workflow ${workflowId} with ${steps.length} steps`);
+    console.log(`[Orchestration] Initializing for execution ${executionId} with ${steps.length} steps`);
 
     try {
       // Get agent AIS scores for routing and budget scaling
@@ -273,8 +273,8 @@ export class OrchestrationService {
 
       // Create orchestration metadata
       const metadata: OrchestrationMetadata = {
-        executionId: crypto.randomUUID(),
-        workflowId,
+        executionId,  // Use the passed executionId instead of generating a new one
+        workflowId: executionId,  // workflowId is the same as executionId in our system
         agentId,
         userId,
         startTime: new Date(),

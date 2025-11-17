@@ -17,6 +17,8 @@ import type {
   Agent,
 } from './types';
 import { ExecutionContext } from './ExecutionContext';
+import { supabaseAdmin } from '../supabaseAdmin';
+import { ExecutionService } from '@/lib/services/ExecutionService';
 
 export class StateManager {
   private supabase: SupabaseClient;
@@ -115,6 +117,31 @@ export class StateManager {
     executionPlan: ExecutionPlan,
     inputValues: Record<string, any>
   ): Promise<string> {
+    // Check execution quota before creating the execution
+    const executionService = new ExecutionService(this.supabase);
+
+    try {
+      const { available, quota } = await executionService.checkExecutionAvailable(userId);
+
+      if (!available) {
+        const quotaDisplay = quota.quota === null ? 'unlimited' : quota.quota.toLocaleString();
+        throw new Error(
+          `Execution quota exceeded. You have used ${quota.used.toLocaleString()} of ${quotaDisplay} executions. Please upgrade your plan or wait for your quota to reset.`
+        );
+      }
+
+      // Log quota status
+      const remaining = quota.remaining === null ? '∞' : quota.remaining.toLocaleString();
+      console.log(`[StateManager] Execution quota check: ${quota.used}/${quota.quota ?? '∞'} used, ${remaining} remaining`);
+
+      if (quota.isNearLimit) {
+        console.warn(`[StateManager] ⚠️  User ${userId} is near execution limit (${(quota.percentageUsed * 100).toFixed(1)}% used)`);
+      }
+    } catch (error: any) {
+      console.error('[StateManager] Execution quota check failed:', error);
+      throw error;
+    }
+
     const { data, error} = await this.supabase
       .from('workflow_executions')
       .insert({
@@ -149,6 +176,15 @@ export class StateManager {
     }
 
     console.log(`[StateManager] Created execution record: ${data.id}`);
+
+    // Record the execution to increment quota usage
+    try {
+      await executionService.recordExecution(userId);
+      console.log(`[StateManager] ✅ Recorded execution usage for user ${userId}`);
+    } catch (error: any) {
+      console.error('[StateManager] Failed to record execution usage (non-critical):', error.message);
+      // Don't fail the execution if quota recording fails - it's already started
+    }
 
     // Setup real-time channel if enabled
     this.setupRealTimeChannel(data.id);
@@ -272,6 +308,7 @@ export class StateManager {
       const startTime = new Date(Date.now() - summary.totalExecutionTime).toISOString();
 
       const { error: agentExecError } = await this.supabase.from('agent_executions').insert({
+        id: executionId, // Use the same execution ID from workflow_executions
         agent_id: context.agentId,
         user_id: context.userId,
         execution_type: 'manual',
@@ -351,6 +388,7 @@ export class StateManager {
       const startTime = new Date(Date.now() - summary.totalExecutionTime).toISOString();
 
       const { error: agentExecError } = await this.supabase.from('agent_executions').insert({
+        id: executionId, // Use the same execution ID from workflow_executions
         agent_id: context.agentId,
         user_id: context.userId,
         execution_type: 'manual',
@@ -601,7 +639,8 @@ export class StateManager {
       const normalizedStepType = this.normalizeStepType(stepType);
 
       // Check if record already exists (might have been created by WorkflowOrchestrator)
-      const { data: existing } = await this.supabase
+      // Use supabaseAdmin to bypass RLS policies for server-side operations
+      const { data: existing } = await supabaseAdmin
         .from('workflow_step_executions')
         .select('id')
         .eq('workflow_execution_id', workflowExecutionId)
@@ -613,21 +652,40 @@ export class StateManager {
         return;
       }
 
-      const { error } = await this.supabase
+      // Build insert data with all available fields
+      const insertData: any = {
+        workflow_execution_id: workflowExecutionId,
+        step_id: stepId,
+        step_name: stepName,
+        step_type: normalizedStepType,
+        status,
+        execution_metadata: metadata || {},
+        created_at: new Date().toISOString(),
+      };
+
+      // Extract started_at from metadata to dedicated column if available
+      if (metadata?.started_at) {
+        insertData.started_at = metadata.started_at;
+      }
+
+      // Extract plugin info from metadata if available
+      if (metadata?.plugin) {
+        insertData.plugin = metadata.plugin;
+      }
+      if (metadata?.action) {
+        insertData.action = metadata.action;
+      }
+
+      // Use supabaseAdmin to bypass RLS policies for INSERT operations
+      const { error} = await supabaseAdmin
         .from('workflow_step_executions')
-        .insert({
-          workflow_execution_id: workflowExecutionId,
-          step_id: stepId,
-          step_name: stepName,
-          step_type: normalizedStepType,
-          status,
-          execution_metadata: metadata || {},
-          created_at: new Date().toISOString(),
-        });
+        .insert(insertData);
 
       if (error) {
         console.error('[StateManager] Failed to log step execution:', error);
         // Don't throw - step logging failures should not stop execution
+      } else {
+        console.log(`✅ [StateManager] Created step execution record for ${stepId} (using service role)`);
       }
     } catch (err) {
       console.error('[StateManager] Step logging error:', err);
@@ -641,6 +699,7 @@ export class StateManager {
    */
   private normalizeStepType(stepType: string): string {
     // Map TypeScript types to database-allowed values
+    // Database only allows: action, llm_decision, conditional, loop, transform, delay, parallel_group
     const typeMapping: Record<string, string> = {
       'ai_processing': 'llm_decision',        // Smart Agent Builder uses ai_processing
       'switch': 'conditional',                 // Phase 2: map switch to conditional
@@ -650,6 +709,11 @@ export class StateManager {
       'sub_workflow': 'action',                // Phase 5: map sub_workflow to action
       'human_approval': 'action',              // Phase 6: map human_approval to action
       'scatter_gather': 'parallel_group',      // Phase 3: map scatter_gather to parallel_group
+      // Orchestration step types (LLM-based operations)
+      'summarize': 'llm_decision',             // Content summarization via LLM
+      'extract': 'llm_decision',               // Information extraction via LLM
+      'generate': 'llm_decision',              // Content generation via LLM
+      // Note: 'transform' is already allowed in database, no mapping needed
     };
 
     return typeMapping[stepType] || stepType;
@@ -673,12 +737,21 @@ export class StateManager {
 
       if (status === 'completed') {
         updateData.completed_at = new Date().toISOString();
+
+        // Extract metrics from metadata to dedicated columns
+        if (metadata?.tokens_used) {
+          updateData.tokens_used = metadata.tokens_used;
+        }
+        if (metadata?.execution_time) {
+          updateData.execution_time_ms = metadata.execution_time;
+        }
       } else if (status === 'failed') {
         updateData.failed_at = new Date().toISOString();
         updateData.error_message = errorMessage;
       }
 
-      const { error } = await this.supabase
+      // Use supabaseAdmin to bypass RLS policies for UPDATE operations
+      const { error } = await supabaseAdmin
         .from('workflow_step_executions')
         .update(updateData)
         .eq('workflow_execution_id', workflowExecutionId)

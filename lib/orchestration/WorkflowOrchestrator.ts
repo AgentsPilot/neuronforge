@@ -50,7 +50,7 @@ export class WorkflowOrchestrator {
    * Returns true if orchestration is active, false if disabled
    */
   async initialize(
-    workflowId: string,
+    executionId: string,
     agentId: string,
     userId: string,
     steps: any[]
@@ -60,7 +60,7 @@ export class WorkflowOrchestrator {
     try {
       // Initialize orchestration service
       this.orchestrationMetadata = await this.orchestrationService.initialize(
-        workflowId,
+        executionId,
         agentId,
         userId,
         steps
@@ -77,7 +77,7 @@ export class WorkflowOrchestrator {
       await this.auditTrail.log({
         action: 'ORCHESTRATION_INITIALIZED',
         entityType: 'workflow',
-        entityId: workflowId,
+        entityId: executionId,
         userId,
         details: {
           executionId: this.orchestrationMetadata.executionId,
@@ -128,10 +128,14 @@ export class WorkflowOrchestrator {
       // RLS policies now allow anon role to INSERT/UPDATE workflow_step_executions
       const { StateManager } = await import('../pilot/StateManager');
       const sm = new StateManager(this.supabase);
+
+      // Get step name from the actual step object (stepInput.step.name)
+      const stepName = stepInput.step?.name || stepId;
+
       await sm.logStepExecution(
         this.orchestrationMetadata.executionId,
         stepId,
-        stepMeta.name || stepId,
+        stepName,
         stepInput.step?.type || stepMeta.intent,
         'running',
         {
@@ -140,7 +144,7 @@ export class WorkflowOrchestrator {
           orchestrated: true,
         }
       );
-      console.log(`✅ [WorkflowOrchestrator] Created step execution record for ${stepId}`);
+      console.log(`✅ [WorkflowOrchestrator] Created step execution record for ${stepId}: ${stepName}`);
 
       // Check budget before execution
       const canProceed = await this.orchestrationService.canStepProceed(
@@ -327,6 +331,20 @@ export class WorkflowOrchestrator {
         `${result.tokensUsed.total} tokens, $${result.cost.toFixed(4)}, ` +
         `${executionResult.executionTime}ms`
       );
+
+      // Update step execution record to "completed" with final metrics
+      await sm.updateStepExecution(
+        this.orchestrationMetadata.executionId,
+        stepId,
+        'completed',
+        {
+          completed_at: new Date().toISOString(),
+          tokens_used: result.tokensUsed.total,
+          execution_time: executionResult.executionTime,
+          success: true,
+        }
+      );
+      console.log(`✅ [WorkflowOrchestrator] Updated step ${stepId} to completed`);
 
       return executionResult;
     } catch (error) {

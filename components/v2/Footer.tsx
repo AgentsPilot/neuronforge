@@ -9,6 +9,7 @@ import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 import { getPluginAPIClient } from '@/lib/client/plugin-api-client'
 import { DarkModeToggle } from '@/components/v2/DarkModeToggle'
+import { PluginRefreshModal } from '@/components/v2/PluginRefreshModal'
 import {
   Clock,
   Plus,
@@ -39,6 +40,11 @@ interface ConnectedPlugin {
   plugin_name?: string
   status: string
   is_expired?: boolean
+  connected_at?: string
+  expires_at?: string
+  last_used?: string
+  last_refreshed?: string
+  username?: string
 }
 
 export function V2Footer() {
@@ -48,6 +54,8 @@ export function V2Footer() {
   const [connectedPlugins, setConnectedPlugins] = useState<ConnectedPlugin[]>([])
   const [hoveredPlugin, setHoveredPlugin] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [refreshModalOpen, setRefreshModalOpen] = useState(false)
+  const [selectedPlugin, setSelectedPlugin] = useState<ConnectedPlugin | null>(null)
 
   useEffect(() => {
     if (!user) return
@@ -72,38 +80,44 @@ export function V2Footer() {
 
     const fetchConnectedPlugins = async () => {
       try {
-        // Use PluginAPIClient for request deduplication
-        const apiClient = getPluginAPIClient()
-        const status = await apiClient.getUserPluginStatus()
+        // Fetch detailed connection info from database
+        // Using * to select all columns (some columns may not exist in all deployments)
+        const { data: connections, error } = await supabase
+          .from('plugin_connections')
+          .select('*')
+          .eq('user_id', user.id)
 
-        console.log('Footer - API response:', status)
-        console.log('Footer - active_expired:', status.active_expired)
+        if (error) {
+          console.error('[Footer] Error fetching plugin connections:', error)
+          setConnectedPlugins([])
+          return
+        }
 
-        // Transform connected plugins
-        const connected = status.connected?.map((plugin: any) => ({
-          plugin_key: plugin.key,
-          plugin_name: plugin.name,
-          status: 'active',
-          is_expired: false
-        })) || []
+        if (!connections) {
+          setConnectedPlugins([])
+          return
+        }
 
-        // Transform expired plugins from active_expired array
-        const expiredKeys = status.active_expired || []
-        console.log('Footer - expiredKeys:', expiredKeys)
+        // Check which ones are expired
+        const now = new Date()
+        const pluginsWithStatus = connections.map(conn => {
+          const expiresAt = conn.expires_at ? new Date(conn.expires_at) : null
+          const isExpired = expiresAt ? expiresAt < now : false
 
-        const expired = expiredKeys.map((pluginKey: string) => ({
-          plugin_key: pluginKey,
-          plugin_name: pluginKey, // Will be formatted by getPluginDisplayName
-          status: 'expired',
-          is_expired: true
-        }))
+          return {
+            plugin_key: conn.plugin_key,
+            plugin_name: conn.plugin_name || conn.plugin_key,
+            status: isExpired ? 'expired' : 'active',
+            is_expired: isExpired,
+            connected_at: conn.created_at,
+            expires_at: conn.expires_at,
+            last_used: conn.last_used_at,
+            last_refreshed: conn.last_refreshed_at,
+            username: conn.username
+          }
+        })
 
-        console.log('Footer - connected:', connected)
-        console.log('Footer - expired:', expired)
-        console.log('Footer - combined:', [...connected, ...expired])
-
-        // Combine both lists
-        setConnectedPlugins([...connected, ...expired])
+        setConnectedPlugins(pluginsWithStatus)
       } catch (error) {
         console.error('Error fetching connected plugins:', error)
         setConnectedPlugins([])
@@ -113,6 +127,35 @@ export function V2Footer() {
     fetchLastRun()
     fetchConnectedPlugins()
   }, [user])
+
+  const handleRefreshComplete = async () => {
+    // Refetch the connected plugins to update the status
+    if (!user) return
+
+    try {
+      const apiClient = getPluginAPIClient()
+      const status = await apiClient.getUserPluginStatus()
+
+      const connected = status.connected?.map((plugin: any) => ({
+        plugin_key: plugin.key,
+        plugin_name: plugin.name,
+        status: 'active',
+        is_expired: false
+      })) || []
+
+      const expiredKeys = status.active_expired || []
+      const expired = expiredKeys.map((pluginKey: string) => ({
+        plugin_key: pluginKey,
+        plugin_name: pluginKey,
+        status: 'expired',
+        is_expired: true
+      }))
+
+      setConnectedPlugins([...connected, ...expired])
+    } catch (error) {
+      console.error('Error refreshing plugin list:', error)
+    }
+  }
 
   const getTimeAgo = (date: Date | null) => {
     if (!date) return 'Never'
@@ -128,9 +171,37 @@ export function V2Footer() {
   }
 
   const getPluginDisplayName = (pluginKey: string) => {
-    // Extract readable name from plugin key (e.g., "google_gmail" -> "Gmail")
-    const name = pluginKey.split('_').pop() || pluginKey
-    return name.charAt(0).toUpperCase() + name.slice(1)
+    // Map plugin keys to their proper display names
+    const nameMap: Record<string, string> = {
+      'google-mail': 'Google Mail',
+      'gmail': 'Gmail',
+      'google-calendar': 'Google Calendar',
+      'google-drive': 'Google Drive',
+      'google-docs': 'Google Docs',
+      'google-sheets': 'Google Sheets',
+      'github': 'GitHub',
+      'slack': 'Slack',
+      'hubspot': 'HubSpot',
+      'outlook': 'Outlook',
+      'whatsapp': 'WhatsApp',
+      'whatsapp-business': 'WhatsApp Business',
+      'twilio': 'Twilio',
+      'aws': 'AWS',
+      'airtable': 'Airtable',
+      'chatgpt-research': 'ChatGPT Research',
+      'linkedin': 'LinkedIn',
+    }
+
+    // Return mapped name or format the key as fallback
+    if (nameMap[pluginKey]) {
+      return nameMap[pluginKey]
+    }
+
+    // Fallback: convert "google-mail" -> "Google Mail"
+    return pluginKey
+      .split(/[-_]/)
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ')
   }
 
   // Plugin icons mapping with real brand icons from react-icons/si (Simple Icons)
@@ -186,7 +257,8 @@ export function V2Footer() {
                 onMouseLeave={() => setHoveredPlugin(null)}
                 onClick={() => {
                   if (plugin.is_expired) {
-                    router.push('/settings/connections')
+                    setSelectedPlugin(plugin)
+                    setRefreshModalOpen(true)
                   }
                 }}
               >
@@ -211,10 +283,10 @@ export function V2Footer() {
                   ></div>
                 )}
 
-                {/* Tooltip with V2 design */}
+                {/* Tooltip with V2 design and connection info */}
                 {hoveredPlugin === plugin.plugin_key && (
                   <div
-                    className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 px-3 py-2 text-xs font-semibold whitespace-nowrap pointer-events-none animate-fade-in"
+                    className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 px-3 py-2.5 text-xs pointer-events-none animate-fade-in min-w-[200px]"
                     style={{
                       backgroundColor: 'var(--v2-surface)',
                       border: '1px solid var(--v2-border)',
@@ -224,10 +296,68 @@ export function V2Footer() {
                       zIndex: 1000
                     }}
                   >
-                    {plugin.plugin_name || getPluginDisplayName(plugin.plugin_key)}
+                    <div className="font-semibold mb-1">
+                      {getPluginDisplayName(plugin.plugin_key)}
+                    </div>
+
+                    {/* Connection Status */}
+                    <div className="space-y-0.5 text-[10px] text-[var(--v2-text-muted)]">
+                      <div className="flex justify-between gap-3">
+                        <span>Status:</span>
+                        <span className={plugin.is_expired ? 'text-orange-500 font-medium' : 'text-green-500 font-medium'}>
+                          {plugin.is_expired ? 'Token Expired' : 'Connected'}
+                        </span>
+                      </div>
+
+                      {plugin.username && (
+                        <div className="flex justify-between gap-3">
+                          <span>Account:</span>
+                          <span className="font-medium text-[var(--v2-text-primary)] truncate max-w-[150px]" title={plugin.username}>
+                            {plugin.username}
+                          </span>
+                        </div>
+                      )}
+
+                      {plugin.connected_at && (
+                        <div className="flex justify-between gap-3">
+                          <span>Connected:</span>
+                          <span className="font-medium text-[var(--v2-text-primary)]">
+                            {new Date(plugin.connected_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                      )}
+
+                      {plugin.expires_at && (
+                        <div className="flex justify-between gap-3">
+                          <span>Expires:</span>
+                          <span className="font-medium text-[var(--v2-text-primary)]">
+                            {new Date(plugin.expires_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                      )}
+
+                      {plugin.last_refreshed && (
+                        <div className="flex justify-between gap-3">
+                          <span>Last Refresh:</span>
+                          <span className="font-medium text-[var(--v2-text-primary)]">
+                            {getTimeAgo(new Date(plugin.last_refreshed))}
+                          </span>
+                        </div>
+                      )}
+
+                      {plugin.last_used && (
+                        <div className="flex justify-between gap-3">
+                          <span>Last Used:</span>
+                          <span className="font-medium text-[var(--v2-text-primary)]">
+                            {getTimeAgo(new Date(plugin.last_used))}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
                     {plugin.is_expired && (
-                      <div className="text-orange-500 text-[10px] mt-0.5">
-                        Token Expired - Click to Reconnect
+                      <div className="text-orange-500 text-[10px] mt-1.5 pt-1.5 border-t border-[var(--v2-border)] font-medium">
+                        Click to Reconnect
                       </div>
                     )}
                     {/* Tooltip arrow */}
@@ -321,6 +451,21 @@ export function V2Footer() {
           </div>
         </div>
       </div>
+
+      {/* Plugin Refresh Modal */}
+      {selectedPlugin && user && (
+        <PluginRefreshModal
+          isOpen={refreshModalOpen}
+          onClose={() => {
+            setRefreshModalOpen(false)
+            setSelectedPlugin(null)
+          }}
+          pluginKey={selectedPlugin.plugin_key}
+          pluginName={selectedPlugin.plugin_name || getPluginDisplayName(selectedPlugin.plugin_key)}
+          userId={user.id}
+          onRefreshComplete={handleRefreshComplete}
+        />
+      )}
     </div>
   )
 }

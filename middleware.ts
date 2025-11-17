@@ -11,12 +11,14 @@ export async function middleware(request: NextRequest) {
   // Skip middleware for:
   // - Static files
   // - API routes
+  // - OAuth callbacks (must not be redirected to /v2)
   // - Marketing pages
   // - Admin pages
   // - Already on V2 route
   if (
     pathname.startsWith('/_next') ||
     pathname.startsWith('/api') ||
+    pathname.startsWith('/oauth') ||
     pathname.startsWith('/static') ||
     pathname.match(/\.(ico|png|jpg|jpeg|svg|gif|woff|woff2|ttf|eot)$/) ||
     pathname.startsWith('/v2') ||

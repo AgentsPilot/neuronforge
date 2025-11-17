@@ -3,11 +3,12 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Brain, Loader2 } from 'lucide-react'
 import { useAuth } from '@/components/UserProvider'
 import type { IntensityBreakdown } from '@/lib/types/intensity'
 import { classifyIntensityRange } from '@/lib/types/intensity'
+import { requestDeduplicator } from '@/lib/utils/request-deduplication'
 
 interface AgentIntensityCardV2Props {
   agentId: string
@@ -17,26 +18,72 @@ export function AgentIntensityCardV2({ agentId }: AgentIntensityCardV2Props) {
   const { user } = useAuth()
   const [breakdown, setBreakdown] = useState<IntensityBreakdown | null>(null)
   const [loading, setLoading] = useState(true)
+  const [lastExecutionTime, setLastExecutionTime] = useState<number>(0)
+
+  // Poll for new executions to detect when agent runs
+  useEffect(() => {
+    if (!agentId) return
+
+    const checkForNewExecutions = async () => {
+      try {
+        const { data: executions } = await fetch(`/api/agents/${agentId}/executions?limit=1`).then(r => r.json())
+        if (executions && executions.length > 0) {
+          const latestExecTime = new Date(executions[0].started_at).getTime()
+          // Use functional update to avoid dependency on lastExecutionTime
+          setLastExecutionTime(prev => {
+            if (latestExecTime > prev) {
+              return latestExecTime
+            }
+            return prev
+          })
+        }
+      } catch (err) {
+        // Silently fail - this is just for cache invalidation
+      }
+    }
+
+    // Check immediately
+    checkForNewExecutions()
+
+    // Check every 30 seconds for new executions
+    const interval = setInterval(checkForNewExecutions, 30000)
+
+    return () => clearInterval(interval)
+  }, [agentId]) // Removed lastExecutionTime from deps to prevent infinite loop
 
   useEffect(() => {
     if (!user?.id || !agentId) return
 
     let isCancelled = false
 
-    const fetchIntensity = async () => {
+    const fetchIntensity = async (forceRefresh = false) => {
       try {
-        const response = await fetch(`/api/agents/${agentId}/intensity`, {
-          headers: {
-            'x-user-id': user.id,
-          },
-        })
+        const cacheKey = `ais-intensity-${agentId}`
 
-        if (!response.ok) {
-          if (!isCancelled) setLoading(false)
-          return
+        // If forceRefresh, clear the cache for this key
+        if (forceRefresh) {
+          requestDeduplicator.clear(cacheKey)
         }
 
-        const data = await response.json()
+        // Use request deduplication with 5 minute cache (AIS scores don't change frequently)
+        const data = await requestDeduplicator.deduplicate(
+          cacheKey,
+          async () => {
+            const response = await fetch(`/api/agents/${agentId}/intensity`, {
+              headers: {
+                'x-user-id': user.id,
+              },
+            })
+
+            if (!response.ok) {
+              throw new Error('Failed to fetch intensity')
+            }
+
+            return response.json()
+          },
+          300000 // 5 minute cache TTL
+        )
+
         if (!isCancelled) {
           setBreakdown(data)
           setLoading(false)
@@ -49,12 +96,21 @@ export function AgentIntensityCardV2({ agentId }: AgentIntensityCardV2Props) {
       }
     }
 
-    fetchIntensity()
+    // Force refresh when lastExecutionTime changes (new execution detected)
+    fetchIntensity(lastExecutionTime > 0)
 
     return () => {
       isCancelled = true
     }
-  }, [agentId, user?.id])
+  }, [agentId, user?.id, lastExecutionTime])
+
+  // Memoize derived values BEFORE any conditional returns (hooks must be called in same order)
+  const combinedScore = useMemo(() => breakdown?.combined_score ?? 0, [breakdown?.combined_score])
+  const intensityRange = useMemo(() => classifyIntensityRange(combinedScore), [combinedScore])
+  const hasExecutions = useMemo(
+    () => (breakdown?.details.execution_stats.total_executions ?? 0) > 0,
+    [breakdown?.details.execution_stats.total_executions]
+  )
 
   if (loading) {
     return (
@@ -71,10 +127,6 @@ export function AgentIntensityCardV2({ agentId }: AgentIntensityCardV2Props) {
       </div>
     )
   }
-
-  const combinedScore = breakdown.combined_score
-  const intensityRange = classifyIntensityRange(combinedScore)
-  const hasExecutions = breakdown.details.execution_stats.total_executions > 0
 
   return (
     <>

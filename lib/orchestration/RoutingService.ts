@@ -16,6 +16,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { supabaseAdmin } from '../supabaseAdmin';
 import type {
   RoutingContext,
   RoutingDecision,
@@ -956,8 +957,8 @@ export class RoutingService implements IRoutingService {
       const aisDimensions = this.mapComplexityToAIS(stepAnalysis);
 
       // Update workflow_step_executions with routing data
-      // RLS policies now allow anon role to UPDATE workflow_step_executions
-      const { error } = await this.supabase
+      // Use supabaseAdmin to bypass RLS policies for UPDATE operations
+      const { error } = await supabaseAdmin
         .from('workflow_step_executions')
         .update({
           // 6-factor complexity scores

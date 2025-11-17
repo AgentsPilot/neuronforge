@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { getStripeService } from '@/lib/stripe/StripeService';
 import { pilotCreditsToTokens } from '@/lib/utils/pricingConfig';
+import { QuotaAllocationService } from '@/lib/services/QuotaAllocationService';
 import Stripe from 'stripe';
 
 // Disable body parsing for webhook signature verification
@@ -221,6 +222,20 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
     credits,
     newBalance
   });
+
+  // Allocate storage and execution quotas based on new balance
+  try {
+    const quotaService = new QuotaAllocationService(supabaseAdmin);
+    const quotaResult = await quotaService.allocateQuotasForUser(userId);
+
+    if (quotaResult.success) {
+      console.log(`✅ [Webhook] Quotas allocated: ${quotaResult.storageQuotaMB} MB storage, ${quotaResult.executionQuota ?? 'unlimited'} executions`);
+    } else {
+      console.error('❌ [Webhook] Failed to allocate quotas:', quotaResult.error);
+    }
+  } catch (quotaError: any) {
+    console.error('❌ [Webhook] Error allocating quotas (non-critical):', quotaError.message);
+  }
 }
 
 /**
@@ -390,6 +405,20 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       newBalance
     });
 
+    // Allocate storage and execution quotas based on new balance
+    try {
+      const quotaService = new QuotaAllocationService(supabaseAdmin);
+      const quotaResult = await quotaService.allocateQuotasForUser(userId);
+
+      if (quotaResult.success) {
+        console.log(`✅ [Webhook] Quotas allocated: ${quotaResult.storageQuotaMB} MB storage, ${quotaResult.executionQuota ?? 'unlimited'} executions`);
+      } else {
+        console.error('❌ [Webhook] Failed to allocate quotas:', quotaResult.error);
+      }
+    } catch (quotaError: any) {
+      console.error('❌ [Webhook] Error allocating quotas (non-critical):', quotaError.message);
+    }
+
   } else if (session.mode === 'subscription') {
     // Subscription created - allocate initial credits and update subscription IDs
     const pilotCredits = parseInt(session.metadata?.credits || '0');
@@ -494,6 +523,20 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       credits,
       newBalance
     });
+
+    // Allocate storage and execution quotas based on new balance
+    try {
+      const quotaService = new QuotaAllocationService(supabaseAdmin);
+      const quotaResult = await quotaService.allocateQuotasForUser(userId);
+
+      if (quotaResult.success) {
+        console.log(`✅ [Webhook] Quotas allocated: ${quotaResult.storageQuotaMB} MB storage, ${quotaResult.executionQuota ?? 'unlimited'} executions`);
+      } else {
+        console.error('❌ [Webhook] Failed to allocate quotas:', quotaResult.error);
+      }
+    } catch (quotaError: any) {
+      console.error('❌ [Webhook] Error allocating quotas (non-critical):', quotaError.message);
+    }
   }
 }
 

@@ -143,16 +143,28 @@ export class StepExecutor {
 
     // Log step execution start to workflow_step_executions table
     if (this.stateManager) {
+      const metadata: any = {
+        started_at: new Date().toISOString(),
+        step_description: step.description,
+      };
+
+      // Include plugin info for action steps
+      if (step.type === 'action') {
+        if ((step as any).plugin) {
+          metadata.plugin = (step as any).plugin;
+        }
+        if ((step as any).action) {
+          metadata.action = (step as any).action;
+        }
+      }
+
       await this.stateManager.logStepExecution(
         context.executionId,
         step.id,
         step.name,
         step.type,
         'running',
-        {
-          started_at: new Date().toISOString(),
-          step_description: step.description,
-        }
+        metadata
       );
     }
 

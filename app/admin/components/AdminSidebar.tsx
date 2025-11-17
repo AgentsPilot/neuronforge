@@ -21,7 +21,8 @@ import {
   Database,
   BarChart3,
   DollarSign,
-  MessageCircle
+  MessageCircle,
+  HardDrive
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -83,6 +84,18 @@ const navigationItems = [
     href: '/admin/system-config',
     icon: DollarSign,
     description: 'Pricing & Billing'
+  },
+  {
+    name: 'Storage Config',
+    href: '/admin/storage-config',
+    icon: HardDrive,
+    description: 'User Storage Management'
+  },
+  {
+    name: 'Executions Config',
+    href: '/admin/executions-config',
+    icon: BarChart3,
+    description: 'User Execution Quotas'
   },
   {
     name: 'Orchestration',

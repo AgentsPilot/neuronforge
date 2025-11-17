@@ -35,6 +35,13 @@ interface RecentRun {
   created_at: string
 }
 
+interface SystemAlert {
+  type: 'critical' | 'warning' | 'caution' | 'info'
+  icon: string
+  message: string
+  severity: number // Higher = more critical
+}
+
 interface DashboardStats {
   creditBalance: number
   totalSpent: number
@@ -45,6 +52,7 @@ interface DashboardStats {
   recentRuns: RecentRun[]
   tokensPerCredit: number
   maxCredits: number
+  systemAlerts: SystemAlert[]
 }
 
 export default function V2DashboardPage() {
@@ -59,12 +67,93 @@ export default function V2DashboardPage() {
     agentStats: [],
     recentRuns: [],
     tokensPerCredit: 10,
-    maxCredits: 100000
+    maxCredits: 100000,
+    systemAlerts: []
   })
   const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
   const [searchQuery, setSearchQuery] = useState('')
   const [userName, setUserName] = useState<string>('')
+
+  // Calculate system alerts based on quota usage and failures
+  const calculateSystemAlerts = (
+    failedCount: number,
+    storageUsedMB: number,
+    storageQuotaMB: number,
+    executionsUsed: number,
+    executionsQuota: number | null,
+    pilotCredits: number
+  ): SystemAlert[] => {
+    const alerts: SystemAlert[] = []
+
+    // 1. Agent Failures (last 24h)
+    if (failedCount > 0) {
+      alerts.push({
+        type: failedCount >= 10 ? 'critical' : failedCount >= 5 ? 'warning' : 'caution',
+        icon: failedCount >= 10 ? '🔴' : failedCount >= 5 ? '🟠' : '🟡',
+        message: `${failedCount} agent failure${failedCount > 1 ? 's' : ''} in last 24h`,
+        severity: failedCount >= 10 ? 100 : failedCount >= 5 ? 80 : 60
+      })
+    }
+
+    // 2. Storage Quota Warnings
+    const storagePercent = storageQuotaMB > 0 ? (storageUsedMB / storageQuotaMB) * 100 : 0
+    if (storagePercent >= 95) {
+      alerts.push({
+        type: 'critical',
+        icon: '🔴',
+        message: `Storage ${storagePercent.toFixed(0)}% full (${storageUsedMB} / ${storageQuotaMB} MB)`,
+        severity: 95
+      })
+    } else if (storagePercent >= 80) {
+      alerts.push({
+        type: 'warning',
+        icon: '🟠',
+        message: `Storage ${storagePercent.toFixed(0)}% full (${storageUsedMB} / ${storageQuotaMB} MB)`,
+        severity: 85
+      })
+    }
+
+    // 3. Execution Quota Warnings (only if quota is not unlimited)
+    if (executionsQuota !== null && executionsQuota > 0) {
+      const executionPercent = (executionsUsed / executionsQuota) * 100
+      if (executionPercent >= 95) {
+        alerts.push({
+          type: 'critical',
+          icon: '🔴',
+          message: `Executions ${executionPercent.toFixed(0)}% used (${executionsUsed} / ${executionsQuota})`,
+          severity: 90
+        })
+      } else if (executionPercent >= 80) {
+        alerts.push({
+          type: 'warning',
+          icon: '🟠',
+          message: `Executions ${executionPercent.toFixed(0)}% used (${executionsUsed} / ${executionsQuota})`,
+          severity: 82
+        })
+      }
+    }
+
+    // 4. Low Credit Balance Warnings
+    if (pilotCredits < 100) {
+      alerts.push({
+        type: 'critical',
+        icon: '🔴',
+        message: `Low credits: ${pilotCredits} remaining`,
+        severity: 98
+      })
+    } else if (pilotCredits < 1000) {
+      alerts.push({
+        type: 'warning',
+        icon: '🟠',
+        message: `Low credits: ${pilotCredits.toLocaleString()} remaining`,
+        severity: 75
+      })
+    }
+
+    // Sort by severity (highest first) and return top 3
+    return alerts.sort((a, b) => b.severity - a.severity).slice(0, 3)
+  }
 
   const fetchDashboardData = async () => {
     if (!user) return
@@ -113,7 +202,7 @@ export default function V2DashboardPage() {
           .eq('user_id', user.id),
         supabase
           .from('user_subscriptions')
-          .select('balance, total_spent')
+          .select('balance, total_spent, storage_quota_mb, storage_used_mb, executions_quota, executions_used')
           .eq('user_id', user.id)
           .single(),
         supabase
@@ -191,6 +280,16 @@ export default function V2DashboardPage() {
       const totalSpentTokens = subscriptionData?.total_spent || 0
       const totalSpentCredits = Math.floor(totalSpentTokens / tokensPerCredit)
 
+      // Calculate system alerts
+      const systemAlerts = calculateSystemAlerts(
+        failedCount || 0,
+        subscriptionData?.storage_used_mb || 0,
+        subscriptionData?.storage_quota_mb || 1000,
+        subscriptionData?.executions_used || 0,
+        subscriptionData?.executions_quota ?? null,
+        pilotCredits
+      )
+
       // Update all stats at once
       setStats({
         creditBalance: pilotCredits,
@@ -201,7 +300,8 @@ export default function V2DashboardPage() {
         agentStats: parsedStats,
         recentRuns: parsedRecentRuns,
         tokensPerCredit,
-        maxCredits
+        maxCredits,
+        systemAlerts
       })
 
       setLastUpdated(new Date())
@@ -365,13 +465,12 @@ export default function V2DashboardPage() {
               </div>
             </Card>
 
-          {/* Client Risk Alerts Card */}
+          {/* System Alerts Card */}
           <Card
             hoverable
-            onClick={() => router.push('/v2/analytics')}
-            className="cursor-pointer !p-3 sm:!p-4 !h-[280px] overflow-hidden !box-border active:scale-[0.98] transition-transform"
+            className="!p-3 sm:!p-4 !h-[280px] overflow-hidden !box-border"
           >
-              <div className="space-y-2">
+              <div className="space-y-2 h-full flex flex-col">
               <div className="flex items-center gap-2">
                 <AlertCircle className="w-6 h-6 sm:w-7 sm:h-7 text-[#06B6D4]" />
                 <h3 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)]">
@@ -381,19 +480,62 @@ export default function V2DashboardPage() {
               <p className="text-sm text-[var(--v2-text-secondary)]">
                 Monitor potential issues and failures
               </p>
-              <div className="pt-0">
-                <div className={`text-2xl sm:text-3xl font-bold ${stats.alertsCount > 0 ? 'text-red-500' : 'text-green-500'}`}>
-                  {stats.alertsCount}
-                </div>
-                <div className="text-xs text-[var(--v2-text-muted)] mt-0.5">
-                  {stats.alertsCount > 0 ? 'failures in last 24h' : 'all systems operational'}
-                </div>
+
+              {/* Alert List */}
+              <div className="flex-1 overflow-y-auto pt-1">
+                {stats.systemAlerts.length > 0 ? (
+                  <div className="space-y-2.5">
+                    {stats.systemAlerts.map((alert, index) => (
+                      <div
+                        key={index}
+                        className={`flex items-start gap-3 p-3 transition-all duration-200 ${
+                          alert.type === 'critical'
+                            ? 'bg-gradient-to-r from-red-50 to-red-50/50 dark:from-red-950/30 dark:to-red-950/10 border-l-4 border-red-500'
+                            : alert.type === 'warning'
+                            ? 'bg-gradient-to-r from-orange-50 to-orange-50/50 dark:from-orange-950/30 dark:to-orange-950/10 border-l-4 border-orange-500'
+                            : 'bg-gradient-to-r from-yellow-50 to-yellow-50/50 dark:from-yellow-950/30 dark:to-yellow-950/10 border-l-4 border-yellow-500'
+                        }`}
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      >
+                        <div className={`flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full ${
+                          alert.type === 'critical'
+                            ? 'bg-red-100 dark:bg-red-900/40'
+                            : alert.type === 'warning'
+                            ? 'bg-orange-100 dark:bg-orange-900/40'
+                            : 'bg-yellow-100 dark:bg-yellow-900/40'
+                        }`}>
+                          <span className="text-base">{alert.icon}</span>
+                        </div>
+                        <div className="flex-1 min-w-0 pt-1">
+                          <p className={`text-xs font-medium leading-relaxed ${
+                            alert.type === 'critical'
+                              ? 'text-red-800 dark:text-red-200'
+                              : alert.type === 'warning'
+                              ? 'text-orange-800 dark:text-orange-200'
+                              : 'text-yellow-800 dark:text-yellow-200'
+                          }`}>
+                            {alert.message}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full text-center py-6">
+                    <div className="w-16 h-16 rounded-full bg-green-50 dark:bg-green-950/30 flex items-center justify-center mb-3">
+                      <CheckCircle2 className="w-8 h-8 text-green-500" />
+                    </div>
+                    <p className="text-sm font-semibold text-green-600 dark:text-green-400">All systems operational</p>
+                    <p className="text-xs text-[var(--v2-text-muted)] mt-1">No issues detected</p>
+                  </div>
+                )}
               </div>
               </div>
             </Card>
 
           {/* Recent Activity Card - Horizontal Bar List */}
           <Card
+            hoverable
             className="!p-3 sm:!p-4 !h-[280px] overflow-hidden !box-border"
           >
               <div className="space-y-2">

@@ -1,0 +1,674 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { motion } from 'framer-motion'
+import { useAuth } from '@/components/UserProvider'
+import { supabase } from '@/lib/supabaseClient'
+import {
+  Brain,
+  TrendingUp,
+  TrendingDown,
+  Users,
+  Bot,
+  Activity,
+  DollarSign,
+  Calendar,
+  BarChart3,
+  PieChart,
+  Zap,
+  Clock,
+  Target,
+  Award,
+  RefreshCw,
+  AlertCircle
+} from 'lucide-react'
+
+interface SystemStats {
+  totalLearnings: number
+  totalUsers: number
+  totalAgents: number
+  avgLearningsPerAgent: number
+  learningRate: number
+  weeklyGrowth: number
+  memoryCost: number
+  estimatedSavings: number
+}
+
+interface AgentLearningData {
+  agent_id: string
+  agent_name: string
+  user_email: string
+  learning_count: number
+  last_learning: string
+  avg_sentiment: string
+}
+
+interface DailyGrowth {
+  date: string
+  count: number
+  cumulative: number
+}
+
+export default function MemorySystemAdminPage() {
+  const router = useRouter()
+  const { user } = useAuth()
+  const [stats, setStats] = useState<SystemStats>({
+    totalLearnings: 0,
+    totalUsers: 0,
+    totalAgents: 0,
+    avgLearningsPerAgent: 0,
+    learningRate: 0,
+    weeklyGrowth: 0,
+    memoryCost: 0,
+    estimatedSavings: 0
+  })
+  const [topAgents, setTopAgents] = useState<AgentLearningData[]>([])
+  const [growthData, setGrowthData] = useState<DailyGrowth[]>([])
+  const [loading, setLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [timeRange, setTimeRange] = useState<'7d' | '30d' | '90d'>('30d')
+
+  useEffect(() => {
+    if (!user) {
+      // User is null or undefined - could be loading or not logged in
+      // The layout will handle redirect if needed
+      return
+    }
+
+    fetchSystemStats()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, timeRange])
+
+  const fetchSystemStats = async (isTimeRangeChange = false) => {
+    // Only show full loading on initial load, use refresh state for time range changes
+    if (loading) {
+      setLoading(true)
+    } else {
+      setIsRefreshing(true)
+    }
+    try {
+      // Calculate date range
+      const startDate = new Date()
+      const daysMap = { '7d': 7, '30d': 30, '90d': 90 }
+      startDate.setDate(startDate.getDate() - daysMap[timeRange])
+
+      // Fetch total learnings in the selected time range
+      const { count: totalLearnings } = await supabaseAdmin
+        .from('run_memories')
+        .select('*', { count: 'exact', head: true })
+        .gte('created_at', startDate.toISOString())
+
+      // Fetch unique users with learnings
+      const { data: uniqueUsers } = await supabaseAdmin
+        .from('run_memories')
+        .select('user_id')
+        .gte('created_at', startDate.toISOString())
+
+      const totalUsers = new Set(uniqueUsers?.map(u => u.user_id)).size
+
+      // Fetch unique agents with learnings
+      const { data: uniqueAgents } = await supabaseAdmin
+        .from('run_memories')
+        .select('agent_id')
+        .gte('created_at', startDate.toISOString())
+
+      const totalAgents = new Set(uniqueAgents?.map(a => a.agent_id)).size
+
+      // Calculate average learnings per agent (within time range)
+      const avgLearningsPerAgent = totalAgents > 0 ? (totalLearnings || 0) / totalAgents : 0
+
+      // Fetch learnings in current period
+      const { count: periodLearnings } = await supabaseAdmin
+        .from('run_memories')
+        .select('*', { count: 'exact', head: true })
+        .gte('created_at', startDate.toISOString())
+
+      // Calculate learning rate (learnings per day)
+      const learningRate = (periodLearnings || 0) / daysMap[timeRange]
+
+      // Calculate weekly growth
+      const oneWeekAgo = new Date()
+      oneWeekAgo.setDate(oneWeekAgo.getDate() - 7)
+      const twoWeeksAgo = new Date()
+      twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14)
+
+      const { count: thisWeekCount } = await supabaseAdmin
+        .from('run_memories')
+        .select('*', { count: 'exact', head: true })
+        .gte('created_at', oneWeekAgo.toISOString())
+
+      const { count: lastWeekCount } = await supabaseAdmin
+        .from('run_memories')
+        .select('*', { count: 'exact', head: true })
+        .gte('created_at', twoWeeksAgo.toISOString())
+        .lt('created_at', oneWeekAgo.toISOString())
+
+      const weeklyGrowth = lastWeekCount
+        ? ((((thisWeekCount || 0) - (lastWeekCount || 0)) / lastWeekCount) * 100)
+        : 0
+
+      // Calculate memory costs (gpt-4o-mini for summarization)
+      const { data: memoryCosts } = await supabaseAdmin
+        .from('token_usage')
+        .select('cost_usd')
+        .eq('activity_type', 'memory_creation')
+        .gte('created_at', startDate.toISOString())
+
+      const memoryCost = memoryCosts?.reduce((sum, m) => sum + (m.cost_usd || 0), 0) || 0
+
+      // Estimate savings (conservative: 10% reduction in repeat errors)
+      const estimatedSavings = memoryCost > 0 ? memoryCost * 15 : 0
+
+      setStats({
+        totalLearnings: totalLearnings || 0,
+        totalUsers,
+        totalAgents,
+        avgLearningsPerAgent: Math.round(avgLearningsPerAgent * 10) / 10,
+        learningRate: Math.round(learningRate * 10) / 10,
+        weeklyGrowth: Math.round(weeklyGrowth),
+        memoryCost,
+        estimatedSavings
+      })
+
+      // Fetch top learning agents
+      const { data: agentLearnings, error: agentError } = await supabase
+        .from('run_memories')
+        .select(`
+          agent_id,
+          agents!inner(agent_name, user_id),
+          sentiment,
+          created_at
+        `)
+        .gte('created_at', startDate.toISOString())
+        .order('created_at', { ascending: false })
+
+      if (agentError) {
+        console.error('Error fetching agent learnings:', agentError)
+      }
+
+      // Group by agent and count
+      const agentMap = new Map<string, any>()
+      agentLearnings?.forEach((learning: any) => {
+        const agentId = learning.agent_id
+        if (!agentMap.has(agentId)) {
+          agentMap.set(agentId, {
+            agent_id: agentId,
+            agent_name: learning.agents?.agent_name || 'Unknown Agent',
+            user_id: learning.agents?.user_id,
+            learning_count: 0,
+            last_learning: learning.created_at,
+            sentiments: []
+          })
+        }
+        const agent = agentMap.get(agentId)!
+        agent.learning_count++
+        if (learning.sentiment) agent.sentiments.push(learning.sentiment)
+      })
+
+      // Get top agents array
+      const topAgentsArray = Array.from(agentMap.values())
+        .sort((a, b) => b.learning_count - a.learning_count)
+        .slice(0, 10)
+
+      // Fetch user emails from admin API endpoint
+      const uniqueUserIds = [...new Set(topAgentsArray.map(a => a.user_id).filter(Boolean))]
+      let userEmailMap = new Map()
+
+      if (uniqueUserIds.length > 0) {
+        try {
+          const response = await fetch('/api/admin/user-emails', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userIds: uniqueUserIds })
+          })
+
+          if (response.ok) {
+            const { data } = await response.json()
+            userEmailMap = new Map(Object.entries(data))
+          } else {
+            console.error('Error fetching user emails:', await response.text())
+          }
+        } catch (error) {
+          console.error('Error calling user-emails API:', error)
+        }
+      }
+
+      const topAgentsWithEmails = topAgentsArray.map(agent => ({
+        agent_id: agent.agent_id,
+        agent_name: agent.agent_name,
+        user_email: agent.user_id ? (userEmailMap.get(agent.user_id) || 'Unknown User') : 'Unknown User',
+        learning_count: agent.learning_count,
+        last_learning: agent.last_learning,
+        avg_sentiment: agent.sentiments.length > 0
+          ? agent.sentiments.filter((s: string) => s === 'positive').length > agent.sentiments.length / 2
+            ? 'Positive'
+            : 'Mixed'
+          : 'N/A'
+      }))
+
+      setTopAgents(topAgentsWithEmails)
+
+      // Fetch daily growth data
+      const { data: dailyData } = await supabase
+        .from('run_memories')
+        .select('created_at')
+        .gte('created_at', startDate.toISOString())
+        .order('created_at', { ascending: true })
+
+      // Group by date
+      const dailyMap = new Map<string, number>()
+      dailyData?.forEach(item => {
+        const date = new Date(item.created_at).toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric'
+        })
+        dailyMap.set(date, (dailyMap.get(date) || 0) + 1)
+      })
+
+      // Create growth array
+      const growthArray: DailyGrowth[] = []
+      let cumulative = 0
+      for (let i = daysMap[timeRange] - 1; i >= 0; i--) {
+        const date = new Date()
+        date.setDate(date.getDate() - i)
+        const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        const count = dailyMap.get(dateStr) || 0
+        cumulative += count
+        growthArray.push({ date: dateStr, count, cumulative })
+      }
+
+      setGrowthData(growthArray)
+      setLoading(false)
+      setIsRefreshing(false)
+    } catch (error) {
+      console.error('Error fetching system stats:', error)
+      setLoading(false)
+      setIsRefreshing(false)
+    }
+  }
+
+  const maxDailyCount = Math.max(...growthData.map(d => d.count), 1)
+  const roiPercentage = stats.memoryCost > 0
+    ? Math.round((stats.estimatedSavings / stats.memoryCost) * 100)
+    : 0
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <RefreshCw className="h-8 w-8 animate-spin text-purple-400" />
+      </div>
+    )
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="space-y-6"
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-xl flex items-center justify-center">
+            <Brain className="h-6 w-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-white">Memory System Analytics</h1>
+            <p className="text-slate-400 text-sm">Platform-wide agent memory insights and ROI</p>
+          </div>
+        </div>
+
+        {/* Time Range Selector */}
+        <div className="flex items-center gap-2">
+          {isRefreshing && (
+            <RefreshCw className="h-4 w-4 animate-spin text-purple-400" />
+          )}
+          <div className="flex items-center gap-2 bg-slate-800/50 backdrop-blur-xl rounded-lg p-1 border border-white/10">
+            {(['7d', '30d', '90d'] as const).map(range => (
+              <button
+                key={range}
+                onClick={() => setTimeRange(range)}
+                disabled={isRefreshing}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                  timeRange === range
+                    ? 'bg-gradient-to-r from-purple-500 to-indigo-600 text-white'
+                    : 'text-slate-300 hover:bg-slate-700/50'
+                }`}
+              >
+                {range === '7d' ? '7 Days' : range === '30d' ? '30 Days' : '90 Days'}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Key Metrics Grid */}
+      <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 transition-opacity duration-300 ${isRefreshing ? 'opacity-60' : 'opacity-100'}`}>
+        {/* Total Memories */}
+        <div className="bg-purple-500/20 backdrop-blur-xl rounded-xl p-4 border border-purple-500/20">
+          <div className="flex items-center justify-between mb-3">
+            <Brain className="h-6 w-6 text-purple-300" />
+            <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold ${
+              stats.weeklyGrowth >= 0 ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'
+            }`}>
+              {stats.weeklyGrowth >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+              <span>{stats.weeklyGrowth >= 0 ? '+' : ''}{stats.weeklyGrowth}%</span>
+            </div>
+          </div>
+          <div className="text-2xl font-bold text-purple-300 mb-1">{stats.totalLearnings.toLocaleString()}</div>
+          <div className="text-xs text-purple-400">Total Memory Records</div>
+        </div>
+
+        {/* Active Users */}
+        <div className="bg-blue-500/20 backdrop-blur-xl rounded-xl p-4 border border-blue-500/20">
+          <div className="flex items-center justify-between mb-3">
+            <Users className="h-6 w-6 text-blue-300" />
+          </div>
+          <div className="text-2xl font-bold text-blue-300 mb-1">{stats.totalUsers}</div>
+          <div className="text-xs text-blue-400">Active Users</div>
+        </div>
+
+        {/* Memory-Enhanced Agents */}
+        <div className="bg-indigo-500/20 backdrop-blur-xl rounded-xl p-4 border border-indigo-500/20">
+          <div className="flex items-center justify-between mb-3">
+            <Bot className="h-6 w-6 text-indigo-300" />
+          </div>
+          <div className="text-2xl font-bold text-indigo-300 mb-1">{stats.totalAgents}</div>
+          <div className="text-xs text-indigo-400">Memory-Enhanced Agents</div>
+        </div>
+
+        {/* Daily Rate */}
+        <div className="bg-amber-500/20 backdrop-blur-xl rounded-xl p-4 border border-amber-500/20">
+          <div className="flex items-center justify-between mb-3">
+            <Zap className="h-6 w-6 text-amber-300" />
+          </div>
+          <div className="text-2xl font-bold text-amber-300 mb-1">{stats.learningRate}</div>
+          <div className="text-xs text-amber-400">Memories per Day</div>
+        </div>
+      </div>
+
+      {/* ROI and Health Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* ROI Calculator */}
+        <div className="bg-green-500/20 backdrop-blur-xl rounded-xl p-6 border border-green-500/20">
+          <div className="flex items-center gap-3 mb-4">
+            <DollarSign className="h-6 w-6 text-green-300" />
+            <div>
+              <div className="text-sm text-green-300 font-semibold">Estimated ROI</div>
+              <div className="text-xs text-green-400">Return on Investment</div>
+            </div>
+          </div>
+          <div className="text-3xl font-bold text-green-300 mb-2">{roiPercentage}x</div>
+          <div className="text-sm text-green-400 mb-4">
+            ${stats.estimatedSavings.toFixed(4)} saved from ${stats.memoryCost.toFixed(4)} investment
+          </div>
+          <div className="p-3 bg-slate-800/50 rounded-lg border border-green-500/10">
+            <div className="text-xs space-y-1">
+              <div className="flex justify-between text-slate-300">
+                <span>Memory Cost:</span>
+                <span className="font-semibold text-green-300">${stats.memoryCost.toFixed(4)}</span>
+              </div>
+              <div className="flex justify-between text-slate-300">
+                <span>Est. Savings:</span>
+                <span className="font-semibold text-green-300">${stats.estimatedSavings.toFixed(4)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* System Health */}
+        <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10">
+          <div className="flex items-center gap-3 mb-4">
+            <Activity className="h-6 w-6 text-purple-300" />
+            <div>
+              <div className="text-sm text-slate-300 font-semibold">System Health</div>
+              <div className="text-xs text-slate-400">Memory effectiveness</div>
+            </div>
+          </div>
+          <div className="space-y-3">
+            <div>
+              <div className="flex justify-between text-sm mb-1">
+                <span className="text-slate-400">Adoption Rate</span>
+                <span className="font-semibold text-white">
+                  {stats.totalAgents > 0 ? Math.round((stats.totalAgents / Math.max(stats.totalUsers, 1)) * 100) : 0}%
+                </span>
+              </div>
+              <div className="w-full bg-slate-700 rounded-full h-2">
+                <div
+                  className="bg-gradient-to-r from-purple-500 to-indigo-600 h-2 rounded-full transition-all"
+                  style={{ width: `${stats.totalAgents > 0 ? Math.min((stats.totalAgents / Math.max(stats.totalUsers, 1)) * 100, 100) : 0}%` }}
+                />
+              </div>
+            </div>
+            <div>
+              <div className="flex justify-between text-sm mb-1">
+                <span className="text-slate-400">Growth Momentum</span>
+                <span className="font-semibold text-white">
+                  {stats.weeklyGrowth >= 20 ? 'Excellent' : stats.weeklyGrowth >= 10 ? 'Good' : stats.weeklyGrowth >= 0 ? 'Steady' : 'Declining'}
+                </span>
+              </div>
+              <div className="w-full bg-slate-700 rounded-full h-2">
+                <div
+                  className={`h-2 rounded-full transition-all ${
+                    stats.weeklyGrowth >= 20 ? 'bg-green-500' :
+                    stats.weeklyGrowth >= 10 ? 'bg-blue-500' :
+                    stats.weeklyGrowth >= 0 ? 'bg-yellow-500' : 'bg-red-500'
+                  }`}
+                  style={{ width: `${Math.min(Math.abs(stats.weeklyGrowth) * 2, 100)}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Quick Insights */}
+        <div className="bg-blue-500/20 backdrop-blur-xl rounded-xl p-6 border border-blue-500/20">
+          <div className="flex items-center gap-3 mb-4">
+            <Target className="h-6 w-6 text-blue-300" />
+            <div>
+              <div className="text-sm text-blue-300 font-semibold">Quick Insights</div>
+              <div className="text-xs text-blue-400">Key takeaways</div>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-start gap-2 text-sm">
+              <Award className="h-4 w-4 text-blue-300 mt-0.5 flex-shrink-0" />
+              <span className="text-slate-300">
+                {stats.avgLearningsPerAgent >= 10
+                  ? 'Agents building strong memory'
+                  : 'Early stage memory formation'}
+              </span>
+            </div>
+            <div className="flex items-start gap-2 text-sm">
+              <Clock className="h-4 w-4 text-blue-300 mt-0.5 flex-shrink-0" />
+              <span className="text-slate-300">
+                {stats.learningRate} memories/day average
+              </span>
+            </div>
+            <div className="flex items-start gap-2 text-sm">
+              {stats.weeklyGrowth >= 0 ? (
+                <TrendingUp className="h-4 w-4 text-blue-300 mt-0.5 flex-shrink-0" />
+              ) : (
+                <AlertCircle className="h-4 w-4 text-blue-300 mt-0.5 flex-shrink-0" />
+              )}
+              <span className="text-slate-300">
+                {stats.weeklyGrowth >= 0
+                  ? `Growing ${stats.weeklyGrowth}% weekly`
+                  : 'Needs attention'}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Growth Chart */}
+      <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10">
+        <div className="flex items-center gap-3 mb-6">
+          <BarChart3 className="h-5 w-5 text-purple-300" />
+          <div>
+            <h3 className="text-lg font-bold text-white">Memory Growth Trend</h3>
+            <p className="text-sm text-slate-400">Daily memory accumulation over time</p>
+          </div>
+        </div>
+
+        {/* Dual Chart: Daily + Cumulative */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Daily Memories */}
+          <div>
+            <div className="text-sm font-semibold text-slate-300 mb-3">Daily Memories</div>
+            <div className="flex items-end justify-between gap-1 h-48">
+              {growthData.map((day, index) => (
+                <div key={index} className="flex-1 flex flex-col items-center gap-1">
+                  <div className="w-full flex flex-col justify-end items-center h-40 relative group">
+                    {day.count > 0 && (
+                      <div
+                        className="w-full bg-gradient-to-t from-purple-500 to-indigo-500 rounded-t-lg transition-all duration-300 hover:from-purple-400 hover:to-indigo-400"
+                        style={{ height: `${(day.count / maxDailyCount) * 100}%`, minHeight: '4px' }}
+                      >
+                        <div className="absolute -top-10 left-1/2 transform -translate-x-1/2 bg-slate-900 text-white text-xs py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 border border-white/10">
+                          {day.count} memories
+                        </div>
+                      </div>
+                    )}
+                    {day.count === 0 && <div className="w-full h-1 bg-slate-700 rounded-full" />}
+                  </div>
+                  <span className="text-xs text-slate-400 font-medium truncate w-full text-center">
+                    {day.date.split(' ')[1]}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Cumulative Growth */}
+          <div>
+            <div className="text-sm font-semibold text-slate-300 mb-3">Cumulative Growth</div>
+            <div className="h-48 flex items-end relative">
+              <svg viewBox="0 0 400 192" preserveAspectRatio="none" className="w-full h-48">
+                <defs>
+                  <linearGradient id="gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" stopColor="rgb(168 85 247)" stopOpacity="0.4" />
+                    <stop offset="100%" stopColor="rgb(99 102 241)" stopOpacity="0.1" />
+                  </linearGradient>
+                </defs>
+                {growthData.length > 1 && (
+                  <>
+                    {/* Area */}
+                    <path
+                      d={`M 0 192 ${growthData.map((d, i) => {
+                        const x = (i / (growthData.length - 1)) * 400
+                        const maxCumulative = Math.max(...growthData.map(g => g.cumulative), 1)
+                        const y = 192 - (d.cumulative / maxCumulative) * 160
+                        return `L ${x} ${y}`
+                      }).join(' ')} L 400 192 Z`}
+                      fill="url(#gradient)"
+                    />
+                    {/* Line */}
+                    <path
+                      d={`M ${growthData.map((d, i) => {
+                        const x = (i / (growthData.length - 1)) * 400
+                        const maxCumulative = Math.max(...growthData.map(g => g.cumulative), 1)
+                        const y = 192 - (d.cumulative / maxCumulative) * 160
+                        return `${x} ${y}`
+                      }).join(' L ')}`}
+                      stroke="rgb(139 92 246)"
+                      strokeWidth="3"
+                      fill="none"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </>
+                )}
+              </svg>
+              <div className="absolute bottom-0 left-0 text-xs text-slate-400">0</div>
+              <div className="absolute top-0 right-0 text-xs font-semibold text-purple-300">
+                {Math.max(...growthData.map(d => d.cumulative), 0)}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Top Memory Agents Table */}
+      <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10">
+        <div className="flex items-center gap-3 mb-6">
+          <Award className="h-5 w-5 text-purple-300" />
+          <div>
+            <h3 className="text-lg font-bold text-white">Top Memory Agents</h3>
+            <p className="text-sm text-slate-400">Agents with the most accumulated memory</p>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-slate-700/50">
+              <tr>
+                <th className="text-left py-3 px-4 text-xs font-medium text-slate-300 uppercase">Rank</th>
+                <th className="text-left py-3 px-4 text-xs font-medium text-slate-300 uppercase">Agent Name</th>
+                <th className="text-left py-3 px-4 text-xs font-medium text-slate-300 uppercase">User</th>
+                <th className="text-left py-3 px-4 text-xs font-medium text-slate-300 uppercase">Memories</th>
+                <th className="text-left py-3 px-4 text-xs font-medium text-slate-300 uppercase">Sentiment</th>
+                <th className="text-left py-3 px-4 text-xs font-medium text-slate-300 uppercase">Last Memory</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-700/50">
+              {topAgents.map((agent, index) => (
+                <tr key={agent.agent_id} className="hover:bg-slate-700/30 transition-colors">
+                  <td className="py-3 px-4">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${
+                      index === 0 ? 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30' :
+                      index === 1 ? 'bg-slate-500/20 text-slate-300 border border-slate-500/30' :
+                      index === 2 ? 'bg-orange-500/20 text-orange-300 border border-orange-500/30' :
+                      'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                    }`}>
+                      {index + 1}
+                    </div>
+                  </td>
+                  <td className="py-3 px-4">
+                    <div className="font-medium text-white">{agent.agent_name}</div>
+                  </td>
+                  <td className="py-3 px-4">
+                    <div className="text-sm text-slate-400">{agent.user_email}</div>
+                  </td>
+                  <td className="py-3 px-4">
+                    <div className="flex items-center gap-2">
+                      <Brain className="h-4 w-4 text-purple-400" />
+                      <span className="font-semibold text-purple-300">{agent.learning_count}</span>
+                    </div>
+                  </td>
+                  <td className="py-3 px-4">
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                      agent.avg_sentiment === 'Positive' ? 'bg-green-500/20 text-green-300' :
+                      agent.avg_sentiment === 'Mixed' ? 'bg-yellow-500/20 text-yellow-300' :
+                      'bg-slate-500/20 text-slate-300'
+                    }`}>
+                      {agent.avg_sentiment}
+                    </span>
+                  </td>
+                  <td className="py-3 px-4">
+                    <div className="text-sm text-slate-400">
+                      {new Date(agent.last_learning).toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {topAgents.length === 0 && (
+            <div className="text-center py-12">
+              <Brain className="h-12 w-12 text-slate-600 mx-auto mb-3" />
+              <p className="text-slate-400">No memory data available for this time range</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </motion.div>
+  )
+}

@@ -469,26 +469,34 @@ export async function POST(req: Request) {
           adjustedTokens
         });
 
-        // Get current total_spent (stored as tokens)
+        // Get current balance and total_spent (stored as tokens)
         const { data: currentSub } = await supabase
           .from('user_subscriptions')
-          .select('total_spent')
+          .select('balance, total_spent')
           .eq('user_id', user.id)
           .single();
 
+        const currentBalance = currentSub?.balance || 0;
         const currentTotalSpent = currentSub?.total_spent || 0;
+        const newBalance = currentBalance - adjustedTokens;
         const newTotalSpent = currentTotalSpent + adjustedTokens;
 
-        // Update total_spent with tokens (UI will convert to Pilot Credits for display)
+        // Update BOTH balance and total_spent with tokens (UI will convert to Pilot Credits for display)
         const { error: updateError } = await supabase
           .from('user_subscriptions')
-          .update({ total_spent: newTotalSpent })
+          .update({
+            balance: newBalance,
+            total_spent: newTotalSpent,
+            agents_paused: newBalance <= 0
+          })
           .eq('user_id', user.id);
 
         if (updateError) {
-          console.error('❌ [SPENDING] Failed to update total_spent:', updateError);
+          console.error('❌ [SPENDING] Failed to update balance and total_spent:', updateError);
         } else {
-          console.log(`✅ [SPENDING] Token spending tracked: ${adjustedTokens} tokens (Total: ${currentTotalSpent} → ${newTotalSpent} tokens)`);
+          console.log(`✅ [SPENDING] Token spending tracked: ${adjustedTokens} tokens`);
+          console.log(`   Balance: ${currentBalance} → ${newBalance} tokens`);
+          console.log(`   Total Spent: ${currentTotalSpent} → ${newTotalSpent} tokens`);
         }
 
         // Log transaction for audit trail (stored as tokens)
@@ -496,8 +504,8 @@ export async function POST(req: Request) {
           user_id: user.id,
           agent_id: agent.id,
           credits_delta: -adjustedTokens, // Stored as tokens
-          balance_before: currentTotalSpent,
-          balance_after: newTotalSpent,
+          balance_before: currentBalance,
+          balance_after: newBalance,
           transaction_type: 'deduction', // DB constraint requires 'deduction' for charges
           activity_type: 'agent_execution',
           description: `${executionType === 'pilot' ? 'Pilot' : 'AgentKit'} execution: ${tokensUsed} tokens × ${intensityMultiplier.toFixed(2)} intensity`,

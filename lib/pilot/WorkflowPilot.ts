@@ -405,9 +405,12 @@ export class WorkflowPilot {
           }
         } catch (reconciliationError: any) {
           // Non-critical - log but don't fail execution
-          console.warn(`⚠️  [WorkflowPilot] Token reconciliation failed (non-critical):`, reconciliationError.message);
+          // Only log if it's not a "not found" error (which can happen if execution failed before completing)
+          if (!reconciliationError.message?.includes('not found')) {
+            console.warn(`⚠️  [WorkflowPilot] Token reconciliation failed (non-critical):`, reconciliationError.message);
+          }
         }
-      }, 1000); // Wait 1 second for DB transaction to complete
+      }, 2000); // Wait 2 seconds for DB transaction to complete
 
       // 14. Update AIS metrics (async)
       this.updateAISMetrics(agent.id, context).catch(err =>
@@ -1253,17 +1256,20 @@ export class WorkflowPilot {
 
     const executionData = {
       agent_id: agentId,
-      execution_id: context.executionId,
-      status: 'success',
-      duration_ms: context.totalExecutionTime,
+      user_id: context.userId,
+      execution_duration_ms: context.totalExecutionTime,
       tokens_used: context.totalTokensUsed,
-      plugin_calls: Array.from(context.getAllStepOutputs().values()).filter(
+      iterations_count: 1,
+      was_successful: true,
+      plugins_used: Array.from(new Set(
+        Array.from(context.getAllStepOutputs().values())
+          .map(o => o.plugin)
+          .filter(p => p && p !== 'system')
+      )),
+      tool_calls_count: Array.from(context.getAllStepOutputs().values()).filter(
         o => o.plugin !== 'system'
       ).length,
-      workflow_steps_executed: context.completedSteps.length,
-      iterations: 1,
-      model_used: 'workflow',
-      provider: 'orchestrator',
+      workflow_steps: context.completedSteps.length,
     };
 
     await updateAgentIntensityMetrics(this.supabase, executionData);

@@ -7,6 +7,10 @@ interface UserSubscription {
   total_spent: number
   status: string
   monthly_credits?: number
+  storage_quota_mb?: number
+  storage_used_mb?: number
+  executions_quota?: number | null
+  executions_used?: number
 }
 
 interface StatsCardsV2Props {
@@ -23,6 +27,22 @@ export default function StatsCardsV2({
   formatCredits
 }: StatsCardsV2Props) {
   const isActive = userSubscription?.status === 'active' || userSubscription?.status === 'past_due'
+
+  // Format storage display
+  const formatStorage = (mb: number) => {
+    if (mb >= 1000) {
+      return `${(mb / 1000).toFixed(1)} GB`
+    }
+    return `${mb} MB`
+  }
+
+  // Format executions display
+  const formatExecutions = (used: number, quota: number | null | undefined) => {
+    if (quota === null || quota === undefined) {
+      return `${used.toLocaleString()} / ∞`
+    }
+    return `${used.toLocaleString()} / ${quota.toLocaleString()}`
+  }
 
   const stats = [
     {
@@ -57,6 +77,16 @@ export default function StatsCardsV2({
       label: 'Used',
       value: formatCredits(userSubscription?.total_spent || 0),
       color: 'text-[var(--v2-text-primary)]'
+    },
+    {
+      label: 'Storage',
+      value: formatStorage(userSubscription?.storage_used_mb || 0) + ' / ' + formatStorage(userSubscription?.storage_quota_mb || 1000),
+      color: 'text-[var(--v2-text-primary)]'
+    },
+    {
+      label: 'Executions',
+      value: formatExecutions(userSubscription?.executions_used || 0, userSubscription?.executions_quota),
+      color: 'text-[var(--v2-text-primary)]'
     }
   ]
 
@@ -64,11 +94,11 @@ export default function StatsCardsV2({
     <div className="bg-[var(--v2-surface)] border border-gray-200 dark:border-gray-700 p-4"
       style={{ borderRadius: 'var(--v2-radius-card)' }}
     >
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
         {stats.map((stat, index) => (
           <div key={index} className="text-center">
             <div className="text-xs text-[var(--v2-text-muted)] mb-1">{stat.label}</div>
-            <div className={`text-lg font-bold ${stat.color}`}>{stat.value}</div>
+            <div className={`text-sm lg:text-base font-bold ${stat.color}`}>{stat.value}</div>
           </div>
         ))}
       </div>

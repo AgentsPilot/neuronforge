@@ -39,6 +39,10 @@ interface UserSubscription {
   monthly_pilot_credits?: number
   monthly_credits?: number
   monthly_amount_usd?: number
+  storage_quota_mb?: number
+  storage_used_mb?: number
+  executions_quota?: number | null
+  executions_used?: number
 }
 
 interface BoostPack {
@@ -106,6 +110,13 @@ export default function BillingSettingsV2() {
   const [hasMoreInvoices, setHasMoreInvoices] = useState(false)
   const [pageHistory, setPageHistory] = useState<string[]>([])
   const [currentPageLastId, setCurrentPageLastId] = useState<string | null>(null)
+
+  // Storage state
+  const [storageQuotaMB, setStorageQuotaMB] = useState(0)
+  const [storageUsedMB, setStorageUsedMB] = useState(0)
+
+  // Executions state
+  const [totalExecutions, setTotalExecutions] = useState(0)
 
   useEffect(() => {
     fetchBillingData()
@@ -266,7 +277,18 @@ export default function BillingSettingsV2() {
 
       if (subscription) {
         setUserSubscription(subscription)
+        // Set storage data
+        setStorageQuotaMB(subscription.storage_quota_mb || 0)
+        setStorageUsedMB(subscription.storage_used_mb || 0)
       }
+
+      // Get total executions count
+      const { count: executionsCount } = await supabase
+        .from('workflow_executions')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+
+      setTotalExecutions(executionsCount || 0)
 
       const { data: rewardTransactions } = await supabase
         .from('credit_transactions')
@@ -1147,20 +1169,77 @@ export default function BillingSettingsV2() {
                     <div className="text-[10px] text-[var(--v2-text-muted)] mt-0.5">-15 remaining</div>
                   </div>
 
-                  {/* Executions Today */}
+                  {/* Total Executions */}
                   <div>
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-medium text-[var(--v2-text-primary)]">Executions Today</span>
+                      <span className="text-xs font-medium text-[var(--v2-text-primary)]">Total Executions</span>
                       <span className="text-xs text-[var(--v2-text-secondary)]">
-                        0 / 100 <span className="text-green-600 dark:text-green-400 font-semibold">(0.0% used)</span>
+                        {(() => {
+                          const used = userSubscription?.executions_used || 0
+                          const quota = userSubscription?.executions_quota
+
+                          if (quota === null || quota === undefined) {
+                            return (
+                              <>
+                                {used.toLocaleString()} / ∞ <span className="text-green-600 dark:text-green-400 font-semibold">(unlimited)</span>
+                              </>
+                            )
+                          }
+
+                          const percentUsed = quota > 0 ? ((used / quota) * 100).toFixed(1) : '0.0'
+                          const colorClass = parseFloat(percentUsed) >= 90 ? 'text-red-600 dark:text-red-400' : parseFloat(percentUsed) >= 70 ? 'text-orange-600 dark:text-orange-400' : 'text-green-600 dark:text-green-400'
+                          return (
+                            <>
+                              {used.toLocaleString()} / {quota.toLocaleString()} <span className={`${colorClass} font-semibold`}>({percentUsed}% used)</span>
+                            </>
+                          )
+                        })()}
                       </span>
                     </div>
                     <div className="w-full bg-[var(--v2-bg)] h-1.5"
                       style={{ borderRadius: 'var(--v2-radius-button)' }}
                     >
-                      <div className="bg-green-500 h-1.5" style={{ width: '0%', borderRadius: 'var(--v2-radius-button)' }}></div>
+                      <div
+                        className={(() => {
+                          const used = userSubscription?.executions_used || 0
+                          const quota = userSubscription?.executions_quota
+
+                          if (quota === null || quota === undefined) {
+                            return 'bg-green-500 h-1.5'
+                          }
+
+                          const percentUsed = quota > 0 ? (used / quota) * 100 : 0
+                          const colorClass = percentUsed >= 90 ? 'bg-red-500' : percentUsed >= 70 ? 'bg-orange-500' : 'bg-blue-500'
+                          return `${colorClass} h-1.5`
+                        })()}
+                        style={{
+                          width: (() => {
+                            const used = userSubscription?.executions_used || 0
+                            const quota = userSubscription?.executions_quota
+
+                            if (quota === null || quota === undefined) {
+                              return '100%'
+                            }
+
+                            return `${quota > 0 ? Math.min((used / quota) * 100, 100) : 0}%`
+                          })(),
+                          borderRadius: 'var(--v2-radius-button)'
+                        }}
+                      ></div>
                     </div>
-                    <div className="text-[10px] text-[var(--v2-text-muted)] mt-0.5">100 remaining</div>
+                    <div className="text-[10px] text-[var(--v2-text-muted)] mt-0.5">
+                      {(() => {
+                        const used = userSubscription?.executions_used || 0
+                        const quota = userSubscription?.executions_quota
+
+                        if (quota === null || quota === undefined) {
+                          return 'Unlimited executions available'
+                        }
+
+                        const remaining = Math.max(0, quota - used)
+                        return `${remaining.toLocaleString()} remaining`
+                      })()}
+                    </div>
                   </div>
 
                   {/* Storage */}
@@ -1168,15 +1247,37 @@ export default function BillingSettingsV2() {
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-xs font-medium text-[var(--v2-text-primary)]">Storage</span>
                       <span className="text-xs text-[var(--v2-text-secondary)]">
-                        150 MB / 500 MB <span className="text-blue-600 dark:text-blue-400 font-semibold">(30.0% used)</span>
+                        {(() => {
+                          const used = storageUsedMB.toFixed(0)
+                          const quota = storageQuotaMB
+                          const percentUsed = quota > 0 ? ((storageUsedMB / quota) * 100).toFixed(1) : '0.0'
+                          const colorClass = parseFloat(percentUsed) >= 90 ? 'text-red-600 dark:text-red-400' : parseFloat(percentUsed) >= 70 ? 'text-orange-600 dark:text-orange-400' : 'text-green-600 dark:text-green-400'
+                          return (
+                            <>
+                              {used} MB / {quota} MB <span className={`${colorClass} font-semibold`}>({percentUsed}% used)</span>
+                            </>
+                          )
+                        })()}
                       </span>
                     </div>
                     <div className="w-full bg-[var(--v2-bg)] h-1.5"
                       style={{ borderRadius: 'var(--v2-radius-button)' }}
                     >
-                      <div className="bg-blue-500 h-1.5" style={{ width: '30%', borderRadius: 'var(--v2-radius-button)' }}></div>
+                      <div
+                        className={(() => {
+                          const percentUsed = storageQuotaMB > 0 ? (storageUsedMB / storageQuotaMB) * 100 : 0
+                          const colorClass = percentUsed >= 90 ? 'bg-red-500' : percentUsed >= 70 ? 'bg-orange-500' : 'bg-green-500'
+                          return `${colorClass} h-1.5`
+                        })()}
+                        style={{
+                          width: `${storageQuotaMB > 0 ? Math.min((storageUsedMB / storageQuotaMB) * 100, 100) : 0}%`,
+                          borderRadius: 'var(--v2-radius-button)'
+                        }}
+                      ></div>
                     </div>
-                    <div className="text-[10px] text-[var(--v2-text-muted)] mt-0.5">350 MB remaining</div>
+                    <div className="text-[10px] text-[var(--v2-text-muted)] mt-0.5">
+                      {Math.max(0, storageQuotaMB - storageUsedMB).toFixed(0)} MB remaining
+                    </div>
                   </div>
                 </div>
               </div>
