@@ -77,52 +77,6 @@ export function V2Footer() {
       }
     }
 
-<<<<<<< HEAD
-    const fetchConnectedPlugins = async () => {
-      try {
-        // Fetch detailed connection info from database
-        // Using * to select all columns (some columns may not exist in all deployments)
-        const { data: connections, error } = await supabase
-          .from('plugin_connections')
-          .select('*')
-          .eq('user_id', user.id)
-
-        if (error) {
-          console.error('[Footer] Error fetching plugin connections:', error)
-          setConnectedPlugins([])
-          return
-        }
-
-        if (!connections) {
-          setConnectedPlugins([])
-          return
-        }
-
-        // Check which ones are expired
-        const now = new Date()
-        const pluginsWithStatus = connections.map(conn => {
-          const expiresAt = conn.expires_at ? new Date(conn.expires_at) : null
-          const isExpired = expiresAt ? expiresAt < now : false
-
-          return {
-            plugin_key: conn.plugin_key,
-            plugin_name: conn.plugin_name || conn.plugin_key,
-            status: isExpired ? 'expired' : 'active',
-            is_expired: isExpired,
-            connected_at: conn.created_at,
-            expires_at: conn.expires_at,
-            last_used: conn.last_used_at,
-            last_refreshed: conn.last_refreshed_at,
-            username: conn.username
-          }
-        })
-
-        setConnectedPlugins(pluginsWithStatus)
-      } catch (error) {
-        console.error('Error fetching connected plugins:', error)
-        setConnectedPlugins([])
-      }
-=======
     // Transform connected plugins from UserProvider context
     if (connectedPluginsFromContext) {
       const plugins: ConnectedPlugin[] = Object.values(connectedPluginsFromContext).map((plugin: any) => ({
@@ -132,40 +86,16 @@ export function V2Footer() {
         is_expired: plugin.is_expired || false
       }))
       setDisplayPlugins(plugins)
-      console.log('Footer - Using plugins from context:', plugins)
->>>>>>> 047417dcb655217569611b06e933b4d53d07ef9d
     }
 
     fetchLastRun()
   }, [user, connectedPluginsFromContext])
 
   const handleRefreshComplete = async () => {
-    // Refetch the connected plugins to update the status
-    if (!user) return
-
-    try {
-      const apiClient = getPluginAPIClient()
-      const status = await apiClient.getUserPluginStatus()
-
-      const connected = status.connected?.map((plugin: any) => ({
-        plugin_key: plugin.key,
-        plugin_name: plugin.name,
-        status: 'active',
-        is_expired: false
-      })) || []
-
-      const expiredKeys = status.active_expired || []
-      const expired = expiredKeys.map((pluginKey: string) => ({
-        plugin_key: pluginKey,
-        plugin_name: pluginKey,
-        status: 'expired',
-        is_expired: true
-      }))
-
-      setConnectedPlugins([...connected, ...expired])
-    } catch (error) {
-      console.error('Error refreshing plugin list:', error)
-    }
+    // Close the modal after refresh
+    setRefreshModalOpen(false)
+    setSelectedPlugin(null)
+    // The UserProvider context will automatically update connected plugins
   }
 
   const getTimeAgo = (date: Date | null) => {
