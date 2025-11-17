@@ -9,12 +9,12 @@ import { pluginStatusCache } from '@/app/api/plugins/user-status/route';
 export const dynamic = 'force-dynamic';
 
 // POST /api/plugins/refresh-token
-// Body: { pluginKey?: string } (optional - if not provided, refreshes all expired)
+// Body: { pluginKeys?: string[] } (optional - if not provided, refreshes all expired)
 // Auth: Cookie-based (primary) or userId query param (backward compatibility)
 //
 // Refreshes OAuth tokens for user's plugins:
-// - If pluginKey provided: refresh that specific plugin
-// - If no pluginKey: refresh all plugins with expired tokens
+// - If pluginKeys provided: refresh those specific plugins (can be array of 1)
+// - If no pluginKeys: refresh all plugins with expired tokens
 export async function POST(request: NextRequest) {
   try {
     // Try cookie-based authentication first (preferred method)
@@ -43,93 +43,98 @@ export async function POST(request: NextRequest) {
 
     console.log(`DEBUG: API - Refreshing tokens for user ${userId} (auth: ${authMethod})`);
 
-    // Parse request body for optional pluginKey
-    let pluginKey: string | undefined;
+    // Parse request body for optional pluginKeys
+    let pluginKeys: string[] | undefined;
     try {
       const body = await request.json();
-      pluginKey = body.pluginKey;
+      pluginKeys = body.pluginKeys;
     } catch {
       // Body is optional, so no error if parsing fails
-      pluginKey = undefined;
+      pluginKeys = undefined;
     }
 
     // Get plugin manager instance
     const pluginManager = await PluginManagerV2.getInstance();
 
-    if (pluginKey) {
-      // Refresh specific plugin
-      console.log(`DEBUG: API - Refreshing specific plugin: ${pluginKey}`);
+    if (pluginKeys && Array.isArray(pluginKeys) && pluginKeys.length > 0) {
+      // Refresh specific plugin(s)
+      console.log(`DEBUG: API - Refreshing specific plugins: ${pluginKeys.join(', ')}`);
 
-      // Check if plugin exists in registry first
-      const pluginDefinition = pluginManager.getPluginDefinition(pluginKey);
-      if (!pluginDefinition) {
-        return NextResponse.json({
-          success: false,
-          error: `Plugin ${pluginKey} not found in registry`
-        }, { status: 404 });
-      }
+      const refreshResults = {
+        refreshed: [] as string[],
+        skipped: [] as string[],
+        failed: [] as string[],
+        notFound: [] as string[]
+      };
 
-      // Check if system plugin BEFORE fetching connections (optimization)
-      if (pluginDefinition.plugin.isSystem) {
-        return NextResponse.json({
-          success: true,
-          message: `System plugin ${pluginKey} does not require token refresh`,
-          refreshed: [],
-          skipped: [pluginKey],
-          failed: []
-        });
-      }
-
-      // Only fetch connections if it's NOT a system plugin
+      // Fetch all active connections once
       const allActiveConnections = await pluginManager['userConnections'].getAllActivePlugins(userId);
-      const connection = allActiveConnections.find(conn => conn.plugin_key === pluginKey);
 
-      if (!connection) {
-        return NextResponse.json({
-          success: false,
-          error: `Plugin ${pluginKey} is not connected for this user`
-        }, { status: 404 });
+      // Process each plugin key
+      for (const currentPluginKey of pluginKeys) {
+        // Check if plugin exists in registry first
+        const pluginDefinition = pluginManager.getPluginDefinition(currentPluginKey);
+        if (!pluginDefinition) {
+          console.log(`DEBUG: Plugin ${currentPluginKey} not found in registry`);
+          refreshResults.notFound.push(currentPluginKey);
+          continue;
+        }
+
+        // Check if system plugin BEFORE checking connections (optimization)
+        if (pluginDefinition.plugin.isSystem) {
+          console.log(`DEBUG: Plugin ${currentPluginKey} is a system plugin, skipping`);
+          refreshResults.skipped.push(currentPluginKey);
+          continue;
+        }
+
+        // Find the connection for this plugin
+        const connection = allActiveConnections.find(conn => conn.plugin_key === currentPluginKey);
+
+        if (!connection) {
+          console.log(`DEBUG: Plugin ${currentPluginKey} is not connected for this user`);
+          refreshResults.failed.push(currentPluginKey);
+          continue;
+        }
+
+        // Check if token is expired or needs refresh
+        const isExpired = !pluginManager['userConnections'].isTokenValid(connection.expires_at);
+        const shouldRefresh = pluginManager['userConnections'].shouldRefreshToken(connection.expires_at, 5);
+
+        if (!isExpired && !shouldRefresh) {
+          console.log(`DEBUG: Token for ${currentPluginKey} is still valid, no refresh needed`);
+          refreshResults.skipped.push(currentPluginKey);
+          continue;
+        }
+
+        // Attempt token refresh
+        const authConfig = pluginDefinition.plugin.auth_config;
+        const refreshedConnection = await pluginManager['userConnections'].refreshToken(connection, authConfig);
+
+        if (refreshedConnection) {
+          console.log(`DEBUG: Successfully refreshed token for ${currentPluginKey}`);
+          refreshResults.refreshed.push(currentPluginKey);
+        } else {
+          console.log(`DEBUG: Failed to refresh token for ${currentPluginKey}`);
+          refreshResults.failed.push(currentPluginKey);
+        }
       }
-
-      // Check if token is expired or needs refresh
-      const isExpired = !pluginManager['userConnections'].isTokenValid(connection.expires_at);
-      const shouldRefresh = pluginManager['userConnections'].shouldRefreshToken(connection.expires_at, 5);
-
-      if (!isExpired && !shouldRefresh) {
-        return NextResponse.json({
-          success: true,
-          message: `Token for ${pluginKey} is still valid, no refresh needed`,
-          refreshed: [],
-          skipped: [pluginKey],
-          failed: []
-        });
-      }
-
-      // Attempt token refresh
-      const authConfig = pluginDefinition.plugin.auth_config;
-      const refreshedConnection = await pluginManager['userConnections'].refreshToken(connection, authConfig);
 
       // Invalidate cache after refresh
       const cacheKey = `plugin-status-${userId}`;
       pluginStatusCache.invalidate(cacheKey);
 
-      if (refreshedConnection) {
-        return NextResponse.json({
-          success: true,
-          message: `Successfully refreshed token for ${pluginKey}`,
-          refreshed: [pluginKey],
-          skipped: [],
-          failed: []
-        });
-      } else {
-        return NextResponse.json({
-          success: false,
-          error: `Failed to refresh token for ${pluginKey}. User may need to reconnect.`,
-          refreshed: [],
-          skipped: [],
-          failed: [pluginKey]
-        }, { status: 500 });
-      }
+      const totalProcessed = refreshResults.refreshed.length + refreshResults.skipped.length +
+                            refreshResults.failed.length + refreshResults.notFound.length;
+      const hasErrors = refreshResults.failed.length > 0 || refreshResults.notFound.length > 0;
+
+      return NextResponse.json({
+        success: !hasErrors,
+        message: `Processed ${totalProcessed} plugin(s): ${refreshResults.refreshed.length} refreshed, ${refreshResults.skipped.length} skipped, ${refreshResults.failed.length} failed, ${refreshResults.notFound.length} not found`,
+        refreshed: refreshResults.refreshed,
+        skipped: refreshResults.skipped,
+        failed: refreshResults.failed,
+        notFound: refreshResults.notFound
+      }, { status: hasErrors ? 207 : 200 }); // 207 Multi-Status for partial success
 
     } else {
       // Refresh all expired plugins
