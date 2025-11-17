@@ -1,4 +1,4 @@
-import { refreshIfNeeded } from '@/lib/plugins/refreshIfNeeded'
+import { getPluginConnection } from '@/lib/plugins/helpers/getPluginConnection'
 
 export async function readInbox(
   userId: string,
@@ -7,7 +7,10 @@ export async function readInbox(
   console.log('📥 readInbox called with userId:', userId, 'options:', options)
 
   const pluginKey = 'google-mail'
-  const { access_token } = await refreshIfNeeded(userId, pluginKey)
+
+  // Get connection with auto-refresh
+  const connection = await getPluginConnection(userId, pluginKey)
+  const access_token = connection.access_token
 
   const maxResults = options?.maxResults ?? 5
   const labelInput = options?.label?.trim() || 'INBOX'

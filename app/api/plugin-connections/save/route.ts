@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabaseServer'
+import { pluginStatusCache } from '@/app/api/plugins/user-status/route'
 
 export async function POST(req: NextRequest) {
   const supabase = createServerSupabaseClient()
@@ -39,6 +40,10 @@ export async function POST(req: NextRequest) {
     console.error('🔴 Supabase upsert failed:', error)
     return new NextResponse(`Supabase error: ${error.message}`, { status: 500 })
   }
+
+  // Invalidate cache so next request gets fresh plugin status
+  pluginStatusCache.invalidate(`plugin-status-${user_id}`)
+  console.log(`DEBUG: API - Cache invalidated for user ${user_id} after plugin connection save`)
 
   return NextResponse.json({ success: true, data })
 }

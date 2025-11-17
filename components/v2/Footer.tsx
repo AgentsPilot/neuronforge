@@ -7,7 +7,6 @@ import React, { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
-import { getPluginAPIClient } from '@/lib/client/plugin-api-client'
 import { DarkModeToggle } from '@/components/v2/DarkModeToggle'
 import { PluginRefreshModal } from '@/components/v2/PluginRefreshModal'
 import {
@@ -49,9 +48,9 @@ interface ConnectedPlugin {
 
 export function V2Footer() {
   const router = useRouter()
-  const { user } = useAuth()
+  const { user, connectedPlugins: connectedPluginsFromContext } = useAuth()
   const [lastRunTime, setLastRunTime] = useState<Date | null>(null)
-  const [connectedPlugins, setConnectedPlugins] = useState<ConnectedPlugin[]>([])
+  const [displayPlugins, setDisplayPlugins] = useState<ConnectedPlugin[]>([])
   const [hoveredPlugin, setHoveredPlugin] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [refreshModalOpen, setRefreshModalOpen] = useState(false)
@@ -78,6 +77,7 @@ export function V2Footer() {
       }
     }
 
+<<<<<<< HEAD
     const fetchConnectedPlugins = async () => {
       try {
         // Fetch detailed connection info from database
@@ -122,11 +122,22 @@ export function V2Footer() {
         console.error('Error fetching connected plugins:', error)
         setConnectedPlugins([])
       }
+=======
+    // Transform connected plugins from UserProvider context
+    if (connectedPluginsFromContext) {
+      const plugins: ConnectedPlugin[] = Object.values(connectedPluginsFromContext).map((plugin: any) => ({
+        plugin_key: plugin.key,
+        plugin_name: plugin.name || plugin.displayName,
+        status: plugin.is_expired ? 'expired' : 'active',
+        is_expired: plugin.is_expired || false
+      }))
+      setDisplayPlugins(plugins)
+      console.log('Footer - Using plugins from context:', plugins)
+>>>>>>> 047417dcb655217569611b06e933b4d53d07ef9d
     }
 
     fetchLastRun()
-    fetchConnectedPlugins()
-  }, [user])
+  }, [user, connectedPluginsFromContext])
 
   const handleRefreshComplete = async () => {
     // Refetch the connected plugins to update the status
@@ -243,9 +254,9 @@ export function V2Footer() {
         </div>
 
         {/* Connected Plugin Icons - Center */}
-        {connectedPlugins.length > 0 && (
+        {displayPlugins.length > 0 && (
           <div className="flex gap-2 sm:gap-3 flex-wrap justify-center">
-            {connectedPlugins.map((plugin) => (
+            {displayPlugins.map((plugin) => (
               <div
                 key={plugin.plugin_key}
                 className="relative w-12 h-12 sm:w-14 sm:h-14 bg-[var(--v2-surface)] flex items-center justify-center flex-shrink-0 cursor-pointer transition-all duration-200 hover:scale-110 border border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:shadow-lg"

@@ -179,6 +179,27 @@ export class PluginManagerV2 {
     if (this.debug) console.log(`DEBUG: Found ${Object.keys(systemPlugins).length} system plugins`);
     return systemPlugins;
   }
+
+  // Get all active plugin keys (including expired tokens) + system plugins
+  // Use for: Showing users all their active services regardless of token status
+  async getAllActivePluginKeys(userId: string): Promise<string[]> {
+    if (this.debug) console.log(`DEBUG: Getting all active plugin keys for user ${userId} (including expired)`);
+
+    // Get ALL active OAuth plugins (including those with expired tokens)
+    const allActiveOAuthConnections = await this.userConnections.getAllActivePlugins(userId);
+    const activeOAuthKeys = allActiveOAuthConnections.map(conn => conn.plugin_key);
+
+    // Get system plugins
+    const systemPlugins = this.getActionableSystemPlugins(userId);
+    const systemPluginKeys = Object.keys(systemPlugins);
+
+    // Combine both (deduplicate in case of overlap)
+    const allActiveKeys = [...new Set([...activeOAuthKeys, ...systemPluginKeys])];
+
+    if (this.debug) console.log(`DEBUG: Found ${allActiveKeys.length} total active plugin keys (OAuth: ${activeOAuthKeys.length}, System: ${systemPluginKeys.length})`);
+
+    return allActiveKeys;
+  }
   
   // Get user's connected plugins (active status only, no token refresh - FAST)
   // Use for: UI display, status checks, listing connected services
