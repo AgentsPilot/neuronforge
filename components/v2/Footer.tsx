@@ -16,7 +16,11 @@ import {
   Mail,
   MoreVertical,
   List,
-  LayoutDashboard
+  LayoutDashboard,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
+  RefreshCw
 } from 'lucide-react'
 import {
   SiGmail,
@@ -55,6 +59,14 @@ export function V2Footer() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [refreshModalOpen, setRefreshModalOpen] = useState(false)
   const [selectedPlugin, setSelectedPlugin] = useState<ConnectedPlugin | null>(null)
+
+  // New state for inline refresh
+  const [refreshingPlugin, setRefreshingPlugin] = useState<string | null>(null)
+  const [refreshStatus, setRefreshStatus] = useState<{
+    plugin: string
+    status: 'success' | 'error'
+    message?: string
+  } | null>(null)
 
   useEffect(() => {
     if (!user) return
@@ -96,6 +108,80 @@ export function V2Footer() {
     setRefreshModalOpen(false)
     setSelectedPlugin(null)
     // The UserProvider context will automatically update connected plugins
+  }
+
+  // Refresh plugin token via API
+  const handlePluginRefresh = async (plugin: ConnectedPlugin) => {
+    if (!plugin.is_expired || refreshingPlugin) return
+
+    setRefreshingPlugin(plugin.plugin_key)
+    setRefreshStatus(null)
+
+    try {
+      // Call the refresh token API
+      const response = await fetch('/api/plugins/refresh-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pluginKeys: [plugin.plugin_key]
+        })
+      })
+
+      const result = await response.json()
+
+      if (result.success && result.refreshed?.includes(plugin.plugin_key)) {
+        // Success!
+        setRefreshStatus({
+          plugin: plugin.plugin_key,
+          status: 'success'
+        })
+
+        // Clear success message after 2 seconds
+        setTimeout(() => {
+          setRefreshStatus(null)
+          setRefreshingPlugin(null)
+
+          // UserProvider will auto-update on next fetch
+          // Manually update local state for immediate UI feedback
+          setDisplayPlugins(prev => prev.map(p =>
+            p.plugin_key === plugin.plugin_key
+              ? { ...p, is_expired: false, status: 'active' }
+              : p
+          ))
+        }, 2000)
+      } else {
+        // Failed or skipped
+        const errorMsg = result.failed?.includes(plugin.plugin_key)
+          ? 'Failed to refresh token. Click to try again.'
+          : result.notFound?.includes(plugin.plugin_key)
+          ? 'Plugin not found.'
+          : result.message || 'Token refresh unsuccessful.'
+
+        setRefreshStatus({
+          plugin: plugin.plugin_key,
+          status: 'error',
+          message: errorMsg
+        })
+
+        // Clear error after 3 seconds
+        setTimeout(() => {
+          setRefreshStatus(null)
+          setRefreshingPlugin(null)
+        }, 3000)
+      }
+    } catch (error: any) {
+      console.error('Plugin refresh error:', error)
+      setRefreshStatus({
+        plugin: plugin.plugin_key,
+        status: 'error',
+        message: error.message || 'Network error. Please try again.'
+      })
+
+      setTimeout(() => {
+        setRefreshStatus(null)
+        setRefreshingPlugin(null)
+      }, 3000)
+    }
   }
 
   const getTimeAgo = (date: Date | null) => {
@@ -189,19 +275,20 @@ export function V2Footer() {
             {displayPlugins.map((plugin) => (
               <div
                 key={plugin.plugin_key}
-                className="relative w-12 h-12 sm:w-14 sm:h-14 bg-[var(--v2-surface)] flex items-center justify-center flex-shrink-0 cursor-pointer transition-all duration-200 hover:scale-110 border border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:shadow-lg"
+                className={`relative w-12 h-12 sm:w-14 sm:h-14 bg-[var(--v2-surface)]
+                  flex items-center justify-center flex-shrink-0
+                  transition-all duration-200 border border-[var(--v2-border)]
+                  ${plugin.is_expired && !refreshingPlugin
+                    ? 'cursor-pointer hover:scale-110 hover:border-[var(--v2-primary)] hover:shadow-lg'
+                    : 'cursor-default'
+                  }`}
                 style={{
                   borderRadius: 'var(--v2-radius-button)',
                   boxShadow: 'var(--v2-shadow-card)'
                 }}
                 onMouseEnter={() => setHoveredPlugin(plugin.plugin_key)}
                 onMouseLeave={() => setHoveredPlugin(null)}
-                onClick={() => {
-                  if (plugin.is_expired) {
-                    setSelectedPlugin(plugin)
-                    setRefreshModalOpen(true)
-                  }
-                }}
+                onClick={() => plugin.is_expired && handlePluginRefresh(plugin)}
               >
                 {getPluginIcon(plugin.plugin_key)}
                 {/* Status indicator - green for active, split green/orange for expired */}
@@ -222,6 +309,36 @@ export function V2Footer() {
                     className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-green-500 rounded-full border-2 shadow-sm"
                     style={{ borderColor: 'var(--v2-bg)' }}
                   ></div>
+                )}
+
+                {/* Loading Overlay */}
+                {refreshingPlugin === plugin.plugin_key && (
+                  <div
+                    className="absolute inset-0 bg-[var(--v2-surface)]/95 flex items-center justify-center backdrop-blur-sm"
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    <Loader2 className="w-6 h-6 sm:w-7 sm:h-7 text-[var(--v2-primary)] animate-spin" />
+                  </div>
+                )}
+
+                {/* Success Overlay */}
+                {refreshStatus?.plugin === plugin.plugin_key && refreshStatus.status === 'success' && (
+                  <div
+                    className="absolute inset-0 bg-green-500/95 flex items-center justify-center animate-fade-in"
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    <CheckCircle2 className="w-7 h-7 sm:w-8 sm:h-8 text-white" />
+                  </div>
+                )}
+
+                {/* Error Overlay */}
+                {refreshStatus?.plugin === plugin.plugin_key && refreshStatus.status === 'error' && (
+                  <div
+                    className="absolute inset-0 bg-red-500/95 flex items-center justify-center animate-fade-in"
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    <AlertCircle className="w-7 h-7 sm:w-8 sm:h-8 text-white" />
+                  </div>
                 )}
 
                 {/* Tooltip with V2 design and connection info */}
@@ -297,8 +414,9 @@ export function V2Footer() {
                     </div>
 
                     {plugin.is_expired && (
-                      <div className="text-orange-500 text-[10px] mt-1.5 pt-1.5 border-t border-[var(--v2-border)] font-medium">
-                        Click to Reconnect
+                      <div className="text-orange-600 dark:text-orange-400 text-[11px] mt-2 pt-2 border-t border-[var(--v2-border)] font-semibold flex items-center gap-1.5">
+                        <RefreshCw className="w-3 h-3" />
+                        Click to refresh token
                       </div>
                     )}
                     {/* Tooltip arrow */}
@@ -407,6 +525,21 @@ export function V2Footer() {
           onRefreshComplete={handleRefreshComplete}
         />
       )}
+
+      {/* CSS Animation for fade-in effect */}
+      <style jsx>{`
+        @keyframes fade-in {
+          from {
+            opacity: 0;
+          }
+          to {
+            opacity: 1;
+          }
+        }
+        .animate-fade-in {
+          animation: fade-in 0.2s ease-in-out;
+        }
+      `}</style>
     </div>
   )
 }
