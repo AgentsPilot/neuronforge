@@ -1,5 +1,5 @@
 // app/v2/agents/new/page.tsx
-// V2 Agent Creation Page - Exact replica of agent detail page layout
+// V2 Agent Creation Page - Complete Conversational Builder with Phases 1-7
 
 'use client'
 
@@ -26,8 +26,16 @@ import {
   Send,
   PlayCircle,
   ChevronDown,
-  X
+  X,
+  User,
+  CheckCircle,
+  Edit,
+  ChevronUp,
+  Plug,
+  AlertCircle
 } from 'lucide-react'
+import { useAgentBuilderState } from '@/hooks/useAgentBuilderState'
+import { useAgentBuilderMessages } from '@/hooks/useAgentBuilderMessages'
 
 function V2AgentBuilderContent() {
   const searchParams = useSearchParams()
@@ -35,9 +43,45 @@ function V2AgentBuilderContent() {
   const initialPrompt = searchParams.get('prompt')
   const { user } = useAuth()
 
-  // Schedule state
+  // Builder state and messages
+  const {
+    state: builderState,
+    setState: setBuilderState,
+    setQuestionsSequence,
+    answerQuestion,
+    setEnhancement,
+    startEditingEnhanced,
+    approvePlan
+  } = useAgentBuilderState()
+
+  const {
+    messages,
+    messagesEndRef,
+    addUserMessage,
+    addAIMessage,
+    addSystemMessage
+  } = useAgentBuilderMessages()
+
+  // Thread management state
+  const [threadId, setThreadId] = useState<string | null>(null)
+  const [isInitializing, setIsInitializing] = useState(false)
+  const initializingRef = useRef(false)
+
+  // Enhanced prompt display state
+  const [isStepsExpanded, setIsStepsExpanded] = useState(false)
+  const [enhancedPromptData, setEnhancedPromptData] = useState<any>(null)
+
+  // Service status tracking
+  const [connectedPlugins, setConnectedPlugins] = useState<string[]>([])
+  const [requiredServices, setRequiredServices] = useState<string[]>([])
+
+  // Input state
+  const [inputValue, setInputValue] = useState('')
+  const [isSending, setIsSending] = useState(false)
+
+  // Schedule state (keeping from original)
   const [scheduleMode, setScheduleMode] = useState<'manual' | 'scheduled'>('manual')
-  const [scheduleType, setScheduleType] = useState<'hourly' | 'daily' | 'weekly' | 'monthly' | ''>('') // Main type
+  const [scheduleType, setScheduleType] = useState<'hourly' | 'daily' | 'weekly' | 'monthly' | ''>('')
   const [scheduleTime, setScheduleTime] = useState<string>('09:00')
   const [selectedDays, setSelectedDays] = useState<string[]>([])
   const [selectedMonthDay, setSelectedMonthDay] = useState<string>('1')
@@ -46,7 +90,12 @@ function V2AgentBuilderContent() {
   const [showScheduleBuilder, setShowScheduleBuilder] = useState(false)
   const builderRef = useRef<HTMLDivElement>(null)
 
-  // Close builder when clicking outside
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
+
+  // Close schedule builder when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (builderRef.current && !builderRef.current.contains(event.target as Node)) {
@@ -60,7 +109,293 @@ function V2AgentBuilderContent() {
     }
   }, [showScheduleBuilder])
 
-  // Generate schedule description
+  // Initialize thread when user and prompt are ready
+  useEffect(() => {
+    if (user && initialPrompt && !threadId && !isInitializing && !initializingRef.current) {
+      initializingRef.current = true
+      initializeThread()
+    }
+  }, [user, initialPrompt, threadId, isInitializing])
+
+  // Auto-trigger Phase 3 when all questions are answered
+  useEffect(() => {
+    const allQuestionsAnswered = builderState.questionsSequence.length > 0 &&
+      builderState.questionsSequence.every(q => builderState.clarificationAnswers[q.id]?.trim())
+
+    if (builderState.workflowPhase === 'enhancement' &&
+        builderState.currentQuestionIndex === -1 &&
+        allQuestionsAnswered &&
+        !builderState.enhancementComplete) {
+
+      addAIMessage('Perfect! Let me create your detailed automation plan...')
+      setTimeout(() => {
+        processPhase3()
+      }, 1000)
+    }
+  }, [builderState.workflowPhase, builderState.currentQuestionIndex, builderState.questionsSequence, builderState.clarificationAnswers, builderState.enhancementComplete])
+
+  // Display current question when index changes
+  useEffect(() => {
+    if (builderState.workflowPhase === 'questions' &&
+        builderState.currentQuestionIndex >= 0 &&
+        builderState.questionsSequence.length > 0) {
+
+      const currentQ = builderState.questionsSequence[builderState.currentQuestionIndex]
+      if (currentQ && !messages.find(m => m.content === currentQ.question)) {
+        addAIMessage(currentQ.question)
+      }
+    }
+  }, [builderState.currentQuestionIndex, builderState.workflowPhase])
+
+  // ==================== API FUNCTIONS ====================
+
+  // Initialize thread and start Phase 1
+  const initializeThread = async () => {
+    setIsInitializing(true)
+    try {
+      // 1. Add user's original prompt to chat
+      addUserMessage(initialPrompt!)
+
+      // 2. Add thinking message
+      addAIMessage('Got it! Let me analyze your request...')
+
+      // Create thread
+      console.log('🔄 Creating thread with prompt:', initialPrompt)
+      const createRes = await fetch('/api/agent-creation/init-thread', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initial_prompt: initialPrompt })
+      })
+
+      if (!createRes.ok) {
+        throw new Error('Failed to create thread')
+      }
+
+      const createData = await createRes.json()
+      console.log('✅ Thread created:', createData.thread_id)
+      setThreadId(createData.thread_id)
+
+      // Process Phase 1 directly
+      await processPhase1(createData.thread_id)
+
+    } catch (error) {
+      console.error('❌ Thread initialization error:', error)
+      addSystemMessage('Error initializing conversation. Please try again.')
+    } finally {
+      setIsInitializing(false)
+    }
+  }
+
+  // Phase 1: Analysis
+  const processPhase1 = async (tid: string) => {
+    try {
+      console.log('🔄 Phase 1: Analysis...')
+
+      const res = await fetch('/api/agent-creation/process-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          thread_id: tid,
+          phase: 1,
+          user_prompt: initialPrompt
+        })
+      })
+
+      if (!res.ok) throw new Error('Phase 1 failed')
+
+      const data = await res.json()
+      console.log('✅ Phase 1 response:', data)
+
+      // Store connected plugins from Phase 1 for service status checking
+      if (data.connectedPlugins) {
+        setConnectedPlugins(data.connectedPlugins)
+        console.log('✅ Phase 1 - Connected plugins stored:', data.connectedPlugins)
+      }
+
+      // Display conversational summary
+      if (data.conversationalSummary) {
+        addAIMessage(data.conversationalSummary)
+      }
+
+      // Update builder state
+      setBuilderState(prev => ({
+        ...prev,
+        clarityScore: data.clarityScore || 0,
+        workflowPhase: 'analysis'
+      }))
+
+      // Move to Phase 2
+      setTimeout(() => processPhase2(tid), 1000)
+
+    } catch (error) {
+      console.error('❌ Phase 1 error:', error)
+      addSystemMessage('Error during analysis')
+    }
+  }
+
+  // Phase 2: Questions
+  const processPhase2 = async (tid: string) => {
+    try {
+      console.log('🔄 Phase 2: Questions...')
+
+      const res = await fetch('/api/agent-creation/process-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          thread_id: tid,
+          phase: 2
+        })
+      })
+
+      if (!res.ok) throw new Error('Phase 2 failed')
+
+      const data = await res.json()
+      console.log('✅ Phase 2 response:', data)
+
+      // Display conversational summary
+      if (data.conversationalSummary) {
+        addAIMessage(data.conversationalSummary)
+      }
+
+      // Extract questions
+      const questions = data.questionsSequence || []
+      if (questions.length > 0) {
+        // Store questions and trigger first question display
+        setQuestionsSequence(questions)
+        // First question will be displayed by useEffect
+      } else {
+        // No questions needed
+        addAIMessage('I have everything I need. Creating your automation plan...')
+        setTimeout(() => processPhase3(tid), 1500)
+      }
+
+    } catch (error) {
+      console.error('❌ Phase 2 error:', error)
+      addSystemMessage('Error generating questions')
+    }
+  }
+
+  // Phase 3: Enhancement
+  const processPhase3 = async (tid?: string) => {
+    const currentThreadId = tid || threadId
+    if (!currentThreadId) return
+
+    try {
+      console.log('🔄 Phase 3: Enhancement...')
+
+      const res = await fetch('/api/agent-creation/process-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          thread_id: currentThreadId,
+          phase: 3,
+          clarification_answers: builderState.clarificationAnswers
+        })
+      })
+
+      if (!res.ok) throw new Error('Phase 3 failed')
+
+      const data = await res.json()
+      console.log('✅ Phase 3 response:', data)
+
+      // Store enhanced prompt data for rich display
+      setEnhancedPromptData(data.enhanced_prompt)
+
+      // Store required services from Phase 3 for service status checking
+      if (data.enhanced_prompt?.specifics?.services_involved) {
+        setRequiredServices(data.enhanced_prompt.specifics.services_involved)
+        console.log('✅ Phase 3 - Required services stored:', data.enhanced_prompt.specifics.services_involved)
+      }
+
+      // Format enhanced prompt for state
+      const enhancedPrompt = typeof data.enhanced_prompt === 'string'
+        ? data.enhanced_prompt
+        : JSON.stringify(data.enhanced_prompt, null, 2)
+
+      setEnhancement(enhancedPrompt)
+
+      // Add simple AI message (detailed plan will show below)
+      addAIMessage("Perfect! I've created a detailed plan for your automation:")
+
+    } catch (error) {
+      console.error('❌ Phase 3 error:', error)
+      addSystemMessage('Error creating automation plan')
+    }
+  }
+
+  // ==================== HANDLERS ====================
+
+  // Handle sending messages/answers
+  const handleSend = async () => {
+    if (!inputValue.trim() || isSending) return
+
+    const answer = inputValue.trim()
+    setInputValue('')
+    setIsSending(true)
+
+    try {
+      // If we're in questions phase, treat as answer
+      if (builderState.workflowPhase === 'questions' &&
+          builderState.currentQuestionIndex >= 0 &&
+          builderState.questionsSequence.length > 0) {
+
+        const currentQ = builderState.questionsSequence[builderState.currentQuestionIndex]
+
+        // Add user's answer
+        addUserMessage(answer)
+
+        // Record answer and proceed
+        answerQuestion(currentQ.id, answer)
+
+        // Show confirmation
+        setTimeout(() => {
+          addSystemMessage('Answer recorded')
+        }, 300)
+      } else {
+        // General message (not during questions)
+        addUserMessage(answer)
+        addAIMessage('I received your message. However, I can only help during the setup process.')
+      }
+    } catch (error) {
+      console.error('❌ Send error:', error)
+      addSystemMessage('Error sending message')
+    } finally {
+      setIsSending(false)
+    }
+  }
+
+  // Handle approve plan
+  const handleApprove = () => {
+    addUserMessage('Yes, perfect!')
+    addAIMessage('Great! Creating your agent now...')
+    approvePlan()
+
+    // TODO: Navigate to agent creation completion
+    setTimeout(() => {
+      router.push('/v2/dashboard')
+    }, 2000)
+  }
+
+  // Handle edit plan
+  const handleEdit = () => {
+    addUserMessage('I need to make some changes')
+    addAIMessage('No problem! What would you like to change?')
+    startEditingEnhanced()
+    // TODO: Implement edit flow
+  }
+
+  // Handle use original
+  const handleUseOriginal = () => {
+    addUserMessage('Use the original prompt instead')
+    addAIMessage('Got it! Creating agent with your original request...')
+    // TODO: Create agent with original prompt
+    setTimeout(() => {
+      router.push('/v2/dashboard')
+    }, 2000)
+  }
+
+  // ==================== SCHEDULE HELPERS ====================
+
   const getScheduleDescription = () => {
     if (!scheduleType) return 'No schedule set'
 
@@ -87,11 +422,9 @@ function V2AgentBuilderContent() {
     return 'Configure schedule'
   }
 
-  // Helper function to toggle day selection
   const handleDayToggle = (day: string) => {
     setSelectedDays(prev => {
       if (prev.includes(day)) {
-        // Don't allow deselecting all days
         if (prev.length === 1) return prev
         return prev.filter(d => d !== day)
       } else {
@@ -100,7 +433,6 @@ function V2AgentBuilderContent() {
     })
   }
 
-  // Helper function to get day suffix (1st, 2nd, 3rd, etc.)
   const getDaySuffix = (day: number) => {
     if (day >= 11 && day <= 13) return 'th'
     switch (day % 10) {
@@ -155,42 +487,279 @@ function V2AgentBuilderContent() {
 
               {/* Chat Messages Area */}
               <div className="flex-1 overflow-y-auto space-y-4 mb-4">
-                {/* Initial Prompt Display */}
-                {initialPrompt && (
-                  <div className="flex justify-end">
-                    <div className="max-w-[80%] p-3 bg-[var(--v2-primary)] text-white rounded-lg rounded-br-none">
-                      <p className="text-sm">{initialPrompt}</p>
-                    </div>
-                  </div>
-                )}
-
-                {/* AI Response */}
-                <div className="flex justify-start">
-                  <div className="max-w-[80%] p-3 bg-gray-100 dark:bg-gray-800 rounded-lg rounded-bl-none">
-                    <p className="text-sm text-[var(--v2-text-primary)] mb-3">
-                      Great! I'll help you create this agent. Let me ask a few questions to configure it properly:
-                    </p>
-                    <div className="space-y-2">
-                      <p className="text-sm text-[var(--v2-text-primary)] font-medium">
-                        1. How often should this agent run?
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        <button className="px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg hover:border-[var(--v2-primary)] transition-colors">
-                          Every hour
-                        </button>
-                        <button className="px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg hover:border-[var(--v2-primary)] transition-colors">
-                          Daily
-                        </button>
-                        <button className="px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg hover:border-[var(--v2-primary)] transition-colors">
-                          On trigger
-                        </button>
-                        <button className="px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg hover:border-[var(--v2-primary)] transition-colors">
-                          Custom schedule
-                        </button>
+                {messages.map((message, index) => (
+                  <div key={index}>
+                    {/* System messages (centered, no avatar) */}
+                    {message.role === 'system' ? (
+                      <div className="flex justify-center">
+                        <div
+                          className="bg-[var(--v2-primary)]/10 text-[var(--v2-primary)] text-xs px-3 py-2"
+                          style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        >
+                          {message.content}
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      /* User and AI messages with avatars */
+                      <div className={`flex gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                        {/* Avatar - AI (left side) */}
+                        {message.role === 'assistant' && (
+                          <div
+                            className="w-8 h-8 flex items-center justify-center shadow-md flex-shrink-0"
+                            style={{
+                              background: 'linear-gradient(135deg, var(--v2-primary), var(--v2-secondary))',
+                              borderRadius: 'var(--v2-radius-button)'
+                            }}
+                          >
+                            <Bot className="h-4 w-4 text-white" />
+                          </div>
+                        )}
+
+                        {/* Message bubble */}
+                        <div className="max-w-[80%]">
+                          <div
+                            className={`p-3 shadow-md backdrop-blur-sm ${
+                              message.role === 'user'
+                                ? 'text-white'
+                                : 'bg-[var(--v2-surface)] border border-[var(--v2-border)]'
+                            }`}
+                            style={
+                              message.role === 'user'
+                                ? {
+                                    background: 'linear-gradient(135deg, var(--v2-primary), var(--v2-secondary))',
+                                    borderRadius: 'var(--v2-radius-button)',
+                                    boxShadow: 'var(--v2-shadow-card)'
+                                  }
+                                : {
+                                    borderRadius: 'var(--v2-radius-button)',
+                                    boxShadow: 'var(--v2-shadow-card)'
+                                  }
+                            }
+                          >
+                            <p className={`text-sm whitespace-pre-wrap leading-relaxed ${
+                              message.role === 'user' ? '' : 'text-[var(--v2-text-primary)]'
+                            }`}>
+                              {message.content}
+                            </p>
+                          </div>
+
+                          {/* Question Progress Indicator - shown for AI questions during Phase 2 */}
+                          {message.role === 'assistant' &&
+                           builderState.workflowPhase === 'questions' &&
+                           builderState.questionsSequence.length > 0 &&
+                           builderState.currentQuestionIndex >= 0 &&
+                           builderState.questionsSequence[builderState.currentQuestionIndex]?.question === message.content && (
+                            <div
+                              className="mt-2 flex items-center gap-2 px-2 py-1 bg-[var(--v2-primary)]/10 border border-[var(--v2-primary)]/20 w-fit"
+                              style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            >
+                              <MessageSquare className="w-3 h-3 text-[var(--v2-primary)]" />
+                              <span className="text-xs font-semibold text-[var(--v2-primary)]">
+                                Question {builderState.currentQuestionIndex + 1} of {builderState.questionsSequence.length}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Avatar - User (right side) */}
+                        {message.role === 'user' && (
+                          <div
+                            className="w-8 h-8 bg-gradient-to-br from-gray-500 to-gray-700 dark:from-gray-400 dark:to-gray-600 flex items-center justify-center shadow-md flex-shrink-0"
+                            style={{ borderRadius: 'var(--v2-radius-button)' }}
+                          >
+                            <User className="h-4 w-4 text-white" />
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Enhanced Prompt Accordion - Show after Phase 3 complete */}
+                    {builderState.enhancementComplete &&
+                     builderState.workflowPhase === 'approval' &&
+                     index === messages.length - 1 &&
+                     message.role === 'assistant' &&
+                     !builderState.planApproved &&
+                     enhancedPromptData && (
+                      <div className="flex justify-start mt-4">
+                        <div className="w-8 h-8 flex-shrink-0" /> {/* Spacer for alignment */}
+
+                        <div className="flex-1 max-w-3xl space-y-4">
+                          {/* Header - Outside card */}
+                          <div className="flex items-center gap-2 mb-4">
+                            <div
+                              className="w-6 h-6 bg-purple-500 flex items-center justify-center"
+                              style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            >
+                              <Sparkles className="h-4 w-4 text-white" />
+                            </div>
+                            <h4 className="font-semibold text-[var(--v2-text-primary)]">Your Agent Plan</h4>
+                          </div>
+
+                          {/* Enhanced Prompt Card - Accordion Style */}
+                          <div
+                            className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-5 space-y-4"
+                            style={{ borderRadius: 'var(--v2-radius-card)', boxShadow: 'var(--v2-shadow-card)' }}
+                          >
+                            {/* Plan Title */}
+                            {enhancedPromptData.plan_title && (
+                              <div className="pb-3 border-b border-[var(--v2-border)]">
+                                <h3 className="text-lg font-bold text-[var(--v2-text-primary)]">
+                                  📋 {enhancedPromptData.plan_title}
+                                </h3>
+                              </div>
+                            )}
+
+                            {/* Description */}
+                            {enhancedPromptData.plan_description && (
+                              <div>
+                                <h4 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-2">
+                                  📝 Description
+                                </h4>
+                                <p className="text-sm text-[var(--v2-text-secondary)] leading-relaxed">
+                                  {enhancedPromptData.plan_description}
+                                </p>
+                              </div>
+                            )}
+
+                            {/* How it works - Expandable Accordion */}
+                            {enhancedPromptData.sections?.processing_steps && (
+                              <div>
+                                <button
+                                  onClick={() => setIsStepsExpanded(!isStepsExpanded)}
+                                  className="w-full flex items-center justify-between py-2 px-3 bg-[var(--v2-surface-hover)] hover:bg-[var(--v2-border)] transition-colors"
+                                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                >
+                                  <span className="text-sm font-semibold text-[var(--v2-text-secondary)] flex items-center gap-2">
+                                    {isStepsExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                    How it works ({enhancedPromptData.sections.processing_steps.length} steps)
+                                  </span>
+                                </button>
+
+                                {isStepsExpanded && (
+                                  <div
+                                    className="mt-3 space-y-3 bg-[var(--v2-surface-hover)] p-4"
+                                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                  >
+                                    {/* Numbered steps with circle badges */}
+                                    {enhancedPromptData.sections.processing_steps.map((step: string, stepIndex: number) => (
+                                      <div key={stepIndex} className="flex gap-3">
+                                        <div
+                                          className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold"
+                                          style={{ background: 'linear-gradient(135deg, var(--v2-primary), var(--v2-secondary))' }}
+                                        >
+                                          {stepIndex + 1}
+                                        </div>
+                                        <div className="flex-1">
+                                          <p className="text-sm text-[var(--v2-text-secondary)] leading-relaxed">{step}</p>
+                                        </div>
+                                      </div>
+                                    ))}
+
+                                    {/* Additional sections */}
+                                    {enhancedPromptData.sections.data && (
+                                      <div className="pt-3 border-t border-[var(--v2-border)]">
+                                        <h5 className="text-xs font-semibold text-[var(--v2-text-muted)] mb-1">📥 Data Source</h5>
+                                        <p className="text-sm text-[var(--v2-text-secondary)]">{enhancedPromptData.sections.data}</p>
+                                      </div>
+                                    )}
+
+                                    {enhancedPromptData.sections.output && (
+                                      <div className="pt-3 border-t border-[var(--v2-border)]">
+                                        <h5 className="text-xs font-semibold text-[var(--v2-text-muted)] mb-1">📤 Output</h5>
+                                        <p className="text-sm text-[var(--v2-text-secondary)]">{enhancedPromptData.sections.output}</p>
+                                      </div>
+                                    )}
+
+                                    {enhancedPromptData.sections.delivery && (
+                                      <div className="pt-3 border-t border-[var(--v2-border)]">
+                                        <h5 className="text-xs font-semibold text-[var(--v2-text-muted)] mb-1">🚀 Delivery</h5>
+                                        <p className="text-sm text-[var(--v2-text-secondary)]">{enhancedPromptData.sections.delivery}</p>
+                                      </div>
+                                    )}
+
+                                    {enhancedPromptData.sections.error_handling && (
+                                      <div className="pt-3 border-t border-[var(--v2-border)]">
+                                        <h5 className="text-xs font-semibold text-[var(--v2-text-muted)] mb-1">⚠️ Error Handling</h5>
+                                        <p className="text-sm text-[var(--v2-text-secondary)]">{enhancedPromptData.sections.error_handling}</p>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Required Services */}
+                            {requiredServices.length > 0 && (
+                              <div>
+                                <h4 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-2 flex items-center gap-1">
+                                  <Plug className="h-3 w-3" />
+                                  Required Services
+                                </h4>
+                                <div className="grid grid-cols-2 gap-2">
+                                  {requiredServices.map((service: string) => {
+                                    const isConnected = connectedPlugins.includes(service)
+                                    return (
+                                      <div
+                                        key={service}
+                                        className={`flex items-center gap-2 px-3 py-2 text-sm font-medium ${
+                                          isConnected
+                                            ? 'bg-[var(--v2-status-success-bg)] text-[var(--v2-status-success-text)] border border-[var(--v2-status-success-border)]'
+                                            : 'bg-[var(--v2-status-warning-bg)] text-[var(--v2-status-warning-text)] border border-[var(--v2-status-warning-border)]'
+                                        }`}
+                                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                      >
+                                        {isConnected ? (
+                                          <CheckCircle className="h-4 w-4" />
+                                        ) : (
+                                          <AlertCircle className="h-4 w-4" />
+                                        )}
+                                        <span className="capitalize">{service.replace(/-/g, ' ')}</span>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Trigger Scope */}
+                            {enhancedPromptData.specifics?.trigger_scope && (
+                              <div className="pt-3 border-t border-[var(--v2-border)]">
+                                <p className="text-xs text-[var(--v2-text-muted)]">
+                                  <span className="font-semibold">⏰ Trigger:</span> {enhancedPromptData.specifics.trigger_scope}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Confirmation Text */}
+                          <p className="text-sm text-[var(--v2-text-muted)]">Does this look right?</p>
+
+                          {/* Improved Approval Buttons */}
+                          <div className="grid grid-cols-2 gap-3">
+                            <button
+                              onClick={handleApprove}
+                              className="px-6 py-3 bg-gradient-to-r from-emerald-500 to-green-600 text-white font-semibold flex items-center justify-center gap-2 transition-all hover:from-emerald-600 hover:to-green-700 active:scale-[0.98]"
+                              style={{ borderRadius: 'var(--v2-radius-button)', boxShadow: 'var(--v2-shadow-button)' }}
+                            >
+                              <CheckCircle className="h-5 w-5" />
+                              Yes, perfect!
+                            </button>
+
+                            <button
+                              onClick={handleEdit}
+                              className="px-6 py-3 bg-[var(--v2-surface)] border-2 border-[var(--v2-border)] text-[var(--v2-text-primary)] font-semibold flex items-center justify-center gap-2 transition-all hover:border-[var(--v2-primary)] hover:bg-[var(--v2-surface-hover)] active:scale-[0.98]"
+                              style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            >
+                              <Edit className="h-5 w-5" />
+                              Need changes
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </div>
+                ))}
+                <div ref={messagesEndRef} />
               </div>
 
               {/* Chat Input */}
@@ -198,11 +767,24 @@ function V2AgentBuilderContent() {
                 <div className="flex gap-2">
                   <input
                     type="text"
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault()
+                        handleSend()
+                      }
+                    }}
                     placeholder="Type your answer or question..."
-                    className="flex-1 px-3 py-2 bg-white dark:bg-gray-800 border border-[var(--v2-border)] rounded-lg text-sm text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)]"
+                    disabled={isSending || builderState.planApproved}
+                    className="flex-1 px-3 py-2 bg-white dark:bg-gray-800 border border-[var(--v2-border)] rounded-lg text-sm text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
                   />
-                  <button className="px-4 py-2 bg-[var(--v2-primary)] text-white rounded-lg hover:opacity-90 transition-opacity">
-                    <Send className="w-4 h-4" />
+                  <button
+                    onClick={handleSend}
+                    disabled={isSending || !inputValue.trim() || builderState.planApproved}
+                    className="px-4 py-2 bg-[var(--v2-primary)] text-white rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                   </button>
                 </div>
               </div>
@@ -231,8 +813,14 @@ function V2AgentBuilderContent() {
 
               {/* Progress Steps from Chat */}
               <div className="flex-1 space-y-3">
-                <div className="flex items-start gap-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
-                  <CheckCircle2 className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
+                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
+                  builderState.workflowPhase !== 'initial'
+                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
+                }`}>
+                  <CheckCircle2 className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
+                    builderState.workflowPhase !== 'initial' ? 'text-blue-500' : 'text-gray-300 dark:text-gray-600'
+                  }`} />
                   <div className="flex-1">
                     <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
                       Initial Request
@@ -243,44 +831,91 @@ function V2AgentBuilderContent() {
                   </div>
                 </div>
 
-                <div className="flex items-start gap-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
-                  <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
+                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
+                  builderState.workflowPhase === 'analysis'
+                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+                    : builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval'
+                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
+                }`}>
+                  {builderState.workflowPhase === 'analysis' ? (
+                    <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
+                  ) : builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' ? (
+                    <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
+                  ) : (
+                    <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                  )}
                   <div className="flex-1">
                     <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
-                      Scheduling Configuration
+                      Analysis Complete
                     </p>
                     <p className="text-xs text-[var(--v2-text-muted)]">
-                      Waiting for schedule preference...
+                      {builderState.workflowPhase === 'analysis' ? 'Analyzing your request...' : 'Understanding requirements'}
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-800/30 rounded-lg border border-gray-200 dark:border-gray-700 opacity-60">
-                  <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
+                  builderState.workflowPhase === 'questions'
+                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+                    : builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval'
+                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
+                }`}>
+                  {builderState.workflowPhase === 'questions' ? (
+                    <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
+                  ) : builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' ? (
+                    <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
+                  ) : (
+                    <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                  )}
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
-                      Integration Setup
+                    <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
+                      Clarification Questions
                     </p>
                     <p className="text-xs text-[var(--v2-text-muted)]">
-                      Configure required services
+                      {builderState.workflowPhase === 'questions'
+                        ? `Answering questions (${Object.keys(builderState.clarificationAnswers).length}/${builderState.questionsSequence.length})`
+                        : 'Answer clarifying questions'
+                      }
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-800/30 rounded-lg border border-gray-200 dark:border-gray-700 opacity-60">
-                  <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
+                  builderState.workflowPhase === 'enhancement'
+                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+                    : builderState.workflowPhase === 'approval'
+                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
+                }`}>
+                  {builderState.workflowPhase === 'enhancement' ? (
+                    <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
+                  ) : builderState.workflowPhase === 'approval' ? (
+                    <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
+                  ) : (
+                    <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                  )}
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
-                      Final Review
+                    <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
+                      Plan Creation
                     </p>
                     <p className="text-xs text-[var(--v2-text-muted)]">
-                      Review and confirm settings
+                      {builderState.workflowPhase === 'enhancement' ? 'Creating automation plan...' : 'Generate detailed plan'}
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-800/30 rounded-lg border border-gray-200 dark:border-gray-700 opacity-60">
-                  <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
+                  builderState.planApproved
+                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
+                }`}>
+                  {builderState.planApproved ? (
+                    <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
+                  ) : (
+                    <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                  )}
                   <div className="flex-1">
                     <p className="text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
                       Agent Ready
@@ -308,19 +943,28 @@ function V2AgentBuilderContent() {
                   <Activity className="w-5 h-5 text-[var(--v2-text-secondary)]" />
                   <div>
                     <p className="text-xs text-[var(--v2-text-muted)]">Status</p>
-                    <p className="text-sm font-medium text-blue-500">Analyzing Requirements</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <Calendar className="w-5 h-5 text-[var(--v2-text-secondary)]" />
-                  <div>
-                    <p className="text-xs text-[var(--v2-text-muted)]">Started</p>
-                    <p className="text-sm font-medium text-[var(--v2-text-primary)]">
-                      {new Date().toLocaleString()}
+                    <p className="text-sm font-medium text-blue-500">
+                      {builderState.workflowPhase === 'initial' && 'Initializing...'}
+                      {builderState.workflowPhase === 'analysis' && 'Analyzing Requirements'}
+                      {builderState.workflowPhase === 'questions' && 'Gathering Information'}
+                      {builderState.workflowPhase === 'enhancement' && 'Creating Plan'}
+                      {builderState.workflowPhase === 'approval' && 'Awaiting Approval'}
+                      {builderState.planApproved && 'Complete'}
                     </p>
                   </div>
                 </div>
+
+                {threadId && (
+                  <div className="flex items-center gap-3">
+                    <Calendar className="w-5 h-5 text-[var(--v2-text-secondary)]" />
+                    <div>
+                      <p className="text-xs text-[var(--v2-text-muted)]">Thread ID</p>
+                      <p className="text-xs font-mono text-[var(--v2-text-primary)]">
+                        {threadId.slice(0, 8)}...
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             </Card>
           </div>
@@ -351,7 +995,7 @@ function V2AgentBuilderContent() {
                 <div className="p-3 bg-gray-50 dark:bg-gray-800/30 rounded-lg border border-[var(--v2-border)]">
                   <p className="text-xs text-[var(--v2-text-muted)] mb-1">Agent Name</p>
                   <p className="text-sm font-medium text-[var(--v2-text-primary)]">
-                    {initialPrompt ? 'Email Automation Agent' : 'Untitled Agent'}
+                    {enhancedPromptData?.plan_title || (initialPrompt ? 'Agent (Building...)' : 'Untitled Agent')}
                   </p>
                 </div>
 
@@ -359,7 +1003,7 @@ function V2AgentBuilderContent() {
                 <div className="p-3 bg-gray-50 dark:bg-gray-800/30 rounded-lg border border-[var(--v2-border)]">
                   <p className="text-xs text-[var(--v2-text-muted)] mb-1">Description</p>
                   <p className="text-sm text-[var(--v2-text-primary)]">
-                    {initialPrompt || 'Describe what this agent will do...'}
+                    {enhancedPromptData?.plan_description || initialPrompt || 'Describe what this agent will do...'}
                   </p>
                 </div>
 
@@ -367,13 +1011,21 @@ function V2AgentBuilderContent() {
                 <div className="p-3 bg-gray-50 dark:bg-gray-800/30 rounded-lg border border-[var(--v2-border)]">
                   <p className="text-xs text-[var(--v2-text-muted)] mb-2">Integrations</p>
                   <div className="flex flex-wrap gap-2">
-                    <span className="text-xs px-2 py-1 bg-white dark:bg-gray-700 rounded-full border border-gray-200 dark:border-gray-600 text-[var(--v2-text-muted)]">
-                      None configured
-                    </span>
+                    {requiredServices.length > 0 ? (
+                      requiredServices.map((service: string) => (
+                        <span key={service} className="text-xs px-2 py-1 bg-white dark:bg-gray-700 rounded-full border border-gray-200 dark:border-gray-600 text-[var(--v2-text-primary)] capitalize">
+                          {service.replace(/-/g, ' ')}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-xs px-2 py-1 bg-white dark:bg-gray-700 rounded-full border border-gray-200 dark:border-gray-600 text-[var(--v2-text-muted)]">
+                        None configured
+                      </span>
+                    )}
                   </div>
                 </div>
 
-                {/* Schedule - Compact V2 Design */}
+                {/* Schedule - Compact V2 Design (keeping from original - not part of phases 1-7) */}
                 <div className="p-3 bg-gray-50 dark:bg-gray-800/30 rounded-lg border border-[var(--v2-border)] space-y-3 relative">
                   <p className="text-xs text-[var(--v2-text-muted)]">Schedule</p>
 
@@ -624,10 +1276,10 @@ function V2AgentBuilderContent() {
               {/* Action Buttons */}
               <div className="mt-auto pt-4 border-t border-[var(--v2-border)] space-y-2">
                 <button
-                  disabled
-                  className="w-full px-4 py-2.5 bg-gray-100 dark:bg-gray-800 text-[var(--v2-text-muted)] rounded-lg text-sm font-medium cursor-not-allowed"
+                  disabled={!builderState.planApproved}
+                  className="w-full px-4 py-2.5 bg-gray-100 dark:bg-gray-800 text-[var(--v2-text-muted)] rounded-lg text-sm font-medium cursor-not-allowed disabled:opacity-50"
                 >
-                  Complete setup to deploy
+                  {builderState.planApproved ? 'Creating agent...' : 'Complete setup to deploy'}
                 </button>
                 <button className="w-full px-4 py-2.5 bg-white dark:bg-gray-800 text-[var(--v2-text-secondary)] border border-[var(--v2-border)] rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                   Save as Draft
