@@ -126,7 +126,7 @@ export class StateManager {
       if (!available) {
         const quotaDisplay = quota.quota === null ? 'unlimited' : quota.quota.toLocaleString();
         throw new Error(
-          `Execution quota exceeded. You have used ${quota.used.toLocaleString()} of ${quotaDisplay} executions. Please upgrade your plan or wait for your quota to reset.`
+          `You've reached your execution limit (${quota.used.toLocaleString()} of ${quotaDisplay} runs used). Upgrade your plan to continue running agents.`
         );
       }
 

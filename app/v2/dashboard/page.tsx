@@ -18,7 +18,12 @@ import {
   Coins,
   CheckCircle2,
   XCircle,
-  Bot
+  Bot,
+  BarChart3,
+  Sparkles,
+  MessageCircle,
+  Database,
+  Clock
 } from 'lucide-react'
 
 interface AgentStat {
@@ -84,6 +89,9 @@ export default function V2DashboardPage() {
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
   const [searchQuery, setSearchQuery] = useState('')
   const [userName, setUserName] = useState<string>('')
+  const [promptIdeas, setPromptIdeas] = useState<any[]>([])
+  const [showIdeas, setShowIdeas] = useState(false)
+  const [accountFrozen, setAccountFrozen] = useState(false)
 
   // Calculate system alerts based on quota usage and failures
   const calculateSystemAlerts = (
@@ -152,7 +160,7 @@ export default function V2DashboardPage() {
         message: `Low credits: ${pilotCredits} remaining`,
         severity: 98
       })
-    } else if (pilotCredits < 1000) {
+    } else if (pilotCredits <= 10000) {
       alerts.push({
         type: 'warning',
         icon: '🟠',
@@ -163,6 +171,53 @@ export default function V2DashboardPage() {
 
     // Sort by severity (highest first) and return top 3
     return alerts.sort((a, b) => b.severity - a.severity).slice(0, 3)
+  }
+
+  const calculateFreeTierAlerts = (
+    freeTierExpiresAt: string | null,
+    accountFrozen: boolean,
+    hasSubscription: boolean
+  ): SystemAlert[] => {
+    const alerts: SystemAlert[] = []
+
+    // Only show free tier alerts if user doesn't have a paid subscription
+    if (!hasSubscription && freeTierExpiresAt) {
+      const expiresAt = new Date(freeTierExpiresAt)
+      const now = new Date()
+      const daysRemaining = Math.ceil((expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+
+      if (accountFrozen || daysRemaining <= 0) {
+        alerts.push({
+          type: 'critical',
+          icon: '🔴',
+          message: 'Free tier expired - Purchase tokens to continue',
+          severity: 999
+        })
+      } else if (daysRemaining <= 3) {
+        alerts.push({
+          type: 'critical',
+          icon: '🔴',
+          message: `Free tier expires in ${daysRemaining} ${daysRemaining === 1 ? 'day' : 'days'}!`,
+          severity: 150
+        })
+      } else if (daysRemaining <= 7) {
+        alerts.push({
+          type: 'warning',
+          icon: '🟠',
+          message: `Free tier expires in ${daysRemaining} days`,
+          severity: 120
+        })
+      } else if (daysRemaining <= 14) {
+        alerts.push({
+          type: 'caution',
+          icon: '🟡',
+          message: `Free tier expires in ${daysRemaining} days`,
+          severity: 70
+        })
+      }
+    }
+
+    return alerts
   }
 
   const fetchDashboardData = async () => {
@@ -185,7 +240,8 @@ export default function V2DashboardPage() {
         { data: subscriptionData },
         { data: recentRunsData },
         { data: agentExecutionCounts },
-        { data: profileData }
+        { data: profileData },
+        { data: promptIdeasData }
       ] = await Promise.all([
         supabase
           .from('agent_stats')
@@ -212,7 +268,7 @@ export default function V2DashboardPage() {
           .eq('user_id', user.id),
         supabase
           .from('user_subscriptions')
-          .select('balance, total_spent, storage_quota_mb, storage_used_mb, executions_quota, executions_used')
+          .select('balance, total_spent, storage_quota_mb, storage_used_mb, executions_quota, executions_used, free_tier_expires_at, account_frozen, stripe_subscription_id')
           .eq('user_id', user.id)
           .single(),
         supabase
@@ -233,12 +289,25 @@ export default function V2DashboardPage() {
           .from('profiles')
           .select('full_name')
           .eq('id', user.id)
-          .single()
+          .single(),
+        // Get user's onboarding prompt ideas
+        supabase
+          .from('onboarding_prompt_ideas')
+          .select('ideas')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
       ])
 
       // Set user name from profile
       if (profileData?.full_name) {
         setUserName(profileData.full_name)
+      }
+
+      // Set prompt ideas if available
+      if (promptIdeasData?.ideas) {
+        setPromptIdeas(promptIdeasData.ideas)
       }
 
       // Count actual executions per agent
@@ -291,7 +360,7 @@ export default function V2DashboardPage() {
       const totalSpentCredits = Math.floor(totalSpentTokens / tokensPerCredit)
 
       // Calculate system alerts
-      const systemAlerts = calculateSystemAlerts(
+      const regularAlerts = calculateSystemAlerts(
         failedCount || 0,
         subscriptionData?.storage_used_mb || 0,
         subscriptionData?.storage_quota_mb || 1000,
@@ -299,6 +368,18 @@ export default function V2DashboardPage() {
         subscriptionData?.executions_quota ?? null,
         pilotCredits
       )
+
+      // Calculate free tier alerts
+      const freeTierAlerts = calculateFreeTierAlerts(
+        subscriptionData?.free_tier_expires_at || null,
+        subscriptionData?.account_frozen || false,
+        !!subscriptionData?.stripe_subscription_id
+      )
+
+      // Merge alerts: free tier alerts first (higher priority), then regular alerts
+      const systemAlerts = [...freeTierAlerts, ...regularAlerts]
+        .sort((a, b) => b.severity - a.severity)
+        .slice(0, 3)
 
       // Update all stats at once
       setStats({
@@ -313,6 +394,9 @@ export default function V2DashboardPage() {
         maxCredits,
         systemAlerts
       })
+
+      // Set account frozen status
+      setAccountFrozen(subscriptionData?.account_frozen || false)
 
       setLastUpdated(new Date())
     } catch (error) {
@@ -386,21 +470,186 @@ export default function V2DashboardPage() {
       </div>
 
       {/* Search Box */}
-      <div className="bg-[var(--v2-surface)] p-2.5 sm:p-3 shadow-[var(--v2-shadow-card)] flex items-center gap-2 sm:gap-3" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+      <div className={`bg-[var(--v2-surface)] p-2.5 sm:p-3 shadow-[var(--v2-shadow-card)] flex items-center gap-2 sm:gap-3 ${accountFrozen || stats.creditBalance < 2000 ? 'opacity-50 cursor-not-allowed' : ''}`} style={{ borderRadius: 'var(--v2-radius-card)' }}>
           <Search className="w-4 h-4 sm:w-5 sm:h-5 text-[var(--v2-text-muted)] flex-shrink-0" />
           <input
             type="text"
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Describe what you want to automate"
+            onChange={(e) => !(accountFrozen || stats.creditBalance < 2000) && setSearchQuery(e.target.value)}
+            placeholder={accountFrozen ? "Account frozen - Purchase tokens to continue" : stats.creditBalance < 2000 ? "Insufficient balance - Need 2000 tokens to create agent" : "Describe what you want to automate"}
             className="flex-1 bg-transparent border-none outline-none text-sm sm:text-base text-[var(--v2-text-secondary)] placeholder:text-[var(--v2-text-muted)]"
+            disabled={accountFrozen || stats.creditBalance < 2000}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && searchQuery.trim()) {
+              if (e.key === 'Enter' && searchQuery.trim() && !accountFrozen && stats.creditBalance >= 2000) {
                 router.push(`/v2/agents/new?prompt=${encodeURIComponent(searchQuery)}`)
+                setShowIdeas(false)
               }
             }}
           />
+          {promptIdeas.length > 0 && !accountFrozen && stats.creditBalance >= 2000 && (
+            <button
+              onClick={() => setShowIdeas(!showIdeas)}
+              className="flex-shrink-0 px-2.5 py-1.5 text-xs font-medium text-[var(--v2-primary)] hover:text-[var(--v2-secondary)] transition-colors whitespace-nowrap"
+              style={{ WebkitAppearance: 'none' }}
+            >
+              {showIdeas ? 'Hide' : 'Show'} Ideas
+            </button>
+          )}
       </div>
+
+      {/* Prompt Ideas Suggestions */}
+      {showIdeas && promptIdeas.length > 0 && (
+        <div className="bg-[var(--v2-surface)] p-3 sm:p-4 shadow-[var(--v2-shadow-card)] space-y-2" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-semibold text-[var(--v2-text-primary)]">Your Personalized Agent Ideas</h3>
+            <button
+              onClick={() => setShowIdeas(false)}
+              className="text-xs text-[var(--v2-text-muted)] hover:text-[var(--v2-text-secondary)]"
+            >
+              ×
+            </button>
+          </div>
+          <p className="text-xs text-[var(--v2-text-muted)] mb-3">
+            Click any idea to fill the search box above, then press Enter to create your agent
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {promptIdeas.slice(0, 6).map((idea: any, index: number) => {
+              // Get category icon
+              const getCategoryIcon = () => {
+                switch (idea.category) {
+                  case 'analytics':
+                    return <BarChart3 className="w-4 h-4" />
+                  case 'automation':
+                    return <Sparkles className="w-4 h-4" />
+                  case 'communication':
+                    return <MessageCircle className="w-4 h-4" />
+                  case 'data':
+                    return <Database className="w-4 h-4" />
+                  case 'scheduling':
+                    return <Clock className="w-4 h-4" />
+                  default:
+                    return <Sparkles className="w-4 h-4" />
+                }
+              }
+
+              // Get category icon color - using V2 design system colors
+              const getCategoryColor = () => {
+                switch (idea.category) {
+                  case 'analytics':
+                    return '#06B6D4' // Cyan (like System Alerts card)
+                  case 'automation':
+                    return '#8B5CF6' // Purple (like Activity card)
+                  case 'communication':
+                    return '#10B981' // Green (like Active Agents card)
+                  case 'data':
+                    return '#F59E0B' // Orange/Amber (like Credits card)
+                  case 'scheduling':
+                    return '#6366F1' // Indigo
+                  default:
+                    return '#64748B' // Slate
+                }
+              }
+
+              // Get complexity badge
+              const getComplexityBadge = () => {
+                switch (idea.complexity) {
+                  case 'simple':
+                    return (
+                      <span className="text-[10px] px-1.5 py-0.5 bg-green-500/20 rounded-full text-green-500 font-medium">
+                        Simple
+                      </span>
+                    )
+                  case 'moderate':
+                    return (
+                      <span className="text-[10px] px-1.5 py-0.5 bg-yellow-500/20 rounded-full text-yellow-500 font-medium">
+                        Moderate
+                      </span>
+                    )
+                  case 'advanced':
+                    return (
+                      <span className="text-[10px] px-1.5 py-0.5 bg-red-500/20 rounded-full text-red-500 font-medium">
+                        Advanced
+                      </span>
+                    )
+                  default:
+                    return null
+                }
+              }
+
+              const categoryColor = getCategoryColor()
+
+              return (
+                <button
+                  key={index}
+                  onClick={() => {
+                    setSearchQuery(idea.prompt)
+                    setShowIdeas(false)
+                    // Focus the search input after a brief delay
+                    setTimeout(() => {
+                      const searchInput = document.querySelector('input[type="text"]') as HTMLInputElement
+                      if (searchInput) {
+                        searchInput.focus()
+                        searchInput.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                      }
+                    }, 100)
+                  }}
+                  className="text-left p-3 bg-[var(--v2-surface-secondary)] hover:bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] rounded-lg transition-all duration-200 group relative"
+                >
+                  {/* Header with icon and title */}
+                  <div className="flex items-start gap-2 mb-2">
+                    <div
+                      className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center"
+                      style={{ backgroundColor: `${categoryColor}20`, color: categoryColor }}
+                    >
+                      {getCategoryIcon()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-sm font-semibold text-[var(--v2-text-primary)] line-clamp-1">
+                        {idea.title}
+                      </h4>
+                      <p className="text-xs text-[var(--v2-text-muted)] capitalize mt-0.5">
+                        {idea.category}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Description */}
+                  <p className="text-xs text-[var(--v2-text-secondary)] line-clamp-3 mb-3">
+                    {idea.description}
+                  </p>
+
+                  {/* Metadata footer */}
+                  <div className="flex items-center justify-between pt-2 border-t border-[var(--v2-border)]">
+                    <div className="flex items-center gap-2">
+                      {getComplexityBadge()}
+                      <div className="flex items-center gap-1">
+                        <TrendingUp className="w-3 h-3 text-[var(--v2-text-muted)]" />
+                        <span className="text-[10px] text-[var(--v2-text-muted)]">
+                          ~{(idea.estimatedTokens / 1000).toFixed(1)}k
+                        </span>
+                      </div>
+                    </div>
+                    <span
+                      className="text-[10px] opacity-0 group-hover:opacity-100 transition-opacity font-medium"
+                      style={{ color: categoryColor }}
+                    >
+                      Use this →
+                    </span>
+                  </div>
+
+                  {/* Number badge */}
+                  <div
+                    className="absolute -top-2 -left-2 w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold shadow-lg border-2 border-[var(--v2-surface)]"
+                    style={{ backgroundColor: categoryColor }}
+                  >
+                    {index + 1}
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 items-start">
@@ -484,7 +733,7 @@ export default function V2DashboardPage() {
               <div className="flex items-center gap-2">
                 <AlertCircle className="w-6 h-6 sm:w-7 sm:h-7 text-[#06B6D4]" />
                 <h3 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)]">
-                  System Alerts
+                  Client Risk Alert
                 </h3>
               </div>
               <p className="text-sm text-[var(--v2-text-secondary)]">

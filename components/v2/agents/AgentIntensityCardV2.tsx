@@ -22,11 +22,15 @@ export function AgentIntensityCardV2({ agentId }: AgentIntensityCardV2Props) {
 
   // Poll for new executions to detect when agent runs
   useEffect(() => {
-    if (!agentId) return
+    if (!agentId || !user?.id) return
 
     const checkForNewExecutions = async () => {
       try {
-        const { data: executions } = await fetch(`/api/agents/${agentId}/executions?limit=1`).then(r => r.json())
+        const { data: executions } = await fetch(`/api/agents/${agentId}/executions?limit=1`, {
+          headers: {
+            'x-user-id': user.id
+          }
+        }).then(r => r.json())
         if (executions && executions.length > 0) {
           const latestExecTime = new Date(executions[0].started_at).getTime()
           // Use functional update to avoid dependency on lastExecutionTime
@@ -49,7 +53,7 @@ export function AgentIntensityCardV2({ agentId }: AgentIntensityCardV2Props) {
     const interval = setInterval(checkForNewExecutions, 30000)
 
     return () => clearInterval(interval)
-  }, [agentId]) // Removed lastExecutionTime from deps to prevent infinite loop
+  }, [agentId, user?.id]) // Added user?.id to deps
 
   useEffect(() => {
     if (!user?.id || !agentId) return
@@ -108,8 +112,8 @@ export function AgentIntensityCardV2({ agentId }: AgentIntensityCardV2Props) {
   const combinedScore = useMemo(() => breakdown?.combined_score ?? 0, [breakdown?.combined_score])
   const intensityRange = useMemo(() => classifyIntensityRange(combinedScore), [combinedScore])
   const hasExecutions = useMemo(
-    () => (breakdown?.details.execution_stats.total_executions ?? 0) > 0,
-    [breakdown?.details.execution_stats.total_executions]
+    () => (breakdown?.details?.execution_stats?.total_executions ?? 0) > 0,
+    [breakdown?.details?.execution_stats?.total_executions]
   )
 
   if (loading) {

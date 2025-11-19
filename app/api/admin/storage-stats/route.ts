@@ -10,11 +10,16 @@ export async function GET() {
 
     if (error) throw error;
 
-    const { data: profiles, error: profileError } = await supabaseAdmin
-      .from('profiles')
-      .select('id, email');
+    // Get emails from auth.users table
+    const { data: users, error: usersError } = await supabaseAdmin.auth.admin.listUsers();
 
-    if (profileError) throw profileError;
+    if (usersError) throw usersError;
+
+    // Map user IDs to emails
+    const profiles = users.users.map(user => ({
+      id: user.id,
+      email: user.email || 'Unknown'
+    }));
 
     return NextResponse.json({ subscriptions, profiles });
   } catch (error: any) {

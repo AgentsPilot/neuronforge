@@ -19,7 +19,8 @@ import {
   CheckCircle2,
   AlertCircle,
   ExternalLink,
-  XCircle
+  XCircle,
+  Clock
 } from 'lucide-react'
 import { createCurrencyService, ExchangeRate } from '@/lib/services/CurrencyService'
 import { formatCurrency as formatCurrencyHelper, formatCurrencyWithRate } from '@/lib/utils/currencyHelpers'
@@ -43,6 +44,11 @@ interface UserSubscription {
   storage_used_mb?: number
   executions_quota?: number | null
   executions_used?: number
+  created_at?: string
+  free_tier_granted_at?: string | null
+  free_tier_expires_at?: string | null
+  free_tier_initial_amount?: number
+  account_frozen?: boolean
 }
 
 interface BoostPack {
@@ -810,12 +816,6 @@ export default function BillingSettingsV2() {
                       <span className="text-xs text-[var(--v2-text-secondary)]">Pilot Credits</span>
                       <span className="text-xs font-semibold text-[var(--v2-text-primary)]">{formatCredits(customCredits)}</span>
                     </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs text-[var(--v2-text-secondary)]">Price per Credit</span>
-                      <span className="font-mono text-[10px] text-[var(--v2-text-primary)]">
-                        {formatCurrencyHelper(pricingConfig.pilot_credit_cost_usd, 'USD', { decimalPlaces: 5 })}
-                      </span>
-                    </div>
                     <div className="border-t border-gray-200 dark:border-gray-700 pt-2 flex justify-between items-center">
                       <span className="text-sm font-semibold text-[var(--v2-text-primary)]">Monthly Total</span>
                       <div className="text-right">
@@ -954,6 +954,124 @@ export default function BillingSettingsV2() {
         {/* Tab Content - Subscription Tab */}
         {activeTab === 'subscription' && (
           <div className="space-y-4">
+            {/* Free Tier Status Card */}
+            {userSubscription?.free_tier_expires_at && !userSubscription?.stripe_subscription_id && (
+              (() => {
+                const expiresAt = new Date(userSubscription.free_tier_expires_at)
+                const now = new Date()
+                const daysRemaining = Math.ceil((expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+                const isExpiringSoon = daysRemaining <= 7
+                const isExpired = daysRemaining <= 0
+                const pilotCredits = Math.floor((userSubscription.balance || 0) / 10)
+
+                return (
+                  <div className={`border-2 p-4 ${
+                    isExpired
+                      ? 'bg-red-50 dark:bg-red-900/20 border-red-500 dark:border-red-600'
+                      : isExpiringSoon
+                      ? 'bg-orange-50 dark:bg-orange-900/20 border-orange-500 dark:border-orange-600'
+                      : 'bg-blue-50 dark:bg-blue-900/20 border-blue-500 dark:border-blue-600'
+                  }`}
+                    style={{ borderRadius: 'var(--v2-radius-card)' }}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className={`w-10 h-10 flex items-center justify-center flex-shrink-0 ${
+                        isExpired
+                          ? 'bg-red-500 dark:bg-red-600'
+                          : isExpiringSoon
+                          ? 'bg-orange-500 dark:bg-orange-600'
+                          : 'bg-blue-500 dark:bg-blue-600'
+                      }`}
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      >
+                        <Clock className="h-5 w-5 text-white" />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className={`text-sm font-semibold mb-1 ${
+                          isExpired
+                            ? 'text-red-900 dark:text-red-300'
+                            : isExpiringSoon
+                            ? 'text-orange-900 dark:text-orange-300'
+                            : 'text-blue-900 dark:text-blue-300'
+                        }`}>
+                          {isExpired ? 'Free Tier Expired' : 'Free Tier Active'}
+                        </h3>
+                        <p className={`text-xs mb-3 ${
+                          isExpired
+                            ? 'text-red-800 dark:text-red-400'
+                            : isExpiringSoon
+                            ? 'text-orange-800 dark:text-orange-400'
+                            : 'text-blue-800 dark:text-blue-400'
+                        }`}>
+                          {isExpired ? (
+                            <>Your free tier has expired. Purchase tokens to continue using the platform.</>
+                          ) : (
+                            <>
+                              You have <strong>{pilotCredits.toLocaleString()} Pilot Credits</strong> remaining.
+                              {isExpiringSoon ? (
+                                <> Your free tier expires in <strong className="text-orange-900 dark:text-orange-300">{daysRemaining} {daysRemaining === 1 ? 'day' : 'days'}</strong>. Purchase tokens to keep your credits!</>
+                              ) : (
+                                <> Expires in <strong>{daysRemaining} days</strong> on {expiresAt.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}.</>
+                              )}
+                            </>
+                          )}
+                        </p>
+
+                        {/* Progress bar */}
+                        {!isExpired && (
+                          <div className="mb-3">
+                            <div className="h-2 bg-white/30 dark:bg-black/30 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full transition-all ${
+                                  isExpiringSoon
+                                    ? 'bg-orange-600 dark:bg-orange-500'
+                                    : 'bg-blue-600 dark:bg-blue-500'
+                                }`}
+                                style={{
+                                  width: `${Math.max(0, Math.min(100, (daysRemaining / 30) * 100))}%`
+                                }}
+                              />
+                            </div>
+                            <div className="flex justify-between mt-1">
+                              <span className={`text-[10px] ${
+                                isExpiringSoon
+                                  ? 'text-orange-700 dark:text-orange-400'
+                                  : 'text-blue-700 dark:text-blue-400'
+                              }`}>
+                                {daysRemaining} days left
+                              </span>
+                              <span className={`text-[10px] ${
+                                isExpiringSoon
+                                  ? 'text-orange-700 dark:text-orange-400'
+                                  : 'text-blue-700 dark:text-blue-400'
+                              }`}>
+                                30 days total
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        <button
+                          onClick={() => setActiveTab('credits')}
+                          className={`px-3 py-1.5 text-white hover:opacity-90 transition-all text-xs font-semibold flex items-center gap-1.5 ${
+                            isExpired
+                              ? 'bg-red-600 dark:bg-red-700'
+                              : isExpiringSoon
+                              ? 'bg-orange-600 dark:bg-orange-700'
+                              : 'bg-blue-600 dark:bg-blue-700'
+                          }`}
+                          style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        >
+                          <Rocket className="h-3.5 w-3.5" />
+                          {isExpired ? 'Purchase Tokens Now' : 'Upgrade to Keep Credits'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })()
+            )}
+
             {/* Subscription Details Cards */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
               {/* Started Date */}
@@ -962,11 +1080,19 @@ export default function BillingSettingsV2() {
               >
                 <div className="flex items-center gap-1.5 mb-1">
                   <Calendar className="h-3.5 w-3.5 text-[var(--v2-text-secondary)]" />
-                  <span className="text-[10px] font-medium text-[var(--v2-text-muted)]">Started</span>
+                  <span className="text-[10px] font-medium text-[var(--v2-text-muted)]">
+                    {(() => {
+                      const isFreeTier = userSubscription?.free_tier_expires_at && !userSubscription?.stripe_subscription_id
+                      return isFreeTier ? 'Free Tier Started' : 'Started'
+                    })()}
+                  </span>
                 </div>
                 <div className="text-sm font-bold text-[var(--v2-text-primary)]">
                   {(() => {
-                    const dateStr = userSubscription?.current_period_start || userSubscription?.created_at
+                    const isFreeTier = userSubscription?.free_tier_expires_at && !userSubscription?.stripe_subscription_id
+                    const dateStr = isFreeTier
+                      ? userSubscription?.free_tier_granted_at || userSubscription?.created_at
+                      : userSubscription?.current_period_start || userSubscription?.created_at
                     if (!dateStr) return 'N/A'
                     return new Date(dateStr).toLocaleDateString('en-US', {
                       month: 'long',
@@ -988,11 +1114,17 @@ export default function BillingSettingsV2() {
                 <div className="flex items-center gap-1.5 mb-1">
                   <Calendar className={`h-3.5 w-3.5 ${isCanceling ? 'text-red-600 dark:text-red-400' : 'text-[var(--v2-text-secondary)]'}`} />
                   <span className={`text-[10px] font-medium ${isCanceling ? 'text-red-600 dark:text-red-400' : 'text-[var(--v2-text-muted)]'}`}>
-                    {isCanceling ? 'Ends On' : 'Next Billing'}
+                    {(() => {
+                      const isFreeTier = userSubscription?.free_tier_expires_at && !userSubscription?.stripe_subscription_id
+                      if (isFreeTier) return 'Subscription Status'
+                      return isCanceling ? 'Ends On' : 'Next Billing'
+                    })()}
                   </span>
                 </div>
                 <div className={`text-sm font-bold ${isCanceling ? 'text-red-600 dark:text-red-400' : 'text-[var(--v2-text-primary)]'}`}>
                   {(() => {
+                    const isFreeTier = userSubscription?.free_tier_expires_at && !userSubscription?.stripe_subscription_id
+                    if (isFreeTier) return 'Free Tier'
                     const dateStr = userSubscription?.current_period_end
                     if (!dateStr) return 'N/A'
                     return new Date(dateStr).toLocaleDateString('en-US', {
@@ -1016,6 +1148,10 @@ export default function BillingSettingsV2() {
                 </div>
                 <div className={`text-sm font-bold ${isCanceling ? 'text-[var(--v2-text-muted)] line-through' : 'text-[var(--v2-text-primary)]'}`}>
                   {(() => {
+                    // Free tier users (no subscription) should see 0
+                    const isFreeTier = userSubscription?.free_tier_expires_at && !userSubscription?.stripe_subscription_id
+                    if (isFreeTier) return '0'
+
                     const monthlyAmountUsd = userSubscription?.monthly_amount_usd || 0
                     const monthlyPilotCredits = Math.round(monthlyAmountUsd / pricingConfig.pilot_credit_cost_usd)
                     return monthlyPilotCredits.toLocaleString()
@@ -1034,7 +1170,13 @@ export default function BillingSettingsV2() {
                   </span>
                 </div>
                 <div className={`text-sm font-bold ${isCanceling ? 'text-[var(--v2-text-muted)] line-through' : 'text-[var(--v2-text-primary)]'}`}>
-                  ${(userSubscription?.monthly_amount_usd || 0).toFixed(2)}
+                  {(() => {
+                    // Free tier users (no subscription) should see $0.00
+                    const isFreeTier = userSubscription?.free_tier_expires_at && !userSubscription?.stripe_subscription_id
+                    if (isFreeTier) return '$0.00'
+
+                    return `$${(userSubscription?.monthly_amount_usd || 0).toFixed(2)}`
+                  })()}
                 </div>
               </div>
             </div>
@@ -1091,6 +1233,9 @@ export default function BillingSettingsV2() {
                       <h3 className="text-sm font-semibold text-[var(--v2-text-primary)]">Active Subscription</h3>
                       <p className="text-xs text-[var(--v2-text-secondary)]">
                         {(() => {
+                          const isFreeTier = userSubscription?.free_tier_expires_at && !userSubscription?.stripe_subscription_id
+                          if (isFreeTier) return '0'
+
                           const monthlyAmountUsd = userSubscription?.monthly_amount_usd || 0
                           const monthlyPilotCredits = Math.round(monthlyAmountUsd / pricingConfig.pilot_credit_cost_usd)
                           return monthlyPilotCredits.toLocaleString()

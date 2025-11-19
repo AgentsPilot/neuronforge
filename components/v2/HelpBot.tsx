@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
-import { MessageCircle, X, Send, Loader2, ThumbsUp, ThumbsDown, BookOpen, Database, Zap, Sparkles } from 'lucide-react'
+import { MessageCircle, X, Send, Loader2, ThumbsUp, ThumbsDown, BookOpen, Database, Zap, Sparkles, Bot, XCircle } from 'lucide-react'
 import { useAuth } from '@/components/UserProvider'
 
 interface Message {
@@ -402,7 +402,33 @@ What would you like to know?`,
 
   return (
     <>
-      {/* Only render the window when open - parent controls the floating button */}
+      {/* Floating Button - only show if not in input help mode (modal) */}
+      {!isInputHelp && !isOpen && (
+        <button
+          onClick={() => setIsOpenInternal(true)}
+          className="fixed bottom-20 right-4 sm:bottom-6 sm:right-6 w-12 h-12 sm:w-14 sm:h-14 bg-gradient-to-br from-[var(--v2-primary)] to-purple-600 text-white shadow-lg hover:shadow-2xl hover:scale-110 active:scale-95 transition-all duration-300 flex items-center justify-center z-40 group"
+          style={{ borderRadius: 'var(--v2-radius-card)' }}
+          title="Help & Support"
+        >
+          <Bot className="w-5 h-5 sm:w-6 sm:h-6 group-hover:rotate-12 transition-transform duration-300" />
+          <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white dark:border-gray-900 animate-pulse"></div>
+          <Sparkles className="absolute top-1 right-1 w-2.5 h-2.5 text-yellow-300 animate-pulse" />
+        </button>
+      )}
+
+      {/* Close Button - only show when open and not in input help mode */}
+      {!isInputHelp && isOpen && (
+        <button
+          onClick={() => setIsOpenInternal(false)}
+          className="fixed bottom-20 right-4 sm:bottom-6 sm:right-6 w-12 h-12 sm:w-14 sm:h-14 bg-gray-600 hover:bg-gray-700 text-white shadow-lg hover:shadow-2xl hover:scale-110 active:scale-95 transition-all duration-300 flex items-center justify-center z-40"
+          style={{ borderRadius: 'var(--v2-radius-card)' }}
+          title="Close Help"
+        >
+          <XCircle className="w-5 h-5 sm:w-6 sm:h-6" />
+        </button>
+      )}
+
+      {/* Chat Window */}
       {isOpen && (
         <div className="fixed bottom-20 left-2 right-2 sm:bottom-28 sm:left-auto sm:right-6 sm:w-[440px] h-[calc(100vh-10rem)] sm:h-[calc(100vh-11rem)] max-h-[600px] sm:max-h-[500px] bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] z-50 flex flex-col border border-[var(--v2-border)] backdrop-blur-xl animate-in slide-in-from-bottom-4 duration-300 rounded-[16px] overflow-hidden">
           {/* Header */}

@@ -4,7 +4,8 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useOnboarding } from './hooks/useOnboarding';
 import ProfileStep from './ProfileStep';
-import DomainStep from './DomainStep';
+import GoalStep from './GoalStep';
+import TriggerStep from './TriggerStep';
 import RoleStep from './RoleStep';
 
 const Onboarding: React.FC = () => {
@@ -19,7 +20,8 @@ const Onboarding: React.FC = () => {
     nextStep,
     prevStep,
     updateProfile,
-    updateDomain,
+    updateGoal,
+    updateMode,
     updateRole,
     canProceedToNext,
     completeOnboarding,
@@ -104,7 +106,8 @@ const Onboarding: React.FC = () => {
     if (isLastStep) {
       const success = await completeOnboarding();
       if (success) {
-        window.location.href = '/dashboard';
+        // Redirect to prompt ideas page instead of dashboard
+        window.location.href = '/onboarding/prompt-ideas';
       }
     } else {
       nextStep();
@@ -116,15 +119,17 @@ const Onboarding: React.FC = () => {
       case 0:
         return <ProfileStep data={data.profile} onChange={updateProfile} />;
       case 1:
-        return <DomainStep data={data.domain} onChange={updateDomain} />;
+        return <GoalStep data={data.goal} onChange={updateGoal} />;
       case 2:
+        return <TriggerStep data={data.mode} onChange={updateMode} />;
+      case 3:
         return <RoleStep data={data.role} onChange={updateRole} />;
       default:
         return null;
     }
   };
 
-  const stepLabels = ['Profile', 'Domain', 'Role'];
+  const stepLabels = ['Profile', 'Goal', 'Trigger', 'Role'];
 
   return (
     <div className="min-h-screen bg-black text-white overflow-hidden">
@@ -276,7 +281,7 @@ const Onboarding: React.FC = () => {
 
         {/* Main content */}
         <div className="flex-1 flex items-center justify-center p-6">
-          <div className="w-full max-w-lg">
+          <div className="w-full max-w-4xl">
             {/* Mobile progress indicator */}
             <motion.div
               initial={{ opacity: 0, y: -20 }}

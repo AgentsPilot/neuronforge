@@ -69,6 +69,7 @@ export default function ExecutionsConfigPage() {
 
   useEffect(() => {
     loadExecutionConfig();
+    loadExecutionStats();
   }, []);
 
   const loadExecutionConfig = async () => {
@@ -130,22 +131,20 @@ export default function ExecutionsConfigPage() {
               const used = s.executions_used || 0;
               const usagePercent = quota !== null && quota > 0 ? (used / quota) * 100 : 0;
 
-              const totalTokens = (s.balance || 0) + (s.total_spent || 0) + (s.total_earned || 0);
-              const pilotTokens = Math.floor(totalTokens / 10);
+              // Convert current balance to pilot credits
+              const pilotCredits = Math.floor((s.balance || 0) / 10);
 
               return {
-                userId: s.user_id,
+                user_id: s.user_id,
                 email: profile?.email || 'Unknown',
-                executionsUsed: used,
-                executionsQuota: quota,
-                usagePercent,
-                pilotTokens,
+                executions_used: used,
+                executions_quota: quota,
+                usage_percent: usagePercent,
+                total_tokens: pilotCredits, // Current pilot credit balance
                 status: s.status,
               };
             })
-            .filter((u: UserExecutionInfo) => u.executionsUsed > 0)
-            .sort((a: UserExecutionInfo, b: UserExecutionInfo) => b.executionsUsed - a.executionsUsed)
-            .slice(0, 10);
+            .sort((a: UserExecutionInfo, b: UserExecutionInfo) => b.executions_used - a.executions_used);
 
           setTopUsers(usersWithUsage);
         }
@@ -297,14 +296,24 @@ export default function ExecutionsConfigPage() {
             </div>
           </div>
 
-          <button
-            onClick={loadExecutionConfig}
-            disabled={loading}
-            className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors border border-slate-700"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={loadExecutionStats}
+              disabled={loading}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors"
+            >
+              <Activity className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              Load Stats
+            </button>
+            <button
+              onClick={loadExecutionConfig}
+              disabled={loading}
+              className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors border border-slate-700"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              Refresh Config
+            </button>
+          </div>
         </motion.div>
 
         {/* Alerts */}

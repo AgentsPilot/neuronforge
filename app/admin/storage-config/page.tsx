@@ -69,6 +69,7 @@ export default function StorageConfigPage() {
 
   useEffect(() => {
     loadStorageConfig();
+    loadStorageStats();
   }, []);
 
   const loadStorageConfig = async () => {
@@ -131,21 +132,19 @@ export default function StorageConfigPage() {
                 : 0;
 
               const totalTokens = (s.balance || 0) + (s.total_spent || 0) + (s.total_earned || 0);
-              const pilotTokens = Math.floor(totalTokens / 10);
+              const pilotCredits = Math.floor(totalTokens / 10);
 
               return {
-                userId: s.user_id,
+                user_id: s.user_id,
                 email: profile?.email || 'Unknown',
-                storageUsedMB: s.storage_used_mb || 0,
-                storageQuotaMB: s.storage_quota_mb || 0,
-                usagePercent,
-                pilotTokens,
+                storage_used_mb: s.storage_used_mb || 0,
+                storage_quota_mb: s.storage_quota_mb || 0,
+                usage_percent: usagePercent,
+                total_tokens: pilotCredits, // Convert to pilot credits
                 status: s.status,
               };
             })
-            .filter((u: UserStorageInfo) => u.storageUsedMB > 0)
-            .sort((a: UserStorageInfo, b: UserStorageInfo) => b.storageUsedMB - a.storageUsedMB)
-            .slice(0, 10);
+            .sort((a: UserStorageInfo, b: UserStorageInfo) => b.storage_used_mb - a.storage_used_mb);
 
           setTopUsers(usersWithUsage);
         }
@@ -301,14 +300,24 @@ export default function StorageConfigPage() {
             </div>
           </div>
 
-          <button
-            onClick={loadStorageConfig}
-            disabled={loading}
-            className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors border border-slate-700"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={loadStorageStats}
+              disabled={loading}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+            >
+              <Activity className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              Load Stats
+            </button>
+            <button
+              onClick={loadStorageConfig}
+              disabled={loading}
+              className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors border border-slate-700"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              Refresh Config
+            </button>
+          </div>
         </motion.div>
 
         {/* Alerts */}
@@ -645,9 +654,6 @@ export default function StorageConfigPage() {
                     User
                   </th>
                   <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">
-                    Pilot Tokens
-                  </th>
-                  <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">
                     Used
                   </th>
                   <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">
@@ -664,7 +670,7 @@ export default function StorageConfigPage() {
               <tbody className="divide-y divide-slate-700">
                 {topUsers.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-6 py-8 text-center text-slate-400">
+                    <td colSpan={5} className="px-6 py-8 text-center text-slate-400">
                       No users found
                     </td>
                   </tr>
@@ -679,9 +685,6 @@ export default function StorageConfigPage() {
                           <p className="text-white text-sm">{user.email}</p>
                           <p className="text-slate-400 text-xs">{user.user_id.slice(0, 8)}...</p>
                         </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className="text-slate-300">{user.total_tokens.toLocaleString()}</span>
                       </td>
                       <td className="px-6 py-4">
                         <span className="text-slate-300">{formatStorage(user.storage_used_mb)}</span>

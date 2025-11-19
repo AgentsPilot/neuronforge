@@ -7,6 +7,7 @@ import React, { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
+import { getPricingConfig } from '@/lib/utils/pricingConfig'
 import { DarkModeToggle } from '@/components/v2/DarkModeToggle'
 import { PluginRefreshModal } from '@/components/v2/PluginRefreshModal'
 import {
@@ -46,7 +47,11 @@ interface ConnectedPlugin {
   username?: string
 }
 
-export function V2Footer() {
+interface V2FooterProps {
+  accountFrozen?: boolean
+}
+
+export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
   const router = useRouter()
   const { user, connectedPlugins: connectedPluginsFromContext } = useAuth()
   const [lastRunTime, setLastRunTime] = useState<Date | null>(null)
@@ -55,6 +60,8 @@ export function V2Footer() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [refreshModalOpen, setRefreshModalOpen] = useState(false)
   const [selectedPlugin, setSelectedPlugin] = useState<ConnectedPlugin | null>(null)
+  const [accountFrozen, setAccountFrozen] = useState(accountFrozenProp || false)
+  const [pilotCredits, setPilotCredits] = useState<number>(0)
 
   useEffect(() => {
     if (!user) return
@@ -77,6 +84,29 @@ export function V2Footer() {
       }
     }
 
+    const fetchAccountStatus = async () => {
+      try {
+        // Fetch pricing config to convert tokens to pilot credits
+        const pricingConfig = await getPricingConfig(supabase)
+        const tokensPerCredit = pricingConfig.tokens_per_pilot_credit
+
+        const { data: subscription } = await supabase
+          .from('user_subscriptions')
+          .select('account_frozen, balance')
+          .eq('user_id', user.id)
+          .single()
+
+        if (subscription) {
+          setAccountFrozen(subscription.account_frozen || false)
+          // Convert raw tokens to pilot credits
+          const credits = Math.floor((subscription.balance || 0) / tokensPerCredit)
+          setPilotCredits(credits)
+        }
+      } catch (error) {
+        console.error('Error fetching account status:', error)
+      }
+    }
+
     // Transform connected plugins from UserProvider context
     if (connectedPluginsFromContext) {
       const plugins: ConnectedPlugin[] = Object.values(connectedPluginsFromContext).map((plugin: any) => ({
@@ -89,6 +119,7 @@ export function V2Footer() {
     }
 
     fetchLastRun()
+    fetchAccountStatus()
   }, [user, connectedPluginsFromContext])
 
   const handleRefreshComplete = async () => {
@@ -326,10 +357,11 @@ export function V2Footer() {
           <DarkModeToggle />
 
           <button
-            onClick={() => router.push('/agents/new')}
-            className="w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] flex items-center justify-center hover:scale-105 transition-transform duration-200 flex-shrink-0"
+            onClick={() => !(accountFrozen || pilotCredits < 2000) && router.push('/agents/new')}
+            className={`w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] flex items-center justify-center transition-transform duration-200 flex-shrink-0 ${accountFrozen || pilotCredits < 2000 ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'}`}
             style={{ borderRadius: 'var(--v2-radius-button)' }}
-            title="Create New Agent"
+            title={accountFrozen ? "Account frozen - Purchase tokens to continue" : pilotCredits < 2000 ? "Insufficient balance - Need 2000 tokens to create agent" : "Create New Agent"}
+            disabled={accountFrozen || pilotCredits < 2000}
           >
             <Plus className="w-4.5 h-4.5 sm:w-5 sm:h-5 text-[#3B82F6]" />
           </button>
@@ -378,10 +410,14 @@ export function V2Footer() {
                   </button>
                   <button
                     onClick={() => {
-                      router.push('/agents/new')
-                      setMenuOpen(false)
+                      if (!accountFrozen && pilotCredits >= 2000) {
+                        router.push('/agents/new')
+                        setMenuOpen(false)
+                      }
                     }}
-                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                    className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${accountFrozen || pilotCredits < 2000 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+                    disabled={accountFrozen || pilotCredits < 2000}
+                    title={accountFrozen ? "Account frozen - Purchase tokens to continue" : pilotCredits < 2000 ? "Insufficient balance - Need 2000 tokens to create agent" : ""}
                   >
                     <Plus className="w-4 h-4 text-[var(--v2-text-secondary)]" />
                     <span className="text-sm font-medium text-[var(--v2-text-primary)]">Create Agent</span>

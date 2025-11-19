@@ -11,6 +11,8 @@ interface UserSubscription {
   storage_used_mb?: number
   executions_quota?: number | null
   executions_used?: number
+  free_tier_expires_at?: string | null
+  stripe_subscription_id?: string
 }
 
 interface StatsCardsV2Props {
@@ -27,6 +29,8 @@ export default function StatsCardsV2({
   formatCredits
 }: StatsCardsV2Props) {
   const isActive = userSubscription?.status === 'active' || userSubscription?.status === 'past_due'
+  const isFreeTier = userSubscription?.free_tier_expires_at && !userSubscription?.stripe_subscription_id
+  const hasPaidSubscription = isActive && !isFreeTier
 
   // Format storage display
   const formatStorage = (mb: number) => {
@@ -60,7 +64,7 @@ export default function StatsCardsV2({
     },
     {
       label: 'Monthly',
-      value: isActive ? (userSubscription?.monthly_credits || 0).toLocaleString() : '0',
+      value: hasPaidSubscription ? (userSubscription?.monthly_credits || 0).toLocaleString() : '0',
       color: 'text-[var(--v2-text-primary)]'
     },
     {

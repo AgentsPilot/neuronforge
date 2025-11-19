@@ -20,7 +20,8 @@ import {
   Sparkles,
   Settings,
   Bot,
-  GitBranch
+  GitBranch,
+  CreditCard
 } from 'lucide-react'
 
 type Field = {
@@ -56,9 +57,49 @@ export default function V2RunAgentPage() {
   const [agent, setAgent] = useState<Agent | null>(null)
   const [loading, setLoading] = useState(true)
   const [executing, setExecuting] = useState(false)
-  const [formData, setFormData] = useState<Record<string, any>>({})
-  const [result, setResult] = useState<any>(null)
-  const [error, setError] = useState<string | null>(null)
+
+  // Persist formData across page refreshes
+  const [formData, setFormData] = useState<Record<string, any>>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = sessionStorage.getItem(`runPage_formData_${agentId}`)
+      return saved ? JSON.parse(saved) : {}
+    }
+    return {}
+  })
+
+  // Persist execution result across page refreshes
+  const [result, setResult] = useState<any>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = sessionStorage.getItem(`runPage_result_${agentId}`)
+      return saved ? JSON.parse(saved) : null
+    }
+    return null
+  })
+
+  // Persist error state across page refreshes
+  const [error, setError] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = sessionStorage.getItem(`runPage_error_${agentId}`)
+      if (saved) {
+        // Clean up malformed error messages (from before the fix)
+        // If error starts with "Execution failed: " and contains JSON, extract the actual error
+        if (saved.includes('{"success":false')) {
+          try {
+            const jsonStart = saved.indexOf('{')
+            const jsonStr = saved.substring(jsonStart)
+            const parsed = JSON.parse(jsonStr)
+            return parsed.error || saved
+          } catch {
+            return saved
+          }
+        }
+        return saved
+      }
+      return null
+    }
+    return null
+  })
+
   const [saving, setSaving] = useState(false)
   const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
 
@@ -92,10 +133,74 @@ export default function V2RunAgentPage() {
     }
   }, [helpBotOpen, helpBotContext])
 
+  // Save formData to sessionStorage when it changes
+  useEffect(() => {
+    if (typeof window !== 'undefined' && agentId) {
+      sessionStorage.setItem(`runPage_formData_${agentId}`, JSON.stringify(formData))
+    }
+  }, [formData, agentId])
+
+  // Save result to sessionStorage when it changes
+  useEffect(() => {
+    if (typeof window !== 'undefined' && agentId) {
+      if (result) {
+        sessionStorage.setItem(`runPage_result_${agentId}`, JSON.stringify(result))
+      } else {
+        sessionStorage.removeItem(`runPage_result_${agentId}`)
+      }
+    }
+  }, [result, agentId])
+
+  // Save error to sessionStorage when it changes
+  useEffect(() => {
+    if (typeof window !== 'undefined' && agentId) {
+      if (error) {
+        sessionStorage.setItem(`runPage_error_${agentId}`, error)
+      } else {
+        sessionStorage.removeItem(`runPage_error_${agentId}`)
+      }
+    }
+  }, [error, agentId])
+
   // Real-time step tracking for SSE
   const [executingSteps, setExecutingSteps] = useState<Set<string>>(new Set())
   const [completedStepsLive, setCompletedStepsLive] = useState<Set<string>>(new Set())
   const [failedStepsLive, setFailedStepsLive] = useState<Set<string>>(new Set())
+
+  // Clear stale execution limit errors when user has credits
+  useEffect(() => {
+    if (!user || !error) return
+
+    const checkAndClearStaleErrors = async () => {
+      // Only check if the error is about execution limits or quota
+      if (error.includes('execution limit') || error.includes('quota') || error.includes('Upgrade your plan')) {
+        try {
+          const { data: subscription } = await supabase
+            .from('user_subscriptions')
+            .select('account_frozen, balance, executions_quota, executions_used')
+            .eq('user_id', user.id)
+            .single()
+
+          if (subscription) {
+            // If account is not frozen and has credits, clear the error
+            const hasCredits = (subscription.balance || 0) > 0
+            const notFrozen = !subscription.account_frozen
+            const hasExecutionQuota = !subscription.executions_quota ||
+              (subscription.executions_used || 0) < subscription.executions_quota
+
+            if (notFrozen && hasCredits && hasExecutionQuota) {
+              console.log('[Run Page] Clearing stale execution limit error - user now has credits')
+              setError(null)
+            }
+          }
+        } catch (err) {
+          console.error('[Run Page] Error checking subscription status:', err)
+        }
+      }
+    }
+
+    checkAndClearStaleErrors()
+  }, [user, error])
 
   useEffect(() => {
     if (user && agentId) {
@@ -119,18 +224,23 @@ export default function V2RunAgentPage() {
       setAgent(agentData)
 
       // Load saved configuration (most recent 'configured' entry)
-      const { data: configData } = await supabase
-        .from('agent_configurations')
-        .select('input_values')
-        .eq('agent_id', agentId)
-        .eq('user_id', user.id)
-        .eq('status', 'configured')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
+      // Only load if we don't already have persisted formData
+      const hasPersistedData = typeof window !== 'undefined' && sessionStorage.getItem(`runPage_formData_${agentId}`)
 
-      if (configData?.input_values) {
-        setFormData(configData.input_values)
+      if (!hasPersistedData) {
+        const { data: configData } = await supabase
+          .from('agent_configurations')
+          .select('input_values')
+          .eq('agent_id', agentId)
+          .eq('user_id', user.id)
+          .eq('status', 'configured')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+
+        if (configData?.input_values) {
+          setFormData(configData.input_values)
+        }
       }
     } catch (error) {
       console.error('Error fetching agent data:', error)
@@ -285,6 +395,7 @@ export default function V2RunAgentPage() {
     if (!agent || !user) return
 
     setExecuting(true)
+    // Clear previous results before starting new execution
     setError(null)
     setResult(null)
 
@@ -405,15 +516,34 @@ export default function V2RunAgentPage() {
         body: JSON.stringify(requestBody),
       })
 
-      if (!response.ok) {
-        const errorText = await response.text()
-        throw new Error(`Execution failed: ${response.statusText} - ${errorText}`)
-      }
-
-      const res = await response.json()
       const endTime = Date.now()
       const executionTime = endTime - startTime
 
+      // Parse response - could be error or success
+      let res
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.log('[DEBUG] Error response text:', errorText)
+
+        let parsedError
+        try {
+          parsedError = JSON.parse(errorText)
+          console.log('[DEBUG] Parsed error:', parsedError)
+        } catch (parseError) {
+          console.error('[DEBUG] JSON parse failed:', parseError)
+          // If JSON parsing fails, show the raw error
+          throw new Error(`Execution failed: ${response.statusText} - ${errorText}`)
+        }
+
+        // Extract user-friendly error message from parsed JSON
+        const errorMessage = parsedError.error || parsedError.message || `Execution failed: ${response.statusText}`
+        console.log('[DEBUG] Extracted error message:', errorMessage)
+        console.error('Execution failed with error:', errorMessage)
+        console.error('Full response:', parsedError)
+        throw new Error(errorMessage)
+      }
+
+      res = await response.json()
       console.log('AgentKit/Pilot response:', res)
 
       if (res.error || (res.success === false && !res.pilot)) {
@@ -713,13 +843,23 @@ export default function V2RunAgentPage() {
             <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800" style={{ borderRadius: 'var(--v2-radius-button)' }}>
               <div className="flex items-start gap-3">
                 <XCircle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
-                <div>
+                <div className="flex-1">
                   <h4 className="text-sm font-semibold text-red-900 dark:text-red-100 mb-1">
                     Execution Failed
                   </h4>
-                  <p className="text-sm text-red-700 dark:text-red-300">
+                  <p className="text-sm text-red-700 dark:text-red-300 mb-3">
                     {error}
                   </p>
+                  {(error.includes('execution limit') || error.includes('Upgrade your plan') || error.includes('insufficient') || error.includes('quota')) && (
+                    <button
+                      onClick={() => router.push('/v2/billing')}
+                      className="px-4 py-2 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white text-sm font-semibold hover:scale-105 transition-all shadow-[var(--v2-shadow-button)] flex items-center gap-2"
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    >
+                      <CreditCard className="w-4 h-4" />
+                      Go to Billing
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

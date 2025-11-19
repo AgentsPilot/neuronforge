@@ -22,6 +22,7 @@ export function UserMenu({ triggerIcon = 'avatar' }: UserMenuProps) {
   const { user } = useAuth()
   const [isOpen, setIsOpen] = useState(false)
   const [profile, setProfile] = useState<any>(null)
+  const [subscription, setSubscription] = useState<any>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
   // Fetch user profile (reuse V1 logic)
@@ -45,6 +46,29 @@ export function UserMenu({ triggerIcon = 'avatar' }: UserMenuProps) {
     }
 
     fetchProfile()
+  }, [user?.id])
+
+  // Fetch user subscription
+  useEffect(() => {
+    if (!user?.id) return
+
+    const fetchSubscription = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('user_subscriptions')
+          .select('stripe_subscription_id, free_tier_expires_at')
+          .eq('user_id', user.id)
+          .single()
+
+        if (!error && data) {
+          setSubscription(data)
+        }
+      } catch (err) {
+        console.error('Subscription fetch error:', err)
+      }
+    }
+
+    fetchSubscription()
   }, [user?.id])
 
   // Close menu when clicking outside
@@ -95,6 +119,20 @@ export function UserMenu({ triggerIcon = 'avatar' }: UserMenuProps) {
 
   const getUserEmail = () => {
     return user?.email || 'user@example.com'
+  }
+
+  const getSubscriptionStatus = () => {
+    if (!subscription) return null
+
+    const isFreeTier = subscription.free_tier_expires_at && !subscription.stripe_subscription_id
+
+    if (isFreeTier) {
+      return { label: 'Free Tier', color: 'text-blue-600 dark:text-blue-400' }
+    } else if (subscription.stripe_subscription_id) {
+      return { label: 'Subscription', color: 'text-green-600 dark:text-green-400' }
+    }
+
+    return null
   }
 
   const menuItems = [
@@ -209,6 +247,17 @@ export function UserMenu({ triggerIcon = 'avatar' }: UserMenuProps) {
                 <p className="text-xs text-[var(--v2-text-muted)] truncate">
                   {getUserEmail()}
                 </p>
+                {(() => {
+                  const status = getSubscriptionStatus()
+                  if (status) {
+                    return (
+                      <span className={`text-xs font-semibold ${status.color}`}>
+                        {status.label}
+                      </span>
+                    )
+                  }
+                  return null
+                })()}
               </div>
             </div>
           </div>

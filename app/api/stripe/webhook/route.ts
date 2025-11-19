@@ -132,7 +132,10 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
       last_payment_attempt: new Date().toISOString(),
       payment_retry_count: 0, // Reset on successful payment
       status: 'active',
-      agents_paused: false
+      agents_paused: false,
+      // Clear free tier expiration on purchase (user is now a paying customer)
+      free_tier_expires_at: null,
+      account_frozen: false
     })
     .eq('user_id', userId);
 
@@ -361,7 +364,10 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       .from('user_subscriptions')
       .update({
         balance: newBalance,
-        total_earned: newTotalEarned
+        total_earned: newTotalEarned,
+        // Clear free tier expiration on purchase (user is now a paying customer)
+        free_tier_expires_at: null,
+        account_frozen: false
       })
       .eq('user_id', userId);
 
@@ -536,6 +542,96 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       }
     } catch (quotaError: any) {
       console.error('❌ [Webhook] Error allocating quotas (non-critical):', quotaError.message);
+    }
+
+    // Check if this is a NEW subscription (first-time subscriber)
+    // Award welcome bonus if user has never had a subscription before
+    const { data: existingTransactions } = await supabaseAdmin
+      .from('credit_transactions')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('activity_type', 'welcome_bonus')
+      .limit(1);
+
+    const isNewUser = !existingTransactions || existingTransactions.length === 0;
+
+    if (isNewUser) {
+      console.log('🎁 [Webhook] New subscriber detected! Awarding welcome bonus...');
+
+      // Award 10,417 Pilot Tokens as welcome bonus (half of 20,834)
+      const WELCOME_BONUS_TOKENS = 10417;
+
+      // Convert Pilot Credits to tokens
+      const welcomeBonusCredits = await pilotCreditsToTokens(WELCOME_BONUS_TOKENS, supabaseAdmin);
+
+      // Get updated balance
+      const { data: currentSub } = await supabaseAdmin
+        .from('user_subscriptions')
+        .select('balance, total_earned')
+        .eq('user_id', userId)
+        .single();
+
+      const balanceBeforeBonus = currentSub?.balance || 0;
+      const totalEarnedBeforeBonus = currentSub?.total_earned || 0;
+      const balanceAfterBonus = balanceBeforeBonus + welcomeBonusCredits;
+      const totalEarnedAfterBonus = totalEarnedBeforeBonus + welcomeBonusCredits;
+
+      // Update subscription with welcome bonus
+      await supabaseAdmin
+        .from('user_subscriptions')
+        .update({
+          balance: balanceAfterBonus,
+          total_earned: totalEarnedAfterBonus
+        })
+        .eq('user_id', userId);
+
+      // Create credit transaction for welcome bonus
+      await supabaseAdmin
+        .from('credit_transactions')
+        .insert({
+          user_id: userId,
+          credits_delta: welcomeBonusCredits,
+          balance_before: balanceBeforeBonus,
+          balance_after: balanceAfterBonus,
+          transaction_type: 'allocation',
+          activity_type: 'welcome_bonus',
+          description: `Welcome to NeuronForge! ${WELCOME_BONUS_TOKENS.toLocaleString()} free Pilot Tokens`,
+          metadata: {
+            pilot_tokens: WELCOME_BONUS_TOKENS,
+            raw_tokens: welcomeBonusCredits,
+            stripe_subscription_id: session.subscription
+          }
+        });
+
+      // Log billing event for welcome bonus
+      await supabaseAdmin
+        .from('billing_events')
+        .insert({
+          user_id: userId,
+          event_type: 'welcome_bonus',
+          credits_delta: welcomeBonusCredits,
+          description: `Welcome bonus: ${WELCOME_BONUS_TOKENS.toLocaleString()} Pilot Tokens`,
+          stripe_event_id: session.id,
+          amount_cents: 0, // Free bonus
+          currency: 'usd'
+        });
+
+      console.log(`✅ [Webhook] Welcome bonus awarded: ${WELCOME_BONUS_TOKENS} Pilot Tokens (${welcomeBonusCredits} raw tokens)`);
+      console.log(`   New balance: ${balanceAfterBonus.toLocaleString()} tokens`);
+
+      // Re-allocate quotas with welcome bonus included
+      try {
+        const quotaService = new QuotaAllocationService(supabaseAdmin);
+        const updatedQuotaResult = await quotaService.allocateQuotasForUser(userId);
+
+        if (updatedQuotaResult.success) {
+          console.log(`✅ [Webhook] Updated quotas with welcome bonus: ${updatedQuotaResult.storageQuotaMB} MB storage, ${updatedQuotaResult.executionQuota ?? 'unlimited'} executions`);
+        }
+      } catch (quotaError: any) {
+        console.error('❌ [Webhook] Error re-allocating quotas with welcome bonus:', quotaError.message);
+      }
+    } else {
+      console.log('ℹ️  [Webhook] Existing subscriber - no welcome bonus awarded');
     }
   }
 }
