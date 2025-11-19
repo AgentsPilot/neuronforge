@@ -3,12 +3,14 @@
 ## Summary
 We have successfully migrated the thread-based conversational agent builder from the old component-based architecture to the new V2 Next.js App Router page structure. This includes:
 - ✅ Fixing duplicate API calls with ref-based guards
-- ✅ Adding user prompt display and thinking messages
+- ✅ Adding user prompt display
+- ✅ **Animated typing indicators with bouncing dots** (Phase 9)
 - ✅ Migrating avatar icons (Bot/User) with gradients
 - ✅ Implementing enhanced prompt accordion UI with expandable sections
 - ✅ Service connection status badges (green for connected, orange for not connected)
 - ✅ **Complete V2 design system alignment** (CSS variables, colors, radius, shadows)
 - ✅ **Question progress indicator** ("Question X of Y" badge next to questions)
+- ✅ **Fixed chat scrolling** with internal scroll area (Phase 8)
 
 ---
 
@@ -95,36 +97,15 @@ const initializeThread = async () => {
 
 ---
 
-### Feature 2: Thinking Messages
+### Feature 2: Thinking Messages (Deprecated - See Phase 9)
 
-**Purpose**: Provide visual feedback during API calls to reduce perceived wait time
+**Original Implementation** (replaced by animated typing indicators):
+- Static text messages like "Got it! Let me analyze your request..."
+- Simple text feedback during API calls
 
-**Implementation**:
+**Replaced By**: Phase 9 - Animated Typing Indicators with bouncing dots
 
-**a) Initial Thinking** ([line 220](app/v2/agents/new/page.tsx#L220)):
-```typescript
-addAIMessage('Got it! Let me analyze your request...')
-```
-
-**b) Phase 3 Thinking** (already existed at [line 194](app/v2/agents/new/page.tsx#L194)):
-```typescript
-addAIMessage('Perfect! Let me create your detailed automation plan...')
-```
-
-**c) Orchestrator Messages** ([lines 381, 387](app/v2/agents/new/page.tsx#L381)):
-```typescript
-// No questions needed
-addAIMessage('Your request is clear. Let me create the automation plan...')
-
-// High clarity, skip questions
-addAIMessage('Your request is very clear. Let me create the automation plan...')
-```
-
-**UX Benefits**:
-- User knows system is working
-- Clear indication of what's happening
-- Reduces anxiety during API latency
-- Matches ChatGPT/Claude conversational patterns
+For the new implementation, see [Phase 9: Animated Typing Indicators](#phase-9-animated-typing-indicators).
 
 ---
 
@@ -881,6 +862,369 @@ This already existed and now works perfectly with the fixed-height container.
 
 ---
 
+## Phase 9: Animated Typing Indicators
+
+### Problem: Static "Thinking" Messages Lack Visual Feedback
+**Issue**: The initial implementation used static text messages like "Got it! Let me analyze your request..." during API calls. While these provided some feedback, they lacked the dynamic visual indicators that modern chat UIs use (like ChatGPT, Claude, Slack, etc.) to show active processing.
+
+**User Experience Gap**:
+- Static messages looked like regular AI responses
+- No visual indication that system was actively "thinking"
+- Users couldn't easily distinguish between actual responses and loading states
+- Reduced engagement during API latency periods
+
+---
+
+### Solution: Animated Typing Indicator with Bouncing Dots
+
+**Design Inspiration**: Modern chat applications (ChatGPT, Claude, Slack) use animated bouncing dots to indicate active processing.
+
+**Implementation Overview**:
+1. Extended Message interface to support `'typing'` role
+2. Created typing indicator add/remove functions
+3. Implemented animated bouncing dots UI with V2 design system
+4. Integrated typing indicators at strategic points in all three phases
+
+---
+
+### Technical Implementation
+
+**1. Extended Message Interface** ([hooks/useAgentBuilderMessages.ts:5](hooks/useAgentBuilderMessages.ts#L5)):
+```typescript
+export interface Message {
+  id: string;
+  role: 'user' | 'assistant' | 'system' | 'typing';  // Added 'typing'
+  content: string;
+  timestamp: Date;
+  questionId?: string;
+  isQuestionAnswer?: boolean;
+  isTemporary?: boolean; // For typing indicators that will be removed
+}
+```
+
+**2. Typing Indicator Functions** ([hooks/useAgentBuilderMessages.ts:70-87](hooks/useAgentBuilderMessages.ts#L70-L87)):
+```typescript
+// Add a typing indicator (temporary message that gets replaced)
+const addTypingIndicator = useCallback((text: string = 'Thinking...') => {
+  const typingMessage: Message = {
+    id: 'typing-indicator',
+    role: 'typing',
+    content: text,
+    timestamp: new Date(),
+    isTemporary: true
+  };
+
+  setMessages(prev => [...prev, typingMessage]);
+  return typingMessage.id;
+}, []);
+
+// Remove typing indicator
+const removeTypingIndicator = useCallback(() => {
+  setMessages(prev => prev.filter(msg => msg.id !== 'typing-indicator'));
+}, []);
+```
+
+**3. Typing Indicator UI Rendering** ([app/v2/agents/new/page.tsx:540-586](app/v2/agents/new/page.tsx#L540-L586)):
+```typescript
+) : message.role === 'typing' ? (
+  /* Typing indicator */
+  <div className="flex gap-3 justify-start">
+    {/* Avatar - AI */}
+    <div
+      className="w-8 h-8 flex items-center justify-center shadow-md flex-shrink-0"
+      style={{
+        background: 'linear-gradient(135deg, var(--v2-primary), var(--v2-secondary))',
+        borderRadius: 'var(--v2-radius-button)'
+      }}
+    >
+      <Bot className="h-4 w-4 text-white" />
+    </div>
+
+    {/* Typing bubble with animated dots */}
+    <div
+      className="bg-[var(--v2-surface)] border border-[var(--v2-border)] px-4 py-3 shadow-md backdrop-blur-sm"
+      style={{ borderRadius: 'var(--v2-radius-button)', boxShadow: 'var(--v2-shadow-card)' }}
+    >
+      <div className="flex items-center gap-3">
+        <div className="flex space-x-1">
+          <div
+            className="w-2 h-2 rounded-full animate-bounce"
+            style={{
+              background: 'linear-gradient(135deg, var(--v2-primary), var(--v2-secondary))',
+              animationDelay: '0ms'
+            }}
+          />
+          <div
+            className="w-2 h-2 rounded-full animate-bounce"
+            style={{
+              background: 'linear-gradient(135deg, var(--v2-primary), var(--v2-secondary))',
+              animationDelay: '150ms'
+            }}
+          />
+          <div
+            className="w-2 h-2 rounded-full animate-bounce"
+            style={{
+              background: 'linear-gradient(135deg, var(--v2-primary), var(--v2-secondary))',
+              animationDelay: '300ms'
+            }}
+          />
+        </div>
+        <span className="text-sm text-[var(--v2-text-secondary)] font-medium">{message.content}</span>
+      </div>
+    </div>
+  </div>
+```
+
+**Design Details**:
+- **Bouncing Dots**: Three dots with staggered animation delays (0ms, 150ms, 300ms)
+- **V2 Gradient**: Uses primary/secondary gradient for dot colors
+- **Bot Avatar**: Shows AI avatar on left for consistency
+- **Custom Text**: Displays contextual text like "Analyzing your request..." or "Creating your agent plan..."
+- **Responsive**: Uses V2 design tokens for consistent styling
+- **Dark Mode**: Full support via V2 CSS variables
+
+---
+
+### Phase Integration
+
+**Phase 1: Initial Analysis** ([app/v2/agents/new/page.tsx:160,211](app/v2/agents/new/page.tsx#L160)):
+```typescript
+const initializeThread = async () => {
+  setIsInitializing(true)
+  try {
+    // 1. Add user's original prompt to chat
+    addUserMessage(initialPrompt!)
+
+    // 2. Add typing indicator (CHANGED from static message)
+    addTypingIndicator('Analyzing your request...')
+
+    // Create thread...
+    await processPhase1(createData.thread_id)
+
+  } catch (error) {
+    removeTypingIndicator()  // Remove on error
+  }
+}
+
+// In processPhase1 after API response
+const processPhase1 = async (tid: string) => {
+  const data = await res.json()
+
+  // Remove typing indicator
+  removeTypingIndicator()
+
+  // Display conversational summary
+  addAIMessage(data.conversationalSummary)
+
+  // Add typing indicator for Phase 2
+  addTypingIndicator('Generating clarification questions...')
+}
+```
+
+**Phase 2: Questions** ([app/v2/agents/new/page.tsx:267,282-283](app/v2/agents/new/page.tsx#L267)):
+```typescript
+const processPhase2 = async (tid: string) => {
+  const data = await res.json()
+
+  // Remove typing indicator
+  removeTypingIndicator()
+
+  // Display conversational summary
+  addAIMessage(data.conversationalSummary)
+
+  const questions = data.questionsSequence || []
+  if (questions.length > 0) {
+    setQuestionsSequence(questions)
+  } else {
+    // No questions needed - add typing indicator for Phase 3
+    addTypingIndicator('Creating your agent plan...')
+    setTimeout(() => processPhase3(tid), 1500)
+  }
+}
+```
+
+**Phase 3: Enhancement (Auto-trigger)** ([app/v2/agents/new/page.tsx:131,317](app/v2/agents/new/page.tsx#L131)):
+```typescript
+// useEffect - Auto-trigger Phase 3 when all questions answered
+useEffect(() => {
+  const allQuestionsAnswered = builderState.questionsSequence.length > 0 &&
+    builderState.questionsSequence.every(q => builderState.clarificationAnswers[q.id]?.trim())
+
+  if (builderState.workflowPhase === 'enhancement' &&
+      builderState.currentQuestionIndex === -1 &&
+      allQuestionsAnswered &&
+      !builderState.enhancementComplete) {
+
+    // Add typing indicator before Phase 3
+    addTypingIndicator('Creating your agent plan...')
+    setTimeout(() => {
+      processPhase3()
+    }, 1000)
+  }
+}, [builderState.workflowPhase, /* ... */])
+
+// In processPhase3 after API response
+const processPhase3 = async (tid?: string) => {
+  const data = await res.json()
+
+  // Remove typing indicator
+  removeTypingIndicator()
+
+  // Store enhanced prompt data and display
+  setEnhancedPromptData(data.enhanced_prompt)
+  addAIMessage("Perfect! I've created a detailed plan for your agent:")
+}
+```
+
+**Error Handling** - All phases:
+```typescript
+catch (error) {
+  console.error('❌ Phase X error:', error)
+  removeTypingIndicator()  // Always remove on error
+  addSystemMessage('Error during phase X')
+}
+```
+
+---
+
+### User Experience Flow
+
+**Before (Static Messages)**:
+```
+User: "Send me email summaries every morning"
+AI: "Got it! Let me analyze your request..."        ← Static text
+[2 second pause]
+AI: "I understand you want to receive..."           ← Response appears
+```
+
+**After (Animated Typing Indicators)**:
+```
+User: "Send me email summaries every morning"
+🤖 💭 💭 💭 Analyzing your request...                ← Bouncing dots
+[Animation continues during API call]
+AI: "I understand you want to receive..."           ← Dots disappear, response shows
+🤖 💭 💭 💭 Generating clarification questions...    ← Next phase indicator
+```
+
+**Visual Representation**:
+```
+┌────────────────────────────────────────┐
+│  [User Avatar]  "Send me email..."     │
+├────────────────────────────────────────┤
+│  [Bot Avatar]  ●  ●  ●  Analyzing...   │  ← Dots bouncing
+│                ↑  ↑  ↑                 │
+│                0ms 150ms 300ms         │
+└────────────────────────────────────────┘
+```
+
+---
+
+### UX Benefits Achieved
+
+- ✅ **Active Feedback**: Bouncing animation shows system is actively processing
+- ✅ **Modern UX**: Matches ChatGPT, Claude, and other modern chat interfaces
+- ✅ **Reduced Anxiety**: Visual indicator reduces perceived wait time
+- ✅ **Contextual Text**: Each phase has appropriate messaging ("Analyzing...", "Generating questions...", "Creating plan...")
+- ✅ **Professional Polish**: Smooth animations with proper timing
+- ✅ **V2 Design Aligned**: Uses V2 color gradients, radius, and shadows
+- ✅ **Dark Mode Support**: Works seamlessly in both light and dark themes
+- ✅ **Error Handling**: Indicators properly removed on errors
+
+---
+
+### Animation Timing
+
+**Bouncing Dots Animation**:
+- **Dot 1**: Starts at 0ms (immediate)
+- **Dot 2**: Starts at 150ms (slight delay)
+- **Dot 3**: Starts at 300ms (more delay)
+- **Effect**: Creates wave-like bouncing motion from left to right
+- **Native**: Uses Tailwind's `animate-bounce` with staggered delays
+
+**Phase Transition Timing**:
+- **Phase 1 → Phase 2**: Typing indicator removed immediately when response arrives
+- **Phase 2 → Phase 3**: 1000ms delay after last question answered (gives user moment to read)
+- **No Questions Path**: 1500ms delay for smooth transition
+
+---
+
+### Testing Checklist
+
+- [x] Typing indicator appears before Phase 1 API call
+- [x] Dots animate with bouncing motion (staggered timing)
+- [x] Indicator removed when Phase 1 response arrives
+- [x] Typing indicator appears before Phase 2 API call
+- [x] Indicator removed when Phase 2 response arrives
+- [x] Typing indicator appears before Phase 3 (when no questions)
+- [x] Typing indicator appears before Phase 3 (after questions answered)
+- [x] Indicator removed when Phase 3 response arrives
+- [x] Typing indicator removed on error conditions
+- [x] Custom text displays correctly for each phase
+- [x] V2 design system styling consistent with other elements
+- [x] Dark mode works properly
+- [x] Bot avatar shows on left of typing indicator
+
+---
+
+### Code References
+
+**Files Modified**:
+1. **`hooks/useAgentBuilderMessages.ts`**
+   - Extended Message interface with `'typing'` role (line 5)
+   - Added `isTemporary` flag (line 10)
+   - Added `addTypingIndicator()` function (lines 70-82)
+   - Added `removeTypingIndicator()` function (lines 84-87)
+   - Exported new functions (lines 115-116)
+
+2. **`app/v2/agents/new/page.tsx`**
+   - Imported typing indicator functions (lines 63-64)
+   - Added typing indicator rendering (lines 540-586)
+   - Phase 1: Added/removed indicators (lines 160, 211, 236)
+   - Phase 2: Added/removed indicators (lines 267, 282-283)
+   - Phase 3: Added/removed indicators (lines 131, 317, 340)
+   - Error handlers: Removed indicators (lines 183, 273, 289, 360)
+
+**Reference Component** (legacy):
+- **`components/agent-creation/conversational/components/TypingIndicator.tsx`**
+  - Old flow typing indicator (not used in V2)
+  - Referenced for animation pattern
+  - V2 implementation uses inline rendering with V2 design system
+
+---
+
+### Comparison with Legacy TypingIndicator Component
+
+**Legacy Component** ([TypingIndicator.tsx](components/agent-creation/conversational/components/TypingIndicator.tsx)):
+- Separate component file
+- Hardcoded colors (blue-500, indigo-500, purple-600)
+- Supported steps/progress display
+- Used `from-blue-500 via-indigo-500 to-purple-600` gradient
+
+**V2 Inline Implementation**:
+- Inline rendering in page.tsx
+- V2 CSS variables (`var(--v2-primary)`, `var(--v2-secondary)`)
+- Simple bouncing dots only (no steps)
+- Uses `linear-gradient(135deg, var(--v2-primary), var(--v2-secondary))`
+- Consistent with V2 design system throughout
+
+---
+
+### Performance Notes
+
+**Optimization Considerations**:
+- **Single Message**: Only one typing indicator exists at a time (`id: 'typing-indicator'`)
+- **Temporary Flag**: Marked as `isTemporary: true` for easy cleanup
+- **Filter Operation**: `removeTypingIndicator()` uses efficient array filter
+- **No DOM Queries**: No need for refs or DOM manipulation
+- **Native Animation**: Uses CSS `animate-bounce`, no JavaScript animation overhead
+
+**Memory Management**:
+- Typing indicator removed immediately after API response
+- No memory leaks from accumulated temporary messages
+- State cleanup on error conditions
+
+---
+
 ## Complete Conversation Flow (New V2)
 
 ```
@@ -1112,6 +1456,21 @@ This already existed and now works perfectly with the fixed-height container.
 - [x] Dark mode support throughout
 - [x] Alignment with Bot avatar (8px spacer)
 
+### Animated Typing Indicators (Phase 9)
+- [x] Typing indicator appears before Phase 1 API call
+- [x] Dots animate with bouncing motion (staggered timing)
+- [x] Indicator removed when Phase 1 response arrives
+- [x] Typing indicator appears before Phase 2 API call
+- [x] Indicator removed when Phase 2 response arrives
+- [x] Typing indicator appears before Phase 3 (when no questions)
+- [x] Typing indicator appears before Phase 3 (after questions answered)
+- [x] Indicator removed when Phase 3 response arrives
+- [x] Typing indicator removed on error conditions
+- [x] Custom text displays correctly for each phase
+- [x] V2 design system styling consistent
+- [x] Dark mode works properly
+- [x] Bot avatar shows on left of typing indicator
+
 ### Edge Cases
 - [x] No processing_steps - accordion doesn't show
 - [x] No services_involved - services section doesn't show
@@ -1131,12 +1490,13 @@ This already existed and now works perfectly with the fixed-height container.
 
 ### UX Improvements (New in This Migration)
 - ✅ **User prompt visible** - Users can see what they asked
-- ✅ **Thinking messages** - Immediate feedback during API calls
+- ✅ **Animated typing indicators** - Bouncing dots with contextual text during API calls (Phase 9)
 - ✅ **Avatar icons** - Professional, recognizable message sources
 - ✅ **Enhanced prompt clarity** - Accordion UI shows full automation scope
 - ✅ **Progressive disclosure** - Steps collapsed by default, expand when needed
 - ✅ **Service transparency** - Clear indication of required integrations
 - ✅ **Better approval flow** - Professional buttons with icons
+- ✅ **Fixed chat scrolling** - Internal scroll with sticky input (Phase 8)
 
 ---
 
@@ -1151,12 +1511,20 @@ This already existed and now works perfectly with the fixed-height container.
 6. ~~**Chat overflow**~~ - ✅ **FIXED** - Chat card now uses fixed height with scrolling (min-h-[500px] max-h-[calc(100vh-140px)])
 
 ### Planned Enhancements
-1. ~~**Fix Chat Scrolling**~~ - ✅ **COMPLETED** (2025-01-18)
+1. ~~**Fix Chat Scrolling**~~ - ✅ **COMPLETED** (Phase 8, 2025-01-18)
    - ✅ Added fixed height container with responsive viewport calculation
    - ✅ Auto-scroll to bottom on new messages (already working)
    - ✅ Smooth scroll behavior with `scroll-smooth` utility
 
-2. **Implement OAuth Flow**
+2. ~~**Add Animated Typing Indicators**~~ - ✅ **COMPLETED** (Phase 9, 2025-01-19)
+   - ✅ Extended Message interface with `'typing'` role
+   - ✅ Created typing indicator add/remove functions
+   - ✅ Implemented bouncing dots animation with V2 design system
+   - ✅ Integrated indicators before all three phases
+   - ✅ Added contextual text for each phase
+   - ✅ Error handling with proper cleanup
+
+3. **Implement OAuth Flow**
    - Migrate PluginConnectionCard component
    - Add Phase 3 OAuth gate check
    - Handle plugin connect/skip flows
@@ -1304,6 +1672,21 @@ Then create dedicated components like the old flow.
 **Cause**: `connectedPlugins` not passed or service name mismatch
 **Solution**: In V2 flow, we show all as connected (green). Update logic if needed.
 
+### Issue: Typing Indicator Not Appearing
+**Symptom**: No bouncing dots during API calls
+**Cause**: `addTypingIndicator()` not called or `'typing'` role not handled in rendering
+**Solution**: Verify typing indicator functions are imported and called before API requests
+
+### Issue: Typing Indicator Not Disappearing
+**Symptom**: Bouncing dots remain after response arrives
+**Cause**: `removeTypingIndicator()` not called in success/error handlers
+**Solution**: Check that `removeTypingIndicator()` is called in both success and catch blocks
+
+### Issue: Multiple Typing Indicators Appearing
+**Symptom**: Multiple sets of bouncing dots stack up
+**Cause**: Old indicator not removed before adding new one
+**Solution**: All typing indicators use the same `id: 'typing-indicator'`, filter should remove duplicates. Check if custom IDs are being used.
+
 ---
 
 ## Summary of Achievements
@@ -1318,9 +1701,11 @@ Then create dedicated components like the old flow.
 - Works correctly in React Strict Mode
 - No more duplicate threads or API calls
 
-### ✅ User Prompt Display
+### ✅ User Prompt Display & Typing Indicators
 - User sees their original prompt first
-- Thinking messages provide immediate feedback
+- Animated typing indicators with bouncing dots (Phase 9)
+- Contextual text for each phase ("Analyzing...", "Generating questions...", "Creating plan...")
+- Professional UX matching modern chat applications
 - Matches old conversational flow UX
 
 ### ✅ Avatar Icons
@@ -1360,8 +1745,9 @@ Then create dedicated components like the old flow.
 
 ### Immediate (High Priority)
 1. ~~**Fix Chat Scrolling**~~ - ✅ **COMPLETED** (Phase 8)
-2. **Test with Real V9 API** - Verify enhanced prompt structure matches expectations
-3. **User Testing** - Get feedback on new UI/UX
+2. ~~**Add Animated Typing Indicators**~~ - ✅ **COMPLETED** (Phase 9)
+3. **Test with Real V9 API** - Verify enhanced prompt structure matches expectations
+4. **User Testing** - Get feedback on new UI/UX including typing indicators
 
 ### Short-term (Medium Priority)
 4. **Implement OAuth Flow** - Migrate plugin connection cards
@@ -1376,21 +1762,21 @@ Then create dedicated components like the old flow.
 
 ---
 
-**Current Status**: ✅ **Phase 1-8 Complete - V2 Migration Ready**
+**Current Status**: ✅ **Phase 1-9 Complete - V2 Migration Ready**
 
-**Total Development Time**: 2 weeks
+**Total Development Time**: 2+ weeks
 **Total Files Modified**: 4 files
-**Total Lines Added**: ~520 lines
-**Latest Features**: Chat Scroll Fix (Phase 8)
-**Previous Features**: Avatar Icons, Enhanced Prompt Accordion, Question Progress, Service Status, V2 Design System
+**Total Lines Added**: ~600 lines
+**Latest Features**: Animated Typing Indicators (Phase 9)
+**Previous Features**: Chat Scroll Fix, Avatar Icons, Enhanced Prompt Accordion, Question Progress, Service Status, V2 Design System
 
 **Ready for**: ✅ User Testing | ✅ Production Deployment | ✅ Feature Extensions
 
 ---
 
-**Document Version**: 1.1
-**Last Updated**: 2025-01-18
+**Document Version**: 1.2
+**Last Updated**: 2025-01-19
 **Author**: Development Team
-**Status**: Migration Complete - Scroll Fix Applied - Ready for Testing
+**Status**: Migration Complete - Phase 9 Typing Indicators Applied - Ready for Testing
 
 **Migration completed from**: `components/agent-creation/conversational/` → `app/v2/agents/new/page.tsx`

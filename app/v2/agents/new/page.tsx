@@ -59,7 +59,10 @@ function V2AgentBuilderContent() {
     messagesEndRef,
     addUserMessage,
     addAIMessage,
-    addSystemMessage
+    addSystemMessage,
+    addTypingIndicator,
+    removeTypingIndicator,
+    removeLastIfTemporary
   } = useAgentBuilderMessages()
 
   // Thread management state
@@ -127,7 +130,8 @@ function V2AgentBuilderContent() {
         allQuestionsAnswered &&
         !builderState.enhancementComplete) {
 
-      addAIMessage('Perfect! Let me create your detailed automation plan...')
+      // Add typing indicator before Phase 3
+      addTypingIndicator('Creating your agent plan...')
       setTimeout(() => {
         processPhase3()
       }, 1000)
@@ -156,8 +160,8 @@ function V2AgentBuilderContent() {
       // 1. Add user's original prompt to chat
       addUserMessage(initialPrompt!)
 
-      // 2. Add thinking message
-      addAIMessage('Got it! Let me analyze your request...')
+      // 2. Add typing indicator
+      addTypingIndicator('Analyzing your request...')
 
       // Create thread
       console.log('🔄 Creating thread with prompt:', initialPrompt)
@@ -180,6 +184,7 @@ function V2AgentBuilderContent() {
 
     } catch (error) {
       console.error('❌ Thread initialization error:', error)
+      removeTypingIndicator()
       addSystemMessage('Error initializing conversation. Please try again.')
     } finally {
       setIsInitializing(false)
@@ -206,6 +211,9 @@ function V2AgentBuilderContent() {
       const data = await res.json()
       console.log('✅ Phase 1 response:', data)
 
+      // Remove typing indicator
+      removeTypingIndicator()
+
       // Store connected plugins from Phase 1 for service status checking
       if (data.connectedPlugins) {
         setConnectedPlugins(data.connectedPlugins)
@@ -224,11 +232,15 @@ function V2AgentBuilderContent() {
         workflowPhase: 'analysis'
       }))
 
+      // Add typing indicator for Phase 2
+      addTypingIndicator('Generating clarification questions...')
+
       // Move to Phase 2
       setTimeout(() => processPhase2(tid), 1000)
 
     } catch (error) {
       console.error('❌ Phase 1 error:', error)
+      removeTypingIndicator()
       addSystemMessage('Error during analysis')
     }
   }
@@ -252,6 +264,9 @@ function V2AgentBuilderContent() {
       const data = await res.json()
       console.log('✅ Phase 2 response:', data)
 
+      // Remove typing indicator
+      removeTypingIndicator()
+
       // Display conversational summary
       if (data.conversationalSummary) {
         addAIMessage(data.conversationalSummary)
@@ -264,13 +279,14 @@ function V2AgentBuilderContent() {
         setQuestionsSequence(questions)
         // First question will be displayed by useEffect
       } else {
-        // No questions needed
-        addAIMessage('I have everything I need. Creating your automation plan...')
+        // No questions needed - add typing indicator for Phase 3
+        addTypingIndicator('Creating your agent plan...')
         setTimeout(() => processPhase3(tid), 1500)
       }
 
     } catch (error) {
       console.error('❌ Phase 2 error:', error)
+      removeTypingIndicator()
       addSystemMessage('Error generating questions')
     }
   }
@@ -298,6 +314,9 @@ function V2AgentBuilderContent() {
       const data = await res.json()
       console.log('✅ Phase 3 response:', data)
 
+      // Remove typing indicator
+      removeTypingIndicator()
+
       // Store enhanced prompt data for rich display
       setEnhancedPromptData(data.enhanced_prompt)
 
@@ -315,11 +334,12 @@ function V2AgentBuilderContent() {
       setEnhancement(enhancedPrompt)
 
       // Add simple AI message (detailed plan will show below)
-      addAIMessage("Perfect! I've created a detailed plan for your automation:")
+      addAIMessage("Perfect! I've created a detailed plan for your agent:")
 
     } catch (error) {
       console.error('❌ Phase 3 error:', error)
-      addSystemMessage('Error creating automation plan')
+      removeTypingIndicator()
+      addSystemMessage('Error creating agent plan')
     }
   }
 
@@ -497,6 +517,53 @@ function V2AgentBuilderContent() {
                           style={{ borderRadius: 'var(--v2-radius-button)' }}
                         >
                           {message.content}
+                        </div>
+                      </div>
+                    ) : message.role === 'typing' ? (
+                      /* Typing indicator */
+                      <div className="flex gap-3 justify-start">
+                        {/* Avatar - AI */}
+                        <div
+                          className="w-8 h-8 flex items-center justify-center shadow-md flex-shrink-0"
+                          style={{
+                            background: 'linear-gradient(135deg, var(--v2-primary), var(--v2-secondary))',
+                            borderRadius: 'var(--v2-radius-button)'
+                          }}
+                        >
+                          <Bot className="h-4 w-4 text-white" />
+                        </div>
+
+                        {/* Typing bubble with animated dots */}
+                        <div
+                          className="bg-[var(--v2-surface)] border border-[var(--v2-border)] px-4 py-3 shadow-md backdrop-blur-sm"
+                          style={{ borderRadius: 'var(--v2-radius-button)', boxShadow: 'var(--v2-shadow-card)' }}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="flex space-x-1">
+                              <div
+                                className="w-2 h-2 rounded-full animate-bounce"
+                                style={{
+                                  background: 'linear-gradient(135deg, var(--v2-primary), var(--v2-secondary))',
+                                  animationDelay: '0ms'
+                                }}
+                              />
+                              <div
+                                className="w-2 h-2 rounded-full animate-bounce"
+                                style={{
+                                  background: 'linear-gradient(135deg, var(--v2-primary), var(--v2-secondary))',
+                                  animationDelay: '150ms'
+                                }}
+                              />
+                              <div
+                                className="w-2 h-2 rounded-full animate-bounce"
+                                style={{
+                                  background: 'linear-gradient(135deg, var(--v2-primary), var(--v2-secondary))',
+                                  animationDelay: '300ms'
+                                }}
+                              />
+                            </div>
+                            <span className="text-sm text-[var(--v2-text-secondary)] font-medium">{message.content}</span>
+                          </div>
                         </div>
                       </div>
                     ) : (
@@ -826,7 +893,7 @@ function V2AgentBuilderContent() {
                       Initial Request
                     </p>
                     <p className="text-xs text-[var(--v2-text-muted)]">
-                      Received your automation request
+                      Received your agent request
                     </p>
                   </div>
                 </div>
@@ -901,7 +968,7 @@ function V2AgentBuilderContent() {
                       Plan Creation
                     </p>
                     <p className="text-xs text-[var(--v2-text-muted)]">
-                      {builderState.workflowPhase === 'enhancement' ? 'Creating automation plan...' : 'Generate detailed plan'}
+                      {builderState.workflowPhase === 'enhancement' ? 'Creating agent plan...' : 'Generate detailed plan'}
                     </p>
                   </div>
                 </div>
