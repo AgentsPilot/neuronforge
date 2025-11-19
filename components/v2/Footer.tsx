@@ -9,6 +9,7 @@ import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 import { DarkModeToggle } from '@/components/v2/DarkModeToggle'
 import { PluginRefreshModal } from '@/components/v2/PluginRefreshModal'
+import { getPluginAPIClient } from '@/lib/client/plugin-api-client'
 import {
   Clock,
   Plus,
@@ -20,7 +21,8 @@ import {
   Loader2,
   CheckCircle2,
   AlertCircle,
-  RefreshCw
+  RefreshCw,
+  PlugZap
 } from 'lucide-react'
 import {
   SiGmail,
@@ -68,6 +70,10 @@ export function V2Footer() {
     message?: string
   } | null>(null)
 
+  // State for OAuth reconnection flow
+  const [reconnectPrompt, setReconnectPrompt] = useState<string | null>(null)
+  const [reconnecting, setReconnecting] = useState<string | null>(null)
+
   useEffect(() => {
     if (!user) return
 
@@ -110,6 +116,84 @@ export function V2Footer() {
     // The UserProvider context will automatically update connected plugins
   }
 
+  // Load plugins from API
+  const loadPlugins = async () => {
+    if (!user) return
+
+    try {
+      const pluginAPIClient = getPluginAPIClient()
+      const status = await pluginAPIClient.getUserPluginStatus(user.id)
+
+      const plugins: ConnectedPlugin[] = status.connected.map((plugin: any) => ({
+        plugin_key: plugin.key,
+        plugin_name: plugin.name || plugin.displayName,
+        status: plugin.is_expired ? 'expired' : 'active',
+        is_expired: plugin.is_expired || false
+      }))
+
+      setDisplayPlugins(plugins)
+    } catch (error) {
+      console.error('Error loading plugins:', error)
+    }
+  }
+
+  // Handle OAuth reconnection
+  const handleOAuthReconnect = async (plugin: ConnectedPlugin) => {
+    if (!user) return
+
+    setReconnectPrompt(null)
+    setReconnecting(plugin.plugin_key)
+
+    try {
+      const pluginAPIClient = getPluginAPIClient()
+      const result = await pluginAPIClient.connectPlugin(user.id, plugin.plugin_key)
+
+      if (result.success) {
+        // Success! Auto-refresh footer
+        setReconnecting(null)
+        setRefreshStatus({
+          plugin: plugin.plugin_key,
+          status: 'success'
+        })
+
+        setTimeout(async () => {
+          setRefreshStatus(null)
+          // Reload plugins to get updated status
+          await loadPlugins()
+        }, 2000)
+      } else {
+        // OAuth failed
+        setReconnecting(null)
+        setRefreshStatus({
+          plugin: plugin.plugin_key,
+          status: 'error',
+          message: result.error || 'OAuth connection failed'
+        })
+
+        setTimeout(() => {
+          setRefreshStatus(null)
+        }, 3000)
+      }
+    } catch (error: any) {
+      console.error('OAuth reconnection error:', error)
+      setReconnecting(null)
+      setRefreshStatus({
+        plugin: plugin.plugin_key,
+        status: 'error',
+        message: error.message || 'Failed to reconnect'
+      })
+
+      setTimeout(() => {
+        setRefreshStatus(null)
+      }, 3000)
+    }
+  }
+
+  // Handle cancel reconnection
+  const handleCancelReconnect = () => {
+    setReconnectPrompt(null)
+  }
+
   // Refresh plugin token via API
   const handlePluginRefresh = async (plugin: ConnectedPlugin) => {
     if (!plugin.is_expired || refreshingPlugin) return
@@ -150,37 +234,33 @@ export function V2Footer() {
           ))
         }, 2000)
       } else {
-        // Failed or skipped
-        const errorMsg = result.failed?.includes(plugin.plugin_key)
-          ? 'Failed to refresh token. Click to try again.'
-          : result.notFound?.includes(plugin.plugin_key)
-          ? 'Plugin not found.'
-          : result.message || 'Token refresh unsuccessful.'
-
-        setRefreshStatus({
-          plugin: plugin.plugin_key,
-          status: 'error',
-          message: errorMsg
-        })
-
-        // Clear error after 3 seconds
-        setTimeout(() => {
-          setRefreshStatus(null)
+        // Failed - show reconnect prompt instead of just error
+        if (result.failed?.includes(plugin.plugin_key)) {
           setRefreshingPlugin(null)
-        }, 3000)
+          setReconnectPrompt(plugin.plugin_key)
+        } else {
+          // Other errors (not found, etc.)
+          const errorMsg = result.notFound?.includes(plugin.plugin_key)
+            ? 'Plugin not found.'
+            : result.message || 'Token refresh unsuccessful.'
+
+          setRefreshStatus({
+            plugin: plugin.plugin_key,
+            status: 'error',
+            message: errorMsg
+          })
+
+          setTimeout(() => {
+            setRefreshStatus(null)
+            setRefreshingPlugin(null)
+          }, 3000)
+        }
       }
     } catch (error: any) {
       console.error('Plugin refresh error:', error)
-      setRefreshStatus({
-        plugin: plugin.plugin_key,
-        status: 'error',
-        message: error.message || 'Network error. Please try again.'
-      })
-
-      setTimeout(() => {
-        setRefreshStatus(null)
-        setRefreshingPlugin(null)
-      }, 3000)
+      // Show reconnect prompt on network/API errors too
+      setRefreshingPlugin(null)
+      setReconnectPrompt(plugin.plugin_key)
     }
   }
 
@@ -338,6 +418,30 @@ export function V2Footer() {
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   >
                     <AlertCircle className="w-7 h-7 sm:w-8 sm:h-8 text-white" />
+                  </div>
+                )}
+
+                {/* Small loading indicator on plugin icon during reconnection */}
+                {reconnectPrompt === plugin.plugin_key && (
+                  <div
+                    className="absolute inset-0 bg-orange-500/20 flex items-center justify-center animate-pulse"
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    <AlertCircle className="w-5 h-5 text-orange-500" />
+                  </div>
+                )}
+
+                {/* Reconnecting Overlay (OAuth in progress) */}
+                {reconnecting === plugin.plugin_key && (
+                  <div
+                    className="absolute inset-0 bg-[var(--v2-surface)]/95
+                      flex flex-col items-center justify-center backdrop-blur-sm"
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    <Loader2 className="w-6 h-6 sm:w-7 sm:h-7 text-[var(--v2-primary)] animate-spin" />
+                    <p className="text-[9px] text-[var(--v2-text-secondary)] mt-2">
+                      Opening OAuth...
+                    </p>
                   </div>
                 )}
 
@@ -524,6 +628,82 @@ export function V2Footer() {
           userId={user.id}
           onRefreshComplete={handleRefreshComplete}
         />
+      )}
+
+      {/* OAuth Reconnection Modal Popup */}
+      {reconnectPrompt && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/50 z-50 animate-fade-in"
+            onClick={handleCancelReconnect}
+          />
+
+          {/* Modal */}
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 animate-fade-in">
+            <div
+              className="bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-2xl p-6 min-w-[320px] max-w-[400px]"
+              style={{
+                borderRadius: 'var(--v2-radius-card)',
+                boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)'
+              }}
+            >
+              {/* Icon */}
+              <div className="flex justify-center mb-4">
+                <div
+                  className="w-14 h-14 bg-orange-500/10 flex items-center justify-center"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  <AlertCircle className="w-8 h-8 text-orange-500" />
+                </div>
+              </div>
+
+              {/* Title */}
+              <h3 className="text-lg font-semibold text-[var(--v2-text)] text-center mb-2">
+                Token Refresh Failed
+              </h3>
+
+              {/* Plugin Name */}
+              {displayPlugins.find(p => p.plugin_key === reconnectPrompt) && (
+                <p className="text-sm text-[var(--v2-text-secondary)] text-center mb-4">
+                  {getPluginDisplayName(reconnectPrompt)} needs to be reconnected
+                </p>
+              )}
+
+              {/* Description */}
+              <p className="text-sm text-[var(--v2-text-secondary)] text-center mb-6">
+                Would you like to reconnect via OAuth to refresh your access token?
+              </p>
+
+              {/* Actions */}
+              <div className="flex gap-3">
+                <button
+                  onClick={handleCancelReconnect}
+                  className="flex-1 px-4 py-2.5 text-sm font-medium rounded-lg
+                    bg-[var(--v2-background)] border border-[var(--v2-border)]
+                    text-[var(--v2-text-secondary)] hover:bg-[var(--v2-surface)]
+                    transition-colors"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    const plugin = displayPlugins.find(p => p.plugin_key === reconnectPrompt)
+                    if (plugin) handleOAuthReconnect(plugin)
+                  }}
+                  className="flex-1 px-4 py-2.5 text-sm font-medium rounded-lg
+                    bg-[var(--v2-primary)] text-white hover:opacity-90
+                    transition-opacity flex items-center justify-center gap-2"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  <PlugZap className="w-4 h-4" />
+                  Reconnect
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
       )}
 
       {/* CSS Animation for fade-in effect */}

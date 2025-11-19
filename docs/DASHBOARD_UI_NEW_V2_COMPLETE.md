@@ -450,9 +450,17 @@ The V2 Footer is a persistent bottom navigation bar that displays connected plug
    ↓
 4. Loading overlay appears (⏳ spinning icon)
    ↓
-5a. Success → Green checkmark (✅) for 2s → Icon turns fully green (🟢)
+5a. SUCCESS → Green checkmark (✅) for 2s → Icon turns fully green (🟢)
    OR
-5b. Error → Red alert (⚠️) for 3s → Icon stays expired (🟢🟠)
+5b. REFRESH FAILED → OAuth Reconnection Modal appears
+   ↓
+6. User sees centered modal with options:
+   - [Cancel] → Modal closes, plugin stays expired
+   - [🔌 Reconnect] → OAuth flow starts
+   ↓
+7. OAuth popup opens → User authenticates
+   ↓
+8. Success → Green checkmark (✅) for 2s → Icon updates → Footer auto-refreshes
 ```
 
 ---
@@ -615,6 +623,208 @@ const handlePluginRefresh = async (plugin: ConnectedPlugin) => {
 - Last refresh timestamp
 - Last used timestamp
 - **Prominent "Click to refresh token" CTA** for expired plugins
+
+---
+
+### **OAuth Reconnection Modal**
+
+When automatic token refresh fails, the system presents a centered modal dialog prompting the user to reconnect via OAuth.
+
+#### **Modal Design**
+
+```
+                Screen Center
+                     ↓
+         ┌─────────────────────────────┐
+         │                             │
+         │       [!] Alert Icon         │
+         │                             │
+         │  Token Refresh Failed       │ ← Title
+         │                             │
+         │  Gmail needs to be          │ ← Plugin name
+         │  reconnected                │
+         │                             │
+         │  Would you like to          │ ← Description
+         │  reconnect via OAuth to     │
+         │  refresh your access token? │
+         │                             │
+         │  [Cancel]  [🔌 Reconnect]   │ ← Actions
+         │                             │
+         └─────────────────────────────┘
+              Dark backdrop behind
+```
+
+#### **Modal Components** ([Footer.tsx:633-707](../components/v2/Footer.tsx#L633-L707)):
+
+**1. Backdrop**:
+- Semi-transparent black overlay (`bg-black/50`)
+- Clicking closes modal (cancels reconnection)
+- Z-index 50 for proper layering
+- Smooth fade-in animation
+
+**2. Modal Card**:
+- Centered positioning (`fixed top-1/2 left-1/2 -translate`)
+- V2 surface background with border
+- Shadow-2xl for depth
+- 320px-400px width (responsive)
+- V2 card border radius
+
+**3. Alert Icon**:
+- Large orange alert circle (14x14)
+- Subtle orange background (`bg-orange-500/10`)
+- Centered at top of modal
+- Communicates warning/attention needed
+
+**4. Content Sections**:
+- **Title**: "Token Refresh Failed" (bold, large)
+- **Plugin Name**: Shows which service needs reconnection
+- **Description**: Clear explanation of OAuth requirement
+- All text uses V2 color variables
+
+**5. Action Buttons**:
+- **Cancel**: Secondary style (border, hover effect)
+- **Reconnect**: Primary V2 color with PlugZap icon
+- Equal width (flex-1)
+- Proper spacing and hover states
+
+#### **State Management** ([Footer.tsx:72-75](../components/v2/Footer.tsx#L72-L75)):
+```tsx
+// State for OAuth reconnection flow
+const [reconnectPrompt, setReconnectPrompt] = useState<string | null>(null)
+const [reconnecting, setReconnecting] = useState<string | null>(null)
+```
+
+**reconnectPrompt**: Stores plugin_key of plugin needing reconnection (triggers modal)
+**reconnecting**: Stores plugin_key during OAuth flow (shows loading)
+
+#### **Reconnection Handler** ([Footer.tsx:134-184](../components/v2/Footer.tsx#L134-L184)):
+```tsx
+const handleOAuthReconnect = async (plugin: ConnectedPlugin) => {
+  if (!user) return
+
+  setReconnectPrompt(null)  // Close modal
+  setReconnecting(plugin.plugin_key)  // Show loading on icon
+
+  try {
+    const pluginAPIClient = getPluginAPIClient()
+    const result = await pluginAPIClient.connectPlugin(user.id, plugin.plugin_key)
+
+    if (result.success) {
+      // Success! Auto-refresh footer
+      setReconnecting(null)
+      setRefreshStatus({
+        plugin: plugin.plugin_key,
+        status: 'success'
+      })
+
+      setTimeout(async () => {
+        setRefreshStatus(null)
+        // Reload plugins to get updated status
+        await loadPlugins()
+      }, 2000)
+    } else {
+      // OAuth failed
+      setReconnecting(null)
+      setRefreshStatus({
+        plugin: plugin.plugin_key,
+        status: 'error',
+        message: result.error || 'OAuth connection failed'
+      })
+
+      setTimeout(() => {
+        setRefreshStatus(null)
+      }, 3000)
+    }
+  } catch (error: any) {
+    console.error('OAuth reconnection error:', error)
+    setReconnecting(null)
+    setRefreshStatus({
+      plugin: plugin.plugin_key,
+      status: 'error',
+      message: error.message || 'Failed to reconnect'
+    })
+
+    setTimeout(() => {
+      setRefreshStatus(null)
+    }, 3000)
+  }
+}
+```
+
+#### **Plugin Icon During Reconnection Prompt** ([Footer.tsx:424-432](../components/v2/Footer.tsx#L424-L432)):
+```tsx
+{/* Small indicator on plugin icon during reconnection prompt */}
+{reconnectPrompt === plugin.plugin_key && (
+  <div
+    className="absolute inset-0 bg-orange-500/20
+      flex items-center justify-center animate-pulse"
+    style={{ borderRadius: 'var(--v2-radius-button)' }}
+  >
+    <AlertCircle className="w-5 h-5 text-orange-500" />
+  </div>
+)}
+```
+
+**Visual Effect**: While modal is open, the plugin icon shows a pulsing orange overlay with alert icon, helping user identify which plugin needs attention.
+
+#### **OAuth Flow States**
+
+```
+┌──────────────────────────────────────────────┐
+│ State 1: Refresh Failed                      │
+│ • Plugin icon: Pulsing orange overlay        │
+│ • Modal: Visible with Cancel/Reconnect       │
+└──────────────────────────────────────────────┘
+              ↓ User clicks "Reconnect"
+┌──────────────────────────────────────────────┐
+│ State 2: OAuth In Progress                   │
+│ • Modal: Closed                              │
+│ • Plugin icon: Loading spinner + "Opening    │
+│   OAuth..." text                             │
+│ • OAuth popup: Opens in new window           │
+└──────────────────────────────────────────────┘
+              ↓ User authenticates
+┌──────────────────────────────────────────────┐
+│ State 3: Success                             │
+│ • OAuth popup: Closes                        │
+│ • Plugin icon: Green checkmark (2s)          │
+│ • Footer: Auto-refreshes with updated status │
+└──────────────────────────────────────────────┘
+```
+
+#### **Error Handling**
+
+**Refresh Failures Trigger Modal** ([Footer.tsx:237-264](../components/v2/Footer.tsx#L237-L264)):
+```tsx
+if (result.failed?.includes(plugin.plugin_key)) {
+  setRefreshingPlugin(null)
+  setReconnectPrompt(plugin.plugin_key)  // Show modal
+} else if (result.notFound?.includes(plugin.plugin_key)) {
+  // Show error overlay (not reconnect modal)
+  setRefreshStatus({
+    plugin: plugin.plugin_key,
+    status: 'error',
+    message: 'Plugin not found.'
+  })
+}
+
+// Network errors also trigger reconnection modal
+catch (error: any) {
+  setRefreshingPlugin(null)
+  setReconnectPrompt(plugin.plugin_key)
+}
+```
+
+**Design Decision**: Failed token refresh and network errors assume OAuth is needed, while "not found" errors show standard error overlay.
+
+#### **UX Benefits**
+
+✅ **Clear Escalation Path**: Automatic refresh fails → prompt for manual OAuth
+✅ **Non-Blocking**: Modal appears only when needed, doesn't interrupt successful refreshes
+✅ **User Control**: User can cancel if they don't want to reconnect now
+✅ **Professional Design**: Centered modal with proper backdrop, matches alert UI patterns
+✅ **Visual Feedback**: Plugin icon shows what needs attention while modal is open
+✅ **Automatic Recovery**: After successful OAuth, footer auto-refreshes without user action
 
 ---
 
@@ -896,13 +1106,28 @@ All components support dark mode via CSS variables:
 - [x] Click on expired plugin triggers refresh
 - [x] Loading spinner appears during refresh
 - [x] Success checkmark appears on successful refresh
-- [x] Error icon appears on failed refresh
+- [x] Failed refresh triggers OAuth reconnection modal
 - [x] Plugin updates to green after successful refresh
-- [x] Plugin stays expired after failed refresh (can retry)
 - [x] Can refresh multiple plugins sequentially
 - [x] Cannot click plugin during refresh (prevents double-refresh)
 - [x] Animations smooth and performant
 - [x] Dark mode works for all overlays
+
+### **OAuth Reconnection Modal**
+- [x] Modal appears centered when token refresh fails
+- [x] Dark backdrop visible behind modal
+- [x] Clicking backdrop closes modal (cancels)
+- [x] Plugin icon shows pulsing orange overlay while modal open
+- [x] Plugin name displayed in modal
+- [x] Cancel button closes modal
+- [x] Reconnect button starts OAuth flow
+- [x] Modal closes when OAuth starts
+- [x] Plugin shows loading state during OAuth
+- [x] Success shows green checkmark, then auto-refreshes footer
+- [x] OAuth failure shows error overlay on plugin icon
+- [x] Modal animations smooth (fade-in)
+- [x] Modal responsive on mobile/tablet/desktop
+- [x] Dark mode works for modal
 
 ---
 
@@ -912,7 +1137,8 @@ All components support dark mode via CSS variables:
 1. **No Real-time Updates**: Dashboard doesn't auto-refresh without page reload
 2. **Limited Analytics**: Only shows execution counts, no time-series data
 3. **Static Alerts**: Alerts calculated on page load, not updated live
-4. **Single Plugin Refresh**: Can only refresh one plugin at a time (future: batch refresh)
+4. **Single Plugin Refresh**: Can only refresh one plugin at a time
+5. **OAuth Popup Dependency**: Requires popups enabled for OAuth reconnection
 
 ### **Future Enhancements**
 1. **Real-time Subscriptions**: Auto-update when agents run or credits change
@@ -942,9 +1168,13 @@ All components support dark mode via CSS variables:
 - Top agents with execution counts
 - Prioritized system alerts
 
-### ✅ Footer Plugin Refresh
+### ✅ Footer Plugin Refresh & OAuth Reconnection
 - Inline token refresh (no modal interruption)
 - Visual feedback (loading/success/error states)
+- **OAuth reconnection modal** for failed token refreshes
+- Centered modal with dark backdrop (professional alert UI)
+- Automatic footer refresh after successful OAuth
+- Plugin icon visual indicators during reconnection flow
 - Retry-friendly error handling
 - V2 design system aligned
 
@@ -956,9 +1186,9 @@ All components support dark mode via CSS variables:
 
 ---
 
-**Document Version**: 1.0
+**Document Version**: 1.1
 **Last Updated**: 2025-01-19
 **Author**: Development Team
-**Status**: Dashboard Complete - Plugin Refresh Implemented - Ready for Production
+**Status**: Dashboard Complete - Plugin Refresh & OAuth Reconnection Implemented - Ready for Production
 
 **Page Location**: `/v2/dashboard` → [app/v2/dashboard/page.tsx](../app/v2/dashboard/page.tsx)
