@@ -22,7 +22,8 @@ import {
   CheckCircle2,
   AlertCircle,
   RefreshCw,
-  PlugZap
+  PlugZap,
+  XCircle
 } from 'lucide-react'
 import {
   SiGmail,
@@ -73,6 +74,10 @@ export function V2Footer() {
   // State for OAuth reconnection flow
   const [reconnectPrompt, setReconnectPrompt] = useState<string | null>(null)
   const [reconnecting, setReconnecting] = useState<string | null>(null)
+
+  // State for plugin disconnection flow
+  const [disconnectPrompt, setDisconnectPrompt] = useState<string | null>(null)
+  const [disconnecting, setDisconnecting] = useState<string | null>(null)
 
   useEffect(() => {
     if (!user) return
@@ -192,6 +197,77 @@ export function V2Footer() {
   // Handle cancel reconnection
   const handleCancelReconnect = () => {
     setReconnectPrompt(null)
+  }
+
+  // Handle plugin click - route to refresh or disconnect based on status
+  const handlePluginClick = (plugin: ConnectedPlugin) => {
+    // Don't allow clicks during any ongoing operation
+    if (disconnecting || refreshingPlugin || reconnecting) return
+
+    if (plugin.is_expired) {
+      // Expired plugins: trigger refresh
+      handlePluginRefresh(plugin)
+    } else {
+      // Active plugins: trigger disconnect prompt
+      setDisconnectPrompt(plugin.plugin_key)
+    }
+  }
+
+  // Handle confirm disconnect
+  const handleConfirmDisconnect = async (plugin: ConnectedPlugin) => {
+    if (!user) return
+
+    setDisconnectPrompt(null)
+    setDisconnecting(plugin.plugin_key)
+
+    try {
+      const pluginAPIClient = getPluginAPIClient()
+      const result = await pluginAPIClient.disconnectPlugin(user.id, plugin.plugin_key)
+
+      if (result.success) {
+        // Success! Show checkmark
+        setDisconnecting(null)
+        setRefreshStatus({
+          plugin: plugin.plugin_key,
+          status: 'success'
+        })
+
+        setTimeout(() => {
+          setRefreshStatus(null)
+          // Remove plugin from footer
+          setDisplayPlugins(prev => prev.filter(p => p.plugin_key !== plugin.plugin_key))
+        }, 2000)
+      } else {
+        // Failed
+        setDisconnecting(null)
+        setRefreshStatus({
+          plugin: plugin.plugin_key,
+          status: 'error',
+          message: result.error || 'Failed to disconnect'
+        })
+
+        setTimeout(() => {
+          setRefreshStatus(null)
+        }, 3000)
+      }
+    } catch (error: any) {
+      console.error('Plugin disconnect error:', error)
+      setDisconnecting(null)
+      setRefreshStatus({
+        plugin: plugin.plugin_key,
+        status: 'error',
+        message: error.message || 'Network error'
+      })
+
+      setTimeout(() => {
+        setRefreshStatus(null)
+      }, 3000)
+    }
+  }
+
+  // Handle cancel disconnect
+  const handleCancelDisconnect = () => {
+    setDisconnectPrompt(null)
   }
 
   // Refresh plugin token via API
@@ -358,7 +434,7 @@ export function V2Footer() {
                 className={`relative w-12 h-12 sm:w-14 sm:h-14 bg-[var(--v2-surface)]
                   flex items-center justify-center flex-shrink-0
                   transition-all duration-200 border border-[var(--v2-border)]
-                  ${plugin.is_expired && !refreshingPlugin
+                  ${!refreshingPlugin && !reconnecting && !disconnecting
                     ? 'cursor-pointer hover:scale-110 hover:border-[var(--v2-primary)] hover:shadow-lg'
                     : 'cursor-default'
                   }`}
@@ -368,7 +444,7 @@ export function V2Footer() {
                 }}
                 onMouseEnter={() => setHoveredPlugin(plugin.plugin_key)}
                 onMouseLeave={() => setHoveredPlugin(null)}
-                onClick={() => plugin.is_expired && handlePluginRefresh(plugin)}
+                onClick={() => handlePluginClick(plugin)}
               >
                 {getPluginIcon(plugin.plugin_key)}
                 {/* Status indicator - green for active, split green/orange for expired */}
@@ -445,6 +521,30 @@ export function V2Footer() {
                   </div>
                 )}
 
+                {/* Pulsing red indicator on plugin icon during disconnect prompt */}
+                {disconnectPrompt === plugin.plugin_key && (
+                  <div
+                    className="absolute inset-0 bg-red-500/20 flex items-center justify-center animate-pulse"
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    <XCircle className="w-5 h-5 text-red-500" />
+                  </div>
+                )}
+
+                {/* Disconnecting Overlay (disconnect in progress) */}
+                {disconnecting === plugin.plugin_key && (
+                  <div
+                    className="absolute inset-0 bg-[var(--v2-surface)]/95
+                      flex flex-col items-center justify-center backdrop-blur-sm"
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    <Loader2 className="w-6 h-6 sm:w-7 sm:h-7 text-red-500 animate-spin" />
+                    <p className="text-[9px] text-[var(--v2-text-secondary)] mt-2">
+                      Disconnecting...
+                    </p>
+                  </div>
+                )}
+
                 {/* Tooltip with V2 design and connection info */}
                 {hoveredPlugin === plugin.plugin_key && (
                   <div
@@ -517,10 +617,16 @@ export function V2Footer() {
                       )}
                     </div>
 
-                    {plugin.is_expired && (
+                    {/* Call to Action */}
+                    {plugin.is_expired ? (
                       <div className="text-orange-600 dark:text-orange-400 text-[11px] mt-2 pt-2 border-t border-[var(--v2-border)] font-semibold flex items-center gap-1.5">
                         <RefreshCw className="w-3 h-3" />
                         Click to refresh token
+                      </div>
+                    ) : (
+                      <div className="text-red-600 dark:text-red-400 text-[11px] mt-2 pt-2 border-t border-[var(--v2-border)] font-semibold flex items-center gap-1.5">
+                        <XCircle className="w-3 h-3" />
+                        Click to disconnect
                       </div>
                     )}
                     {/* Tooltip arrow */}
@@ -699,6 +805,82 @@ export function V2Footer() {
                 >
                   <PlugZap className="w-4 h-4" />
                   Reconnect
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Plugin Disconnect Confirmation Modal */}
+      {disconnectPrompt && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/50 z-50 animate-fade-in"
+            onClick={handleCancelDisconnect}
+          />
+
+          {/* Modal */}
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 animate-fade-in">
+            <div
+              className="bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-2xl p-6 min-w-[320px] max-w-[400px]"
+              style={{
+                borderRadius: 'var(--v2-radius-card)',
+                boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)'
+              }}
+            >
+              {/* Icon */}
+              <div className="flex justify-center mb-4">
+                <div
+                  className="w-14 h-14 bg-red-500/10 flex items-center justify-center"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  <XCircle className="w-8 h-8 text-red-500" />
+                </div>
+              </div>
+
+              {/* Title */}
+              <h3 className="text-lg font-semibold text-[var(--v2-text)] text-center mb-2">
+                Disconnect Plugin
+              </h3>
+
+              {/* Plugin Name */}
+              {displayPlugins.find(p => p.plugin_key === disconnectPrompt) && (
+                <p className="text-sm text-[var(--v2-text-secondary)] text-center mb-4">
+                  {getPluginDisplayName(disconnectPrompt)}
+                </p>
+              )}
+
+              {/* Description */}
+              <p className="text-sm text-[var(--v2-text-secondary)] text-center mb-6">
+                Are you sure you want to disconnect this plugin? You will need to reconnect and authorize again to use it.
+              </p>
+
+              {/* Actions */}
+              <div className="flex gap-3">
+                <button
+                  onClick={handleCancelDisconnect}
+                  className="flex-1 px-4 py-2.5 text-sm font-medium rounded-lg
+                    bg-[var(--v2-background)] border border-[var(--v2-border)]
+                    text-[var(--v2-text-secondary)] hover:bg-[var(--v2-surface)]
+                    transition-colors"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    const plugin = displayPlugins.find(p => p.plugin_key === disconnectPrompt)
+                    if (plugin) handleConfirmDisconnect(plugin)
+                  }}
+                  className="flex-1 px-4 py-2.5 text-sm font-medium rounded-lg
+                    bg-red-500 text-white hover:bg-red-600
+                    transition-colors flex items-center justify-center gap-2"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  <XCircle className="w-4 h-4" />
+                  Disconnect
                 </button>
               </div>
             </div>

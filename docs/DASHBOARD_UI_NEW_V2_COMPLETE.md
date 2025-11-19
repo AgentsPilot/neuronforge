@@ -463,6 +463,29 @@ The V2 Footer is a persistent bottom navigation bar that displays connected plug
 8. Success → Green checkmark (✅) for 2s → Icon updates → Footer auto-refreshes
 ```
 
+### **Plugin Disconnect Flow**
+
+**User Journey**:
+```
+1. User sees active plugin (🟢 solid green indicator)
+   ↓
+2. Hovers over plugin → Tooltip shows "Click to disconnect"
+   ↓
+3. Clicks plugin icon
+   ↓
+4. Disconnect confirmation modal appears (red theme)
+   ↓
+5. User sees centered modal with options:
+   - [Cancel] → Modal closes, plugin stays connected
+   - [🔴 Disconnect] → Disconnect process starts
+   ↓
+6. Loading overlay appears (⏳ red spinning icon)
+   ↓
+7a. SUCCESS → Green checkmark (✅) for 2s → Plugin removed from footer
+   OR
+7b. ERROR → Red error icon (❌) with message for 3s
+```
+
 ---
 
 ### **Implementation Details**
@@ -828,6 +851,256 @@ catch (error: any) {
 
 ---
 
+### **Plugin Disconnect Functionality**
+
+Users can disconnect active (connected) plugins directly from the footer by clicking on them. This provides quick access to plugin management without navigating to a separate settings page.
+
+#### **User Flow**
+
+```
+1. User sees active plugin (🟢 solid green indicator)
+   ↓
+2. Hovers over plugin → Tooltip shows "Click to disconnect"
+   ↓
+3. Clicks plugin icon
+   ↓
+4. Disconnect confirmation modal appears (centered, red theme)
+   ↓
+5. User chooses:
+   - [Cancel] → Modal closes, plugin stays connected
+   - [🔴 Disconnect] → Disconnect process starts
+   ↓
+6. Loading overlay appears (⏳ red spinning icon)
+   ↓
+7a. SUCCESS → Green checkmark (✅) for 2s → Plugin removed from footer
+   OR
+7b. ERROR → Red error icon (❌) with message for 3s
+```
+
+#### **Modal Design**
+
+```
+                Screen Center
+                     ↓
+         ┌─────────────────────────────┐
+         │                             │
+         │       [X] Alert Icon        │ ← Red icon
+         │                             │
+         │  Disconnect Plugin          │ ← Title
+         │                             │
+         │  Gmail                      │ ← Plugin name
+         │                             │
+         │  Are you sure you want to   │ ← Warning
+         │  disconnect this plugin?    │
+         │  You will need to           │
+         │  reconnect and authorize    │
+         │  again to use it.           │
+         │                             │
+         │  [Cancel]  [🔴 Disconnect]  │ ← Actions
+         │                             │
+         └─────────────────────────────┘
+              Dark backdrop behind
+```
+
+#### **Modal Components** ([Footer.tsx:791-865](../components/v2/Footer.tsx#L791-L865)):
+
+**1. Backdrop**:
+- Semi-transparent black overlay (`bg-black/50`)
+- Clicking closes modal (cancels disconnect)
+- Z-index 50 for proper layering
+- Smooth fade-in animation
+
+**2. Modal Card**:
+- Centered positioning (`fixed top-1/2 left-1/2 -translate`)
+- V2 surface background with border
+- Shadow-2xl for depth
+- 320px-400px width (responsive)
+- V2 card border radius
+
+**3. Alert Icon**:
+- Large red X circle (14x14)
+- Subtle red background (`bg-red-500/10`)
+- Centered at top of modal
+- Communicates destructive action warning
+
+**4. Content Sections**:
+- **Title**: "Disconnect Plugin" (bold, large)
+- **Plugin Name**: Shows which service will be disconnected
+- **Warning**: Clear explanation of consequences
+- All text uses V2 color variables
+
+**5. Action Buttons**:
+- **Cancel**: Secondary style (border, hover effect)
+- **Disconnect**: Red destructive style with XCircle icon
+- Equal width (flex-1)
+- Proper spacing and hover states (red-600 on hover)
+
+#### **State Management** ([Footer.tsx:78-80](../components/v2/Footer.tsx#L78-L80)):
+```tsx
+// State for plugin disconnection flow
+const [disconnectPrompt, setDisconnectPrompt] = useState<string | null>(null)
+const [disconnecting, setDisconnecting] = useState<string | null>(null)
+```
+
+**disconnectPrompt**: Stores plugin_key of plugin needing disconnect confirmation (triggers modal)
+**disconnecting**: Stores plugin_key during disconnect process (shows loading)
+
+#### **Disconnect Handler** ([Footer.tsx:217-266](../components/v2/Footer.tsx#L217-L266)):
+```tsx
+const handleConfirmDisconnect = async (plugin: ConnectedPlugin) => {
+  if (!user) return
+
+  setDisconnectPrompt(null)  // Close modal
+  setDisconnecting(plugin.plugin_key)  // Show loading on icon
+
+  try {
+    const pluginAPIClient = getPluginAPIClient()
+    const result = await pluginAPIClient.disconnectPlugin(user.id, plugin.plugin_key)
+
+    if (result.success) {
+      // Success! Show checkmark and remove
+      setDisconnecting(null)
+      setRefreshStatus({
+        plugin: plugin.plugin_key,
+        status: 'success'
+      })
+
+      setTimeout(() => {
+        setRefreshStatus(null)
+        // Remove plugin from footer
+        setDisplayPlugins(prev => prev.filter(p => p.plugin_key !== plugin.plugin_key))
+      }, 2000)
+    } else {
+      // Disconnect failed
+      setDisconnecting(null)
+      setRefreshStatus({
+        plugin: plugin.plugin_key,
+        status: 'error',
+        message: result.error || 'Failed to disconnect'
+      })
+
+      setTimeout(() => {
+        setRefreshStatus(null)
+      }, 3000)
+    }
+  } catch (error: any) {
+    console.error('Plugin disconnect error:', error)
+    setDisconnecting(null)
+    setRefreshStatus({
+      plugin: plugin.plugin_key,
+      status: 'error',
+      message: error.message || 'Network error'
+    })
+
+    setTimeout(() => {
+      setRefreshStatus(null)
+    }, 3000)
+  }
+}
+```
+
+#### **Plugin Icon During Disconnect Prompt** ([Footer.tsx:449-456](../components/v2/Footer.tsx#L449-L456)):
+```tsx
+{/* Pulsing red indicator on plugin icon during disconnect prompt */}
+{disconnectPrompt === plugin.plugin_key && (
+  <div
+    className="absolute inset-0 bg-red-500/20
+      flex items-center justify-center animate-pulse"
+    style={{ borderRadius: 'var(--v2-radius-button)' }}
+  >
+    <XCircle className="w-5 h-5 text-red-500" />
+  </div>
+)}
+```
+
+**Visual Effect**: While modal is open, the plugin icon shows a pulsing red overlay with X icon, helping user identify which plugin will be disconnected.
+
+#### **Plugin Click Router** ([Footer.tsx:198-214](../components/v2/Footer.tsx#L198-L214)):
+```tsx
+const handlePluginClick = (plugin: ConnectedPlugin) => {
+  // Don't allow clicks during any ongoing operation
+  if (disconnecting || refreshingPlugin || reconnecting) return
+
+  if (plugin.is_expired) {
+    // Expired plugins: trigger refresh
+    handlePluginRefresh(plugin)
+  } else {
+    // Active plugins: trigger disconnect prompt
+    setDisconnectPrompt(plugin.plugin_key)
+  }
+}
+```
+
+**Design Decision**: Single click handler routes to appropriate action based on plugin status:
+- **Expired plugins** → Token refresh flow
+- **Active plugins** → Disconnect confirmation flow
+
+#### **Disconnect Flow States**
+
+```
+┌──────────────────────────────────────────────┐
+│ State 1: Disconnect Prompt                   │
+│ • Plugin icon: Pulsing red overlay           │
+│ • Modal: Visible with Cancel/Disconnect      │
+└──────────────────────────────────────────────┘
+              ↓ User clicks "Disconnect"
+┌──────────────────────────────────────────────┐
+│ State 2: Disconnecting In Progress           │
+│ • Modal: Closed                              │
+│ • Plugin icon: Red loading spinner +         │
+│   "Disconnecting..." text                    │
+└──────────────────────────────────────────────┘
+              ↓ API completes
+┌──────────────────────────────────────────────┐
+│ State 3: Success                             │
+│ • Plugin icon: Green checkmark (2s)          │
+│ • Footer: Plugin removed from list           │
+└──────────────────────────────────────────────┘
+```
+
+#### **Tooltip Updates** ([Footer.tsx:520-531](../components/v2/Footer.tsx#L520-L531)):
+
+**Expired Plugins**:
+```tsx
+<div className="text-orange-600 dark:text-orange-400 text-[11px] ...">
+  <RefreshCw className="w-3 h-3" />
+  Click to refresh token
+</div>
+```
+
+**Active Plugins**:
+```tsx
+<div className="text-red-600 dark:text-red-400 text-[11px] ...">
+  <XCircle className="w-3 h-3" />
+  Click to disconnect
+</div>
+```
+
+**Design Pattern**: Tooltips use color-coding to communicate action type:
+- **Orange**: Warning level (refresh needed)
+- **Red**: Destructive action (disconnect)
+
+#### **Color Scheme Comparison**
+
+| Feature | Color | Icon | Meaning |
+|---------|-------|------|---------|
+| **OAuth Reconnection** | Orange (`orange-500`) | `AlertCircle` | Warning - Action needed |
+| **Plugin Disconnect** | Red (`red-500`) | `XCircle` | Destructive - Remove connection |
+| **Success State** | Green (`green-500`) | `CheckCircle2` | Success - Operation complete |
+| **Error State** | Red (`red-500`) | `AlertCircle` | Error - Operation failed |
+
+#### **UX Benefits**
+
+✅ **Quick Access**: Disconnect plugins without navigating to settings
+✅ **Clear Warning**: Modal clearly explains consequences of disconnection
+✅ **User Control**: Cancel option prevents accidental disconnects
+✅ **Visual Distinction**: Red color scheme signals destructive action
+✅ **Immediate Feedback**: Loading states and success/error indicators
+✅ **Clean Removal**: Plugin removed from footer after successful disconnect
+✅ **Professional Design**: Matches established modal pattern from OAuth reconnection
+
+---
+
 ### **API Integration**
 
 **Endpoint**: `/api/plugins/refresh-token`
@@ -1129,6 +1402,29 @@ All components support dark mode via CSS variables:
 - [x] Modal responsive on mobile/tablet/desktop
 - [x] Dark mode works for modal
 
+### **Plugin Disconnect Functionality**
+- [x] Active plugins show "Click to disconnect" tooltip (red text)
+- [x] Clicking active plugin triggers disconnect modal
+- [x] Disconnect modal appears centered with red theme
+- [x] Dark backdrop visible behind disconnect modal
+- [x] Clicking backdrop closes modal (cancels)
+- [x] Plugin icon shows pulsing red overlay while modal open
+- [x] Plugin name displayed in modal
+- [x] Warning message explains consequences
+- [x] Cancel button closes modal
+- [x] Disconnect button starts disconnect process
+- [x] Modal closes when disconnect starts
+- [x] Plugin shows red loading spinner during disconnect
+- [x] "Disconnecting..." text shows during process
+- [x] Success shows green checkmark for 2s
+- [x] Plugin removed from footer after successful disconnect
+- [x] Error shows red error icon with message
+- [x] Modal animations smooth (fade-in)
+- [x] Modal responsive on mobile/tablet/desktop
+- [x] Dark mode works for disconnect modal
+- [x] Cannot click plugins during disconnect operation
+- [x] Expired plugins still route to refresh (not disconnect)
+
 ---
 
 ## Known Limitations
@@ -1168,13 +1464,16 @@ All components support dark mode via CSS variables:
 - Top agents with execution counts
 - Prioritized system alerts
 
-### ✅ Footer Plugin Refresh & OAuth Reconnection
-- Inline token refresh (no modal interruption)
+### ✅ Footer Plugin Management
+- **Inline token refresh** (no modal interruption for refresh)
+- **OAuth reconnection modal** for failed token refreshes (orange theme)
+- **Plugin disconnect modal** for removing connections (red destructive theme)
 - Visual feedback (loading/success/error states)
-- **OAuth reconnection modal** for failed token refreshes
-- Centered modal with dark backdrop (professional alert UI)
+- Centered modals with dark backdrop (professional alert UI)
 - Automatic footer refresh after successful OAuth
-- Plugin icon visual indicators during reconnection flow
+- Plugin removed from footer after successful disconnect
+- Plugin icon visual indicators during all operations
+- Intelligent click routing (expired → refresh, active → disconnect)
 - Retry-friendly error handling
 - V2 design system aligned
 
@@ -1186,9 +1485,9 @@ All components support dark mode via CSS variables:
 
 ---
 
-**Document Version**: 1.1
+**Document Version**: 1.2
 **Last Updated**: 2025-01-19
 **Author**: Development Team
-**Status**: Dashboard Complete - Plugin Refresh & OAuth Reconnection Implemented - Ready for Production
+**Status**: Dashboard Complete - Plugin Refresh, OAuth Reconnection & Disconnect Implemented - Ready for Production
 
 **Page Location**: `/v2/dashboard` → [app/v2/dashboard/page.tsx](../app/v2/dashboard/page.tsx)
