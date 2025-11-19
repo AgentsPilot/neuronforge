@@ -757,6 +757,180 @@ useEffect(() => {
 
 ---
 
+## Phase 3 Response Validation (NEW - v9)
+
+### Overview
+As of v9, **Phase 3 responses are strictly validated** using Zod schemas before being accepted by the frontend. This ensures type safety and catches malformed LLM responses.
+
+### What Changed
+
+| Aspect | Before (v8 and earlier) | After (v9 with validation) |
+|--------|-------------------------|----------------------------|
+| **Validation** | ❌ None (any JSON accepted) | ✅ Strict Zod validation at runtime |
+| **Sections Type** | `string` (single paragraph) | `string[]` (array of bullet points) |
+| **Metadata** | Allows arbitrary keys | Strictly typed `Phase3Metadata` |
+| **Error Handling** | Silent failures | Clear validation errors with field paths |
+
+### Enhanced Prompt Structure (v9)
+
+```typescript
+interface EnhancedPrompt {
+  plan_title: string
+  plan_description: string
+  sections: {
+    data: string[]              // ✅ Array of bullet points (not a single string!)
+    actions: string[]           // ✅ Array of bullet points
+    output: string[]            // ✅ Array of bullet points
+    delivery: string[]          // ✅ Array of bullet points
+    processing_steps?: string[] // ✅ Optional (v7 compatibility)
+  }
+  specifics: {
+    services_involved: string[]
+    user_inputs_required: string[]
+  }
+}
+```
+
+### Frontend Handling
+
+**In processPhase3 (line ~361):**
+
+```typescript
+const processPhase3 = async () => {
+  const res = await fetch('/api/agent-creation/process-message', {
+    method: 'POST',
+    body: JSON.stringify({
+      thread_id: threadId,
+      phase: 3,
+      clarification_answers: answers,
+      metadata: { /* ... */ }
+    })
+  })
+
+  if (!res.ok) {
+    // ❌ Validation failed on backend
+    const error = await res.json()
+    console.error('❌ Phase 3 validation failed:', error.details)
+    // Show user-friendly error message
+    addAIMessage("I encountered an error generating the plan. Please try again.")
+    return
+  }
+
+  const data = await res.json()
+  console.log('✅ Phase 3 response (validated):', data)
+
+  // ✅ Data is now guaranteed to match schema
+  setEnhancedPromptData(data.enhanced_prompt)
+
+  // Access sections as arrays
+  console.log('Data steps:', data.enhanced_prompt.sections.data) // string[]
+  console.log('Actions:', data.enhanced_prompt.sections.actions) // string[]
+}
+```
+
+### UI Rendering (Enhanced Prompt Accordion)
+
+**Sections are now arrays, so render as lists:**
+
+```tsx
+<div className="space-y-4">
+  {/* Data Section */}
+  <div>
+    <h4 className="font-semibold mb-2">Data</h4>
+    <ul className="list-disc list-inside space-y-1">
+      {enhancedPromptData.sections.data.map((item, idx) => (
+        <li key={idx} className="text-sm">{item}</li>
+      ))}
+    </ul>
+  </div>
+
+  {/* Actions Section */}
+  <div>
+    <h4 className="font-semibold mb-2">Actions</h4>
+    <ul className="list-disc list-inside space-y-1">
+      {enhancedPromptData.sections.actions.map((item, idx) => (
+        <li key={idx} className="text-sm">{item}</li>
+      ))}
+    </ul>
+  </div>
+
+  {/* Output Section */}
+  <div>
+    <h4 className="font-semibold mb-2">Output</h4>
+    <ul className="list-disc list-inside space-y-1">
+      {enhancedPromptData.sections.output.map((item, idx) => (
+        <li key={idx} className="text-sm">{item}</li>
+      ))}
+    </ul>
+  </div>
+
+  {/* Delivery Section */}
+  <div>
+    <h4 className="font-semibold mb-2">Delivery</h4>
+    <ul className="list-disc list-inside space-y-1">
+      {enhancedPromptData.sections.delivery.map((item, idx) => (
+        <li key={idx} className="text-sm">{item}</li>
+      ))}
+    </ul>
+  </div>
+
+  {/* Optional: Processing Steps (v7 compatibility) */}
+  {enhancedPromptData.sections.processing_steps && (
+    <div>
+      <h4 className="font-semibold mb-2">Processing Steps</h4>
+      <ul className="list-disc list-inside space-y-1">
+        {enhancedPromptData.sections.processing_steps.map((item, idx) => (
+          <li key={idx} className="text-sm">{item}</li>
+        ))}
+      </ul>
+    </div>
+  )}
+</div>
+```
+
+### Validation Implementation Files
+
+- **Zod Schemas:** [lib/validation/phase3-schema.ts](../lib/validation/phase3-schema.ts)
+- **TypeScript Types:** [components/agent-creation/types/agent-prompt-threads.ts](../components/agent-creation/types/agent-prompt-threads.ts)
+- **Route Handler:** [app/api/agent-creation/process-message/route.ts:396-412](../app/api/agent-creation/process-message/route.ts#L396-L412)
+- **LLM Prompt:** [app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v9-chatgpt.txt](../app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v9-chatgpt.txt)
+
+### Testing Validation
+
+1. **Normal Flow** - Should work seamlessly, validation happens transparently
+2. **Backend Logs** - Check for validation success:
+   ```
+   🔍 Validating Phase 3 response structure...
+   ✅ Phase 3 response validated successfully
+   ```
+3. **Error Case** - If validation fails, backend returns 500 with details:
+   ```json
+   {
+     "success": false,
+     "error": "Invalid Phase 3 response structure from AI",
+     "phase": 3,
+     "details": "enhanced_prompt.sections.data: Expected array, received string"
+   }
+   ```
+
+### Migration Note
+
+If you have existing code that expects `sections.data` to be a string, **update it to handle arrays**:
+
+```typescript
+// ❌ Old (v8 and earlier)
+<p>{enhancedPrompt.sections.data}</p>
+
+// ✅ New (v9)
+<ul>
+  {enhancedPrompt.sections.data.map((item, idx) => (
+    <li key={idx}>{item}</li>
+  ))}
+</ul>
+```
+
+---
+
 ## Next Steps
 
 1. ✅ Review this documentation
@@ -765,18 +939,21 @@ useEffect(() => {
 4. ⬜ Implement `createAgent()` function (Step 3)
 5. ⬜ Update approval handlers (Step 4)
 6. ⬜ Add loading states (Step 6)
-7. ⬜ Test complete flow end-to-end
-8. ⬜ Verify database record has correct ID
-9. ⬜ Test navigation to agent detail page
-10. ⬜ Deploy to production
+7. ⬜ **Update UI to render sections as arrays (v9 migration)**
+8. ⬜ Test complete flow end-to-end
+9. ⬜ Verify database record has correct ID
+10. ⬜ Test navigation to agent detail page
+11. ⬜ Deploy to production
 
 ---
 
-**Document Version**: 1.0
-**Last Updated**: 2025-01-18
+**Document Version**: 1.1
+**Last Updated**: 2025-01-19 (Added Phase 3 Validation section)
 **Author**: Development Team
 **Status**: Implementation Guide - Ready for Development
 
 **Dependencies**:
 - [LEGACY_CONVERSATIONAL_AGENT_CREATION_SEQUENCE.md](LEGACY_CONVERSATIONAL_AGENT_CREATION_SEQUENCE.md)
 - [CONVERSATIONAL_UI_NEW_V2_COMPLETE.md](CONVERSATIONAL_UI_NEW_V2_COMPLETE.md)
+- [PHASE3_SCHEMA_VALIDATION.md](PHASE3_SCHEMA_VALIDATION.md) ← NEW
+- [thread-based-agent-creation-flow.md](thread-based-agent-creation-flow.md)

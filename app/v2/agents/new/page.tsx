@@ -309,7 +309,11 @@ function V2AgentBuilderContent() {
         })
       })
 
-      if (!res.ok) throw new Error('Phase 3 failed')
+      if (!res.ok) {
+        const errorData = await res.json()
+        console.error('❌ Phase 3 HTTP error:', res.status, errorData)
+        throw new Error(`Phase 3 failed: ${errorData.error || 'Unknown error'} - ${errorData.details || ''}`)
+      }
 
       const data = await res.json()
       console.log('✅ Phase 3 response:', data)
@@ -336,10 +340,20 @@ function V2AgentBuilderContent() {
       // Add simple AI message (detailed plan will show below)
       addAIMessage("Perfect! I've created a detailed plan for your agent:")
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Phase 3 error:', error)
       removeTypingIndicator()
-      addSystemMessage('Error creating agent plan')
+
+      // Show detailed error to help debugging
+      const errorMessage = error.message || 'Unknown error'
+      addSystemMessage(`Error creating agent plan: ${errorMessage}`)
+
+      // Log full error for debugging
+      console.error('Full error details:', {
+        message: error.message,
+        stack: error.stack,
+        error
+      })
     }
   }
 

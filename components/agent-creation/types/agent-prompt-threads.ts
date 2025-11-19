@@ -43,17 +43,19 @@ export interface ConnectedService {
 
 export interface AnalysisObject {
   data: AnalysisDimension;
-  trigger: AnalysisDimension;
+  trigger?: AnalysisDimension; // Optional in Phase 3
   output: AnalysisDimension;
   actions: AnalysisDimension;
   delivery: AnalysisDimension;
-  error_handling: AnalysisDimension;
+  error_handling?: AnalysisDimension; // Optional in Phase 3
 }
 
+export type DimensionStatus = 'clear' | 'partial' | 'missing';
+
 export interface AnalysisDimension {
-  status: 'clear' | 'partial' | 'missing';
-  confidence: number; // 0-1
-  detected: string;
+  status: DimensionStatus;
+  confidence: number; // 0-1, strictly validated at runtime
+  detected: string; // Non-empty string
 }
 
 // Database insert/update types (omit generated fields)
@@ -100,31 +102,28 @@ export interface ProcessMessageRequest {
 export interface ProcessMessageResponse {
   success: boolean;
   phase: ThreadPhase;
+
+  // Phase 1 & 2 fields
   analysis?: AnalysisObject;
   questionsSequence?: ClarificationQuestion[];
-  enhanced_prompt?: EnhancedPrompt;
-  requiredServices?: string[];
   needsClarification?: boolean;
   clarityScore?: number;
   suggestions?: string[];
-  missingPlugins?: string[];
-  pluginWarning?: Record<string, any>;
   connectedPlugins?: string[]; // Phase 1: List of user's connected plugin keys (e.g., ['google-mail', 'slack'])
-  conversationalSummary?: string; // All Phases: LLM-generated friendly summary of understanding/progress
-  ready_for_generation?: boolean; // Phase 3: True if all plugins connected and ready to create agent
+
+  // Phase 3 specific fields
+  enhanced_prompt?: EnhancedPrompt;
+  requiredServices?: string[];
+  missingPlugins?: string[];
+  pluginWarning?: Record<string, string>; // Changed from Record<string, any>
   error?: string; // Phase 3: Error message if workflow impossible (e.g., no alternatives for declined plugin)
-  metadata?: {
-    all_clarifications_applied?: boolean;
-    confirmation_needed?: boolean;
-    implicit_services_detected?: string[];
-    oauth_required?: boolean;
-    oauth_message?: string;
-    plugins_adjusted?: string[];
-    adjustment_reason?: string;
-    declined_plugins_blocking?: string[];
-    reason?: string;
-    [key: string]: any;
-  };
+  // Note: ready_for_generation is ONLY in metadata.ready_for_generation, not at top level
+
+  // All Phases
+  conversationalSummary?: string; // LLM-generated friendly summary of understanding/progress
+
+  // Strictly typed metadata (no arbitrary keys)
+  metadata?: Phase3Metadata;
 }
 
 export interface ClarificationQuestion {
@@ -146,22 +145,44 @@ export interface ClarificationOption {
   description?: string;
 }
 
+export interface EnhancedPromptSections {
+  data: string[];              // Array of bullet points
+  actions: string[];           // Array of bullet points
+  output: string[];            // Array of bullet points
+  delivery: string[];          // Array of bullet points
+  processing_steps?: string[]; // Optional - v7 compatibility
+}
+
+export interface EnhancedPromptSpecifics {
+  services_involved: string[];
+  user_inputs_required: string[];
+}
+
 export interface EnhancedPrompt {
   plan_title: string;
   plan_description: string;
-  sections: {
-    data: string;
-    actions: string; // v8: single string instead of array
-    output: string;
-    delivery: string;
-    processing_steps?: string[]; // v7 and below (deprecated in v8)
-    error_handling?: string; // v7 and below (not in v8)
-  };
-  specifics: {
-    services_involved: string[];
-    user_inputs_required: string[];
-    trigger_scope?: string; // v7 and below (not in v8)
-  };
+  sections: EnhancedPromptSections;
+  specifics: EnhancedPromptSpecifics;
+}
+
+/**
+ * Strict metadata for Phase 3 responses
+ * All fields explicitly defined, no arbitrary keys
+ */
+export interface Phase3Metadata {
+  all_clarifications_applied: boolean;
+  ready_for_generation: boolean;
+  confirmation_needed: boolean;
+  implicit_services_detected: string[];
+  provenance_checked: boolean;
+  resolved_contacts: Record<string, string>; // {"user": "alice@company.com"}
+  provenance_note?: string;
+  declined_plugins_blocking?: string[];
+  oauth_required?: boolean;
+  oauth_message?: string;
+  plugins_adjusted?: string[];
+  adjustment_reason?: string;
+  reason?: string;
 }
 
 // Thread resume response type

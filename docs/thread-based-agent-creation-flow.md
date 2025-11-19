@@ -235,15 +235,39 @@ This diagram shows the complete user journey through `useConversationalBuilder.t
 │    │      phase2 msg, phase2 response, phase3 msg]                  │
 │    │   • Builds conversation for Chat Completions                   │
 │    │   • GPT-4o generates enhanced prompt with ALL context          │
+│    │   • ✅ VALIDATES response with Zod schema (strict!)            │
 │    │   • Stores AI response in thread                               │
 │    │                                                                │
 │    └─► Returns: {                                                   │
 │          enhanced_prompt: {                                         │
-│            plan_description: "Create automated workflow...",        │
-│            workflow_steps: [...],                                   │
-│            required_plugins: ['gmail', 'slack'],                    │
-│            input_schema: {...},                                     │
-│            output_schema: {...}                                     │
+│            plan_title: "Gmail to Slack Automation",                 │
+│            plan_description: "Send daily emails to Slack...",       │
+│            sections: {                                              │
+│              data: [                                                │
+│                "- Fetch emails from Gmail inbox",                   │
+│                "- Filter by date (today only)"                      │
+│              ],                                                     │
+│              actions: [                                             │
+│                "- Format email content as Slack message"            │
+│              ],                                                     │
+│              output: [                                              │
+│                "- Formatted Slack message with email subject/body"  │
+│              ],                                                     │
+│              delivery: [                                            │
+│                "- Post to #general channel at 9am daily"            │
+│              ],                                                     │
+│              processing_steps: [ /* optional v7 field */ ]          │
+│            },                                                       │
+│            specifics: {                                             │
+│              services_involved: ['gmail', 'slack'],                 │
+│              user_inputs_required: []                               │
+│            }                                                        │
+│          },                                                         │
+│          metadata: {                                                │
+│            all_clarifications_applied: true,                        │
+│            ready_for_generation: true,                              │
+│            confirmation_needed: false,                              │
+│            /* ...strictly typed Phase3Metadata */                   │
 │          }                                                          │
 │        }                                                            │
 │                                                                     │
@@ -464,4 +488,145 @@ Try-Catch Boundaries:
    → User can retry
    → OR admin can disable flag to use legacy flow
 ```
+
+---
+
+## 🔒 Phase 3 Strict Validation (NEW)
+
+### Overview
+Phase 3 responses are now **strictly validated** using Zod schemas to ensure the LLM returns well-formed, type-safe JSON.
+
+### Validation Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Phase 3 Response Flow with Validation                      │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  1. GPT-4o generates JSON response                          │
+│     ↓                                                       │
+│  2. Backend parses JSON                                     │
+│     ↓                                                       │
+│  3. ✅ Zod Schema Validation (lib/validation/phase3-schema.ts) │
+│     │                                                       │
+│     ├─ ✅ Valid → Continue                                  │
+│     │                                                       │
+│     └─ ❌ Invalid → Return 500 error with details           │
+│        Example: "enhanced_prompt.sections.data: Expected   │
+│                  array, received string"                   │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Validated Schema Structure
+
+**File:** `lib/validation/phase3-schema.ts`
+
+```typescript
+Phase3ResponseSchema = {
+  analysis: {
+    data: { status: 'clear'|'partial'|'missing', confidence: 0-1, detected: string },
+    actions: { ... },
+    output: { ... },
+    delivery: { ... },
+    trigger?: { ... },              // ✅ OPTIONAL in Phase 3
+    error_handling?: { ... }        // ✅ OPTIONAL in Phase 3
+  },
+  requiredServices: string[],
+  missingPlugins: string[],
+  pluginWarning: Record<string, string>,
+  clarityScore: number (0-100),
+  enhanced_prompt: {
+    plan_title: string,
+    plan_description: string,
+    sections: {
+      data: string[],              // ✅ Array of bullet points (not string!)
+      actions: string[],           // ✅ Array of bullet points
+      output: string[],            // ✅ Array of bullet points
+      delivery: string[],          // ✅ Array of bullet points
+      processing_steps?: string[]  // ✅ Optional (v7 compatibility)
+    },
+    specifics: {
+      services_involved: string[],
+      user_inputs_required: string[]
+    }
+  },
+  metadata: {
+    all_clarifications_applied: boolean,
+    ready_for_generation: boolean,  // ✅ Lives HERE (not at top-level!)
+    confirmation_needed: boolean,
+    implicit_services_detected: string[],
+    provenance_checked: boolean,
+    resolved_contacts: Record<string, string>,
+    // ... 7 more strictly-typed optional fields
+    // ❌ NO [key: string]: any escape hatch!
+  },
+  conversationalSummary: string
+  // ❌ ready_for_generation REMOVED from top-level (only in metadata!)
+}
+```
+
+### Key Changes from Legacy
+
+| Aspect | Before (v8 and earlier) | After (v9 with validation) |
+|--------|-------------------------|----------------------------|
+| **Validation** | ❌ None (any JSON accepted) | ✅ Strict Zod validation |
+| **Sections Type** | `string` (single text) | `string[]` (array of bullets) |
+| **Metadata** | Allows `[key: string]: any` | Strictly typed, no arbitrary keys |
+| **Error Detection** | Silent failures | Clear validation errors with field paths |
+| **Type Safety** | TypeScript only (compile-time) | TypeScript + Zod (runtime) |
+| **processing_steps** | Not supported in v8 | ✅ Supported (optional, v7 compat) |
+| **trigger/error_handling** | Required | ✅ Optional in Phase 3 (v9.1) |
+| **ready_for_generation** | Both top-level & metadata | ✅ Only in metadata (v9.1) |
+
+### Benefits
+
+1. **Runtime Type Safety** - Catches malformed LLM responses before they reach the frontend
+2. **Clear Error Messages** - When validation fails, you get exact field paths:
+   ```
+   enhanced_prompt.sections.actions: Expected array, received string
+   metadata.all_clarifications_applied: Required
+   ```
+3. **No Silent Failures** - Any deviation from schema returns 500 with details
+4. **Backward Compatible** - Phase 1 & 2 still use loose validation
+5. **v7 Compatibility** - Supports optional `processing_steps` field
+
+### Implementation Files
+
+- **Zod Schemas:** [lib/validation/phase3-schema.ts](../lib/validation/phase3-schema.ts)
+- **TypeScript Types:** [components/agent-creation/types/agent-prompt-threads.ts](../components/agent-creation/types/agent-prompt-threads.ts)
+- **Validation Logic:** [app/api/agent-creation/process-message/route.ts:396-412](../app/api/agent-creation/process-message/route.ts#L396-L412)
+- **LLM Prompt:** [app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v9-chatgpt.txt](../app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v9-chatgpt.txt)
+
+### Testing Validation
+
+To test the validation:
+
+1. **Valid Response** - Normal Phase 3 flow should work seamlessly
+2. **Invalid Response** - Modify LLM prompt to return wrong types:
+   ```json
+   {
+     "sections": {
+       "data": "string instead of array"  // ❌ Will fail validation
+     }
+   }
+   ```
+3. **Check Logs** - Look for:
+   ```
+   🔍 Validating Phase 3 response structure...
+   ✅ Phase 3 response validated successfully
+   ```
+   OR
+   ```
+   ❌ Phase 3 response validation failed: enhanced_prompt.sections.data: Expected array, received string
+   ```
+
+---
+
+## 📚 Related Documentation
+
+- **Main Flow:** You are here
+- **Phase 3 Schema Details:** [PHASE3_SCHEMA_VALIDATION.md](PHASE3_SCHEMA_VALIDATION.md)
+- **V2 Implementation:** [V2_AGENT_CREATION_AND_SAVE_IMPLEMENTATION.md](V2_AGENT_CREATION_AND_SAVE_IMPLEMENTATION.md)
+- **UI Components:** [CONVERSATIONAL_UI_NEW_V2_COMPLETE.md](CONVERSATIONAL_UI_NEW_V2_COMPLETE.md)
 
