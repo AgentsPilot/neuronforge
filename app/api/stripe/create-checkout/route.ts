@@ -64,8 +64,8 @@ export async function POST(request: NextRequest) {
 
     // Construct URLs
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || request.headers.get('origin') || 'http://localhost:3000';
-    const successUrl = `${baseUrl}/settings?tab=billing&success=true`;
-    const cancelUrl = `${baseUrl}/settings?tab=billing&canceled=true`;
+    const successUrl = `${baseUrl}/v2/billing?success=true`;
+    const cancelUrl = `${baseUrl}/v2/billing?canceled=true`;
 
     let session;
 

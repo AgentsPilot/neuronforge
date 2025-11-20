@@ -85,6 +85,13 @@ export default function ModalsV2({
   const currentBalance = userSubscription?.balance || 0
   const currentPilotCredits = Math.floor(currentBalance / pricingConfig.tokens_per_pilot_credit)
 
+  console.log('[ModalsV2] Render:', {
+    modalMounted,
+    showCheckoutModal,
+    hasClientSecret: !!clientSecret,
+    willRenderCheckout: modalMounted && showCheckoutModal && clientSecret
+  })
+
   return (
     <>
       {/* Embedded Checkout Modal */}

@@ -71,7 +71,7 @@ export async function POST(req: Request) {
       .from('user_subscriptions')
       .select('account_frozen, free_tier_expires_at, balance')
       .eq('user_id', user.id)
-      .single()
+      .maybeSingle()
 
     if (!subError && subscription) {
       if (subscription.account_frozen) {
@@ -522,7 +522,7 @@ export async function POST(req: Request) {
           .from('user_subscriptions')
           .select('balance, total_spent')
           .eq('user_id', user.id)
-          .single();
+          .maybeSingle();
 
         const currentBalance = currentSub?.balance || 0;
         const currentTotalSpent = currentSub?.total_spent || 0;

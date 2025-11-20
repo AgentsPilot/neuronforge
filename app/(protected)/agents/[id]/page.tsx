@@ -12,7 +12,8 @@ import AgentSandbox from '@/components/dashboard/AgentSandBox/AgentSandbox'
 import { AgentIntensityCard } from '@/components/agents/AgentIntensityCard'
 import AgentPreview from '@/components/agent-creation/SmartAgentBuilder/components/AgentPreview'
 import SimpleDynamicWorkflow from '@/components/agent-creation/SmartAgentBuilder/components/VisualAgentFlow'
-import { SiGmail, SiSlack, SiNotion, SiGoogledrive, SiGooglecalendar, SiGoogledocs, SiGooglesheets, SiGithub, SiHubspot, SiWhatsapp } from 'react-icons/si'
+import { SiNotion, SiGithub } from 'react-icons/si'
+import { PluginIcon } from '@/components/PluginIcon'
 import {
   Bot,
   Edit,
@@ -198,20 +199,22 @@ const getTimezoneDisplayName = (timezone: string) => {
   return timezoneMap[timezone] || timezone.replace('_', ' ').split('/').pop() || 'Local Time'
 }
 
-// Helper function to get plugin-specific icon (using real brand logos with brand colors on white bg)
+// Helper function to get plugin-specific icon (using local SVG files via PluginIcon)
 const getPluginIcon = (pluginName: string) => {
   const name = pluginName.toLowerCase()
-  // Use brand colors for recognizable logos
-  if (name.includes('gmail') || name.includes('google-mail')) return <SiGmail className="h-8 w-8 text-red-500" />
-  if (name.includes('calendar')) return <SiGooglecalendar className="h-8 w-8 text-blue-500" />
-  if (name.includes('drive')) return <SiGoogledrive className="h-8 w-8 text-green-500" />
-  if (name.includes('docs') || name.includes('document')) return <SiGoogledocs className="h-8 w-8 text-blue-600" />
-  if (name.includes('sheets') || name.includes('excel')) return <SiGooglesheets className="h-8 w-8 text-emerald-500" />
+  // Use PluginIcon component for plugins with local SVG files
+  if (name.includes('gmail') || name.includes('google-mail')) return <PluginIcon pluginId="google-mail" className="h-8 w-8" alt="Gmail" />
+  if (name.includes('calendar')) return <PluginIcon pluginId="google-calendar" className="h-8 w-8" alt="Google Calendar" />
+  if (name.includes('drive')) return <PluginIcon pluginId="google-drive" className="h-8 w-8" alt="Google Drive" />
+  if (name.includes('docs') || name.includes('document')) return <PluginIcon pluginId="google-docs" className="h-8 w-8" alt="Google Docs" />
+  if (name.includes('sheets') || name.includes('excel')) return <PluginIcon pluginId="google-sheets" className="h-8 w-8" alt="Google Sheets" />
   if (name.includes('github')) return <SiGithub className="h-8 w-8 text-gray-900" />
-  if (name.includes('slack')) return <SiSlack className="h-8 w-8 text-[#4A154B]" />
-  if (name.includes('hubspot') || name.includes('crm')) return <SiHubspot className="h-8 w-8 text-orange-500" />
+  if (name.includes('slack')) return <PluginIcon pluginId="slack" className="h-8 w-8" alt="Slack" />
+  if (name.includes('hubspot') || name.includes('crm')) return <PluginIcon pluginId="hubspot" className="h-8 w-8" alt="HubSpot" />
   if (name.includes('notion')) return <SiNotion className="h-8 w-8 text-gray-900" />
-  if (name.includes('whatsapp')) return <SiWhatsapp className="h-8 w-8 text-green-500" />
+  if (name.includes('whatsapp')) return <PluginIcon pluginId="whatsapp" className="h-8 w-8" alt="WhatsApp" />
+  if (name.includes('airtable')) return <PluginIcon pluginId="airtable" className="h-8 w-8" alt="Airtable" />
+  if (name.includes('chatgpt') || name.includes('openai')) return <PluginIcon pluginId="chatgpt-research" className="h-8 w-8" alt="ChatGPT" />
   if (name.includes('outlook') || name.includes('microsoft')) return <Mail className="h-8 w-8 text-blue-600" />
   if (name.includes('twilio') || name.includes('phone')) return <Phone className="h-8 w-8 text-red-600" />
   if (name.includes('aws') || name.includes('cloud')) return <Cloud className="h-8 w-8 text-orange-500" />

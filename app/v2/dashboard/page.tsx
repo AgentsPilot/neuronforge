@@ -23,7 +23,10 @@ import {
   Sparkles,
   MessageCircle,
   Database,
-  Clock
+  Clock,
+  ArrowRight,
+  Mic,
+  MicOff
 } from 'lucide-react'
 
 interface AgentStat {
@@ -85,6 +88,12 @@ export default function V2DashboardPage() {
     maxCredits: 100000,
     systemAlerts: []
   })
+
+  // Voice input state
+  const [isListening, setIsListening] = useState(false)
+  const [isVoiceSupported, setIsVoiceSupported] = useState(false)
+  const recognitionRef = React.useRef<any>(null)
+  const isListeningRef = React.useRef(false)
   const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
   const [searchQuery, setSearchQuery] = useState('')
@@ -414,6 +423,61 @@ export default function V2DashboardPage() {
     return () => clearInterval(interval)
   }, [user])
 
+  // Initialize Speech Recognition
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+      if (SpeechRecognition) {
+        setIsVoiceSupported(true)
+        recognitionRef.current = new SpeechRecognition()
+        recognitionRef.current.continuous = false
+        recognitionRef.current.interimResults = true
+        recognitionRef.current.lang = 'en-US'
+
+        recognitionRef.current.onresult = (event: any) => {
+          let finalTranscript = ''
+          for (let i = 0; i < event.results.length; i++) {
+            if (event.results[i].isFinal) {
+              finalTranscript += event.results[i][0].transcript + ' '
+            }
+          }
+          if (finalTranscript) {
+            setSearchQuery(prev => prev + finalTranscript)
+          }
+        }
+
+        recognitionRef.current.onerror = (event: any) => {
+          if (event.error === 'not-allowed') {
+            alert('Microphone permission denied. Please allow microphone access.')
+          }
+          setIsListening(false)
+          isListeningRef.current = false
+        }
+
+        recognitionRef.current.onend = () => {
+          if (isListeningRef.current) {
+            setTimeout(() => {
+              if (isListeningRef.current && recognitionRef.current) {
+                try {
+                  recognitionRef.current.start()
+                } catch (e) {
+                  setIsListening(false)
+                  isListeningRef.current = false
+                }
+              }
+            }, 100)
+          }
+        }
+      }
+    }
+
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop()
+      }
+    }
+  }, [])
+
   // Quick stats calculation
   const totalRuns = stats.agentStats.reduce((sum, stat) => sum + stat.count, 0)
   const lastRunTime = stats.agentStats.length > 0 && stats.agentStats[0].lastRun
@@ -431,6 +495,27 @@ export default function V2DashboardPage() {
     if (hours > 0) return `${hours}h ago`
     if (minutes > 0) return `${minutes}m ago`
     return 'Just now'
+  }
+
+  // Voice input toggle
+  const toggleListening = async () => {
+    if (!recognitionRef.current) return
+
+    if (isListening) {
+      isListeningRef.current = false
+      setIsListening(false)
+      recognitionRef.current.stop()
+    } else {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        stream.getTracks().forEach(track => track.stop())
+        isListeningRef.current = true
+        setIsListening(true)
+        recognitionRef.current.start()
+      } catch (error) {
+        alert('Please allow microphone access to use voice input')
+      }
+    }
   }
 
   if (loading) {
@@ -470,31 +555,107 @@ export default function V2DashboardPage() {
       </div>
 
       {/* Search Box */}
-      <div className={`bg-[var(--v2-surface)] p-2.5 sm:p-3 shadow-[var(--v2-shadow-card)] flex items-center gap-2 sm:gap-3 ${accountFrozen || stats.creditBalance < 2000 ? 'opacity-50 cursor-not-allowed' : ''}`} style={{ borderRadius: 'var(--v2-radius-card)' }}>
-          <Search className="w-4 h-4 sm:w-5 sm:h-5 text-[var(--v2-text-muted)] flex-shrink-0" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => !(accountFrozen || stats.creditBalance < 2000) && setSearchQuery(e.target.value)}
-            placeholder={accountFrozen ? "Account frozen - Purchase tokens to continue" : stats.creditBalance < 2000 ? "Insufficient balance - Need 2000 tokens to create agent" : "Describe what you want to automate"}
-            className="flex-1 bg-transparent border-none outline-none text-sm sm:text-base text-[var(--v2-text-secondary)] placeholder:text-[var(--v2-text-muted)]"
-            disabled={accountFrozen || stats.creditBalance < 2000}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && searchQuery.trim() && !accountFrozen && stats.creditBalance >= 2000) {
-                router.push(`/v2/agents/new?prompt=${encodeURIComponent(searchQuery)}`)
-                setShowIdeas(false)
-              }
-            }}
-          />
-          {promptIdeas.length > 0 && !accountFrozen && stats.creditBalance >= 2000 && (
-            <button
-              onClick={() => setShowIdeas(!showIdeas)}
-              className="flex-shrink-0 px-2.5 py-1.5 text-xs font-medium text-[var(--v2-primary)] hover:text-[var(--v2-secondary)] transition-colors whitespace-nowrap"
-              style={{ WebkitAppearance: 'none' }}
-            >
-              {showIdeas ? 'Hide' : 'Show'} Ideas
-            </button>
-          )}
+      <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)]" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+        <div className={`p-2.5 sm:p-3 ${accountFrozen || stats.creditBalance < 2000 ? 'opacity-50 cursor-not-allowed' : ''}`}>
+          {/* Main Input Row */}
+          <div className="flex items-start gap-2 sm:gap-3">
+            <Search className="w-4 h-4 sm:w-5 sm:h-5 text-[var(--v2-text-muted)] flex-shrink-0 mt-1" />
+            <textarea
+              value={searchQuery}
+              onChange={(e) => {
+                if (!(accountFrozen || stats.creditBalance < 2000)) {
+                  setSearchQuery(e.target.value)
+                  // Auto-resize
+                  e.target.style.height = 'auto'
+                  e.target.style.height = Math.min(e.target.scrollHeight, 128) + 'px'
+                }
+              }}
+              placeholder={accountFrozen ? "Account frozen - Purchase tokens to continue" : stats.creditBalance < 2000 ? "Insufficient balance - Need 2000 tokens to create agent" : "Describe what you want to automate..."}
+              className="flex-1 bg-transparent border-none outline-none text-sm sm:text-base text-[var(--v2-text-secondary)] placeholder:text-[var(--v2-text-muted)] resize-none min-h-[40px] max-h-32"
+              disabled={accountFrozen || stats.creditBalance < 2000}
+              rows={2}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey && searchQuery.trim().length >= 20 && !accountFrozen && stats.creditBalance >= 2000) {
+                  e.preventDefault()
+                  router.push(`/v2/agents/new?prompt=${encodeURIComponent(searchQuery)}`)
+                  setShowIdeas(false)
+                }
+              }}
+            />
+          </div>
+
+          {/* Bottom Action Bar */}
+          <div className="flex items-center justify-between mt-2 pt-2 border-t border-[var(--v2-border)]">
+            {/* Left Side: Character Counter */}
+            <div className="flex items-center gap-2 text-xs text-[var(--v2-text-muted)]">
+              {searchQuery.length > 0 ? (
+                <>
+                  <span className={`font-medium ${searchQuery.trim().length < 20 ? 'text-red-500' : 'text-green-600'}`}>
+                    {searchQuery.length}
+                  </span>
+                  <span className="text-[var(--v2-text-muted)]">/ 20 min</span>
+                </>
+              ) : (
+                <span className="text-[var(--v2-text-muted)]">20 characters minimum</span>
+              )}
+            </div>
+
+            {/* Right Side: Action Buttons */}
+            <div className="flex items-center gap-2">
+              {/* Show Ideas Button */}
+              {promptIdeas.length > 0 && !accountFrozen && stats.creditBalance >= 2000 && (
+                <button
+                  onClick={() => setShowIdeas(!showIdeas)}
+                  className="px-3 py-1.5 text-xs font-medium text-[var(--v2-primary)] hover:text-[var(--v2-secondary)] transition-colors"
+                >
+                  {showIdeas ? 'Hide' : 'Show'} Ideas
+                </button>
+              )}
+
+              {/* Microphone Button */}
+              {isVoiceSupported && !accountFrozen && stats.creditBalance >= 2000 && (
+                <button
+                  type="button"
+                  onClick={toggleListening}
+                  className={`w-8 h-8 rounded-md flex items-center justify-center transition-all ${
+                    isListening
+                      ? 'bg-gradient-to-r from-red-500 to-pink-500 shadow-sm animate-pulse'
+                      : 'hover:bg-[var(--v2-surface-hover)] border border-transparent hover:border-[var(--v2-border)]'
+                  }`}
+                  title={isListening ? 'Stop recording' : 'Start voice input'}
+                >
+                  {isListening ? (
+                    <MicOff className="w-4 h-4 text-white" />
+                  ) : (
+                    <Mic className={`w-4 h-4 transition-colors ${isListening ? 'text-white' : 'text-[var(--v2-text-muted)] group-hover:text-[var(--v2-primary)]'}`} />
+                  )}
+                </button>
+              )}
+
+              {/* Submit Arrow Button */}
+              <button
+                onClick={() => {
+                  if (accountFrozen || stats.creditBalance < 2000 || searchQuery.trim().length < 20) return
+                  router.push(`/v2/agents/new?prompt=${encodeURIComponent(searchQuery)}`)
+                  setShowIdeas(false)
+                }}
+                disabled={accountFrozen || stats.creditBalance < 2000 || searchQuery.trim().length < 20}
+                className={`w-8 h-8 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white hover:opacity-90 transition-all rounded-md flex items-center justify-center ${accountFrozen || stats.creditBalance < 2000 || searchQuery.trim().length < 20 ? 'opacity-50 cursor-not-allowed' : 'shadow-sm'}`}
+                title={
+                  accountFrozen
+                    ? "Account frozen - Purchase tokens to continue"
+                    : stats.creditBalance < 2000
+                    ? "Insufficient balance - Need 2000 tokens to create agent"
+                    : searchQuery.trim().length < 20
+                    ? "Enter at least 20 characters to start building"
+                    : "Start Agent Builder with this prompt"
+                }
+              >
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Prompt Ideas Suggestions */}

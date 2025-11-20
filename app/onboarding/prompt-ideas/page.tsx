@@ -28,6 +28,7 @@ interface PromptIdea {
 interface Allocation {
   pilot_tokens: number;
   raw_tokens: number;
+  tokens_used: number;
   storage_mb: number;
   storage_used_mb: number;
   executions: number | null;
@@ -141,6 +142,10 @@ export default function PromptIdeasPage() {
     router.push('/v2/dashboard');
   };
 
+  const handleBrowseTemplates = () => {
+    router.push('/v2/dashboard');
+  };
+
   return (
     <div className="min-h-screen bg-black text-white overflow-hidden">
       {/* Background Effects */}
@@ -209,7 +214,7 @@ export default function PromptIdeasPage() {
                       {allocation.pilot_tokens.toLocaleString()}
                     </div>
                     <p className="text-xs text-blue-300 mt-1">
-                      = {allocation.raw_tokens.toLocaleString()} raw tokens
+                      0 used
                     </p>
                   </div>
 
@@ -223,7 +228,7 @@ export default function PromptIdeasPage() {
                       {allocation.storage_mb} MB
                     </div>
                     <p className="text-xs text-green-300 mt-1">
-                      {allocation.storage_used_mb} MB used
+                      0 MB used
                     </p>
                   </div>
 
@@ -237,7 +242,7 @@ export default function PromptIdeasPage() {
                       {allocation.executions === null ? '∞' : allocation.executions.toLocaleString()}
                     </div>
                     <p className="text-xs text-yellow-300 mt-1">
-                      {allocation.executions === null ? 'Unlimited' : `${allocation.executions_used} used`}
+                      {allocation.executions === null ? 'Unlimited' : '0 used'}
                     </p>
                   </div>
                 </div>

@@ -132,7 +132,28 @@ export async function POST(request: NextRequest) {
     // Calculate new balances
     const currentBalance = userSub.balance || 0;
     const currentTotalEarned = userSub.total_earned || 0;
-    const newBalance = currentBalance + tokens;
+
+    // Calculate remaining boost and reward credits (these roll over)
+    const { data: boostTransactions } = await supabaseAdmin
+      .from('credit_transactions')
+      .select('credits_delta')
+      .eq('user_id', user.id)
+      .eq('activity_type', 'boost_pack_purchase');
+
+    const totalBoostCredits = boostTransactions?.reduce((sum, tx) => sum + tx.credits_delta, 0) || 0;
+
+    const { data: rewardTransactions } = await supabaseAdmin
+      .from('credit_transactions')
+      .select('credits_delta')
+      .eq('user_id', user.id)
+      .eq('activity_type', 'reward_credit');
+
+    const totalRewardCredits = rewardTransactions?.reduce((sum, tx) => sum + tx.credits_delta, 0) || 0;
+
+    console.log(`🔄 [Sync] Preserving credits - Boost: ${totalBoostCredits}, Rewards: ${totalRewardCredits}`);
+
+    // For subscriptions, REPLACE subscription credits but PRESERVE boost/reward credits
+    const newBalance = tokens + totalBoostCredits + totalRewardCredits;
     const newTotalEarned = currentTotalEarned + tokens;
 
     console.log('📊 [Sync] Balance update:', currentBalance, '→', newBalance);
@@ -148,6 +169,7 @@ export async function POST(request: NextRequest) {
       .update({
         balance: newBalance,
         total_earned: newTotalEarned,
+        monthly_credits: pilotCredits,
         monthly_amount_usd: monthlyAmountUsd,
         stripe_subscription_id: subscriptionId,
         stripe_customer_id: latestSubscription.customer as string,
@@ -156,7 +178,10 @@ export async function POST(request: NextRequest) {
         last_payment_attempt: new Date().toISOString(),
         payment_retry_count: 0,
         status: 'active',
-        agents_paused: false
+        agents_paused: false,
+        // Clear free tier expiration on purchase (user is now a paying customer)
+        free_tier_expires_at: null,
+        account_frozen: false
       })
       .eq('user_id', user.id);
 
@@ -207,6 +232,26 @@ export async function POST(request: NextRequest) {
       });
 
     console.log('✅ [Sync] Subscription synced successfully!');
+
+    // Allocate storage and execution quotas based on new balance
+    try {
+      console.log('📊 [Sync] Allocating quotas based on new balance');
+      const { QuotaAllocationService } = await import('@/lib/services/QuotaAllocationService');
+      const quotaService = new QuotaAllocationService(supabaseAdmin);
+      const quotaResult = await quotaService.allocateQuotasForUser(user.id);
+
+      if (quotaResult.success) {
+        console.log('✅ [Sync] Quotas allocated:', {
+          storage: quotaResult.storageQuota,
+          executions: quotaResult.executionsQuota
+        });
+      } else {
+        console.error('❌ [Sync] Quota allocation returned failure:', quotaResult.error);
+      }
+    } catch (error) {
+      console.error('❌ [Sync] Error allocating quotas:', error);
+      // Don't fail the sync if quota allocation fails
+    }
 
     return NextResponse.json({
       success: true,

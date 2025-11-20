@@ -20,20 +20,11 @@ import {
   LayoutDashboard
 } from 'lucide-react'
 import {
-  SiGmail,
-  SiGooglecalendar,
-  SiGoogledrive,
-  SiGoogledocs,
-  SiGooglesheets,
   SiGithub,
-  SiSlack,
-  SiHubspot,
-  SiWhatsapp,
   SiTwilio,
-  SiAmazon,
-  SiOpenai,
-  SiAirtable
+  SiAmazon
 } from 'react-icons/si'
+import { PluginIcon } from '@/components/PluginIcon'
 
 interface ConnectedPlugin {
   plugin_key: string
@@ -176,25 +167,24 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
       .join(' ')
   }
 
-  // Plugin icons mapping with real brand icons from react-icons/si (Simple Icons)
-  // Using authentic brand colors as seen in marketing page
+  // Plugin icons mapping - using PluginIcon for local SVG files
   const pluginIcons: Record<string, React.ReactNode> = {
-    'google-mail': <SiGmail className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#EA4335' }} />,
-    'gmail': <SiGmail className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#EA4335' }} />,
-    'google-calendar': <SiGooglecalendar className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#4285F4' }} />,
-    'google-drive': <SiGoogledrive className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#4285F4' }} />,
-    'google-docs': <SiGoogledocs className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#4285F4' }} />,
-    'google-sheets': <SiGooglesheets className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#0F9D58' }} />,
+    'google-mail': <PluginIcon pluginId="google-mail" className="w-5 h-5 sm:w-6 sm:h-6" alt="Gmail" />,
+    'gmail': <PluginIcon pluginId="google-mail" className="w-5 h-5 sm:w-6 sm:h-6" alt="Gmail" />,
+    'google-calendar': <PluginIcon pluginId="google-calendar" className="w-5 h-5 sm:w-6 sm:h-6" alt="Google Calendar" />,
+    'google-drive': <PluginIcon pluginId="google-drive" className="w-5 h-5 sm:w-6 sm:h-6" alt="Google Drive" />,
+    'google-docs': <PluginIcon pluginId="google-docs" className="w-5 h-5 sm:w-6 sm:h-6" alt="Google Docs" />,
+    'google-sheets': <PluginIcon pluginId="google-sheets" className="w-5 h-5 sm:w-6 sm:h-6" alt="Google Sheets" />,
     'github': <SiGithub className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#FFFFFF' }} />,
-    'slack': <SiSlack className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#4A154B' }} />,
-    'hubspot': <SiHubspot className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#FF7A59' }} />,
+    'slack': <PluginIcon pluginId="slack" className="w-5 h-5 sm:w-6 sm:h-6" alt="Slack" />,
+    'hubspot': <PluginIcon pluginId="hubspot" className="w-5 h-5 sm:w-6 sm:h-6" alt="HubSpot" />,
     'outlook': <Mail className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#0078D4' }} />,
-    'whatsapp': <SiWhatsapp className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#25D366' }} />,
-    'whatsapp-business': <SiWhatsapp className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#25D366' }} />,
+    'whatsapp': <PluginIcon pluginId="whatsapp" className="w-5 h-5 sm:w-6 sm:h-6" alt="WhatsApp" />,
+    'whatsapp-business': <PluginIcon pluginId="whatsapp" className="w-5 h-5 sm:w-6 sm:h-6" alt="WhatsApp Business" />,
     'twilio': <SiTwilio className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#F22F46' }} />,
     'aws': <SiAmazon className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#FF9900' }} />,
-    'airtable': <SiAirtable className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#FCB400' }} />,
-    'chatgpt-research': <SiOpenai className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#10A37F' }} />,
+    'airtable': <PluginIcon pluginId="airtable" className="w-5 h-5 sm:w-6 sm:h-6" alt="Airtable" />,
+    'chatgpt-research': <PluginIcon pluginId="chatgpt-research" className="w-5 h-5 sm:w-6 sm:h-6" alt="ChatGPT Research" />,
   }
 
   const getPluginIcon = (pluginKey: string) => {
@@ -202,7 +192,7 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
   }
 
   return (
-    <div className="mt-6 sm:mt-8 lg:mt-10 pt-3 sm:pt-4 lg:pt-5">
+    <div className="mt-2 sm:mt-3 lg:mt-4 pt-3 sm:pt-4 lg:pt-5">
 
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
         {/* Last Run */}

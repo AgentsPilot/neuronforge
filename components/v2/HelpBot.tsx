@@ -20,12 +20,110 @@ interface PageContext {
 }
 
 const PAGE_CONTEXTS: Record<string, PageContext> = {
-  '/v2/dashboard': { title: 'Dashboard', description: 'Overview of your agents, credits, and activity', helpTopics: ['How do I view my agent statistics?', 'What do the credit metrics mean?', 'How do I create a new agent?'] },
-  '/v2/agent-list': { title: 'Agent List', description: 'Manage and monitor all your agents', helpTopics: ['How do I filter agents?', 'What are agent statuses?', 'How do I edit an agent?'] },
-  '/v2/analytics': { title: 'Analytics', description: 'Track performance and costs', helpTopics: ['How do I interpret the cost breakdown?', 'What metrics are tracked?', 'How do I export analytics data?'] },
-  '/v2/billing': { title: 'Billing', description: 'Manage your subscription and credits', helpTopics: ['How do I add more credits?', 'What are Pilot Credits?', 'How is usage calculated?'] },
-  '/v2/settings': { title: 'Settings', description: 'Configure your account and preferences', helpTopics: ['How do I change my API keys?', 'How do I manage integrations?', 'How do I update my profile?'] },
-  '/v2/agents/new': { title: 'Create Agent', description: 'Build a new AI agent with conversational builder', helpTopics: ['How does the agent builder work?', 'What information do I need to provide?', 'Can I test my agent before saving?'] },
+  '/v2/dashboard': {
+    title: 'Dashboard',
+    description: 'Your command center for agents, credits, and system activity',
+    helpTopics: [
+      'How do I view my agent performance?',
+      'What do Pilot Credits mean?',
+      'How do I create a new agent?',
+      'What are the different agent statuses?',
+      'How do I check my remaining credits?'
+    ]
+  },
+  '/v2/agent-list': {
+    title: 'Agent List',
+    description: 'Manage, filter, and monitor all your AI agents',
+    helpTopics: [
+      'How do I filter agents by status?',
+      'What do agent statuses mean?',
+      'How do I edit an agent?',
+      'How do I delete an agent?',
+      'What is the AIS score?'
+    ]
+  },
+  '/v2/agents': {
+    title: 'Agents',
+    description: 'Browse and manage your AI automation agents',
+    helpTopics: [
+      'How do I create a new agent?',
+      'What types of agents can I build?',
+      'How do I view agent details?'
+    ]
+  },
+  '/v2/agents/new': {
+    title: 'Create Agent',
+    description: 'Build a new AI agent using our conversational builder',
+    helpTopics: [
+      'How does the agent builder work?',
+      'What information do I need to provide?',
+      'How do I connect plugins?',
+      'Can I test my agent before saving?',
+      'What are input and output schemas?'
+    ]
+  },
+  '/v2/analytics': {
+    title: 'Analytics',
+    description: 'Track performance metrics, costs, and usage patterns',
+    helpTopics: [
+      'How do I interpret the cost breakdown?',
+      'What metrics are tracked?',
+      'How do I export analytics data?',
+      'What is token usage?',
+      'How do I optimize costs?'
+    ]
+  },
+  '/v2/billing': {
+    title: 'Billing',
+    description: 'Manage your subscription, credits, and payment methods',
+    helpTopics: [
+      'How do I add more Pilot Credits?',
+      'What are Pilot Credits vs Raw Tokens?',
+      'How is usage calculated?',
+      'How do I upgrade my plan?',
+      'What happens when I run out of credits?'
+    ]
+  },
+  '/v2/settings': {
+    title: 'Settings',
+    description: 'Configure your account, API keys, and integrations',
+    helpTopics: [
+      'How do I add API keys?',
+      'How do I manage plugin connections?',
+      'How do I update my profile?',
+      'How do I connect to Slack?',
+      'What security settings are available?'
+    ]
+  },
+  '/v2/templates': {
+    title: 'Templates',
+    description: 'Browse pre-built agent templates for common use cases',
+    helpTopics: [
+      'How do I use a template?',
+      'Can I customize templates?',
+      'What templates are available?'
+    ]
+  },
+  '/v2/monitoring': {
+    title: 'Monitoring',
+    description: 'Real-time monitoring and logs for your agents',
+    helpTopics: [
+      'How do I view agent execution logs?',
+      'What does the monitoring dashboard show?',
+      'How do I troubleshoot failed executions?',
+      'What are execution statuses?'
+    ]
+  },
+  '/v2/notifications': {
+    title: 'Notifications',
+    description: 'Manage alerts and notifications for your agents',
+    helpTopics: [
+      'How do I set up notifications?',
+      'What types of alerts are available?',
+      'How do I configure Slack notifications?',
+      'Can I customize notification preferences?'
+    ]
+  },
 }
 
 // ---- ADDED TYPES FOR FIELD-SPECIFIC HELP ----
@@ -92,10 +190,58 @@ export function HelpBot(props: HelpBotProps) {
   const [isLoading, setIsLoading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
-  const pageContext = PAGE_CONTEXTS[pathname] || {
-    title: 'NeuronForge', description: 'AI Agent Platform', helpTopics: [
-      'How do I get started?', 'What can I do here?'],
+  // Dynamic page context matching for parameterized routes
+  const getPageContext = (path: string): PageContext => {
+    // Try exact match first
+    if (PAGE_CONTEXTS[path]) {
+      return PAGE_CONTEXTS[path]
+    }
+
+    // Check for dynamic routes
+    if (path.match(/^\/v2\/agents\/[^/]+$/)) {
+      // Agent detail page: /v2/agents/[id]
+      return {
+        title: 'Agent Details',
+        description: 'View and manage a specific agent',
+        helpTopics: [
+          'How do I edit this agent?',
+          'How do I run this agent?',
+          'What is the AIS score?',
+          'How do I view execution history?',
+          'How do I delete this agent?',
+          'What are connected plugins?'
+        ]
+      }
+    }
+
+    if (path.match(/^\/v2\/agents\/[^/]+\/run$/)) {
+      // Agent run page: /v2/agents/[id]/run
+      return {
+        title: 'Run Agent',
+        description: 'Execute your agent and view results',
+        helpTopics: [
+          'How do I provide input to my agent?',
+          'What happens when I run an agent?',
+          'How do I view execution results?',
+          'What are execution logs?',
+          'How much does it cost to run an agent?'
+        ]
+      }
+    }
+
+    // Default fallback
+    return {
+      title: 'NeuronForge',
+      description: 'AI Agent Platform',
+      helpTopics: [
+        'How do I get started?',
+        'What can I do here?',
+        'How do I create my first agent?'
+      ]
+    }
   }
+
+  const pageContext = getPageContext(pathname)
 
   // ---- MODAL/FIELD-HELP WELCOME & CONTEXT ----
   // Track if we've initialized this session to prevent resets
@@ -105,15 +251,17 @@ export function HelpBot(props: HelpBotProps) {
 
   // Save messages to sessionStorage when they change (input help mode only)
   useEffect(() => {
-    if (typeof window !== 'undefined' && isInputHelp && context && messages.length > 0) {
+    if (typeof window !== 'undefined' && isInputHelp && context && messages.length > 0 && user?.id) {
       // Only save if the current session matches the context
-      const currentSessionId = `input_help_${context.agentId}_${context.fieldName}`
+      const currentSessionId = `input_help_${user.id}_${context.agentId}_${context.fieldName}`
       if (sessionIdRef.current === currentSessionId) {
-        const storageKey = `helpBot_messages_${context.agentId}_${context.fieldName}`
+        // Version 3: includes user ID to prevent cross-user contamination
+        const STORAGE_VERSION = 'v3'
+        const storageKey = `helpBot_messages_${STORAGE_VERSION}_${user.id}_${context.agentId}_${context.fieldName}`
         sessionStorage.setItem(storageKey, JSON.stringify(messages))
       }
     }
-  }, [messages, isInputHelp, context?.agentId, context?.fieldName])
+  }, [messages, isInputHelp, context?.agentId, context?.fieldName, user?.id])
 
   useEffect(() => {
     console.log('[HelpBot Init Effect] TRIGGERED - isOpen:', isOpen, 'isInputHelp:', isInputHelp, 'context?.fieldName:', context?.fieldName || 'null', 'sessionInitialized:', sessionInitialized)
@@ -130,10 +278,11 @@ export function HelpBot(props: HelpBotProps) {
       return
     }
 
-    // Create unique session ID based on context
+    // Create unique session ID based on context, user, AND page
+    // This ensures conversations reset when switching users OR pages
     const currentSessionId = isInputHelp && context
-      ? `input_help_${context.agentId}_${context.fieldName}`
-      : 'general_help'
+      ? `input_help_${user?.id || 'anonymous'}_${context.agentId}_${context.fieldName}`
+      : `general_help_${user?.id || 'anonymous'}_${pathname}`
 
     console.log('[HelpBot Init Effect] SESSION CHECK:')
     console.log('  - currentSessionId:', currentSessionId)
@@ -161,9 +310,21 @@ export function HelpBot(props: HelpBotProps) {
     if (isInputHelp && context) {
       // Input help mode - load field-specific conversation
       console.log('[HelpBot Init Effect] Loading input help for field:', context.fieldName)
-      if (typeof window !== 'undefined') {
-        const storageKey = `helpBot_messages_${context.agentId}_${context.fieldName}`
+      if (typeof window !== 'undefined' && user?.id) {
+        // Version 3: includes user ID to prevent cross-user contamination
+        const STORAGE_VERSION = 'v3'
+        const storageKey = `helpBot_messages_${STORAGE_VERSION}_${user.id}_${context.agentId}_${context.fieldName}`
         const saved = sessionStorage.getItem(storageKey)
+
+        // Clean up old version storage keys (v1 and v2 without user ID)
+        const oldStorageKeyV2 = `helpBot_messages_v2_${context.agentId}_${context.fieldName}`
+        const oldStorageKeyV1 = `helpBot_messages_${context.agentId}_${context.fieldName}`
+        if (sessionStorage.getItem(oldStorageKeyV2)) {
+          sessionStorage.removeItem(oldStorageKeyV2)
+        }
+        if (sessionStorage.getItem(oldStorageKeyV1)) {
+          sessionStorage.removeItem(oldStorageKeyV1)
+        }
 
         if (saved) {
           // Load existing conversation for this field
@@ -184,11 +345,39 @@ export function HelpBot(props: HelpBotProps) {
             if (msg.role === 'assistant') {
               // Update the first assistant message (welcome) if it uses old field name format
               if (index === 0 && msg.content.includes('field')) {
-                // Check if it contains any underscore-based field name (e.g., spreadsheet_id, database_id, etc.)
-                if (msg.content.match(/[a-z]+_[a-z]+/i)) {
+                // Check if it contains any underscore-based field name or old generic message
+                const isOldMessage =
+                  msg.content.match(/[a-z]+_[a-z]+/i) ||
+                  msg.content.includes('send me the link or info') ||
+                  msg.content.includes("I'm here to help you fill the") ||
+                  msg.content.includes("extract only what's needed");
+
+                if (isOldMessage) {
+                  // Regenerate context-aware message
+                  const fieldType = context.expectedType || 'string'
+                  let welcomeMessage = ''
+
+                  if (fieldType === 'email' || displayLabel.toLowerCase().includes('email')) {
+                    welcomeMessage = `I can help you with the **${displayLabel}** field. Just paste an email address or any text containing an email, and I'll extract it for you!`
+                  } else if (fieldType === 'url' || displayLabel.toLowerCase().includes('url') || displayLabel.toLowerCase().includes('link')) {
+                    welcomeMessage = `I can help you with the **${displayLabel}** field. Share a URL or link, and I'll extract and validate it for you!`
+                  } else if (displayLabel.toLowerCase().includes('spreadsheet') || displayLabel.toLowerCase().includes('sheet')) {
+                    welcomeMessage = `I can help you with the **${displayLabel}** field. Paste a Google Sheets link or share URL, and I'll extract the spreadsheet ID!`
+                  } else if (displayLabel.toLowerCase().includes('database') || displayLabel.toLowerCase().includes('db')) {
+                    welcomeMessage = `I can help you with the **${displayLabel}** field. Share a database URL or connection string, and I'll extract the database ID or relevant info!`
+                  } else if (fieldType === 'number' || displayLabel.toLowerCase().includes('number') || displayLabel.toLowerCase().includes('count')) {
+                    welcomeMessage = `I can help you with the **${displayLabel}** field. Just tell me the number or share text containing it, and I'll extract the numeric value!`
+                  } else if (fieldType === 'date') {
+                    welcomeMessage = `I can help you with the **${displayLabel}** field. Share a date in any format, and I'll format it correctly for you!`
+                  } else if (fieldType === 'boolean') {
+                    welcomeMessage = `I can help you with the **${displayLabel}** field. Tell me yes/no, true/false, or describe what you want, and I'll set the right value!`
+                  } else {
+                    welcomeMessage = `I can help you with the **${displayLabel}** field. Share any relevant information, and I'll extract what's needed and fill it for you!`
+                  }
+
                   return {
                     ...msg,
-                    content: `I'm here to help you fill the **${displayLabel}** field. Just send me the link or info, I'll extract only what's needed and fill it for you!`
+                    content: welcomeMessage
                   }
                 }
               }
@@ -210,10 +399,33 @@ export function HelpBot(props: HelpBotProps) {
           // New field - show welcome message
           console.log('[HelpBot Init Effect] New field conversation, showing welcome')
           const displayLabel = context.fieldLabel || context.fieldName
+          const fieldType = context.expectedType || 'string'
+
+          // Create context-aware welcome message based on field type
+          let welcomeMessage = ''
+          if (fieldType === 'email' || displayLabel.toLowerCase().includes('email')) {
+            welcomeMessage = `I can help you with the **${displayLabel}** field. Just paste an email address or any text containing an email, and I'll extract it for you!`
+          } else if (fieldType === 'url' || displayLabel.toLowerCase().includes('url') || displayLabel.toLowerCase().includes('link')) {
+            welcomeMessage = `I can help you with the **${displayLabel}** field. Share a URL or link, and I'll extract and validate it for you!`
+          } else if (displayLabel.toLowerCase().includes('spreadsheet') || displayLabel.toLowerCase().includes('sheet')) {
+            welcomeMessage = `I can help you with the **${displayLabel}** field. Paste a Google Sheets link or share URL, and I'll extract the spreadsheet ID!`
+          } else if (displayLabel.toLowerCase().includes('database') || displayLabel.toLowerCase().includes('db')) {
+            welcomeMessage = `I can help you with the **${displayLabel}** field. Share a database URL or connection string, and I'll extract the database ID or relevant info!`
+          } else if (fieldType === 'number' || displayLabel.toLowerCase().includes('number') || displayLabel.toLowerCase().includes('count')) {
+            welcomeMessage = `I can help you with the **${displayLabel}** field. Just tell me the number or share text containing it, and I'll extract the numeric value!`
+          } else if (fieldType === 'date') {
+            welcomeMessage = `I can help you with the **${displayLabel}** field. Share a date in any format, and I'll format it correctly for you!`
+          } else if (fieldType === 'boolean') {
+            welcomeMessage = `I can help you with the **${displayLabel}** field. Tell me yes/no, true/false, or describe what you want, and I'll set the right value!`
+          } else {
+            // Generic fallback for string and other types
+            welcomeMessage = `I can help you with the **${displayLabel}** field. Share any relevant information, and I'll extract what's needed and fill it for you!`
+          }
+
           setMessages([
             {
               role: 'assistant',
-              content: `I'm here to help you fill the **${displayLabel}** field. Just send me the link or info, I'll extract only what's needed and fill it for you!`,
+              content: welcomeMessage,
             },
           ])
         }
@@ -237,7 +449,7 @@ What would you like to know?`,
       setSessionInitialized(true)
     }
     // eslint-disable-next-line
-  }, [isOpen, context?.agentId, context?.fieldName])
+  }, [isOpen, context?.agentId, context?.fieldName, user?.id, pathname])
 
   useEffect(() => {
     console.log('[HelpBot] Messages state updated:', messages.length, 'messages')
@@ -250,6 +462,21 @@ What would you like to know?`,
 
     // Store the original input for later
     const originalInput = input.trim()
+
+    // Check if user typed a number to select a quick question (only if we have help topics)
+    if (!isInputHelp && messages.length === 1 && pageContext.helpTopics.length > 0) {
+      const numberMatch = originalInput.match(/^(\d+)$/)
+      if (numberMatch) {
+        const selectedIndex = parseInt(numberMatch[1], 10) - 1
+        if (selectedIndex >= 0 && selectedIndex < pageContext.helpTopics.length) {
+          // User selected a quick question by number
+          const selectedQuestion = pageContext.helpTopics[selectedIndex]
+          setInput(selectedQuestion)
+          // Let it fall through to send the question
+          return handleQuickQuestion(selectedQuestion)
+        }
+      }
+    }
 
     // Check if this is a URL being pasted for ID extraction
     const isUrl = /^https?:\/\/.+/.test(originalInput)
@@ -278,60 +505,126 @@ What would you like to know?`,
       })
       const data = await response.json()
       if (data.error) throw new Error(data.error)
-      // ---- SPECIAL FILL HANDLER ----
-      try {
-        const maybeJSON = typeof data.response === 'string' ? JSON.parse(data.response) : null
-        if (
-          maybeJSON &&
-          maybeJSON.action === 'fill_agent_input' &&
-          maybeJSON.value &&
-          typeof onFill === 'function' &&
-          isInputHelp
-        ) {
-          onFill(maybeJSON.value)
 
-          // Add success message
-          // Note: If it was a URL for an ID field, the placeholder was already shown
-          // Otherwise, the URL is still visible (e.g., for range fields that need guidance)
-          setMessages((prev) => {
-            const lastMessage = prev[prev.length - 1]
-            // If the last message already shows the placeholder, just add success message
-            if (lastMessage.content === '🔗 [Link provided]') {
+      // ---- SPECIAL FILL HANDLER ----
+      let responseContent = data.response
+      let actionHandled = false
+
+      try {
+        // Check if response contains JSON action (could be mixed with text)
+        const jsonMatch = data.response.match(/\{[\s\S]*?"action"[\s\S]*?\}/)
+        if (jsonMatch) {
+          const maybeJSON = JSON.parse(jsonMatch[0])
+
+          if (
+            maybeJSON &&
+            maybeJSON.action === 'fill_agent_input' &&
+            maybeJSON.value &&
+            typeof onFill === 'function' &&
+            isInputHelp
+          ) {
+            // Fill the input
+            onFill(maybeJSON.value)
+            actionHandled = true
+
+            // Extract the user-friendly message (text before the JSON)
+            const textBeforeJSON = data.response.substring(0, jsonMatch.index).trim()
+
+            // Add success message with the extracted value
+            setMessages((prev) => {
+              const lastMessage = prev[prev.length - 1]
+              // If the last message already shows the placeholder, just add success message
+              if (lastMessage.content === '🔗 [Link provided]') {
+                return [
+                  ...prev,
+                  {
+                    role: 'assistant',
+                    content: textBeforeJSON || `✓ Extracted and filled: **${maybeJSON.value}**\n\nNeed help with anything else?`,
+                  },
+                ]
+              }
+              // Otherwise, replace the URL with placeholder and add success message
               return [
-                ...prev,
+                ...prev.slice(0, -1),
+                {
+                  role: 'user',
+                  content: '🔗 [Link provided]',
+                },
                 {
                   role: 'assistant',
-                  content: `✓ Extracted and filled: **${maybeJSON.value}**\n\nNeed help with anything else?`,
+                  content: textBeforeJSON || `✓ Extracted and filled: **${maybeJSON.value}**\n\nNeed help with anything else?`,
                 },
               ]
-            }
-            // Otherwise, replace the URL with placeholder and add success message
-            return [
-              ...prev.slice(0, -1),
-              {
-                role: 'user',
-                content: '🔗 [Link provided]',
-              },
-              {
-                role: 'assistant',
-                content: `✓ Extracted and filled: **${maybeJSON.value}**\n\nNeed help with anything else?`,
-              },
-            ]
-          })
-          setIsLoading(false)
-          return // Skip adding the JSON response to messages
+            })
+            setIsLoading(false)
+            return // Skip adding the JSON response to messages
+          }
         }
-      } catch { /* ignore parse errors */ }
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: data.response,
-          source: data.source,
-          cacheId: data.cacheId,
-          feedbackGiven: null,
-        },
-      ])
+
+        // Fallback: If no JSON found but response indicates extraction, parse the value
+        if (!actionHandled && isInputHelp && typeof onFill === 'function') {
+          // Pattern to detect extracted values like "The X is: value" or "Extracted: value"
+          const extractionPatterns = [
+            /(?:is|are):\s*(.+?)(?:\n|$)/i,  // "The email is: value"
+            /(?:extracted|found):\s*(.+?)(?:\n|$)/i,  // "Extracted: value"
+            /(?:value|result):\s*(.+?)(?:\n|$)/i,  // "Value: xxx"
+            /"([^"]+)"/,  // Quoted value
+          ]
+
+          for (const pattern of extractionPatterns) {
+            const match = data.response.match(pattern)
+            if (match && match[1]) {
+              const extractedValue = match[1].trim()
+              // Auto-fill the value
+              onFill(extractedValue)
+              actionHandled = true
+
+              // Show success message
+              setMessages((prev) => {
+                const lastMessage = prev[prev.length - 1]
+                if (lastMessage.content === '🔗 [Link provided]') {
+                  return [
+                    ...prev,
+                    {
+                      role: 'assistant',
+                      content: `✓ Extracted and filled: **${extractedValue}**\n\nNeed help with anything else?`,
+                    },
+                  ]
+                }
+                return [
+                  ...prev.slice(0, -1),
+                  {
+                    role: 'user',
+                    content: '🔗 [Link provided]',
+                  },
+                  {
+                    role: 'assistant',
+                    content: `✓ Extracted and filled: **${extractedValue}**\n\nNeed help with anything else?`,
+                  },
+                ]
+              })
+              setIsLoading(false)
+              return // Skip adding the response to messages
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[HelpBot] Error parsing fill action:', e)
+      }
+
+      // If no action was handled, show the regular response
+      if (!actionHandled) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            content: responseContent,
+            source: data.source,
+            cacheId: data.cacheId,
+            feedbackGiven: null,
+          },
+        ])
+      }
     } catch (error) {
       setMessages((prev) => [
         ...prev,
@@ -416,21 +709,9 @@ What would you like to know?`,
         </button>
       )}
 
-      {/* Close Button - only show when open and not in input help mode */}
-      {!isInputHelp && isOpen && (
-        <button
-          onClick={() => setIsOpenInternal(false)}
-          className="fixed bottom-20 right-4 sm:bottom-6 sm:right-6 w-12 h-12 sm:w-14 sm:h-14 bg-gray-600 hover:bg-gray-700 text-white shadow-lg hover:shadow-2xl hover:scale-110 active:scale-95 transition-all duration-300 flex items-center justify-center z-40"
-          style={{ borderRadius: 'var(--v2-radius-card)' }}
-          title="Close Help"
-        >
-          <XCircle className="w-5 h-5 sm:w-6 sm:h-6" />
-        </button>
-      )}
-
       {/* Chat Window */}
       {isOpen && (
-        <div className="fixed bottom-20 left-2 right-2 sm:bottom-28 sm:left-auto sm:right-6 sm:w-[440px] h-[calc(100vh-10rem)] sm:h-[calc(100vh-11rem)] max-h-[600px] sm:max-h-[500px] bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] z-50 flex flex-col border border-[var(--v2-border)] backdrop-blur-xl animate-in slide-in-from-bottom-4 duration-300 rounded-[16px] overflow-hidden">
+        <div className="fixed bottom-20 left-2 right-2 sm:bottom-28 sm:left-auto sm:right-6 sm:w-[440px] h-[calc(100vh-10rem)] sm:h-[calc(100vh-11rem)] max-h-[700px] sm:max-h-[600px] bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] z-50 flex flex-col border border-[var(--v2-border)] backdrop-blur-xl animate-in slide-in-from-bottom-4 duration-300 rounded-[16px] overflow-hidden">
           {/* Header */}
           <div className="flex items-center justify-between px-4 sm:px-5 py-4 border-b border-[var(--v2-border)]/50 bg-gradient-to-r from-[var(--v2-primary)] via-purple-600 to-[var(--v2-primary)] text-white backdrop-blur-xl rounded-t-[16px]">
             <div className="flex items-center gap-3">

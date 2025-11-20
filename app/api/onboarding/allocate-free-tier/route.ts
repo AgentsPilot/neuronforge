@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
+import { pilotCreditsToTokens } from '@/lib/utils/pricingConfig';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -65,8 +66,8 @@ export async function POST(request: NextRequest) {
       free_tier_duration_days
     });
 
-    // 2. Convert Pilot Tokens to raw tokens (1 Pilot Token = 10 raw tokens)
-    const raw_tokens = free_pilot_tokens * 10;
+    // 2. Convert Pilot Tokens to LLM tokens using database config
+    const raw_tokens = await pilotCreditsToTokens(free_pilot_tokens, supabase);
 
     // 2.5. Calculate expiration dates for free tier tracking
     const now = new Date();

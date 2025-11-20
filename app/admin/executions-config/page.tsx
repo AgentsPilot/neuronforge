@@ -292,7 +292,7 @@ export default function ExecutionsConfigPage() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-white">Execution Quota Management</h1>
-              <p className="text-slate-400 text-sm">Configure execution limits based on pilot tokens purchased</p>
+              <p className="text-slate-400 text-sm">Configure execution limits based on LLM tokens purchased</p>
             </div>
           </div>
 
@@ -423,7 +423,7 @@ export default function ExecutionsConfigPage() {
                 Token-Based Execution Tiers
               </h2>
               <p className="text-slate-400 text-sm mt-1">
-                Configure execution limits based on pilot tokens purchased (balance + spent + earned)
+                Configure execution limits based on monthly subscription tier (monthly_credits field in user_subscriptions)
               </p>
             </div>
             <button
@@ -441,7 +441,7 @@ export default function ExecutionsConfigPage() {
               <thead className="bg-slate-900/50">
                 <tr>
                   <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">
-                    Minimum Pilot Tokens
+                    Minimum LLM Tokens
                   </th>
                   <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">
                     Execution Quota
@@ -551,17 +551,17 @@ export default function ExecutionsConfigPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs text-slate-400 mb-2 block">
-                    Minimum Pilot Tokens *
+                    Minimum LLM Tokens *
                   </label>
                   <input
                     type="number"
                     value={newMinTokens || ''}
                     onChange={(e) => setNewMinTokens(parseInt(e.target.value) || 0)}
                     className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white text-sm"
-                    placeholder="e.g., 10000"
+                    placeholder="e.g., 100000"
                   />
                   <p className="text-xs text-slate-500 mt-1">
-                    Users with this many pilot tokens will get this execution quota
+                    Users with this monthly subscription tier will get this execution quota
                   </p>
                 </div>
 
@@ -586,7 +586,7 @@ export default function ExecutionsConfigPage() {
                 <div className="mt-4 p-3 bg-slate-800/50 rounded-lg">
                   <p className="text-xs text-slate-400 mb-1">Preview:</p>
                   <p className="text-white text-sm">
-                    Users with <span className="font-semibold text-purple-400">{newMinTokens.toLocaleString()}+</span> pilot tokens
+                    Users with <span className="font-semibold text-purple-400">{newMinTokens.toLocaleString()}+</span> LLM tokens
                     will receive {
                       newExecutionsQuota.toLowerCase() === 'unlimited'
                         ? <span className="font-semibold text-green-400">unlimited</span>

@@ -67,15 +67,30 @@ export class StripeService {
       }
     });
 
-    // Update our database
-    await supabase
+    // Update our database - only update stripe_customer_id on existing rows
+    const { data: existing } = await supabase
       .from('user_subscriptions')
-      .upsert({
-        user_id: userId,
-        stripe_customer_id: customer.id
-      }, {
-        onConflict: 'user_id'
-      });
+      .select('id')
+      .eq('user_id', userId)
+      .single();
+
+    if (existing) {
+      // Update existing subscription with new customer ID
+      await supabase
+        .from('user_subscriptions')
+        .update({ stripe_customer_id: customer.id })
+        .eq('user_id', userId);
+    } else {
+      // Insert new subscription row with minimum required fields
+      await supabase
+        .from('user_subscriptions')
+        .insert({
+          user_id: userId,
+          stripe_customer_id: customer.id,
+          monthly_amount_usd: 10.00,
+          monthly_credits: 20833
+        });
+    }
 
     return customer.id;
   }

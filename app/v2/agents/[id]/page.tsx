@@ -36,18 +36,11 @@ import {
   Brain
 } from 'lucide-react'
 import {
-  SiGmail,
-  SiSlack,
   SiNotion,
-  SiGoogledrive,
-  SiGooglecalendar,
-  SiGoogledocs,
-  SiGooglesheets,
-  SiGithub,
-  SiHubspot,
-  SiWhatsapp
+  SiGithub
 } from 'react-icons/si'
 import { Mail, Phone, Cloud, Database, Globe, Puzzle } from 'lucide-react'
+import { PluginIcon } from '@/components/PluginIcon'
 import { AgentIntensityCardV2 } from '@/components/v2/agents/AgentIntensityCardV2'
 import { AgentHealthCardV2 } from '@/components/v2/agents/AgentHealthCardV2'
 import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
@@ -99,20 +92,22 @@ type Execution = {
   }
 }
 
-// Helper function to get plugin-specific icon (using real brand logos with brand colors)
+// Helper function to get plugin-specific icon (using local SVG files via PluginIcon)
 const getPluginIcon = (pluginName: string) => {
   const name = pluginName.toLowerCase()
-  // Use brand colors for recognizable logos
-  if (name.includes('gmail') || name.includes('google-mail')) return <SiGmail className="w-4 h-4 text-red-500" />
-  if (name.includes('calendar')) return <SiGooglecalendar className="w-4 h-4 text-blue-500" />
-  if (name.includes('drive')) return <SiGoogledrive className="w-4 h-4 text-green-500" />
-  if (name.includes('docs') || name.includes('document')) return <SiGoogledocs className="w-4 h-4 text-blue-600" />
-  if (name.includes('sheets') || name.includes('excel')) return <SiGooglesheets className="w-4 h-4 text-emerald-500" />
+  // Use PluginIcon component for plugins with local SVG files
+  if (name.includes('gmail') || name.includes('google-mail')) return <PluginIcon pluginId="google-mail" className="w-4 h-4" alt="Gmail" />
+  if (name.includes('calendar')) return <PluginIcon pluginId="google-calendar" className="w-4 h-4" alt="Google Calendar" />
+  if (name.includes('drive')) return <PluginIcon pluginId="google-drive" className="w-4 h-4" alt="Google Drive" />
+  if (name.includes('docs') || name.includes('document')) return <PluginIcon pluginId="google-docs" className="w-4 h-4" alt="Google Docs" />
+  if (name.includes('sheets') || name.includes('excel')) return <PluginIcon pluginId="google-sheets" className="w-4 h-4" alt="Google Sheets" />
   if (name.includes('github')) return <SiGithub className="w-4 h-4 text-gray-900 dark:text-white" />
-  if (name.includes('slack')) return <SiSlack className="w-4 h-4 text-[#4A154B]" />
-  if (name.includes('hubspot') || name.includes('crm')) return <SiHubspot className="w-4 h-4 text-orange-500" />
+  if (name.includes('slack')) return <PluginIcon pluginId="slack" className="w-4 h-4" alt="Slack" />
+  if (name.includes('hubspot') || name.includes('crm')) return <PluginIcon pluginId="hubspot" className="w-4 h-4" alt="HubSpot" />
   if (name.includes('notion')) return <SiNotion className="w-4 h-4 text-gray-900 dark:text-white" />
-  if (name.includes('whatsapp')) return <SiWhatsapp className="w-4 h-4 text-green-500" />
+  if (name.includes('whatsapp')) return <PluginIcon pluginId="whatsapp" className="w-4 h-4" alt="WhatsApp" />
+  if (name.includes('airtable')) return <PluginIcon pluginId="airtable" className="w-4 h-4" alt="Airtable" />
+  if (name.includes('chatgpt') || name.includes('openai')) return <PluginIcon pluginId="chatgpt-research" className="w-4 h-4" alt="ChatGPT" />
   if (name.includes('outlook') || name.includes('microsoft')) return <Mail className="w-4 h-4 text-blue-600" />
   if (name.includes('twilio') || name.includes('phone')) return <Phone className="w-4 h-4 text-red-600" />
   if (name.includes('aws') || name.includes('cloud')) return <Cloud className="w-4 h-4 text-orange-500" />

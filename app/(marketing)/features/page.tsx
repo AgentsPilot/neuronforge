@@ -18,7 +18,8 @@ import {
   Grid3x3,
   Calendar
 } from 'lucide-react'
-import { SiSlack, SiGmail, SiNotion, SiGoogledrive, SiGooglecalendar, SiHubspot, SiSalesforce, SiZoom, SiZapier, SiAmazon, SiStripe } from 'react-icons/si'
+import { SiNotion, SiSalesforce, SiZoom, SiZapier, SiAmazon, SiStripe } from 'react-icons/si'
+import { PluginIcon } from '@/components/PluginIcon'
 
 interface Feature {
   id: string
@@ -944,11 +945,11 @@ export default function FeaturesPage() {
               {[
                 {
                   name: 'Slack',
-                  icon: <SiSlack className="w-8 h-8 text-[#4A154B]" />
+                  icon: <PluginIcon pluginId="slack" className="w-8 h-8" alt="Slack" />
                 },
                 {
                   name: 'Gmail',
-                  icon: <SiGmail className="w-8 h-8 text-red-500" />
+                  icon: <PluginIcon pluginId="google-mail" className="w-8 h-8" alt="Gmail" />
                 },
                 {
                   name: 'Notion',
@@ -956,35 +957,35 @@ export default function FeaturesPage() {
                 },
                 {
                   name: 'Google Drive',
-                  icon: <SiGoogledrive className="w-8 h-8 text-[#4285F4]" />
+                  icon: <PluginIcon pluginId="google-drive" className="w-8 h-8" alt="Google Drive" />
                 },
                 {
                   name: 'Google Calendar',
-                  icon: <SiGooglecalendar className="w-8 h-8 text-[#4285F4]" />
+                  icon: <PluginIcon pluginId="google-calendar" className="w-8 h-8" alt="Google Calendar" />
                 },
                 {
                   name: 'HubSpot',
-                  icon: <SiHubspot className="w-8 h-8 text-[#FF7A59]" />
+                  icon: <PluginIcon pluginId="hubspot" className="w-8 h-8" alt="HubSpot" />
+                },
+                {
+                  name: 'Facebook',
+                  icon: <PluginIcon pluginId="facebook" className="w-8 h-8" alt="Facebook" />
+                },
+                {
+                  name: 'Instagram',
+                  icon: <PluginIcon pluginId="instagram" className="w-8 h-8" alt="Instagram" />
+                },
+                {
+                  name: 'Google Ads',
+                  icon: <PluginIcon pluginId="google-ads" className="w-8 h-8" alt="Google Ads" />
+                },
+                {
+                  name: 'Meta Ads',
+                  icon: <PluginIcon pluginId="meta-ads" className="w-8 h-8" alt="Meta Ads" />
                 },
                 {
                   name: 'Salesforce',
                   icon: <SiSalesforce className="w-8 h-8 text-[#00A1E0]" />
-                },
-                {
-                  name: 'Microsoft 365',
-                  icon: <Grid3x3 className="w-8 h-8 text-[#00A4EF]" />
-                },
-                {
-                  name: 'Zoom',
-                  icon: <SiZoom className="w-8 h-8 text-[#2D8CFF]" />
-                },
-                {
-                  name: 'Zapier',
-                  icon: <SiZapier className="w-8 h-8 text-[#FF4A00]" />
-                },
-                {
-                  name: 'AWS',
-                  icon: <SiAmazon className="w-8 h-8 text-[#FF9900]" />
                 },
                 {
                   name: 'Stripe',

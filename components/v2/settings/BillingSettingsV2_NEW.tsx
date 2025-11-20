@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabaseClient'
 import Script from 'next/script'
 import {
@@ -139,12 +138,38 @@ export default function BillingSettingsV2() {
 
   useEffect(() => {
     setModalMounted(true)
+
+    // Check if Stripe is already loaded
+    if (typeof window !== 'undefined' && window.Stripe) {
+      console.log('✅ Stripe already loaded on mount')
+      setStripeLoaded(true)
+    }
+
     return () => setModalMounted(false)
   }, [])
 
   useEffect(() => {
+    console.log('[Checkout Effect] Triggered:', {
+      showCheckoutModal,
+      hasClientSecret: !!clientSecret,
+      stripeLoaded,
+      modalMounted,
+      hasWindow: typeof window !== 'undefined',
+      hasStripe: typeof window !== 'undefined' && !!window.Stripe
+    })
+
+    // If stripeLoaded is false but Stripe is actually available, update the state
+    if (!stripeLoaded && typeof window !== 'undefined' && window.Stripe) {
+      console.log('⚠️ [Checkout Effect] Stripe is loaded but state is false, updating...')
+      setStripeLoaded(true)
+      return
+    }
+
     if (showCheckoutModal && clientSecret && stripeLoaded && modalMounted && typeof window !== 'undefined' && window.Stripe) {
+      console.log('✅ [Checkout Effect] All conditions met, initializing in 300ms')
       setTimeout(() => initializeEmbeddedCheckout(clientSecret, 0), 300)
+    } else {
+      console.log('⏸️ [Checkout Effect] Waiting for conditions...')
     }
   }, [showCheckoutModal, clientSecret, stripeLoaded, modalMounted])
 
@@ -153,22 +178,57 @@ export default function BillingSettingsV2() {
     const checkoutSuccess = urlParams.get('success')
 
     if (checkoutSuccess === 'true') {
-      console.log('🎉 Checkout completed! Triggering automatic sync...')
+      console.log('🎉 Checkout completed! Checking if sync needed...')
 
-      fetch('/api/stripe/sync-subscription', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+      // Check if this is a new subscription or an upgrade
+      supabase.auth.getUser().then(({ data: { user } }) => {
+        if (!user) {
+          console.log('⚠️  No user found, skipping sync')
+          return
+        }
+
+        // Check if subscription already exists
+        supabase
+          .from('user_subscriptions')
+          .select('stripe_subscription_id')
+          .eq('user_id', user.id)
+          .single()
+          .then(({ data: existingSub }) => {
+            if (existingSub?.stripe_subscription_id) {
+              // Subscription exists - this is an upgrade, let webhook handle it
+              console.log('⏭️  Skipping sync - existing subscription detected, webhook will handle the upgrade')
+              setShowSuccessMessage(true)
+              setTimeout(() => setShowSuccessMessage(false), 5000)
+              fetchBillingData()
+              const newUrl = window.location.pathname
+              window.history.replaceState({}, '', newUrl)
+            } else {
+              // No existing subscription - this is a new purchase, run sync
+              console.log('🔄 New subscription - triggering sync...')
+              fetch('/api/stripe/sync-subscription', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+              })
+                .then(res => res.json())
+                .then(data => {
+                  console.log('✅ Sync result:', data)
+                  setShowSuccessMessage(true)
+                  setTimeout(() => setShowSuccessMessage(false), 5000)
+                  fetchBillingData()
+                  const newUrl = window.location.pathname
+                  window.history.replaceState({}, '', newUrl)
+                })
+                .catch(error => console.error('❌ Sync failed:', error))
+            }
+          })
+          .catch(error => {
+            console.error('❌ Error checking existing subscription:', error)
+            // If check fails, skip sync to be safe (webhook will handle it)
+            fetchBillingData()
+            const newUrl = window.location.pathname
+            window.history.replaceState({}, '', newUrl)
+          })
       })
-        .then(res => res.json())
-        .then(data => {
-          console.log('✅ Sync result:', data)
-          setShowSuccessMessage(true)
-          setTimeout(() => setShowSuccessMessage(false), 5000)
-          fetchBillingData()
-          const newUrl = window.location.pathname
-          window.history.replaceState({}, '', newUrl)
-        })
-        .catch(error => console.error('❌ Sync failed:', error))
     }
   }, [])
 
@@ -408,6 +468,11 @@ export default function BillingSettingsV2() {
         throw new Error('No client secret returned')
       }
 
+      console.log('✅ [Subscription] Received client secret, opening modal')
+      console.log('  - clientSecret length:', secret.length)
+      console.log('  - modalMounted:', modalMounted)
+      console.log('  - stripeLoaded:', stripeLoaded)
+
       setClientSecret(secret)
       setShowCheckoutModal(true)
       setSubscriptionLoading(false)
@@ -473,8 +538,20 @@ export default function BillingSettingsV2() {
     }
 
     try {
+      // Destroy existing checkout instance if present
       if (stripeCheckoutRef.current) {
-        stripeCheckoutRef.current.destroy()
+        console.log('🧹 Cleaning up previous Stripe checkout instance')
+        try {
+          stripeCheckoutRef.current.destroy()
+        } catch (destroyError) {
+          console.warn('⚠️ Error destroying previous checkout:', destroyError)
+        }
+        stripeCheckoutRef.current = null
+      }
+
+      // Clear any residual content in the checkout container
+      if (checkoutRef.current) {
+        checkoutRef.current.innerHTML = ''
       }
 
       const stripeKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
@@ -485,6 +562,7 @@ export default function BillingSettingsV2() {
         return
       }
 
+      console.log('🔵 Initializing new Stripe checkout session')
       const stripe = window.Stripe(stripeKey)
 
       const checkout = await stripe.initEmbeddedCheckout({
@@ -495,21 +573,33 @@ export default function BillingSettingsV2() {
           setShowSuccessMessage(true)
 
           try {
-            await fetch('/api/stripe/sync-subscription', {
+            console.log('🔄 Calling manual sync endpoint...')
+            const syncResponse = await fetch('/api/stripe/sync-subscription', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' }
             })
+
+            const syncData = await syncResponse.json()
+            console.log('✅ Sync response:', syncData)
+
+            if (!syncResponse.ok) {
+              console.error('❌ Sync endpoint returned error:', syncData)
+            }
           } catch (error) {
             console.error('❌ Manual sync failed:', error)
           }
 
+          console.log('🔄 Fetching updated billing data...')
           await fetchBillingData()
+          console.log('✅ Billing data refreshed')
+
           setTimeout(() => setShowSuccessMessage(false), 5000)
         }
       })
 
       stripeCheckoutRef.current = checkout
       checkout.mount(checkoutRef.current)
+      console.log('✅ Stripe checkout mounted successfully')
     } catch (error) {
       console.error('❌ Error initializing embedded checkout:', error)
       alert('Failed to load checkout. Please try again.')
@@ -519,7 +609,11 @@ export default function BillingSettingsV2() {
 
   const closeCheckoutModal = () => {
     if (stripeCheckoutRef.current) {
-      stripeCheckoutRef.current.destroy()
+      try {
+        stripeCheckoutRef.current.destroy()
+      } catch (error) {
+        console.error('Error destroying Stripe checkout:', error)
+      }
       stripeCheckoutRef.current = null
     }
     setShowCheckoutModal(false)
@@ -732,7 +826,7 @@ export default function BillingSettingsV2() {
               <div>
                 <p className="text-xs font-medium text-blue-900 dark:text-blue-300">How Pilot Credits Work</p>
                 <p className="text-xs text-blue-700 dark:text-blue-400 mt-0.5">
-                  Purchase a custom amount of Pilot Credits each month. Credits roll over completely (no expiration).
+                  Purchase a custom amount of Pilot Credits each month.
                 </p>
               </div>
             </div>

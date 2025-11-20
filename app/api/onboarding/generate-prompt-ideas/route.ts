@@ -62,6 +62,10 @@ export async function POST(request: NextRequest) {
       .limit(1)
       .maybeSingle() // Use maybeSingle to avoid error when no rows
 
+    if (fetchError) {
+      console.error('[Generate Ideas] Error fetching existing ideas:', fetchError);
+    }
+
     if (existingIdeas) {
       console.log(`✅ Returning cached prompt ideas for user ${user.id}`)
       return NextResponse.json({
@@ -75,6 +79,8 @@ export async function POST(request: NextRequest) {
         }
       })
     }
+
+    console.log(`[Generate Ideas] No cached ideas found for user ${user.id}, generating new ones...`);
 
     // Generate prompt ideas using GPT-4o-mini for cost efficiency
     const systemPrompt = `You are an AI agent creation assistant for NeuronForge, a platform where users create autonomous AI agents for business automation.

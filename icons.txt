@@ -1,0 +1,15 @@
+gmail
+googledrive
+googlesheets
+googledocs
+googlecalendar
+slack
+whatsapp
+hubspot
+openai
+airtable
+googleads
+meta
+facebook
+instagram
+googleadsense
