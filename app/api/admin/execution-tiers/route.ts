@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
         config_key: configKey,
         config_value: configValue,
         category: 'executions',
-        description: `Execution quota for ${minTokens.toLocaleString()}+ pilot tokens`,
+        description: `Execution quota for ${minTokens.toLocaleString()}+ LLM tokens`,
       });
 
     if (error) throw error;

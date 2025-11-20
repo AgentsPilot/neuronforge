@@ -42,9 +42,11 @@ export class StorageService {
   constructor(private supabase: SupabaseClient) {}
 
   /**
-   * Get storage quota based on total pilot tokens purchased
+   * Get storage quota based on total LLM tokens earned
+   * @param totalLlmTokens Total LLM tokens earned (not pilot credits)
+   * @returns Storage quota in MB
    */
-  async getStorageQuotaForTokens(totalPilotTokens: number): Promise<number> {
+  async getStorageQuotaForTokens(totalLlmTokens: number): Promise<number> {
     // Load all token-based tiers from config
     const { data: configs, error } = await this.supabase
       .from('ais_system_config')
@@ -66,7 +68,7 @@ export class StorageService {
 
     // Find the highest tier that user qualifies for
     for (const tier of tiers) {
-      if (totalPilotTokens >= tier.minTokens) {
+      if (totalLlmTokens >= tier.minTokens) {
         return tier.storageMB;
       }
     }
@@ -76,13 +78,13 @@ export class StorageService {
   }
 
   /**
-   * Calculate and apply storage quota based on user's total tokens purchased
+   * Calculate and apply storage quota based on user's monthly subscription tier
    */
   async applyStorageQuotaBasedOnTokens(userId: string): Promise<{ success: boolean; quotaMB: number }> {
-    // Get user's total purchased tokens (balance + total_spent + total_earned)
+    // Get user's monthly subscription credits (determines tier)
     const { data: subscription, error: subError } = await this.supabase
       .from('user_subscriptions')
-      .select('balance, total_spent, total_earned')
+      .select('monthly_credits')
       .eq('user_id', userId)
       .single();
 
@@ -90,12 +92,14 @@ export class StorageService {
       throw new Error('User subscription not found');
     }
 
-    // Calculate total pilot credits purchased (tokens / 10)
-    const totalTokens = (subscription.balance || 0) + (subscription.total_spent || 0) + (subscription.total_earned || 0);
-    const totalPilotTokens = Math.floor(totalTokens / 10);
+    // Convert monthly_credits (Pilot Credits) to LLM tokens for tier matching
+    // monthly_credits is stored as Pilot Credits, need to convert to LLM tokens
+    const monthlyPilotCredits = subscription.monthly_credits || 0;
+    const monthlyLlmTokens = monthlyPilotCredits * 10; // Pilot Credits × 10 = LLM tokens
 
-    // Get appropriate storage quota
-    const quotaMB = await this.getStorageQuotaForTokens(totalPilotTokens);
+    // Get appropriate storage quota based on monthly subscription tier
+    // Tier thresholds are in LLM tokens
+    const quotaMB = await this.getStorageQuotaForTokens(monthlyLlmTokens);
 
     // Update user's storage quota
     const { error } = await this.supabase
@@ -108,7 +112,7 @@ export class StorageService {
       throw new Error(`Failed to apply storage quota: ${error.message}`);
     }
 
-    console.log(`✅ Applied ${quotaMB} MB storage to user ${userId} (${totalPilotTokens} pilot tokens)`);
+    console.log(`✅ Applied ${quotaMB} MB storage to user ${userId} (monthly subscription: ${monthlyLlmTokens.toLocaleString()} LLM tokens)`);
     return { success: true, quotaMB };
   }
 

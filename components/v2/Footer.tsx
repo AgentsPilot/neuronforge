@@ -7,6 +7,7 @@ import React, { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
+import { getPricingConfig } from '@/lib/utils/pricingConfig'
 import { DarkModeToggle } from '@/components/v2/DarkModeToggle'
 import { PluginRefreshModal } from '@/components/v2/PluginRefreshModal'
 import { getPluginAPIClient } from '@/lib/client/plugin-api-client'
@@ -26,20 +27,11 @@ import {
   XCircle
 } from 'lucide-react'
 import {
-  SiGmail,
-  SiGooglecalendar,
-  SiGoogledrive,
-  SiGoogledocs,
-  SiGooglesheets,
   SiGithub,
-  SiSlack,
-  SiHubspot,
-  SiWhatsapp,
   SiTwilio,
-  SiAmazon,
-  SiOpenai,
-  SiAirtable
+  SiAmazon
 } from 'react-icons/si'
+import { PluginIcon } from '@/components/PluginIcon'
 
 interface ConnectedPlugin {
   plugin_key: string
@@ -53,7 +45,11 @@ interface ConnectedPlugin {
   username?: string
 }
 
-export function V2Footer() {
+interface V2FooterProps {
+  accountFrozen?: boolean
+}
+
+export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
   const router = useRouter()
   const { user, connectedPlugins: connectedPluginsFromContext } = useAuth()
   const [lastRunTime, setLastRunTime] = useState<Date | null>(null)
@@ -62,6 +58,8 @@ export function V2Footer() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [refreshModalOpen, setRefreshModalOpen] = useState(false)
   const [selectedPlugin, setSelectedPlugin] = useState<ConnectedPlugin | null>(null)
+  const [accountFrozen, setAccountFrozen] = useState(accountFrozenProp || false)
+  const [pilotCredits, setPilotCredits] = useState<number>(0)
 
   // New state for inline refresh
   const [refreshingPlugin, setRefreshingPlugin] = useState<string | null>(null)
@@ -100,6 +98,29 @@ export function V2Footer() {
       }
     }
 
+    const fetchAccountStatus = async () => {
+      try {
+        // Fetch pricing config to convert tokens to pilot credits
+        const pricingConfig = await getPricingConfig(supabase)
+        const tokensPerCredit = pricingConfig.tokens_per_pilot_credit
+
+        const { data: subscription } = await supabase
+          .from('user_subscriptions')
+          .select('account_frozen, balance')
+          .eq('user_id', user.id)
+          .single()
+
+        if (subscription) {
+          setAccountFrozen(subscription.account_frozen || false)
+          // Convert raw tokens to pilot credits
+          const credits = Math.floor((subscription.balance || 0) / tokensPerCredit)
+          setPilotCredits(credits)
+        }
+      } catch (error) {
+        console.error('Error fetching account status:', error)
+      }
+    }
+
     // Transform connected plugins from UserProvider context
     if (connectedPluginsFromContext) {
       const plugins: ConnectedPlugin[] = Object.values(connectedPluginsFromContext).map((plugin: any) => ({
@@ -112,6 +133,7 @@ export function V2Footer() {
     }
 
     fetchLastRun()
+    fetchAccountStatus()
   }, [user, connectedPluginsFromContext])
 
   const handleRefreshComplete = async () => {
@@ -387,25 +409,24 @@ export function V2Footer() {
       .join(' ')
   }
 
-  // Plugin icons mapping with real brand icons from react-icons/si (Simple Icons)
-  // Using authentic brand colors as seen in marketing page
+  // Plugin icons mapping - using PluginIcon for local SVG files
   const pluginIcons: Record<string, React.ReactNode> = {
-    'google-mail': <SiGmail className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#EA4335' }} />,
-    'gmail': <SiGmail className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#EA4335' }} />,
-    'google-calendar': <SiGooglecalendar className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#4285F4' }} />,
-    'google-drive': <SiGoogledrive className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#4285F4' }} />,
-    'google-docs': <SiGoogledocs className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#4285F4' }} />,
-    'google-sheets': <SiGooglesheets className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#0F9D58' }} />,
+    'google-mail': <PluginIcon pluginId="google-mail" className="w-5 h-5 sm:w-6 sm:h-6" alt="Gmail" />,
+    'gmail': <PluginIcon pluginId="google-mail" className="w-5 h-5 sm:w-6 sm:h-6" alt="Gmail" />,
+    'google-calendar': <PluginIcon pluginId="google-calendar" className="w-5 h-5 sm:w-6 sm:h-6" alt="Google Calendar" />,
+    'google-drive': <PluginIcon pluginId="google-drive" className="w-5 h-5 sm:w-6 sm:h-6" alt="Google Drive" />,
+    'google-docs': <PluginIcon pluginId="google-docs" className="w-5 h-5 sm:w-6 sm:h-6" alt="Google Docs" />,
+    'google-sheets': <PluginIcon pluginId="google-sheets" className="w-5 h-5 sm:w-6 sm:h-6" alt="Google Sheets" />,
     'github': <SiGithub className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#FFFFFF' }} />,
-    'slack': <SiSlack className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#4A154B' }} />,
-    'hubspot': <SiHubspot className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#FF7A59' }} />,
+    'slack': <PluginIcon pluginId="slack" className="w-5 h-5 sm:w-6 sm:h-6" alt="Slack" />,
+    'hubspot': <PluginIcon pluginId="hubspot" className="w-5 h-5 sm:w-6 sm:h-6" alt="HubSpot" />,
     'outlook': <Mail className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#0078D4' }} />,
-    'whatsapp': <SiWhatsapp className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#25D366' }} />,
-    'whatsapp-business': <SiWhatsapp className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#25D366' }} />,
+    'whatsapp': <PluginIcon pluginId="whatsapp" className="w-5 h-5 sm:w-6 sm:h-6" alt="WhatsApp" />,
+    'whatsapp-business': <PluginIcon pluginId="whatsapp" className="w-5 h-5 sm:w-6 sm:h-6" alt="WhatsApp Business" />,
     'twilio': <SiTwilio className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#F22F46' }} />,
     'aws': <SiAmazon className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#FF9900' }} />,
-    'airtable': <SiAirtable className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#FCB400' }} />,
-    'chatgpt-research': <SiOpenai className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#10A37F' }} />,
+    'airtable': <PluginIcon pluginId="airtable" className="w-5 h-5 sm:w-6 sm:h-6" alt="Airtable" />,
+    'chatgpt-research': <PluginIcon pluginId="chatgpt-research" className="w-5 h-5 sm:w-6 sm:h-6" alt="ChatGPT Research" />,
   }
 
   const getPluginIcon = (pluginKey: string) => {
@@ -413,7 +434,7 @@ export function V2Footer() {
   }
 
   return (
-    <div className="mt-6 sm:mt-8 lg:mt-10 pt-3 sm:pt-4 lg:pt-5">
+    <div className="mt-2 sm:mt-3 lg:mt-4 pt-3 sm:pt-4 lg:pt-5">
 
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
         {/* Last Run */}
@@ -654,10 +675,11 @@ export function V2Footer() {
           <DarkModeToggle />
 
           <button
-            onClick={() => router.push('/agents/new')}
-            className="w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] flex items-center justify-center hover:scale-105 transition-transform duration-200 flex-shrink-0"
+            onClick={() => !(accountFrozen || pilotCredits < 2000) && router.push('/agents/new')}
+            className={`w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] flex items-center justify-center transition-transform duration-200 flex-shrink-0 ${accountFrozen || pilotCredits < 2000 ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'}`}
             style={{ borderRadius: 'var(--v2-radius-button)' }}
-            title="Create New Agent"
+            title={accountFrozen ? "Account frozen - Purchase tokens to continue" : pilotCredits < 2000 ? "Insufficient balance - Need 2000 tokens to create agent" : "Create New Agent"}
+            disabled={accountFrozen || pilotCredits < 2000}
           >
             <Plus className="w-4.5 h-4.5 sm:w-5 sm:h-5 text-[#3B82F6]" />
           </button>
@@ -706,10 +728,14 @@ export function V2Footer() {
                   </button>
                   <button
                     onClick={() => {
-                      router.push('/agents/new')
-                      setMenuOpen(false)
+                      if (!accountFrozen && pilotCredits >= 2000) {
+                        router.push('/agents/new')
+                        setMenuOpen(false)
+                      }
                     }}
-                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                    className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${accountFrozen || pilotCredits < 2000 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+                    disabled={accountFrozen || pilotCredits < 2000}
+                    title={accountFrozen ? "Account frozen - Purchase tokens to continue" : pilotCredits < 2000 ? "Insufficient balance - Need 2000 tokens to create agent" : ""}
                   >
                     <Plus className="w-4 h-4 text-[var(--v2-text-secondary)]" />
                     <span className="text-sm font-medium text-[var(--v2-text-primary)]">Create Agent</span>

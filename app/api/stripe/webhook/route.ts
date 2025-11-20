@@ -115,7 +115,48 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
 
   const currentBalance = userSub?.balance || 0;
   const currentTotalEarned = userSub?.total_earned || 0;
-  const newBalance = currentBalance + credits;
+
+  // Calculate remaining boost, reward, and welcome bonus credits (these roll over)
+  const { data: boostTransactions } = await supabaseAdmin
+    .from('credit_transactions')
+    .select('credits_delta')
+    .eq('user_id', userId)
+    .eq('activity_type', 'boost_pack_purchase');
+
+  const totalBoostCredits = boostTransactions?.reduce((sum, tx) => sum + tx.credits_delta, 0) || 0;
+
+  const { data: rewardTransactions } = await supabaseAdmin
+    .from('credit_transactions')
+    .select('credits_delta')
+    .eq('user_id', userId)
+    .eq('activity_type', 'reward_credit');
+
+  const totalRewardCredits = rewardTransactions?.reduce((sum, tx) => sum + tx.credits_delta, 0) || 0;
+
+  const { data: welcomeTransactions } = await supabaseAdmin
+    .from('credit_transactions')
+    .select('credits_delta')
+    .eq('user_id', userId)
+    .eq('activity_type', 'welcome_bonus');
+
+  const totalWelcomeCredits = welcomeTransactions?.reduce((sum, tx) => sum + tx.credits_delta, 0) || 0;
+
+  console.log(`🔄 [Webhook] Preserving credits - Boost: ${totalBoostCredits}, Rewards: ${totalRewardCredits}, Welcome: ${totalWelcomeCredits}`);
+
+  // Calculate new balance based on whether this is an upgrade or renewal
+  let newBalance;
+  if (hasProration) {
+    // SUBSCRIPTION UPGRADE: Add prorated credits to existing balance
+    // User keeps everything they had + gets the upgrade amount
+    newBalance = currentBalance + credits;
+    console.log(`📈 [Webhook] Upgrade detected: Adding ${credits.toLocaleString()} to existing balance ${currentBalance.toLocaleString()}`);
+  } else {
+    // SUBSCRIPTION RENEWAL: Replace subscription credits, preserve boost/reward/welcome
+    // SUBSCRIPTION CREDITS DO NOT ROLL OVER - replace with new allocation
+    // BUT boost, reward, and welcome credits DO roll over - preserve them
+    newBalance = credits + totalBoostCredits + totalRewardCredits + totalWelcomeCredits;
+    console.log(`🔄 [Webhook] Renewal detected: New subscription ${credits.toLocaleString()} + rolling credits`);
+  }
   const newTotalEarned = currentTotalEarned + credits;
 
   // Update user subscription balance
@@ -132,7 +173,10 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
       last_payment_attempt: new Date().toISOString(),
       payment_retry_count: 0, // Reset on successful payment
       status: 'active',
-      agents_paused: false
+      agents_paused: false,
+      // Clear free tier expiration on purchase (user is now a paying customer)
+      free_tier_expires_at: null,
+      account_frozen: false
     })
     .eq('user_id', userId);
 
@@ -336,8 +380,13 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
 
   if (session.mode === 'payment' && purchaseType === 'boost_pack') {
     // One-time boost pack purchase
+    console.log('🎁 [Webhook] Processing boost pack purchase');
+    console.log('📦 [Webhook] Session metadata:', session.metadata);
+
     const pilotCredits = parseInt(session.metadata?.credits || '0');
     const boostPackId = session.metadata?.boost_pack_id;
+
+    console.log(`💰 [Webhook] Boost pack details: ${pilotCredits} Pilot Credits, boost_pack_id: ${boostPackId}`);
 
     // Convert Pilot Credits to tokens for storage (fetched from database)
     const credits = await pilotCreditsToTokens(pilotCredits, supabaseAdmin);
@@ -353,6 +402,8 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
 
     const currentBalance = userSub?.balance || 0;
     const currentTotalEarned = userSub?.total_earned || 0;
+
+    // BOOST PACKS ROLL OVER - accumulate on top of existing balance
     const newBalance = currentBalance + credits;
     const newTotalEarned = currentTotalEarned + credits;
 
@@ -361,12 +412,15 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       .from('user_subscriptions')
       .update({
         balance: newBalance,
-        total_earned: newTotalEarned
+        total_earned: newTotalEarned,
+        // Clear free tier expiration on purchase (user is now a paying customer)
+        free_tier_expires_at: null,
+        account_frozen: false
       })
       .eq('user_id', userId);
 
-    // Create credit transaction
-    await supabaseAdmin
+    // Create credit transaction and capture the ID
+    const { data: creditTransaction, error: creditTxError } = await supabaseAdmin
       .from('credit_transactions')
       .insert({
         user_id: userId,
@@ -382,21 +436,43 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
           boost_pack_id: boostPackId,
           amount_paid_cents: session.amount_total
         }
-      });
+      })
+      .select('id')
+      .single();
 
-    // Record boost pack purchase
+    if (creditTxError) {
+      console.error('❌ [Webhook] Failed to create credit transaction for boost pack:', creditTxError);
+    } else {
+      console.log('✅ [Webhook] Credit transaction created:', creditTransaction?.id);
+    }
+
+    // Record boost pack purchase with proper schema
     if (boostPackId) {
-      await supabaseAdmin
+      const { error: boostPackError } = await supabaseAdmin
         .from('boost_pack_purchases')
         .insert({
           user_id: userId,
           boost_pack_id: boostPackId,
+          transaction_id: creditTransaction?.id || null,
           credits_purchased: credits,
           bonus_credits: 0, // Bonus already included in credits
-          price_paid_usd: ((session.amount_total || 0) / 100).toFixed(2), // Convert cents to USD
+          price_paid_usd: (session.amount_total || 0) / 100, // Numeric, not string
           stripe_payment_intent_id: session.payment_intent as string,
-          payment_status: 'succeeded'
+          payment_status: 'succeeded',
+          metadata: {
+            stripe_session_id: session.id,
+            boost_pack_id: boostPackId,
+            amount_total: session.amount_total
+          }
         });
+
+      if (boostPackError) {
+        console.error('❌ [Webhook] Failed to insert into boost_pack_purchases:', boostPackError);
+      } else {
+        console.log('✅ [Webhook] Boost pack purchase recorded in boost_pack_purchases table');
+      }
+    } else {
+      console.warn('⚠️  [Webhook] No boostPackId in session metadata - skipping boost_pack_purchases insert');
     }
 
     console.log('✅ [Webhook] Boost pack processed:', {
@@ -442,7 +518,30 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
 
     const currentBalance = userSub?.balance || 0;
     const currentTotalEarned = userSub?.total_earned || 0;
-    const newBalance = currentBalance + credits;
+
+    // Calculate remaining boost and reward credits (these roll over)
+    const { data: boostTransactions } = await supabaseAdmin
+      .from('credit_transactions')
+      .select('credits_delta')
+      .eq('user_id', userId)
+      .eq('activity_type', 'boost_pack_purchase');
+
+    const totalBoostCredits = boostTransactions?.reduce((sum, tx) => sum + tx.credits_delta, 0) || 0;
+
+    const { data: rewardTransactions } = await supabaseAdmin
+      .from('credit_transactions')
+      .select('credits_delta')
+      .eq('user_id', userId)
+      .eq('activity_type', 'reward_credit');
+
+    const totalRewardCredits = rewardTransactions?.reduce((sum, tx) => sum + tx.credits_delta, 0) || 0;
+
+    console.log(`🔄 [Webhook] Initial subscription - Preserving credits - Boost: ${totalBoostCredits}, Rewards: ${totalRewardCredits}`);
+
+    // SUBSCRIPTION CREDITS DO NOT ROLL OVER - replace with new allocation
+    // This applies to initial subscription purchase (free tier → paid transition)
+    // BUT boost and reward credits DO roll over - preserve them
+    const newBalance = credits + totalBoostCredits + totalRewardCredits;
     const newTotalEarned = currentTotalEarned + credits;
 
     // Calculate monthly amount from credits
@@ -464,7 +563,10 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
         balance: newBalance,
         total_earned: newTotalEarned,
         monthly_credits: pilotCredits,
-        monthly_amount_usd: monthlyAmountUsd
+        monthly_amount_usd: monthlyAmountUsd,
+        // Clear free tier expiration on purchase (user is now a paying customer)
+        free_tier_expires_at: null,
+        account_frozen: false
       })
       .eq('user_id', userId);
 
@@ -483,7 +585,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
         balance_before: currentBalance,
         balance_after: newBalance,
         transaction_type: 'allocation',
-        activity_type: 'subscription_created',
+        activity_type: 'subscription_renewal',
         description: `Initial subscription: ${credits.toLocaleString()} credits`,
         metadata: {
           stripe_session_id: session.id,
@@ -536,6 +638,96 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       }
     } catch (quotaError: any) {
       console.error('❌ [Webhook] Error allocating quotas (non-critical):', quotaError.message);
+    }
+
+    // Check if this is a NEW subscription (first-time subscriber)
+    // Award welcome bonus if user has never had a subscription before
+    const { data: existingTransactions } = await supabaseAdmin
+      .from('credit_transactions')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('activity_type', 'welcome_bonus')
+      .limit(1);
+
+    const isNewUser = !existingTransactions || existingTransactions.length === 0;
+
+    if (isNewUser) {
+      console.log('🎁 [Webhook] New subscriber detected! Awarding welcome bonus...');
+
+      // Award 10,417 Pilot Tokens as welcome bonus (half of 20,834)
+      const WELCOME_BONUS_TOKENS = 10417;
+
+      // Convert Pilot Credits to tokens
+      const welcomeBonusCredits = await pilotCreditsToTokens(WELCOME_BONUS_TOKENS, supabaseAdmin);
+
+      // Get updated balance
+      const { data: currentSub } = await supabaseAdmin
+        .from('user_subscriptions')
+        .select('balance, total_earned')
+        .eq('user_id', userId)
+        .single();
+
+      const balanceBeforeBonus = currentSub?.balance || 0;
+      const totalEarnedBeforeBonus = currentSub?.total_earned || 0;
+      const balanceAfterBonus = balanceBeforeBonus + welcomeBonusCredits;
+      const totalEarnedAfterBonus = totalEarnedBeforeBonus + welcomeBonusCredits;
+
+      // Update subscription with welcome bonus
+      await supabaseAdmin
+        .from('user_subscriptions')
+        .update({
+          balance: balanceAfterBonus,
+          total_earned: totalEarnedAfterBonus
+        })
+        .eq('user_id', userId);
+
+      // Create credit transaction for welcome bonus
+      await supabaseAdmin
+        .from('credit_transactions')
+        .insert({
+          user_id: userId,
+          credits_delta: welcomeBonusCredits,
+          balance_before: balanceBeforeBonus,
+          balance_after: balanceAfterBonus,
+          transaction_type: 'allocation',
+          activity_type: 'welcome_bonus',
+          description: `Welcome to NeuronForge! ${WELCOME_BONUS_TOKENS.toLocaleString()} free Pilot Tokens`,
+          metadata: {
+            pilot_tokens: WELCOME_BONUS_TOKENS,
+            raw_tokens: welcomeBonusCredits,
+            stripe_subscription_id: session.subscription
+          }
+        });
+
+      // Log billing event for welcome bonus
+      await supabaseAdmin
+        .from('billing_events')
+        .insert({
+          user_id: userId,
+          event_type: 'welcome_bonus',
+          credits_delta: welcomeBonusCredits,
+          description: `Welcome bonus: ${WELCOME_BONUS_TOKENS.toLocaleString()} Pilot Tokens`,
+          stripe_event_id: session.id,
+          amount_cents: 0, // Free bonus
+          currency: 'usd'
+        });
+
+      console.log(`✅ [Webhook] Welcome bonus awarded: ${WELCOME_BONUS_TOKENS} Pilot Tokens (${welcomeBonusCredits} raw tokens)`);
+      console.log(`   New balance: ${balanceAfterBonus.toLocaleString()} tokens`);
+
+      // Re-allocate quotas with welcome bonus included
+      try {
+        const quotaService = new QuotaAllocationService(supabaseAdmin);
+        const updatedQuotaResult = await quotaService.allocateQuotasForUser(userId);
+
+        if (updatedQuotaResult.success) {
+          console.log(`✅ [Webhook] Updated quotas with welcome bonus: ${updatedQuotaResult.storageQuotaMB} MB storage, ${updatedQuotaResult.executionQuota ?? 'unlimited'} executions`);
+        }
+      } catch (quotaError: any) {
+        console.error('❌ [Webhook] Error re-allocating quotas with welcome bonus:', quotaError.message);
+      }
+    } else {
+      console.log('ℹ️  [Webhook] Existing subscriber - no welcome bonus awarded');
     }
   }
 }
@@ -592,6 +784,25 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
       amount_cents: stripeAmountCents,
       currency: 'usd'
     });
+
+  // Recalculate storage and execution quotas based on new subscription tier
+  try {
+    console.log('📊 [Webhook] Recalculating quotas after subscription update');
+    const quotaService = new QuotaAllocationService(supabaseAdmin);
+    const quotaResult = await quotaService.allocateQuotasForUser(userId);
+
+    if (quotaResult.success) {
+      console.log('✅ [Webhook] Quotas allocated after subscription update:', {
+        storage: quotaResult.storageQuotaMB,
+        executions: quotaResult.executionQuota
+      });
+    } else {
+      console.error('❌ [Webhook] Quota allocation returned failure:', quotaResult.error);
+    }
+  } catch (error) {
+    console.error('❌ [Webhook] Error allocating quotas after subscription update:', error);
+    // Don't fail the webhook if quota allocation fails
+  }
 
   console.log('✅ [Webhook] Subscription updated:', { userId, pilotCredits, stripeAmountUsd });
 }
@@ -660,7 +871,51 @@ export async function POST(request: NextRequest) {
     const stripeService = getStripeService();
     const event = stripeService.constructWebhookEvent(body, signature, webhookSecret);
 
-    console.log('📥 [Webhook] Received event:', event.type);
+    console.log('📥 [Webhook] Received event:', event.type, 'ID:', event.id);
+
+    // ============================================================================
+    // IDEMPOTENCY CHECK: Prevent duplicate processing of the same webhook event
+    // ============================================================================
+    const { data: existingEvent, error: checkError } = await supabaseAdmin
+      .from('processed_webhook_events')
+      .select('event_id')
+      .eq('event_id', event.id)
+      .maybeSingle();
+
+    if (checkError) {
+      console.error('❌ [Webhook] Error checking for duplicate event:', checkError);
+      // Continue processing - don't fail webhook if check fails
+    }
+
+    if (existingEvent) {
+      console.log(`⏭️  [Webhook] Event ${event.id} already processed, skipping duplicate`);
+      return NextResponse.json({ received: true, duplicate: true });
+    }
+
+    // Record this event as being processed (before actual processing to handle concurrent requests)
+    const { error: insertError } = await supabaseAdmin
+      .from('processed_webhook_events')
+      .insert({
+        event_id: event.id,
+        event_type: event.type,
+        processed_at: new Date().toISOString(),
+        metadata: {
+          created: event.created,
+          livemode: event.livemode
+        }
+      });
+
+    if (insertError) {
+      // If insert fails due to unique constraint (race condition), another request is processing this
+      if (insertError.code === '23505') { // PostgreSQL unique violation
+        console.log(`⏭️  [Webhook] Event ${event.id} is being processed by another request, skipping`);
+        return NextResponse.json({ received: true, duplicate: true });
+      }
+      console.error('❌ [Webhook] Error recording event:', insertError);
+      // Continue processing even if we couldn't record the event
+    }
+
+    console.log(`✅ [Webhook] Event ${event.id} recorded, processing...`);
 
     // Process event based on type
     switch (event.type) {

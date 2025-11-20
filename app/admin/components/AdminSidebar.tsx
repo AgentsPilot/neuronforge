@@ -22,7 +22,8 @@ import {
   BarChart3,
   DollarSign,
   MessageCircle,
-  HardDrive
+  HardDrive,
+  UserCheck
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -72,6 +73,12 @@ const navigationItems = [
     href: '/admin/users',
     icon: Users,
     description: 'Platform Users'
+  },
+  {
+    name: 'Onboarding',
+    href: '/admin/onboarding',
+    icon: UserCheck,
+    description: 'Free Tier & User Status'
   },
   {
     name: 'System Flow',

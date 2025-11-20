@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
         config_key: configKey,
         config_value: storageMB.toString(),
         category: 'storage',
-        description: `Storage quota (MB) for ${minTokens.toLocaleString()}+ pilot tokens`,
+        description: `Storage quota (MB) for ${minTokens.toLocaleString()}+ LLM tokens`,
       });
 
     if (error) throw error;

@@ -69,6 +69,7 @@ export default function StorageConfigPage() {
 
   useEffect(() => {
     loadStorageConfig();
+    loadStorageStats();
   }, []);
 
   const loadStorageConfig = async () => {
@@ -131,21 +132,19 @@ export default function StorageConfigPage() {
                 : 0;
 
               const totalTokens = (s.balance || 0) + (s.total_spent || 0) + (s.total_earned || 0);
-              const pilotTokens = Math.floor(totalTokens / 10);
+              const pilotCredits = Math.floor(totalTokens / 10);
 
               return {
-                userId: s.user_id,
+                user_id: s.user_id,
                 email: profile?.email || 'Unknown',
-                storageUsedMB: s.storage_used_mb || 0,
-                storageQuotaMB: s.storage_quota_mb || 0,
-                usagePercent,
-                pilotTokens,
+                storage_used_mb: s.storage_used_mb || 0,
+                storage_quota_mb: s.storage_quota_mb || 0,
+                usage_percent: usagePercent,
+                total_tokens: pilotCredits, // Convert to pilot credits
                 status: s.status,
               };
             })
-            .filter((u: UserStorageInfo) => u.storageUsedMB > 0)
-            .sort((a: UserStorageInfo, b: UserStorageInfo) => b.storageUsedMB - a.storageUsedMB)
-            .slice(0, 10);
+            .sort((a: UserStorageInfo, b: UserStorageInfo) => b.storage_used_mb - a.storage_used_mb);
 
           setTopUsers(usersWithUsage);
         }
@@ -297,18 +296,28 @@ export default function StorageConfigPage() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-white">Storage Management</h1>
-              <p className="text-slate-400 text-sm">Configure storage quotas based on pilot tokens purchased</p>
+              <p className="text-slate-400 text-sm">Configure storage quotas based on LLM tokens purchased</p>
             </div>
           </div>
 
-          <button
-            onClick={loadStorageConfig}
-            disabled={loading}
-            className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors border border-slate-700"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={loadStorageStats}
+              disabled={loading}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+            >
+              <Activity className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              Load Stats
+            </button>
+            <button
+              onClick={loadStorageConfig}
+              disabled={loading}
+              className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors border border-slate-700"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              Refresh Config
+            </button>
+          </div>
         </motion.div>
 
         {/* Alerts */}
@@ -418,7 +427,7 @@ export default function StorageConfigPage() {
                 Token-Based Storage Tiers
               </h2>
               <p className="text-slate-400 text-sm mt-1">
-                Configure storage limits based on pilot tokens purchased (balance + spent + earned)
+                Configure storage limits based on monthly subscription tier (monthly_credits field in user_subscriptions)
               </p>
             </div>
             <button
@@ -436,7 +445,7 @@ export default function StorageConfigPage() {
               <thead className="bg-slate-900/50">
                 <tr>
                   <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">
-                    Minimum Pilot Tokens
+                    Minimum LLM Tokens
                   </th>
                   <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">
                     Storage Quota
@@ -545,17 +554,17 @@ export default function StorageConfigPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs text-slate-400 mb-2 block">
-                    Minimum Pilot Tokens *
+                    Minimum LLM Tokens *
                   </label>
                   <input
                     type="number"
                     value={newMinTokens || ''}
                     onChange={(e) => setNewMinTokens(parseInt(e.target.value) || 0)}
                     className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white text-sm"
-                    placeholder="e.g., 10000"
+                    placeholder="e.g., 100000"
                   />
                   <p className="text-xs text-slate-500 mt-1">
-                    Users with this many pilot tokens will get this storage quota
+                    Users with this monthly subscription tier will get this storage quota
                   </p>
                 </div>
 
@@ -580,7 +589,7 @@ export default function StorageConfigPage() {
                 <div className="mt-4 p-3 bg-slate-800/50 rounded-lg">
                   <p className="text-xs text-slate-400 mb-1">Preview:</p>
                   <p className="text-white text-sm">
-                    Users with <span className="font-semibold text-blue-400">{newMinTokens.toLocaleString()}+</span> pilot tokens
+                    Users with <span className="font-semibold text-blue-400">{newMinTokens.toLocaleString()}+</span> LLM tokens
                     will receive <span className="font-semibold text-green-400">{formatStorage(newStorageMB)}</span> of storage
                   </p>
                 </div>
@@ -645,9 +654,6 @@ export default function StorageConfigPage() {
                     User
                   </th>
                   <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">
-                    Pilot Tokens
-                  </th>
-                  <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">
                     Used
                   </th>
                   <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">
@@ -664,7 +670,7 @@ export default function StorageConfigPage() {
               <tbody className="divide-y divide-slate-700">
                 {topUsers.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-6 py-8 text-center text-slate-400">
+                    <td colSpan={5} className="px-6 py-8 text-center text-slate-400">
                       No users found
                     </td>
                   </tr>
@@ -679,9 +685,6 @@ export default function StorageConfigPage() {
                           <p className="text-white text-sm">{user.email}</p>
                           <p className="text-slate-400 text-xs">{user.user_id.slice(0, 8)}...</p>
                         </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className="text-slate-300">{user.total_tokens.toLocaleString()}</span>
                       </td>
                       <td className="px-6 py-4">
                         <span className="text-slate-300">{formatStorage(user.storage_used_mb)}</span>

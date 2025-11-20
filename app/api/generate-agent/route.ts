@@ -80,6 +80,42 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    // Check if account is frozen (free tier expired) or has insufficient balance
+    try {
+      const { data: subscription, error: subError } = await supabase
+        .from('user_subscriptions')
+        .select('account_frozen, free_tier_expires_at, balance')
+        .eq('user_id', user.id)
+        .single()
+
+      if (!subError && subscription) {
+        if (subscription.account_frozen) {
+          console.log(`🔒 [Generate Agent] Account frozen for user ${user.id}`)
+          return NextResponse.json({
+            error: 'Account Frozen',
+            message: 'Your free tier has expired. Please purchase tokens to continue creating agents.',
+            frozen: true
+          }, { status: 403 })
+        }
+
+        // Agent creation requires minimum 2000 pilot tokens
+        const MINIMUM_TOKENS_FOR_CREATION = 2000
+        if ((subscription.balance || 0) < MINIMUM_TOKENS_FOR_CREATION) {
+          console.log(`🔒 [Generate Agent] Insufficient balance for user ${user.id} (balance: ${subscription.balance})`)
+          return NextResponse.json({
+            error: 'Insufficient Balance',
+            message: `Agent creation requires at least ${MINIMUM_TOKENS_FOR_CREATION} pilot tokens. Please purchase tokens to continue.`,
+            insufficientBalance: true,
+            requiredTokens: MINIMUM_TOKENS_FOR_CREATION,
+            currentBalance: subscription.balance || 0
+          }, { status: 403 })
+        }
+      }
+    } catch (freezeCheckError) {
+      // Log but don't block creation if freeze check fails
+      console.error('⚠️ [Generate Agent] Freeze check failed (proceeding):', freezeCheckError)
+    }
+
     const sessionId = providedSessionId || 
                       clarificationAnswers?.sessionId || 
                       req.headers.get('x-session-id') || 

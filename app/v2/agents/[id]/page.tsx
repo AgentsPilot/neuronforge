@@ -36,18 +36,11 @@ import {
   Brain
 } from 'lucide-react'
 import {
-  SiGmail,
-  SiSlack,
   SiNotion,
-  SiGoogledrive,
-  SiGooglecalendar,
-  SiGoogledocs,
-  SiGooglesheets,
-  SiGithub,
-  SiHubspot,
-  SiWhatsapp
+  SiGithub
 } from 'react-icons/si'
 import { Mail, Phone, Cloud, Database, Globe, Puzzle } from 'lucide-react'
+import { PluginIcon } from '@/components/PluginIcon'
 import { AgentIntensityCardV2 } from '@/components/v2/agents/AgentIntensityCardV2'
 import { AgentHealthCardV2 } from '@/components/v2/agents/AgentHealthCardV2'
 import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
@@ -99,20 +92,22 @@ type Execution = {
   }
 }
 
-// Helper function to get plugin-specific icon (using real brand logos with brand colors)
+// Helper function to get plugin-specific icon (using local SVG files via PluginIcon)
 const getPluginIcon = (pluginName: string) => {
   const name = pluginName.toLowerCase()
-  // Use brand colors for recognizable logos
-  if (name.includes('gmail') || name.includes('google-mail')) return <SiGmail className="w-4 h-4 text-red-500" />
-  if (name.includes('calendar')) return <SiGooglecalendar className="w-4 h-4 text-blue-500" />
-  if (name.includes('drive')) return <SiGoogledrive className="w-4 h-4 text-green-500" />
-  if (name.includes('docs') || name.includes('document')) return <SiGoogledocs className="w-4 h-4 text-blue-600" />
-  if (name.includes('sheets') || name.includes('excel')) return <SiGooglesheets className="w-4 h-4 text-emerald-500" />
+  // Use PluginIcon component for plugins with local SVG files
+  if (name.includes('gmail') || name.includes('google-mail')) return <PluginIcon pluginId="google-mail" className="w-4 h-4" alt="Gmail" />
+  if (name.includes('calendar')) return <PluginIcon pluginId="google-calendar" className="w-4 h-4" alt="Google Calendar" />
+  if (name.includes('drive')) return <PluginIcon pluginId="google-drive" className="w-4 h-4" alt="Google Drive" />
+  if (name.includes('docs') || name.includes('document')) return <PluginIcon pluginId="google-docs" className="w-4 h-4" alt="Google Docs" />
+  if (name.includes('sheets') || name.includes('excel')) return <PluginIcon pluginId="google-sheets" className="w-4 h-4" alt="Google Sheets" />
   if (name.includes('github')) return <SiGithub className="w-4 h-4 text-gray-900 dark:text-white" />
-  if (name.includes('slack')) return <SiSlack className="w-4 h-4 text-[#4A154B]" />
-  if (name.includes('hubspot') || name.includes('crm')) return <SiHubspot className="w-4 h-4 text-orange-500" />
+  if (name.includes('slack')) return <PluginIcon pluginId="slack" className="w-4 h-4" alt="Slack" />
+  if (name.includes('hubspot') || name.includes('crm')) return <PluginIcon pluginId="hubspot" className="w-4 h-4" alt="HubSpot" />
   if (name.includes('notion')) return <SiNotion className="w-4 h-4 text-gray-900 dark:text-white" />
-  if (name.includes('whatsapp')) return <SiWhatsapp className="w-4 h-4 text-green-500" />
+  if (name.includes('whatsapp')) return <PluginIcon pluginId="whatsapp" className="w-4 h-4" alt="WhatsApp" />
+  if (name.includes('airtable')) return <PluginIcon pluginId="airtable" className="w-4 h-4" alt="Airtable" />
+  if (name.includes('chatgpt') || name.includes('openai')) return <PluginIcon pluginId="chatgpt-research" className="w-4 h-4" alt="ChatGPT" />
   if (name.includes('outlook') || name.includes('microsoft')) return <Mail className="w-4 h-4 text-blue-600" />
   if (name.includes('twilio') || name.includes('phone')) return <Phone className="w-4 h-4 text-red-600" />
   if (name.includes('aws') || name.includes('cloud')) return <Cloud className="w-4 h-4 text-orange-500" />
@@ -195,73 +190,78 @@ export default function V2AgentDetailPage() {
       if (allExecutionsData) {
         console.log(`[V2 Agent Page] Fetched ${allExecutionsData.length} executions for agent ${agentId}`);
 
-        // Enrich executions with token data from token_usage table when logs are missing
-        const enrichedExecutions = await Promise.all(
-          allExecutionsData.map(async (execution) => {
-            // Check if logs have complete token data
-            const hasCompleteTokenData =
-              execution.logs?.tokensUsed?.total &&
-              execution.logs?.tokensUsed?.prompt &&
-              execution.logs?.tokensUsed?.completion;
+        // Identify executions missing token data
+        const executionsNeedingTokenData = allExecutionsData.filter(execution => {
+          const hasCompleteTokenData =
+            execution.logs?.tokensUsed?.total &&
+            execution.logs?.tokensUsed?.prompt &&
+            execution.logs?.tokensUsed?.completion;
+          return !hasCompleteTokenData;
+        });
 
-            console.log(`[V2 Agent Page] Execution ${execution.id}:`, {
-              hasCompleteTokenData,
-              logsTokenData: execution.logs?.tokensUsed,
-              status: execution.status,
-              started_at: execution.started_at
-            });
+        console.log(`[V2 Agent Page] ${executionsNeedingTokenData.length} executions need token data from token_usage table`);
 
-            if (!hasCompleteTokenData) {
-              console.log(`[V2 Agent Page] Execution ${execution.id} missing token data in logs, fetching from token_usage table...`);
+        // Batch fetch ALL token data for executions missing data (single query!)
+        let tokenDataByExecutionId = new Map();
+        if (executionsNeedingTokenData.length > 0) {
+          const executionIds = executionsNeedingTokenData.map(e => e.id);
 
-              // Fetch ALL token data records for this execution (classification, steps, memory, etc.)
-              const { data: tokenDataRecords, error: tokenError } = await supabase
-                .from('token_usage')
-                .select('input_tokens, output_tokens, activity_type')
-                .eq('execution_id', execution.id);
+          const { data: allTokenDataRecords, error: tokenError } = await supabase
+            .from('token_usage')
+            .select('execution_id, input_tokens, output_tokens, activity_type')
+            .in('execution_id', executionIds);
 
-              console.log(`[V2 Agent Page] Token usage query result for execution ${execution.id}:`, {
-                found: !!tokenDataRecords,
-                count: tokenDataRecords?.length || 0,
-                error: tokenError,
-                records: tokenDataRecords
-              });
+          if (!tokenError && allTokenDataRecords) {
+            console.log(`[V2 Agent Page] Fetched ${allTokenDataRecords.length} token records for ${executionIds.length} executions`);
 
-              if (!tokenError && tokenDataRecords && tokenDataRecords.length > 0) {
-                // Sum ALL token records for this execution (classification + steps + memory)
-                const inputTokens = tokenDataRecords.reduce((sum, record) => sum + (record.input_tokens || 0), 0);
-                const outputTokens = tokenDataRecords.reduce((sum, record) => sum + (record.output_tokens || 0), 0);
-                const totalTokens = inputTokens + outputTokens;
-
-                console.log(`[V2 Agent Page] ✅ Enriched execution ${execution.id} with token data (${tokenDataRecords.length} records):`, {
-                  input: inputTokens,
-                  output: outputTokens,
-                  total: totalTokens,
-                  source: 'token_usage_table_summed'
-                });
-
-                return {
-                  ...execution,
-                  logs: {
-                    ...(execution.logs || {}),
-                    tokensUsed: {
-                      prompt: inputTokens,
-                      completion: outputTokens,
-                      total: totalTokens,
-                      _source: 'token_usage_table_summed' // Debug flag
-                    }
-                  }
-                };
-              } else {
-                console.warn(`[V2 Agent Page] ⚠️ No token data found for execution ${execution.id} in either logs or token_usage table`);
+            // Group token records by execution_id
+            allTokenDataRecords.forEach(record => {
+              if (!tokenDataByExecutionId.has(record.execution_id)) {
+                tokenDataByExecutionId.set(record.execution_id, []);
               }
-            } else {
-              console.log(`[V2 Agent Page] ✅ Execution ${execution.id} has complete token data in logs:`, execution.logs.tokensUsed);
-            }
+              tokenDataByExecutionId.get(record.execution_id).push(record);
+            });
+          } else if (tokenError) {
+            console.error(`[V2 Agent Page] Error fetching batch token data:`, tokenError);
+          }
+        }
 
+        // Enrich executions with token data
+        const enrichedExecutions = allExecutionsData.map(execution => {
+          const hasCompleteTokenData =
+            execution.logs?.tokensUsed?.total &&
+            execution.logs?.tokensUsed?.prompt &&
+            execution.logs?.tokensUsed?.completion;
+
+          if (hasCompleteTokenData) {
             return execution;
-          })
-        );
+          }
+
+          // Check if we have token data from batch query
+          const tokenRecords = tokenDataByExecutionId.get(execution.id);
+          if (tokenRecords && tokenRecords.length > 0) {
+            // Sum ALL token records for this execution
+            const inputTokens = tokenRecords.reduce((sum, record) => sum + (record.input_tokens || 0), 0);
+            const outputTokens = tokenRecords.reduce((sum, record) => sum + (record.output_tokens || 0), 0);
+            const totalTokens = inputTokens + outputTokens;
+
+            return {
+              ...execution,
+              logs: {
+                ...(execution.logs || {}),
+                tokensUsed: {
+                  prompt: inputTokens,
+                  completion: outputTokens,
+                  total: totalTokens,
+                  _source: 'token_usage_table_batched'
+                }
+              }
+            };
+          }
+
+          // No token data available
+          return execution;
+        });
 
         console.log(`[V2 Agent Page] Enrichment complete. Summary:`, {
           totalExecutions: enrichedExecutions.length,

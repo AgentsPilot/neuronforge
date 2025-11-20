@@ -30,7 +30,7 @@ import {
   Repeat,
   Network
 } from 'lucide-react';
-import { SiGmail, SiSlack, SiNotion, SiGoogledrive, SiGooglecalendar, SiHubspot } from 'react-icons/si';
+import { PluginIcon } from '@/components/PluginIcon';
 
 // ============================================================================
 // HERO ANIMATION COMPONENTS
@@ -421,7 +421,7 @@ const HeroAnimation = () => {
                   >
                     <div className="flex items-center justify-center gap-2 flex-wrap">
                       <div className="flex items-center gap-1.5 bg-slate-800/50 px-2 py-1.5 rounded-md border border-white/5">
-                        <SiGmail className="w-4 h-4 text-red-500" />
+                        <PluginIcon pluginId="google-mail" className="w-4 h-4 text-red-500" alt="Gmail" />
                         <span className="text-white font-medium text-xs">Gmail</span>
                       </div>
                       <motion.div
@@ -443,7 +443,7 @@ const HeroAnimation = () => {
                         →
                       </motion.div>
                       <div className="flex items-center gap-1.5 bg-slate-800/50 px-2 py-1.5 rounded-md border border-white/5">
-                        <SiSlack className="w-4 h-4 text-[#4A154B]" />
+                        <PluginIcon pluginId="slack" className="w-4 h-4 text-[#4A154B]" alt="Slack" />
                         <span className="text-white font-medium text-xs">Slack</span>
                       </div>
                     </div>
@@ -487,9 +487,9 @@ const HeroAnimation = () => {
                       className="flex items-center gap-2.5 md:gap-3 bg-slate-800 rounded-lg md:rounded-xl p-2.5 md:p-3 border border-white/10 relative z-10"
                     >
                       <div className="w-10 h-10 md:w-12 md:h-12 flex items-center justify-center flex-shrink-0">
-                        {item.type === 'mail' && <SiGmail className="w-6 h-6 md:w-8 md:h-8 text-red-500" />}
+                        {item.type === 'mail' && <PluginIcon pluginId="google-mail" className="w-6 h-6 md:w-8 md:h-8 text-red-500" alt="Gmail" />}
                         {item.type === 'brain' && <Brain className="w-6 h-6 md:w-8 md:h-8 text-purple-500" />}
-                        {item.type === 'slack' && <SiSlack className="w-6 h-6 md:w-8 md:h-8 text-[#4A154B]" />}
+                        {item.type === 'slack' && <PluginIcon pluginId="slack" className="w-6 h-6 md:w-8 md:h-8 text-[#4A154B]" alt="Slack" />}
                       </div>
 
                       <div className="flex-1">
@@ -874,27 +874,27 @@ export default function AgentPilotLanding() {
 
                       {/* Gmail - 0deg */}
                       <div className="absolute top-[20px] left-1/2 -translate-x-1/2 -translate-y-1/2 w-10 h-10 bg-slate-800/90 backdrop-blur-sm border border-blue-400/30 rounded-lg flex items-center justify-center shadow-lg">
-                        <SiGmail className="w-5 h-5 text-red-400" />
+                        <PluginIcon pluginId="google-mail" className="w-5 h-5 text-red-400" alt="Gmail" />
                       </div>
                       {/* Slack - 51.4deg */}
                       <div className="absolute top-1/2 right-[20px] translate-x-1/2 -translate-y-1/2 w-10 h-10 bg-slate-800/90 backdrop-blur-sm border border-blue-400/30 rounded-lg flex items-center justify-center shadow-lg" style={{ transform: 'rotate(-51.4deg) translateX(170px) rotate(51.4deg) translate(-50%, -50%)' }}>
-                        <SiSlack className="w-5 h-5 text-purple-300" />
+                        <PluginIcon pluginId="slack" className="w-5 h-5 text-purple-300" alt="Slack" />
                       </div>
                       {/* Drive - 102.8deg */}
                       <div className="absolute right-[20px] top-1/2 translate-x-1/2 -translate-y-1/2 w-10 h-10 bg-slate-800/90 backdrop-blur-sm border border-blue-400/30 rounded-lg flex items-center justify-center shadow-lg">
-                        <SiGoogledrive className="w-5 h-5 text-blue-400" />
+                        <PluginIcon pluginId="google-drive" className="w-5 h-5 text-blue-400" alt="Google Drive" />
                       </div>
-                      {/* Notion - 154.2deg */}
+                      {/* Google Sheets - 154.2deg */}
                       <div className="absolute bottom-[20px] right-[20px] translate-x-1/2 translate-y-1/2 w-10 h-10 bg-slate-800/90 backdrop-blur-sm border border-blue-400/30 rounded-lg flex items-center justify-center shadow-lg">
-                        <SiNotion className="w-5 h-5 text-white" />
+                        <PluginIcon pluginId="google-sheets" className="w-5 h-5 text-green-400" alt="Google Sheets" />
                       </div>
                       {/* Calendar - 205.7deg */}
                       <div className="absolute bottom-[20px] left-1/2 -translate-x-1/2 translate-y-1/2 w-10 h-10 bg-slate-800/90 backdrop-blur-sm border border-blue-400/30 rounded-lg flex items-center justify-center shadow-lg">
-                        <SiGooglecalendar className="w-5 h-5 text-cyan-400" />
+                        <PluginIcon pluginId="google-calendar" className="w-5 h-5 text-cyan-400" alt="Google Calendar" />
                       </div>
                       {/* HubSpot - 257.1deg */}
                       <div className="absolute bottom-[20px] left-[20px] -translate-x-1/2 translate-y-1/2 w-10 h-10 bg-slate-800/90 backdrop-blur-sm border border-blue-400/30 rounded-lg flex items-center justify-center shadow-lg">
-                        <SiHubspot className="w-5 h-5 text-orange-400" />
+                        <PluginIcon pluginId="hubspot" className="w-5 h-5 text-orange-400" alt="HubSpot" />
                       </div>
                       {/* Brain - 308.5deg */}
                       <div className="absolute left-[20px] top-1/2 -translate-x-1/2 -translate-y-1/2 w-10 h-10 bg-slate-800/90 backdrop-blur-sm border border-blue-400/30 rounded-lg flex items-center justify-center shadow-lg">
@@ -1043,38 +1043,62 @@ export default function AgentPilotLanding() {
           <div className="flex flex-wrap items-center justify-center gap-12 opacity-70">
             {/* Gmail */}
             <div className="flex items-center gap-3 group hover:opacity-100 transition">
-              <SiGmail className="w-8 h-8 text-red-500" />
+              <PluginIcon pluginId="google-mail" className="w-8 h-8 text-red-500" alt="Gmail" />
               <span className="text-slate-300 font-medium">Gmail</span>
             </div>
 
             {/* Slack */}
             <div className="flex items-center gap-3 group hover:opacity-100 transition">
-              <SiSlack className="w-8 h-8 text-[#4A154B]" />
+              <PluginIcon pluginId="slack" className="w-8 h-8 text-[#4A154B]" alt="Slack" />
               <span className="text-slate-300 font-medium">Slack</span>
-            </div>
-
-            {/* Notion */}
-            <div className="flex items-center gap-3 group hover:opacity-100 transition">
-              <SiNotion className="w-8 h-8 text-white" />
-              <span className="text-slate-300 font-medium">Notion</span>
             </div>
 
             {/* Google Drive */}
             <div className="flex items-center gap-3 group hover:opacity-100 transition">
-              <SiGoogledrive className="w-8 h-8 text-[#4285F4]" />
+              <PluginIcon pluginId="google-drive" className="w-8 h-8 text-[#4285F4]" alt="Google Drive" />
               <span className="text-slate-300 font-medium">Google Drive</span>
             </div>
 
             {/* Google Calendar */}
             <div className="flex items-center gap-3 group hover:opacity-100 transition">
-              <SiGooglecalendar className="w-8 h-8 text-[#4285F4]" />
+              <PluginIcon pluginId="google-calendar" className="w-8 h-8 text-[#4285F4]" alt="Google Calendar" />
               <span className="text-slate-300 font-medium">Calendar</span>
+            </div>
+
+            {/* HubSpot */}
+            <div className="flex items-center gap-3 group hover:opacity-100 transition">
+              <PluginIcon pluginId="hubspot" className="w-8 h-8 text-[#FF7A59]" alt="HubSpot" />
+              <span className="text-slate-300 font-medium">HubSpot</span>
+            </div>
+
+            {/* Google Ads */}
+            <div className="flex items-center gap-3 group hover:opacity-100 transition">
+              <PluginIcon pluginId="google-ads" className="w-8 h-8 text-[#4285F4]" alt="Google Ads" />
+              <span className="text-slate-300 font-medium">Google Ads</span>
+            </div>
+
+            {/* Meta Ads */}
+            <div className="flex items-center gap-3 group hover:opacity-100 transition">
+              <PluginIcon pluginId="meta-ads" className="w-8 h-8 text-[#0081FB]" alt="Meta Ads" />
+              <span className="text-slate-300 font-medium">Meta Ads</span>
+            </div>
+
+            {/* Facebook */}
+            <div className="flex items-center gap-3 group hover:opacity-100 transition">
+              <PluginIcon pluginId="facebook" className="w-8 h-8 text-[#1877F2]" alt="Facebook" />
+              <span className="text-slate-300 font-medium">Facebook</span>
+            </div>
+
+            {/* Instagram */}
+            <div className="flex items-center gap-3 group hover:opacity-100 transition">
+              <PluginIcon pluginId="instagram" className="w-8 h-8 text-[#E4405F]" alt="Instagram" />
+              <span className="text-slate-300 font-medium">Instagram</span>
             </div>
 
             {/* And more indicator */}
             <div className="flex items-center gap-2 text-slate-500">
               <span className="text-2xl">+</span>
-              <span className="text-sm font-medium">15 more</span>
+              <span className="text-sm font-medium">20 more</span>
             </div>
           </div>
         </div>

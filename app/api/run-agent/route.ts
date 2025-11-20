@@ -65,6 +65,54 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // Check if account is frozen (free tier expired) or has insufficient balance
+  try {
+    const { data: subscription, error: subError } = await supabase
+      .from('user_subscriptions')
+      .select('account_frozen, free_tier_expires_at, balance')
+      .eq('user_id', user.id)
+      .maybeSingle()
+
+    if (!subError && subscription) {
+      if (subscription.account_frozen) {
+        console.log(`🔒 [Run Agent] Account frozen for user ${user.id}`)
+        return NextResponse.json({
+          error: 'Account Frozen',
+          message: 'Your free tier has expired. Please purchase tokens to continue using agents.',
+          frozen: true
+        }, { status: 403 })
+      }
+
+      // Check if user has enough tokens based on last run cost
+      const { data: lastRun, error: lastRunError } = await supabase
+        .from('agent_stats')
+        .select('last_run_cost')
+        .eq('agent_id', agent_id)
+        .eq('user_id', user.id)
+        .order('last_run_at', { ascending: false })
+        .limit(1)
+        .single()
+
+      if (!lastRunError && lastRun?.last_run_cost) {
+        const requiredTokens = lastRun.last_run_cost
+        if ((subscription.balance || 0) < requiredTokens) {
+          console.log(`🔒 [Run Agent] Insufficient balance for user ${user.id} (balance: ${subscription.balance}, required: ${requiredTokens})`)
+          return NextResponse.json({
+            error: 'Insufficient Balance',
+            message: `This agent requires approximately ${requiredTokens} pilot tokens based on previous runs. Please purchase tokens to continue.`,
+            insufficientBalance: true,
+            requiredTokens: requiredTokens,
+            currentBalance: subscription.balance || 0
+          }, { status: 403 })
+        }
+      }
+      // If no last run exists, allow execution (first run)
+    }
+  } catch (freezeCheckError) {
+    // Log but don't block execution if freeze check fails
+    console.error('⚠️ [Run Agent] Freeze check failed (proceeding):', freezeCheckError)
+  }
+
   // Fetch agent
   const { data: agent, error: agentError } = await supabase
     .from('agents')
@@ -474,7 +522,7 @@ export async function POST(req: Request) {
           .from('user_subscriptions')
           .select('balance, total_spent')
           .eq('user_id', user.id)
-          .single();
+          .maybeSingle();
 
         const currentBalance = currentSub?.balance || 0;
         const currentTotalSpent = currentSub?.total_spent || 0;

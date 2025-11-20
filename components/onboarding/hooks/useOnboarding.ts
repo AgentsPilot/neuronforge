@@ -20,14 +20,16 @@ export interface Plugin {
   enabled: boolean;
 }
 
-export type UserRole = 'admin' | 'user' | 'viewer';
+export type UserRole = 'business_owner' | 'manager' | 'consultant' | 'operations' | 'sales' | 'marketing' | 'finance' | 'other';
 export type UserDomain = 'sales' | 'marketing' | 'operations' | 'engineering' | 'executive' | 'other';
 
 export interface OnboardingData {
   profile: ProfileData;
-  domain: UserDomain; // Add domain field
+  goal: string; // User's main goal for using agents
+  mode: 'on_demand' | 'scheduled' | 'monitor' | 'guided' | null; // Preferred agent mode (matches spec), null until selected
+  domain: UserDomain; // Add domain field (kept for backward compatibility)
   plugins: Plugin[];
-  role: UserRole;
+  role: UserRole | null; // null until user selects a role
 }
 
 export interface OnboardingState {
@@ -38,7 +40,7 @@ export interface OnboardingState {
   isInitialized: boolean;
 }
 
-const TOTAL_STEPS = 3; // Profile, Domain, Role (Plugins step removed)
+const TOTAL_STEPS = 4; // Profile, Goal, Trigger (Mode), Role
 
 const initialState: OnboardingState = {
   currentStep: 0,
@@ -50,14 +52,16 @@ const initialState: OnboardingState = {
       jobTitle: '',
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     },
-    domain: 'other', // Add domain to initial state
+    goal: '', // User's main goal
+    mode: null, // null until user selects - forces explicit choice
+    domain: 'other', // Add domain to initial state (backward compatibility)
     plugins: [
       { id: 'slack', name: 'Slack', description: 'Connect your Slack workspace', enabled: false },
       { id: 'google-mail', name: 'Gmail', description: 'Connect your Gmail account', enabled: false },
       { id: 'calendar', name: 'Google Calendar', description: 'Connect your calendar', enabled: false },
       { id: 'drive', name: 'Google Drive', description: 'Connect your Google Drive', enabled: false },
     ],
-    role: 'admin',
+    role: null, // null until user selects - forces explicit choice
   },
   isLoading: false,
   error: null,
@@ -173,6 +177,28 @@ export const useOnboarding = () => {
     }));
   }, []);
 
+  // Add updateGoal function
+  const updateGoal = useCallback((goal: string) => {
+    setState(prev => ({
+      ...prev,
+      data: {
+        ...prev.data,
+        goal,
+      },
+    }));
+  }, []);
+
+  // Add updateMode function
+  const updateMode = useCallback((mode: 'on-demand' | 'scheduled') => {
+    setState(prev => ({
+      ...prev,
+      data: {
+        ...prev.data,
+        mode,
+      },
+    }));
+  }, []);
+
   // Add updateDomain function
   const updateDomain = useCallback((domain: UserDomain) => {
     setState(prev => ({
@@ -205,16 +231,16 @@ export const useOnboarding = () => {
     switch (state.currentStep) {
       case 0: // Profile step
         return isProfileValid();
-      case 1: // Domain step
-        return state.data.domain !== null;
-      case 2: // Plugins step (optional)
-        return true;
+      case 1: // Goal step
+        return state.data.goal.trim().length >= 10; // Require at least 10 characters
+      case 2: // Trigger/Mode step
+        return state.data.mode !== null;
       case 3: // Role step
         return state.data.role !== null;
       default:
         return false;
     }
-  }, [state.currentStep, state.data.domain, state.data.role, isProfileValid]);
+  }, [state.currentStep, state.data.goal, state.data.role, state.data.mode, isProfileValid]);
 
   // API functions
   const saveOnboardingData = useCallback(async () => {
@@ -228,8 +254,29 @@ export const useOnboarding = () => {
         throw new Error('No authenticated user found');
       }
 
-      // Upsert (create or update) the profiles table with onboarding data
-      // First, try to upsert with all fields including domain and onboarding flag
+      // Prepare complete onboarding data for JSONB storage
+      const onboardingData = {
+        profile: state.data.profile,
+        goal: state.data.goal,
+        mode: state.data.mode,
+        domain: state.data.domain,
+        role: state.data.role,
+        completedAt: new Date().toISOString(),
+      };
+
+      console.log('🔍 DEBUG: About to save profile with data:', {
+        full_name: state.data.profile.fullName,
+        company: state.data.profile.company,
+        job_title: state.data.profile.jobTitle,
+        timezone: state.data.profile.timezone,
+        onboarding_goal: state.data.goal,
+        onboarding_mode: state.data.mode,
+        role: state.data.role,
+        domain: state.data.domain,
+        onboarding_data: onboardingData,
+      });
+
+      // Upsert (create or update) the profiles table with ALL onboarding data
       let { error: profileError } = await supabase
         .from('profiles')
         .upsert({
@@ -238,8 +285,11 @@ export const useOnboarding = () => {
           company: state.data.profile.company || null,
           job_title: state.data.profile.jobTitle || null,
           timezone: state.data.profile.timezone,
-          domain: state.data.domain,
+          onboarding_goal: state.data.goal || null,
+          onboarding_mode: state.data.mode || null,
+          domain: state.data.domain || null,
           role: state.data.role,
+          onboarding_data: onboardingData, // Store complete data as JSONB
           onboarding: true, // Mark onboarding as completed
           created_at: new Date().toISOString(), // Will be ignored if profile exists
           updated_at: new Date().toISOString(),
@@ -247,9 +297,11 @@ export const useOnboarding = () => {
           onConflict: 'id' // Update if profile with this id exists
         });
 
-      // If domain or onboarding column doesn't exist, try without it (role column exists)
+      // If some columns don't exist, try fallback without them
       if (profileError && profileError.code === '42703') {
-        console.log('Domain or onboarding column not found, saving without those fields');
+        console.log('⚠️ Some onboarding columns not found in database. Saving minimal profile data.');
+        console.log('Please run migration: 20251118_add_onboarding_fields_to_profiles.sql');
+
         const { error: fallbackError } = await supabase
           .from('profiles')
           .upsert({
@@ -267,30 +319,38 @@ export const useOnboarding = () => {
 
         profileError = fallbackError;
 
-        // Store domain in localStorage as backup
+        // Store all onboarding data in localStorage as backup when DB columns don't exist
+        localStorage.setItem('onboarding_goal', state.data.goal);
+        localStorage.setItem('onboarding_mode', state.data.mode || '');
         localStorage.setItem('user_domain', state.data.domain);
+        localStorage.setItem('onboarding_data', JSON.stringify(onboardingData));
       }
 
       if (profileError) {
-        console.error('Profile update error:', profileError);
+        console.error('❌ Profile update error:', profileError);
         throw new Error(`Failed to update profile: ${profileError.message}`);
       }
 
-      // Optional: Mark onboarding as completed in the profiles table
-      // You could add an onboarding_completed boolean column if needed
-      
-      console.log('Onboarding data saved successfully:', {
+      console.log('✅ Onboarding data saved successfully to profiles table:');
+      console.log('📝 Profile:', {
+        full_name: state.data.profile.fullName,
+        email: state.data.profile.email,
         company: state.data.profile.company,
         job_title: state.data.profile.jobTitle,
         timezone: state.data.profile.timezone,
-        domain: state.data.domain,
-        role: state.data.role
       });
-      
+      console.log('🎯 Goal:', state.data.goal);
+      console.log('⚡ Mode:', state.data.mode);
+      console.log('🏢 Domain:', state.data.domain);
+      console.log('👤 Role:', state.data.role);
+      console.log('💾 Complete data saved to onboarding_data JSONB column');
+
       // Save to localStorage as backup
       localStorage.setItem('onboarding_completed', 'true');
       localStorage.setItem('user_profile', JSON.stringify(state.data.profile));
       localStorage.setItem('user_domain', state.data.domain);
+      localStorage.setItem('onboarding_goal', state.data.goal);
+      localStorage.setItem('onboarding_mode', state.data.mode || '');
       
       return { success: true };
     } catch (error) {
@@ -313,6 +373,30 @@ export const useOnboarding = () => {
 
       // Save onboarding data (creates/updates profile)
       await saveOnboardingData();
+
+      // Allocate free tier quotas (tokens, storage, executions)
+      console.log('🎁 Allocating free tier quotas...');
+      try {
+        const allocationResponse = await fetch('/api/onboarding/allocate-free-tier', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ userId: user.id }),
+        });
+
+        const allocationResult = await allocationResponse.json();
+
+        if (allocationResult.success) {
+          console.log('✅ Free tier quotas allocated:', allocationResult.allocation);
+        } else {
+          console.error('⚠️ Failed to allocate free tier quotas:', allocationResult.error);
+          // Don't fail onboarding if allocation fails - user can contact support
+        }
+      } catch (allocationError) {
+        console.error('⚠️ Error during quota allocation:', allocationError);
+        // Don't fail onboarding if allocation fails
+      }
 
       // Update auth metadata to mark onboarding as complete
       const { error: metadataError } = await supabase.auth.updateUser({
@@ -398,10 +482,10 @@ export const useOnboarding = () => {
   const getStepTitle = useCallback((step?: number) => {
     const currentStepIndex = step ?? state.currentStep;
     const titles = [
-      'Complete Your Profile', 
-      'Choose Your Domain', 
-      'Connect Plugins', 
-      'Select Your Role'
+      'Welcome! Tell Us About You',
+      'What Do You Want to Accomplish?',
+      'When Should Your Agent Work?',
+      'Choose Your Access Level'
     ];
     return titles[currentStepIndex] || 'Unknown Step';
   }, [state.currentStep]);
@@ -420,25 +504,27 @@ export const useOnboarding = () => {
     isLoading: state.isLoading,
     error: state.error,
     isInitialized: state.isInitialized,
-    
+
     // Navigation
     nextStep,
     prevStep,
     goToStep,
-    
+
     // Data updates
     updateProfile,
-    updateDomain, // Add updateDomain
+    updateGoal,
+    updateMode,
+    updateDomain, // Add updateDomain (backward compatibility)
     updateRole,
-    
+
     // Validation
     canProceedToNext,
     isProfileValid,
-    
+
     // Actions
     completeOnboarding,
     saveOnboardingData,
-    
+
     // Utilities
     getStepTitle,
     getProgress,

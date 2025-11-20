@@ -69,6 +69,7 @@ export default function ExecutionsConfigPage() {
 
   useEffect(() => {
     loadExecutionConfig();
+    loadExecutionStats();
   }, []);
 
   const loadExecutionConfig = async () => {
@@ -130,22 +131,20 @@ export default function ExecutionsConfigPage() {
               const used = s.executions_used || 0;
               const usagePercent = quota !== null && quota > 0 ? (used / quota) * 100 : 0;
 
-              const totalTokens = (s.balance || 0) + (s.total_spent || 0) + (s.total_earned || 0);
-              const pilotTokens = Math.floor(totalTokens / 10);
+              // Convert current balance to pilot credits
+              const pilotCredits = Math.floor((s.balance || 0) / 10);
 
               return {
-                userId: s.user_id,
+                user_id: s.user_id,
                 email: profile?.email || 'Unknown',
-                executionsUsed: used,
-                executionsQuota: quota,
-                usagePercent,
-                pilotTokens,
+                executions_used: used,
+                executions_quota: quota,
+                usage_percent: usagePercent,
+                total_tokens: pilotCredits, // Current pilot credit balance
                 status: s.status,
               };
             })
-            .filter((u: UserExecutionInfo) => u.executionsUsed > 0)
-            .sort((a: UserExecutionInfo, b: UserExecutionInfo) => b.executionsUsed - a.executionsUsed)
-            .slice(0, 10);
+            .sort((a: UserExecutionInfo, b: UserExecutionInfo) => b.executions_used - a.executions_used);
 
           setTopUsers(usersWithUsage);
         }
@@ -293,18 +292,28 @@ export default function ExecutionsConfigPage() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-white">Execution Quota Management</h1>
-              <p className="text-slate-400 text-sm">Configure execution limits based on pilot tokens purchased</p>
+              <p className="text-slate-400 text-sm">Configure execution limits based on LLM tokens purchased</p>
             </div>
           </div>
 
-          <button
-            onClick={loadExecutionConfig}
-            disabled={loading}
-            className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors border border-slate-700"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={loadExecutionStats}
+              disabled={loading}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors"
+            >
+              <Activity className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              Load Stats
+            </button>
+            <button
+              onClick={loadExecutionConfig}
+              disabled={loading}
+              className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors border border-slate-700"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              Refresh Config
+            </button>
+          </div>
         </motion.div>
 
         {/* Alerts */}
@@ -414,7 +423,7 @@ export default function ExecutionsConfigPage() {
                 Token-Based Execution Tiers
               </h2>
               <p className="text-slate-400 text-sm mt-1">
-                Configure execution limits based on pilot tokens purchased (balance + spent + earned)
+                Configure execution limits based on monthly subscription tier (monthly_credits field in user_subscriptions)
               </p>
             </div>
             <button
@@ -432,7 +441,7 @@ export default function ExecutionsConfigPage() {
               <thead className="bg-slate-900/50">
                 <tr>
                   <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">
-                    Minimum Pilot Tokens
+                    Minimum LLM Tokens
                   </th>
                   <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">
                     Execution Quota
@@ -542,17 +551,17 @@ export default function ExecutionsConfigPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs text-slate-400 mb-2 block">
-                    Minimum Pilot Tokens *
+                    Minimum LLM Tokens *
                   </label>
                   <input
                     type="number"
                     value={newMinTokens || ''}
                     onChange={(e) => setNewMinTokens(parseInt(e.target.value) || 0)}
                     className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white text-sm"
-                    placeholder="e.g., 10000"
+                    placeholder="e.g., 100000"
                   />
                   <p className="text-xs text-slate-500 mt-1">
-                    Users with this many pilot tokens will get this execution quota
+                    Users with this monthly subscription tier will get this execution quota
                   </p>
                 </div>
 
@@ -577,7 +586,7 @@ export default function ExecutionsConfigPage() {
                 <div className="mt-4 p-3 bg-slate-800/50 rounded-lg">
                   <p className="text-xs text-slate-400 mb-1">Preview:</p>
                   <p className="text-white text-sm">
-                    Users with <span className="font-semibold text-purple-400">{newMinTokens.toLocaleString()}+</span> pilot tokens
+                    Users with <span className="font-semibold text-purple-400">{newMinTokens.toLocaleString()}+</span> LLM tokens
                     will receive {
                       newExecutionsQuota.toLowerCase() === 'unlimited'
                         ? <span className="font-semibold text-green-400">unlimited</span>

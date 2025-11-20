@@ -20,7 +20,8 @@ import {
   Sparkles,
   Settings,
   Bot,
-  GitBranch
+  GitBranch,
+  CreditCard
 } from 'lucide-react'
 
 type Field = {
@@ -56,9 +57,111 @@ export default function V2RunAgentPage() {
   const [agent, setAgent] = useState<Agent | null>(null)
   const [loading, setLoading] = useState(true)
   const [executing, setExecuting] = useState(false)
-  const [formData, setFormData] = useState<Record<string, any>>({})
-  const [result, setResult] = useState<any>(null)
-  const [error, setError] = useState<string | null>(null)
+
+  // Track if config has been loaded - initialize based on whether we loaded from sessionStorage
+  const [configLoaded, setConfigLoaded] = useState(() => {
+    if (typeof window !== 'undefined' && agentId) {
+      const isPageActive = sessionStorage.getItem(`runPage_active_${agentId}`)
+      if (isPageActive === 'true') {
+        const saved = sessionStorage.getItem(`runPage_formData_${agentId}`)
+        if (saved) {
+          const parsed = JSON.parse(saved)
+          // Check if there's actual data (non-empty values)
+          const hasData = Object.values(parsed).some(val => val !== '' && val !== null && val !== undefined)
+          // If we loaded data from sessionStorage, mark config as loaded
+          return hasData
+        }
+      }
+    }
+    return false
+  })
+
+  // Persist formData across page refreshes only (clear on navigation to reload from DB)
+  const [formData, setFormData] = useState<Record<string, any>>(() => {
+    if (typeof window !== 'undefined' && agentId) {
+      // Check if we're coming from a refresh or a new navigation
+      // IMPORTANT: Check BEFORE setting the flag in useEffect
+      const isPageActive = sessionStorage.getItem(`runPage_active_${agentId}`)
+
+      console.log('[Run Page INIT] formData initialization - isPageActive:', isPageActive)
+
+      if (isPageActive === 'true') {
+        // Page was already active, this is a refresh
+        const saved = sessionStorage.getItem(`runPage_formData_${agentId}`)
+        if (saved) {
+          const parsed = JSON.parse(saved)
+          // Check if there's actual data (non-empty values)
+          const hasData = Object.values(parsed).some(val => val !== '' && val !== null && val !== undefined)
+          console.log('[Run Page INIT] Loading formData from sessionStorage:', hasData ? Object.keys(parsed) : 'empty values - will load from DB')
+
+          // Only use sessionStorage data if it has actual non-empty values
+          // If all values are empty, we'll load from DB instead
+          if (hasData) {
+            return parsed
+          }
+        }
+        // Fall through to return {} and load from DB
+      } else {
+        // New navigation, clear any old form data to reload fresh from DB
+        console.log('[Run Page INIT] New navigation - clearing old formData')
+        sessionStorage.removeItem(`runPage_formData_${agentId}`)
+      }
+      return {}
+    }
+    return {}
+  })
+
+  // Persist execution result across page refreshes only (clear on navigation)
+  const [result, setResult] = useState<any>(() => {
+    if (typeof window !== 'undefined') {
+      // Check if we're coming from a refresh or a new navigation
+      const isPageActive = sessionStorage.getItem(`runPage_active_${agentId}`)
+
+      if (isPageActive === 'true') {
+        // Page was already active, this is a refresh - keep the result
+        const saved = sessionStorage.getItem(`runPage_result_${agentId}`)
+        return saved ? JSON.parse(saved) : null
+      } else {
+        // New navigation, clear any old results
+        sessionStorage.removeItem(`runPage_result_${agentId}`)
+        return null
+      }
+    }
+    return null
+  })
+
+  // Persist error state across page refreshes only (clear on navigation)
+  const [error, setError] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      // Check if we're coming from a refresh or a new navigation
+      const isPageActive = sessionStorage.getItem(`runPage_active_${agentId}`)
+
+      if (isPageActive === 'true') {
+        // Page was already active, this is a refresh - keep the error
+        const saved = sessionStorage.getItem(`runPage_error_${agentId}`)
+        if (saved) {
+          // Clean up malformed error messages (from before the fix)
+          if (saved.includes('{"success":false')) {
+            try {
+              const jsonStart = saved.indexOf('{')
+              const jsonStr = saved.substring(jsonStart)
+              const parsed = JSON.parse(jsonStr)
+              return parsed.error || saved
+            } catch {
+              return saved
+            }
+          }
+          return saved
+        }
+      } else {
+        // New navigation, clear any old errors
+        sessionStorage.removeItem(`runPage_error_${agentId}`)
+      }
+      return null
+    }
+    return null
+  })
+
   const [saving, setSaving] = useState(false)
   const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
 
@@ -92,10 +195,87 @@ export default function V2RunAgentPage() {
     }
   }, [helpBotOpen, helpBotContext])
 
+  // Save formData to sessionStorage when it changes
+  useEffect(() => {
+    if (typeof window !== 'undefined' && agentId) {
+      sessionStorage.setItem(`runPage_formData_${agentId}`, JSON.stringify(formData))
+    }
+  }, [formData, agentId])
+
+  // Mark page as active on mount, clear on unmount (for navigation detection)
+  useEffect(() => {
+    if (typeof window !== 'undefined' && agentId) {
+      // Set the flag when component mounts
+      sessionStorage.setItem(`runPage_active_${agentId}`, 'true')
+
+      // Clear the flag when user navigates away
+      return () => {
+        sessionStorage.removeItem(`runPage_active_${agentId}`)
+      }
+    }
+  }, [agentId])
+
+  // Save result to sessionStorage when it changes
+  useEffect(() => {
+    if (typeof window !== 'undefined' && agentId) {
+      if (result) {
+        sessionStorage.setItem(`runPage_result_${agentId}`, JSON.stringify(result))
+      } else {
+        sessionStorage.removeItem(`runPage_result_${agentId}`)
+      }
+    }
+  }, [result, agentId])
+
+  // Save error to sessionStorage when it changes
+  useEffect(() => {
+    if (typeof window !== 'undefined' && agentId) {
+      if (error) {
+        sessionStorage.setItem(`runPage_error_${agentId}`, error)
+      } else {
+        sessionStorage.removeItem(`runPage_error_${agentId}`)
+      }
+    }
+  }, [error, agentId])
+
   // Real-time step tracking for SSE
   const [executingSteps, setExecutingSteps] = useState<Set<string>>(new Set())
   const [completedStepsLive, setCompletedStepsLive] = useState<Set<string>>(new Set())
   const [failedStepsLive, setFailedStepsLive] = useState<Set<string>>(new Set())
+
+  // Clear stale execution limit errors when user has credits
+  useEffect(() => {
+    if (!user || !error) return
+
+    const checkAndClearStaleErrors = async () => {
+      // Only check if the error is about execution limits or quota
+      if (error.includes('execution limit') || error.includes('quota') || error.includes('Upgrade your plan')) {
+        try {
+          const { data: subscription } = await supabase
+            .from('user_subscriptions')
+            .select('account_frozen, balance, executions_quota, executions_used')
+            .eq('user_id', user.id)
+            .single()
+
+          if (subscription) {
+            // If account is not frozen and has credits, clear the error
+            const hasCredits = (subscription.balance || 0) > 0
+            const notFrozen = !subscription.account_frozen
+            const hasExecutionQuota = !subscription.executions_quota ||
+              (subscription.executions_used || 0) < subscription.executions_quota
+
+            if (notFrozen && hasCredits && hasExecutionQuota) {
+              console.log('[Run Page] Clearing stale execution limit error - user now has credits')
+              setError(null)
+            }
+          }
+        } catch (err) {
+          console.error('[Run Page] Error checking subscription status:', err)
+        }
+      }
+    }
+
+    checkAndClearStaleErrors()
+  }, [user, error])
 
   useEffect(() => {
     if (user && agentId) {
@@ -119,7 +299,8 @@ export default function V2RunAgentPage() {
       setAgent(agentData)
 
       // Load saved configuration (most recent 'configured' entry)
-      const { data: configData } = await supabase
+      // Always query the database
+      const { data: configData, error: configError } = await supabase
         .from('agent_configurations')
         .select('input_values')
         .eq('agent_id', agentId)
@@ -129,8 +310,31 @@ export default function V2RunAgentPage() {
         .limit(1)
         .maybeSingle()
 
-      if (configData?.input_values) {
-        setFormData(configData.input_values)
+      console.log('[Run Page] Config query result:', {
+        hasConfigData: !!configData,
+        inputValuesKeys: configData?.input_values ? Object.keys(configData.input_values) : [],
+        configError,
+        currentFormDataKeys: Object.keys(formData)
+      })
+
+      // Load configuration if found and not already loaded
+      if (configData?.input_values && !configLoaded) {
+        // Use functional update to get current state
+        setFormData(current => {
+          const currentKeys = Object.keys(current).length
+          if (currentKeys === 0) {
+            console.log('[Run Page] Loading input values from configuration:', configData.input_values)
+            setConfigLoaded(true) // Mark as loaded
+            return configData.input_values
+          } else {
+            console.log('[Run Page] NOT loading config because formData already has', currentKeys, 'fields')
+            return current
+          }
+        })
+      } else if (!configData?.input_values) {
+        console.log('[Run Page] No configuration data found in database for this agent')
+      } else {
+        console.log('[Run Page] Config already loaded, skipping')
       }
     } catch (error) {
       console.error('Error fetching agent data:', error)
@@ -285,6 +489,7 @@ export default function V2RunAgentPage() {
     if (!agent || !user) return
 
     setExecuting(true)
+    // Clear previous results before starting new execution
     setError(null)
     setResult(null)
 
@@ -405,15 +610,34 @@ export default function V2RunAgentPage() {
         body: JSON.stringify(requestBody),
       })
 
-      if (!response.ok) {
-        const errorText = await response.text()
-        throw new Error(`Execution failed: ${response.statusText} - ${errorText}`)
-      }
-
-      const res = await response.json()
       const endTime = Date.now()
       const executionTime = endTime - startTime
 
+      // Parse response - could be error or success
+      let res
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.log('[DEBUG] Error response text:', errorText)
+
+        let parsedError
+        try {
+          parsedError = JSON.parse(errorText)
+          console.log('[DEBUG] Parsed error:', parsedError)
+        } catch (parseError) {
+          console.error('[DEBUG] JSON parse failed:', parseError)
+          // If JSON parsing fails, show the raw error
+          throw new Error(`Execution failed: ${response.statusText} - ${errorText}`)
+        }
+
+        // Extract user-friendly error message from parsed JSON
+        const errorMessage = parsedError.error || parsedError.message || `Execution failed: ${response.statusText}`
+        console.log('[DEBUG] Extracted error message:', errorMessage)
+        console.error('Execution failed with error:', errorMessage)
+        console.error('Full response:', parsedError)
+        throw new Error(errorMessage)
+      }
+
+      res = await response.json()
       console.log('AgentKit/Pilot response:', res)
 
       if (res.error || (res.success === false && !res.pilot)) {
@@ -645,45 +869,61 @@ export default function V2RunAgentPage() {
             )}
 
             {/* Save and Run Buttons */}
-            <div className="flex gap-3">
-              {/* Save Inputs Button */}
-              <button
-                onClick={handleSaveInputs}
-                disabled={saving || !isFormValid()}
-                className="flex-1 px-6 py-3 bg-[var(--v2-surface)] border-2 border-[var(--v2-primary)] text-[var(--v2-primary)] font-semibold hover:bg-[var(--v2-primary)] hover:text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              >
-                {saving ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    Saving...
-                  </>
-                ) : (
-                  <>
-                    <Settings className="w-5 h-5" />
-                    Save Inputs
-                  </>
-                )}
-              </button>
+            <div className="flex flex-col gap-2">
+              <div className="flex gap-3">
+                {/* Save Inputs Button */}
+                <button
+                  onClick={handleSaveInputs}
+                  disabled={saving || !isFormValid()}
+                  className="flex-1 px-6 py-3 bg-[var(--v2-surface)] border-2 border-[var(--v2-primary)] text-[var(--v2-primary)] font-semibold hover:bg-[var(--v2-primary)] hover:text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  {saving ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Settings className="w-5 h-5" />
+                      Save Inputs
+                    </>
+                  )}
+                </button>
 
-              {/* Run Button */}
+                {/* Run Button */}
+                <button
+                  onClick={handleRun}
+                  disabled={executing || agent.status !== 'active' || !isFormValid()}
+                  className="flex-1 px-6 py-3 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white font-semibold hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  {executing ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Running Agent...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-5 h-5" />
+                      Run Agent
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Reload Configuration Button - for debugging */}
               <button
-                onClick={handleRun}
-                disabled={executing || agent.status !== 'active' || !isFormValid()}
-                className="flex-1 px-6 py-3 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white font-semibold hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
+                onClick={async () => {
+                  // Clear sessionStorage and reload from DB
+                  sessionStorage.removeItem(`runPage_formData_${agentId}`)
+                  setConfigLoaded(false) // Reset the flag
+                  setFormData({}) // Clear current form data
+                  await fetchAgentData()
+                }}
+                className="text-xs px-3 py-1.5 text-[var(--v2-text-secondary)] hover:text-[var(--v2-primary)] transition-colors"
               >
-                {executing ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    Running Agent...
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-5 h-5" />
-                    Run Agent
-                  </>
-                )}
+                Reload saved configuration
               </button>
             </div>
           </div>
@@ -713,13 +953,23 @@ export default function V2RunAgentPage() {
             <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800" style={{ borderRadius: 'var(--v2-radius-button)' }}>
               <div className="flex items-start gap-3">
                 <XCircle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
-                <div>
+                <div className="flex-1">
                   <h4 className="text-sm font-semibold text-red-900 dark:text-red-100 mb-1">
                     Execution Failed
                   </h4>
-                  <p className="text-sm text-red-700 dark:text-red-300">
+                  <p className="text-sm text-red-700 dark:text-red-300 mb-3">
                     {error}
                   </p>
+                  {(error.includes('execution limit') || error.includes('Upgrade your plan') || error.includes('insufficient') || error.includes('quota')) && (
+                    <button
+                      onClick={() => router.push('/v2/billing')}
+                      className="px-4 py-2 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white text-sm font-semibold hover:scale-105 transition-all shadow-[var(--v2-shadow-button)] flex items-center gap-2"
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    >
+                      <CreditCard className="w-4 h-4" />
+                      Go to Billing
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

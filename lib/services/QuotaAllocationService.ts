@@ -2,6 +2,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { StorageService } from './StorageService';
 import { ExecutionService } from './ExecutionService';
+import { tokensToPilotCredits } from '../utils/pricingConfig';
 
 export class QuotaAllocationService {
   constructor(private supabase: SupabaseClient) {}
@@ -70,8 +71,11 @@ export class QuotaAllocationService {
         return null;
       }
 
-      const totalTokens = (subscription.balance || 0) + (subscription.total_spent || 0) + (subscription.total_earned || 0);
-      const pilotTokens = Math.floor(totalTokens / 10);
+      // Use total_earned as source of truth for lifetime purchases
+      // This avoids triple-counting (balance + spent + earned)
+      // Convert LLM tokens to Pilot Credits for UI display using database config
+      const totalLlmTokens = subscription.total_earned || 0;
+      const pilotTokens = await tokensToPilotCredits(totalLlmTokens, this.supabase);
 
       return {
         pilotTokens,
