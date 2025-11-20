@@ -101,6 +101,7 @@ export default function V2DashboardPage() {
   const [promptIdeas, setPromptIdeas] = useState<any[]>([])
   const [showIdeas, setShowIdeas] = useState(false)
   const [accountFrozen, setAccountFrozen] = useState(false)
+  const textareaRef = React.useRef<HTMLTextAreaElement>(null)
 
   // Calculate system alerts based on quota usage and failures
   const calculateSystemAlerts = (
@@ -497,6 +498,24 @@ export default function V2DashboardPage() {
     return 'Just now'
   }
 
+  // Auto-resize textarea when searchQuery changes
+  React.useEffect(() => {
+    if (textareaRef.current) {
+      // Reset height to auto first to get accurate scrollHeight
+      textareaRef.current.style.height = 'auto'
+      // Set height based on content, capped at 128px
+      const newHeight = textareaRef.current.scrollHeight
+      textareaRef.current.style.height = Math.min(newHeight, 128) + 'px'
+    }
+  }, [searchQuery])
+
+  // Initialize textarea height on mount
+  React.useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto'
+    }
+  }, [])
+
   // Voice input toggle
   const toggleListening = async () => {
     if (!recognitionRef.current) return
@@ -561,19 +580,18 @@ export default function V2DashboardPage() {
           <div className="flex items-start gap-2 sm:gap-3">
             <Search className="w-4 h-4 sm:w-5 sm:h-5 text-[var(--v2-text-muted)] flex-shrink-0 mt-1" />
             <textarea
+              ref={textareaRef}
               value={searchQuery}
               onChange={(e) => {
                 if (!(accountFrozen || stats.creditBalance < 2000)) {
                   setSearchQuery(e.target.value)
-                  // Auto-resize
-                  e.target.style.height = 'auto'
-                  e.target.style.height = Math.min(e.target.scrollHeight, 128) + 'px'
                 }
               }}
               placeholder={accountFrozen ? "Account frozen - Purchase tokens to continue" : stats.creditBalance < 2000 ? "Insufficient balance - Need 2000 tokens to create agent" : "Describe what you want to automate..."}
-              className="flex-1 bg-transparent border-none outline-none text-sm sm:text-base text-[var(--v2-text-secondary)] placeholder:text-[var(--v2-text-muted)] resize-none min-h-[40px] max-h-32"
+              className="flex-1 bg-transparent border-none outline-none text-sm sm:text-base text-[var(--v2-text-secondary)] placeholder:text-[var(--v2-text-muted)] resize-none max-h-32"
+              style={{ height: 'auto', overflow: 'hidden' }}
               disabled={accountFrozen || stats.creditBalance < 2000}
-              rows={2}
+              rows={1}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey && searchQuery.trim().length >= 20 && !accountFrozen && stats.creditBalance >= 2000) {
                   e.preventDefault()
