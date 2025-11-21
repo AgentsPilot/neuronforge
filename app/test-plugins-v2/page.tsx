@@ -12,7 +12,7 @@ interface DebugLog {
   message: string;
 }
 
-type TabType = 'plugins' | 'ai-services' | 'thread-conversation';
+type TabType = 'plugins' | 'ai-services' | 'thread-conversation' | 'free-tier-users';
 
 const PARAMETER_TEMPLATES = {
   "google-mail": {
@@ -505,6 +505,10 @@ export default function TestPluginsPage() {
     request: any;
     response: any;
   }>>([]);
+
+  // Free Tier Users state
+  const [freeTierUserId, setFreeTierUserId] = useState('');
+  const [freeTierResponse, setFreeTierResponse] = useState<any>(null);
 
   // Debug logging
   const [debugLogs, setDebugLogs] = useState<DebugLog[]>([]);
@@ -1110,6 +1114,52 @@ export default function TestPluginsPage() {
     addDebugLog('success', 'Communication history downloaded');
   };
 
+  // Free Tier User Creation Functions
+  const createFreeTierUser = async () => {
+    if (!freeTierUserId.trim()) {
+      addDebugLog('error', 'User ID is required');
+      return;
+    }
+
+    setIsLoading(true);
+    setFreeTierResponse(null);
+
+    try {
+      addDebugLog('info', `Creating free tier subscription for user: ${freeTierUserId}`);
+
+      const response = await fetch('/api/onboarding/allocate-free-tier', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: freeTierUserId
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        addDebugLog('success', `Free tier created successfully for ${freeTierUserId}`);
+        setFreeTierResponse(data);
+      } else {
+        addDebugLog('error', `Failed to create free tier: ${data.error || 'Unknown error'}`);
+        setFreeTierResponse(data);
+      }
+    } catch (error: any) {
+      addDebugLog('error', `API error: ${error.message}`);
+      setFreeTierResponse({ success: false, error: error.message });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const resetFreeTierForm = () => {
+    setFreeTierUserId('');
+    setFreeTierResponse(null);
+    addDebugLog('info', 'Free tier form reset');
+  };
+
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px', fontFamily: 'monospace' }}>
       <h1>Plugin System Testing Interface</h1>
@@ -1152,6 +1202,7 @@ export default function TestPluginsPage() {
           onClick={() => setActiveTab('thread-conversation')}
           style={{
             padding: '10px 20px',
+            marginRight: '5px',
             backgroundColor: activeTab === 'thread-conversation' ? '#007bff' : '#f8f9fa',
             color: activeTab === 'thread-conversation' ? 'white' : '#333',
             border: 'none',
@@ -1162,6 +1213,21 @@ export default function TestPluginsPage() {
           }}
         >
           Thread Conversation
+        </button>
+        <button
+          onClick={() => setActiveTab('free-tier-users')}
+          style={{
+            padding: '10px 20px',
+            backgroundColor: activeTab === 'free-tier-users' ? '#007bff' : '#f8f9fa',
+            color: activeTab === 'free-tier-users' ? 'white' : '#333',
+            border: 'none',
+            borderBottom: activeTab === 'free-tier-users' ? '3px solid #0056b3' : 'none',
+            cursor: 'pointer',
+            fontSize: '16px',
+            fontWeight: activeTab === 'free-tier-users' ? 'bold' : 'normal'
+          }}
+        >
+          Free Tier Users
         </button>
       </div>
 
@@ -1897,6 +1963,171 @@ export default function TestPluginsPage() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Free Tier Users Tab Content */}
+      {activeTab === 'free-tier-users' && (
+        <>
+          {/* Free Tier User Creation Form */}
+          <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
+            <h2>Create Free Tier User Subscription</h2>
+            <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#e7f3ff', borderRadius: '3px' }}>
+              <p style={{ margin: 0, fontSize: '14px', color: '#0066cc' }}>
+                <strong>ℹ️ Info:</strong> This will create a new record in the <code>user_subscriptions</code> table with free tier quotas.
+                The user must already exist in the <code>auth.users</code> table (created during signup).
+              </p>
+            </div>
+
+            <div style={{ marginBottom: '15px' }}>
+              <label htmlFor="freeTierUserId" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                User ID (UUID):
+              </label>
+              <input
+                id="freeTierUserId"
+                type="text"
+                value={freeTierUserId}
+                onChange={(e) => setFreeTierUserId(e.target.value)}
+                placeholder="e.g., 550e8400-e29b-41d4-a716-446655440000"
+                style={{
+                  width: '500px',
+                  padding: '10px',
+                  fontSize: '14px',
+                  fontFamily: 'monospace',
+                  border: '1px solid #ccc',
+                  borderRadius: '3px'
+                }}
+              />
+              <div style={{ marginTop: '5px', fontSize: '12px', color: '#666' }}>
+                Enter the UUID of the user from auth.users table
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#f8f9fa', borderRadius: '3px' }}>
+              <h4 style={{ marginTop: 0 }}>What will be created:</h4>
+              <ul style={{ margin: '10px 0', paddingLeft: '20px', fontSize: '14px' }}>
+                <li><strong>Pilot Tokens:</strong> 20,834 tokens (from system config)</li>
+                <li><strong>Storage Quota:</strong> 1,000 MB (from system config)</li>
+                <li><strong>Execution Quota:</strong> Unlimited (null)</li>
+                <li><strong>Free Tier Duration:</strong> 30 days (from system config)</li>
+                <li><strong>Status:</strong> active</li>
+                <li><strong>Account Frozen:</strong> false</li>
+              </ul>
+              <div style={{ fontSize: '12px', color: '#666', marginTop: '10px' }}>
+                Note: If the user already has a subscription, the free tier allocation will be added to their existing balance.
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                onClick={createFreeTierUser}
+                disabled={isLoading || !freeTierUserId.trim()}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: !freeTierUserId.trim() ? '#ccc' : '#28a745',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '3px',
+                  cursor: !freeTierUserId.trim() ? 'not-allowed' : 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 'bold'
+                }}
+              >
+                {isLoading ? 'Creating...' : 'Create Free Tier Subscription'}
+              </button>
+              <button
+                onClick={resetFreeTierForm}
+                disabled={isLoading}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: '#6c757d',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '3px',
+                  cursor: isLoading ? 'not-allowed' : 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 'bold'
+                }}
+              >
+                Reset Form
+              </button>
+            </div>
+          </div>
+
+          {/* Response Display */}
+          {freeTierResponse && (
+            <div style={{ marginBottom: '30px', padding: '15px', border: `2px solid ${freeTierResponse.success ? '#28a745' : '#dc3545'}`, borderRadius: '5px', backgroundColor: freeTierResponse.success ? '#f0fff0' : '#fff0f0' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <h2 style={{ margin: 0 }}>
+                  {freeTierResponse.success ? '✅ Success' : '❌ Error'}
+                </h2>
+                <button
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(JSON.stringify(freeTierResponse, null, 2));
+                      addDebugLog('success', 'Response copied to clipboard');
+                    } catch (error: any) {
+                      addDebugLog('error', `Failed to copy: ${error.message}`);
+                    }
+                  }}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: '#007bff',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: 'pointer',
+                    fontSize: '14px'
+                  }}
+                >
+                  Copy to Clipboard
+                </button>
+              </div>
+
+              {freeTierResponse.success && freeTierResponse.allocation && (
+                <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: 'white', borderRadius: '3px', border: '1px solid #28a745' }}>
+                  <h3 style={{ marginTop: 0 }}>Allocation Details:</h3>
+                  <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '14px' }}>
+                    <li><strong>Pilot Tokens:</strong> {freeTierResponse.allocation.pilot_tokens?.toLocaleString() || 'N/A'}</li>
+                    <li><strong>Raw Tokens:</strong> {freeTierResponse.allocation.raw_tokens?.toLocaleString() || 'N/A'}</li>
+                    <li><strong>Storage MB:</strong> {freeTierResponse.allocation.storage_mb?.toLocaleString() || 'N/A'}</li>
+                    <li><strong>Executions:</strong> {freeTierResponse.allocation.executions === null ? 'Unlimited' : freeTierResponse.allocation.executions}</li>
+                  </ul>
+                  {freeTierResponse.message && (
+                    <div style={{ marginTop: '10px', fontStyle: 'italic', color: '#28a745' }}>
+                      {freeTierResponse.message}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!freeTierResponse.success && (
+                <div style={{ padding: '10px', backgroundColor: 'white', borderRadius: '3px', border: '1px solid #dc3545' }}>
+                  <strong>Error Message:</strong>
+                  <div style={{ marginTop: '5px', color: '#dc3545' }}>
+                    {freeTierResponse.error || 'Unknown error occurred'}
+                  </div>
+                </div>
+              )}
+
+              <details style={{ marginTop: '15px' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: '#007bff' }}>
+                  View Full API Response
+                </summary>
+                <pre style={{
+                  backgroundColor: '#f8f9fa',
+                  padding: '15px',
+                  borderRadius: '3px',
+                  overflow: 'auto',
+                  fontSize: '12px',
+                  maxHeight: '300px',
+                  marginTop: '10px'
+                }}>
+                  {JSON.stringify(freeTierResponse, null, 2)}
+                </pre>
+              </details>
+            </div>
+          )}
+        </>
       )}
 
       {/* Control Panel */}
