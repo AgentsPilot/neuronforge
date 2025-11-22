@@ -4,7 +4,10 @@ import { createClient } from '@supabase/supabase-js';
 import { savePluginConnection } from '../plugins/savePluginConnection';
 import { PluginAuthConfig, UserConnection, ConnectionStatus } from '@/lib/types/plugin-types'
 
-let userConnectionsInstance: UserPluginConnections | null = null;
+// Use globalThis to ensure singleton persists across module reloads (important for Next.js dev mode)
+const globalForUserConnections = globalThis as unknown as {
+  userConnectionsInstance: UserPluginConnections | null;
+};
 
 export class UserPluginConnections {
   private supabase: any;
@@ -34,14 +37,15 @@ export class UserPluginConnections {
   }
 
   // Singleton factory for serverless functions
+  // Uses globalThis to persist across module reloads in Next.js dev mode
   static getInstance(): UserPluginConnections {
-    if (!userConnectionsInstance) {
+    if (!globalForUserConnections.userConnectionsInstance) {
       if (process.env.NODE_ENV === 'development') {
         console.log('DEBUG: Creating new UserPluginConnections instance for serverless function');
       }
-      userConnectionsInstance = new UserPluginConnections();
+      globalForUserConnections.userConnectionsInstance = new UserPluginConnections();
     }
-    return userConnectionsInstance;
+    return globalForUserConnections.userConnectionsInstance;
   }
 
   // Private helper: Fetch active plugin connections from database
