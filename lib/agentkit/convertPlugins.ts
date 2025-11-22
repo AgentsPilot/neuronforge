@@ -153,6 +153,36 @@ export async function getPluginContextPrompt(
 
     Object.entries(llmContext.actions).forEach(([actionName, actionInfo]) => {
       contextLines.push(`  - **${actionName}**: ${actionInfo.usage_context}`);
+
+      // Include required parameters so AI knows exactly what's needed
+      if (actionInfo.parameters?.required?.length > 0) {
+        contextLines.push(`    REQUIRED params: ${actionInfo.parameters.required.join(', ')}`);
+      }
+
+      // Include parameter structure for complex/nested schemas
+      if (actionInfo.parameters?.properties) {
+        const props = actionInfo.parameters.properties;
+        const paramDetails: string[] = [];
+
+        Object.entries(props).forEach(([paramName, paramDef]: [string, any]) => {
+          if (paramDef.type === 'object' && paramDef.properties) {
+            // Nested object - show structure
+            const nestedProps = Object.keys(paramDef.properties).join(', ');
+            const nestedRequired = paramDef.required?.join(', ') || 'none';
+            paramDetails.push(`      "${paramName}": { type: object, properties: [${nestedProps}], required: [${nestedRequired}] }`);
+          } else if (paramDef.type === 'array') {
+            paramDetails.push(`      "${paramName}": { type: array of ${paramDef.items?.type || 'any'} }`);
+          } else {
+            // Simple type
+            paramDetails.push(`      "${paramName}": { type: ${paramDef.type}${paramDef.description ? `, desc: "${paramDef.description.substring(0, 50)}..."` : ''} }`);
+          }
+        });
+
+        if (paramDetails.length > 0) {
+          contextLines.push(`    Parameter structure:`);
+          paramDetails.forEach(detail => contextLines.push(detail));
+        }
+      }
     });
 
     contextLines.push('');

@@ -70,6 +70,25 @@ function V2AgentBuilderContent() {
   const [isInitializing, setIsInitializing] = useState(false)
   const initializingRef = useRef(false)
 
+  // Generate proper UUID format for database compatibility (matches backend)
+  const generateUUID = () => {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  };
+
+  // ID tracking (for consistency with token tracking and database)
+  const sessionId = useRef(generateUUID())
+  const agentId = useRef(generateUUID())
+
+  console.log('🆔 V2 Agent Builder initialized with IDs:', {
+    agentId: agentId.current,
+    sessionId: sessionId.current,
+    threadId
+  });
+
   // Enhanced prompt display state
   const [isStepsExpanded, setIsStepsExpanded] = useState(false)
   const [enhancedPromptData, setEnhancedPromptData] = useState<any>(null)
@@ -81,6 +100,7 @@ function V2AgentBuilderContent() {
   // Input state
   const [inputValue, setInputValue] = useState('')
   const [isSending, setIsSending] = useState(false)
+  const [isCreatingAgent, setIsCreatingAgent] = useState(false)
 
   // Schedule state (keeping from original)
   const [scheduleMode, setScheduleMode] = useState<'manual' | 'scheduled'>('manual')
@@ -167,7 +187,12 @@ function V2AgentBuilderContent() {
       console.log('🔄 Creating thread with prompt:', initialPrompt)
       const createRes = await fetch('/api/agent-creation/init-thread', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': user?.id || '',
+          'x-session-id': sessionId.current,
+          'x-agent-id': agentId.current
+        },
         body: JSON.stringify({ initial_prompt: initialPrompt })
       })
 
@@ -198,7 +223,12 @@ function V2AgentBuilderContent() {
 
       const res = await fetch('/api/agent-creation/process-message', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': user?.id || '',
+          'x-session-id': sessionId.current,
+          'x-agent-id': agentId.current
+        },
         body: JSON.stringify({
           thread_id: tid,
           phase: 1,
@@ -252,7 +282,12 @@ function V2AgentBuilderContent() {
 
       const res = await fetch('/api/agent-creation/process-message', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': user?.id || '',
+          'x-session-id': sessionId.current,
+          'x-agent-id': agentId.current
+        },
         body: JSON.stringify({
           thread_id: tid,
           phase: 2
@@ -301,7 +336,12 @@ function V2AgentBuilderContent() {
 
       const res = await fetch('/api/agent-creation/process-message', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': user?.id || '',
+          'x-session-id': sessionId.current,
+          'x-agent-id': agentId.current
+        },
         body: JSON.stringify({
           thread_id: currentThreadId,
           phase: 3,
@@ -357,6 +397,136 @@ function V2AgentBuilderContent() {
     }
   }
 
+  // ==================== AGENT CREATION ====================
+
+  /**
+   * Create and save agent to database
+   * @param useEnhanced - true for enhanced prompt, false for original
+   */
+  const createAgent = async (useEnhanced: boolean = true) => {
+    if (!user?.id) {
+      addSystemMessage('Error: User not authenticated')
+      return
+    }
+
+    setIsCreatingAgent(true)
+
+    try {
+      console.log('🚀 Creating agent...', {
+        useEnhanced,
+        agentId: agentId.current,
+        sessionId: sessionId.current,
+        threadId
+      })
+
+      // Step 1: Build clarificationAnswers with IDs
+      const clarificationAnswers = {
+        ...builderState.clarificationAnswers,
+        agentId: agentId.current,
+        sessionId: sessionId.current,
+        threadId: threadId,
+        originalPrompt: initialPrompt,
+        enhancedPrompt: builderState.enhancedPrompt
+      }
+
+      // Step 2: Call /api/generate-agent-v2
+      console.log('📞 Calling /api/generate-agent-v2...')
+      const generateRes = await fetch('/api/generate-agent-v2', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': user.id,
+          'x-session-id': sessionId.current,
+          'x-agent-id': agentId.current
+        },
+        body: JSON.stringify({
+          prompt: useEnhanced ? builderState.enhancedPrompt : initialPrompt,
+          promptType: useEnhanced ? 'enhanced' : 'original',
+          clarificationAnswers,
+          userId: user.id
+        })
+      })
+
+      if (!generateRes.ok) {
+        const errorData = await generateRes.json()
+        throw new Error(errorData.error || 'Failed to generate agent')
+      }
+
+      const generatedAgent = await generateRes.json()
+      console.log('✅ Agent generated:', generatedAgent.agent?.agent_name)
+
+      // Step 3: Build agent_config metadata
+      const agentConfig = {
+        creation_metadata: {
+          ai_generated_at: new Date().toISOString(),
+          session_id: sessionId.current,
+          agent_id: agentId.current,
+          thread_id: threadId,
+          prompt_type: useEnhanced ? 'enhanced' : 'original',
+          clarification_answers: builderState.clarificationAnswers,
+          version: '2.0',
+          platform_version: 'v2.0',
+          enhanced_prompt_data: enhancedPromptData // Structured v9 data
+        },
+        ai_context: {
+          reasoning: generatedAgent.agent?.ai_reasoning || '',
+          confidence: generatedAgent.agent?.ai_confidence || 0,
+          original_prompt: initialPrompt,
+          enhanced_prompt: builderState.enhancedPrompt,
+          generated_plan: generatedAgent.agent?.generated_plan || ''
+        }
+      }
+
+      // Step 4: Build final agent data
+      const agentData = {
+        ...generatedAgent.agent,
+        agent_config: agentConfig,
+        schedule_cron: null, // TODO: Add schedule if configured
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+        mode: 'on_demand',
+        status: 'draft'
+      }
+
+      // Step 5: Call /api/create-agent
+      console.log('📞 Calling /api/create-agent...')
+      const createRes = await fetch('/api/create-agent', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': user.id,
+          'x-session-id': sessionId.current,
+          'x-agent-id': agentId.current
+        },
+        body: JSON.stringify({
+          agent: agentData,
+          sessionId: sessionId.current,
+          agentId: agentId.current
+        })
+      })
+
+      if (!createRes.ok) {
+        const errorData = await createRes.json()
+        throw new Error(errorData.error || 'Failed to create agent')
+      }
+
+      const result = await createRes.json()
+      console.log('✅ Agent created successfully:', result.agent?.id)
+
+      // Step 6: Navigate to agent detail page
+      addAIMessage('🎉 Your agent has been created successfully!')
+
+      setTimeout(() => {
+        router.push(`/v2/agents/${result.agent.id}`)
+      }, 1500)
+
+    } catch (error: any) {
+      console.error('❌ Agent creation error:', error)
+      addSystemMessage(`Error creating agent: ${error.message}`)
+    } finally {
+      setIsCreatingAgent(false)
+    }
+  }
+
   // ==================== HANDLERS ====================
 
   // Handle sending messages/answers
@@ -399,15 +569,13 @@ function V2AgentBuilderContent() {
   }
 
   // Handle approve plan
-  const handleApprove = () => {
+  const handleApprove = async () => {
     addUserMessage('Yes, perfect!')
-    addAIMessage('Great! Creating your agent now...')
+    addAIMessage('Excellent! Creating your agent with the enhanced plan...')
     approvePlan()
 
-    // TODO: Navigate to agent creation completion
-    setTimeout(() => {
-      router.push('/v2/dashboard')
-    }, 2000)
+    // Create agent with enhanced prompt
+    await createAgent(true)
   }
 
   // Handle edit plan
@@ -419,13 +587,13 @@ function V2AgentBuilderContent() {
   }
 
   // Handle use original
-  const handleUseOriginal = () => {
+  const handleUseOriginal = async () => {
     addUserMessage('Use the original prompt instead')
-    addAIMessage('Got it! Creating agent with your original request...')
-    // TODO: Create agent with original prompt
-    setTimeout(() => {
-      router.push('/v2/dashboard')
-    }, 2000)
+    addAIMessage('Perfect! Creating your agent with your original request...')
+    approvePlan()
+
+    // Create agent with original prompt
+    await createAgent(false)
   }
 
   // ==================== SCHEDULE HELPERS ====================
@@ -819,16 +987,27 @@ function V2AgentBuilderContent() {
                           <div className="grid grid-cols-2 gap-3">
                             <button
                               onClick={handleApprove}
-                              className="px-6 py-3 bg-gradient-to-r from-emerald-500 to-green-600 text-white font-semibold flex items-center justify-center gap-2 transition-all hover:from-emerald-600 hover:to-green-700 active:scale-[0.98]"
+                              disabled={isCreatingAgent}
+                              className="px-6 py-3 bg-gradient-to-r from-emerald-500 to-green-600 text-white font-semibold flex items-center justify-center gap-2 transition-all hover:from-emerald-600 hover:to-green-700 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
                               style={{ borderRadius: 'var(--v2-radius-button)', boxShadow: 'var(--v2-shadow-button)' }}
                             >
-                              <CheckCircle className="h-5 w-5" />
-                              Yes, perfect!
+                              {isCreatingAgent ? (
+                                <>
+                                  <Loader2 className="h-5 w-5 animate-spin" />
+                                  Creating agent...
+                                </>
+                              ) : (
+                                <>
+                                  <CheckCircle className="h-5 w-5" />
+                                  Yes, perfect!
+                                </>
+                              )}
                             </button>
 
                             <button
                               onClick={handleEdit}
-                              className="px-6 py-3 bg-[var(--v2-surface)] border-2 border-[var(--v2-border)] text-[var(--v2-text-primary)] font-semibold flex items-center justify-center gap-2 transition-all hover:border-[var(--v2-primary)] hover:bg-[var(--v2-surface-hover)] active:scale-[0.98]"
+                              disabled={isCreatingAgent}
+                              className="px-6 py-3 bg-[var(--v2-surface)] border-2 border-[var(--v2-border)] text-[var(--v2-text-primary)] font-semibold flex items-center justify-center gap-2 transition-all hover:border-[var(--v2-primary)] hover:bg-[var(--v2-surface-hover)] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
                               style={{ borderRadius: 'var(--v2-radius-button)' }}
                             >
                               <Edit className="h-5 w-5" />

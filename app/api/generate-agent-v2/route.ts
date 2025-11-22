@@ -12,6 +12,7 @@ import { enhanceOutputInference } from '@/lib/outputInference'
 import { AuditTrailService } from '@/lib/services/AuditTrailService'
 import { AUDIT_EVENTS } from '@/lib/audit/events'
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics'
+import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2'
 
 export const runtime = 'nodejs'
 
@@ -28,6 +29,111 @@ const aiAnalytics = new AIAnalyticsService(supabaseServiceRole, {
   enableCostTracking: true,
   enablePerformanceMetrics: true
 })
+
+/**
+ * Validate and fix workflow step parameters against plugin schemas
+ * This catches AI mistakes where it uses wrong parameter names (e.g., "query" instead of "topic")
+ */
+async function validateAndFixWorkflowSteps(
+  workflowSteps: any[]
+): Promise<{ steps: any[]; fixes: string[] }> {
+  const pluginManager = await PluginManagerV2.getInstance()
+  const allPlugins = pluginManager.getAvailablePlugins()
+  const fixes: string[] = []
+
+  const validatedSteps = workflowSteps.map((step, index) => {
+    // Only validate plugin_action steps (not ai_processing, conditional, etc.)
+    if (step.type !== 'plugin_action' || !step.plugin || !step.plugin_action) {
+      return step
+    }
+
+    const pluginDef = allPlugins[step.plugin]
+    if (!pluginDef) {
+      console.warn(`⚠️ [Validation] Plugin "${step.plugin}" not found in definitions`)
+      return step
+    }
+
+    const actionDef = pluginDef.actions[step.plugin_action]
+    if (!actionDef) {
+      console.warn(`⚠️ [Validation] Action "${step.plugin_action}" not found in plugin "${step.plugin}"`)
+      return step
+    }
+
+    const requiredParams = actionDef.parameters?.required || []
+    const stepParams = step.params || {}
+
+    // Check for missing required parameters
+    for (const requiredParam of requiredParams) {
+      if (stepParams[requiredParam] === undefined) {
+        // Try to find a similar parameter that might be misnamed
+        const similarParam = findSimilarParam(stepParams, requiredParam)
+
+        if (similarParam) {
+          // Auto-fix: rename the misnamed parameter
+          stepParams[requiredParam] = stepParams[similarParam]
+          delete stepParams[similarParam]
+          const fixMsg = `Step ${index + 1} (${step.plugin}.${step.plugin_action}): Fixed param "${similarParam}" → "${requiredParam}"`
+          fixes.push(fixMsg)
+          console.log(`🔧 [Validation] ${fixMsg}`)
+        } else {
+          console.warn(`⚠️ [Validation] Step ${index + 1}: Missing required param "${requiredParam}" for ${step.plugin}.${step.plugin_action}`)
+        }
+      }
+    }
+
+    return { ...step, params: stepParams }
+  })
+
+  if (fixes.length > 0) {
+    console.log(`✅ [Validation] Applied ${fixes.length} parameter fixes`)
+  } else {
+    console.log(`✅ [Validation] All workflow steps have correct parameter names`)
+  }
+
+  return { steps: validatedSteps, fixes }
+}
+
+/**
+ * Find a similar parameter name that might be a common AI mistake
+ */
+function findSimilarParam(
+  params: Record<string, any>,
+  targetParam: string
+): string | null {
+  // Common AI mistakes mapping: what AI might use → what it should be
+  const commonMistakes: Record<string, string[]> = {
+    'topic': ['query', 'search_term', 'search_query', 'subject', 'question', 'research_topic'],
+    'query': ['search', 'search_term', 'q', 'search_query'],
+    'recipient_email': ['to', 'email', 'to_email', 'recipient', 'email_to'],
+    'subject': ['title', 'email_subject', 'header'],
+    'message': ['body', 'content', 'text', 'email_body', 'email_content'],
+    'spreadsheet_id': ['sheet_id', 'spreadsheetId', 'google_sheet_id', 'sheet'],
+    'values': ['data', 'rows', 'content', 'row_data'],
+    'content': ['text', 'body', 'data', 'input'],
+  }
+
+  // Check if any param in the step matches a common mistake for the target
+  const possibleMistakes = commonMistakes[targetParam] || []
+  for (const mistake of possibleMistakes) {
+    if (params[mistake] !== undefined) {
+      return mistake
+    }
+  }
+
+  // Fuzzy match: check for partial matches or case differences
+  const paramKeys = Object.keys(params)
+  for (const key of paramKeys) {
+    if (key.toLowerCase() === targetParam.toLowerCase() && key !== targetParam) {
+      return key
+    }
+    if (key.toLowerCase().includes(targetParam.toLowerCase()) ||
+        targetParam.toLowerCase().includes(key.toLowerCase())) {
+      return key
+    }
+  }
+
+  return null
+}
 
 export async function POST(req: Request) {
   try {
@@ -124,6 +230,21 @@ export async function POST(req: Request) {
       confidence: analysis.confidence
     })
 
+    // ========================================
+    // 🔧 VALIDATE & FIX WORKFLOW STEP PARAMS
+    // ========================================
+    // Catch AI mistakes where it uses wrong parameter names (e.g., "query" instead of "topic")
+    const { steps: validatedWorkflowSteps, fixes: paramFixes } = await validateAndFixWorkflowSteps(
+      analysis.workflow_steps
+    )
+
+    // Update analysis with validated steps
+    analysis.workflow_steps = validatedWorkflowSteps
+
+    if (paramFixes.length > 0) {
+      console.log('🔧 Applied parameter fixes:', paramFixes)
+    }
+
     // Track AI analytics for the analysis call
     if (analysis.tokensUsed) {
       await aiAnalytics.trackAICall({
@@ -200,6 +321,19 @@ export async function POST(req: Request) {
           dependencies: idx > 0 ? [`step${idx}`] : [],
         }
 
+        // Convert ai_processing to Pilot ai_processing - CHECK THIS FIRST!
+        // Must check before generic plugin_action because ai_processing also has plugin + plugin_action fields
+        if (step.plugin === 'ai_processing' || step.type === 'ai_processing' || legacySteps[idx]?.type === 'ai_processing') {
+          // Use prompt from params if available, otherwise use operation
+          const prompt = step.params?.prompt || step.operation
+          return {
+            ...base,
+            type: 'ai_processing',
+            prompt: prompt,
+            params: step.params || {},
+          }
+        }
+
         // Convert legacy plugin_action to Pilot action
         if (step.plugin && step.plugin_action) {
           return {
@@ -207,18 +341,6 @@ export async function POST(req: Request) {
             type: 'action',
             plugin: step.plugin,
             action: step.plugin_action,
-            params: step.params || {},
-          }
-        }
-
-        // Convert ai_processing to Pilot ai_processing
-        if (step.plugin === 'ai_processing' || legacySteps[idx]?.type === 'ai_processing') {
-          // Use prompt from params if available, otherwise use operation
-          const prompt = step.params?.prompt || step.operation
-          return {
-            ...base,
-            type: 'ai_processing',
-            prompt: prompt,
             params: step.params || {},
           }
         }

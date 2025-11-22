@@ -1440,18 +1440,30 @@ await supabase.from('agent_logs').insert({
    - **Impact**: No detailed step timeline
    - **Fix**: Inject StateManager into StepExecutor
 
+5. **❌ Missing Return Schemas**: Plugin definitions don't include return schemas
+   - **Impact**: AI generates incorrect variable references like `{{step1.data.result}}` but plugins return different field names (e.g., `summary`, `key_points`, `sources`)
+   - **Fix**: Add `returns` schema to each action in plugin definitions
+   - **Location**: `lib/plugins/definitions/*.json`
+
 ### What Works Today
 
 ✅ Agent creation via AgentKit intelligence
 ✅ Workflow step generation
-✅ Legacy format conversion
+✅ Legacy format conversion (including `ai_processing` type preservation - fixed in `generatePilotSteps`)
 ✅ Orchestrator execution
 ✅ Plugin action execution
-✅ AI processing via AgentKit
+✅ AI processing via AgentKit (StepExecutor routes `type: "ai_processing"` to `executeLLMDecision`)
 ✅ High-level workflow tracking
 ✅ Unified logging to agent_logs
 ✅ AIS intensity tracking
 ✅ Memory summarization
+
+### Recent Fixes (2025-11-22)
+
+1. **ai_processing Type Preservation** - Fixed in `app/api/generate-agent-v2/route.ts`
+   - **Issue**: `generatePilotSteps()` was checking `plugin && plugin_action` BEFORE `ai_processing`, causing ai_processing steps to be incorrectly converted to `type: "action"`
+   - **Fix**: Reordered conditions to check for `ai_processing` FIRST
+   - **Result**: `pilot_steps` now correctly has `type: "ai_processing"` for AI processing steps
 
 ---
 
@@ -1463,3 +1475,4 @@ Would you like me to fix any of these issues?
 2. **Add parameter mapping** to workflow steps
 3. **Implement step-level logging** to workflow_step_executions table
 4. **Add conditional execution** support
+5. **Add return schemas to plugin definitions** - So AI knows correct field names for variable references (e.g., `{{step1.data.summary}}` instead of `{{step1.data.result}}`)
