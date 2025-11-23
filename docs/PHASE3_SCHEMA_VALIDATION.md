@@ -183,7 +183,6 @@ if (phase === 3) {
     confirmation_needed: boolean,
     implicit_services_detected: string[],
     provenance_checked: boolean,
-    resolved_contacts: Record<string, string>, // {"user": "email@example.com"}
     provenance_note?: string,
     declined_plugins_blocking?: string[],
     oauth_required?: boolean,
@@ -273,10 +272,7 @@ if (phase === 3) {
     "ready_for_generation": true,
     "confirmation_needed": false,
     "implicit_services_detected": [],
-    "provenance_checked": true,
-    "resolved_contacts": {
-      "user": "alice@company.com"
-    }
+    "provenance_checked": true
   },
   "conversationalSummary": "Your agent is fully defined and ready to create!"
   // Note: ready_for_generation is ONLY in metadata, not at top-level!

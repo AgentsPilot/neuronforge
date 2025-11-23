@@ -86,15 +86,17 @@ export interface InitThreadResponse {
 export interface ProcessMessageRequest {
   thread_id: string;
   phase: ThreadPhase;
-  user_prompt: string;
-  user_context: UserContext;
-  analysis: AnalysisObject | null;
-  connected_services: string[]; // Simple array of connected plugin keys
+  user_prompt?: string;  // Required for Phase 1
+  user_context?: UserContext;
+  analysis?: AnalysisObject | null;
+  connected_services?: string[]; // Simple array of connected plugin keys
   available_services?: ConnectedService[]; // All plugins available in the system with full context
   clarification_answers?: Record<string, any>;
-  enhanced_prompt?: EnhancedPrompt | null; // Phase 2: Previous Phase 3 output for refinement (v8)
+  enhanced_prompt?: EnhancedPrompt | null; // Phase 2/3: Previous Phase 3 output for refinement
+  declined_services?: string[]; // V10: Services user explicitly refused to connect (top-level)
+  user_feedback?: string; // V10: Free-form user feedback for refinement (mini-cycle mode)
   metadata?: {
-    declined_plugins?: string[]; // Plugins user explicitly declined to connect
+    declined_plugins?: string[]; // Deprecated: use declined_services instead
     [key: string]: any; // Allow additional metadata
   };
 }
@@ -153,9 +155,19 @@ export interface EnhancedPromptSections {
   processing_steps?: string[]; // Optional - v7 compatibility
 }
 
+/**
+ * V10: Resolved user input tracking
+ * Represents inputs that were previously in user_inputs_required but now have values
+ */
+export interface ResolvedUserInput {
+  key: string;    // Machine-friendly key (e.g., "accountant_email", "user_email")
+  value: string;  // Resolved value (e.g., "bob@company.com")
+}
+
 export interface EnhancedPromptSpecifics {
   services_involved: string[];
-  user_inputs_required: string[];
+  user_inputs_required: string[];  // Labels for inputs still missing
+  resolved_user_inputs?: ResolvedUserInput[];  // V10: Previously required inputs that now have values
 }
 
 export interface EnhancedPrompt {
@@ -175,7 +187,6 @@ export interface Phase3Metadata {
   confirmation_needed: boolean;
   implicit_services_detected: string[];
   provenance_checked: boolean;
-  resolved_contacts: Record<string, string>; // {"user": "alice@company.com"}
   provenance_note?: string;
   declined_plugins_blocking?: string[];
   oauth_required?: boolean;

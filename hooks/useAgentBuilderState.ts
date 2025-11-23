@@ -330,6 +330,20 @@ export function useAgentBuilderState() {
     }));
   }, []);
 
+  // V10: Reset state for mini-cycle or edit flow refinement
+  // This allows Phase 3 to be re-triggered after questions are answered
+  const resetForRefinement = useCallback(() => {
+    setState(prev => ({
+      ...prev,
+      enhancementComplete: false,  // Allow useEffect to trigger Phase 3 again
+      // Keep workflowPhase as 'approval' during edit - will change to 'questions' if needed
+      // Clear old mini-cycle questions to avoid conflicts
+      questionsSequence: [],
+      currentQuestionIndex: -1,
+      // Don't clear clarificationAnswers - we want to keep previous answers
+    }));
+  }, []);
+
   // Approve plan
   const approvePlan = useCallback(() => {
     setState(prev => ({
@@ -366,6 +380,7 @@ export function useAgentBuilderState() {
     updateEditedEnhanced,
     saveEditedEnhanced,
     cancelEditedEnhanced,
+    resetForRefinement,  // V10: Reset state for mini-cycle/edit flow
     approvePlan,
     updateAgentPreview
   };

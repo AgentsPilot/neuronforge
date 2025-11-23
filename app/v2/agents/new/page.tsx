@@ -36,6 +36,7 @@ import {
 } from 'lucide-react'
 import { useAgentBuilderState } from '@/hooks/useAgentBuilderState'
 import { useAgentBuilderMessages } from '@/hooks/useAgentBuilderMessages'
+import { getPluginAPIClient } from '@/lib/client/plugin-api-client'
 
 function V2AgentBuilderContent() {
   const searchParams = useSearchParams()
@@ -51,6 +52,7 @@ function V2AgentBuilderContent() {
     answerQuestion,
     setEnhancement,
     startEditingEnhanced,
+    resetForRefinement,  // V10: Reset state for mini-cycle/edit flow
     approvePlan
   } = useAgentBuilderState()
 
@@ -96,6 +98,19 @@ function V2AgentBuilderContent() {
   // Service status tracking
   const [connectedPlugins, setConnectedPlugins] = useState<string[]>([])
   const [requiredServices, setRequiredServices] = useState<string[]>([])
+
+  // Plugin OAuth state (for missing plugins flow)
+  const [missingPlugins, setMissingPlugins] = useState<string[]>([])
+  const [declinedPlugins, setDeclinedPlugins] = useState<string[]>([])
+  const [connectingPlugin, setConnectingPlugin] = useState<string | null>(null)
+  const [showPluginCards, setShowPluginCards] = useState(false)
+
+  // V10: Mini-cycle state (for user_inputs_required refinement)
+  const [isInMiniCycle, setIsInMiniCycle] = useState(false)
+  const [pendingEnhancedPrompt, setPendingEnhancedPrompt] = useState<any>(null)
+
+  // V10: Edit flow state (for "Need changes" button)
+  const [isAwaitingFeedback, setIsAwaitingFeedback] = useState(false)
 
   // Input state
   const [inputValue, setInputValue] = useState('')
@@ -150,13 +165,23 @@ function V2AgentBuilderContent() {
         allQuestionsAnswered &&
         !builderState.enhancementComplete) {
 
-      // Add typing indicator before Phase 3
-      addTypingIndicator('Creating your agent plan...')
+      // V10: Different messaging for mini-cycle vs initial Phase 3
+      if (isInMiniCycle) {
+        addTypingIndicator('Updating your agent plan with new details...')
+      } else {
+        addTypingIndicator('Creating your agent plan...')
+      }
+
       setTimeout(() => {
-        processPhase3()
+        // V10: Pass pendingEnhancedPrompt for refinement in mini-cycle mode
+        if (isInMiniCycle && pendingEnhancedPrompt) {
+          processPhase3(undefined, undefined, { enhanced_prompt: pendingEnhancedPrompt })
+        } else {
+          processPhase3()
+        }
       }, 1000)
     }
-  }, [builderState.workflowPhase, builderState.currentQuestionIndex, builderState.questionsSequence, builderState.clarificationAnswers, builderState.enhancementComplete])
+  }, [builderState.workflowPhase, builderState.currentQuestionIndex, builderState.questionsSequence, builderState.clarificationAnswers, builderState.enhancementComplete, isInMiniCycle, pendingEnhancedPrompt])
 
   // Display current question when index changes
   useEffect(() => {
@@ -275,10 +300,17 @@ function V2AgentBuilderContent() {
     }
   }
 
-  // Phase 2: Questions
-  const processPhase2 = async (tid: string) => {
+  // Phase 2: Questions (supports mini-cycle mode with enhanced_prompt)
+  const processPhase2 = async (
+    tid: string,
+    options?: {
+      enhanced_prompt?: any;  // V10: For mini-cycle refinement
+      user_feedback?: string; // V10: For edit flow refinement
+    }
+  ) => {
     try {
-      console.log('🔄 Phase 2: Questions...')
+      const isMiniCycle = !!options?.enhanced_prompt || !!options?.user_feedback
+      console.log('🔄 Phase 2: Questions...', isMiniCycle ? '(mini-cycle mode)' : '')
 
       const res = await fetch('/api/agent-creation/process-message', {
         method: 'POST',
@@ -290,7 +322,10 @@ function V2AgentBuilderContent() {
         },
         body: JSON.stringify({
           thread_id: tid,
-          phase: 2
+          phase: 2,
+          enhanced_prompt: options?.enhanced_prompt || null,  // V10: Pass for mini-cycle
+          user_feedback: options?.user_feedback || null,      // V10: Pass for edit flow
+          declined_services: declinedPlugins                  // V10: Maintain declined services
         })
       })
 
@@ -312,10 +347,25 @@ function V2AgentBuilderContent() {
       if (questions.length > 0) {
         // Store questions and trigger first question display
         setQuestionsSequence(questions)
+
+        // V10: Track mini-cycle state - when these questions are answered, re-run Phase 3
+        if (isMiniCycle) {
+          setIsInMiniCycle(true)
+          // Store the enhanced_prompt for Phase 3 refinement
+          if (options?.enhanced_prompt) {
+            setPendingEnhancedPrompt(options.enhanced_prompt)
+          }
+        }
         // First question will be displayed by useEffect
       } else {
-        // No questions needed - add typing indicator for Phase 3
-        addTypingIndicator('Creating your agent plan...')
+        // No questions needed - proceed to Phase 3
+        if (isMiniCycle) {
+          // V10: Mini-cycle complete, no more questions - show the plan
+          setIsInMiniCycle(false)
+          addTypingIndicator('Finalizing your agent plan...')
+        } else {
+          addTypingIndicator('Creating your agent plan...')
+        }
         setTimeout(() => processPhase3(tid), 1500)
       }
 
@@ -326,13 +376,32 @@ function V2AgentBuilderContent() {
     }
   }
 
-  // Phase 3: Enhancement
-  const processPhase3 = async (tid?: string) => {
+  // Phase 3: Enhancement (with OAuth gate support and V10 mini-cycle refinement)
+  const processPhase3 = async (
+    tid?: string,
+    pluginsOverride?: string[],
+    options?: {
+      declined_services?: string[];
+      enhanced_prompt?: any;  // V10: For mini-cycle refinement
+    }
+  ) => {
     const currentThreadId = tid || threadId
     if (!currentThreadId) return
 
     try {
       console.log('🔄 Phase 3: Enhancement...')
+
+      // Use override plugins if provided (after OAuth), otherwise use current state
+      const pluginsToSend = pluginsOverride || connectedPlugins
+      console.log('🔌 Phase 3 - Sending connected_services:', pluginsToSend)
+
+      if (options?.declined_services) {
+        console.log('⏭️ Phase 3 - Sending declined_services:', options.declined_services)
+      }
+
+      if (options?.enhanced_prompt) {
+        console.log('🔄 Phase 3 - Mini-cycle refinement with enhanced_prompt')
+      }
 
       const res = await fetch('/api/agent-creation/process-message', {
         method: 'POST',
@@ -345,7 +414,10 @@ function V2AgentBuilderContent() {
         body: JSON.stringify({
           thread_id: currentThreadId,
           phase: 3,
-          clarification_answers: builderState.clarificationAnswers
+          clarification_answers: builderState.clarificationAnswers,
+          connected_services: pluginsToSend,
+          declined_services: options?.declined_services || [],
+          enhanced_prompt: options?.enhanced_prompt || null  // V10: For mini-cycle refinement
         })
       })
 
@@ -360,6 +432,54 @@ function V2AgentBuilderContent() {
 
       // Remove typing indicator
       removeTypingIndicator()
+
+      // ⚠️ OAuth Gate Check: If missing plugins, show connection cards
+      if (data.missingPlugins && data.missingPlugins.length > 0) {
+        console.log('🔒 Phase 3 OAuth Gate: Missing plugins detected', data.missingPlugins)
+
+        setMissingPlugins(data.missingPlugins)
+        setShowPluginCards(true)
+
+        // Show message asking user to connect plugins
+        const oauthMessage = data.metadata?.oauth_message ||
+          'To complete your automation, please connect the following services:'
+        addAIMessage(oauthMessage)
+
+        return // Stop here, wait for user to connect/skip plugins
+      }
+
+      // V10: Check for user_inputs_required - trigger mini-cycle if needed
+      const userInputsRequired = data.enhanced_prompt?.specifics?.user_inputs_required || []
+      if (userInputsRequired.length > 0 && !isInMiniCycle) {
+        console.log('🔄 Phase 3: user_inputs_required detected, triggering mini-cycle:', userInputsRequired)
+
+        // Store the enhanced_prompt for refinement
+        setPendingEnhancedPrompt(data.enhanced_prompt)
+
+        // V10: Reset enhancement state so Phase 3 can be re-triggered after mini-cycle questions
+        resetForRefinement()
+
+        // Show message about needing more information
+        addAIMessage(`I need a few more details to complete your agent. Let me ask some quick questions about: ${userInputsRequired.join(', ')}`)
+
+        // Trigger mini-cycle Phase 2 with the enhanced_prompt
+        addTypingIndicator('Generating clarification questions...')
+        setTimeout(() => {
+          processPhase2(currentThreadId, { enhanced_prompt: data.enhanced_prompt })
+        }, 1000)
+
+        return // Stop here, wait for mini-cycle to complete
+      }
+
+      // V10: If we were in mini-cycle, clear the state
+      if (isInMiniCycle) {
+        console.log('✅ Mini-cycle complete, all inputs resolved')
+        setIsInMiniCycle(false)
+        setPendingEnhancedPrompt(null)
+      }
+
+      // ✅ No missing plugins and no pending inputs - proceed with enhanced prompt display
+      console.log('✅ Phase 3: All plugins connected, showing enhanced prompt')
 
       // Store enhanced prompt data for rich display
       setEnhancedPromptData(data.enhanced_prompt)
@@ -394,6 +514,86 @@ function V2AgentBuilderContent() {
         stack: error.stack,
         error
       })
+    }
+  }
+
+  // ==================== PLUGIN OAUTH HANDLERS ====================
+
+  /**
+   * Handle connecting a plugin via OAuth
+   * After successful connection, re-calls Phase 3 if all plugins connected
+   */
+  const handleConnectPlugin = async (pluginKey: string) => {
+    if (!user?.id) {
+      addSystemMessage('Error: User not authenticated')
+      return
+    }
+
+    console.log('🔌 Starting OAuth flow for plugin:', pluginKey)
+    setConnectingPlugin(pluginKey)
+
+    try {
+      // Use PluginAPIClient for real OAuth
+      const pluginClient = getPluginAPIClient()
+      const result = await pluginClient.connectPlugin(user.id, pluginKey)
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to connect plugin')
+      }
+
+      console.log('✅ OAuth successful for:', pluginKey)
+
+      // Update connected plugins (merge with existing)
+      const updatedPlugins = [...connectedPlugins, pluginKey]
+      setConnectedPlugins(updatedPlugins)
+
+      // Remove from missing plugins list
+      const remainingMissing = missingPlugins.filter(p => p !== pluginKey)
+      setMissingPlugins(remainingMissing)
+
+      // Show success message
+      addSystemMessage(`${pluginKey.replace(/-/g, ' ')} connected successfully!`)
+
+      // If no more missing plugins, hide cards and re-call Phase 3
+      if (remainingMissing.length === 0) {
+        console.log('✅ All plugins connected! Re-running Phase 3...')
+        setShowPluginCards(false)
+        addTypingIndicator('All services connected! Creating your automation plan...')
+        await processPhase3(threadId!, updatedPlugins)
+      }
+
+    } catch (error: any) {
+      console.error('❌ OAuth failed for', pluginKey, ':', error)
+      addSystemMessage(`Failed to connect ${pluginKey.replace(/-/g, ' ')}: ${error.message}`)
+    } finally {
+      setConnectingPlugin(null)
+    }
+  }
+
+  /**
+   * Handle skipping a plugin (user declines to connect)
+   * Re-calls Phase 3 with declined_plugins metadata so LLM can adjust the plan
+   */
+  const handleSkipPlugin = async (pluginKey: string) => {
+    console.log('⏭️ Plugin skipped:', pluginKey)
+
+    // Add to declined plugins list
+    const updatedDeclined = [...declinedPlugins, pluginKey]
+    setDeclinedPlugins(updatedDeclined)
+
+    // Remove from missing plugins list
+    const remainingMissing = missingPlugins.filter(p => p !== pluginKey)
+    setMissingPlugins(remainingMissing)
+
+    // Show message that we're adjusting the plan
+    addAIMessage(`I understand you can't connect ${pluginKey.replace(/-/g, ' ')} right now. Let me see if I can adjust the plan...`)
+
+    // If no more missing plugins (all handled via connect or skip), re-call Phase 3
+    if (remainingMissing.length === 0) {
+      console.log('🔄 All plugins handled. Re-running Phase 3 with declined services:', updatedDeclined)
+      setShowPluginCards(false)
+      addTypingIndicator('Re-evaluating with alternative services...')
+      await processPhase3(threadId!, connectedPlugins, { declined_services: updatedDeclined })
     }
   }
 
@@ -538,6 +738,31 @@ function V2AgentBuilderContent() {
     setIsSending(true)
 
     try {
+      // V10: If we're awaiting feedback (user clicked "Need changes"), treat as user_feedback
+      if (isAwaitingFeedback && threadId) {
+        console.log('📝 Processing user feedback for plan refinement:', answer)
+
+        // Add user's feedback message
+        addUserMessage(answer)
+
+        // Clear feedback mode
+        setIsAwaitingFeedback(false)
+
+        // V10: Reset enhancement state so Phase 3 can be re-triggered after edit questions
+        resetForRefinement()
+
+        // Show typing indicator
+        addTypingIndicator('Updating your plan...')
+
+        // Call Phase 2 with user_feedback and current enhanced_prompt
+        await processPhase2(threadId, {
+          user_feedback: answer,
+          enhanced_prompt: pendingEnhancedPrompt || enhancedPromptData
+        })
+
+        return
+      }
+
       // If we're in questions phase, treat as answer
       if (builderState.workflowPhase === 'questions' &&
           builderState.currentQuestionIndex >= 0 &&
@@ -579,11 +804,22 @@ function V2AgentBuilderContent() {
   }
 
   // Handle edit plan
+  // V10: Handle edit flow - user wants to make changes to the plan
   const handleEdit = () => {
     addUserMessage('I need to make some changes')
-    addAIMessage('No problem! What would you like to change?')
+    addAIMessage('Sure thing, what changes would you like to add to the plan?')
+
+    // Store the current enhanced prompt for refinement
+    if (enhancedPromptData) {
+      setPendingEnhancedPrompt(enhancedPromptData)
+    }
+
+    // Enable feedback mode - next message from user will be treated as feedback
+    // Note: Don't reset state here - keep showing the card until user submits feedback
+    setIsAwaitingFeedback(true)
+
+    // Update state to allow input
     startEditingEnhanced()
-    // TODO: Implement edit flow
   }
 
   // Handle use original
@@ -822,12 +1058,56 @@ function V2AgentBuilderContent() {
                       </div>
                     )}
 
-                    {/* Enhanced Prompt Accordion - Show after Phase 3 complete */}
+                    {/* V10: Minimized Plan Card - Show during edit flow to give context */}
+                    {isAwaitingFeedback &&
+                     index === messages.length - 1 &&
+                     message.role === 'assistant' &&
+                     enhancedPromptData && (
+                      <div className="flex justify-start mt-4">
+                        <div className="w-8 h-8 flex-shrink-0" /> {/* Spacer for alignment */}
+
+                        <div
+                          className="flex-1 max-w-3xl bg-[var(--v2-surface)] border border-[var(--v2-primary)]/30 p-4"
+                          style={{ borderRadius: 'var(--v2-radius-card)', boxShadow: 'var(--v2-shadow-card)' }}
+                        >
+                          {/* Header with "Editing" badge */}
+                          <div className="flex items-center gap-3">
+                            <div
+                              className="w-8 h-8 bg-purple-500/20 flex items-center justify-center"
+                              style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            >
+                              <Edit className="h-4 w-4 text-purple-500" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <h4 className="font-semibold text-[var(--v2-text-primary)] truncate">
+                                  {enhancedPromptData.plan_title || 'Your Agent Plan'}
+                                </h4>
+                                <span
+                                  className="flex-shrink-0 px-2 py-0.5 bg-[var(--v2-primary)]/10 text-[var(--v2-primary)] text-xs font-medium"
+                                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                >
+                                  Editing...
+                                </span>
+                              </div>
+                              {enhancedPromptData.plan_description && (
+                                <p className="text-xs text-[var(--v2-text-muted)] mt-1 line-clamp-2">
+                                  {enhancedPromptData.plan_description}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Enhanced Prompt Accordion - Show after Phase 3 complete, hide during edit flow */}
                     {builderState.enhancementComplete &&
                      builderState.workflowPhase === 'approval' &&
                      index === messages.length - 1 &&
                      message.role === 'assistant' &&
                      !builderState.planApproved &&
+                     !isAwaitingFeedback &&
                      enhancedPromptData && (
                       <div className="flex justify-start mt-4">
                         <div className="w-8 h-8 flex-shrink-0" /> {/* Spacer for alignment */}
@@ -903,35 +1183,6 @@ function V2AgentBuilderContent() {
                                         </div>
                                       </div>
                                     ))}
-
-                                    {/* Additional sections */}
-                                    {enhancedPromptData.sections.data && (
-                                      <div className="pt-3 border-t border-[var(--v2-border)]">
-                                        <h5 className="text-xs font-semibold text-[var(--v2-text-muted)] mb-1">📥 Data Source</h5>
-                                        <p className="text-sm text-[var(--v2-text-secondary)]">{enhancedPromptData.sections.data}</p>
-                                      </div>
-                                    )}
-
-                                    {enhancedPromptData.sections.output && (
-                                      <div className="pt-3 border-t border-[var(--v2-border)]">
-                                        <h5 className="text-xs font-semibold text-[var(--v2-text-muted)] mb-1">📤 Output</h5>
-                                        <p className="text-sm text-[var(--v2-text-secondary)]">{enhancedPromptData.sections.output}</p>
-                                      </div>
-                                    )}
-
-                                    {enhancedPromptData.sections.delivery && (
-                                      <div className="pt-3 border-t border-[var(--v2-border)]">
-                                        <h5 className="text-xs font-semibold text-[var(--v2-text-muted)] mb-1">🚀 Delivery</h5>
-                                        <p className="text-sm text-[var(--v2-text-secondary)]">{enhancedPromptData.sections.delivery}</p>
-                                      </div>
-                                    )}
-
-                                    {enhancedPromptData.sections.error_handling && (
-                                      <div className="pt-3 border-t border-[var(--v2-border)]">
-                                        <h5 className="text-xs font-semibold text-[var(--v2-text-muted)] mb-1">⚠️ Error Handling</h5>
-                                        <p className="text-sm text-[var(--v2-text-secondary)]">{enhancedPromptData.sections.error_handling}</p>
-                                      </div>
-                                    )}
                                   </div>
                                 )}
                               </div>
@@ -970,6 +1221,33 @@ function V2AgentBuilderContent() {
                               </div>
                             )}
 
+                            {/* V10: Resolved User Inputs */}
+                            {enhancedPromptData.specifics?.resolved_user_inputs &&
+                             enhancedPromptData.specifics.resolved_user_inputs.length > 0 && (
+                              <div>
+                                <h4 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-2 flex items-center gap-1">
+                                  <CheckCircle className="h-3 w-3" />
+                                  Resolved Inputs
+                                </h4>
+                                <div className="space-y-1">
+                                  {enhancedPromptData.specifics.resolved_user_inputs.map((input: { key: string; value: string }, idx: number) => (
+                                    <div
+                                      key={idx}
+                                      className="flex items-center gap-2 px-3 py-2 text-sm bg-[var(--v2-surface-hover)]"
+                                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                    >
+                                      <span className="text-[var(--v2-text-muted)] capitalize">
+                                        {input.key.replace(/_/g, ' ')}:
+                                      </span>
+                                      <span className="text-[var(--v2-text-primary)] font-medium">
+                                        {input.value}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
                             {/* Trigger Scope */}
                             {enhancedPromptData.specifics?.trigger_scope && (
                               <div className="pt-3 border-t border-[var(--v2-border)]">
@@ -980,11 +1258,13 @@ function V2AgentBuilderContent() {
                             )}
                           </div>
 
-                          {/* Confirmation Text */}
-                          <p className="text-sm text-[var(--v2-text-muted)]">Does this look right?</p>
+                          {/* Confirmation Text and Buttons - Hide during edit flow */}
+                          {!isAwaitingFeedback && (
+                            <>
+                              <p className="text-sm text-[var(--v2-text-muted)]">Does this look right?</p>
 
-                          {/* Improved Approval Buttons */}
-                          <div className="grid grid-cols-2 gap-3">
+                              {/* Improved Approval Buttons */}
+                              <div className="grid grid-cols-2 gap-3">
                             <button
                               onClick={handleApprove}
                               disabled={isCreatingAgent}
@@ -1014,11 +1294,75 @@ function V2AgentBuilderContent() {
                               Need changes
                             </button>
                           </div>
+                            </>
+                          )}
                         </div>
                       </div>
                     )}
                   </div>
                 ))}
+
+                {/* Plugin Connection Cards - OAuth Gate UI */}
+                {showPluginCards && missingPlugins.length > 0 && (
+                  <div className="flex justify-start mt-4">
+                    <div className="w-8 h-8 flex-shrink-0" /> {/* Spacer for avatar alignment */}
+
+                    <div className="flex-1 max-w-3xl space-y-3">
+                      {missingPlugins.map((plugin) => (
+                        <div
+                          key={plugin}
+                          className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4 flex items-center justify-between"
+                          style={{ borderRadius: 'var(--v2-radius-card)', boxShadow: 'var(--v2-shadow-card)' }}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div
+                              className="w-10 h-10 bg-[var(--v2-primary)]/10 flex items-center justify-center"
+                              style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            >
+                              <Plug className="h-5 w-5 text-[var(--v2-primary)]" />
+                            </div>
+                            <div>
+                              <p className="font-medium text-[var(--v2-text-primary)] capitalize">
+                                {plugin.replace(/-/g, ' ')}
+                              </p>
+                              <p className="text-xs text-[var(--v2-text-muted)]">
+                                Required for this automation
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleConnectPlugin(plugin)}
+                              disabled={connectingPlugin !== null}
+                              className="px-4 py-2 bg-[var(--v2-primary)] text-white font-medium flex items-center gap-2 hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                              style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            >
+                              {connectingPlugin === plugin ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                  Connecting...
+                                </>
+                              ) : (
+                                'Connect'
+                              )}
+                            </button>
+
+                            <button
+                              onClick={() => handleSkipPlugin(plugin)}
+                              disabled={connectingPlugin !== null}
+                              className="px-4 py-2 border border-[var(--v2-border)] text-[var(--v2-text-secondary)] font-medium hover:bg-[var(--v2-surface-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                              style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            >
+                              Skip
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div ref={messagesEndRef} />
               </div>
 
@@ -1035,7 +1379,7 @@ function V2AgentBuilderContent() {
                         handleSend()
                       }
                     }}
-                    placeholder="Type your answer or question..."
+                    placeholder={isAwaitingFeedback ? "Describe what you'd like to change..." : "Type your answer or question..."}
                     disabled={isSending || builderState.planApproved}
                     className="flex-1 px-3 py-2 bg-white dark:bg-gray-800 border border-[var(--v2-border)] rounded-lg text-sm text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
                   />

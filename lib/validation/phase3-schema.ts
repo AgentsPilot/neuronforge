@@ -42,6 +42,15 @@ export const EnhancedPromptSectionsSchema = z.object({
 });
 
 /**
+ * V10: Resolved user input schema
+ * Represents inputs that were previously in user_inputs_required but now have values
+ */
+export const ResolvedUserInputSchema = z.object({
+  key: z.string().min(1),    // Machine-friendly key (e.g., "accountant_email", "user_email")
+  value: z.string().min(1),  // Resolved value (e.g., "bob@company.com")
+});
+
+/**
  * Enhanced prompt with plan details and specifics
  */
 export const EnhancedPromptSchema = z.object({
@@ -50,7 +59,8 @@ export const EnhancedPromptSchema = z.object({
   sections: EnhancedPromptSectionsSchema,
   specifics: z.object({
     services_involved: z.array(z.string()),
-    user_inputs_required: z.array(z.string()),
+    user_inputs_required: z.array(z.string()),  // Labels for inputs still missing
+    resolved_user_inputs: z.array(ResolvedUserInputSchema).optional(),  // V10: Previously required inputs that now have values
   }),
 });
 
@@ -64,7 +74,6 @@ export const Phase3MetadataSchema = z.object({
   confirmation_needed: z.boolean(),
   implicit_services_detected: z.array(z.string()),
   provenance_checked: z.boolean(),
-  resolved_contacts: z.record(z.string(), z.string()), // {"user": "alice@company.com"}
   provenance_note: z.string().optional(),
   declined_plugins_blocking: z.array(z.string()).optional(),
   oauth_required: z.boolean().optional(),
