@@ -32,7 +32,9 @@ import {
   Edit,
   ChevronUp,
   Plug,
-  AlertCircle
+  AlertCircle,
+  HelpCircle,  // V10: For question message variant
+  FileText     // V10: For plan summary message variant
 } from 'lucide-react'
 import { useAgentBuilderState } from '@/hooks/useAgentBuilderState'
 import { useAgentBuilderMessages } from '@/hooks/useAgentBuilderMessages'
@@ -61,6 +63,8 @@ function V2AgentBuilderContent() {
     messagesEndRef,
     addUserMessage,
     addAIMessage,
+    addAIQuestion,      // V10: Question variant
+    addPlanSummary,     // V10: Plan summary variant
     addSystemMessage,
     addTypingIndicator,
     removeTypingIndicator,
@@ -184,6 +188,7 @@ function V2AgentBuilderContent() {
   }, [builderState.workflowPhase, builderState.currentQuestionIndex, builderState.questionsSequence, builderState.clarificationAnswers, builderState.enhancementComplete, isInMiniCycle, pendingEnhancedPrompt])
 
   // Display current question when index changes
+  // V10: Use addAIQuestion for question variant styling (cyan HelpCircle icon)
   useEffect(() => {
     if (builderState.workflowPhase === 'questions' &&
         builderState.currentQuestionIndex >= 0 &&
@@ -191,7 +196,7 @@ function V2AgentBuilderContent() {
 
       const currentQ = builderState.questionsSequence[builderState.currentQuestionIndex]
       if (currentQ && !messages.find(m => m.content === currentQ.question)) {
-        addAIMessage(currentQ.question)
+        addAIQuestion(currentQ.question, currentQ.id)
       }
     }
   }, [builderState.currentQuestionIndex, builderState.workflowPhase])
@@ -806,6 +811,12 @@ function V2AgentBuilderContent() {
   // Handle edit plan
   // V10: Handle edit flow - user wants to make changes to the plan
   const handleEdit = () => {
+    // V10: Add plan summary as a muted/disabled message for context
+    if (enhancedPromptData?.plan_description) {
+      addPlanSummary(enhancedPromptData.plan_description)
+    }
+
+    // Add user message and AI response
     addUserMessage('I need to make some changes')
     addAIMessage('Sure thing, what changes would you like to add to the plan?')
 
@@ -815,14 +826,15 @@ function V2AgentBuilderContent() {
     }
 
     // Enable feedback mode - next message from user will be treated as feedback
-    // Note: Don't reset state here - keep showing the card until user submits feedback
     setIsAwaitingFeedback(true)
 
     // Update state to allow input
     startEditingEnhanced()
   }
 
-  // Handle use original
+  // NOTE: Not currently wired to any UI element.
+  // Kept in case we want to allow users to bypass the enhanced prompt
+  // and send the original user prompt directly to generate-agent-v2.
   const handleUseOriginal = async () => {
     addUserMessage('Use the original prompt instead')
     addAIMessage('Perfect! Creating your agent with your original request...')
@@ -905,10 +917,215 @@ function V2AgentBuilderContent() {
         <V2Header />
       </div>
 
-      {/* Main Grid Layout - Three Columns with Arrows */}
+      {/* Main Grid Layout - Two Columns: Setup Progress → Chat (Extended) */}
       <div className="relative">
-        <div className="grid grid-cols-1 lg:grid-cols-[2fr_auto_1fr_auto_1fr] gap-4 lg:gap-6 items-start">
-          {/* Left Column - Conversational Chat (WIDER) */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto_3fr] gap-4 lg:gap-6 items-start">
+          {/* Left Column - Setup Progress (hidden on mobile) */}
+          <div className="hidden lg:block space-y-4 sm:space-y-5">
+            <Card className="!p-4 sm:!p-6 min-h-[800px] flex flex-col">
+              <div className="flex items-center gap-3 mb-4">
+                <Settings className="w-6 h-6 text-[#06B6D4]" />
+                <div>
+                  <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
+                    Setup Progress
+                  </h3>
+                  <p className="text-xs text-[var(--v2-text-secondary)]">
+                    Tracking conversation steps
+                  </p>
+                </div>
+              </div>
+
+              {/* Progress Steps */}
+              <div className="flex-1 space-y-3">
+                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
+                  builderState.workflowPhase !== 'initial'
+                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
+                }`}>
+                  <CheckCircle2 className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
+                    builderState.workflowPhase !== 'initial' ? 'text-green-500' : 'text-gray-300 dark:text-gray-600'
+                  }`} />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
+                      Initial Request
+                    </p>
+                    <p className="text-xs text-[var(--v2-text-muted)]">
+                      Received your agent request
+                    </p>
+                  </div>
+                </div>
+
+                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
+                  builderState.workflowPhase === 'analysis'
+                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+                    : builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval'
+                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
+                }`}>
+                  {builderState.workflowPhase === 'analysis' ? (
+                    <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
+                  ) : builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' ? (
+                    <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
+                  ) : (
+                    <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                  )}
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
+                      Analysis Complete
+                    </p>
+                    <p className="text-xs text-[var(--v2-text-muted)]">
+                      {builderState.workflowPhase === 'analysis' ? 'Analyzing your request...' : 'Understanding requirements'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
+                  builderState.workflowPhase === 'questions'
+                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+                    : builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval'
+                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
+                }`}>
+                  {builderState.workflowPhase === 'questions' ? (
+                    <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
+                  ) : builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' ? (
+                    <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
+                  ) : (
+                    <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                  )}
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
+                      Clarification Questions
+                    </p>
+                    <p className="text-xs text-[var(--v2-text-muted)]">
+                      {builderState.workflowPhase === 'questions'
+                        ? `Answering questions (${Object.keys(builderState.clarificationAnswers).length}/${builderState.questionsSequence.length})`
+                        : 'Answer clarifying questions'
+                      }
+                    </p>
+                  </div>
+                </div>
+
+                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
+                  builderState.workflowPhase === 'enhancement'
+                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+                    : builderState.workflowPhase === 'approval'
+                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
+                }`}>
+                  {builderState.workflowPhase === 'enhancement' ? (
+                    <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
+                  ) : builderState.workflowPhase === 'approval' ? (
+                    <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
+                  ) : (
+                    <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                  )}
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
+                      Plan Creation
+                    </p>
+                    <p className="text-xs text-[var(--v2-text-muted)]">
+                      {builderState.workflowPhase === 'enhancement' ? 'Creating agent plan...' : 'Generate detailed plan'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Step 5: Input Parameters - Placeholder (always gray for now) */}
+                <div className="flex items-start gap-3 p-3 rounded-lg border bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60">
+                  <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
+                      Input Parameters
+                    </p>
+                    <p className="text-xs text-[var(--v2-text-muted)]">
+                      Configure agent settings
+                    </p>
+                  </div>
+                </div>
+
+                {/* Step 6: Scheduling - Placeholder (always gray for now) */}
+                <div className="flex items-start gap-3 p-3 rounded-lg border bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60">
+                  <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
+                      Scheduling
+                    </p>
+                    <p className="text-xs text-[var(--v2-text-muted)]">
+                      Set when agent runs
+                    </p>
+                  </div>
+                </div>
+
+                {/* Step 7: Agent Ready */}
+                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
+                  builderState.planApproved
+                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
+                }`}>
+                  {builderState.planApproved ? (
+                    <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
+                  ) : (
+                    <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                  )}
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
+                      Agent Ready
+                    </p>
+                    <p className="text-xs text-[var(--v2-text-muted)]">
+                      Deploy your agent
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Bottom Info Section */}
+              <div className="mt-auto pt-4 border-t border-[var(--v2-border)] space-y-3">
+                <div className="flex items-center gap-3">
+                  <Brain className="w-5 h-5 text-[var(--v2-text-secondary)]" />
+                  <div>
+                    <p className="text-xs text-[var(--v2-text-muted)]">Builder Type</p>
+                    <p className="text-sm font-medium text-[var(--v2-text-primary)]">
+                      Conversational AI Builder
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <Activity className="w-5 h-5 text-[var(--v2-text-secondary)]" />
+                  <div>
+                    <p className="text-xs text-[var(--v2-text-muted)]">Status</p>
+                    <p className="text-sm font-medium text-blue-500">
+                      {builderState.workflowPhase === 'initial' && 'Initializing...'}
+                      {builderState.workflowPhase === 'analysis' && 'Analyzing Requirements'}
+                      {builderState.workflowPhase === 'questions' && 'Gathering Information'}
+                      {builderState.workflowPhase === 'enhancement' && 'Creating Plan'}
+                      {builderState.workflowPhase === 'approval' && 'Awaiting Approval'}
+                      {builderState.planApproved && 'Complete'}
+                    </p>
+                  </div>
+                </div>
+
+                {threadId && (
+                  <div className="flex items-center gap-3">
+                    <Calendar className="w-5 h-5 text-[var(--v2-text-secondary)]" />
+                    <div>
+                      <p className="text-xs text-[var(--v2-text-muted)]">Thread ID</p>
+                      <p className="text-xs font-mono text-[var(--v2-text-primary)]">
+                        {threadId.slice(0, 8)}...
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </Card>
+          </div>
+
+          {/* Arrow between Setup Progress and Chat */}
+          <div className="hidden lg:flex items-center justify-center">
+            <ArrowRight className="w-6 h-6 text-[var(--v2-primary)]" />
+          </div>
+
+          {/* Right Column - Agent Builder Chat (Extended Width) */}
           <div className="space-y-4 sm:space-y-5">
             <Card className="!p-4 sm:!p-6 min-h-[800px] flex flex-col">
               <div className="flex items-center gap-3 mb-4">
@@ -986,26 +1203,44 @@ function V2AgentBuilderContent() {
                       </div>
                     ) : (
                       /* User and AI messages with avatars */
-                      <div className={`flex gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        {/* Avatar - AI (left side) */}
+                      <div className={`flex gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'} ${
+                        message.variant === 'plan-summary' ? 'opacity-60' : ''
+                      }`}>
+                        {/* Avatar - AI (left side) with variant styling */}
                         {message.role === 'assistant' && (
                           <div
-                            className="w-8 h-8 flex items-center justify-center shadow-md flex-shrink-0"
+                            className={`w-8 h-8 flex items-center justify-center shadow-md flex-shrink-0 ${
+                              message.variant === 'plan-summary' ? 'opacity-70' : ''
+                            }`}
                             style={{
-                              background: 'linear-gradient(135deg, var(--v2-primary), var(--v2-secondary))',
+                              background: message.variant === 'question'
+                                ? 'linear-gradient(135deg, #06B6D4, #0891B2)' // Cyan for questions
+                                : message.variant === 'plan-summary'
+                                ? 'rgba(139, 92, 246, 0.2)' // Muted purple for plan summary
+                                : 'linear-gradient(135deg, var(--v2-primary), var(--v2-secondary))', // Default purple
                               borderRadius: 'var(--v2-radius-button)'
                             }}
                           >
-                            <Bot className="h-4 w-4 text-white" />
+                            {message.variant === 'question' ? (
+                              <HelpCircle className="h-4 w-4 text-white" />
+                            ) : message.variant === 'plan-summary' ? (
+                              <FileText className="h-4 w-4 text-purple-500" />
+                            ) : (
+                              <Bot className="h-4 w-4 text-white" />
+                            )}
                           </div>
                         )}
 
-                        {/* Message bubble */}
+                        {/* Message bubble with variant styling */}
                         <div className="max-w-[80%]">
                           <div
                             className={`p-3 shadow-md backdrop-blur-sm ${
                               message.role === 'user'
                                 ? 'text-white'
+                                : message.variant === 'question'
+                                ? 'bg-[var(--v2-surface)] border border-cyan-300 dark:border-cyan-700'
+                                : message.variant === 'plan-summary'
+                                ? 'bg-[var(--v2-surface)] border border-purple-200 dark:border-purple-800/50'
                                 : 'bg-[var(--v2-surface)] border border-[var(--v2-border)]'
                             }`}
                             style={
@@ -1022,7 +1257,11 @@ function V2AgentBuilderContent() {
                             }
                           >
                             <p className={`text-sm whitespace-pre-wrap leading-relaxed ${
-                              message.role === 'user' ? '' : 'text-[var(--v2-text-primary)]'
+                              message.role === 'user'
+                                ? ''
+                                : message.variant === 'plan-summary'
+                                ? 'text-[var(--v2-text-muted)] italic'
+                                : 'text-[var(--v2-text-primary)]'
                             }`}>
                               {message.content}
                             </p>
@@ -1030,16 +1269,17 @@ function V2AgentBuilderContent() {
 
                           {/* Question Progress Indicator - shown for AI questions during Phase 2 */}
                           {message.role === 'assistant' &&
+                           message.variant === 'question' &&
                            builderState.workflowPhase === 'questions' &&
                            builderState.questionsSequence.length > 0 &&
                            builderState.currentQuestionIndex >= 0 &&
                            builderState.questionsSequence[builderState.currentQuestionIndex]?.question === message.content && (
                             <div
-                              className="mt-2 flex items-center gap-2 px-2 py-1 bg-[var(--v2-primary)]/10 border border-[var(--v2-primary)]/20 w-fit"
+                              className="mt-2 flex items-center gap-2 px-2 py-1 bg-cyan-500/10 border border-cyan-500/20 w-fit"
                               style={{ borderRadius: 'var(--v2-radius-button)' }}
                             >
-                              <MessageSquare className="w-3 h-3 text-[var(--v2-primary)]" />
-                              <span className="text-xs font-semibold text-[var(--v2-primary)]">
+                              <HelpCircle className="w-3 h-3 text-cyan-600 dark:text-cyan-400" />
+                              <span className="text-xs font-semibold text-cyan-600 dark:text-cyan-400">
                                 Question {builderState.currentQuestionIndex + 1} of {builderState.questionsSequence.length}
                               </span>
                             </div>
@@ -1055,49 +1295,6 @@ function V2AgentBuilderContent() {
                             <User className="h-4 w-4 text-white" />
                           </div>
                         )}
-                      </div>
-                    )}
-
-                    {/* V10: Minimized Plan Card - Show during edit flow to give context */}
-                    {isAwaitingFeedback &&
-                     index === messages.length - 1 &&
-                     message.role === 'assistant' &&
-                     enhancedPromptData && (
-                      <div className="flex justify-start mt-4">
-                        <div className="w-8 h-8 flex-shrink-0" /> {/* Spacer for alignment */}
-
-                        <div
-                          className="flex-1 max-w-3xl bg-[var(--v2-surface)] border border-[var(--v2-primary)]/30 p-4"
-                          style={{ borderRadius: 'var(--v2-radius-card)', boxShadow: 'var(--v2-shadow-card)' }}
-                        >
-                          {/* Header with "Editing" badge */}
-                          <div className="flex items-center gap-3">
-                            <div
-                              className="w-8 h-8 bg-purple-500/20 flex items-center justify-center"
-                              style={{ borderRadius: 'var(--v2-radius-button)' }}
-                            >
-                              <Edit className="h-4 w-4 text-purple-500" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
-                                <h4 className="font-semibold text-[var(--v2-text-primary)] truncate">
-                                  {enhancedPromptData.plan_title || 'Your Agent Plan'}
-                                </h4>
-                                <span
-                                  className="flex-shrink-0 px-2 py-0.5 bg-[var(--v2-primary)]/10 text-[var(--v2-primary)] text-xs font-medium"
-                                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                                >
-                                  Editing...
-                                </span>
-                              </div>
-                              {enhancedPromptData.plan_description && (
-                                <p className="text-xs text-[var(--v2-text-muted)] mt-1 line-clamp-2">
-                                  {enhancedPromptData.plan_description}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                        </div>
                       </div>
                     )}
 
@@ -1391,503 +1588,6 @@ function V2AgentBuilderContent() {
                     {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                   </button>
                 </div>
-              </div>
-            </Card>
-          </div>
-
-          {/* Arrow between left and middle - hidden on mobile */}
-          <div className="hidden lg:flex items-center justify-center">
-            <ArrowRight className="w-6 h-6 text-[var(--v2-primary)]" />
-          </div>
-
-          {/* Middle Column - Progress Steps */}
-          <div className="space-y-4 sm:space-y-5">
-            <Card className="!p-4 sm:!p-6 min-h-[800px] flex flex-col">
-              <div className="flex items-center gap-3 mb-4">
-                <Settings className="w-6 h-6 text-[#06B6D4]" />
-                <div>
-                  <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
-                    Setup Progress
-                  </h3>
-                  <p className="text-xs text-[var(--v2-text-secondary)]">
-                    Tracking conversation steps
-                  </p>
-                </div>
-              </div>
-
-              {/* Progress Steps from Chat */}
-              <div className="flex-1 space-y-3">
-                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
-                  builderState.workflowPhase !== 'initial'
-                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
-                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
-                }`}>
-                  <CheckCircle2 className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
-                    builderState.workflowPhase !== 'initial' ? 'text-blue-500' : 'text-gray-300 dark:text-gray-600'
-                  }`} />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
-                      Initial Request
-                    </p>
-                    <p className="text-xs text-[var(--v2-text-muted)]">
-                      Received your agent request
-                    </p>
-                  </div>
-                </div>
-
-                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
-                  builderState.workflowPhase === 'analysis'
-                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
-                    : builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval'
-                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
-                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
-                }`}>
-                  {builderState.workflowPhase === 'analysis' ? (
-                    <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
-                  ) : builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' ? (
-                    <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
-                  ) : (
-                    <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
-                  )}
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
-                      Analysis Complete
-                    </p>
-                    <p className="text-xs text-[var(--v2-text-muted)]">
-                      {builderState.workflowPhase === 'analysis' ? 'Analyzing your request...' : 'Understanding requirements'}
-                    </p>
-                  </div>
-                </div>
-
-                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
-                  builderState.workflowPhase === 'questions'
-                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
-                    : builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval'
-                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
-                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
-                }`}>
-                  {builderState.workflowPhase === 'questions' ? (
-                    <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
-                  ) : builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' ? (
-                    <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
-                  ) : (
-                    <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
-                  )}
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
-                      Clarification Questions
-                    </p>
-                    <p className="text-xs text-[var(--v2-text-muted)]">
-                      {builderState.workflowPhase === 'questions'
-                        ? `Answering questions (${Object.keys(builderState.clarificationAnswers).length}/${builderState.questionsSequence.length})`
-                        : 'Answer clarifying questions'
-                      }
-                    </p>
-                  </div>
-                </div>
-
-                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
-                  builderState.workflowPhase === 'enhancement'
-                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
-                    : builderState.workflowPhase === 'approval'
-                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
-                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
-                }`}>
-                  {builderState.workflowPhase === 'enhancement' ? (
-                    <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
-                  ) : builderState.workflowPhase === 'approval' ? (
-                    <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
-                  ) : (
-                    <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
-                  )}
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
-                      Plan Creation
-                    </p>
-                    <p className="text-xs text-[var(--v2-text-muted)]">
-                      {builderState.workflowPhase === 'enhancement' ? 'Creating agent plan...' : 'Generate detailed plan'}
-                    </p>
-                  </div>
-                </div>
-
-                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
-                  builderState.planApproved
-                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
-                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
-                }`}>
-                  {builderState.planApproved ? (
-                    <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
-                  ) : (
-                    <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
-                  )}
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
-                      Agent Ready
-                    </p>
-                    <p className="text-xs text-[var(--v2-text-muted)]">
-                      Deploy your agent
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Bottom Info Section */}
-              <div className="mt-auto pt-4 border-t border-[var(--v2-border)] space-y-3">
-                <div className="flex items-center gap-3">
-                  <Brain className="w-5 h-5 text-[var(--v2-text-secondary)]" />
-                  <div>
-                    <p className="text-xs text-[var(--v2-text-muted)]">Builder Type</p>
-                    <p className="text-sm font-medium text-[var(--v2-text-primary)]">
-                      Conversational AI Builder
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <Activity className="w-5 h-5 text-[var(--v2-text-secondary)]" />
-                  <div>
-                    <p className="text-xs text-[var(--v2-text-muted)]">Status</p>
-                    <p className="text-sm font-medium text-blue-500">
-                      {builderState.workflowPhase === 'initial' && 'Initializing...'}
-                      {builderState.workflowPhase === 'analysis' && 'Analyzing Requirements'}
-                      {builderState.workflowPhase === 'questions' && 'Gathering Information'}
-                      {builderState.workflowPhase === 'enhancement' && 'Creating Plan'}
-                      {builderState.workflowPhase === 'approval' && 'Awaiting Approval'}
-                      {builderState.planApproved && 'Complete'}
-                    </p>
-                  </div>
-                </div>
-
-                {threadId && (
-                  <div className="flex items-center gap-3">
-                    <Calendar className="w-5 h-5 text-[var(--v2-text-secondary)]" />
-                    <div>
-                      <p className="text-xs text-[var(--v2-text-muted)]">Thread ID</p>
-                      <p className="text-xs font-mono text-[var(--v2-text-primary)]">
-                        {threadId.slice(0, 8)}...
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </Card>
-          </div>
-
-          {/* Arrow between middle and right - hidden on mobile */}
-          <div className="hidden lg:flex items-center justify-center">
-            <ArrowRight className="w-6 h-6 text-[var(--v2-primary)]" />
-          </div>
-
-          {/* Right Column - Generated Agent Preview */}
-          <div className="space-y-4 sm:space-y-5">
-            <Card className="!p-4 sm:!p-6 min-h-[800px] flex flex-col">
-              <div className="flex items-center gap-3 mb-4">
-                <Bot className="w-6 h-6 text-[#10B981]" />
-                <div>
-                  <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
-                    Agent Preview
-                  </h3>
-                  <p className="text-xs text-[var(--v2-text-secondary)]">
-                    Configuration as it builds
-                  </p>
-                </div>
-              </div>
-
-              {/* Agent Configuration Preview */}
-              <div className="flex-1 space-y-4">
-                {/* Agent Name */}
-                <div className="p-3 bg-gray-50 dark:bg-gray-800/30 rounded-lg border border-[var(--v2-border)]">
-                  <p className="text-xs text-[var(--v2-text-muted)] mb-1">Agent Name</p>
-                  <p className="text-sm font-medium text-[var(--v2-text-primary)]">
-                    {enhancedPromptData?.plan_title || (initialPrompt ? 'Agent (Building...)' : 'Untitled Agent')}
-                  </p>
-                </div>
-
-                {/* Description */}
-                <div className="p-3 bg-gray-50 dark:bg-gray-800/30 rounded-lg border border-[var(--v2-border)]">
-                  <p className="text-xs text-[var(--v2-text-muted)] mb-1">Description</p>
-                  <p className="text-sm text-[var(--v2-text-primary)]">
-                    {enhancedPromptData?.plan_description || initialPrompt || 'Describe what this agent will do...'}
-                  </p>
-                </div>
-
-                {/* Integrations */}
-                <div className="p-3 bg-gray-50 dark:bg-gray-800/30 rounded-lg border border-[var(--v2-border)]">
-                  <p className="text-xs text-[var(--v2-text-muted)] mb-2">Integrations</p>
-                  <div className="flex flex-wrap gap-2">
-                    {requiredServices.length > 0 ? (
-                      requiredServices.map((service: string) => (
-                        <span key={service} className="text-xs px-2 py-1 bg-white dark:bg-gray-700 rounded-full border border-gray-200 dark:border-gray-600 text-[var(--v2-text-primary)] capitalize">
-                          {service.replace(/-/g, ' ')}
-                        </span>
-                      ))
-                    ) : (
-                      <span className="text-xs px-2 py-1 bg-white dark:bg-gray-700 rounded-full border border-gray-200 dark:border-gray-600 text-[var(--v2-text-muted)]">
-                        None configured
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Schedule - Compact V2 Design (keeping from original - not part of phases 1-7) */}
-                <div className="p-3 bg-gray-50 dark:bg-gray-800/30 rounded-lg border border-[var(--v2-border)] space-y-3 relative">
-                  <p className="text-xs text-[var(--v2-text-muted)]">Schedule</p>
-
-                  {/* Mode Selection */}
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setScheduleMode('manual')}
-                      className={`flex-1 p-2.5 sm:p-2 rounded-lg text-xs font-medium shadow-sm flex items-center justify-center gap-1.5 transition-all ${
-                        scheduleMode === 'manual'
-                          ? 'bg-[var(--v2-primary)] text-white'
-                          : 'bg-white dark:bg-gray-700 border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:border-[var(--v2-primary)]'
-                      }`}
-                    >
-                      <PlayCircle className="w-3 h-3" />
-                      Manual
-                    </button>
-                    <button
-                      onClick={() => setScheduleMode('scheduled')}
-                      className={`flex-1 p-2.5 sm:p-2 rounded-lg text-xs font-medium shadow-sm flex items-center justify-center gap-1.5 transition-all ${
-                        scheduleMode === 'scheduled'
-                          ? 'bg-[var(--v2-primary)] text-white'
-                          : 'bg-white dark:bg-gray-700 border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:border-[var(--v2-primary)]'
-                      }`}
-                    >
-                      <Calendar className="w-3 h-3" />
-                      Scheduled
-                    </button>
-                  </div>
-
-                  {/* Interactive Schedule Builder */}
-                  {scheduleMode === 'scheduled' && (
-                    <div className="space-y-2 relative">
-                      {/* Schedule Display/Trigger Button */}
-                      <button
-                        onClick={() => setShowScheduleBuilder(!showScheduleBuilder)}
-                        className="w-full px-3 py-2.5 sm:px-2 sm:py-1.5 bg-white dark:bg-gray-700 border border-[var(--v2-border)] rounded-lg text-xs text-left flex items-center justify-between hover:border-[var(--v2-primary)] transition-colors active:scale-[0.98]"
-                      >
-                        <span className={scheduleType ? 'text-[var(--v2-text-primary)]' : 'text-[var(--v2-text-muted)]'}>
-                          {getScheduleDescription()}
-                        </span>
-                        <Settings className="w-4 h-4 sm:w-3 sm:h-3 text-gray-400" />
-                      </button>
-
-                      {/* Schedule Builder Modal */}
-                      {showScheduleBuilder && (
-                        <div className="fixed sm:absolute z-50 left-0 right-0 sm:left-auto sm:right-auto sm:w-[340px] bottom-0 sm:bottom-auto sm:top-full sm:mt-1 bg-white dark:bg-gray-800 border-t sm:border border-[var(--v2-border)] sm:rounded-lg rounded-t-2xl sm:rounded-t-lg shadow-2xl p-4 max-h-[80vh] sm:max-h-[500px] overflow-y-auto" ref={builderRef}>
-                          <div className="space-y-3">
-                            {/* Header */}
-                            <div className="flex items-center justify-between pb-2 border-b border-[var(--v2-border)]">
-                              <h3 className="text-sm font-semibold text-[var(--v2-text-primary)]">Configure Schedule</h3>
-                              <button
-                                onClick={() => setShowScheduleBuilder(false)}
-                                className="text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]"
-                              >
-                                <X className="w-4 h-4" />
-                              </button>
-                            </div>
-
-                            {/* Step 1: Choose Type */}
-                            <div className="space-y-1.5">
-                              <label className="text-xs font-medium text-[var(--v2-text-secondary)]">Frequency</label>
-                              <div className="grid grid-cols-4 gap-2 sm:gap-1.5">
-                                {[
-                                  { value: 'hourly', label: 'Hourly', icon: Clock },
-                                  { value: 'daily', label: 'Daily', icon: Calendar },
-                                  { value: 'weekly', label: 'Weekly', icon: Calendar },
-                                  { value: 'monthly', label: 'Monthly', icon: Calendar },
-                                ].map((type) => (
-                                  <button
-                                    key={type.value}
-                                    onClick={() => {
-                                      setScheduleType(type.value as any)
-                                      if (type.value === 'weekly' && selectedDays.length === 0) {
-                                        setSelectedDays(['monday'])
-                                      }
-                                    }}
-                                    className={`p-2 sm:p-1.5 rounded text-[11px] sm:text-[10px] font-medium flex flex-col items-center gap-1 sm:gap-0.5 transition-all active:scale-95 ${
-                                      scheduleType === type.value
-                                        ? 'bg-[var(--v2-primary)] text-white'
-                                        : 'bg-gray-100 dark:bg-gray-700 text-[var(--v2-text-secondary)] hover:bg-gray-200 dark:hover:bg-gray-600'
-                                    }`}
-                                  >
-                                    <type.icon className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
-                                    <span className="leading-tight">{type.label}</span>
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-
-                            {/* Hourly Configuration */}
-                            {scheduleType === 'hourly' && (
-                              <div className="space-y-1.5">
-                                <label className="text-xs font-medium text-[var(--v2-text-secondary)]">Every</label>
-                                <div className="grid grid-cols-4 gap-2 sm:gap-1.5">
-                                  {['1', '2', '3', '4', '6', '8', '12'].map((interval) => (
-                                    <button
-                                      key={interval}
-                                      onClick={() => setHourlyInterval(interval)}
-                                      className={`p-2 sm:p-1.5 rounded text-xs font-medium transition-all active:scale-95 ${
-                                        hourlyInterval === interval
-                                          ? 'bg-[var(--v2-primary)] text-white'
-                                          : 'bg-gray-100 dark:bg-gray-700 text-[var(--v2-text-secondary)] hover:bg-gray-200 dark:hover:bg-gray-600'
-                                      }`}
-                                    >
-                                      {interval}h
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Daily Configuration */}
-                            {scheduleType === 'daily' && (
-                              <div className="space-y-2">
-                                <div className="space-y-1.5">
-                                  <label className="text-xs font-medium text-[var(--v2-text-secondary)]">Days</label>
-                                  <div className="grid grid-cols-3 gap-2 sm:gap-1.5">
-                                    {[
-                                      { value: 'everyday', label: 'Every day' },
-                                      { value: 'weekdays', label: 'Weekdays' },
-                                      { value: 'weekends', label: 'Weekends' },
-                                    ].map((option) => (
-                                      <button
-                                        key={option.value}
-                                        onClick={() => setDailyOption(option.value as any)}
-                                        className={`p-2 sm:p-1.5 rounded text-[11px] sm:text-[10px] font-medium transition-all active:scale-95 ${
-                                          dailyOption === option.value
-                                            ? 'bg-[var(--v2-primary)] text-white'
-                                            : 'bg-gray-100 dark:bg-gray-700 text-[var(--v2-text-secondary)] hover:bg-gray-200 dark:hover:bg-gray-600'
-                                        }`}
-                                      >
-                                        {option.label}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-                                <div className="space-y-1.5">
-                                  <label className="text-xs font-medium text-[var(--v2-text-secondary)]">Time</label>
-                                  <input
-                                    type="time"
-                                    value={scheduleTime}
-                                    onChange={(e) => setScheduleTime(e.target.value)}
-                                    className="w-full px-2 py-1.5 bg-white dark:bg-gray-700 border border-[var(--v2-border)] rounded text-xs"
-                                  />
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Weekly Configuration */}
-                            {scheduleType === 'weekly' && (
-                              <div className="space-y-2">
-                                <div className="space-y-1.5">
-                                  <label className="text-xs font-medium text-[var(--v2-text-secondary)]">Select Days</label>
-                                  <div className="grid grid-cols-7 gap-1.5 sm:gap-1">
-                                    {[
-                                      { short: 'M', full: 'monday' },
-                                      { short: 'T', full: 'tuesday' },
-                                      { short: 'W', full: 'wednesday' },
-                                      { short: 'T', full: 'thursday' },
-                                      { short: 'F', full: 'friday' },
-                                      { short: 'S', full: 'saturday' },
-                                      { short: 'S', full: 'sunday' }
-                                    ].map((day, index) => (
-                                      <button
-                                        key={index}
-                                        onClick={() => handleDayToggle(day.full)}
-                                        className={`p-2 sm:p-1.5 rounded text-[11px] sm:text-[10px] font-medium transition-all leading-tight active:scale-95 ${
-                                          selectedDays.includes(day.full)
-                                            ? 'bg-[var(--v2-primary)] text-white'
-                                            : 'bg-gray-100 dark:bg-gray-700 text-[var(--v2-text-secondary)] hover:bg-gray-200 dark:hover:bg-gray-600'
-                                        }`}
-                                      >
-                                        {day.short}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-                                <div className="space-y-1.5">
-                                  <label className="text-xs font-medium text-[var(--v2-text-secondary)]">Time</label>
-                                  <input
-                                    type="time"
-                                    value={scheduleTime}
-                                    onChange={(e) => setScheduleTime(e.target.value)}
-                                    className="w-full px-2 py-1.5 bg-white dark:bg-gray-700 border border-[var(--v2-border)] rounded text-xs"
-                                  />
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Monthly Configuration */}
-                            {scheduleType === 'monthly' && (
-                              <div className="space-y-2">
-                                <div className="space-y-1.5">
-                                  <label className="text-xs font-medium text-[var(--v2-text-secondary)]">Day of Month</label>
-                                  <div className="grid grid-cols-7 gap-1.5 sm:gap-1 max-h-[200px] sm:max-h-[140px] overflow-y-auto">
-                                    {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
-                                      <button
-                                        key={day}
-                                        onClick={() => setSelectedMonthDay(day.toString())}
-                                        className={`p-2 sm:p-1.5 rounded text-[11px] sm:text-[10px] font-medium transition-all leading-tight active:scale-95 ${
-                                          selectedMonthDay === day.toString()
-                                            ? 'bg-[var(--v2-primary)] text-white'
-                                            : 'bg-gray-100 dark:bg-gray-700 text-[var(--v2-text-secondary)] hover:bg-gray-200 dark:hover:bg-gray-600'
-                                        }`}
-                                      >
-                                        {day}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-                                <div className="space-y-1.5">
-                                  <label className="text-xs font-medium text-[var(--v2-text-secondary)]">Time</label>
-                                  <input
-                                    type="time"
-                                    value={scheduleTime}
-                                    onChange={(e) => setScheduleTime(e.target.value)}
-                                    className="w-full px-2 py-1.5 bg-white dark:bg-gray-700 border border-[var(--v2-border)] rounded text-xs"
-                                  />
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Preview & Apply */}
-                            {scheduleType && (
-                              <div className="pt-3 border-t border-[var(--v2-border)] space-y-3">
-                                <div className="flex items-center gap-2 px-3 py-2 bg-[var(--v2-primary)]/10 rounded-lg">
-                                  <Clock className="w-4 h-4 text-[var(--v2-primary)]" />
-                                  <span className="text-xs font-medium text-[var(--v2-primary)]">
-                                    {getScheduleDescription()}
-                                  </span>
-                                </div>
-                                <button
-                                  onClick={() => setShowScheduleBuilder(false)}
-                                  className="w-full px-4 py-3 sm:px-3 sm:py-2 bg-[var(--v2-primary)] text-white rounded-lg text-sm sm:text-xs font-medium hover:opacity-90 active:scale-[0.98] transition-all"
-                                >
-                                  Apply Schedule
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="mt-auto pt-4 border-t border-[var(--v2-border)] space-y-2">
-                <button
-                  disabled={!builderState.planApproved}
-                  className="w-full px-4 py-2.5 bg-gray-100 dark:bg-gray-800 text-[var(--v2-text-muted)] rounded-lg text-sm font-medium cursor-not-allowed disabled:opacity-50"
-                >
-                  {builderState.planApproved ? 'Creating agent...' : 'Complete setup to deploy'}
-                </button>
-                <button className="w-full px-4 py-2.5 bg-white dark:bg-gray-800 text-[var(--v2-text-secondary)] border border-[var(--v2-border)] rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                  Save as Draft
-                </button>
               </div>
             </Card>
           </div>

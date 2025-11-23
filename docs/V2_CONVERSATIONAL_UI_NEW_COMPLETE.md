@@ -11,6 +11,11 @@ We have successfully migrated the thread-based conversational agent builder from
 - ✅ **Complete V2 design system alignment** (CSS variables, colors, radius, shadows)
 - ✅ **Question progress indicator** ("Question X of Y" badge next to questions)
 - ✅ **Fixed chat scrolling** with internal scroll area (Phase 8)
+- ✅ **V10 Mini-Cycle & Edit Flow** with resolved user inputs tracking (Phase 11)
+- ✅ **Layout Restructuring** - Two-column layout: Setup Progress → Chat (Phase 12)
+- ✅ **Message Variants** - Question (cyan) and Plan Summary (muted) styling (Phase 12)
+- ✅ **Setup Progress Expansion** - 7 steps with Input Parameters & Scheduling placeholders (Phase 13)
+- ✅ **Input Schema Defaults** - Input fields hidden by default for Step 5 flow (Phase 13)
 
 ---
 
@@ -2272,21 +2277,446 @@ This reduces visual clutter while maintaining all necessary information.
 
 ---
 
-**Current Status**: ✅ **Phase 1-11 Complete - V2 Migration Ready with V10 Implementation**
+## Phase 12: Layout Restructuring & Message Variants
 
-**Total Development Time**: 3+ weeks
-**Total Files Modified**: 5 files
-**Total Lines Added**: ~900 lines
-**Latest Features**: Phase 11 - V10 Implementation (Mini-Cycle, Edit Flow, Resolved Inputs)
-**Previous Features**: v9 Schema Array Rendering, Animated Typing Indicators, Chat Scroll Fix, Avatar Icons, Enhanced Prompt Accordion, Question Progress, Service Status, V2 Design System
+### Overview
+Phase 12 introduces a simplified two-column layout and new message variants for better visual differentiation during the agent creation flow.
 
-**Ready for**: ✅ User Testing | ✅ Production Deployment | ✅ Feature Extensions
+### Layout Changes
+
+#### Before (Phase 11)
+```
+Desktop: [Chat (2fr)] → [Arrow] → [Setup Progress (1fr)] → [Arrow] → [Agent Preview (1fr)]
+Mobile:  [Chat (full width)]
+```
+
+**Grid CSS**: `grid-cols-[2fr_auto_1fr_auto_1fr]`
+
+#### After (Phase 12)
+```
+Desktop: [Setup Progress (1fr)] → [Arrow] → [Agent Builder Chat (3fr)]
+Mobile:  [Agent Builder Chat (full width)]
+```
+
+**Grid CSS**: `grid-cols-[1fr_auto_3fr]`
 
 ---
 
-**Document Version**: 1.4
-**Last Updated**: 2025-01-23 (Added Phase 11 - V10 Implementation)
+### What Changed
+
+| Aspect | Before | After |
+|--------|--------|-------|
+| **Column Order** | Chat → Setup Progress → Agent Preview | Setup Progress → Chat |
+| **Agent Preview** | Visible (3rd column) | Hidden (removed) |
+| **Chat Width** | 2fr (~40%) | 3fr (~75%) |
+| **Setup Progress Position** | Middle | First (leftmost) |
+| **Mobile View** | Chat only | Chat only (Setup Progress hidden) |
+
+---
+
+### Technical Implementation
+
+#### 1. Grid Layout Change ([app/v2/agents/new/page.tsx:920](app/v2/agents/new/page.tsx#L920))
+
+```tsx
+{/* Main Grid Layout - Two Columns: Setup Progress → Chat (Extended) */}
+<div className="relative">
+  <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto_3fr] gap-4 lg:gap-6 items-start">
+```
+
+#### 2. Setup Progress Column (First, Hidden on Mobile)
+
+```tsx
+{/* Left Column - Setup Progress (hidden on mobile) */}
+<div className="hidden lg:block space-y-4 sm:space-y-5">
+  <Card className="!p-4 sm:!p-6 min-h-[800px] flex flex-col">
+    <div className="flex items-center gap-3 mb-4">
+      <Settings className="w-6 h-6 text-[#06B6D4]" />
+      <div>
+        <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
+          Setup Progress
+        </h3>
+        <p className="text-xs text-[var(--v2-text-secondary)]">
+          Tracking conversation steps
+        </p>
+      </div>
+    </div>
+    {/* Progress steps content... */}
+  </Card>
+</div>
+```
+
+#### 3. Arrow Between Columns
+
+```tsx
+{/* Arrow between Setup Progress and Chat */}
+<div className="hidden lg:flex items-center justify-center">
+  <ArrowRight className="w-6 h-6 text-[var(--v2-primary)]" />
+</div>
+```
+
+#### 4. Extended Chat Column
+
+```tsx
+{/* Right Column - Agent Builder Chat (Extended Width) */}
+<div className="space-y-4 sm:space-y-5">
+  <Card className="!p-4 sm:!p-6 min-h-[800px] flex flex-col">
+    <div className="flex items-center gap-3 mb-4">
+      <MessageSquare className="w-6 h-6 text-[#8B5CF6]" />
+      {/* ... */}
+    </div>
+    {/* Chat content... */}
+  </Card>
+</div>
+```
+
+---
+
+### Message Variants (V10)
+
+Phase 12 introduces AI message variants for visual differentiation:
+
+#### Variant Types ([useAgentBuilderMessages.ts:9](hooks/useAgentBuilderMessages.ts#L9))
+
+```typescript
+/**
+ * V10: AI Message Variants
+ * - default: Standard AI response (Bot icon, purple gradient avatar)
+ * - question: Clarification questions (HelpCircle icon, cyan avatar)
+ * - plan-summary: Minimized plan during edit flow (muted, disabled appearance)
+ */
+export type AIMessageVariant = 'default' | 'question' | 'plan-summary';
+
+export interface Message {
+  id: string;
+  role: 'user' | 'assistant' | 'system' | 'typing';
+  content: string;
+  timestamp: Date;
+  variant?: AIMessageVariant; // V10: AI message styling variant
+  // ... other fields
+}
+```
+
+#### Helper Functions
+
+```typescript
+// V10: Add an AI question message (cyan HelpCircle icon, for Phase 2 questions)
+const addAIQuestion = useCallback((content: string, questionId?: string) => {
+  addMessage(content, 'assistant', questionId, false, 'question');
+}, [addMessage]);
+
+// V10: Add a minimized plan summary message (muted/disabled appearance)
+const addPlanSummary = useCallback((content: string) => {
+  addMessage(content, 'assistant', undefined, false, 'plan-summary');
+}, [addMessage]);
+```
+
+---
+
+### Avatar Styling by Variant
+
+```tsx
+{/* Avatar - AI (left side) with variant styling */}
+{message.role === 'assistant' && (
+  <div
+    className={`w-8 h-8 flex items-center justify-center shadow-md flex-shrink-0 ${
+      message.variant === 'plan-summary' ? 'opacity-70' : ''
+    }`}
+    style={{
+      background: message.variant === 'question'
+        ? 'linear-gradient(135deg, #06B6D4, #0891B2)' // Cyan for questions
+        : message.variant === 'plan-summary'
+        ? 'rgba(139, 92, 246, 0.2)' // Muted purple for plan summary
+        : 'linear-gradient(135deg, var(--v2-primary), var(--v2-secondary))', // Default
+      borderRadius: 'var(--v2-radius-button)'
+    }}
+  >
+    {message.variant === 'question' ? (
+      <HelpCircle className="h-4 w-4 text-white" />
+    ) : message.variant === 'plan-summary' ? (
+      <FileText className="h-4 w-4 text-purple-500" />
+    ) : (
+      <Bot className="h-4 w-4 text-white" />
+    )}
+  </div>
+)}
+```
+
+---
+
+### Message Bubble Styling by Variant
+
+```tsx
+<div
+  className={`p-3 shadow-md backdrop-blur-sm ${
+    message.role === 'user'
+      ? 'text-white'
+      : message.variant === 'question'
+      ? 'bg-[var(--v2-surface)] border border-cyan-300 dark:border-cyan-700'
+      : message.variant === 'plan-summary'
+      ? 'bg-[var(--v2-surface)] border border-purple-200 dark:border-purple-800/50'
+      : 'bg-[var(--v2-surface)] border border-[var(--v2-border)]'
+  }`}
+>
+  <p className={`text-sm whitespace-pre-wrap leading-relaxed ${
+    message.variant === 'plan-summary'
+      ? 'text-[var(--v2-text-muted)] italic'
+      : 'text-[var(--v2-text-primary)]'
+  }`}>
+    {message.content}
+  </p>
+</div>
+```
+
+---
+
+### Usage in Edit Flow
+
+When user clicks "Need changes", a plan summary message is added for context:
+
+```typescript
+const handleEdit = () => {
+  // V10: Add plan summary as a muted/disabled message for context
+  if (enhancedPromptData?.plan_description) {
+    addPlanSummary(enhancedPromptData.plan_description)
+  }
+  addUserMessage('I need to make some changes')
+  addAIMessage('Sure thing, what changes would you like to add to the plan?')
+  // ...
+}
+```
+
+---
+
+### Question Progress Indicator
+
+Questions now display with cyan styling and a progress badge:
+
+```tsx
+{/* Question Progress Indicator - shown for AI questions during Phase 2 */}
+{message.variant === 'question' &&
+ builderState.workflowPhase === 'questions' && (
+  <div
+    className="mt-2 flex items-center gap-2 px-2 py-1 bg-cyan-500/10 border border-cyan-500/20 w-fit"
+    style={{ borderRadius: 'var(--v2-radius-button)' }}
+  >
+    <HelpCircle className="w-3 h-3 text-cyan-600 dark:text-cyan-400" />
+    <span className="text-xs font-semibold text-cyan-600 dark:text-cyan-400">
+      Question {builderState.currentQuestionIndex + 1} of {builderState.questionsSequence.length}
+    </span>
+  </div>
+)}
+```
+
+---
+
+### Visual Summary
+
+| Variant | Avatar Background | Icon | Border | Text Style |
+|---------|-------------------|------|--------|------------|
+| **default** | Purple gradient | Bot | Standard | Normal |
+| **question** | Cyan gradient (#06B6D4) | HelpCircle | Cyan | Normal |
+| **plan-summary** | Muted purple (20% opacity) | FileText | Purple | Italic, muted |
+
+---
+
+### Testing Checklist
+
+- [x] Layout shows Setup Progress → Arrow → Chat on desktop
+- [x] Agent Preview section hidden
+- [x] Chat extends to ~75% width on desktop
+- [x] Setup Progress hidden on mobile
+- [x] Question messages show cyan avatar with HelpCircle icon
+- [x] Question progress badge shows "Question X of Y"
+- [x] Plan summary messages show muted/disabled appearance
+- [x] Edit flow adds plan summary for context
+- [x] Dark mode works for all variants
+- [x] All icons imported (HelpCircle, FileText from lucide-react)
+
+---
+
+### Code References
+
+**Files Modified for Phase 12:**
+
+1. **`app/v2/agents/new/page.tsx`**
+   - Changed grid layout from 5-column to 3-column
+   - Reordered columns: Setup Progress → Arrow → Chat
+   - Removed Agent Preview section
+   - Added message variant rendering (question, plan-summary)
+   - Added HelpCircle, FileText icon imports
+   - Updated handleEdit to use addPlanSummary
+
+2. **`hooks/useAgentBuilderMessages.ts`**
+   - Added `AIMessageVariant` type
+   - Added `variant` field to Message interface
+   - Added `addAIQuestion()` helper function
+   - Added `addPlanSummary()` helper function
+
+---
+
+---
+
+## Phase 13: Setup Progress Expansion & Input Schema Defaults
+
+### Overview
+
+Phase 13 expands the Setup Progress panel from 5 steps to 7 steps, preparing for the Input Parameters and Scheduling collection flows. Additionally, input fields in the agent schema are now hidden by default.
+
+---
+
+### Setup Progress Steps (7 Total)
+
+| Step | Label | Subtitle | Condition |
+|------|-------|----------|-----------|
+| 1 | Initial Request | Received your agent request | **Green** when `workflowPhase !== 'initial'` |
+| 2 | Analysis Complete | Understanding requirements | **Blue** during analysis, **Green** after |
+| 3 | Clarification Questions | Answer clarifying questions | **Blue** during Phase 2, **Green** when Phase 3 starts |
+| 4 | Plan Creation | Generate detailed plan | **Blue** during Phase 3, **Green** when complete |
+| 5 | **Input Parameters** | Configure agent settings | **Placeholder (gray)** - TBD |
+| 6 | **Scheduling** | Set when agent runs | **Placeholder (gray)** - TBD |
+| 7 | Agent Ready | Deploy your agent | **Green** when `planApproved === true` |
+
+---
+
+### Step 1 Styling Fix
+
+**Issue**: Step 1 (Initial Request) was using blue styling when complete, inconsistent with other steps which use green.
+
+**Fix**: Changed to green styling to match the pattern:
+
+```tsx
+// Before (blue)
+? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+
+// After (green)
+? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+```
+
+---
+
+### New Steps 5 & 6 (Placeholders)
+
+Steps 5 and 6 are currently hardcoded to gray/empty state. The trigger conditions will be defined when the Input Parameters and Scheduling collection flows are implemented.
+
+```tsx
+{/* Step 5: Input Parameters - Placeholder (always gray for now) */}
+<div className="flex items-start gap-3 p-3 rounded-lg border bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60">
+  <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+  <div className="flex-1">
+    <p className="text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
+      Input Parameters
+    </p>
+    <p className="text-xs text-[var(--v2-text-muted)]">
+      Configure agent settings
+    </p>
+  </div>
+</div>
+
+{/* Step 6: Scheduling - Placeholder (always gray for now) */}
+<div className="flex items-start gap-3 p-3 rounded-lg border bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60">
+  <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+  <div className="flex-1">
+    <p className="text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
+      Scheduling
+    </p>
+    <p className="text-xs text-[var(--v2-text-muted)]">
+      Set when agent runs
+    </p>
+  </div>
+</div>
+```
+
+---
+
+### handleUseOriginal - Dead Code Preserved
+
+The `handleUseOriginal()` function is not currently wired to any UI element. It's preserved in case we want to allow users to bypass the enhanced prompt and send the original user prompt directly to `generate-agent-v2`.
+
+```typescript
+// NOTE: Not currently wired to any UI element.
+// Kept in case we want to allow users to bypass the enhanced prompt
+// and send the original user prompt directly to generate-agent-v2.
+const handleUseOriginal = async () => {
+  addUserMessage('Use the original prompt instead')
+  addAIMessage('Perfect! Creating your agent with your original request...')
+  approvePlan()
+  await createAgent(false)  // false = use original prompt
+}
+```
+
+---
+
+### generate-agent-v2: Input Fields Hidden by Default
+
+The `generate-agent-v2` API now sets `hidden: true` on all input fields by default. This prepares for the "Input Parameters" step (Step 5) where users will configure these values.
+
+```typescript
+// app/api/generate-agent-v2/route.ts
+input_schema: analysis.required_inputs.map(input => ({
+  name: input.name,
+  type: input.type,
+  label: input.label,
+  required: input.required,
+  description: input.description,
+  placeholder: input.placeholder || '',
+  hidden: true  // Hidden by default - will be shown during Input Parameters step
+})),
+```
+
+---
+
+### Code References
+
+**Files Modified for Phase 13:**
+
+1. **`app/v2/agents/new/page.tsx`**
+   - Changed Step 1 from blue to green styling when complete
+   - Added Step 5: "Input Parameters" (placeholder gray)
+   - Added Step 6: "Scheduling" (placeholder gray)
+   - Moved "Agent Ready" from Step 5 to Step 7
+   - Added comment to `handleUseOriginal` noting it's dead code
+
+2. **`app/api/generate-agent-v2/route.ts`**
+   - Added `hidden: true` to all input fields in `input_schema`
+
+---
+
+### Future Work
+
+- **Step 5 (Input Parameters)**: Will trigger when Phase 4 (Plan Creation) completes. Will present input fields in chat for user to fill values.
+- **Step 6 (Scheduling)**: Will mimic the scheduling section from "Agent Review". Will be incorporated into chat flow.
+- **Step 7 (Agent Ready)**: Will present the full agent for final approval after Steps 5 & 6 complete.
+
+---
+
+### Testing Checklist
+
+- [x] Step 1 turns green (not blue) when Phase 1 starts
+- [x] Steps 2-4 maintain blue → green transition behavior
+- [x] Step 5 (Input Parameters) always shows gray/disabled
+- [x] Step 6 (Scheduling) always shows gray/disabled
+- [x] Step 7 (Agent Ready) turns green when plan approved
+- [x] `handleUseOriginal` function has explanatory comment
+- [x] `generate-agent-v2` adds `hidden: true` to all input fields
+
+---
+
+**Current Status**: ✅ **Phase 1-13 Complete - V2 Migration Ready with Expanded Setup Progress**
+
+**Total Development Time**: 3+ weeks
+**Total Files Modified**: 7 files
+**Total Lines Added**: ~1050 lines
+**Latest Features**: Phase 13 - Setup Progress Expansion & Input Schema Defaults
+**Previous Features**: Layout Restructuring, V10 Implementation, v9 Schema Array Rendering, Animated Typing Indicators, Chat Scroll Fix, Avatar Icons, Enhanced Prompt Accordion, Question Progress, Service Status, V2 Design System
+
+**Ready for**: ✅ User Testing | ✅ Production Deployment | ✅ Feature Extensions | 🔜 Input Parameters & Scheduling Implementation
+
+---
+
+**Document Version**: 1.6
+**Last Updated**: 2025-11-23 (Added Phase 13 - Setup Progress Expansion & Input Schema Defaults)
 **Author**: Development Team
-**Status**: Migration Complete - Phase 11 V10 Implementation - Ready for Testing
+**Status**: Migration Complete - Phase 13 Setup Progress Expansion - Ready for Testing
 
 **Migration completed from**: `components/agent-creation/conversational/` → `app/v2/agents/new/page.tsx`

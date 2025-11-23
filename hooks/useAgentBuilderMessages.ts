@@ -1,5 +1,13 @@
 import { useState, useRef, useCallback } from 'react';
 
+/**
+ * V10: AI Message Variants
+ * - default: Standard AI response (Bot icon, purple gradient avatar)
+ * - question: Clarification questions (HelpCircle icon, cyan avatar)
+ * - plan-summary: Minimized plan during edit flow (muted, disabled appearance)
+ */
+export type AIMessageVariant = 'default' | 'question' | 'plan-summary';
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system' | 'typing';
@@ -8,6 +16,7 @@ export interface Message {
   questionId?: string;
   isQuestionAnswer?: boolean;
   isTemporary?: boolean; // For typing indicators that will be removed
+  variant?: AIMessageVariant; // V10: AI message styling variant
 }
 
 /**
@@ -23,7 +32,8 @@ export function useAgentBuilderMessages() {
     content: string,
     role: 'user' | 'assistant' | 'system' = 'assistant',
     questionId?: string,
-    isQuestionAnswer?: boolean
+    isQuestionAnswer?: boolean,
+    variant?: AIMessageVariant
   ) => {
     const newMessage: Message = {
       id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -31,7 +41,8 @@ export function useAgentBuilderMessages() {
       content,
       timestamp: new Date(),
       questionId,
-      isQuestionAnswer
+      isQuestionAnswer,
+      variant
     };
 
     setMessages(prev => [...prev, newMessage]);
@@ -50,6 +61,16 @@ export function useAgentBuilderMessages() {
   // Add a system message (for status updates)
   const addSystemMessage = useCallback((content: string) => {
     addMessage(content, 'system');
+  }, [addMessage]);
+
+  // V10: Add an AI question message (cyan HelpCircle icon, for Phase 2 questions)
+  const addAIQuestion = useCallback((content: string, questionId?: string) => {
+    addMessage(content, 'assistant', questionId, false, 'question');
+  }, [addMessage]);
+
+  // V10: Add a minimized plan summary message (muted/disabled appearance)
+  const addPlanSummary = useCallback((content: string) => {
+    addMessage(content, 'assistant', undefined, false, 'plan-summary');
   }, [addMessage]);
 
   // Add a question answer pair
@@ -110,6 +131,8 @@ export function useAgentBuilderMessages() {
     addMessage,
     addUserMessage,
     addAIMessage,
+    addAIQuestion,      // V10: Question variant
+    addPlanSummary,     // V10: Plan summary variant
     addSystemMessage,
     addQuestionAnswer,
     clearMessages,

@@ -371,7 +371,8 @@ export async function POST(req: Request) {
         label: input.label,
         required: input.required,
         description: input.description,
-        placeholder: input.placeholder || ''
+        placeholder: input.placeholder || '',
+        hidden: true  // Hidden by default - will be shown during Input Parameters step
       })),
       output_schema: outputInference.outputs,
       status: 'draft',
