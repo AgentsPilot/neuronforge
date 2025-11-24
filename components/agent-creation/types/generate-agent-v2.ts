@@ -192,6 +192,54 @@ export type GenerateAgentV2Response =
   | GenerateAgentV2ErrorResponse;
 
 // ============================================
+// CREATE AGENT TYPES
+// ============================================
+
+/** Agent config metadata for create-agent API */
+export interface CreateAgentConfigMetadata {
+  ai_generated_at: string;
+  session_id: string;
+  agent_id: string;
+  thread_id: string;
+  prompt_type: 'enhanced' | 'original';
+  clarification_answers: Record<string, any>;
+  version: string;
+  platform_version: string;
+  enhanced_prompt_data: any; // V9 structured data
+}
+
+/** AI context for create-agent API */
+export interface CreateAgentAIContext {
+  reasoning: string;
+  confidence: number;
+  original_prompt: string;
+  enhanced_prompt: string;
+  generated_plan: string;
+}
+
+/** Agent config for create-agent API */
+export interface CreateAgentConfig {
+  creation_metadata: CreateAgentConfigMetadata;
+  ai_context: CreateAgentAIContext;
+}
+
+/** Complete agent data structure for create-agent API */
+export interface CreateAgentData extends Omit<GeneratedAgentData, 'agent_config' | 'schedule_cron' | 'mode' | 'timezone' | 'status'> {
+  agent_config: CreateAgentConfig;
+  schedule_cron: string | null;
+  timezone: string;
+  mode: 'on_demand' | 'scheduled';
+  status: 'draft';
+}
+
+/** Request payload for create-agent API */
+export interface CreateAgentRequest {
+  agent: CreateAgentData;
+  sessionId: string;
+  agentId: string;
+}
+
+// ============================================
 // TYPE GUARDS
 // ============================================
 

@@ -1,26 +1,32 @@
 # V2 Agent Creation & Save Implementation Guide
 
 ## Overview
-This document describes how to implement the complete agent creation flow in the new V2 UI ([app/v2/agents/new/page.tsx](app/v2/agents/new/page.tsx)), including transitioning to SmartAgentBuilder and saving to the `agents` table. This guide builds upon the legacy flow documented in [LEGACY_CONVERSATIONAL_AGENT_CREATION_SEQUENCE.md](LEGACY_CONVERSATIONAL_AGENT_CREATION_SEQUENCE.md).
+This document describes the complete agent creation flow in the new V2 UI ([app/v2/agents/new/page.tsx](app/v2/agents/new/page.tsx)), including agent generation, scheduling, input parameters, and saving to the `agents` table. Originally written as an implementation guide, this document has been updated to reflect the **fully implemented Phase 14 pipeline** (as of 2025-11-25).
+
+**Status**: ✅ **All features implemented and functional** - No SmartAgentBuilder transition needed, fully conversational end-to-end flow.
 
 ---
 
 ## Current V2 Flow Status
 
-### ✅ Implemented (Phase 1-4)
+### ✅ Implemented (Phase 1-14)
 1. **Thread Initialization** - Creates OpenAI thread with v9 prompt
 2. **Phase 1: Analysis** - Analyzes prompt, returns clarity score and connected plugins
 3. **Phase 2: Questions** - Generates clarification questions, user answers
 4. **Phase 3: Enhancement** - Creates enhanced prompt with structured data
 5. **UI Components** - Avatar icons, message bubbles, enhanced prompt accordion
 6. **Service Status** - Connected/not connected service badges
+7. **ID Consistency** - agentId & sessionId tracked via useRef throughout flow
+8. **Input Parameters** - Sequential collection with type validation (Phase 14)
+9. **Scheduling Integration** - Scheduling UI embedded in conversational flow (Phase 14)
+10. **Agent Draft Review** - Final review card before creation (Phase 14)
+11. **Agent Generation** - Calls `/api/generate-agent-v2` with enhanced prompt
+12. **Agent Creation** - Calls `/api/create-agent` to save to database
+13. **Input Parameters Save** - Calls `/api/agent-configurations/save-inputs` after creation
+14. **Navigation** - Redirects to agent detail page after successful creation
 
-### ❌ Not Implemented (Agent Creation)
-1. **SmartAgentBuilder Integration** - Transition from conversational to smart builder
-2. **Agent Generation** - Call `/api/generate-agent-v2` with enhanced prompt
-3. **Agent Creation** - Call `/api/create-agent` to save to database
-4. **ID Consistency** - Pass agentId & sessionId through entire flow
-5. **Navigation** - Return to dashboard or agent detail after creation
+### 🎉 Complete End-to-End Flow
+The V2 conversational agent builder now has a fully functional pipeline from initial prompt through final agent creation and save, without requiring transition to SmartAgentBuilder.
 
 ---
 
@@ -931,26 +937,124 @@ If you have existing code that expects `sections.data` to be a string, **update 
 
 ---
 
-## Next Steps
+## Phase 14: Complete Implementation (NEW)
 
-1. ✅ Review this documentation
-2. ⬜ Implement ID tracking (Step 1)
-3. ⬜ Add IDs to API headers (Step 2)
-4. ⬜ Implement `createAgent()` function (Step 3)
-5. ⬜ Update approval handlers (Step 4)
-6. ⬜ Add loading states (Step 6)
-7. ⬜ **Update UI to render sections as arrays (v9 migration)**
-8. ⬜ Test complete flow end-to-end
-9. ⬜ Verify database record has correct ID
-10. ⬜ Test navigation to agent detail page
-11. ⬜ Deploy to production
+### What Was Implemented
+
+All steps described in this document have been fully implemented as of Phase 14 (2025-11-25):
+
+1. **✅ ID Tracking (Step 1)** - `agentId` and `sessionId` generated via useRef on mount
+2. **✅ API Headers (Step 2)** - All API calls include x-agent-id and x-session-id headers
+3. **✅ Agent Creation (Step 3)** - `executeAgentCreation()` function implemented
+4. **✅ Approval Handlers (Step 4)** - `handleApprove()` triggers full agent creation pipeline
+5. **✅ Loading States (Step 6)** - `isCreatingAgent` state with UI indicators
+6. **✅ Array Rendering (v9)** - Enhanced prompt sections rendered as bullet lists
+7. **✅ Input Parameters** - Sequential collection with validation (NEW)
+8. **✅ Scheduling Integration** - Embedded in chat flow (NEW)
+9. **✅ Agent Draft Review** - Final approval card (NEW)
+10. **✅ Save Input Values** - Saved after agent creation (NEW)
+
+### New Features Beyond Original Spec
+
+**Input Parameters Collection**:
+- Sequential one-at-a-time question flow
+- Type-specific validation (string, number, boolean, date, enum, select)
+- Merges AI-resolved inputs with user-provided inputs
+- Error handling with retry capability
+
+**Agent Draft Review**:
+- Comprehensive review card showing all configuration
+- Displays plan, plugins, input parameters, and scheduling
+- Approve/Cancel buttons for final confirmation
+- Human-readable schedule display
+
+**Scheduling Integration**:
+- Embedded scheduling UI in chat flow
+- On-demand and scheduled modes
+- Cron expression generation
+- Timezone support
+
+### Implementation Files
+
+- **Main File**: [app/v2/agents/new/page.tsx](app/v2/agents/new/page.tsx)
+  - Lines 126-163: State variables for input params and final approval
+  - Lines 726-756: Input parameters collection logic
+  - Lines 1231-1281: Input validation function
+  - Lines 2054-2262: Agent draft review card
+  - Lines 773-857: Agent creation and save pipeline
+
+- **Supporting Files**:
+  - [lib/utils/scheduleFormatter.ts](lib/utils/scheduleFormatter.ts) - Schedule display formatting
+  - [app/api/agent-configurations/save-inputs/route.ts](app/api/agent-configurations/save-inputs/route.ts) - Input values API
 
 ---
 
-**Document Version**: 1.1
-**Last Updated**: 2025-01-19 (Added Phase 3 Validation section)
+## Testing Checklist (Updated)
+
+### ID Consistency
+- [x] `agentId` generated on mount and stored in useRef
+- [x] `sessionId` generated on mount and stored in useRef
+- [x] Both IDs sent in all API call headers
+- [x] Both IDs included in `clarificationAnswers`
+- [x] Both IDs sent to `/api/create-agent`
+- [x] Database record uses frontend `agentId`
+
+### API Integration
+- [x] `/api/generate-agent-v2` called with correct payload
+- [x] `agent_config` JSONB includes all metadata
+- [x] `/api/create-agent` receives `agentId` and `sessionId`
+- [x] `/api/agent-configurations/save-inputs` called after agent creation
+- [x] Token tracking works (agentId consistency)
+
+### User Experience
+- [x] Loading states show during agent creation
+- [x] Success message displays after save
+- [x] Navigation to agent detail page works
+- [x] Error handling shows user-friendly messages
+- [x] No duplicate API calls
+- [x] Input parameters collected with validation
+- [x] Scheduling UI embedded in chat flow
+- [x] Agent draft review before final save
+- [x] Auto-scroll works throughout flow
+
+### Data Integrity
+- [x] Enhanced prompt stored in `agent_config`
+- [x] Clarification answers preserved
+- [x] Thread ID included in metadata
+- [x] All plugin data saved correctly
+- [x] Input parameter values saved to database
+- [x] Resolved user inputs merged with collected inputs
+- [x] Schedule configuration saved correctly
+
+---
+
+## Complete Flow Sequence (Phase 14)
+
+1. **Plan Approval** → User clicks "Yes, perfect!"
+2. **Plan Summary** → Minimized plan card added to chat
+3. **Typing Indicator** → "Drafting your agent..."
+4. **Generate Agent** → `/api/generate-agent-v2`
+5. **Draft Ready** → "✨ Agent draft ready!"
+6. **Resolved Inputs** → AI-inferred inputs added to state
+7. **Input Parameters** → Sequential Q&A with validation
+8. **Scheduling** → User configures when agent runs
+9. **Transition** → "Let me prepare your agent draft..."
+10. **Agent Draft** → Full review card displayed
+11. **User Approval** → Clicks "Approve" button
+12. **Creating** → "Creating agent..." indicator
+13. **Save Agent** → `/api/create-agent`
+14. **Save Inputs** → `/api/agent-configurations/save-inputs`
+15. **Success** → "🎉 Your agent has been created!"
+16. **Navigate** → Redirect to `/v2/agents/{id}`
+
+---
+
+## Status
+
+**Document Version**: 1.2
+**Last Updated**: 2025-11-25 (Updated with Phase 14 implementation status)
 **Author**: Development Team
-**Status**: Implementation Guide - Ready for Development
+**Status**: ✅ **IMPLEMENTATION COMPLETE** - All features deployed and functional
 
 **Dependencies**:
 - [LEGACY_CONVERSATIONAL_AGENT_CREATION_SEQUENCE.md](LEGACY_CONVERSATIONAL_AGENT_CREATION_SEQUENCE.md)

@@ -8,14 +8,7 @@ import { Suspense, useState, useEffect, useRef } from 'react'
 import { useAuth } from '@/components/UserProvider'
 import { Card } from '@/components/v2/ui/card'
 import { V2Header } from '@/components/v2/V2Header'
-import {
-  ArrowLeft,
-  Bot,
-  Sparkles,
-  MessageSquare,
-  Zap,
-  CheckCircle2,
-  Clock,
+import { ArrowLeft, Bot, Sparkles, MessageSquare, Zap, CheckCircle2, Clock,
   Settings,
   Loader2,
   Brain,
@@ -39,8 +32,15 @@ import {
 import { useAgentBuilderState } from '@/hooks/useAgentBuilderState'
 import { useAgentBuilderMessages } from '@/hooks/useAgentBuilderMessages'
 import { getPluginAPIClient } from '@/lib/client/plugin-api-client'
-import type { GenerateAgentV2Response } from '@/components/agent-creation/types/generate-agent-v2'
+import type {
+  GenerateAgentV2Response,
+  CreateAgentData,
+  CreateAgentConfig,
+  CreateAgentConfigMetadata,
+  CreateAgentAIContext
+} from '@/components/agent-creation/types/generate-agent-v2'
 import { isGenerateAgentV2Success } from '@/components/agent-creation/types/generate-agent-v2'
+import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
 
 function V2AgentBuilderContent() {
   const searchParams = useSearchParams()
@@ -118,6 +118,23 @@ function V2AgentBuilderContent() {
   // V10: Edit flow state (for "Need changes" button)
   const [isAwaitingFeedback, setIsAwaitingFeedback] = useState(false)
 
+  // Scheduling flow state
+  const [isAwaitingSchedule, setIsAwaitingSchedule] = useState(false)
+  const [scheduleCompleted, setScheduleCompleted] = useState(false)
+  const [pendingAgentData, setPendingAgentData] = useState<CreateAgentData | null>(null)
+
+  // Input Parameters flow state
+  const [requiredInputs, setRequiredInputs] = useState<any[]>([])
+  const [currentInputIndex, setCurrentInputIndex] = useState(-1)
+  const [inputParameterValues, setInputParameterValues] = useState<Record<string, any>>({})
+  const [isAwaitingInputParameter, setIsAwaitingInputParameter] = useState(false)
+  const [inputParametersComplete, setInputParametersComplete] = useState(false)
+  const [inputValidationError, setInputValidationError] = useState<string | null>(null)
+
+  // Final approval state
+  const [isAwaitingFinalApproval, setIsAwaitingFinalApproval] = useState(false)
+  const [agentCreated, setAgentCreated] = useState(false)
+
   // Input state
   const [inputValue, setInputValue] = useState('')
   const [isSending, setIsSending] = useState(false)
@@ -134,10 +151,15 @@ function V2AgentBuilderContent() {
   const [showScheduleBuilder, setShowScheduleBuilder] = useState(false)
   const builderRef = useRef<HTMLDivElement>(null)
 
-  // Auto-scroll to bottom when messages change
+  // Final schedule configuration for draft review
+  const [selectedScheduleMode, setSelectedScheduleMode] = useState<'on_demand' | 'scheduled'>('on_demand')
+  const [scheduleCron, setScheduleCron] = useState<string | null>(null)
+  const [scheduleTimezone, setScheduleTimezone] = useState<string>('UTC')
+
+  // Auto-scroll to bottom when messages or UI state changes
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [messages, scheduleType, scheduleTime, selectedDays, selectedMonthDay, isAwaitingSchedule, isAwaitingFinalApproval])
 
   // Close schedule builder when clicking outside
   useEffect(() => {
@@ -175,7 +197,7 @@ function V2AgentBuilderContent() {
       if (isInMiniCycle) {
         addTypingIndicator('Updating your agent plan with new details...')
       } else {
-        addTypingIndicator('Creating your agent plan...')
+        addTypingIndicator('Creating your enhanced agent plan...')
       }
 
       setTimeout(() => {
@@ -662,21 +684,13 @@ function V2AgentBuilderContent() {
 
       console.log('✅ Agent generated:', generatedAgent.agent.agent_name)
 
-      // TODO: TEMP - Remove after testing
-      // Stop flow after generate-agent-v2 for testing purposes
-      console.log('🛑 [TEMP] Stopping flow after generate-agent-v2 for testing')
-      addAIMessage(`Agent "${generatedAgent.agent.agent_name}" generated successfully! (Flow stopped for testing)`)
-      setIsCreatingAgent(false)
-      return
-      // END TEMP
-
       // Step 3: Build agent_config metadata
-      const agentConfig = {
+      const agentConfig: CreateAgentConfig = {
         creation_metadata: {
           ai_generated_at: new Date().toISOString(),
           session_id: sessionId.current,
           agent_id: agentId.current,
-          thread_id: threadId,
+          thread_id: threadId || '',
           prompt_type: useEnhanced ? 'enhanced' : 'original',
           clarification_answers: builderState.clarificationAnswers,
           version: '2.0',
@@ -686,23 +700,86 @@ function V2AgentBuilderContent() {
         ai_context: {
           reasoning: generatedAgent.agent.ai_reasoning || '',
           confidence: generatedAgent.agent.ai_confidence || 0,
-          original_prompt: initialPrompt,
-          enhanced_prompt: builderState.enhancedPrompt,
+          original_prompt: initialPrompt || '',
+          enhanced_prompt: builderState.enhancedPrompt || '',
           generated_plan: (generatedAgent.agent as any).generated_plan || ''
         }
       }
 
-      // Step 4: Build final agent data
-      const agentData = {
+      // Step 4: Build initial agent data (schedule will be set later)
+      const agentData: CreateAgentData = {
         ...generatedAgent.agent,
         agent_config: agentConfig,
-        schedule_cron: null, // TODO: Add schedule if configured
+        schedule_cron: null, // Will be set after scheduling step
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-        mode: 'on_demand',
+        mode: 'on_demand', // Will be updated if scheduled
         status: 'draft'
       }
 
-      // Step 5: Call /api/create-agent
+      // Store agent data for later
+      setPendingAgentData(agentData)
+
+      // Remove typing indicator and show draft ready message
+      removeTypingIndicator()
+      addAIMessage("✨ Agent draft ready!")
+
+      // Add resolved_user_inputs to inputParameterValues if available
+      if (enhancedPromptData?.specifics?.resolved_user_inputs) {
+        const resolvedInputs: Record<string, any> = {}
+        enhancedPromptData.specifics.resolved_user_inputs.forEach((input: { key: string; value: string }) => {
+          resolvedInputs[input.key] = input.value
+        })
+        setInputParameterValues(prev => ({ ...prev, ...resolvedInputs }))
+      }
+
+      // Check for required input parameters
+      const requiredParams = generatedAgent.agent.input_schema?.filter(
+        (input: any) => input.required === true
+      ) || []
+
+      if (requiredParams.length > 0) {
+        // Start input parameters flow
+        setRequiredInputs(requiredParams)
+        setCurrentInputIndex(0)
+        setIsAwaitingInputParameter(true)
+        addAIMessage("Great! Now let's configure the agent's settings.")
+
+        // Ask first parameter question
+        const firstParam = requiredParams[0]
+        addAIMessage(`What value should I use for **${firstParam.label || firstParam.name}**?\n\n${firstParam.description || ''}`)
+      } else {
+        // No required parameters, mark step complete and go to scheduling
+        setInputParametersComplete(true)
+        addAIMessage("Great! Now let's decide when the agent will run.")
+        setIsAwaitingSchedule(true)
+      }
+
+      setIsCreatingAgent(false)
+      return // Stop here - continue from input parameters or scheduling handlers
+
+    } catch (error: any) {
+      console.error('❌ Agent creation error:', error)
+      removeTypingIndicator()
+      addSystemMessage(`Error creating agent: ${error.message}`)
+    } finally {
+      setIsCreatingAgent(false)
+    }
+  }
+
+  /**
+   * Execute final agent creation - saves agent to database
+   * Called after scheduling step is complete
+   */
+  const executeAgentCreation = async (agentData: CreateAgentData) => {
+    if (!user?.id) {
+      addSystemMessage('Error: User not authenticated')
+      return
+    }
+
+    setIsCreatingAgent(true)
+
+    try {
+      // Call /api/create-agent
       console.log('📞 Calling /api/create-agent...')
       const createRes = await fetch('/api/create-agent', {
         method: 'POST',
@@ -727,7 +804,35 @@ function V2AgentBuilderContent() {
       const result = await createRes.json()
       console.log('✅ Agent created successfully:', result.agent?.id)
 
-      // Step 6: Navigate to agent detail page
+      // Save input parameter values if any were collected
+      if (Object.keys(inputParameterValues).length > 0 && result.agent?.id) {
+        console.log('💾 Saving input parameter values...')
+        try {
+          const saveInputsRes = await fetch('/api/agent-configurations/save-inputs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              agent_id: result.agent.id,
+              input_values: inputParameterValues,
+              input_schema: requiredInputs
+            })
+          })
+
+          if (!saveInputsRes.ok) {
+            console.error('Failed to save input values')
+          } else {
+            console.log('✅ Input values saved successfully')
+          }
+        } catch (err) {
+          console.error('Error saving input values:', err)
+        }
+      }
+
+      // Mark agent as created
+      setAgentCreated(true)
+
+      // Remove typing indicator and show success message
+      removeTypingIndicator()
       addAIMessage('🎉 Your agent has been created successfully!')
 
       setTimeout(() => {
@@ -795,8 +900,57 @@ function V2AgentBuilderContent() {
         setTimeout(() => {
           addSystemMessage('Answer recorded')
         }, 300)
+      } else if (isAwaitingInputParameter && currentInputIndex >= 0 && currentInputIndex < requiredInputs.length) {
+        // Handle input parameter answer
+        const currentParam = requiredInputs[currentInputIndex]
+
+        // Add user's answer
+        addUserMessage(answer)
+
+        // Validate the input
+        const validation = validateInputParameter(answer, currentParam)
+
+        if (!validation.valid) {
+          // Show error and ask again
+          setInputValidationError(validation.error || 'Invalid input')
+          addSystemMessage(`❌ ${validation.error}`)
+          addAIMessage(`Please try again. What value should I use for **${currentParam.label || currentParam.name}**?`)
+        } else {
+          // Valid input, store it
+          setInputValidationError(null)
+          setInputParameterValues(prev => ({
+            ...prev,
+            [currentParam.name]: validation.parsedValue
+          }))
+
+          // Move to next parameter or finish
+          if (currentInputIndex + 1 < requiredInputs.length) {
+            // Ask next parameter
+            setCurrentInputIndex(currentInputIndex + 1)
+            const nextParam = requiredInputs[currentInputIndex + 1]
+            addAIMessage(`Great! What value should I use for **${nextParam.label || nextParam.name}**?\n\n${nextParam.description || ''}`)
+          } else {
+            // All parameters collected
+            setIsAwaitingInputParameter(false)
+            const finalInputValues = {
+              ...inputParameterValues,
+              [currentParam.name]: validation.parsedValue
+            }
+            setInputParameterValues(finalInputValues)
+
+            addAIMessage('Perfect! All settings configured.')
+
+            // Input values will be saved after agent creation in executeAgentCreation
+
+            setInputParametersComplete(true)
+
+            // Proceed to scheduling
+            addAIMessage("Now let's decide when the agent will run.")
+            setIsAwaitingSchedule(true)
+          }
+        }
       } else {
-        // General message (not during questions)
+        // General message (not during questions or input parameters)
         addUserMessage(answer)
         addAIMessage('I received your message. However, I can only help during the setup process.')
       }
@@ -811,10 +965,20 @@ function V2AgentBuilderContent() {
   // Handle approve plan
   const handleApprove = async () => {
     addUserMessage('Yes, perfect!')
-    addAIMessage('Excellent! Creating your agent with the enhanced plan...')
+
+    // Add minimized plan summary for context
+    if (enhancedPromptData?.plan_description) {
+      const planSummary = enhancedPromptData.plan_title
+        ? `📋 ${enhancedPromptData.plan_title}\n\n${enhancedPromptData.plan_description}`
+        : enhancedPromptData.plan_description
+      addPlanSummary(planSummary)
+    }
+
+    // Show thinking indicator while generating agent
+    addTypingIndicator('Drafting your agent based on the enhanced plan...')
     approvePlan()
 
-    // Create agent with enhanced prompt
+    // Create agent with enhanced prompt (will show scheduling UI after)
     await createAgent(true)
   }
 
@@ -882,6 +1046,58 @@ function V2AgentBuilderContent() {
     return 'Configure schedule'
   }
 
+  /**
+   * Build cron expression from schedule state
+   * Returns null for on-demand mode, cron string for scheduled mode
+   */
+  const buildCronExpression = (): string | null => {
+    if (scheduleMode === 'manual') return null
+    if (!scheduleType) return null
+
+    // Parse time (HH:MM format)
+    const [hour, minute] = scheduleTime.split(':').map(Number)
+
+    // Hourly: "0 * * * *" or "0 */N * * *"
+    if (scheduleType === 'hourly') {
+      const interval = parseInt(hourlyInterval) || 1
+      return interval === 1 ? '0 * * * *' : `0 */${interval} * * *`
+    }
+
+    // Daily
+    if (scheduleType === 'daily') {
+      if (dailyOption === 'everyday') {
+        return `${minute} ${hour} * * *`
+      }
+      if (dailyOption === 'weekdays') {
+        return `${minute} ${hour} * * 1-5` // Mon-Fri
+      }
+      if (dailyOption === 'weekends') {
+        return `${minute} ${hour} * * 0,6` // Sun, Sat
+      }
+    }
+
+    // Weekly: specific days
+    if (scheduleType === 'weekly' && selectedDays.length > 0) {
+      const dayMap: Record<string, number> = {
+        sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
+        thursday: 4, friday: 5, saturday: 6
+      }
+      const cronDays = selectedDays
+        .map(d => dayMap[d.toLowerCase()])
+        .sort((a, b) => a - b)
+        .join(',')
+      return `${minute} ${hour} * * ${cronDays}`
+    }
+
+    // Monthly: specific day of month
+    if (scheduleType === 'monthly') {
+      const day = parseInt(selectedMonthDay) || 1
+      return `${minute} ${hour} ${day} * *`
+    }
+
+    return null
+  }
+
   const handleDayToggle = (day: string) => {
     setSelectedDays(prev => {
       if (prev.includes(day)) {
@@ -900,6 +1116,155 @@ function V2AgentBuilderContent() {
       case 2: return 'nd'
       case 3: return 'rd'
       default: return 'th'
+    }
+  }
+
+  /**
+   * Handle on-demand schedule selection
+   */
+  const handleOnDemand = async () => {
+    if (!pendingAgentData) return
+
+    addUserMessage('Run on-demand')
+    setScheduleMode('manual')
+    setScheduleCompleted(true)
+    setIsAwaitingSchedule(false)
+
+    // Store schedule configuration
+    setSelectedScheduleMode('on_demand')
+    setScheduleCron(null)
+    setScheduleTimezone('UTC')
+
+    // Update agent data with on-demand schedule
+    const finalAgentData: CreateAgentData = {
+      ...pendingAgentData,
+      schedule_cron: null,
+      mode: 'on_demand'
+    }
+    setPendingAgentData(finalAgentData)
+
+    // Show transition message and agent draft
+    addAIMessage("Great! Let me prepare your agent draft for review...")
+    setIsAwaitingFinalApproval(true)
+  }
+
+  /**
+   * Handle scheduled mode confirmation
+   */
+  const handleScheduledConfirm = async () => {
+    if (!pendingAgentData) return
+
+    const cronExpression = buildCronExpression()
+    if (!cronExpression) {
+      addSystemMessage('Please configure a schedule first')
+      return
+    }
+
+    const scheduleDescription = getScheduleDescription()
+    addUserMessage(`Schedule: ${scheduleDescription}`)
+    setScheduleCompleted(true)
+    setIsAwaitingSchedule(false)
+
+    // Store schedule configuration
+    setSelectedScheduleMode('scheduled')
+    setScheduleCron(cronExpression)
+    // TODO: Get timezone from user's browser or allow selection
+    setScheduleTimezone('UTC')
+
+    // Update agent data with schedule
+    const finalAgentData: CreateAgentData = {
+      ...pendingAgentData,
+      schedule_cron: cronExpression,
+      mode: 'scheduled',
+      timezone: 'UTC'
+    }
+    setPendingAgentData(finalAgentData)
+
+    // Show transition message and agent draft
+    addAIMessage("Great! Let me prepare your agent draft for review...")
+    setIsAwaitingFinalApproval(true)
+  }
+
+  /**
+   * Handle final approval of agent draft
+   */
+  const handleFinalApprove = async () => {
+    if (!pendingAgentData) return
+
+    addUserMessage('Approve')
+    setIsAwaitingFinalApproval(false)
+
+    // Show creating agent indicator
+    addTypingIndicator('Creating agent...')
+    setIsCreatingAgent(true)
+
+    // Create the agent
+    await executeAgentCreation(pendingAgentData)
+
+    // Navigation after creation will be handled in executeAgentCreation
+    // once the temp return is removed
+  }
+
+  /**
+   * Handle cancellation - return to dashboard
+   */
+  const handleFinalCancel = () => {
+    router.push('/v2/dashboard')
+  }
+
+  // ==================== INPUT PARAMETER HELPERS ====================
+
+  /**
+   * Validate input parameter value against expected type
+   */
+  const validateInputParameter = (value: string, param: any): { valid: boolean; error?: string; parsedValue?: any } => {
+    const trimmedValue = value.trim()
+
+    // Empty check for required fields
+    if (!trimmedValue) {
+      return { valid: false, error: 'This field is required' }
+    }
+
+    switch (param.type) {
+      case 'string':
+      case 'email':
+      case 'time':
+        return { valid: true, parsedValue: trimmedValue }
+
+      case 'number':
+        const num = Number(trimmedValue)
+        if (isNaN(num)) {
+          return { valid: false, error: 'Please enter a valid number' }
+        }
+        return { valid: true, parsedValue: num }
+
+      case 'boolean':
+        const lowerValue = trimmedValue.toLowerCase()
+        if (!['true', 'false', 'yes', 'no', '1', '0'].includes(lowerValue)) {
+          return { valid: false, error: 'Please enter true/false or yes/no' }
+        }
+        const boolValue = ['true', 'yes', '1'].includes(lowerValue)
+        return { valid: true, parsedValue: boolValue }
+
+      case 'date':
+        const date = new Date(trimmedValue)
+        if (isNaN(date.getTime())) {
+          return { valid: false, error: 'Please enter a valid date (YYYY-MM-DD)' }
+        }
+        return { valid: true, parsedValue: trimmedValue }
+
+      case 'enum':
+      case 'select':
+        if (param.enum && !param.enum.includes(trimmedValue)) {
+          return { valid: false, error: `Please choose one of: ${param.enum.join(', ')}` }
+        }
+        if (param.options && !param.options.includes(trimmedValue)) {
+          return { valid: false, error: `Please choose one of: ${param.options.join(', ')}` }
+        }
+        return { valid: true, parsedValue: trimmedValue }
+
+      default:
+        return { valid: true, parsedValue: trimmedValue }
     }
   }
 
@@ -968,13 +1333,13 @@ function V2AgentBuilderContent() {
                 <div className={`flex items-start gap-3 p-3 rounded-lg border ${
                   builderState.workflowPhase === 'analysis'
                     ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
-                    : builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval'
+                    : builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted
                     ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
                     : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
                 }`}>
                   {builderState.workflowPhase === 'analysis' ? (
                     <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
-                  ) : builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' ? (
+                  ) : builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted ? (
                     <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
                   ) : (
                     <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
@@ -992,13 +1357,13 @@ function V2AgentBuilderContent() {
                 <div className={`flex items-start gap-3 p-3 rounded-lg border ${
                   builderState.workflowPhase === 'questions'
                     ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
-                    : builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval'
+                    : builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted
                     ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
                     : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
                 }`}>
                   {builderState.workflowPhase === 'questions' ? (
                     <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
-                  ) : builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' ? (
+                  ) : builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted ? (
                     <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
                   ) : (
                     <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
@@ -1019,13 +1384,13 @@ function V2AgentBuilderContent() {
                 <div className={`flex items-start gap-3 p-3 rounded-lg border ${
                   builderState.workflowPhase === 'enhancement'
                     ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
-                    : builderState.workflowPhase === 'approval'
+                    : builderState.workflowPhase === 'approval' || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted
                     ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
                     : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
                 }`}>
                   {builderState.workflowPhase === 'enhancement' ? (
                     <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
-                  ) : builderState.workflowPhase === 'approval' ? (
+                  ) : builderState.workflowPhase === 'approval' || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted ? (
                     <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
                   ) : (
                     <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
@@ -1040,49 +1405,85 @@ function V2AgentBuilderContent() {
                   </div>
                 </div>
 
-                {/* Step 5: Input Parameters - Placeholder (always gray for now) */}
-                <div className="flex items-start gap-3 p-3 rounded-lg border bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60">
-                  <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                {/* Step 5: Input Parameters */}
+                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
+                  isAwaitingInputParameter
+                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+                    : inputParametersComplete
+                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
+                }`}>
+                  {isAwaitingInputParameter ? (
+                    <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
+                  ) : inputParametersComplete ? (
+                    <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
+                  ) : (
+                    <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                  )}
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
+                    <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
                       Input Parameters
                     </p>
                     <p className="text-xs text-[var(--v2-text-muted)]">
-                      Configure agent settings
+                      {isAwaitingInputParameter
+                        ? `Configuring settings (${currentInputIndex + 1}/${requiredInputs.length})`
+                        : 'Configure agent settings'
+                      }
                     </p>
                   </div>
                 </div>
 
-                {/* Step 6: Scheduling - Placeholder (always gray for now) */}
-                <div className="flex items-start gap-3 p-3 rounded-lg border bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60">
-                  <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                {/* Step 6: Scheduling */}
+                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
+                  isAwaitingSchedule && !scheduleCompleted
+                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+                    : scheduleCompleted
+                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
+                }`}>
+                  {isAwaitingSchedule && !scheduleCompleted ? (
+                    <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
+                  ) : scheduleCompleted ? (
+                    <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
+                  ) : (
+                    <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                  )}
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
+                    <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
                       Scheduling
                     </p>
                     <p className="text-xs text-[var(--v2-text-muted)]">
-                      Set when agent runs
+                      {isAwaitingSchedule && !scheduleCompleted ? 'Configuring schedule...' : 'Set when agent runs'}
                     </p>
                   </div>
                 </div>
 
                 {/* Step 7: Agent Ready */}
                 <div className={`flex items-start gap-3 p-3 rounded-lg border ${
-                  builderState.planApproved
+                  isAwaitingFinalApproval
+                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+                    : agentCreated
                     ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
                     : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
                 }`}>
-                  {builderState.planApproved ? (
+                  {isAwaitingFinalApproval ? (
+                    <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
+                  ) : agentCreated ? (
                     <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
                   ) : (
                     <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
                   )}
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
+                    <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
                       Agent Ready
                     </p>
                     <p className="text-xs text-[var(--v2-text-muted)]">
-                      Deploy your agent
+                      {isAwaitingFinalApproval
+                        ? 'Reviewing agent draft...'
+                        : agentCreated
+                        ? 'Agent created!'
+                        : 'Deploy your agent'
+                      }
                     </p>
                   </div>
                 </div>
@@ -1509,6 +1910,414 @@ function V2AgentBuilderContent() {
                   </div>
                 ))}
 
+                {/* Scheduling Selection UI */}
+                {isAwaitingSchedule && !scheduleCompleted && (
+                  <div className="flex justify-start mt-4">
+                    <div className="w-8 h-8 flex-shrink-0" /> {/* Spacer for avatar alignment */}
+
+                    <Card className="flex-1 max-w-3xl !p-6">
+                      <div className="space-y-6">
+                        {/* Schedule Mode Selection */}
+                        <div>
+                          <h3 className="text-lg font-semibold text-[var(--v2-text-primary)] mb-3">
+                            When should this agent run?
+                          </h3>
+                          <div className="grid grid-cols-2 gap-4">
+                            <button
+                              onClick={handleOnDemand}
+                              disabled={isCreatingAgent}
+                              className="p-4 border-2 border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:bg-[var(--v2-surface-hover)] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                              style={{ borderRadius: 'var(--v2-radius-card)' }}
+                            >
+                              <div className="flex flex-col items-center text-center gap-2">
+                                <PlayCircle className="h-8 w-8 text-[var(--v2-primary)]" />
+                                <div>
+                                  <p className="font-semibold text-[var(--v2-text-primary)]">On-demand</p>
+                                  <p className="text-xs text-[var(--v2-text-muted)] mt-1">
+                                    Run manually when needed
+                                  </p>
+                                </div>
+                              </div>
+                            </button>
+
+                            <button
+                              onClick={() => setScheduleMode('scheduled')}
+                              className={`p-4 border-2 transition-all ${
+                                scheduleMode === 'scheduled'
+                                  ? 'border-[var(--v2-primary)] bg-[var(--v2-surface-hover)]'
+                                  : 'border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:bg-[var(--v2-surface-hover)]'
+                              }`}
+                              style={{ borderRadius: 'var(--v2-radius-card)' }}
+                            >
+                              <div className="flex flex-col items-center text-center gap-2">
+                                <Clock className="h-8 w-8 text-[var(--v2-primary)]" />
+                                <div>
+                                  <p className="font-semibold text-[var(--v2-text-primary)]">Scheduled</p>
+                                  <p className="text-xs text-[var(--v2-text-muted)] mt-1">
+                                    Run automatically on schedule
+                                  </p>
+                                </div>
+                              </div>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Schedule Configuration (shown when scheduled is selected) */}
+                        {scheduleMode === 'scheduled' && (
+                          <div className="space-y-4 pt-4 border-t border-[var(--v2-border)]">
+                            {/* Schedule Type Selection */}
+                            <div>
+                              <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-2">
+                                Frequency
+                              </label>
+                              <div className="grid grid-cols-4 gap-2">
+                                {(['hourly', 'daily', 'weekly', 'monthly'] as const).map((type) => (
+                                  <button
+                                    key={type}
+                                    onClick={() => setScheduleType(type)}
+                                    className={`px-3 py-2 text-sm font-medium transition-all ${
+                                      scheduleType === type
+                                        ? 'bg-[var(--v2-primary)] text-white'
+                                        : 'bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:border-[var(--v2-primary)]'
+                                    }`}
+                                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                  >
+                                    {type.charAt(0).toUpperCase() + type.slice(1)}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Time Selection (for daily/weekly/monthly) */}
+                            {scheduleType && scheduleType !== 'hourly' && (
+                              <div>
+                                <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-2">
+                                  Time
+                                </label>
+                                <input
+                                  type="time"
+                                  value={scheduleTime}
+                                  onChange={(e) => setScheduleTime(e.target.value)}
+                                  className="px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] focus:outline-none focus:border-[var(--v2-primary)]"
+                                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                />
+                              </div>
+                            )}
+
+                            {/* Daily Options */}
+                            {scheduleType === 'daily' && (
+                              <div>
+                                <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-2">
+                                  Days
+                                </label>
+                                <div className="flex gap-2">
+                                  {(['everyday', 'weekdays', 'weekends'] as const).map((option) => (
+                                    <button
+                                      key={option}
+                                      onClick={() => setDailyOption(option)}
+                                      className={`px-3 py-2 text-sm font-medium transition-all ${
+                                        dailyOption === option
+                                          ? 'bg-[var(--v2-primary)] text-white'
+                                          : 'bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:border-[var(--v2-primary)]'
+                                      }`}
+                                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                    >
+                                      {option === 'everyday' ? 'Every day' : option.charAt(0).toUpperCase() + option.slice(1)}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Weekly Day Selection */}
+                            {scheduleType === 'weekly' && (
+                              <div>
+                                <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-2">
+                                  Days of week
+                                </label>
+                                <div className="grid grid-cols-7 gap-2">
+                                  {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day) => (
+                                    <button
+                                      key={day}
+                                      onClick={() => handleDayToggle(day)}
+                                      className={`px-2 py-2 text-xs font-medium transition-all ${
+                                        selectedDays.includes(day)
+                                          ? 'bg-[var(--v2-primary)] text-white'
+                                          : 'bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:border-[var(--v2-primary)]'
+                                      }`}
+                                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                    >
+                                      {day.slice(0, 3)}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Monthly Day Selection */}
+                            {scheduleType === 'monthly' && (
+                              <div>
+                                <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-2">
+                                  Day of month
+                                </label>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="31"
+                                  value={selectedMonthDay}
+                                  onChange={(e) => setSelectedMonthDay(e.target.value)}
+                                  className="px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] focus:outline-none focus:border-[var(--v2-primary)]"
+                                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                />
+                              </div>
+                            )}
+
+                            {/* Schedule Preview */}
+                            {scheduleType && (
+                              <div className="p-3 bg-[var(--v2-surface-hover)] border border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                                <p className="text-sm text-[var(--v2-text-secondary)]">
+                                  <span className="font-medium">Schedule: </span>
+                                  {getScheduleDescription()}
+                                </p>
+                              </div>
+                            )}
+
+                            {/* Confirm Button */}
+                            <button
+                              onClick={handleScheduledConfirm}
+                              disabled={!scheduleType || isCreatingAgent}
+                              className="w-full px-6 py-3 bg-gradient-to-r from-emerald-500 to-green-600 text-white font-semibold flex items-center justify-center gap-2 transition-all hover:from-emerald-600 hover:to-green-700 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                              style={{ borderRadius: 'var(--v2-radius-button)', boxShadow: 'var(--v2-shadow-button)' }}
+                            >
+                              {isCreatingAgent ? (
+                                <>
+                                  <Loader2 className="h-5 w-5 animate-spin" />
+                                  Creating agent...
+                                </>
+                              ) : (
+                                <>
+                                  <CheckCircle className="h-5 w-5" />
+                                  Confirm Schedule
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </Card>
+                  </div>
+                )}
+
+                {/* Agent Draft - Final Review before Creation */}
+                {isAwaitingFinalApproval && enhancedPromptData && (
+                  <div className="flex justify-start mt-4">
+                    <div className="w-8 h-8 flex-shrink-0" /> {/* Spacer for alignment */}
+
+                    <div className="flex-1 max-w-3xl space-y-4">
+                      {/* Header */}
+                      <div className="flex items-center gap-2 mb-4">
+                        <div
+                          className="w-6 h-6 bg-gradient-to-r from-emerald-500 to-green-600 flex items-center justify-center"
+                          style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        >
+                          <FileText className="h-4 w-4 text-white" />
+                        </div>
+                        <h4 className="font-semibold text-[var(--v2-text-primary)]">Agent Draft</h4>
+                      </div>
+
+                      {/* Agent Draft Card */}
+                      <div
+                        className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-5 space-y-4"
+                        style={{ borderRadius: 'var(--v2-radius-card)', boxShadow: 'var(--v2-shadow-card)' }}
+                      >
+                        {/* Plan Title */}
+                        {enhancedPromptData.plan_title && (
+                          <div className="pb-3 border-b border-[var(--v2-border)]">
+                            <h3 className="text-lg font-bold text-[var(--v2-text-primary)]">
+                              📋 {enhancedPromptData.plan_title}
+                            </h3>
+                          </div>
+                        )}
+
+                        {/* Description */}
+                        {enhancedPromptData.plan_description && (
+                          <div>
+                            <h4 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-2">
+                              📝 Description
+                            </h4>
+                            <p className="text-sm text-[var(--v2-text-secondary)] leading-relaxed">
+                              {enhancedPromptData.plan_description}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* How it works - Steps */}
+                        {enhancedPromptData.sections?.processing_steps && enhancedPromptData.sections.processing_steps.length > 0 && (
+                          <div>
+                            <h4 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-3">
+                              ⚙️ How it works ({enhancedPromptData.sections.processing_steps.length} steps)
+                            </h4>
+                            <div className="space-y-3">
+                              {enhancedPromptData.sections.processing_steps.map((step: string, stepIndex: number) => (
+                                <div key={stepIndex} className="flex gap-3">
+                                  <div
+                                    className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold"
+                                    style={{ background: 'linear-gradient(135deg, var(--v2-primary), var(--v2-secondary))' }}
+                                  >
+                                    {stepIndex + 1}
+                                  </div>
+                                  <div className="flex-1">
+                                    <p className="text-sm text-[var(--v2-text-secondary)] leading-relaxed">{step}</p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Required Services/Plugins */}
+                        {requiredServices.length > 0 && (
+                          <div>
+                            <h4 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-2 flex items-center gap-1">
+                              <Plug className="h-3 w-3" />
+                              Required Services
+                            </h4>
+                            <div className="grid grid-cols-2 gap-2">
+                              {requiredServices.map((service: string) => {
+                                const isConnected = connectedPlugins.includes(service)
+                                return (
+                                  <div
+                                    key={service}
+                                    className={`flex items-center gap-2 px-3 py-2 text-sm font-medium ${
+                                      isConnected
+                                        ? 'bg-[var(--v2-status-success-bg)] text-[var(--v2-status-success-text)] border border-[var(--v2-status-success-border)]'
+                                        : 'bg-[var(--v2-status-warning-bg)] text-[var(--v2-status-warning-text)] border border-[var(--v2-status-warning-border)]'
+                                    }`}
+                                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                  >
+                                    {isConnected ? (
+                                      <CheckCircle className="h-4 w-4" />
+                                    ) : (
+                                      <AlertCircle className="h-4 w-4" />
+                                    )}
+                                    <span className="capitalize">{service.replace(/-/g, ' ')}</span>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Input Parameters */}
+                        {Object.keys(inputParameterValues).length > 0 && (
+                          <div>
+                            <h4 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-2 flex items-center gap-1">
+                              <Settings className="h-3 w-3" />
+                              Configuration
+                            </h4>
+                            <div className="space-y-2">
+                              {Object.entries(inputParameterValues).map(([key, value]) => {
+                                // Find the input schema for this parameter to get the label
+                                const paramSchema = requiredInputs.find((input: any) => input.name === key)
+                                const label = paramSchema?.label || key.replace(/_/g, ' ')
+
+                                return (
+                                  <div
+                                    key={key}
+                                    className="flex items-start gap-2 px-3 py-2 bg-[var(--v2-surface-hover)]"
+                                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                  >
+                                    <span className="text-sm text-[var(--v2-text-muted)] capitalize min-w-[120px]">
+                                      {label}:
+                                    </span>
+                                    <span className="text-sm text-[var(--v2-text-primary)] font-medium">
+                                      {typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)}
+                                    </span>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Scheduling */}
+                        <div>
+                          <h4 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-2 flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            Schedule
+                          </h4>
+                          <div
+                            className="px-3 py-2 bg-[var(--v2-surface-hover)]"
+                            style={{ borderRadius: 'var(--v2-radius-button)' }}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-[var(--v2-text-secondary)]">
+                                {selectedScheduleMode === 'on_demand' ? (
+                                  <>
+                                    <span className="font-semibold">Mode:</span> Manual trigger only
+                                  </>
+                                ) : scheduleCron ? (
+                                  <>
+                                    <span className="font-semibold">Runs:</span> {formatScheduleDisplay('scheduled', scheduleCron)}
+                                    {scheduleTimezone && scheduleTimezone !== 'UTC' && (
+                                      <span className="text-xs text-[var(--v2-text-muted)] ml-2">
+                                        ({scheduleTimezone})
+                                      </span>
+                                    )}
+                                  </>
+                                ) : (
+                                  <>
+                                    <span className="font-semibold">Mode:</span> Manual trigger only
+                                  </>
+                                )}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Review Text and Buttons */}
+                        <div className="pt-3 border-t border-[var(--v2-border)] space-y-4">
+                          <p className="text-sm text-[var(--v2-text-muted)]">
+                            Review your agent configuration. Click Approve to create your agent, or Cancel to go back.
+                          </p>
+
+                          {/* Action Buttons */}
+                          <div className="grid grid-cols-2 gap-3">
+                            <button
+                              onClick={handleFinalApprove}
+                              disabled={isCreatingAgent}
+                              className="px-6 py-3 bg-gradient-to-r from-emerald-500 to-green-600 text-white font-semibold flex items-center justify-center gap-2 transition-all hover:from-emerald-600 hover:to-green-700 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                              style={{ borderRadius: 'var(--v2-radius-button)', boxShadow: 'var(--v2-shadow-button)' }}
+                            >
+                              {isCreatingAgent ? (
+                                <>
+                                  <Loader2 className="h-5 w-5 animate-spin" />
+                                  Creating...
+                                </>
+                              ) : (
+                                <>
+                                  <CheckCircle className="h-5 w-5" />
+                                  Approve
+                                </>
+                              )}
+                            </button>
+
+                            <button
+                              onClick={handleFinalCancel}
+                              disabled={isCreatingAgent}
+                              className="px-6 py-3 bg-[var(--v2-surface)] border-2 border-[var(--v2-border)] text-[var(--v2-text-primary)] font-semibold flex items-center justify-center gap-2 transition-all hover:border-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                              style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            >
+                              <X className="h-5 w-5" />
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Plugin Connection Cards - OAuth Gate UI */}
                 {showPluginCards && missingPlugins.length > 0 && (
                   <div className="flex justify-start mt-4">
@@ -1587,12 +2396,12 @@ function V2AgentBuilderContent() {
                       }
                     }}
                     placeholder={isAwaitingFeedback ? "Describe what you'd like to change..." : "Type your answer or question..."}
-                    disabled={isSending || builderState.planApproved}
+                    disabled={isSending || (builderState.planApproved && !isAwaitingInputParameter && !isAwaitingSchedule)}
                     className="flex-1 px-3 py-2 bg-white dark:bg-gray-800 border border-[var(--v2-border)] rounded-lg text-sm text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
                   />
                   <button
                     onClick={handleSend}
-                    disabled={isSending || !inputValue.trim() || builderState.planApproved}
+                    disabled={isSending || !inputValue.trim() || (builderState.planApproved && !isAwaitingInputParameter && !isAwaitingSchedule)}
                     className="px-4 py-2 bg-[var(--v2-primary)] text-white rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}

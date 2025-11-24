@@ -2702,21 +2702,350 @@ input_schema: analysis.required_inputs.map(input => ({
 
 ---
 
-**Current Status**: ✅ **Phase 1-13 Complete - V2 Migration Ready with Expanded Setup Progress**
+## Phase 14: Input Parameters & Agent Draft Implementation
 
-**Total Development Time**: 3+ weeks
-**Total Files Modified**: 7 files
-**Total Lines Added**: ~1050 lines
-**Latest Features**: Phase 13 - Setup Progress Expansion & Input Schema Defaults
-**Previous Features**: Layout Restructuring, V10 Implementation, v9 Schema Array Rendering, Animated Typing Indicators, Chat Scroll Fix, Avatar Icons, Enhanced Prompt Accordion, Question Progress, Service Status, V2 Design System
+### Overview
+Implemented the complete Input Parameters flow (Step 5), Agent Draft final review (Step 7), and integrated scheduling selection with full agent creation pipeline.
 
-**Ready for**: ✅ User Testing | ✅ Production Deployment | ✅ Feature Extensions | 🔜 Input Parameters & Scheduling Implementation
+### Feature 1: Input Parameters Collection Flow
+
+**Problem**: After plan approval, users need to configure required input parameters before creating the agent.
+
+**Solution** ([app/v2/agents/new/page.tsx:726-756](app/v2/agents/new/page.tsx#L726-L756)):
+
+```typescript
+// Add resolved_user_inputs to inputParameterValues
+if (enhancedPromptData?.specifics?.resolved_user_inputs) {
+  const resolvedInputs: Record<string, any> = {}
+  enhancedPromptData.specifics.resolved_user_inputs.forEach((input: { key: string; value: string }) => {
+    resolvedInputs[input.key] = input.value
+  })
+  setInputParameterValues(prev => ({ ...prev, ...resolvedInputs }))
+}
+
+// Check for required input parameters
+const requiredParams = generatedAgent.agent.input_schema?.filter(
+  (input: any) => input.required === true
+) || []
+
+if (requiredParams.length > 0) {
+  // Start input parameters flow - ask one at a time
+  setRequiredInputs(requiredParams)
+  setCurrentInputIndex(0)
+  setIsAwaitingInputParameter(true)
+  addAIMessage("Great! Now let's configure the agent's settings.")
+
+  const firstParam = requiredParams[0]
+  addAIMessage(`What value should I use for **${firstParam.label || firstParam.name}**?\n\n${firstParam.description || ''}`)
+}
+```
+
+**Key Features**:
+- Sequential one-at-a-time question flow
+- Merges AI-resolved inputs with user-provided inputs
+- Type-specific validation (string, number, boolean, date, enum, select)
+- Error handling with retry on validation failure
+- Progress tracking in Setup Progress sidebar
+
+**Validation Function** ([page.tsx:1231-1281](app/v2/agents/new/page.tsx#L1231-L1281)):
+```typescript
+const validateInputParameter = (value: string, param: any) => {
+  switch (param.type) {
+    case 'number':
+      // Validates numeric input
+    case 'boolean':
+      // Validates true/false/yes/no
+    case 'date':
+      // Validates date format
+    case 'enum':
+    case 'select':
+      // Validates against allowed options
+    // ... etc
+  }
+}
+```
 
 ---
 
-**Document Version**: 1.6
-**Last Updated**: 2025-11-23 (Added Phase 13 - Setup Progress Expansion & Input Schema Defaults)
+### Feature 2: Agent Draft Final Review
+
+**Problem**: Users need to review all configuration (plan, plugins, inputs, schedule) before final approval.
+
+**Solution** ([app/v2/agents/new/page.tsx:2054-2262](app/v2/agents/new/page.tsx#L2054-L2262)):
+
+Created comprehensive review card showing:
+- **Plan Title & Description** - From enhanced plan
+- **How it Works** - Processing steps with numbered badges
+- **Required Services/Plugins** - Connection status indicators
+- **Configuration** - All input parameter values
+- **Schedule** - Human-readable schedule format
+- **Action Buttons**: Approve (creates agent) / Cancel (returns to dashboard)
+
+```typescript
+{/* Agent Draft - Final Review */}
+{isAwaitingFinalApproval && enhancedPromptData && (
+  <div className="flex-1 max-w-3xl space-y-4">
+    {/* Plan Title, Description, Steps, Plugins, Config, Schedule */}
+
+    {/* Action Buttons */}
+    <button onClick={handleFinalApprove}>Approve</button>
+    <button onClick={handleFinalCancel}>Cancel</button>
+  </div>
+)}
+```
+
+**Approval Flow**:
+1. User reviews complete configuration
+2. Clicks "Approve" → Shows "Creating agent..." indicator
+3. Creates agent via `/api/create-agent`
+4. Saves input parameters via `/api/agent-configurations/save-inputs`
+5. Shows success message
+6. Navigates to agent detail page
+
+**Cancel Flow**:
+- Navigates to `/v2/dashboard`
+- Exits agent creation entirely
+
+---
+
+### Feature 3: Setup Progress - Agent Ready Step
+
+**Problem**: "Agent Ready" step was turning green too early (when plan approved, before scheduling).
+
+**Solution** ([app/v2/agents/new/page.tsx:1464-1491](app/v2/agents/new/page.tsx#L1464-L1491)):
+
+```typescript
+{/* Step 7: Agent Ready */}
+<div className={`flex items-start gap-3 p-3 rounded-lg border ${
+  isAwaitingFinalApproval
+    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'  // Blue during review
+    : agentCreated
+    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'  // Green after creation
+    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'  // Gray default
+}`}>
+  {isAwaitingFinalApproval ? (
+    <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
+  ) : agentCreated ? (
+    <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
+  ) : (
+    <div className="w-5 h-5 border-2 border-gray-300 rounded-full"></div>
+  )}
+  {/* ... */}
+</div>
+```
+
+**State Transitions**:
+- **Gray** → Before scheduling complete
+- **Blue** (pulsing) → Reviewing agent draft
+- **Green** (checkmark) → Agent created successfully
+
+---
+
+### Feature 4: Input Field Disabled Logic
+
+**Problem**: Input field stayed disabled during input parameters and scheduling.
+
+**Solution** ([app/v2/agents/new/page.tsx:2393](app/v2/agents/new/page.tsx#L2393)):
+
+```typescript
+disabled={isSending || (builderState.planApproved && !isAwaitingInputParameter && !isAwaitingSchedule)}
+```
+
+**Logic**:
+- Enabled during input parameter collection
+- Enabled during scheduling selection
+- Disabled after plan approved (when showing agent draft with buttons)
+
+---
+
+### Feature 5: Save Inputs After Agent Creation
+
+**Problem**: Input parameters were being saved before agent existed in database.
+
+**Solution** ([app/v2/agents/new/page.tsx:821-843](app/v2/agents/new/page.tsx#L821-L843)):
+
+Moved save-inputs API call to **after** create-agent succeeds:
+
+```typescript
+// Create agent first
+const result = await createRes.json()
+
+// Then save input parameters using returned agent ID
+if (Object.keys(inputParameterValues).length > 0 && result.agent?.id) {
+  const saveInputsRes = await fetch('/api/agent-configurations/save-inputs', {
+    method: 'POST',
+    body: JSON.stringify({
+      agent_id: result.agent.id,  // Use agent ID from creation response
+      input_values: inputParameterValues,
+      input_schema: requiredInputs
+    })
+  })
+}
+```
+
+---
+
+### Feature 6: Auto-Scroll Improvements
+
+**Problem**: Page didn't auto-scroll when scheduling UI updated (selecting options, setting time).
+
+**Solution** ([app/v2/agents/new/page.tsx:159-162](app/v2/agents/new/page.tsx#L159-L162)):
+
+```typescript
+// Auto-scroll to bottom when messages or UI state changes
+useEffect(() => {
+  messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+}, [messages, scheduleType, scheduleTime, selectedDays, selectedMonthDay, isAwaitingSchedule, isAwaitingFinalApproval])
+```
+
+**Triggers auto-scroll on**:
+- New messages added
+- Schedule type changed (daily/weekly/monthly)
+- Schedule time set
+- Days selected (weekly)
+- Agent draft appears
+
+---
+
+### Feature 7: Plan Summary Enhancement
+
+**Problem**: Plan summary only showed description, not title.
+
+**Solution** ([app/v2/agents/new/page.tsx:987-993](app/v2/agents/new/page.tsx#L987-L993)):
+
+```typescript
+const planSummary = enhancedPromptData.plan_title
+  ? `📋 ${enhancedPromptData.plan_title}\n\n${enhancedPromptData.plan_description}`
+  : enhancedPromptData.plan_description
+addPlanSummary(planSummary)
+```
+
+Now shows:
+```
+📋 Email Automation Agent
+
+Monitors inbox and sends scheduled reports...
+```
+
+---
+
+### Complete Flow Sequence
+
+1. **Plan Approval** → User clicks "Yes, perfect!"
+2. **Plan Summary** → Minimized plan card added to chat (muted)
+3. **Typing Indicator** → "Drafting your agent based on the enhanced plan..."
+4. **Generate Agent** → Calls generate-agent-v2 API
+5. **Draft Ready** → "✨ Agent draft ready!"
+6. **Resolved Inputs** → AI-inferred inputs added to state
+7. **Input Parameters** → Ask user for required inputs one-by-one
+8. **Input Validation** → Type-specific validation with retry on error
+9. **Scheduling** → User selects when agent runs
+10. **Transition Message** → "Great! Let me prepare your agent draft for review..."
+11. **Agent Draft Card** → Full review with all configuration
+12. **User Approval** → Clicks "Approve" button
+13. **Creating Agent** → "Creating agent..." indicator
+14. **Save to Database** → Calls /api/create-agent
+15. **Save Input Values** → Calls /api/agent-configurations/save-inputs
+16. **Success Message** → "🎉 Your agent has been created successfully!"
+17. **Navigation** → Redirects to agent detail page
+
+---
+
+### State Variables Added
+
+```typescript
+// Input Parameters flow
+const [requiredInputs, setRequiredInputs] = useState<any[]>([])
+const [currentInputIndex, setCurrentInputIndex] = useState(-1)
+const [inputParameterValues, setInputParameterValues] = useState<Record<string, any>>({})
+const [isAwaitingInputParameter, setIsAwaitingInputParameter] = useState(false)
+const [inputParametersComplete, setInputParametersComplete] = useState(false)
+
+// Final approval
+const [isAwaitingFinalApproval, setIsAwaitingFinalApproval] = useState(false)
+const [agentCreated, setAgentCreated] = useState(false)
+
+// Final schedule configuration
+const [selectedScheduleMode, setSelectedScheduleMode] = useState<'on_demand' | 'scheduled'>('on_demand')
+const [scheduleCron, setScheduleCron] = useState<string | null>(null)
+const [scheduleTimezone, setScheduleTimezone] = useState<string>('UTC')
+```
+
+---
+
+### Setup Progress - Complete State Matrix
+
+| Step | Initial | Active | Complete |
+|------|---------|--------|----------|
+| 1. Initial Request | Gray | Blue | Green |
+| 2. Analysis Complete | Gray | Blue | Green → stays green |
+| 3. Clarification Questions | Gray | Blue | Green → stays green |
+| 4. Plan Creation | Gray | Blue | Green → stays green |
+| 5. Input Parameters | Gray | Blue (collecting) | Green (complete) |
+| 6. Scheduling | Gray | Blue (selecting) | Green (confirmed) |
+| 7. Agent Ready | Gray | Blue (reviewing draft) | Green (created) |
+
+All previous steps stay green as user progresses through flow.
+
+---
+
+### Code References
+
+**Files Modified for Phase 14:**
+
+1. **`app/v2/agents/new/page.tsx`**
+   - Added input parameters collection flow (lines 726-756, 900-958)
+   - Added validation function (lines 1231-1281)
+   - Added agent draft UI card (lines 2054-2262)
+   - Updated Agent Ready step logic (lines 1464-1491)
+   - Fixed input field disabled logic (line 2393)
+   - Moved save-inputs after agent creation (lines 821-843)
+   - Enhanced auto-scroll triggers (line 162)
+   - Enhanced plan summary with title (lines 989-991)
+   - Added state variables for input params and final approval (lines 126-163)
+
+2. **`lib/utils/scheduleFormatter.ts`**
+   - Imported for human-readable schedule display in agent draft
+
+---
+
+### Testing Checklist
+
+- [x] Required input parameters collected one at a time
+- [x] Input validation works for all types (string, number, boolean, date, enum, select)
+- [x] Validation errors show and allow retry
+- [x] Resolved user inputs merged into inputParameterValues
+- [x] Setup Progress Step 5 (Input Parameters) transitions gray → blue → green
+- [x] Scheduling UI shows and allows configuration
+- [x] Setup Progress Step 6 (Scheduling) transitions gray → blue → green
+- [x] Agent draft card displays all configuration correctly
+- [x] Setup Progress Step 7 (Agent Ready) shows blue during review
+- [x] Approve button creates agent and saves inputs
+- [x] Agent Ready step turns green after creation
+- [x] Success message shows and navigates to agent detail
+- [x] Cancel button returns to dashboard
+- [x] Auto-scroll works during scheduling UI updates
+- [x] Plan summary shows title and description
+- [x] Input field enabled during input params and scheduling
+- [x] All previous steps stay green throughout flow
+
+---
+
+**Current Status**: ✅ **Phase 1-14 Complete - Full Agent Creation Pipeline Implemented**
+
+**Total Development Time**: 4+ weeks
+**Total Files Modified**: 8 files
+**Total Lines Added**: ~1500 lines
+**Latest Features**: Phase 14 - Input Parameters Collection, Agent Draft Review, Final Approval Flow
+**Previous Features**: Setup Progress Expansion, Layout Restructuring, V10 Implementation, v9 Schema Array Rendering, Animated Typing Indicators, Chat Scroll Fix, Avatar Icons, Enhanced Prompt Accordion, Question Progress, Service Status, V2 Design System
+
+**Ready for**: ✅ User Testing | ✅ Production Deployment | ✅ Feature Extensions
+
+---
+
+**Document Version**: 1.7
+**Last Updated**: 2025-11-25 (Added Phase 14 - Input Parameters & Agent Draft Implementation)
 **Author**: Development Team
-**Status**: Migration Complete - Phase 13 Setup Progress Expansion - Ready for Testing
+**Status**: Migration Complete - Phase 14 Full Pipeline - Ready for Production
 
 **Migration completed from**: `components/agent-creation/conversational/` → `app/v2/agents/new/page.tsx`
