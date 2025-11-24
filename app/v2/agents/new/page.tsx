@@ -39,6 +39,8 @@ import {
 import { useAgentBuilderState } from '@/hooks/useAgentBuilderState'
 import { useAgentBuilderMessages } from '@/hooks/useAgentBuilderMessages'
 import { getPluginAPIClient } from '@/lib/client/plugin-api-client'
+import type { GenerateAgentV2Response } from '@/components/agent-creation/types/generate-agent-v2'
+import { isGenerateAgentV2Success } from '@/components/agent-creation/types/generate-agent-v2'
 
 function V2AgentBuilderContent() {
   const searchParams = useSearchParams()
@@ -652,13 +654,21 @@ function V2AgentBuilderContent() {
         })
       })
 
-      if (!generateRes.ok) {
-        const errorData = await generateRes.json()
-        throw new Error(errorData.error || 'Failed to generate agent')
+      const generatedAgent: GenerateAgentV2Response = await generateRes.json()
+
+      if (!isGenerateAgentV2Success(generatedAgent)) {
+        throw new Error(generatedAgent.error || 'Failed to generate agent')
       }
 
-      const generatedAgent = await generateRes.json()
-      console.log('✅ Agent generated:', generatedAgent.agent?.agent_name)
+      console.log('✅ Agent generated:', generatedAgent.agent.agent_name)
+
+      // TODO: TEMP - Remove after testing
+      // Stop flow after generate-agent-v2 for testing purposes
+      console.log('🛑 [TEMP] Stopping flow after generate-agent-v2 for testing')
+      addAIMessage(`Agent "${generatedAgent.agent.agent_name}" generated successfully! (Flow stopped for testing)`)
+      setIsCreatingAgent(false)
+      return
+      // END TEMP
 
       // Step 3: Build agent_config metadata
       const agentConfig = {
@@ -674,11 +684,11 @@ function V2AgentBuilderContent() {
           enhanced_prompt_data: enhancedPromptData // Structured v9 data
         },
         ai_context: {
-          reasoning: generatedAgent.agent?.ai_reasoning || '',
-          confidence: generatedAgent.agent?.ai_confidence || 0,
+          reasoning: generatedAgent.agent.ai_reasoning || '',
+          confidence: generatedAgent.agent.ai_confidence || 0,
           original_prompt: initialPrompt,
           enhanced_prompt: builderState.enhancedPrompt,
-          generated_plan: generatedAgent.agent?.generated_plan || ''
+          generated_plan: (generatedAgent.agent as any).generated_plan || ''
         }
       }
 
@@ -922,7 +932,7 @@ function V2AgentBuilderContent() {
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto_3fr] gap-4 lg:gap-6 items-start">
           {/* Left Column - Setup Progress (hidden on mobile) */}
           <div className="hidden lg:block space-y-4 sm:space-y-5">
-            <Card className="!p-4 sm:!p-6 min-h-[800px] flex flex-col">
+            <Card className="!p-4 sm:!p-6 h-[800px] max-h-[calc(100vh-120px)] flex flex-col overflow-hidden">
               <div className="flex items-center gap-3 mb-4">
                 <Settings className="w-6 h-6 text-[#06B6D4]" />
                 <div>
@@ -1127,7 +1137,7 @@ function V2AgentBuilderContent() {
 
           {/* Right Column - Agent Builder Chat (Extended Width) */}
           <div className="space-y-4 sm:space-y-5">
-            <Card className="!p-4 sm:!p-6 min-h-[800px] flex flex-col">
+            <Card className="!p-4 sm:!p-6 h-[800px] max-h-[calc(100vh-120px)] flex flex-col">
               <div className="flex items-center gap-3 mb-4">
                 <MessageSquare className="w-6 h-6 text-[#8B5CF6]" />
                 <div>
@@ -1418,8 +1428,8 @@ function V2AgentBuilderContent() {
                               </div>
                             )}
 
-                            {/* V10: Resolved User Inputs */}
-                            {enhancedPromptData.specifics?.resolved_user_inputs &&
+                            {/* V10: Resolved User Inputs - TEMP: Hidden, condition TBD */}
+                            {false && enhancedPromptData.specifics?.resolved_user_inputs &&
                              enhancedPromptData.specifics.resolved_user_inputs.length > 0 && (
                               <div>
                                 <h4 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-2 flex items-center gap-1">

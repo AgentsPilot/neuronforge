@@ -13,8 +13,15 @@ import { AuditTrailService } from '@/lib/services/AuditTrailService'
 import { AUDIT_EVENTS } from '@/lib/audit/events'
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics'
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2'
+import type {
+  GenerateAgentV2SuccessResponse,
+  GeneratedAgentData
+} from '@/components/agent-creation/types/generate-agent-v2'
 
 export const runtime = 'nodejs'
+
+// Debug mode - set to true to log full response before sending
+const DEBUG = process.env.NODE_ENV === 'development'
 
 // Initialize Supabase service client for analytics
 const supabaseServiceRole = createClient(
@@ -465,9 +472,9 @@ export async function POST(req: Request) {
 
     // DON'T save to database yet - return agent data for user review
     // User will save it through the wizard when they click "Save Agent"
-    return NextResponse.json({
+    const response: GenerateAgentV2SuccessResponse = {
       success: true,
-      agent: agentData,
+      agent: agentData as GeneratedAgentData,
       agentId: agentId,
       sessionId: sessionId,
       extraction_details: {
@@ -483,7 +490,14 @@ export async function POST(req: Request) {
         agentId: agentId,
         sessionId: sessionId
       }
-    })
+    }
+
+    // Debug: Log full response before sending to client
+    if (DEBUG) {
+      console.log('🔍 [DEBUG] generate-agent-v2 response:', JSON.stringify(response, null, 2))
+    }
+
+    return NextResponse.json(response)
 
   } catch (error: any) {
     console.error('❌ AgentKit Agent Generation V2 Error:', error)
