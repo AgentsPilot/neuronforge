@@ -8,23 +8,55 @@ import { PILOT_DSL_SCHEMA } from '@/lib/pilot/schema';
 export interface AnalyzedWorkflowStep {
   id: string;
   operation: string;
-  type: 'plugin_action' | 'ai_processing' | 'conditional' | 'transform' | 'human_approval';
-  plugin: string;
-  plugin_action: string;
+  type: 'plugin_action' | 'ai_processing' | 'conditional' | 'loop' | 'switch' | 'scatter_gather' | 'enrichment' | 'transform' | 'human_approval' | 'parallel_group' | 'sub_workflow' | 'delay' | 'validation' | 'comparison';
+  plugin?: string;
+  plugin_action?: string;
   params?: Record<string, any>; // Parameters to pass to plugin action
   dependencies: string[];
   reasoning: string;
+
   // Conditional-specific fields
   condition?: {
     field: string;
     operator: string;
     value: any;
   };
-  // Conditional execution
+
+  // Conditional execution (for steps within branches)
   executeIf?: {
     field: string;
     operator: string;
     value: any;
+  };
+
+  // Loop-specific fields
+  items?: string;  // Variable reference to array to iterate over (e.g., "{{step1.data.customers}}")
+  maxIterations?: number;  // Safety limit for loops
+  steps?: AnalyzedWorkflowStep[];  // Nested steps to execute in loop
+
+  // Switch-specific fields
+  evaluate?: string;  // Expression to evaluate for switch
+  cases?: Record<string, string[]>;  // Map of case values to step IDs
+  default?: string[];  // Default case step IDs
+
+  // Scatter-gather specific
+  scatter?: {
+    input: string;
+    steps: AnalyzedWorkflowStep[];
+    maxConcurrency?: number;
+  };
+  gather?: {
+    operation: 'collect' | 'merge' | 'reduce';
+    mergeStrategy?: string;
+  };
+
+  // Enrichment specific
+  source?: string;
+  enrichWith?: {
+    plugin: string;
+    action: string;
+    lookupField: string;
+    returnFields: string[];
   };
 }
 
