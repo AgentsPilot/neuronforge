@@ -142,6 +142,44 @@ function findSimilarParam(
   return null
 }
 
+/**
+ * Validate that input names referenced in workflow match declared inputs
+ * Returns missing and unused inputs for auto-correction
+ */
+function validateInputNameConsistency(
+  workflowSteps: any[],
+  requiredInputs: any[]
+): { missingInputs: string[]; unusedInputs: string[] } {
+  const referencedInputs = new Set<string>()
+  const declaredInputs = new Set(requiredInputs.map(i => i.name))
+
+  // Recursively extract all {{input.X}} references from workflow steps
+  function extractInputReferences(obj: any): void {
+    if (!obj) return
+
+    if (typeof obj === 'string') {
+      // Match {{input.field_name}} patterns
+      const matches = obj.matchAll(/\{\{input\.(\w+)\}\}/g)
+      for (const match of matches) {
+        referencedInputs.add(match[1])
+      }
+    } else if (Array.isArray(obj)) {
+      obj.forEach(item => extractInputReferences(item))
+    } else if (typeof obj === 'object') {
+      Object.values(obj).forEach(value => extractInputReferences(value))
+    }
+  }
+
+  // Extract from all workflow steps (including nested)
+  workflowSteps.forEach(step => extractInputReferences(step))
+
+  // Find discrepancies
+  const missingInputs = [...referencedInputs].filter(i => !declaredInputs.has(i))
+  const unusedInputs = [...declaredInputs].filter(i => !referencedInputs.has(i))
+
+  return { missingInputs, unusedInputs }
+}
+
 export async function POST(req: Request) {
   try {
     const {
@@ -252,6 +290,38 @@ export async function POST(req: Request) {
       console.log('🔧 Applied parameter fixes:', paramFixes)
     }
 
+    // ========================================
+    // 🔍 VALIDATE INPUT NAME CONSISTENCY
+    // ========================================
+    // Ensure that input names referenced in workflow match declared inputs
+    const inputConsistencyCheck = validateInputNameConsistency(
+      analysis.workflow_steps,
+      analysis.required_inputs
+    )
+
+    if (inputConsistencyCheck.missingInputs.length > 0) {
+      console.warn('⚠️ Referenced inputs not declared in schema:', inputConsistencyCheck.missingInputs)
+
+      // Auto-add missing inputs
+      const autoAddedInputs = inputConsistencyCheck.missingInputs.map(inputName => ({
+        name: inputName,
+        type: 'text' as const,
+        label: inputName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+        required: true,
+        description: `Auto-detected input parameter: ${inputName}`,
+        placeholder: `Enter ${inputName.replace(/_/g, ' ')}`,
+        reasoning: 'Auto-added from workflow parameter reference'
+      }))
+
+      analysis.required_inputs.push(...autoAddedInputs)
+      console.log(`✅ Auto-added ${autoAddedInputs.length} missing inputs:`, autoAddedInputs.map(i => i.name))
+    }
+
+    if (inputConsistencyCheck.unusedInputs.length > 0) {
+      console.warn('⚠️ Declared inputs never used in workflow:', inputConsistencyCheck.unusedInputs)
+      // Don't remove - user might want these for future edits
+    }
+
     // Track AI analytics for the analysis call
     if (analysis.tokensUsed) {
       await aiAnalytics.trackAICall({
@@ -318,6 +388,27 @@ export async function POST(req: Request) {
     // workflow_steps is kept for backward compatibility with old agents
     const pilot_steps = generatePilotSteps(analysis.workflow_steps, workflow_steps)
     console.log(`🚀 Generated ${pilot_steps.length} pilot_steps (normalized Pilot format)`)
+
+    // Validate workflow structure before proceeding
+    const { validateWorkflowStructure } = await import('@/lib/pilot/schema')
+    const validationResult = validateWorkflowStructure(pilot_steps)
+
+    if (!validationResult.valid) {
+      console.error('[generate-agent-v2] ❌ Workflow validation failed:', validationResult.errors)
+      return NextResponse.json(
+        {
+          error: 'Workflow validation failed',
+          details: validationResult.errors,
+          userMessage: 'The generated workflow has structural issues. Please try simplifying your request or contact support.'
+        },
+        { status: 400 }
+      )
+    }
+
+    console.log('✅ Workflow validation passed:', {
+      steps_count: pilot_steps.length,
+      warnings: validationResult.warnings
+    })
 
     // Helper function to convert legacy format to Pilot format
     function generatePilotSteps(analysisSteps: any[], legacySteps: any[]): any[] {

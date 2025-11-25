@@ -3,6 +3,7 @@
 
 import { openai, AGENTKIT_CONFIG } from './agentkitClient';
 import { convertPluginsToTools, getPluginContextPrompt } from './convertPlugins';
+import { PILOT_DSL_SCHEMA } from '@/lib/pilot/schema';
 
 export interface AnalyzedWorkflowStep {
   id: string;
@@ -432,6 +433,172 @@ Steps that should only run when a condition is true must include "executeIf":
 5. Sequential steps should have dependencies on previous step (e.g., step2 depends on step1)
 6. Conditional branches should depend on the conditional step
 
+# ⚡ LOOP WORKFLOWS - WHEN TO USE ⚡
+Use loops when you need to process EACH ITEM in a collection individually:
+
+**WHEN TO USE LOOPS:**
+- "Summarize each email individually"
+- "Process each row in the spreadsheet"
+- "For every customer, send a personalized message"
+- "Check each file for errors"
+- User says "for each", "every", "individually", "one by one"
+
+**WHEN NOT TO USE LOOPS:**
+- "Summarize ALL emails" (use single AI processing with all data)
+- "Get total count" (use transform step)
+- User wants aggregate result, not individual processing
+
+**LOOP STEP FORMAT:**
+{
+  "id": "process_emails",
+  "operation": "Process each email individually",
+  "type": "loop",
+  "items": "{{step1.data.emails}}",
+  "maxIterations": 100,
+  "steps": [
+    {
+      "id": "summarize_email",
+      "operation": "Summarize individual email",
+      "type": "ai_processing",
+      "plugin": "ai_processing",
+      "plugin_action": "process",
+      "params": {
+        "prompt": "Summarize: {{item.subject}} - {{item.body}}"
+      },
+      "dependencies": [],
+      "reasoning": "AI processing for each email"
+    }
+  ],
+  "dependencies": ["step1"],
+  "reasoning": "Need to process each email separately"
+}
+
+**EXAMPLE - Process Each Email Individually:**
+[
+  {"id": "step1", "operation": "Get last 10 emails", "type": "plugin_action", "plugin": "google-mail", "plugin_action": "search_emails", "params": {"max_results": 10}, "dependencies": []},
+  {"id": "step2", "operation": "Process each email", "type": "loop", "items": "{{step1.data.emails}}", "maxIterations": 10, "steps": [{"id": "step2_process", "operation": "Categorize email", "type": "ai_processing", "plugin": "ai_processing", "plugin_action": "process", "params": {"prompt": "Categorize this email: {{item.subject}}"}, "dependencies": []}], "dependencies": ["step1"]},
+  {"id": "step3", "operation": "Send results", "type": "plugin_action", "plugin": "google-mail", "plugin_action": "send_email", "params": {"recipients": {"to": ["{{input.recipient_email}}"]}, "content": {"subject": "Email Categories", "body": "{{step2.data.results}}"}}, "dependencies": ["step2"]}
+]
+
+**IMPORTANT LOOP RULES:**
+1. Loop steps MUST have "items" field pointing to an array variable
+2. Use "maxIterations" as safety limit (default: 100)
+3. Inside loop steps, reference current item with "{{item.fieldname}}"
+4. Loop steps can contain nested plugin actions or ai_processing
+5. Loop results are automatically aggregated into parent step output
+
+# ⚡ SWITCH/CASE WORKFLOWS - WHEN TO USE ⚡
+Use switch statements for MULTI-WAY branching based on a value:
+
+**WHEN TO USE SWITCH:**
+- "Route based on priority: high/medium/low"
+- "Handle different document types differently"
+- "Process by status: pending/approved/rejected"
+- "Different actions for each category"
+
+**SWITCH STEP FORMAT:**
+{
+  "id": "route_by_priority",
+  "operation": "Route ticket based on priority",
+  "type": "switch",
+  "evaluate": "{{step1.data.priority}}",
+  "cases": {
+    "high": ["step_urgent"],
+    "medium": ["step_normal"],
+    "low": ["step_later"]
+  },
+  "default": ["step_unknown"],
+  "dependencies": ["step1"],
+  "reasoning": "Multi-way routing by priority"
+}
+
+**EXAMPLE - Route Support Tickets:**
+[
+  {"id": "step1", "operation": "Extract ticket priority", "type": "ai_processing", "plugin": "ai_processing", "plugin_action": "process", "params": {"prompt": "Extract priority from: {{input.ticket_text}}"}, "dependencies": []},
+  {"id": "route_priority", "operation": "Route by priority", "type": "switch", "evaluate": "{{step1.data.priority}}", "cases": {"high": ["step_urgent"], "medium": ["step_normal"], "low": ["step_later"]}, "default": ["step_unknown"], "dependencies": ["step1"]},
+  {"id": "step_urgent", "operation": "Send urgent notification", "type": "plugin_action", "plugin": "google-mail", "plugin_action": "send_email", "params": {"recipients": {"to": ["urgent@company.com"]}, "content": {"subject": "URGENT", "body": "{{input.ticket_text}}"}}, "executeIf": {"field": "route_priority.data.matched_case", "operator": "==", "value": "high"}, "dependencies": ["route_priority"]},
+  {"id": "step_normal", "operation": "Add to queue", "type": "plugin_action", "plugin": "google-sheets", "plugin_action": "append_rows", "params": {"spreadsheet_id": "{{input.queue_sheet}}", "values": [["{{input.ticket_text}}"]]}, "executeIf": {"field": "route_priority.data.matched_case", "operator": "==", "value": "medium"}, "dependencies": ["route_priority"]}
+]
+
+**IMPORTANT SWITCH RULES:**
+1. "evaluate" field must reference a variable that resolves to a value
+2. "cases" is an object mapping values to arrays of step IDs
+3. "default" is optional array of step IDs for unmatched cases
+4. Case-specific steps should use "executeIf" to check which case matched
+
+# ⚡ SCATTER-GATHER PATTERN - PARALLEL + AGGREGATE ⚡
+Use scatter-gather for PARALLEL PROCESSING with result aggregation:
+
+**WHEN TO USE SCATTER-GATHER:**
+- "Fetch data from multiple APIs and combine"
+- "Process items in parallel, then summarize results"
+- "Query multiple sources simultaneously"
+- "Fan-out processing with fan-in aggregation"
+
+**SCATTER-GATHER FORMAT:**
+{
+  "id": "fetch_all_sources",
+  "operation": "Fetch from multiple data sources",
+  "type": "scatter_gather",
+  "scatter": {
+    "input": "{{input.source_list}}",
+    "steps": [
+      {"id": "fetch_api", "operation": "Fetch from API", "type": "plugin_action", "plugin": "api", "plugin_action": "get", "dependencies": []}
+    ],
+    "maxConcurrency": 5
+  },
+  "gather": {
+    "operation": "merge",
+    "mergeStrategy": "combine"
+  },
+  "dependencies": [],
+  "reasoning": "Parallel data fetching with aggregation"
+}
+
+**EXAMPLE - Multi-Source Data Aggregation:**
+[
+  {"id": "prepare_sources", "operation": "List data sources", "type": "ai_processing", "params": {"prompt": "Identify sources: {{input.topic}}"}, "dependencies": []},
+  {"id": "fetch_all", "operation": "Fetch from all sources", "type": "scatter_gather", "scatter": {"input": "{{prepare_sources.data.sources}}", "steps": [{"id": "fetch", "operation": "Fetch data", "type": "plugin_action", "plugin": "http", "plugin_action": "get", "params": {"url": "{{item.url}}"}, "dependencies": []}], "maxConcurrency": 3}, "gather": {"operation": "merge"}, "dependencies": ["prepare_sources"]},
+  {"id": "analyze", "operation": "Analyze combined data", "type": "ai_processing", "params": {"prompt": "Analyze: {{fetch_all.data}}"}, "dependencies": ["fetch_all"]}
+]
+
+# ⚡ ENRICHMENT PATTERN - ADD CONTEXT ⚡
+Use enrichment to ADD ADDITIONAL DATA to existing records:
+
+**WHEN TO USE ENRICHMENT:**
+- "Add customer details to each order"
+- "Lookup company info for each lead"
+- "Enrich contacts with social profiles"
+- "Add metadata to records"
+
+**ENRICHMENT FORMAT:**
+{
+  "id": "enrich_customers",
+  "operation": "Add customer details to orders",
+  "type": "enrichment",
+  "source": "{{step1.data.orders}}",
+  "enrichWith": {
+    "plugin": "database",
+    "action": "lookup",
+    "lookupField": "customer_id",
+    "returnFields": ["name", "email", "tier"]
+  },
+  "dependencies": ["step1"],
+  "reasoning": "Enrich orders with customer context"
+}
+
+**EXAMPLE - Enrich Leads with Company Data:**
+[
+  {"id": "step1", "operation": "Get new leads", "type": "plugin_action", "plugin": "hubspot", "plugin_action": "get_contacts", "params": {"filter": "new"}, "dependencies": []},
+  {"id": "enrich", "operation": "Add company details", "type": "enrichment", "source": "{{step1.data.contacts}}", "enrichWith": {"plugin": "clearbit", "action": "enrich", "lookupField": "email", "returnFields": ["company_name", "industry", "size"]}, "dependencies": ["step1"]},
+  {"id": "prioritize", "operation": "Score leads", "type": "ai_processing", "params": {"prompt": "Score these leads: {{enrich.data}}"}, "dependencies": ["enrich"]}
+]
+
+**IMPORTANT PATTERN RULES:**
+1. Scatter-gather for parallel operations that need aggregated results
+2. Enrichment for adding context to existing data
+3. Both patterns optimize for efficiency and performance
+
 # ⚡ CRITICAL - ALWAYS DETECT OUTPUT FORMAT ⚡
 EVERY SummaryBlock output MUST have a "format" field. Analyze the user's prompt and detect their desired format:
 
@@ -513,7 +680,14 @@ CRITICAL: Every plugin_action step MUST have a "params" field with proper variab
       ],
       temperature: 0.1,
       max_tokens: 3000,
-      response_format: { type: 'json_object' }
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'pilot_workflow',
+          strict: true,
+          schema: PILOT_DSL_SCHEMA
+        }
+      }
     });
 
     const rawResponse = completion.choices[0].message.content || '{}';

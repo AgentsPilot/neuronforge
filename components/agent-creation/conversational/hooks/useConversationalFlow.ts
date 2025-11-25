@@ -214,10 +214,23 @@ export function useConversationalFlow({
       console.error('Error in handleInitialPrompt:', error);
       setState(prev => ({ ...prev, isProcessing: false }));
 
+      // Provide specific error context based on error type
+      let errorMessage = 'Sorry, something went wrong. Please try again.';
+
+      if (error.message?.includes('timeout') || error.code === 'ETIMEDOUT') {
+        errorMessage = '⏱️ Request timed out. Please try again with a simpler prompt or check your connection.';
+      } else if (error.message?.includes('network') || error.message?.includes('fetch') || error.code === 'ENOTFOUND') {
+        errorMessage = '🌐 Network error occurred. Please check your internet connection and try again.';
+      } else if (error.message?.includes('unauthorized') || error.status === 401) {
+        errorMessage = '🔒 Authentication error. Please refresh the page and sign in again.';
+      } else if (error.message) {
+        errorMessage = `Sorry, I encountered an error: ${error.message}. Please try again or contact support if the problem persists.`;
+      }
+
       addMessage({
         type: 'ai',
         messageType: 'text',
-        content: `Sorry, something went wrong: ${error.message}. Please try again.`
+        content: errorMessage
       });
     }
   }, [addMessage, useThreadFlow, initializeThread, processMessageInThread]);
@@ -267,9 +280,18 @@ export function useConversationalFlow({
     }));
 
     try {
-      // Real OAuth flow using PluginAPIClient
+      // Real OAuth flow using PluginAPIClient with timeout
       const pluginClient = getPluginAPIClient();
-      const result = await pluginClient.connectPlugin(user.id, pluginKey);
+
+      // Add 60-second timeout for OAuth flow
+      const connectWithTimeout = Promise.race([
+        pluginClient.connectPlugin(user.id, pluginKey),
+        new Promise<{ success: false; error: string }>((_, reject) =>
+          setTimeout(() => reject(new Error('OAuth connection timed out after 60 seconds')), 60000)
+        )
+      ]);
+
+      const result = await connectWithTimeout;
 
       if (!result.success) {
         throw new Error(result.error || 'Failed to connect plugin');
@@ -342,11 +364,24 @@ export function useConversationalFlow({
         connectingPlugin: null
       }));
 
+      // Provide specific error message based on error type
+      let errorMessage = `Failed to connect ${pluginKey}. Please try again or skip this plugin.`;
+
+      if (error.message?.includes('timed out')) {
+        errorMessage = `⏱️ Connection to ${pluginKey} timed out. This usually means the OAuth popup was closed or didn't complete. Please try again and complete the authorization process.`;
+      } else if (error.message?.includes('popup') || error.message?.includes('blocked')) {
+        errorMessage = `🚫 Popup blocker may have prevented the authorization window. Please allow popups for this site and try again.`;
+      } else if (error.message?.includes('cancelled') || error.message?.includes('denied')) {
+        errorMessage = `❌ Authorization was cancelled or denied. You can try again or skip this plugin if it's not essential.`;
+      } else if (error.message) {
+        errorMessage = `Failed to connect ${pluginKey}: ${error.message}. Please try again or skip this plugin.`;
+      }
+
       // Show error message
       addMessage({
         type: 'ai',
         messageType: 'text',
-        content: `Failed to connect ${pluginKey}: ${error.message}. Please try again or skip this plugin.`
+        content: errorMessage
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
