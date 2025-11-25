@@ -115,7 +115,7 @@ function generateExecutionSystemPrompt(
     // This is an enhanced prompt - extract clean goal from workflow steps
     const stepDescriptions = workflowSteps
       .filter(s => s.plugin !== 'ai_processing')
-      .map(s => s.operation)
+      .map(s => s.operation || (s as any).name || 'process')
       .join(', then ');
 
     if (stepDescriptions) {
@@ -125,14 +125,20 @@ function generateExecutionSystemPrompt(
 
   // Build workflow overview from steps
   const workflowOverview = workflowSteps.map((step, idx) => {
+    // Handle both analysis format (operation/plugin_action) and pilot format (name/action)
+    const operation = step.operation || (step as any).name || 'Process step';
+    const action = step.plugin_action || (step as any).action || '';
+    const plugin = step.plugin || '';
+
     // Clean up redundant text in operation
-    let cleanOperation = step.operation
-      .replace(new RegExp(`using ${step.plugin}`, 'gi'), '')
-      .replace(new RegExp(`with ${step.plugin}`, 'gi'), '')
-      .replace(new RegExp(step.plugin_action, 'gi'), '')
+    let cleanOperation = operation
+      .replace(new RegExp(`using ${plugin}`, 'gi'), '')
+      .replace(new RegExp(`with ${plugin}`, 'gi'), '')
+      .replace(new RegExp(action, 'gi'), '')
       .trim();
 
-    return `${idx + 1}. ${cleanOperation} (${step.plugin}.${step.plugin_action})`;
+    const actionLabel = action ? `.${action}` : '';
+    return `${idx + 1}. ${cleanOperation}${plugin ? ` (${plugin}${actionLabel})` : ''}`;
   }).join('\n');
 
   // Build rich system prompt for execution
@@ -632,6 +638,194 @@ Use enrichment to ADD ADDITIONAL DATA to existing records:
 2. Enrichment for adding context to existing data
 3. Both patterns optimize for efficiency and performance
 
+# ⚡ TRANSFORM STEPS - DATA MANIPULATION WITHOUT AI ⚡
+Use transform steps for DETERMINISTIC data operations that don't require AI reasoning:
+
+**WHEN TO USE TRANSFORM (NOT AI):**
+- Filter arrays by criteria
+- Map/reshape data structures
+- Sort, group, or aggregate data
+- Extract specific fields
+- Count, sum, or calculate statistics
+- ANY operation that follows fixed rules
+
+**WHEN NOT TO USE TRANSFORM:**
+- Analyzing sentiment or meaning (use AI)
+- Making judgment calls (use AI)
+- Understanding context (use AI)
+
+**TRANSFORM OPERATIONS:**
+- **map**: Transform each item in array
+- **filter**: Remove items that don't match criteria
+- **reduce**: Aggregate array into single value
+- **sort**: Order items by field
+- **group**: Group items by field value
+- **aggregate**: Calculate sum, avg, min, max, count
+
+**TRANSFORM STEP FORMAT:**
+{
+  "id": "filter_urgent",
+  "operation": "Filter emails marked as urgent",
+  "type": "transform",
+  "params": {
+    "operation": "filter",
+    "input": "{{step1.data.emails}}",
+    "config": {
+      "condition": {
+        "field": "priority",
+        "operator": "==",
+        "value": "urgent"
+      }
+    }
+  },
+  "dependencies": ["step1"],
+  "reasoning": "Deterministic filtering - no AI needed"
+}
+
+**EXAMPLE - Extract and Count:**
+[
+  {"id": "step1", "operation": "Get all tickets", "type": "plugin_action", "plugin": "zendesk", "plugin_action": "list_tickets", "dependencies": []},
+  {"id": "step2", "operation": "Filter open tickets", "type": "transform", "params": {"operation": "filter", "input": "{{step1.data.tickets}}", "config": {"condition": {"field": "status", "operator": "==", "value": "open"}}}, "dependencies": ["step1"]},
+  {"id": "step3", "operation": "Count by priority", "type": "transform", "params": {"operation": "group", "input": "{{step2.data}}", "config": {"groupBy": "priority"}}, "dependencies": ["step2"]},
+  {"id": "step4", "operation": "Send summary", "type": "plugin_action", "plugin": "slack", "plugin_action": "post_message", "params": {"channel": "{{input.channel}}", "text": "Open tickets: {{step3.data}}"}, "dependencies": ["step3"]}
+]
+
+**EXAMPLE - Map Data Structure:**
+[
+  {"id": "step1", "operation": "Get customer list", "type": "plugin_action", "plugin": "database", "plugin_action": "query", "params": {"query": "SELECT * FROM customers"}, "dependencies": []},
+  {"id": "step2", "operation": "Extract email addresses", "type": "transform", "params": {"operation": "map", "input": "{{step1.data}}", "config": {"email": "{{current.email}}", "name": "{{current.first_name}} {{current.last_name}}"}}, "dependencies": ["step1"]},
+  {"id": "step3", "operation": "Send bulk email", "type": "plugin_action", "plugin": "google-mail", "plugin_action": "send_bulk", "params": {"recipients": "{{step2.data}}"}, "dependencies": ["step2"]}
+]
+
+# ⚡ COMPARISON STEPS - MATCHING AND DIFFING DATA ⚡
+Use comparison steps to MATCH, MERGE, or FIND DIFFERENCES between datasets:
+
+**WHEN TO USE COMPARISON (NOT AI):**
+- Match records by email, ID, or any field
+- Find customers in one list but not another
+- Detect what changed between two datasets
+- Merge data from multiple sources
+- ANY exact matching operation
+
+**WHEN NOT TO USE COMPARISON:**
+- Fuzzy matching by similarity (use AI)
+- Matching by meaning/context (use AI)
+
+**COMPARISON OPERATIONS:**
+- **equals**: Check if two values are equal
+- **deep_equals**: Recursively compare objects
+- **diff**: Find what changed between objects
+- **contains**: Check if one dataset contains another
+- **subset**: Check if array is subset of another
+
+**COMPARISON STEP FORMAT:**
+{
+  "id": "match_customers",
+  "operation": "Match customers between systems",
+  "type": "comparison",
+  "params": {
+    "left": "{{step1.data.crm_customers}}",
+    "right": "{{step2.data.sheet_customers}}",
+    "operation": "diff",
+    "outputFormat": "detailed"
+  },
+  "dependencies": ["step1", "step2"],
+  "reasoning": "Find mismatches between CRM and spreadsheet"
+}
+
+**EXAMPLE - Find Missing Customers:**
+[
+  {"id": "step1", "operation": "Get CRM customers", "type": "plugin_action", "plugin": "hubspot", "plugin_action": "get_contacts", "dependencies": []},
+  {"id": "step2", "operation": "Get spreadsheet customers", "type": "plugin_action", "plugin": "google-sheets", "plugin_action": "read_range", "params": {"spreadsheet_id": "{{input.sheet_id}}", "range": "A:Z"}, "dependencies": []},
+  {"id": "step3", "operation": "Find customers missing from CRM", "type": "comparison", "params": {"left": "{{step2.data}}", "right": "{{step1.data.contacts}}", "operation": "diff", "outputFormat": "diff"}, "dependencies": ["step1", "step2"]},
+  {"id": "step4", "operation": "Alert about missing customers", "type": "plugin_action", "plugin": "slack", "plugin_action": "post_message", "params": {"channel": "sales", "text": "Found {{step3.data.added.length}} customers in sheet but not in CRM"}, "dependencies": ["step3"]}
+]
+
+**EXAMPLE - Compare Contract vs Database:**
+[
+  {"id": "step1", "operation": "Extract contract data", "type": "ai_processing", "params": {"prompt": "Extract: customer name, email, package from {{input.contract_pdf}}"}, "dependencies": []},
+  {"id": "step2", "operation": "Get database record", "type": "plugin_action", "plugin": "database", "plugin_action": "query", "params": {"query": "SELECT * FROM customers WHERE email = {{step1.data.email}}"}, "dependencies": ["step1"]},
+  {"id": "step3", "operation": "Compare package details", "type": "comparison", "params": {"left": "{{step1.data.package}}", "right": "{{step2.data[0].package}}", "operation": "deep_equals", "outputFormat": "boolean"}, "dependencies": ["step1", "step2"]},
+  {"id": "step4", "operation": "Flag mismatch", "type": "plugin_action", "plugin": "slack", "plugin_action": "post_message", "params": {"channel": "billing", "text": "Package mismatch for {{step1.data.email}}"}, "executeIf": {"field": "step3.data", "operator": "==", "value": false}, "dependencies": ["step3"]}
+]
+
+# ⚡ VALIDATION STEPS - VERIFY DATA QUALITY ⚡
+Use validation steps to CHECK data against rules or schemas:
+
+**WHEN TO USE VALIDATION:**
+- Verify required fields exist
+- Check data types and formats
+- Validate against business rules
+- Ensure data meets criteria before processing
+
+**VALIDATION STEP FORMAT:**
+{
+  "id": "validate_input",
+  "operation": "Validate customer data",
+  "type": "validation",
+  "params": {
+    "data": "{{step1.data}}",
+    "schema": {
+      "type": "object",
+      "required": ["email", "name", "company"]
+    },
+    "rules": [
+      {"field": "email", "condition": {"operator": "matches", "value": ".*@.*\\..*"}, "message": "Invalid email format"}
+    ],
+    "onValidationFail": "throw"
+  },
+  "dependencies": ["step1"],
+  "reasoning": "Ensure data quality before processing"
+}
+
+**EXAMPLE - Validate Before Processing:**
+[
+  {"id": "step1", "operation": "Get form submissions", "type": "plugin_action", "plugin": "typeform", "plugin_action": "get_responses", "dependencies": []},
+  {"id": "step2", "operation": "Validate submissions", "type": "validation", "params": {"data": "{{step1.data}}", "schema": {"type": "array"}, "rules": [{"field": "email", "condition": {"operator": "exists"}}], "onValidationFail": "skip"}, "dependencies": ["step1"]},
+  {"id": "step3", "operation": "Add to CRM", "type": "plugin_action", "plugin": "hubspot", "plugin_action": "create_contact", "params": {"email": "{{step2.data.email}}"}, "dependencies": ["step2"]}
+]
+
+# ⚡ CRITICAL - BATCH AI VS LOOP WITH AI ⚡
+MOST IMPORTANT: Choose the RIGHT pattern to avoid wasting 50-100x AI calls and cost!
+
+**USE BATCH AI (SINGLE CALL) WHEN:**
+- Processing is UNIFORM across all items
+- "Summarize all emails"
+- "Extract names from all documents"
+- "Categorize these customers"
+- You want ONE result covering ALL items
+
+**USE LOOP WITH AI (MULTIPLE CALLS) WHEN:**
+- Each item needs UNIQUE reasoning based on context
+- "For each customer, write a PERSONALIZED email based on their purchase history"
+- "For each document, determine if it's RELEVANT to this specific case"
+- Each item needs DIFFERENT AI analysis
+
+**EXAMPLE - WRONG (Wastes 50 AI calls):**
+[
+  {"id": "step1", "operation": "Get emails", "type": "plugin_action", "plugin": "google-mail", "plugin_action": "search_emails", "params": {"max_results": 50}, "dependencies": []},
+  {"id": "step2", "operation": "Summarize each email", "type": "loop", "iterateOver": "{{step1.data.emails}}", "loopSteps": [{"id": "summarize", "operation": "Summarize email", "type": "ai_processing", "params": {"prompt": "Summarize: {{item.subject}} - {{item.body}}"}, "dependencies": []}], "dependencies": ["step1"]}
+]
+
+**EXAMPLE - CORRECT (Single AI call):**
+[
+  {"id": "step1", "operation": "Get emails", "type": "plugin_action", "plugin": "google-mail", "plugin_action": "search_emails", "params": {"max_results": 50}, "dependencies": []},
+  {"id": "step2", "operation": "Summarize all emails", "type": "ai_processing", "params": {"prompt": "Summarize these emails, highlighting urgent issues: {{step1.data.emails}}"}, "dependencies": ["step1"]}
+]
+
+**EXAMPLE - CORRECT (Loop needed for personalization):**
+[
+  {"id": "step1", "operation": "Get customers", "type": "plugin_action", "plugin": "database", "plugin_action": "query", "dependencies": []},
+  {"id": "step2", "operation": "Write personalized emails", "type": "loop", "iterateOver": "{{step1.data.customers}}", "loopSteps": [{"id": "write_email", "operation": "Write personalized email", "type": "ai_processing", "params": {"prompt": "Write personalized email for {{item.name}} who purchased {{item.last_purchase}} and prefers {{item.communication_style}}"}, "dependencies": []}], "dependencies": ["step1"], "reasoning": "Each email must be uniquely tailored to customer"}
+]
+
+**DECISION TREE:**
+Is this operation deterministic (fixed rules)?
+  → YES: Use transform/comparison/validation (0 AI calls)
+  → NO: Does it require AI?
+      → Process ALL items uniformly: Batch AI (1 call)
+      → Each item needs unique reasoning: Loop with AI (N calls)
+
 # ⚡ CRITICAL - ALWAYS DETECT OUTPUT FORMAT ⚡
 EVERY SummaryBlock output MUST have a "format" field. Analyze the user's prompt and detect their desired format:
 
@@ -702,8 +896,13 @@ CRITICAL: Every plugin_action step MUST have a "params" field with proper variab
       console.log(`${'='.repeat(80)}\n`);
     }
 
+    // CRITICAL: For structured outputs with strict JSON schema mode, we MUST use gpt-4o
+    // gpt-4o-mini and other models don't support strict mode
+    const modelToUse = 'gpt-4o';
+    console.log(`🔍 [DEBUG] Using model: ${modelToUse} (forced for strict JSON schema support)`);
+
     const completion = await openai.chat.completions.create({
-      model: AGENTKIT_CONFIG.model,
+      model: modelToUse,
       messages: [
         { role: "system", content: systemPrompt },
         {
@@ -717,7 +916,7 @@ CRITICAL: Every plugin_action step MUST have a "params" field with proper variab
         type: 'json_schema',
         json_schema: {
           name: 'pilot_workflow',
-          strict: true,
+          strict: false,  // Disabled strict mode due to union type limitations (Condition definition)
           schema: PILOT_DSL_SCHEMA
         }
       }

@@ -58,7 +58,13 @@ async function loadAgentkitConfig(): Promise<typeof DEFAULT_AGENTKIT_CONFIG> {
     // Parse configuration
     const config: Record<string, any> = {};
     data.forEach((row) => {
-      config[row.key] = row.value;
+      // Parse JSON values from database (stored as JSON strings)
+      try {
+        config[row.key] = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
+      } catch {
+        // If not JSON, use raw value
+        config[row.key] = row.value;
+      }
     });
 
     cachedConfig = {

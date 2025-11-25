@@ -364,10 +364,11 @@ export async function POST(req: Request) {
     // 🚀 PILOT DUAL-FORMAT GENERATION
     // ========================================
     // Generate workflow_steps (ALWAYS - for UI animation)
+    // Handle both Analysis format (operation/plugin_action) and Pilot format (name/action)
     const workflow_steps = analysis.workflow_steps.map(step => ({
-      operation: step.operation,
+      operation: step.operation || (step as any).name || 'Process step',
       plugin: step.plugin,
-      plugin_action: step.plugin_action,
+      plugin_action: step.plugin_action || (step as any).action,
       params: step.params || {}, // IMPORTANT: Preserve params from AI analysis
       validated: true,
       type: step.plugin === 'ai_processing' ? 'ai_processing' : 'plugin_action'
