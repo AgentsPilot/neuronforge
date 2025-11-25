@@ -159,7 +159,7 @@ function V2AgentBuilderContent() {
   // Auto-scroll to bottom when messages or UI state changes
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, scheduleType, scheduleTime, selectedDays, selectedMonthDay, isAwaitingSchedule, isAwaitingFinalApproval])
+  }, [messages, scheduleType, scheduleTime, selectedDays, selectedMonthDay, showScheduleBuilder, isAwaitingSchedule, isAwaitingFinalApproval])
 
   // Close schedule builder when clicking outside
   useEffect(() => {
