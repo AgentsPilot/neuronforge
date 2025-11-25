@@ -178,6 +178,15 @@ export async function analyzePromptDirectAgentKit(
 
     console.log(`🔧 AgentKit Direct: Loaded ${tools.length} available actions`);
 
+    // DEBUG: Log the plugin context that will be shown to AI
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`\n${'='.repeat(80)}`);
+      console.log(`🔍 [DEBUG] Plugin Context for AI:`);
+      console.log(`${'='.repeat(80)}`);
+      console.log(pluginContext);
+      console.log(`${'='.repeat(80)}\n`);
+    }
+
     // CRITICAL: Very clear instructions to AgentKit
     const systemPrompt = `You are an intelligent agent builder. Your job is to analyze a user's request and create a complete agent specification.
 
@@ -195,6 +204,38 @@ ${pluginContext}
 5. **DO NOT use chatgpt-research for basic summarization - use ai_processing instead**
 6. **ONLY use chatgpt-research when user asks to "research" or "find information about" topics**
 7. **ALWAYS provide user-friendly labels for input fields** - see Label Generation Rules below
+8. **PARAMETER NAMES MUST MATCH EXACTLY** - see Parameter Name Rules below
+
+# ⚠️ PARAMETER STRUCTURE RULES (CRITICAL - EXECUTION WILL FAIL IF WRONG):
+When generating workflow_steps params, you MUST use the EXACT parameter structure from the plugin schema.
+DO NOT invent or guess parameter names. Check the "Connected Services Available" section above for the EXACT structure.
+
+**CRITICAL: Some plugins have NESTED parameter structures!**
+
+Example - google-mail.send_email requires NESTED objects:
+✅ CORRECT:
+{
+  "recipients": { "to": ["{{input.recipient_email}}"] },
+  "content": { "subject": "My Subject", "body": "Email body here" }
+}
+
+❌ WRONG (flat structure will FAIL):
+{
+  "recipient_email": "...",
+  "subject": "...",
+  "message": "..."
+}
+
+**Other common mistakes to AVOID:**
+- chatgpt-research.research_topic requires "topic" (NOT "query", NOT "search_term")
+- google-mail.search_emails requires "query" (this one IS "query")
+- google-sheets.append_rows requires "spreadsheet_id", "values" (NOT "sheet_id", "data")
+
+**How to find correct parameter structure:**
+1. Look at the "Connected Services Available" section above
+2. Each action shows its REQUIRED params and Parameter structure
+3. If it says "type: object, properties: [...]" you MUST use nested structure
+4. Match the EXACT structure shown in the schema
 
 # Plugin Selection Examples:
 - "Summarize my emails" → google-mail ONLY (ai_processing handles summary)
@@ -292,6 +333,24 @@ Return a JSON object with:
       },
       "dependencies": ["step2"],
       "reasoning": "User wants to send to sheet"
+    },
+    {
+      "id": "step4",
+      "operation": "Send summary via email",
+      "type": "plugin_action",
+      "plugin": "google-mail",
+      "plugin_action": "send_email",
+      "params": {
+        "recipients": {
+          "to": ["{{input.recipient_email}}"]
+        },
+        "content": {
+          "subject": "Your Summary Report",
+          "body": "{{step2.data.summary}}"
+        }
+      },
+      "dependencies": ["step2"],
+      "reasoning": "User wants to email results - NOTE: google-mail uses NESTED structure with recipients.to and content.subject/body"
     }
   ],
   "suggested_outputs": [
@@ -433,6 +492,15 @@ Example workflows:
 The "prompt" in params should include variable references: "Summarize these: {{step1.data.emails}}"
 
 CRITICAL: Every plugin_action step MUST have a "params" field with proper variable mapping!`;
+
+    // DEBUG: Log the full system prompt
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`\n${'='.repeat(80)}`);
+      console.log(`🔍 [DEBUG] Full System Prompt for AI (${systemPrompt.length} chars):`);
+      console.log(`${'='.repeat(80)}`);
+      console.log(systemPrompt);
+      console.log(`${'='.repeat(80)}\n`);
+    }
 
     const completion = await openai.chat.completions.create({
       model: AGENTKIT_CONFIG.model,

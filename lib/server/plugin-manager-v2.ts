@@ -20,20 +20,27 @@ const corePluginFiles = [
       'airtable-plugin-v2.json',
       // Add other plugin files here as you create them
     ];
-console.log('Plugin-Manager-v2 Loaded:', {
-  Plugin_Definitions: Object.values(corePluginFiles),  
-  Total_Plugins: Object.keys(corePluginFiles).length
-})
 
+// Use globalThis to ensure singleton persists across module reloads (important for Next.js dev mode)
+const globalForPluginManager = globalThis as unknown as {
+  pluginManagerInstance: PluginManagerV2 | null;
+  pluginManagerInitPromise: Promise<PluginManagerV2> | null;
+};
 
-let pluginManagerInstance: PluginManagerV2 | null = null;
+// Only log on first module load, not on every access
+if (!globalForPluginManager.pluginManagerInstance) {
+  console.log('Plugin-Manager-v2 Loaded:', {
+    Plugin_Definitions: Object.values(corePluginFiles),
+    Total_Plugins: Object.keys(corePluginFiles).length
+  });
+}
 
 export class PluginManagerV2 {
   private plugins: Map<string, PluginDefinition> = new Map();
   private userConnections: UserPluginConnections;
   public static debug = process.env.NODE_ENV === 'development';
   private debug = process.env.NODE_ENV === 'development';
-  private initialized = false;
+  public initialized = false;
 
   constructor(userConnections: UserPluginConnections) {
     this.userConnections = userConnections;
@@ -41,17 +48,40 @@ export class PluginManagerV2 {
   }
 
   // Singleton factory for serverless functions
+  // Uses globalThis to persist across module reloads in Next.js dev mode
+  // Also handles concurrent initialization to prevent race conditions
   static async getInstance(): Promise<PluginManagerV2> {
-    if (!pluginManagerInstance) {
+    // Return cached instance if available
+    if (globalForPluginManager.pluginManagerInstance?.initialized) {
+      return globalForPluginManager.pluginManagerInstance;
+    }
+
+    // If initialization is already in progress, wait for it
+    if (globalForPluginManager.pluginManagerInitPromise) {
+      return globalForPluginManager.pluginManagerInitPromise;
+    }
+
+    // Start initialization and cache the promise to prevent race conditions
+    globalForPluginManager.pluginManagerInitPromise = (async () => {
       if (PluginManagerV2.debug) {
         console.log('DEBUG: Creating new PluginManagerV2 instance for serverless function');
       }
-      
+
       const userConnections = UserPluginConnections.getInstance();
-      pluginManagerInstance = new PluginManagerV2(userConnections);
-      await pluginManagerInstance.initializeWithCorePlugins();
+      const instance = new PluginManagerV2(userConnections);
+      await instance.initializeWithCorePlugins();
+
+      globalForPluginManager.pluginManagerInstance = instance;
+      return instance;
+    })();
+
+    try {
+      const instance = await globalForPluginManager.pluginManagerInitPromise;
+      return instance;
+    } finally {
+      // Clear the promise after initialization completes (success or failure)
+      globalForPluginManager.pluginManagerInitPromise = null;
     }
-    return pluginManagerInstance;
   }
 
   // Initialize plugin manager with core plugins (called once per cold start)

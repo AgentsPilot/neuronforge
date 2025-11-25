@@ -43,17 +43,19 @@ export interface ConnectedService {
 
 export interface AnalysisObject {
   data: AnalysisDimension;
-  trigger: AnalysisDimension;
+  trigger?: AnalysisDimension; // Optional in Phase 3
   output: AnalysisDimension;
   actions: AnalysisDimension;
   delivery: AnalysisDimension;
-  error_handling: AnalysisDimension;
+  error_handling?: AnalysisDimension; // Optional in Phase 3
 }
 
+export type DimensionStatus = 'clear' | 'partial' | 'missing';
+
 export interface AnalysisDimension {
-  status: 'clear' | 'partial' | 'missing';
-  confidence: number; // 0-1
-  detected: string;
+  status: DimensionStatus;
+  confidence: number; // 0-1, strictly validated at runtime
+  detected: string; // Non-empty string
 }
 
 // Database insert/update types (omit generated fields)
@@ -84,15 +86,17 @@ export interface InitThreadResponse {
 export interface ProcessMessageRequest {
   thread_id: string;
   phase: ThreadPhase;
-  user_prompt: string;
-  user_context: UserContext;
-  analysis: AnalysisObject | null;
-  connected_services: string[]; // Simple array of connected plugin keys
+  user_prompt?: string;  // Required for Phase 1
+  user_context?: UserContext;
+  analysis?: AnalysisObject | null;
+  connected_services?: string[]; // Simple array of connected plugin keys
   available_services?: ConnectedService[]; // All plugins available in the system with full context
   clarification_answers?: Record<string, any>;
-  enhanced_prompt?: EnhancedPrompt | null; // Phase 2: Previous Phase 3 output for refinement (v8)
+  enhanced_prompt?: EnhancedPrompt | null; // Phase 2/3: Previous Phase 3 output for refinement
+  declined_services?: string[]; // V10: Services user explicitly refused to connect (top-level)
+  user_feedback?: string; // V10: Free-form user feedback for refinement (mini-cycle mode)
   metadata?: {
-    declined_plugins?: string[]; // Plugins user explicitly declined to connect
+    declined_plugins?: string[]; // Deprecated: use declined_services instead
     [key: string]: any; // Allow additional metadata
   };
 }
@@ -100,31 +104,28 @@ export interface ProcessMessageRequest {
 export interface ProcessMessageResponse {
   success: boolean;
   phase: ThreadPhase;
+
+  // Phase 1 & 2 fields
   analysis?: AnalysisObject;
   questionsSequence?: ClarificationQuestion[];
-  enhanced_prompt?: EnhancedPrompt;
-  requiredServices?: string[];
   needsClarification?: boolean;
   clarityScore?: number;
   suggestions?: string[];
-  missingPlugins?: string[];
-  pluginWarning?: Record<string, any>;
   connectedPlugins?: string[]; // Phase 1: List of user's connected plugin keys (e.g., ['google-mail', 'slack'])
-  conversationalSummary?: string; // All Phases: LLM-generated friendly summary of understanding/progress
-  ready_for_generation?: boolean; // Phase 3: True if all plugins connected and ready to create agent
+
+  // Phase 3 specific fields
+  enhanced_prompt?: EnhancedPrompt;
+  requiredServices?: string[];
+  missingPlugins?: string[];
+  pluginWarning?: Record<string, string>; // Changed from Record<string, any>
   error?: string; // Phase 3: Error message if workflow impossible (e.g., no alternatives for declined plugin)
-  metadata?: {
-    all_clarifications_applied?: boolean;
-    confirmation_needed?: boolean;
-    implicit_services_detected?: string[];
-    oauth_required?: boolean;
-    oauth_message?: string;
-    plugins_adjusted?: string[];
-    adjustment_reason?: string;
-    declined_plugins_blocking?: string[];
-    reason?: string;
-    [key: string]: any;
-  };
+  // Note: ready_for_generation is ONLY in metadata.ready_for_generation, not at top level
+
+  // All Phases
+  conversationalSummary?: string; // LLM-generated friendly summary of understanding/progress
+
+  // Strictly typed metadata (no arbitrary keys)
+  metadata?: Phase3Metadata;
 }
 
 export interface ClarificationQuestion {
@@ -146,22 +147,53 @@ export interface ClarificationOption {
   description?: string;
 }
 
+export interface EnhancedPromptSections {
+  data: string[];              // Array of bullet points
+  actions: string[];           // Array of bullet points
+  output: string[];            // Array of bullet points
+  delivery: string[];          // Array of bullet points
+  processing_steps?: string[]; // Optional - v7 compatibility
+}
+
+/**
+ * V10: Resolved user input tracking
+ * Represents inputs that were previously in user_inputs_required but now have values
+ */
+export interface ResolvedUserInput {
+  key: string;    // Machine-friendly key (e.g., "accountant_email", "user_email")
+  value: string;  // Resolved value (e.g., "bob@company.com")
+}
+
+export interface EnhancedPromptSpecifics {
+  services_involved: string[];
+  user_inputs_required: string[];  // Labels for inputs still missing
+  resolved_user_inputs?: ResolvedUserInput[];  // V10: Previously required inputs that now have values
+}
+
 export interface EnhancedPrompt {
   plan_title: string;
   plan_description: string;
-  sections: {
-    data: string;
-    actions: string; // v8: single string instead of array
-    output: string;
-    delivery: string;
-    processing_steps?: string[]; // v7 and below (deprecated in v8)
-    error_handling?: string; // v7 and below (not in v8)
-  };
-  specifics: {
-    services_involved: string[];
-    user_inputs_required: string[];
-    trigger_scope?: string; // v7 and below (not in v8)
-  };
+  sections: EnhancedPromptSections;
+  specifics: EnhancedPromptSpecifics;
+}
+
+/**
+ * Strict metadata for Phase 3 responses
+ * All fields explicitly defined, no arbitrary keys
+ */
+export interface Phase3Metadata {
+  all_clarifications_applied: boolean;
+  ready_for_generation: boolean;
+  confirmation_needed: boolean;
+  implicit_services_detected: string[];
+  provenance_checked: boolean;
+  provenance_note?: string;
+  declined_plugins_blocking?: string[];
+  oauth_required?: boolean;
+  oauth_message?: string;
+  plugins_adjusted?: string[];
+  adjustment_reason?: string;
+  reason?: string;
 }
 
 // Thread resume response type

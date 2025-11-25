@@ -15,6 +15,7 @@ import type {
   ConnectedService,
   UserContext
 } from '@/components/agent-creation/types/agent-prompt-threads';
+import { validatePhase3Response } from '@/lib/validation/phase3-schema';
 
 
 // Initialize Supabase client
@@ -91,8 +92,10 @@ export async function POST(request: NextRequest) {
       user_prompt,
       user_context,
       connected_services,
+      declined_services,      // V10: top-level field for declined plugins
       clarification_answers,
       enhanced_prompt,
+      user_feedback,          // V10: refinement feedback for mini-cycle
       metadata
     } = requestBody;
 
@@ -256,19 +259,23 @@ export async function POST(request: NextRequest) {
         available_services: user_available_services
       };
     } else if (phase === 2) {
-      // v8: Phase 2 can receive connected_services and enhanced_prompt for refinement
+      // V10: Phase 2 can receive connected_services, enhanced_prompt, declined_services, and user_feedback for refinement
       // If null, reference Phase 1 stored values from thread metadata
       userMessage = {
         phase: 2,
         connected_services: connected_services || threadRecord.metadata?.phase1_connected_services || null,
-        enhanced_prompt: enhanced_prompt || null
+        enhanced_prompt: enhanced_prompt || null,
+        declined_services: declined_services || [],   // V10: services user refused to connect
+        user_feedback: user_feedback || null          // V10: refinement feedback for mini-cycle
       };
     } else if (phase === 3) {
+      // V10: Phase 3 needs connected_services for OAuth gate re-call, declined_services, and enhanced_prompt for refinement
       userMessage = {
         phase: 3,
         clarification_answers: clarification_answers || {},
-        metadata: metadata || {}
-        // Note: connected_services and available_services already in thread context from Phase 1, no need to resend
+        connected_services: connected_services || threadRecord.metadata?.phase1_connected_services || [],
+        declined_services: declined_services || [],   // V10: services user refused to connect
+        enhanced_prompt: enhanced_prompt || null      // V10: for refinement cycles
       };
     }
 
@@ -385,13 +392,39 @@ export async function POST(request: NextRequest) {
       // Don't fail the request if storing fails
     }
 
-    // Step 12: Parse response JSON
+    // Step 12: Parse and validate response JSON
     let aiResponse: ProcessMessageResponse;
     try {
-      //console.log('📝 AI response preview:', aiResponseText.slice(0, 200));
       console.log('📝 AI response preview:', aiResponseText);
 
-      aiResponse = JSON.parse(aiResponseText);
+      const parsedJson = JSON.parse(aiResponseText);
+
+      // Strict validation for Phase 3 responses
+      if (phase === 3) {
+        console.log('🔍 Validating Phase 3 response structure...');
+
+        const validation = validatePhase3Response(parsedJson);
+
+        if (!validation.success) {
+          console.error('❌ Phase 3 response validation failed:', validation.errors);
+          return NextResponse.json(
+            {
+              success: false,
+              error: 'Invalid Phase 3 response structure from AI',
+              phase,
+              details: validation.errors?.join('; ') || 'Unknown validation error'
+            } as ThreadErrorResponse,
+            { status: 500 }
+          );
+        }
+
+        console.log('✅ Phase 3 response validated successfully');
+        aiResponse = validation.data as ProcessMessageResponse;
+      } else {
+        // Phase 1 & 2: No strict validation yet
+        aiResponse = parsedJson;
+      }
+
       aiResponse.success = true;
       aiResponse.phase = phase;
 
@@ -404,13 +437,12 @@ export async function POST(request: NextRequest) {
         console.log('✅ Phase 1 - Returning connected plugins to frontend:', aiResponse.connectedPlugins);
       }
 
-
       // Step 12.6: Log Phase 3 OAuth gate details
       if (phase === 3) {
         console.log('🔒 Phase 3 - OAuth Gate Check:');
         console.log('  Required services:', aiResponse.requiredServices);
         console.log('  Missing plugins:', aiResponse.missingPlugins);
-        console.log('  Ready for generation:', aiResponse.ready_for_generation);
+        console.log('  Ready for generation:', aiResponse.metadata?.ready_for_generation);
         if (aiResponse.metadata?.declined_plugins_blocking) {
           console.log('  ⚠️ Declined plugins blocking:', aiResponse.metadata.declined_plugins_blocking);
         }
