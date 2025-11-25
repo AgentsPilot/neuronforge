@@ -30,9 +30,9 @@ export interface AnalyzedWorkflowStep {
   };
 
   // Loop-specific fields
-  items?: string;  // Variable reference to array to iterate over (e.g., "{{step1.data.customers}}")
+  iterateOver?: string;  // Variable reference to array to iterate over (e.g., "{{step1.data.customers}}")
   maxIterations?: number;  // Safety limit for loops
-  steps?: AnalyzedWorkflowStep[];  // Nested steps to execute in loop
+  loopSteps?: AnalyzedWorkflowStep[];  // Nested steps to execute in loop
 
   // Switch-specific fields
   evaluate?: string;  // Expression to evaluate for switch
@@ -485,9 +485,9 @@ Use loops when you need to process EACH ITEM in a collection individually:
   "id": "process_emails",
   "operation": "Process each email individually",
   "type": "loop",
-  "items": "{{step1.data.emails}}",
+  "iterateOver": "{{step1.data.emails}}",
   "maxIterations": 100,
-  "steps": [
+  "loopSteps": [
     {
       "id": "summarize_email",
       "operation": "Summarize individual email",
@@ -508,16 +508,17 @@ Use loops when you need to process EACH ITEM in a collection individually:
 **EXAMPLE - Process Each Email Individually:**
 [
   {"id": "step1", "operation": "Get last 10 emails", "type": "plugin_action", "plugin": "google-mail", "plugin_action": "search_emails", "params": {"max_results": 10}, "dependencies": []},
-  {"id": "step2", "operation": "Process each email", "type": "loop", "items": "{{step1.data.emails}}", "maxIterations": 10, "steps": [{"id": "step2_process", "operation": "Categorize email", "type": "ai_processing", "plugin": "ai_processing", "plugin_action": "process", "params": {"prompt": "Categorize this email: {{item.subject}}"}, "dependencies": []}], "dependencies": ["step1"]},
+  {"id": "step2", "operation": "Process each email", "type": "loop", "iterateOver": "{{step1.data.emails}}", "maxIterations": 10, "loopSteps": [{"id": "step2_process", "operation": "Categorize email", "type": "ai_processing", "plugin": "ai_processing", "plugin_action": "process", "params": {"prompt": "Categorize this email: {{item.subject}}"}, "dependencies": []}], "dependencies": ["step1"]},
   {"id": "step3", "operation": "Send results", "type": "plugin_action", "plugin": "google-mail", "plugin_action": "send_email", "params": {"recipients": {"to": ["{{input.recipient_email}}"]}, "content": {"subject": "Email Categories", "body": "{{step2.data.results}}"}}, "dependencies": ["step2"]}
 ]
 
 **IMPORTANT LOOP RULES:**
-1. Loop steps MUST have "items" field pointing to an array variable
-2. Use "maxIterations" as safety limit (default: 100)
-3. Inside loop steps, reference current item with "{{item.fieldname}}"
-4. Loop steps can contain nested plugin actions or ai_processing
-5. Loop results are automatically aggregated into parent step output
+1. Loop steps MUST have "iterateOver" field pointing to an array variable
+2. Nested steps go in "loopSteps" array (not "steps")
+3. Use "maxIterations" as safety limit (default: 100)
+4. Inside loop steps, reference current item with "{{item.fieldname}}"
+5. Loop steps can contain nested plugin actions or ai_processing
+6. Loop results are automatically aggregated into parent step output
 
 # ⚡ SWITCH/CASE WORKFLOWS - WHEN TO USE ⚡
 Use switch statements for MULTI-WAY branching based on a value:
