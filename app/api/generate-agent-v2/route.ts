@@ -410,162 +410,49 @@ export async function POST(req: Request) {
       warnings: validationResult.warnings
     })
 
-    // Helper function to convert AgentKit analysis format to Pilot format
-    // CRITICAL: Must preserve ALL workflow structure (loops, conditionals, switch, etc.)
+    // Helper function to normalize field names for Pilot execution
+    // Minimal conversion: Only maps field names, preserves ALL workflow structure
     function generatePilotSteps(analysisSteps: any[], legacySteps: any[]): any[] {
-      // Recursive function to convert nested steps
-      function convertStep(step: any, idx: number): any {
-        const base = {
-          id: step.id || `step${idx + 1}`,
-          name: step.operation || step.name || `Step ${idx + 1}`,
-          dependencies: Array.isArray(step.dependencies) ? step.dependencies : (idx > 0 ? [`step${idx}`] : []),
+      // Recursively normalize field names in nested structures
+      function normalizeStep(step: any): any {
+        // Base field mapping: operation → name, plugin_action → action
+        const normalized: any = {
+          ...step,
+          name: step.operation || step.name,  // Pilot uses 'name', AI generates 'operation'
         }
 
-        // Preserve executeIf for conditional execution
-        const executeIf = step.executeIf ? { executeIf: step.executeIf } : {}
+        // Remove redundant fields
+        delete normalized.operation
 
-        // CRITICAL: Handle loop steps (iterateOver + loopSteps)
-        if (step.type === 'loop' && step.iterateOver && step.loopSteps) {
-          return {
-            ...base,
-            ...executeIf,
-            type: 'loop',
-            iterateOver: step.iterateOver,
-            maxIterations: step.maxIterations || 100,
-            loopSteps: step.loopSteps.map((nestedStep: any, nestedIdx: number) =>
-              convertStep(nestedStep, nestedIdx)
-            ),
-          }
+        // Normalize plugin steps: plugin_action → action
+        if (step.plugin_action) {
+          normalized.action = step.plugin_action
+          normalized.type = 'action'  // Pilot uses 'action', AI generates 'plugin_action'
+          delete normalized.plugin_action
         }
 
-        // Handle conditional steps
-        if (step.type === 'conditional' && step.condition) {
-          return {
-            ...base,
-            ...executeIf,
-            type: 'conditional',
-            condition: step.condition,
-            thenSteps: step.thenSteps?.map((s: any, i: number) => convertStep(s, i)),
-            elseSteps: step.elseSteps?.map((s: any, i: number) => convertStep(s, i)),
-          }
+        // Recursively normalize nested structures
+        if (step.loopSteps) {
+          normalized.loopSteps = step.loopSteps.map(normalizeStep)
+        }
+        if (step.thenSteps) {
+          normalized.thenSteps = step.thenSteps.map(normalizeStep)
+        }
+        if (step.elseSteps) {
+          normalized.elseSteps = step.elseSteps.map(normalizeStep)
+        }
+        if (step.scatter?.steps) {
+          normalized.scatter.steps = step.scatter.steps.map(normalizeStep)
+        }
+        if (step.steps) {
+          normalized.steps = step.steps.map(normalizeStep)
         }
 
-        // Handle switch/case steps
-        if (step.type === 'switch' && step.evaluate) {
-          return {
-            ...base,
-            ...executeIf,
-            type: 'switch',
-            evaluate: step.evaluate,
-            cases: step.cases || {},
-            default: step.default || [],
-          }
-        }
-
-        // Handle scatter-gather steps
-        if (step.type === 'scatter_gather' && step.scatter) {
-          return {
-            ...base,
-            ...executeIf,
-            type: 'scatter_gather',
-            scatter: {
-              input: step.scatter.input,
-              steps: step.scatter.steps?.map((s: any, i: number) => convertStep(s, i)) || [],
-              maxConcurrency: step.scatter.maxConcurrency || 5,
-              itemVariable: step.scatter.itemVariable || 'item',
-            },
-            gather: step.gather || { operation: 'collect' },
-          }
-        }
-
-        // Handle enrichment steps
-        if (step.type === 'enrichment' && step.enrichWith) {
-          return {
-            ...base,
-            ...executeIf,
-            type: 'enrichment',
-            source: step.source,
-            enrichWith: step.enrichWith,
-          }
-        }
-
-        // Handle transform steps
-        if (step.type === 'transform') {
-          return {
-            ...base,
-            ...executeIf,
-            type: 'transform',
-            operation: step.operation,
-            input: step.input,
-            outputVariable: step.outputVariable,
-            params: step.params || {},
-          }
-        }
-
-        // Handle human approval steps
-        if (step.type === 'human_approval') {
-          return {
-            ...base,
-            ...executeIf,
-            type: 'human_approval',
-            approvers: step.approvers || [],
-            approvalType: step.approvalType || 'any',
-            title: step.title || step.name,
-            message: step.message || 'Approval required',
-            timeout: step.timeout || 3600000,
-            onTimeout: step.onTimeout || 'reject',
-          }
-        }
-
-        // Handle parallel group steps
-        if (step.type === 'parallel_group' && step.steps) {
-          return {
-            ...base,
-            ...executeIf,
-            type: 'parallel_group',
-            steps: step.steps.map((s: any, i: number) => convertStep(s, i)),
-          }
-        }
-
-        // Convert ai_processing to Pilot ai_processing - CHECK THIS BEFORE plugin_action!
-        // Must check before generic plugin_action because ai_processing also has plugin + plugin_action fields
-        if (step.plugin === 'ai_processing' || step.type === 'ai_processing') {
-          // Use prompt from params if available, otherwise use operation
-          const prompt = step.params?.prompt || step.operation || step.name
-          return {
-            ...base,
-            ...executeIf,
-            type: 'ai_processing',
-            prompt: prompt,
-            params: step.params || {},
-          }
-        }
-
-        // Convert plugin_action to Pilot action
-        if (step.type === 'plugin_action' && step.plugin && step.plugin_action) {
-          return {
-            ...base,
-            ...executeIf,
-            type: 'action',
-            plugin: step.plugin,
-            action: step.plugin_action,
-            params: step.params || {},
-          }
-        }
-
-        // Fallback: preserve original type and structure
-        return {
-          ...base,
-          ...executeIf,
-          type: step.type || 'action',
-          plugin: step.plugin || 'unknown',
-          action: step.plugin_action || step.action || 'process',
-          params: step.params || {},
-        }
+        return normalized
       }
 
-      // Convert all top-level steps
-      return analysisSteps.map((step, idx) => convertStep(step, idx))
+      // Normalize all top-level steps
+      return analysisSteps.map(normalizeStep)
     }
 
     // Build agent data from AgentKit's intelligent analysis
