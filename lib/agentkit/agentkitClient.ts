@@ -10,7 +10,7 @@ export const openai = new OpenAI({
 
 // AgentKit Configuration Defaults
 const DEFAULT_AGENTKIT_CONFIG = {
-  model: "gpt-4o-mini", // Using mini model for cost efficiency (80% cheaper than gpt-4o)
+  model: "gpt-4o", // Using gpt-4o for agent generation (supports structured outputs)
   temperature: 0.1,
   maxIterations: 10, // Maximum function call loops to prevent infinite execution
   timeout: 120000, // 2 minutes timeout for long-running operations
