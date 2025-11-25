@@ -136,7 +136,8 @@ export const PILOT_DSL_SCHEMA = {
           description: "Comparison operator"
         },
         value: {
-          description: "Value to compare against (can be any type)"
+          type: "string",
+          description: "Value to compare against (use string representation for any type)"
         },
         // Complex condition fields (logical operators)
         and: {
@@ -154,6 +155,7 @@ export const PILOT_DSL_SCHEMA = {
           description: "Condition to negate"
         }
       },
+      required: ["field", "operator"],
       additionalProperties: false
     },
     "WorkflowStepLevel1": {
@@ -320,6 +322,7 @@ export const PILOT_DSL_SCHEMA = {
               description: "Variable name for the item in each iteration (default: 'item')"
             }
           },
+          required: [],
           additionalProperties: false
         },
         gather: {
@@ -590,6 +593,7 @@ export const PILOT_DSL_SCHEMA = {
             maxConcurrency: { type: "number", minimum: 1, maximum: 10 },
             itemVariable: { type: "string" }
           },
+          required: [],
           additionalProperties: false
         },
         gather: {
@@ -731,6 +735,7 @@ export const PILOT_DSL_SCHEMA = {
             maxConcurrency: { type: "number", minimum: 1, maximum: 10 },
             itemVariable: { type: "string" }
           },
+          required: [],
           additionalProperties: false
         },
         gather: {
@@ -872,6 +877,7 @@ export const PILOT_DSL_SCHEMA = {
             maxConcurrency: { type: "number", minimum: 1, maximum: 10 },
             itemVariable: { type: "string" }
           },
+          required: [],
           additionalProperties: false
         },
         gather: {
