@@ -410,32 +410,142 @@ export async function POST(req: Request) {
       warnings: validationResult.warnings
     })
 
-    // Helper function to convert legacy format to Pilot format
+    // Helper function to convert AgentKit analysis format to Pilot format
+    // CRITICAL: Must preserve ALL workflow structure (loops, conditionals, switch, etc.)
     function generatePilotSteps(analysisSteps: any[], legacySteps: any[]): any[] {
-      return analysisSteps.map((step, idx) => {
+      // Recursive function to convert nested steps
+      function convertStep(step: any, idx: number): any {
         const base = {
-          id: `step${idx + 1}`,
-          name: step.operation || `Step ${idx + 1}`,
-          dependencies: idx > 0 ? [`step${idx}`] : [],
+          id: step.id || `step${idx + 1}`,
+          name: step.operation || step.name || `Step ${idx + 1}`,
+          dependencies: Array.isArray(step.dependencies) ? step.dependencies : (idx > 0 ? [`step${idx}`] : []),
         }
 
-        // Convert ai_processing to Pilot ai_processing - CHECK THIS FIRST!
-        // Must check before generic plugin_action because ai_processing also has plugin + plugin_action fields
-        if (step.plugin === 'ai_processing' || step.type === 'ai_processing' || legacySteps[idx]?.type === 'ai_processing') {
-          // Use prompt from params if available, otherwise use operation
-          const prompt = step.params?.prompt || step.operation
+        // Preserve executeIf for conditional execution
+        const executeIf = step.executeIf ? { executeIf: step.executeIf } : {}
+
+        // CRITICAL: Handle loop steps (iterateOver + loopSteps)
+        if (step.type === 'loop' && step.iterateOver && step.loopSteps) {
           return {
             ...base,
+            ...executeIf,
+            type: 'loop',
+            iterateOver: step.iterateOver,
+            maxIterations: step.maxIterations || 100,
+            loopSteps: step.loopSteps.map((nestedStep: any, nestedIdx: number) =>
+              convertStep(nestedStep, nestedIdx)
+            ),
+          }
+        }
+
+        // Handle conditional steps
+        if (step.type === 'conditional' && step.condition) {
+          return {
+            ...base,
+            ...executeIf,
+            type: 'conditional',
+            condition: step.condition,
+            thenSteps: step.thenSteps?.map((s: any, i: number) => convertStep(s, i)),
+            elseSteps: step.elseSteps?.map((s: any, i: number) => convertStep(s, i)),
+          }
+        }
+
+        // Handle switch/case steps
+        if (step.type === 'switch' && step.evaluate) {
+          return {
+            ...base,
+            ...executeIf,
+            type: 'switch',
+            evaluate: step.evaluate,
+            cases: step.cases || {},
+            default: step.default || [],
+          }
+        }
+
+        // Handle scatter-gather steps
+        if (step.type === 'scatter_gather' && step.scatter) {
+          return {
+            ...base,
+            ...executeIf,
+            type: 'scatter_gather',
+            scatter: {
+              input: step.scatter.input,
+              steps: step.scatter.steps?.map((s: any, i: number) => convertStep(s, i)) || [],
+              maxConcurrency: step.scatter.maxConcurrency || 5,
+              itemVariable: step.scatter.itemVariable || 'item',
+            },
+            gather: step.gather || { operation: 'collect' },
+          }
+        }
+
+        // Handle enrichment steps
+        if (step.type === 'enrichment' && step.enrichWith) {
+          return {
+            ...base,
+            ...executeIf,
+            type: 'enrichment',
+            source: step.source,
+            enrichWith: step.enrichWith,
+          }
+        }
+
+        // Handle transform steps
+        if (step.type === 'transform') {
+          return {
+            ...base,
+            ...executeIf,
+            type: 'transform',
+            operation: step.operation,
+            input: step.input,
+            outputVariable: step.outputVariable,
+            params: step.params || {},
+          }
+        }
+
+        // Handle human approval steps
+        if (step.type === 'human_approval') {
+          return {
+            ...base,
+            ...executeIf,
+            type: 'human_approval',
+            approvers: step.approvers || [],
+            approvalType: step.approvalType || 'any',
+            title: step.title || step.name,
+            message: step.message || 'Approval required',
+            timeout: step.timeout || 3600000,
+            onTimeout: step.onTimeout || 'reject',
+          }
+        }
+
+        // Handle parallel group steps
+        if (step.type === 'parallel_group' && step.steps) {
+          return {
+            ...base,
+            ...executeIf,
+            type: 'parallel_group',
+            steps: step.steps.map((s: any, i: number) => convertStep(s, i)),
+          }
+        }
+
+        // Convert ai_processing to Pilot ai_processing - CHECK THIS BEFORE plugin_action!
+        // Must check before generic plugin_action because ai_processing also has plugin + plugin_action fields
+        if (step.plugin === 'ai_processing' || step.type === 'ai_processing') {
+          // Use prompt from params if available, otherwise use operation
+          const prompt = step.params?.prompt || step.operation || step.name
+          return {
+            ...base,
+            ...executeIf,
             type: 'ai_processing',
             prompt: prompt,
             params: step.params || {},
           }
         }
 
-        // Convert legacy plugin_action to Pilot action
-        if (step.plugin && step.plugin_action) {
+        // Convert plugin_action to Pilot action
+        if (step.type === 'plugin_action' && step.plugin && step.plugin_action) {
           return {
             ...base,
+            ...executeIf,
             type: 'action',
             plugin: step.plugin,
             action: step.plugin_action,
@@ -443,15 +553,19 @@ export async function POST(req: Request) {
           }
         }
 
-        // Fallback: generic action
+        // Fallback: preserve original type and structure
         return {
           ...base,
-          type: 'action',
+          ...executeIf,
+          type: step.type || 'action',
           plugin: step.plugin || 'unknown',
-          action: step.plugin_action || 'process',
+          action: step.plugin_action || step.action || 'process',
           params: step.params || {},
         }
-      })
+      }
+
+      // Convert all top-level steps
+      return analysisSteps.map((step, idx) => convertStep(step, idx))
     }
 
     // Build agent data from AgentKit's intelligent analysis
