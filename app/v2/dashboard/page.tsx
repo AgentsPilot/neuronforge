@@ -589,7 +589,7 @@ export default function V2DashboardPage() {
               }}
               placeholder={accountFrozen ? "Account frozen - Purchase tokens to continue" : stats.creditBalance < 2000 ? "Insufficient balance - Need 2000 tokens to create agent" : "Describe what you want to automate..."}
               className="flex-1 bg-transparent border-none outline-none text-sm sm:text-base text-[var(--v2-text-secondary)] placeholder:text-[var(--v2-text-muted)] resize-none max-h-32"
-              style={{ height: 'auto', overflow: 'hidden' }}
+              style={{ height: 'auto', overflowY: 'auto' }}
               disabled={accountFrozen || stats.creditBalance < 2000}
               rows={1}
               onKeyDown={(e) => {
