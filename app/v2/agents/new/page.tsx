@@ -471,7 +471,7 @@ function V2AgentBuilderContent() {
 
         // Show message asking user to connect plugins
         const oauthMessage = data.metadata?.oauth_message ||
-          'To complete your automation, please connect the following services:'
+          'To complete your setup, please connect the following services:'
         addAIMessage(oauthMessage)
 
         return // Stop here, wait for user to connect/skip plugins
@@ -587,7 +587,7 @@ function V2AgentBuilderContent() {
       if (remainingMissing.length === 0) {
         console.log('✅ All plugins connected! Re-running Phase 3...')
         setShowPluginCards(false)
-        addTypingIndicator('All services connected! Creating your automation plan...')
+        addTypingIndicator('All services connected! Creating your enhanced plan...')
         await processPhase3(threadId!, updatedPlugins)
       }
 
@@ -1333,13 +1333,13 @@ function V2AgentBuilderContent() {
                 <div className={`flex items-start gap-3 p-3 rounded-lg border ${
                   builderState.workflowPhase === 'analysis'
                     ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
-                    : builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted
+                    : builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted
                     ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
                     : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
                 }`}>
                   {builderState.workflowPhase === 'analysis' ? (
                     <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
-                  ) : builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted ? (
+                  ) : builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted ? (
                     <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
                   ) : (
                     <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
@@ -1357,13 +1357,13 @@ function V2AgentBuilderContent() {
                 <div className={`flex items-start gap-3 p-3 rounded-lg border ${
                   builderState.workflowPhase === 'questions'
                     ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
-                    : builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted
+                    : builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted
                     ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
                     : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
                 }`}>
                   {builderState.workflowPhase === 'questions' ? (
                     <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
-                  ) : builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted ? (
+                  ) : builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted ? (
                     <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
                   ) : (
                     <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
@@ -1384,13 +1384,13 @@ function V2AgentBuilderContent() {
                 <div className={`flex items-start gap-3 p-3 rounded-lg border ${
                   builderState.workflowPhase === 'enhancement'
                     ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
-                    : builderState.workflowPhase === 'approval' || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted
+                    : builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted
                     ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
                     : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
                 }`}>
                   {builderState.workflowPhase === 'enhancement' ? (
                     <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
-                  ) : builderState.workflowPhase === 'approval' || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted ? (
+                  ) : builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted ? (
                     <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
                   ) : (
                     <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
