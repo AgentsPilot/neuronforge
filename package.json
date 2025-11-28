@@ -8,6 +8,9 @@
   "scripts": {
     "dev": "next dev -p 3000 2>&1 | grep -vE 'status_only=true|agent_execution.*select=id|Cache skipped|cache skip|auto no cache' || true",
     "dev:verbose": "next dev -p 3000",
+    "dev:pretty:terminal": "next dev -p 3000 2>&1 | npx pino-pretty",
+    "dev:pretty:file": "next dev -p 3000 2>&1 | npx pino-pretty --no-color --singleLine > dev.log",
+    "dev:pretty": "next dev -p 3000 2>&1 | npx pino-pretty --no-color --singleLine > dev.log",
     "dev:log": "next dev -p 3000 > dev.log 2>&1",
     "build": "next build",
     "start": "next start",
@@ -53,6 +56,8 @@
     "openai": "^5.23.2",
     "pdf-parse": "^1.1.1",
     "pdfjs-dist": "^5.4.54",
+    "pino": "^10.1.0",
+    "pino-pretty": "^13.1.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-gauge-chart": "^0.5.1",

@@ -4,6 +4,7 @@ import { getUser } from '@/lib/auth';
 import { useThreadBasedAgentCreation } from '@/lib/utils/featureFlags';
 import { OpenAIProvider } from '@/lib/ai/providers/openaiProvider';
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
+import { createLogger } from '@/lib/logger';
 import type {
   AgentPromptThread,
   ThreadErrorResponse
@@ -21,6 +22,9 @@ const aiAnalytics = new AIAnalyticsService(supabase, {
   enableCostTracking: true,
   enablePerformanceMetrics: true
 });
+
+// Create logger instance for this route
+const logger = createLogger({ module: 'API', route: '/api/agent-creation/thread/:id' });
 
 export interface ThreadResumeResponse {
   success: boolean;
@@ -44,12 +48,18 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   const threadId = params.id;
-  console.log('🔍 GET /api/agent-creation/thread/:id - Retrieving thread:', threadId);
+
+  // Generate or extract correlation ID for request tracing
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId, threadId });
+  const startTime = Date.now();
+
+  requestLogger.info('Thread retrieval request received');
 
   try {
     // Step 1: Check feature flag
     if (!useThreadBasedAgentCreation()) {
-      console.log('⚠️ Thread-based agent creation is disabled');
+      requestLogger.warn('Thread-based agent creation is disabled');
       return NextResponse.json(
         {
           success: false,
@@ -63,7 +73,7 @@ export async function GET(
     // Step 2: Authenticate user
     const user = await getUser();
     if (!user) {
-      console.error('❌ Unauthorized: No user found');
+      requestLogger.warn('Unauthorized access attempt');
       return NextResponse.json(
         {
           success: false,
@@ -74,7 +84,7 @@ export async function GET(
       );
     }
 
-    console.log('✅ User authenticated:', user.id);
+    requestLogger.debug({ userId: user.id }, 'User authenticated');
 
     // Step 3: Validate thread ID
     if (!threadId) {
@@ -89,6 +99,7 @@ export async function GET(
     }
 
     // Step 4: Retrieve thread from database
+    const dbStartTime = Date.now();
     const { data: threadRecord, error: threadError } = await supabase
       .from('agent_prompt_threads')
       .select('*')
@@ -97,7 +108,11 @@ export async function GET(
       .single();
 
     if (threadError || !threadRecord) {
-      console.error('❌ Thread not found or unauthorized:', threadError);
+      const dbDuration = Date.now() - dbStartTime;
+      requestLogger.error(
+        { err: threadError, userId: user.id, duration: dbDuration },
+        'Thread not found or unauthorized'
+      );
       return NextResponse.json(
         {
           success: false,
@@ -108,19 +123,27 @@ export async function GET(
       );
     }
 
-    console.log('✅ Thread found:', {
-      id: threadRecord.id,
-      status: threadRecord.status,
-      current_phase: threadRecord.current_phase,
-      expires_at: threadRecord.expires_at
-    });
+    const dbDuration = Date.now() - dbStartTime;
+    requestLogger.debug(
+      {
+        dbRecordId: threadRecord.id,
+        status: threadRecord.status,
+        currentPhase: threadRecord.current_phase,
+        expiresAt: threadRecord.expires_at,
+        duration: dbDuration
+      },
+      'Thread found in database'
+    );
 
     // Step 5: Check if thread is expired
     const now = new Date();
     const expiresAt = new Date(threadRecord.expires_at);
 
     if (threadRecord.status === 'expired' || now > expiresAt) {
-      console.log('⏰ Thread has expired');
+      requestLogger.info(
+        { status: threadRecord.status, expiresAt: threadRecord.expires_at },
+        'Thread has expired'
+      );
 
       // Update status to expired if not already
       if (threadRecord.status !== 'expired') {
@@ -142,6 +165,7 @@ export async function GET(
 
     // Step 6: Retrieve messages from OpenAI thread
     let messages;
+    const retrievalStartTime = Date.now();
     try {
       const openaiProvider = OpenAIProvider.getInstance(aiAnalytics);
       const messagesResponse = await openaiProvider.getThreadMessages(threadId, {
@@ -156,9 +180,17 @@ export async function GET(
         created_at: msg.created_at
       }));
 
-      console.log('✅ Retrieved', messages.length, 'messages from thread');
+      const retrievalDuration = Date.now() - retrievalStartTime;
+      requestLogger.info(
+        { messageCount: messages.length, duration: retrievalDuration },
+        'Messages retrieved from OpenAI thread'
+      );
     } catch (messageError: any) {
-      console.error('❌ Failed to retrieve messages:', messageError);
+      const retrievalDuration = Date.now() - retrievalStartTime;
+      requestLogger.error(
+        { err: messageError, duration: retrievalDuration },
+        'Failed to retrieve messages from OpenAI thread'
+      );
       return NextResponse.json(
         {
           success: false,
@@ -176,17 +208,25 @@ export async function GET(
       messages
     };
 
-    console.log('✅ Thread resume data prepared:', {
-      thread_id: threadId,
-      user_id: user.id,
-      message_count: messages.length,
-      current_phase: threadRecord.current_phase
-    });
+    const totalDuration = Date.now() - startTime;
+    requestLogger.info(
+      {
+        userId: user.id,
+        messageCount: messages.length,
+        currentPhase: threadRecord.current_phase,
+        duration: totalDuration
+      },
+      'Thread retrieval complete'
+    );
 
     return NextResponse.json(response);
 
   } catch (error: any) {
-    console.error('❌ Unexpected error in thread retrieval:', error);
+    const totalDuration = Date.now() - startTime;
+    requestLogger.error(
+      { err: error, duration: totalDuration },
+      'Unexpected error in thread retrieval'
+    );
     return NextResponse.json(
       {
         success: false,
