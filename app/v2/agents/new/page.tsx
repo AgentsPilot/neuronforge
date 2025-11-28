@@ -724,31 +724,32 @@ function V2AgentBuilderContent() {
       addAIMessage("✨ Agent draft ready!")
 
       // Add resolved_user_inputs to inputParameterValues if available
+      // Keep resolvedInputs in scope so we can filter out already-provided parameters
+      let resolvedInputs: Record<string, any> = {}
       if (enhancedPromptData?.specifics?.resolved_user_inputs) {
-        const resolvedInputs: Record<string, any> = {}
         enhancedPromptData.specifics.resolved_user_inputs.forEach((input: { key: string; value: string }) => {
           resolvedInputs[input.key] = input.value
         })
         setInputParameterValues(prev => ({ ...prev, ...resolvedInputs }))
       }
 
-      // Check for required input parameters
+      // Check for required input parameters that don't already have values from resolved_user_inputs
       const requiredParams = generatedAgent.agent.input_schema?.filter(
-        (input: any) => input.required === true
+        (input: any) => input.required === true && !(input.name in resolvedInputs)
       ) || []
 
       if (requiredParams.length > 0) {
-        // Start input parameters flow
+        // Start input parameters flow for missing parameters only
         setRequiredInputs(requiredParams)
         setCurrentInputIndex(0)
         setIsAwaitingInputParameter(true)
-        addAIMessage("Great! Now let's configure the agent's settings.")
+        addAIMessage("Great! Now let's configure the remaining agent settings.")
 
         // Ask first parameter question
         const firstParam = requiredParams[0]
         addAIMessage(`What value should I use for **${firstParam.label || firstParam.name}**?\n\n${firstParam.description || ''}`)
       } else {
-        // No required parameters, mark step complete and go to scheduling
+        // No required parameters or all already have values, mark step complete and go to scheduling
         setInputParametersComplete(true)
         addAIMessage("Great! Now let's decide when the agent will run.")
         setIsAwaitingSchedule(true)
