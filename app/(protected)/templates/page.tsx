@@ -272,16 +272,21 @@ export default function AgentTemplates() {
           message: `Failed to import "${agent.agent_name}". Please try again.`
         })
       } else {
-        // Increment import count in shared_agents table
-        const { error: updateError } = await supabase
-          .from('shared_agents')
-          .update({
-            import_count: (agent.import_count || 0) + 1
+        // Track import in shared_agent_imports table
+        // This will automatically trigger import_count increment via database trigger
+        const { error: trackError } = await supabase
+          .from('shared_agent_imports')
+          .insert({
+            shared_agent_id: agent.id,
+            imported_by_user_id: user.id,
+            created_agent_id: data.id
           })
-          .eq('id', agent.id)
 
-        if (updateError) {
-          console.error('Error updating import count:', updateError)
+        if (trackError) {
+          // Log error but don't fail the import (it's just analytics)
+          console.error('Error tracking import:', trackError)
+          // If it's a unique constraint violation (user already imported this template),
+          // that's okay - just skip the tracking
         }
 
         setImportStatus({

@@ -18,6 +18,10 @@ import {
 } from 'lucide-react';
 
 interface MemoryConfig {
+  global: {
+    enabled: boolean;
+    debug_mode: boolean;
+  };
   injection: {
     max_tokens: number;
     min_recent_runs: number;
@@ -70,6 +74,10 @@ export default function MemoryConfigPage() {
   const [retentionExpanded, setRetentionExpanded] = useState(false);
 
   const [config, setConfig] = useState<MemoryConfig>({
+    global: {
+      enabled: true,
+      debug_mode: false
+    },
     injection: {
       max_tokens: 4000,
       min_recent_runs: 2,
@@ -242,10 +250,73 @@ export default function MemoryConfigPage() {
 
         {/* Configuration Sections */}
         <div className="space-y-6">
+          {/* Global Memory Controls */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-slate-900/50 backdrop-blur-xl border border-white/10 rounded-2xl p-6"
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <Brain className="w-6 h-6 text-purple-400" />
+              <h3 className="text-xl font-bold text-white">Global Memory Settings</h3>
+            </div>
+
+            <div className="space-y-4">
+              {/* Enable Memory Toggle */}
+              <div className="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl">
+                <div>
+                  <label className="text-sm font-medium text-white block mb-1">
+                    Enable Memory System
+                  </label>
+                  <p className="text-xs text-slate-400">
+                    Master toggle for the entire memory system. When disabled, no memories will be loaded or saved.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setConfig({ ...config, global: { ...config.global, enabled: !config.global.enabled } })}
+                  className={`relative inline-flex h-8 w-16 items-center rounded-full transition-colors ${
+                    config.global.enabled ? 'bg-green-500' : 'bg-slate-700'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-6 w-6 transform rounded-full bg-white shadow-lg transition-transform ${
+                      config.global.enabled ? 'translate-x-9' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Debug Mode Toggle */}
+              <div className="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl">
+                <div>
+                  <label className="text-sm font-medium text-white block mb-1">
+                    Debug Mode
+                  </label>
+                  <p className="text-xs text-slate-400">
+                    Enable verbose logging for memory operations (injection, summarization, retrieval).
+                  </p>
+                </div>
+                <button
+                  onClick={() => setConfig({ ...config, global: { ...config.global, debug_mode: !config.global.debug_mode } })}
+                  className={`relative inline-flex h-8 w-16 items-center rounded-full transition-colors ${
+                    config.global.debug_mode ? 'bg-blue-500' : 'bg-slate-700'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-6 w-6 transform rounded-full bg-white shadow-lg transition-transform ${
+                      config.global.debug_mode ? 'translate-x-9' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+          </motion.div>
+
           {/* Section 1: Injection Configuration */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
             className="bg-slate-900/50 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden"
           >
             <button
@@ -335,7 +406,7 @@ export default function MemoryConfigPage() {
                       })}
                       className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                     />
-                    <p className="text-xs text-slate-400 mt-1">Maximum number of recent runs to inject. Caps how many of the most recent executions are included in memory context. Prevents token budget exhaustion on recent runs alone, leaving room for semantic search results. Recommended: 5 for standard workflows (last 5 runs), 10 for highly sequential operations, 3 for cost-efficient operations. Should be >= Min Recent Runs.</p>
+                    <p className="text-xs text-slate-400 mt-1">Maximum number of recent runs to inject. Caps how many of the most recent executions are included in memory context. Prevents token budget exhaustion on recent runs alone, leaving room for semantic search results. Recommended: 5 for standard workflows (last 5 runs), 10 for highly sequential operations, 3 for cost-efficient operations. Should be greater than or equal to Min Recent Runs.</p>
                   </div>
 
                   <div>

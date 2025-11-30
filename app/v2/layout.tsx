@@ -12,6 +12,7 @@ import './globals-v2.css'
 // Pages that have their own HelpBot implementation should not show the global one
 const PAGES_WITH_OWN_HELPBOT = [
   '/v2/agents/[id]/run',
+  '/v2/sandbox/[agentId]',
 ]
 
 export default function V2RootLayout({
@@ -22,8 +23,8 @@ export default function V2RootLayout({
   const pathname = usePathname()
 
   // Check if current page has its own HelpBot
-  // Match pattern like /v2/agents/123/run
-  const hasOwnHelpBot = pathname?.match(/\/v2\/agents\/[^/]+\/run/)
+  // Match patterns like /v2/agents/123/run or /v2/sandbox/456
+  const hasOwnHelpBot = pathname?.match(/\/v2\/agents\/[^/]+\/run/) || pathname?.match(/\/v2\/sandbox\/[^/]+/)
 
   return (
     <V2ThemeProvider>

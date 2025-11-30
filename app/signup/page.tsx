@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import { motion } from 'framer-motion';
 import Link from 'next/link';
+import Image from 'next/image';
 
 export default function SignupPage() {
   const router = useRouter();
@@ -313,34 +314,34 @@ export default function SignupPage() {
             backgroundPosition: ['0% 0%', '100% 100%', '0% 0%'],
           }}
           transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
-          className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,_var(--tw-gradient-stops))] from-blue-900/40 via-purple-900/30 to-pink-900/40 bg-[length:200%_200%]"
+          className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,_var(--tw-gradient-stops))] from-orange-900/20 via-zinc-900/30 to-transparent bg-[length:200%_200%]"
         />
         <motion.div
           animate={{
             backgroundPosition: ['100% 100%', '0% 0%', '100% 100%'],
           }}
           transition={{ duration: 30, repeat: Infinity, ease: "linear" }}
-          className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_var(--tw-gradient-stops))] from-indigo-900/30 via-transparent to-fuchsia-900/30 bg-[length:200%_200%]"
+          className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_var(--tw-gradient-stops))] from-orange-900/15 via-transparent to-transparent bg-[length:200%_200%]"
         />
         <motion.div
           animate={{
             x: [0, 150, 0],
             y: [0, -150, 0],
             scale: [1, 1.3, 1],
-            opacity: [0.3, 0.5, 0.3]
+            opacity: [0.15, 0.3, 0.15]
           }}
           transition={{ duration: 20, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute top-20 left-20 w-[500px] h-[500px] bg-blue-500/20 rounded-full blur-3xl"
+          className="absolute top-20 left-20 w-[500px] h-[500px] bg-orange-600/10 rounded-full blur-3xl"
         />
         <motion.div
           animate={{
             x: [0, -150, 0],
             y: [0, 150, 0],
             scale: [1, 1.4, 1],
-            opacity: [0.3, 0.5, 0.3]
+            opacity: [0.15, 0.3, 0.15]
           }}
           transition={{ duration: 25, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute bottom-20 right-20 w-[500px] h-[500px] bg-purple-500/20 rounded-full blur-3xl"
+          className="absolute bottom-20 right-20 w-[500px] h-[500px] bg-orange-600/10 rounded-full blur-3xl"
         />
       </div>
 
@@ -356,19 +357,24 @@ export default function SignupPage() {
             <Link href="/" className="inline-block mb-4">
               <motion.div
                 whileHover={{ scale: 1.05 }}
-                className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl mx-auto flex items-center justify-center shadow-2xl"
+                className="mx-auto inline-block"
               >
-                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
+                <Image
+                  src="/images/AgentPilot_Logo.png"
+                  alt="AgentsPilots"
+                  width={100}
+                  height={100}
+                  className="transition-transform duration-200"
+                  priority
+                />
               </motion.div>
             </Link>
-            <h1 className="text-4xl font-black mb-2">
-              <span className="bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
+            <h1 className="text-3xl font-black mb-1">
+              <span className="text-orange-400">
                 Create Account
               </span>
             </h1>
-            <p className="text-slate-400 text-lg">Join the AI workforce revolution</p>
+            <p className="text-slate-400 text-sm">Join the AI workforce revolution</p>
           </motion.div>
 
           {/* Signup Form */}
@@ -376,20 +382,9 @@ export default function SignupPage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.2 }}
-            className="relative group"
           >
-            <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-2xl opacity-50 group-hover:opacity-75 blur-lg transition duration-500"></div>
-            <div className="relative bg-gradient-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-2xl rounded-2xl shadow-2xl border border-white/20 p-8">
-              <form onSubmit={handleSignup} className="space-y-6">
-                {/* Required Fields Notice */}
-                <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-3">
-                  <p className="text-blue-300 text-sm flex items-center gap-2">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    All fields are mandatory
-                  </p>
-                </div>
+            <div className="bg-gradient-to-br from-zinc-900/95 to-zinc-800/95 backdrop-blur-2xl rounded-2xl shadow-2xl border border-white/20 p-6">
+              <form onSubmit={handleSignup} className="space-y-4">
 
                 {errorMessage && (
                   <motion.div
@@ -411,7 +406,7 @@ export default function SignupPage() {
                 )}
 
                 {/* Full Name */}
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <label htmlFor="fullName" className="text-sm font-bold text-slate-200 block">
                     Full Name <span className="text-red-400">*</span>
                   </label>
@@ -419,7 +414,7 @@ export default function SignupPage() {
                     id="fullName"
                     type="text"
                     placeholder="Enter your full name"
-                    className="w-full px-4 py-3.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all duration-200"
+                    className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all duration-200"
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
                     disabled={isLoading}
@@ -428,7 +423,7 @@ export default function SignupPage() {
                 </div>
 
                 {/* Email */}
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <label htmlFor="email" className="text-sm font-bold text-slate-200 block">
                     Email Address <span className="text-red-400">*</span>
                   </label>
@@ -437,7 +432,7 @@ export default function SignupPage() {
                       id="email"
                       type="email"
                       placeholder="Enter your email"
-                      className="w-full px-4 py-3.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all duration-200"
+                      className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all duration-200"
                       value={email}
                       onChange={(e) => {
                         setEmail(e.target.value);
@@ -448,14 +443,14 @@ export default function SignupPage() {
                     />
                     {emailCheckLoading && (
                       <div className="absolute inset-y-0 right-0 pr-4 flex items-center">
-                        <div className="w-5 h-5 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+                        <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
                       </div>
                     )}
                   </div>
                 </div>
 
                 {/* Password */}
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <label htmlFor="password" className="text-sm font-bold text-slate-200 block">
                     Password <span className="text-red-400">*</span>
                   </label>
@@ -464,7 +459,7 @@ export default function SignupPage() {
                       id="password"
                       type={showPassword ? 'text' : 'password'}
                       placeholder="Enter your password"
-                      className="w-full px-4 py-3.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all duration-200 pr-12"
+                      className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all duration-200 pr-12"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       disabled={isLoading}
@@ -510,7 +505,7 @@ export default function SignupPage() {
                 </div>
 
                 {/* Confirm Password */}
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <label htmlFor="confirmPassword" className="text-sm font-bold text-slate-200 block">
                     Confirm Password <span className="text-red-400">*</span>
                   </label>
@@ -518,7 +513,7 @@ export default function SignupPage() {
                     id="confirmPassword"
                     type="password"
                     placeholder="Re-enter your password"
-                    className="w-full px-4 py-3.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all duration-200"
+                    className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all duration-200"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     disabled={isLoading}
@@ -529,13 +524,13 @@ export default function SignupPage() {
                 <button
                   type="submit"
                   disabled={isLoading}
-                  className="w-full bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 disabled:from-slate-600 disabled:to-slate-700 text-white font-bold py-3.5 px-4 rounded-xl transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98] disabled:transform-none disabled:cursor-not-allowed shadow-lg hover:shadow-2xl hover:shadow-purple-500/50"
+                  className="w-full bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 disabled:from-slate-600 disabled:to-slate-700 text-white font-bold py-3 px-4 rounded-xl transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98] disabled:transform-none disabled:cursor-not-allowed shadow-lg hover:shadow-2xl hover:shadow-orange-500/50"
                 >
                   {isLoading ? 'Creating Account...' : 'Sign Up'}
                 </button>
 
                 {/* Divider */}
-                <div className="relative flex items-center py-2">
+                <div className="relative flex items-center py-1">
                   <div className="flex-grow border-t border-white/10"></div>
                   <span className="flex-shrink mx-4 text-slate-400 text-sm">or continue with</span>
                   <div className="flex-grow border-t border-white/10"></div>
@@ -546,7 +541,7 @@ export default function SignupPage() {
                   type="button"
                   onClick={handleGoogleSignUp}
                   disabled={isLoading}
-                  className="w-full bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 text-white font-semibold py-3.5 px-4 rounded-xl transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98] disabled:transform-none disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center gap-3"
+                  className="w-full bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 text-white font-semibold py-3 px-4 rounded-xl transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98] disabled:transform-none disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center gap-3"
                 >
                   <svg className="w-5 h-5" viewBox="0 0 24 24">
                     <path
@@ -577,12 +572,12 @@ export default function SignupPage() {
                 </div>
 
                 {/* Back to Login */}
-                <div className="text-center pt-2">
+                <div className="text-center pt-1">
                   <p className="text-sm text-slate-400">
                     Already have an account?{' '}
                     <Link
                       href="/login"
-                      className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400 hover:from-blue-300 hover:to-purple-300 transition-all duration-200 font-bold"
+                      className="text-orange-400 hover:text-orange-300 transition-all duration-200 font-bold"
                     >
                       Log in here
                     </Link>
@@ -597,7 +592,7 @@ export default function SignupPage() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.6, delay: 0.4 }}
-            className="text-center mt-8"
+            className="text-center mt-6"
           >
             <Link
               href="/"

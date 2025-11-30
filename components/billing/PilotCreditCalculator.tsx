@@ -329,12 +329,10 @@ export default function PilotCreditCalculator({
       <motion.div
         initial={{ opacity: 0, y: 40 }}
         animate={{ opacity: 1, y: 0 }}
-        className="relative group"
       >
-        <div className="absolute -inset-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-3xl opacity-50 blur-2xl"></div>
-        <div className="relative bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/20 p-12">
+        <div className="bg-gradient-to-br from-zinc-900/90 to-zinc-800/90 backdrop-blur-2xl rounded-2xl shadow-2xl border border-white/20 p-8">
           <div className="text-center">
-            <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-purple-500 border-t-transparent mb-4"></div>
+            <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-orange-500 border-t-transparent mb-4"></div>
             <p className="text-slate-400">Loading pricing calculator...</p>
           </div>
         </div>
@@ -348,44 +346,38 @@ export default function PilotCreditCalculator({
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true }}
       transition={{ duration: 0.8 }}
-      className="relative group"
     >
-      {/* Gradient Border Effect */}
-      <div className="absolute -inset-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-3xl opacity-50 group-hover:opacity-75 blur-2xl transition duration-1000"></div>
-
       {/* Main Container */}
-      <div className="relative bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/20 overflow-hidden">
+      <div className="bg-gradient-to-br from-zinc-900/90 to-zinc-800/90 backdrop-blur-2xl rounded-2xl shadow-2xl border border-white/20 overflow-hidden">
         {/* Header */}
-        <div className="bg-gradient-to-r from-blue-500/10 via-purple-500/10 to-pink-500/10 border-b border-white/10 p-8">
-          <div className="flex items-center gap-4 mb-3">
-            <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center">
-              <Zap className="h-7 w-7 text-white" />
-            </div>
+        <div className="bg-gradient-to-r from-orange-500/10 to-orange-600/10 border-b border-white/10 p-5 md:p-6">
+          <div className="flex items-center gap-3">
+            <Zap className="w-8 h-8 md:w-10 md:h-10 text-orange-400" />
             <div>
-              <h2 className="text-3xl font-black text-white">Smart Fuel Auto-Plan</h2>
-              <p className="text-slate-400 text-sm">Calculate your monthly subscription</p>
+              <h2 className="text-xl md:text-2xl font-black text-white">Smart Fuel Auto-Plan</h2>
+              <p className="text-slate-400 text-xs">Calculate your monthly subscription</p>
             </div>
           </div>
         </div>
 
-        <div className="p-8 space-y-8">
+        <div className="p-5 md:p-6 space-y-6">
           {/* Calculator Inputs */}
-          <div className="space-y-8">
+          <div className="space-y-5">
             {/* Number of Agents */}
-            <div className="space-y-4">
+            <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <label className="text-lg font-bold text-white">
+                <label className="text-base md:text-lg font-bold text-white">
                   Number of AI Agents
                 </label>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   <input
                     type="number"
                     value={inputs.numAgents}
                     onChange={(e) => updateInput('numAgents', parseInt(e.target.value) || 0)}
-                    className="w-24 px-4 py-2 bg-slate-800/50 border border-slate-600 rounded-xl text-right font-bold text-white text-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
+                    className="w-20 px-3 py-1.5 bg-zinc-800/50 border border-zinc-600 rounded-lg text-right font-bold text-white text-sm md:text-base focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition"
                     min="0"
                   />
-                  <span className="text-slate-400 text-sm font-medium">agents</span>
+                  <span className="text-slate-400 text-xs font-medium">agents</span>
                 </div>
               </div>
               <input
@@ -395,7 +387,7 @@ export default function PilotCreditCalculator({
                 min="0"
                 max="50"
                 step="1"
-                className="w-full h-3 bg-gradient-to-r from-blue-900/50 to-purple-900/50 rounded-lg appearance-none cursor-pointer slider"
+                className="w-full h-2 bg-gradient-to-r from-orange-900/50 to-orange-800/50 rounded-lg appearance-none cursor-pointer slider"
               />
               <div className="flex justify-between text-xs text-slate-500 font-medium">
                 <span>0</span>
@@ -405,20 +397,20 @@ export default function PilotCreditCalculator({
             </div>
 
             {/* Average Plugins per Agent */}
-            <div className="space-y-4">
+            <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <label className="text-lg font-bold text-white">
+                <label className="text-base md:text-lg font-bold text-white">
                   Plugins per Agent
                 </label>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   <input
                     type="number"
                     value={inputs.avgPluginsPerAgent}
                     onChange={(e) => updateInput('avgPluginsPerAgent', parseInt(e.target.value) || 0)}
-                    className="w-24 px-4 py-2 bg-slate-800/50 border border-slate-600 rounded-xl text-right font-bold text-white text-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition"
+                    className="w-20 px-3 py-1.5 bg-zinc-800/50 border border-zinc-600 rounded-lg text-right font-bold text-white text-sm md:text-base focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition"
                     min="0"
                   />
-                  <span className="text-slate-400 text-sm font-medium">plugins</span>
+                  <span className="text-slate-400 text-xs font-medium">plugins</span>
                 </div>
               </div>
               <input
@@ -428,7 +420,7 @@ export default function PilotCreditCalculator({
                 min="0"
                 max="10"
                 step="1"
-                className="w-full h-3 bg-gradient-to-r from-purple-900/50 to-pink-900/50 rounded-lg appearance-none cursor-pointer slider"
+                className="w-full h-2 bg-gradient-to-r from-orange-900/50 to-orange-800/50 rounded-lg appearance-none cursor-pointer slider"
               />
               <div className="flex justify-between text-xs text-slate-500 font-medium">
                 <span>0</span>
@@ -441,52 +433,49 @@ export default function PilotCreditCalculator({
           {/* AIS Estimated Usage */}
           {result && (
             <>
-              <div className="border-t border-white/10 pt-8 space-y-6">
+              <div className="border-t border-white/10 pt-5 space-y-4">
                 <div className="flex items-center gap-2 text-slate-400">
-                  <TrendingUp className="h-5 w-5" />
-                  <h3 className="text-lg font-bold">AIS Estimated Usage</h3>
+                  <TrendingUp className="h-4 w-4" />
+                  <h3 className="text-base font-bold">AIS Estimated Usage</h3>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-gradient-to-br from-blue-500/10 to-blue-600/10 border border-blue-500/20 rounded-2xl p-5">
-                    <div className="text-xs text-blue-300 mb-2 font-medium uppercase tracking-wide">Monthly Executions</div>
-                    <div className="text-3xl font-black text-white">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="bg-gradient-to-br from-orange-500/10 to-orange-600/10 border border-orange-500/20 rounded-xl p-4">
+                    <div className="text-xs text-orange-300 mb-1.5 font-medium uppercase tracking-wide">Monthly Executions</div>
+                    <div className="text-xl md:text-2xl font-black text-white">
                       {formatNumber(result.estimatedExecutions)}
                     </div>
-                    <div className="text-xs text-slate-400 mt-1">Based on typical usage patterns</div>
+                    <div className="text-xs text-slate-400 mt-1">Based on typical patterns</div>
                   </div>
 
-                  <div className="bg-gradient-to-br from-purple-500/10 to-purple-600/10 border border-purple-500/20 rounded-2xl p-5">
-                    <div className="text-xs text-purple-300 mb-2 font-medium uppercase tracking-wide">Daily Pilot Credits</div>
-                    <div className="text-3xl font-black text-white">
+                  <div className="bg-gradient-to-br from-orange-500/10 to-orange-600/10 border border-orange-500/20 rounded-xl p-4">
+                    <div className="text-xs text-orange-300 mb-1.5 font-medium uppercase tracking-wide">Daily Credits</div>
+                    <div className="text-xl md:text-2xl font-black text-white">
                       {formatNumber(result.creditsPerDay)}
                     </div>
-                    <div className="text-xs text-slate-400 mt-1">Average consumption rate</div>
+                    <div className="text-xs text-slate-400 mt-1">Average consumption</div>
                   </div>
                 </div>
               </div>
 
               {/* Monthly Subscription Cost */}
-              <div className="relative group/cost">
-                <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-2xl opacity-75 blur transition duration-500"></div>
-                <div className="relative bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl p-8 border border-white/20">
-                  <div className="text-center">
-                    <div className="text-sm text-slate-400 mb-3 font-medium uppercase tracking-wide">Your Monthly Subscription</div>
-                    <div className="text-6xl font-black mb-3 bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
-                      {formatCurrency(result.monthlyAmount)}
-                    </div>
-                    <div className="text-sm text-slate-400">
-                      {formatNumber(result.monthlyCredits)} Pilot Credits included
-                    </div>
+              <div className="bg-gradient-to-br from-zinc-900 to-zinc-800 rounded-xl p-5 md:p-6 border border-white/20">
+                <div className="text-center">
+                  <div className="text-xs text-slate-400 mb-2 font-medium uppercase tracking-wide">Your Monthly Subscription</div>
+                  <div className="text-3xl md:text-4xl lg:text-5xl font-black mb-2 text-orange-400">
+                    {formatCurrency(result.monthlyAmount)}
+                  </div>
+                  <div className="text-xs text-slate-400">
+                    {formatNumber(result.monthlyCredits)} Pilot Credits included
                   </div>
                 </div>
               </div>
 
               {/* Features List */}
-              <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 border border-white/10 rounded-2xl p-6">
-                <div className="grid grid-cols-2 gap-4">
+              <div className="bg-gradient-to-br from-zinc-800/50 to-zinc-900/50 border border-white/10 rounded-xl p-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                   {[
-                    'Credits roll over forever',
+                    'Flexible pricing',
                     '1,000 free trial credits',
                     'All plugins included',
                     'Unlimited agents',
@@ -494,10 +483,10 @@ export default function PilotCreditCalculator({
                     'Cancel anytime',
                   ].map((feature, idx) => (
                     <div key={idx} className="flex items-center gap-2">
-                      <div className="w-5 h-5 bg-green-500/20 rounded-full flex items-center justify-center flex-shrink-0">
-                        <Check className="h-3 w-3 text-green-400" />
+                      <div className="w-4 h-4 bg-orange-500/20 rounded-full flex items-center justify-center flex-shrink-0">
+                        <Check className="h-2.5 w-2.5 text-orange-400" />
                       </div>
-                      <span className="text-sm text-slate-300 font-medium">{feature}</span>
+                      <span className="text-xs text-slate-300 font-medium">{feature}</span>
                     </div>
                   ))}
                 </div>
@@ -507,7 +496,7 @@ export default function PilotCreditCalculator({
               {showSubscribeButton && (
                 <button
                   onClick={handleSubscribe}
-                  className="w-full py-5 bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 hover:from-blue-700 hover:via-purple-700 hover:to-pink-700 text-white font-black rounded-2xl text-lg transition-all duration-300 hover:scale-[1.02] shadow-2xl hover:shadow-purple-500/50"
+                  className="w-full py-3 md:py-4 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-black rounded-xl text-sm md:text-base transition-all duration-300 hover:scale-[1.02] shadow-2xl hover:shadow-orange-500/50"
                 >
                   Subscribe Now
                 </button>

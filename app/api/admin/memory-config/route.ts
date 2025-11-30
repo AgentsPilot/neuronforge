@@ -36,6 +36,10 @@ export async function GET() {
 
     // Parse settings into structured config with defaults
     const config = {
+      global: {
+        enabled: true,
+        debug_mode: false
+      },
       injection: {
         max_tokens: 4000,
         min_recent_runs: 2,
@@ -89,6 +93,9 @@ export async function GET() {
         }
 
         // Map database keys to config structure
+        if (key === 'memory_global_enabled') config.global.enabled = parsedValue === 'true' || parsedValue === true;
+        if (key === 'memory_global_debug_mode') config.global.debug_mode = parsedValue === 'true' || parsedValue === true;
+
         if (key === 'memory_injection_max_tokens') config.injection.max_tokens = parsedValue;
         if (key === 'memory_injection_min_recent_runs') config.injection.min_recent_runs = parsedValue;
         if (key === 'memory_injection_max_recent_runs') config.injection.max_recent_runs = parsedValue;
@@ -153,6 +160,10 @@ export async function PUT(request: NextRequest) {
 
     // Prepare upsert data for all config keys
     const upsertData = [
+      // Global configuration
+      { key: 'memory_global_enabled', value: config.global.enabled.toString(), category: 'memory', description: 'Enable/disable entire memory system' },
+      { key: 'memory_global_debug_mode', value: config.global.debug_mode.toString(), category: 'memory', description: 'Enable verbose logging for memory operations' },
+
       // Injection configuration
       { key: 'memory_injection_max_tokens', value: config.injection.max_tokens.toString(), category: 'memory', description: 'Maximum tokens to inject from memory' },
       { key: 'memory_injection_min_recent_runs', value: config.injection.min_recent_runs.toString(), category: 'memory', description: 'Minimum recent runs to include' },

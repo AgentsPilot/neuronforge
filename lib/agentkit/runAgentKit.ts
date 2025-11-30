@@ -278,16 +278,42 @@ export async function runAgentKit(
   // Get appropriate provider instance
   const aiProvider = ProviderFactory.getProvider(selectedProvider);
 
-  // MEMORY SYSTEM: Load context from past executions
-  console.log('🧠 [Memory] Loading agent memory context...');
+  // MEMORY SYSTEM: Load context from past executions (with timeout and config check)
+  const { MemoryConfigService } = await import('@/lib/memory/MemoryConfigService');
+  const memoryConfig = await MemoryConfigService.getGlobalConfig(supabase);
+
+  let memoryPrompt = '';
+  let memoryContext: any = null;
   const memoryInjector = new MemoryInjector(supabase);
-  const memoryContext = await memoryInjector.buildMemoryContext(
-    agent.id,
-    userId,
-    { userInput, inputValues }
-  );
-  const memoryPrompt = memoryInjector.formatForPrompt(memoryContext);
-  console.log(`🧠 [Memory] Loaded ${memoryContext.token_count} tokens of memory context`);
+
+  if (memoryConfig.enabled) {
+    try {
+      console.log('🧠 [Memory] Loading agent memory context...');
+
+      // Load memory with 1000ms timeout (same as WorkflowPilot)
+      memoryContext = await Promise.race([
+        memoryInjector.buildMemoryContext(agent.id, userId, { userInput, inputValues }),
+        new Promise<null>((_, reject) =>
+          setTimeout(() => reject(new Error('Memory loading timeout (1000ms)')), 1000)
+        )
+      ]);
+
+      if (memoryContext) {
+        memoryPrompt = memoryInjector.formatForPrompt(memoryContext);
+        if (memoryConfig.debug_mode) {
+          console.log(`🧠 [Memory] Loaded ${memoryContext.token_count} tokens of memory context`);
+        }
+      }
+    } catch (error: any) {
+      if (error.message.includes('timeout')) {
+        console.warn(`⏱️  [Memory] Loading timed out - proceeding without memory`);
+      } else {
+        console.warn(`⚠️  [Memory] Failed to load (non-critical):`, error.message);
+      }
+    }
+  } else {
+    console.log('🔇 [Memory] Memory disabled via config');
+  }
 
   // Get next run number for this agent
   const runNumber = await memoryInjector.getNextRunNumber(agent.id);

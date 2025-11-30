@@ -193,7 +193,7 @@ export class AgentSharingValidator {
       if (successRate < this.config.minSuccessRate) {
         return {
           valid: false,
-          reason: `Agent must have at least ${this.config.minSuccessRate}% success rate (currently: ${Math.round(successRate)}%)`,
+          reason: `Agent must have ≥${this.config.minSuccessRate}% success rate (currently: ${Math.round(successRate)}%)`,
           details: { successRate: Math.round(successRate), required: this.config.minSuccessRate }
         };
       }

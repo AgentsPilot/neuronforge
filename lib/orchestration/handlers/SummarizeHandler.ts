@@ -28,14 +28,15 @@ export class SummarizeHandler extends BaseHandler {
       // Resolve variables in input
       const resolvedInput = this.resolveInputVariables(context);
 
-      // Apply compression to input if enabled
-      const { compressed: input, result: compressionResult } = await this.compressInput(
-        JSON.stringify(resolvedInput),
-        context
-      );
+      // Apply preprocessing to clean data and extract metadata
+      const { data: cleanedData, metadata } = await this.applyPreprocessing(resolvedInput);
+
+      // Prepare input for LLM
+      const input = JSON.stringify(cleanedData);
 
       // Estimate token usage
-      const estimatedTokens = compressionResult.compressedTokens + 800; // Summaries need more output tokens
+      const inputTokens = this.estimateTokenCount(input);
+      const estimatedTokens = inputTokens + 800; // Summaries need more output tokens
       if (!this.checkBudget(context, estimatedTokens)) {
         return this.createErrorResult('Insufficient budget for summarization');
       }
@@ -47,11 +48,17 @@ export class SummarizeHandler extends BaseHandler {
         context
       );
 
+      // Calculate dataset size for smart metadata filtering
+      const dataSize = Array.isArray(cleanedData) ? cleanedData.length : 0;
+
+      // Inject preprocessing metadata facts into user prompt
+      const enrichedUser = this.injectPreprocessingFacts(user, metadata, dataSize);
+
       // Execute summarization using provider-agnostic method
       const llmResponse = await this.callLLM(
         context,
         system,
-        user,
+        enrichedUser, // Use enriched prompt with metadata facts
         0.5, // Moderate temperature for balanced creativity
         Math.min(context.budget.remaining, 2048)
       );
@@ -75,16 +82,14 @@ export class SummarizeHandler extends BaseHandler {
       const result = this.createSuccessResult(
         {
           summary: cleanSummary,  // Use cleaned version instead of raw output
-          originalLength: compressionResult.originalTokens,
+          originalLength: inputTokens,
           summaryLength: tokensUsed.output,
-          compressionRatio: 1 - (tokensUsed.output / compressionResult.originalTokens),
+          compressionRatio: 1 - (tokensUsed.output / inputTokens),
         },
         tokensUsed,
         cost,
         Date.now() - startTime,
         {
-          compressionApplied: compressionResult.strategy !== 'none',
-          compressionRatio: compressionResult.ratio,
           model: context.routingDecision.model,
           provider: context.routingDecision.provider,
         }

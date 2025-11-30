@@ -28,14 +28,15 @@ export class AggregateHandler extends BaseHandler {
       // Resolve variables in input
       const resolvedInput = this.resolveInputVariables(context);
 
-      // Apply compression to input if enabled
-      const { compressed: input, result: compressionResult } = await this.compressInput(
-        JSON.stringify(resolvedInput),
-        context
-      );
+      // Apply preprocessing to clean data and extract metadata
+      const { data: cleanedData, metadata } = await this.applyPreprocessing(resolvedInput);
+
+      // Prepare input for LLM
+      const input = JSON.stringify(cleanedData);
 
       // Estimate token usage
-      const estimatedTokens = compressionResult.compressedTokens + 700;
+      const inputTokens = this.estimateTokenCount(input);
+      const estimatedTokens = inputTokens + 700;
       if (!this.checkBudget(context, estimatedTokens)) {
         return this.createErrorResult('Insufficient budget for aggregation');
       }
@@ -47,11 +48,17 @@ export class AggregateHandler extends BaseHandler {
         context
       );
 
+      // Calculate dataset size for smart metadata filtering
+      const dataSize = Array.isArray(cleanedData) ? cleanedData.length : 0;
+
+      // Inject preprocessing metadata facts into user prompt
+      const enrichedUser = this.injectPreprocessingFacts(user, metadata, dataSize);
+
       // Execute aggregation using provider-agnostic method
       const llmResponse = await this.callLLM(
         context,
         system,
-        user,
+        enrichedUser, // Use enriched prompt with metadata facts
         0.3, // Low temperature for consistent calculations
         Math.min(context.budget.remaining, 1536)
       );
@@ -78,8 +85,6 @@ export class AggregateHandler extends BaseHandler {
         cost,
         Date.now() - startTime,
         {
-          compressionApplied: compressionResult.strategy !== 'none',
-          compressionRatio: compressionResult.ratio,
           model: context.routingDecision.model,
           provider: context.routingDecision.provider,
           aggregationType: aggregateResult.type,

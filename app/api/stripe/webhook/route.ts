@@ -261,6 +261,41 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
     console.log('✅ [Webhook] Billing event created successfully');
   }
 
+  // AUDIT TRAIL: Log payment and credit allocation
+  try {
+    const { auditLog } = await import('@/lib/services/AuditTrailService');
+
+    await auditLog({
+      action: hasProration ? 'SUBSCRIPTION_UPGRADED' : 'SUBSCRIPTION_RENEWED',
+      entityType: 'subscription',
+      entityId: String((invoice as any).subscription || invoice.id),
+      userId: userId,
+      resourceName: `Subscription Payment`,
+      details: {
+        stripe_invoice_id: invoice.id,
+        stripe_payment_intent_id: (invoice as any).payment_intent,
+        amount_paid_cents: invoice.amount_paid,
+        amount_paid_usd: (invoice.amount_paid / 100).toFixed(2),
+        credits_allocated: credits,
+        pilot_credits: pilotCredits,
+        is_prorated: hasProration,
+        balance_before: currentBalance,
+        balance_after: newBalance,
+        period_start: periodStart ? new Date(periodStart * 1000).toISOString() : null,
+        period_end: periodEnd ? new Date(periodEnd * 1000).toISOString() : null,
+        total_boost_credits: totalBoostCredits,
+        total_reward_credits: totalRewardCredits,
+        total_welcome_credits: totalWelcomeCredits
+      },
+      severity: 'info',
+      complianceFlags: ['SOC2']
+    });
+
+    console.log('✅ [Webhook] Audit trail logged for payment');
+  } catch (auditError) {
+    console.error('⚠️ [Webhook] Audit logging failed (non-critical):', auditError);
+  }
+
   console.log('✅ [Webhook] Invoice processed successfully:', {
     userId,
     credits,
@@ -350,6 +385,35 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
       amount_cents: invoice.amount_due,
       currency: invoice.currency
     });
+
+  // AUDIT TRAIL: Log payment failure
+  try {
+    const { auditLog } = await import('@/lib/services/AuditTrailService');
+
+    await auditLog({
+      action: 'PAYMENT_FAILED',
+      entityType: 'subscription',
+      entityId: String((invoice as any).subscription || invoice.id),
+      userId: userId,
+      resourceName: `Subscription Payment Failure`,
+      details: {
+        stripe_invoice_id: invoice.id,
+        amount_due_cents: invoice.amount_due,
+        amount_due_usd: (invoice.amount_due / 100).toFixed(2),
+        retry_count: retryCount,
+        grace_period_days: gracePeriodDays,
+        days_since_period_end: daysSincePeriodEnd,
+        agents_paused: shouldPauseAgents,
+        status: shouldPauseAgents ? 'past_due' : 'active'
+      },
+      severity: shouldPauseAgents ? 'critical' : 'warning',
+      complianceFlags: ['SOC2']
+    });
+
+    console.log('✅ [Webhook] Audit trail logged for payment failure');
+  } catch (auditError) {
+    console.error('⚠️ [Webhook] Audit logging failed (non-critical):', auditError);
+  }
 
   console.log('✅ [Webhook] Payment failure processed:', {
     userId,

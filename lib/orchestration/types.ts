@@ -173,7 +173,8 @@ export type BudgetAllocationStrategy =
   | 'equal'        // Equal distribution across steps
   | 'proportional' // Based on step complexity/intent
   | 'adaptive'     // Dynamic based on execution history
-  | 'priority';    // Based on step priority scores
+  | 'priority'     // Based on step priority scores
+  | 'predictive';  // Historical data-driven prediction (Phase 1)
 
 // ============================================================================
 // COMPRESSION STRATEGIES

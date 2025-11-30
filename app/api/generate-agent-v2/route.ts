@@ -422,8 +422,12 @@ export async function POST(req: Request) {
           name: step.operation || step.name,  // Pilot uses 'name', AI generates 'operation'
         }
 
-        // Remove redundant fields
-        delete normalized.operation
+        // CRITICAL: Only delete 'operation' for action steps
+        // For transform/comparison/enrichment steps, 'operation' is a REQUIRED field!
+        const stepsWithRequiredOperation = ['transform', 'comparison', 'enrichment']
+        if (!stepsWithRequiredOperation.includes(step.type)) {
+          delete normalized.operation
+        }
 
         // Normalize plugin steps: plugin_action → action
         if (step.plugin_action) {

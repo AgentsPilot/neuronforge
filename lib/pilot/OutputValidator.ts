@@ -89,6 +89,16 @@ export class OutputValidator {
       return `Field ${fieldName} should be object, got ${actualType}`;
     }
 
+    // Handle PluginAction type - plugin actions return objects with result data
+    if (expectedType === 'PluginAction' && actualType !== 'object') {
+      return `Field ${fieldName} should be PluginAction (object), got ${actualType}`;
+    }
+
+    if (expectedType === 'PluginAction' && actualType === 'object') {
+      // PluginAction results are objects - validation passes
+      return null;
+    }
+
     // Handle primitive types
     const typeMap: Record<string, string[]> = {
       'string': ['string'],
@@ -97,9 +107,10 @@ export class OutputValidator {
       'boolean': ['boolean'],
       'array': ['array'],
       'object': ['object'],
+      'PluginAction': ['object'], // PluginAction results are objects
     };
 
-    const allowedTypes = typeMap[expectedType.toLowerCase()] || [expectedType.toLowerCase()];
+    const allowedTypes = typeMap[expectedType.toLowerCase()] || typeMap[expectedType] || [expectedType.toLowerCase()];
 
     if (!allowedTypes.includes(actualType)) {
       return `Field ${fieldName} should be ${expectedType}, got ${actualType}`;

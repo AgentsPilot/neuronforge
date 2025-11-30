@@ -104,10 +104,31 @@ export async function POST(request: NextRequest) {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
-      // Helper to send SSE events
+      let timeoutId: NodeJS.Timeout | null = null;
+
+      // Helper to send SSE events safely
       const sendEvent = (event: string, data: any) => {
-        const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-        controller.enqueue(encoder.encode(message));
+        try {
+          const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+          controller.enqueue(encoder.encode(message));
+        } catch (error: any) {
+          // Stream already closed, ignore
+          console.log(`📡 [SSE] Cannot send event - stream already closed: ${error.message}`);
+        }
+      };
+
+      // Helper to safely close stream
+      const closeStream = () => {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        try {
+          controller.close();
+        } catch (error: any) {
+          // Already closed, ignore
+          console.log(`📡 [SSE] Stream already closed: ${error.message}`);
+        }
       };
 
       console.log(`📡 [SSE] Stream started for execution: ${finalExecutionId}`);
@@ -155,7 +176,7 @@ export async function POST(request: NextRequest) {
                 // Clean up and close stream
                 cleanupListener();
                 ExecutionEventEmitter.cleanupExecution(finalExecutionId);
-                controller.close();
+                closeStream();
                 console.log(`📡 [SSE] Stream closed for completed execution: ${finalExecutionId}`);
                 break;
 
@@ -167,7 +188,7 @@ export async function POST(request: NextRequest) {
                 // Clean up and close stream
                 cleanupListener();
                 ExecutionEventEmitter.cleanupExecution(finalExecutionId);
-                controller.close();
+                closeStream();
                 console.log(`📡 [SSE] Stream closed for failed execution: ${finalExecutionId}`);
                 break;
             }
@@ -178,21 +199,20 @@ export async function POST(request: NextRequest) {
       );
 
       // Set a timeout to prevent hanging connections (5 minutes)
-      const timeout = setTimeout(() => {
+      timeoutId = setTimeout(() => {
         console.log(`📡 [SSE] Stream timeout for execution: ${finalExecutionId}`);
         cleanupListener();
         ExecutionEventEmitter.cleanupExecution(finalExecutionId);
         sendEvent('error', { error: 'Stream timeout - execution may still be running' });
-        controller.close();
+        closeStream();
       }, 300000); // 5 minutes
 
       // Clean up on client disconnect
       request.signal.addEventListener('abort', () => {
         console.log(`📡 [SSE] Client disconnected from execution: ${finalExecutionId}`);
-        clearTimeout(timeout);
         cleanupListener();
         // Don't cleanup execution events - other clients might be listening
-        controller.close();
+        closeStream();
       });
     },
   });

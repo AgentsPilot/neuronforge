@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import {
   Sparkles,
@@ -291,17 +290,24 @@ export default function AgentPromptBar() {
               
               <textarea
                 value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Describe your automation idea and I'll help you build it..."
-                className="flex-1 border-none focus:ring-0 focus:outline-none bg-transparent placeholder-gray-400 text-gray-900 text-base font-medium resize-none min-h-[60px] max-h-32"
-                style={{ outline: 'none', boxShadow: 'none' }}
-                disabled={loading}
-                rows={3}
-                onInput={(e) => {
+                onChange={(e) => {
+                  setPrompt(e.target.value)
+                  // Auto-grow textarea up to max height
                   const target = e.target as HTMLTextAreaElement
                   target.style.height = 'auto'
-                  target.style.height = Math.min(target.scrollHeight, 128) + 'px'
+                  const newHeight = Math.min(target.scrollHeight, 128)
+                  target.style.height = newHeight + 'px'
                 }}
+                placeholder="Describe your automation idea and I'll help you build it..."
+                className="flex-1 border-none focus:ring-0 focus:outline-none bg-transparent placeholder-gray-400 text-gray-900 text-base font-medium resize-none overflow-y-auto scroll-smooth scrollbar-thin transition-all duration-200"
+                style={{
+                  outline: 'none',
+                  boxShadow: 'none',
+                  height: '60px',
+                  scrollbarWidth: 'thin',
+                  scrollbarColor: 'rgba(209, 213, 219, 0.5) transparent'
+                }}
+                disabled={loading}
               />
 
               {/* Microphone Button */}

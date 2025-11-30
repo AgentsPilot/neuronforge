@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
-import { V2Header } from '@/components/v2/V2Header'
+import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import { Card } from '@/components/v2/ui/card'
 import InputHelpButton from '@/components/v2/InputHelpButton'
 import { HelpBot } from '@/components/v2/HelpBot'
@@ -709,7 +709,12 @@ export default function V2RunAgentPage() {
 
   return (
     <div className="space-y-4 sm:space-y-5 lg:space-y-6">
-      {/* Top Bar: Back Button + User Menu */}
+      {/* Logo - First Line */}
+      <div className="mb-3">
+        <V2Logo />
+      </div>
+
+      {/* Back Button + Controls */}
       <div className="flex items-center justify-between">
         <button
           onClick={() => router.push(`/v2/agents/${agentId}`)}
@@ -719,7 +724,7 @@ export default function V2RunAgentPage() {
           <ArrowLeft className="w-4 h-4" />
           Back to Agent
         </button>
-        <V2Header />
+        <V2Controls />
       </div>
 
       {/* Main Content */}
@@ -1358,45 +1363,20 @@ export default function V2RunAgentPage() {
         )
       })()}
 
-      {/* Floating Help Button */}
-      <button
-        onClick={toggleChatbot}
-        className={`fixed bottom-4 right-4 sm:bottom-6 sm:right-6 w-12 h-12 sm:w-14 sm:h-14 text-white shadow-lg hover:shadow-2xl hover:scale-110 active:scale-95 transition-all duration-300 flex items-center justify-center z-50 group ${
-          helpBotOpen
-            ? 'bg-gray-600 hover:bg-gray-700'
-            : 'bg-gradient-to-br from-[var(--v2-primary)] to-purple-600'
-        }`}
-        style={{ borderRadius: 'var(--v2-radius-card)' }}
-        title={helpBotOpen ? "Close Help" : "Help & Support"}
-      >
-        {helpBotOpen ? (
-          <XCircle className="w-5 h-5 sm:w-6 sm:h-6" />
-        ) : (
-          <>
-            <Bot className="w-5 h-5 sm:w-6 sm:h-6 group-hover:rotate-12 transition-transform duration-300" />
-            <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white dark:border-gray-900 animate-pulse"></div>
-            <Sparkles className="absolute top-1 right-1 w-2.5 h-2.5 text-yellow-300 animate-pulse" />
-          </>
-        )}
-      </button>
-
-      {/* HelpBot Window - ONE window for both general and input help */}
-      {helpBotOpen && (() => {
-        const botKey = helpBotContext ? `${helpBotContext.agentId}-${helpBotContext.fieldName}` : 'general'
-        console.log('[Parent] Rendering HelpBot with key:', botKey)
-        return (
-          <HelpBot
-            key={botKey}
-            isOpen={helpBotOpen}
-            context={helpBotContext}
-            onFill={handleChatbotFill}
-            onClose={() => {
-              setHelpBotOpen(false)
-              setHelpBotContext(null)
-            }}
-          />
-        )
-      })()}
+      {/* HelpBot - handles both floating button and window */}
+      <HelpBot
+        isOpen={helpBotOpen}
+        context={helpBotContext}
+        onFill={handleChatbotFill}
+        onOpen={() => {
+          setHelpBotOpen(true)
+          setHelpBotContext(null) // Open in general help mode
+        }}
+        onClose={() => {
+          setHelpBotOpen(false)
+          setHelpBotContext(null)
+        }}
+      />
     </div>
   )
 }

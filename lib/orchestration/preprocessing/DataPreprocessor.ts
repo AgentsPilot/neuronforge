@@ -31,10 +31,34 @@ export class DataPreprocessor {
       customRules: config.customRules ?? [],
     };
 
+    // Unwrap step output objects (e.g., { step1: { data: {...}, plugin: "...", action: "..." } })
+    let unwrappedData = data;
+    const stepKeys = Object.keys(data || {}).filter(k => k.startsWith('step'));
+    if (stepKeys.length === 1 && data[stepKeys[0]]?.data) {
+      // Single step output - unwrap to get the actual data
+      unwrappedData = data[stepKeys[0]].data;
+      console.log(`[DataPreprocessor] Unwrapped step output: ${stepKeys[0]}`);
+    }
+
     // Detect data type
-    const dataType = this.detectDataType(data);
+    const dataType = this.detectDataType(unwrappedData);
 
     console.log(`[DataPreprocessor] Detected data type: ${dataType}`);
+
+    // Extract actual data array from plugin output wrapper
+    let actualData = unwrappedData;
+    if (dataType === 'email' && unwrappedData.emails) {
+      actualData = unwrappedData.emails;
+    } else if (dataType === 'contact' && unwrappedData.contacts) {
+      actualData = unwrappedData.contacts;
+    } else if (dataType === 'event' && unwrappedData.events) {
+      actualData = unwrappedData.events;
+    } else if (dataType === 'transaction' && unwrappedData.transactions) {
+      actualData = unwrappedData.transactions;
+    } else if (unwrappedData.data && typeof unwrappedData.data === 'object') {
+      // Handle nested data wrapper
+      actualData = unwrappedData.data;
+    }
 
     // Route to appropriate preprocessor
     try {
@@ -42,25 +66,25 @@ export class DataPreprocessor {
 
       switch (dataType) {
         case 'email':
-          result = await EmailPreprocessor.preprocess(data, fullConfig);
+          result = await EmailPreprocessor.preprocess(actualData, fullConfig);
           break;
 
         case 'transaction':
-          result = await TransactionPreprocessor.preprocess(data, fullConfig);
+          result = await TransactionPreprocessor.preprocess(actualData, fullConfig);
           break;
 
         case 'contact':
-          result = await ContactPreprocessor.preprocess(data, fullConfig);
+          result = await ContactPreprocessor.preprocess(actualData, fullConfig);
           break;
 
         case 'event':
-          result = await EventPreprocessor.preprocess(data, fullConfig);
+          result = await EventPreprocessor.preprocess(actualData, fullConfig);
           break;
 
         case 'generic':
         case 'unknown':
         default:
-          result = await GenericPreprocessor.preprocess(data, fullConfig);
+          result = await GenericPreprocessor.preprocess(actualData, fullConfig);
           break;
       }
 
@@ -125,6 +149,26 @@ export class DataPreprocessor {
       return 'unknown';
     }
 
+    // Check for plugin output wrapper with emails array
+    if (data.emails && Array.isArray(data.emails) && data.emails.length > 0) {
+      return this.detectDataType(data.emails[0]);
+    }
+
+    // Check for plugin output wrapper with contacts array
+    if (data.contacts && Array.isArray(data.contacts) && data.contacts.length > 0) {
+      return this.detectDataType(data.contacts[0]);
+    }
+
+    // Check for plugin output wrapper with events array
+    if (data.events && Array.isArray(data.events) && data.events.length > 0) {
+      return this.detectDataType(data.events[0]);
+    }
+
+    // Check for plugin output wrapper with transactions array
+    if (data.transactions && Array.isArray(data.transactions) && data.transactions.length > 0) {
+      return this.detectDataType(data.transactions[0]);
+    }
+
     // Email detection: Has subject AND (from OR sender OR payload)
     if (data.subject && (data.from || data.sender || data.payload)) {
       return 'email';
@@ -156,7 +200,7 @@ export class DataPreprocessor {
       return 'event';
     }
 
-    // Check for nested data wrapper
+    // Check for nested data wrapper (step output format)
     if (data.data && typeof data.data === 'object') {
       return this.detectDataType(data.data);
     }
@@ -172,19 +216,45 @@ export class DataPreprocessor {
   /**
    * Format metadata facts for LLM injection
    * Converts extracted metadata into natural language facts
+   *
+   * @param metadata - Extracted metadata from preprocessing
+   * @param options - Formatting options
+   * @param options.maxFacts - Maximum number of facts to include (default: unlimited)
+   * @param options.skipRedundant - Skip facts that may be redundant with data (default: false)
+   * @param options.dataSize - Size of the dataset being processed (used for smart filtering)
    */
-  static formatMetadataFacts(metadata: PreprocessingResult['metadata']): string {
+  static formatMetadataFacts(
+    metadata: PreprocessingResult['metadata'],
+    options: {
+      maxFacts?: number;
+      skipRedundant?: boolean;
+      dataSize?: number;
+    } = {}
+  ): string {
+    const { maxFacts, skipRedundant = false, dataSize = 0 } = options;
     const facts: string[] = [];
+
+    // For small datasets (< 20 items), skip all metadata - data is small enough
+    if (skipRedundant && dataSize > 0 && dataSize < 20) {
+      console.log(`[DataPreprocessor] Skipping metadata facts (dataset too small: ${dataSize} items)`);
+      return '';
+    }
 
     // Date range
     if (metadata.dateRange) {
       facts.push(`Date range: ${metadata.dateRange.formattedRange}`);
-      facts.push(`Items with dates: ${metadata.dateRange.count}`);
+      // Skip "Items with dates" if it's redundant (same as total)
+      if (!skipRedundant || metadata.dateRange.count !== metadata.counts?.total) {
+        facts.push(`Items with dates: ${metadata.dateRange.count}`);
+      }
     }
 
     // Counts
     if (metadata.counts) {
-      facts.push(`Total items: ${metadata.counts.total}`);
+      // Only add total count if it's useful (for large datasets, it helps)
+      if (!skipRedundant || dataSize >= 20) {
+        facts.push(`Total items: ${metadata.counts.total}`);
+      }
 
       if (metadata.counts.byType) {
         const typeBreakdown = Object.entries(metadata.counts.byType)
@@ -193,16 +263,22 @@ export class DataPreprocessor {
         facts.push(`Breakdown by type: ${typeBreakdown}`);
       }
 
-      if (metadata.counts.unread !== undefined) {
+      if (metadata.counts.unread !== undefined && metadata.counts.unread > 0) {
         facts.push(`Unread items: ${metadata.counts.unread}`);
       }
     }
 
     // Email-specific
     if (metadata.email) {
-      facts.push(`Total emails: ${metadata.counts?.total || 0}`);
+      // Skip "Total emails" if we already have "Total items"
+      if (!skipRedundant || !metadata.counts) {
+        facts.push(`Total emails: ${metadata.counts?.total || 0}`);
+      }
       facts.push(`Unique senders: ${metadata.email.senders.length}`);
-      facts.push(`Total attachments: ${metadata.email.totalAttachments}`);
+
+      if (metadata.email.totalAttachments > 0) {
+        facts.push(`Total attachments: ${metadata.email.totalAttachments}`);
+      }
 
       if (metadata.email.senders.length > 0) {
         const topSenders = metadata.email.senders
@@ -226,7 +302,9 @@ export class DataPreprocessor {
 
     // Contact-specific
     if (metadata.contact) {
-      facts.push(`Total contacts: ${metadata.contact.totalContacts}`);
+      if (!skipRedundant || !metadata.counts) {
+        facts.push(`Total contacts: ${metadata.contact.totalContacts}`);
+      }
       facts.push(`With email: ${metadata.contact.withEmail}`);
       facts.push(`With phone: ${metadata.contact.withPhone}`);
 
@@ -241,7 +319,9 @@ export class DataPreprocessor {
 
     // Event-specific
     if (metadata.event) {
-      facts.push(`Total events: ${metadata.event.totalEvents}`);
+      if (!skipRedundant || !metadata.counts) {
+        facts.push(`Total events: ${metadata.event.totalEvents}`);
+      }
       facts.push(`Upcoming: ${metadata.event.upcomingEvents}, Past: ${metadata.event.pastEvents}`);
       facts.push(`Average duration: ${metadata.event.avgDuration} minutes`);
 
@@ -254,8 +334,16 @@ export class DataPreprocessor {
       return '';
     }
 
+    // Apply maxFacts limit if specified
+    const limitedFacts = maxFacts && maxFacts > 0 ? facts.slice(0, maxFacts) : facts;
+
+    // Log if facts were limited
+    if (maxFacts && facts.length > maxFacts) {
+      console.log(`[DataPreprocessor] Limited metadata facts from ${facts.length} to ${maxFacts}`);
+    }
+
     return '\n\n--- VERIFIED FACTS (use these exact values) ---\n' +
-           facts.map(f => `• ${f}`).join('\n') +
+           limitedFacts.map(f => `• ${f}`).join('\n') +
            '\n--- END FACTS ---\n\n';
   }
 }

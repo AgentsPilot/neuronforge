@@ -15,6 +15,8 @@ import type {
 import { CompressionService } from '../CompressionService';
 import { OrchestrationError } from '../types';
 import { ProviderFactory } from '@/lib/ai/providerFactory';
+import { DataPreprocessor } from '../preprocessing/DataPreprocessor';
+import type { PreprocessorConfig, PreprocessingResult, ExtractedMetadata } from '../preprocessing/types';
 
 export abstract class BaseHandler implements IntentHandler {
   abstract intent: IntentType;
@@ -58,29 +60,92 @@ export abstract class BaseHandler implements IntentHandler {
   }
 
   /**
-   * Apply compression to input if enabled
-   * Note: Compression is handled at orchestration level before handler execution
-   * This method is kept for backward compatibility but compression should be done upstream
+   * Apply preprocessing to input data
+   * Cleans data, extracts metadata, and prepares for LLM consumption
+   *
+   * @param input - Raw input data (emails, transactions, contacts, etc.)
+   * @param config - Optional preprocessing configuration
+   * @returns Cleaned data and extracted metadata
    */
-  protected async compressInput(
-    input: string,
-    context: HandlerContext
-  ): Promise<{ compressed: string; result: CompressionResult }> {
-    // Compression is disabled in handlers - it's done at orchestration level
-    // Return input as-is with no-op compression result
-    const tokens = this.estimateTokenCount(input);
-    return {
-      compressed: input,
-      result: {
-        original: input,
-        compressed: input,
-        originalTokens: tokens,
-        compressedTokens: tokens,
-        ratio: 1.0,
-        qualityScore: 1.0,
-        strategy: 'none',
-      },
-    };
+  protected async applyPreprocessing(
+    input: any,
+    config?: PreprocessorConfig
+  ): Promise<{ data: any; metadata: ExtractedMetadata }> {
+    try {
+      // Count tokens BEFORE preprocessing
+      const inputStr = JSON.stringify(input);
+      const tokensBefore = this.estimateTokenCount(inputStr);
+
+      // Apply preprocessing with default config
+      const result: PreprocessingResult = await DataPreprocessor.preprocess(input, config || {});
+
+      if (!result.success) {
+        console.warn(`[${this.intent}Handler] Preprocessing failed:`, result.warnings);
+        // Return original input if preprocessing fails
+        return { data: input, metadata: {} };
+      }
+
+      // Count tokens AFTER preprocessing
+      const cleanedStr = JSON.stringify(result.cleanedInput);
+      const tokensAfter = this.estimateTokenCount(cleanedStr);
+      const tokensSaved = tokensBefore - tokensAfter;
+      const savingsPercent = tokensBefore > 0 ? ((tokensSaved / tokensBefore) * 100).toFixed(1) : '0.0';
+
+      console.log(
+        `[${this.intent}Handler] Preprocessing complete: ${result.operations.length} operations, ` +
+        `${result.warnings?.length || 0} warnings`
+      );
+      console.log(
+        `[${this.intent}Handler] Token impact: ${tokensBefore} → ${tokensAfter} tokens ` +
+        `(${savingsPercent}% ${tokensSaved >= 0 ? 'reduction' : 'increase'}, ${Math.abs(tokensSaved)} tokens ${tokensSaved >= 0 ? 'saved' : 'added'})`
+      );
+
+      return {
+        data: result.cleanedInput,
+        metadata: result.metadata,
+      };
+    } catch (error) {
+      console.error(`[${this.intent}Handler] Preprocessing error:`, error);
+      // Return original input on error
+      return { data: input, metadata: {} };
+    }
+  }
+
+  /**
+   * Inject preprocessing metadata facts into prompt
+   * Adds VERIFIED FACTS section to help LLM avoid hallucination
+   *
+   * @param prompt - Original prompt text
+   * @param metadata - Extracted metadata from preprocessing
+   * @param dataSize - Size of the dataset (used for smart filtering)
+   * @returns Enhanced prompt with metadata facts
+   */
+  protected injectPreprocessingFacts(
+    prompt: string,
+    metadata: ExtractedMetadata,
+    dataSize: number = 0
+  ): string {
+    if (!metadata || Object.keys(metadata).length === 0) {
+      return prompt;
+    }
+
+    // Use smart deduplication and limiting for metadata facts
+    const facts = DataPreprocessor.formatMetadataFacts(metadata, {
+      skipRedundant: true,  // Skip facts that are redundant with the data
+      maxFacts: 5,          // Limit to top 5 most useful facts
+      dataSize: dataSize,   // Pass dataset size for smart filtering
+    });
+
+    if (!facts) {
+      return prompt;
+    }
+
+    // Count tokens for metadata facts to track overhead
+    const factsTokens = this.estimateTokenCount(facts);
+    console.log(`[${this.intent}Handler] Metadata facts: +${factsTokens} tokens`);
+
+    // Inject facts at the beginning of the prompt
+    return facts + prompt;
   }
 
   /**

@@ -28,14 +28,12 @@ export class ConditionalHandler extends BaseHandler {
       // Resolve variables in input
       const resolvedInput = this.resolveInputVariables(context);
 
-      // Apply compression to input if enabled
-      const { compressed: input, result: compressionResult } = await this.compressInput(
-        JSON.stringify(resolvedInput),
-        context
-      );
+      // Prepare input for LLM
+      const input = JSON.stringify(resolvedInput);
 
       // Estimate token usage - conditionals need minimal output
-      const estimatedTokens = compressionResult.compressedTokens + 200;
+      const inputTokens = this.estimateTokenCount(input);
+      const estimatedTokens = inputTokens + 200;
       if (!this.checkBudget(context, estimatedTokens)) {
         return this.createErrorResult('Insufficient budget for conditional');
       }
@@ -78,8 +76,6 @@ export class ConditionalHandler extends BaseHandler {
         cost,
         Date.now() - startTime,
         {
-          compressionApplied: compressionResult.strategy !== 'none',
-          compressionRatio: compressionResult.ratio,
           model: context.routingDecision.model,
           provider: context.routingDecision.provider,
           conditionMet: conditionalResult.result,

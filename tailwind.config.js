@@ -6,6 +6,18 @@ module.exports = {
     './components/**/*.{js,ts,jsx,tsx,mdx}',
     './lib/**/*.{js,ts,jsx,tsx}',
   ],
+  safelist: [
+    // Force generation of dark mode classes for sandbox cards
+    'dark:bg-blue-900/40',
+    'dark:bg-green-900/40',
+    'dark:border-blue-500',
+    'dark:border-green-500',
+    'dark:text-blue-200',
+    'dark:text-green-200',
+    'dark:text-blue-400',
+    'dark:text-green-400',
+    'dark:text-white',
+  ],
   theme: {
     extend: {
       // V2 Design System Tokens

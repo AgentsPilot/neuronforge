@@ -52,7 +52,7 @@ export default function FeaturesPage() {
       id: 'natural-language',
       title: 'Natural Language Processing',
       description: 'Describe your automation needs in plain English. Our advanced NLP understands context, intent, and business requirements.',
-      icon: <MessageSquare className="w-8 h-8 text-blue-400" />,
+      icon: <MessageSquare className="w-8 h-8 text-orange-400" />,
       category: 'AI Core',
       benefits: [
         'No coding required - use everyday language',
@@ -66,7 +66,7 @@ export default function FeaturesPage() {
       id: 'intelligent-workflows',
       title: 'Intelligent Workflow Generation',
       description: 'AI automatically designs and optimizes workflows based on your descriptions, learning from patterns and best practices.',
-      icon: <Sparkles className="w-8 h-8 text-purple-400" />,
+      icon: <Sparkles className="w-8 h-8 text-orange-400" />,
       category: 'AI Core',
       benefits: [
         'Automatic workflow optimization',
@@ -80,7 +80,7 @@ export default function FeaturesPage() {
       id: 'enterprise-integrations',
       title: 'Enterprise Integrations',
       description: 'Connect to 500+ business applications including CRM, ERP, communication tools, and databases with pre-built connectors.',
-      icon: <LinkIcon className="w-8 h-8 text-green-400" />,
+      icon: <LinkIcon className="w-8 h-8 text-orange-400" />,
       category: 'Integrations',
       benefits: [
         'Pre-built connectors for popular platforms',
@@ -94,7 +94,7 @@ export default function FeaturesPage() {
       id: 'real-time-monitoring',
       title: 'Real-time Monitoring',
       description: 'Track agent performance, execution metrics, and system health with comprehensive dashboards and alerting.',
-      icon: <BarChart3 className="w-8 h-8 text-cyan-400" />,
+      icon: <BarChart3 className="w-8 h-8 text-orange-400" />,
       category: 'Operations',
       benefits: [
         'Live performance metrics',
@@ -108,7 +108,7 @@ export default function FeaturesPage() {
       id: 'enterprise-security',
       title: 'Enterprise Security',
       description: 'Bank-grade security with end-to-end encryption, SOC 2 compliance, and granular access controls.',
-      icon: <Lock className="w-8 h-8 text-red-400" />,
+      icon: <Lock className="w-8 h-8 text-orange-400" />,
       category: 'Security',
       benefits: [
         'End-to-end encryption',
@@ -122,7 +122,7 @@ export default function FeaturesPage() {
       id: 'scalable-architecture',
       title: 'Auto-scaling Infrastructure',
       description: 'Cloud-native architecture that automatically scales to handle millions of operations with 99.9% uptime guarantee.',
-      icon: <Zap className="w-8 h-8 text-yellow-400" />,
+      icon: <Zap className="w-8 h-8 text-orange-400" />,
       category: 'Infrastructure',
       benefits: [
         'Automatic scaling based on demand',
@@ -136,7 +136,7 @@ export default function FeaturesPage() {
       id: 'visual-builder',
       title: 'Visual Workflow Builder',
       description: 'Drag-and-drop interface for complex workflows with real-time preview and testing capabilities.',
-      icon: <Paintbrush className="w-8 h-8 text-pink-400" />,
+      icon: <Paintbrush className="w-8 h-8 text-orange-400" />,
       category: 'User Experience',
       benefits: [
         'Intuitive drag-and-drop interface',
@@ -150,7 +150,7 @@ export default function FeaturesPage() {
       id: 'intelligent-routing',
       title: 'Smart Decision Routing',
       description: 'AI-powered decision trees that route tasks based on content, priority, sentiment, and business rules.',
-      icon: <Brain className="w-8 h-8 text-purple-500" />,
+      icon: <Brain className="w-8 h-8 text-orange-400" />,
       category: 'AI Core',
       benefits: [
         'Intelligent content analysis',
@@ -164,7 +164,7 @@ export default function FeaturesPage() {
       id: 'collaboration-tools',
       title: 'Team Collaboration',
       description: 'Built-in collaboration features with shared workspaces, role management, and approval workflows.',
-      icon: <Users className="w-8 h-8 text-green-400" />,
+      icon: <Users className="w-8 h-8 text-orange-400" />,
       category: 'User Experience',
       benefits: [
         'Shared team workspaces',
@@ -178,7 +178,7 @@ export default function FeaturesPage() {
       id: 'api-platform',
       title: 'Developer API Platform',
       description: 'Comprehensive REST APIs with SDKs, webhooks, and extensive documentation for custom integrations.',
-      icon: <Code className="w-8 h-8 text-blue-400" />,
+      icon: <Code className="w-8 h-8 text-orange-400" />,
       category: 'Integrations',
       benefits: [
         'RESTful API with full documentation',
@@ -192,7 +192,7 @@ export default function FeaturesPage() {
       id: 'analytics-insights',
       title: 'Advanced Analytics',
       description: 'Deep insights into automation performance, cost savings, and efficiency gains with predictive analytics.',
-      icon: <TrendingUp className="w-8 h-8 text-green-400" />,
+      icon: <TrendingUp className="w-8 h-8 text-orange-400" />,
       category: 'Operations',
       benefits: [
         'ROI and cost savings tracking',
@@ -220,7 +220,7 @@ export default function FeaturesPage() {
       id: 'scheduling-automation',
       title: 'Smart Scheduling',
       description: 'Advanced scheduling capabilities with timezone support, recurring tasks, and intelligent time optimization.',
-      icon: <Calendar className="w-8 h-8 text-teal-400" />,
+      icon: <Calendar className="w-8 h-8 text-orange-400" />,
       category: 'Operations',
       benefits: [
         'Flexible scheduling with cron support',
@@ -244,7 +244,7 @@ export default function FeaturesPage() {
       id: 'flexible-scheduling',
       title: 'Flexible Execution',
       description: 'Agents can be triggered on demand for immediate execution or scheduled to run automatically at specified times.',
-      icon: <Calendar className="w-8 h-8 text-teal-400" />,
+      icon: <Calendar className="w-8 h-8 text-orange-400" />,
       category: 'AI Core',
       benefits: [
         'On-demand execution for instant results',
@@ -256,42 +256,42 @@ export default function FeaturesPage() {
   const integrationFeatures = features.filter(f => f.category === 'Integrations')
 
   return (
-    <div className="min-h-screen bg-black text-white overflow-hidden">
-      {/* Background Effects - Same as main page */}
+    <div className="min-h-screen bg-zinc-950 text-white overflow-hidden">
+      {/* Background Effects */}
       <div className="fixed inset-0 pointer-events-none">
         <motion.div
           animate={{
             backgroundPosition: ['0% 0%', '100% 100%', '0% 0%'],
           }}
           transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
-          className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,_var(--tw-gradient-stops))] from-blue-900/40 via-purple-900/30 to-pink-900/40 bg-[length:200%_200%]"
+          className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,_var(--tw-gradient-stops))] from-orange-900/20 via-zinc-900/30 to-transparent bg-[length:200%_200%]"
         />
         <motion.div
           animate={{
             backgroundPosition: ['100% 100%', '0% 0%', '100% 100%'],
           }}
           transition={{ duration: 30, repeat: Infinity, ease: "linear" }}
-          className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_var(--tw-gradient-stops))] from-indigo-900/30 via-transparent to-fuchsia-900/30 bg-[length:200%_200%]"
+          className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_var(--tw-gradient-stops))] from-orange-900/15 via-transparent to-transparent bg-[length:200%_200%]"
         />
         <motion.div
           animate={{
             x: [0, 150, 0],
             y: [0, -150, 0],
             scale: [1, 1.3, 1],
-            opacity: [0.3, 0.5, 0.3]
+            opacity: [0.15, 0.3, 0.15]
           }}
           transition={{ duration: 20, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute top-20 left-20 w-[500px] h-[500px] bg-blue-500/20 rounded-full blur-3xl"
+          className="absolute top-20 left-20 w-[500px] h-[500px] bg-orange-600/10 rounded-full blur-3xl"
         />
         <motion.div
           animate={{
             x: [0, -150, 0],
             y: [0, 150, 0],
             scale: [1, 1.4, 1],
-            opacity: [0.3, 0.5, 0.3]
+            opacity: [0.15, 0.3, 0.15]
           }}
           transition={{ duration: 25, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute bottom-20 right-20 w-[500px] h-[500px] bg-purple-500/20 rounded-full blur-3xl"
+          className="absolute bottom-20 right-20 w-[500px] h-[500px] bg-orange-600/10 rounded-full blur-3xl"
         />
         <motion.div
           animate={{
@@ -301,21 +301,14 @@ export default function FeaturesPage() {
             opacity: [0.2, 0.4, 0.3, 0.2]
           }}
           transition={{ duration: 30, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-pink-500/15 rounded-full blur-3xl"
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-orange-500/8 rounded-full blur-3xl"
         />
       </div>
 
-      {/* Interactive mouse glow */}
-      <div 
-        className="fixed inset-0 pointer-events-none transition-all duration-500 hidden lg:block z-0"
-        style={{
-          background: `radial-gradient(600px circle at ${mousePosition.x}px ${mousePosition.y}px, rgba(139, 92, 246, 0.15), transparent 60%)`
-        }}
-      />
 
       <div className="relative z-10">
         {/* Hero Section - Same style as main page */}
-        <section className="relative pt-20 pb-32">
+        <section className="relative py-8 md:py-12 lg:py-14">
           <div className="max-w-7xl mx-auto px-6">
             <motion.div
               initial={{ opacity: 0, y: 20 }}
@@ -323,13 +316,13 @@ export default function FeaturesPage() {
               transition={{ duration: 0.8 }}
               className="text-center mb-16"
             >
-              <motion.h1 
-                className="text-5xl md:text-7xl font-black mb-6 leading-tight"
+              <motion.h1
+                className="text-3xl md:text-4xl lg:text-5xl font-black mb-4 leading-tight"
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.8, delay: 0.2 }}
               >
-                <span className="bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
+                <span className="text-orange-400">
                   Powerful AI Features
                 </span>
                 <br />
@@ -340,10 +333,9 @@ export default function FeaturesPage() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.8, delay: 0.4 }}
-                className="text-xl md:text-2xl text-slate-300 max-w-4xl mx-auto mb-8 leading-relaxed"
+                className="text-base md:text-lg text-slate-300 max-w-3xl mx-auto mb-8 leading-relaxed"
               >
                 Everything you need to build, deploy, and scale intelligent automation across your organization.
-                <br />
                 From simple workflows to enterprise-grade solutions.
               </motion.p>
               
@@ -360,10 +352,10 @@ export default function FeaturesPage() {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.6, delay: 0.7 + index * 0.1 }}
                     onClick={() => setActiveCategory(category)}
-                    className={`px-6 py-3 rounded-full font-medium transition-all duration-300 ${
+                    className={`px-4 py-2 rounded-full font-medium text-sm transition-all duration-300 ${
                       activeCategory === category
-                        ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg shadow-purple-500/25'
-                        : 'bg-slate-900/50 text-gray-200 border border-white/10 hover:bg-slate-800/50 backdrop-blur-sm'
+                        ? 'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-lg shadow-orange-500/50'
+                        : 'bg-zinc-900/50 text-slate-300 border border-white/10 hover:bg-zinc-800/50 hover:border-orange-500/30 backdrop-blur-sm'
                     }`}
                   >
                     {category === 'all' ? 'All Features' : category}
@@ -375,7 +367,7 @@ export default function FeaturesPage() {
         </section>
 
         {/* Core AI Features Highlight */}
-        <section className="py-8 relative">
+        <section className="py-8 md:py-12 relative">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
@@ -384,12 +376,12 @@ export default function FeaturesPage() {
               transition={{ duration: 0.8 }}
               className="text-center mb-12"
             >
-              <h2 className="text-4xl font-bold text-white mb-4">
-                <span className="bg-gradient-to-r from-cyan-300 via-blue-300 to-purple-300 bg-clip-text text-transparent">
+              <h2 className="text-2xl md:text-3xl font-bold mb-3">
+                <span className="text-orange-400">
                   AI-Powered Core
                 </span>
               </h2>
-              <p className="text-xl text-gray-200">The intelligent foundation that makes everything possible</p>
+              <p className="text-base md:text-lg text-slate-400">The intelligent foundation that makes everything possible</p>
             </motion.div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -400,20 +392,18 @@ export default function FeaturesPage() {
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true }}
                   transition={{ duration: 0.6, delay: index * 0.2 }}
-                  className="relative group"
                 >
-                  <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-2xl opacity-50 group-hover:opacity-75 blur-lg transition duration-500" />
-                  <div className="relative bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-xl rounded-2xl p-8 border border-white/10 hover:scale-105 transition-all duration-300 shadow-lg hover:shadow-purple-500/25 h-full flex flex-col">
+                  <div className="bg-zinc-900/90 backdrop-blur-xl rounded-2xl p-6 border border-white/10 shadow-lg h-full flex flex-col">
                     <div className="flex items-start space-x-4 flex-1">
                       <div className="flex-shrink-0">{feature.icon}</div>
                       <div className="flex-1 flex flex-col">
-                        <h3 className="text-2xl font-bold text-white mb-3">{feature.title}</h3>
-                        <p className="text-gray-200 mb-6 leading-relaxed flex-grow">{feature.description}</p>
+                        <h3 className="text-lg md:text-xl font-bold text-white mb-2">{feature.title}</h3>
+                        <p className="text-sm md:text-base text-gray-200 mb-4 leading-relaxed flex-grow">{feature.description}</p>
 
                         <div className="space-y-2">
                           {feature.benefits.slice(0, 2).map((benefit, idx) => (
-                            <div key={idx} className="flex items-center text-sm">
-                              <div className="w-2 h-2 bg-green-400 rounded-full mr-3"></div>
+                            <div key={idx} className="flex items-center text-xs md:text-sm">
+                              <div className="w-1.5 h-1.5 bg-green-400 rounded-full mr-2"></div>
                               <span className="text-gray-300">{benefit}</span>
                             </div>
                           ))}
@@ -428,30 +418,28 @@ export default function FeaturesPage() {
         </section>
 
         {/* Interactive Feature Demo */}
-        <section className="py-20 relative">
+        <section className="py-6 md:py-8 relative">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, y: 20 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ duration: 0.8 }}
-              className="text-center mb-12"
+              className="text-center mb-8"
             >
-              <h2 className="text-4xl font-bold text-white mb-4">
+              <h2 className="text-2xl md:text-3xl font-bold text-white mb-2">
                 See It In Action
               </h2>
-              <p className="text-xl text-gray-200">Interactive demonstration of key platform capabilities</p>
+              <p className="text-base text-gray-200">Interactive demonstration of key platform capabilities</p>
             </motion.div>
 
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, y: 40 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ duration: 0.8 }}
-              className="relative group"
             >
-              <div className="absolute -inset-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-3xl opacity-50 group-hover:opacity-75 blur-2xl transition duration-1000" />
-              <div className="relative bg-gradient-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-xl border border-white/20 rounded-3xl p-8 shadow-2xl overflow-hidden">
+              <div className="bg-gradient-to-br from-zinc-900/95 to-zinc-800/95 backdrop-blur-xl border border-white/20 rounded-3xl p-6 shadow-2xl overflow-hidden">
                 {/* Animated background particles */}
                 <div className="absolute inset-0 overflow-hidden pointer-events-none">
                   {[...Array(6)].map((_, i) => (
@@ -469,9 +457,7 @@ export default function FeaturesPage() {
                         ease: "easeInOut",
                         delay: i * 0.8
                       }}
-                      className={`absolute w-2 h-2 rounded-full ${
-                        i % 3 === 0 ? 'bg-blue-400' : i % 3 === 1 ? 'bg-purple-400' : 'bg-pink-400'
-                      } blur-sm`}
+                      className="absolute w-2 h-2 rounded-full bg-orange-400 blur-sm"
                       style={{
                         left: `${20 + i * 12}%`,
                         top: `${10 + i * 15}%`,
@@ -497,7 +483,7 @@ export default function FeaturesPage() {
                       whileInView={{ opacity: 1, scale: 1 }}
                       viewport={{ once: true }}
                       transition={{ duration: 0.6, delay: 0.4 }}
-                      className="bg-purple-900/50 rounded-xl p-6 border border-purple-500/30 relative overflow-hidden"
+                      className="bg-zinc-800/50 rounded-xl p-6 border border-orange-500/30 relative overflow-hidden"
                     >
                       {/* Animated border glow */}
                       <motion.div
@@ -510,7 +496,7 @@ export default function FeaturesPage() {
                           repeat: Infinity,
                           ease: "easeInOut"
                         }}
-                        className="absolute inset-0 bg-gradient-to-r from-purple-500/20 via-blue-500/20 to-purple-500/20 rounded-xl"
+                        className="absolute inset-0 bg-orange-500/20 rounded-xl"
                       />
                       
                       <div className="relative">
@@ -524,14 +510,14 @@ export default function FeaturesPage() {
                           Input:
                         </motion.div>
                         
-                        <div className="bg-purple-800/30 rounded-lg p-4 border border-purple-400/30 mb-4 relative">
+                        <div className="bg-zinc-800/30 rounded-lg p-4 border border-orange-400/30 mb-4 relative">
                           {/* Typing animation */}
                           <motion.div
                             initial={{ width: 0 }}
                             whileInView={{ width: "100%" }}
                             viewport={{ once: true }}
                             transition={{ duration: 2, delay: 0.8 }}
-                            className="absolute top-0 left-0 h-full bg-gradient-to-r from-transparent via-blue-400/10 to-transparent"
+                            className="absolute top-0 left-0 h-full bg-gradient-to-r from-transparent via-orange-400/10 to-transparent"
                           />
                           
                           <motion.p 
@@ -549,7 +535,7 @@ export default function FeaturesPage() {
                           <motion.span
                             animate={{ opacity: [1, 0, 1] }}
                             transition={{ duration: 0.8, repeat: Infinity }}
-                            className="inline-block w-0.5 h-4 bg-blue-400 ml-1"
+                            className="inline-block w-0.5 h-4 bg-orange-400 ml-1"
                           />
                         </div>
                         
@@ -565,9 +551,9 @@ export default function FeaturesPage() {
                         
                         <div className="space-y-2">
                           {[
-                            { text: "Trigger: Pricing calculator completion", color: "bg-blue-400", delay: 1.8 },
-                            { text: "Condition: High-value lead classification", color: "bg-purple-400", delay: 2.0 },
-                            { text: "Actions: Slack notification + HubSpot automation", color: "bg-green-400", delay: 2.2 }
+                            { text: "Trigger: Pricing calculator completion", color: "bg-orange-400", delay: 1.8 },
+                            { text: "Condition: High-value lead classification", color: "bg-orange-500", delay: 2.0 },
+                            { text: "Actions: Slack notification + HubSpot automation", color: "bg-orange-600", delay: 2.2 }
                           ].map((item, idx) => (
                             <motion.div 
                               key={idx}
@@ -608,7 +594,7 @@ export default function FeaturesPage() {
                       whileInView={{ opacity: 1, scale: 1 }}
                       viewport={{ once: true }}
                       transition={{ duration: 0.6, delay: 0.5 }}
-                      className="bg-gradient-to-br from-blue-900/50 to-purple-900/50 rounded-xl p-6 border border-blue-400/30 relative overflow-hidden"
+                      className="bg-gradient-to-br from-zinc-900/50 to-zinc-800/50 rounded-xl p-6 border border-orange-400/30 relative overflow-hidden"
                     >
                       {/* Animated flow lines */}
                       <motion.div
@@ -631,9 +617,9 @@ export default function FeaturesPage() {
                           />
                           <defs>
                             <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                              <stop offset="0%" stopColor="#3B82F6" stopOpacity="0.6" />
-                              <stop offset="50%" stopColor="#8B5CF6" stopOpacity="0.8" />
-                              <stop offset="100%" stopColor="#10B981" stopOpacity="0.6" />
+                              <stop offset="0%" stopColor="#fb923c" stopOpacity="0.6" />
+                              <stop offset="50%" stopColor="#f97316" stopOpacity="0.8" />
+                              <stop offset="100%" stopColor="#ea580c" stopOpacity="0.6" />
                             </linearGradient>
                           </defs>
                         </svg>
@@ -641,25 +627,25 @@ export default function FeaturesPage() {
 
                       <div className="space-y-4 relative z-10">
                         {[
-                          { 
-                            step: "1", 
-                            title: "Monitor Pricing Calculator", 
+                          {
+                            step: "1",
+                            title: "Monitor Pricing Calculator",
                             subtitle: "Webhook listener active",
-                            color: "bg-blue-500",
+                            color: "bg-orange-500",
                             delay: 2.6
                           },
-                          { 
-                            step: "2", 
-                            title: "Evaluate Lead Score", 
+                          {
+                            step: "2",
+                            title: "Evaluate Lead Score",
                             subtitle: "AI classification: High-value criteria",
-                            color: "bg-purple-500",
+                            color: "bg-orange-500",
                             delay: 2.8
                           },
-                          { 
-                            step: "3", 
-                            title: "Execute Actions", 
+                          {
+                            step: "3",
+                            title: "Execute Actions",
                             subtitle: "Slack + HubSpot integration",
-                            color: "bg-green-500",
+                            color: "bg-orange-500",
                             delay: 3.0
                           }
                         ].map((step, index) => (
@@ -725,13 +711,13 @@ export default function FeaturesPage() {
                         transition={{ duration: 0.5, delay: 3.2 }}
                         className="mt-6"
                       >
-                        <div className="w-full bg-slate-700/50 rounded-full h-2 overflow-hidden">
+                        <div className="w-full bg-zinc-700/50 rounded-full h-2 overflow-hidden">
                           <motion.div
                             initial={{ width: "0%" }}
                             whileInView={{ width: "100%" }}
                             viewport={{ once: true }}
                             transition={{ duration: 1.5, delay: 3.4, ease: "easeInOut" }}
-                            className="h-full bg-gradient-to-r from-blue-500 via-purple-500 to-green-500 relative"
+                            className="h-full bg-orange-500 relative"
                           >
                             {/* Moving shine effect */}
                             <motion.div
@@ -784,7 +770,7 @@ export default function FeaturesPage() {
                           whileInView={{ opacity: 1 }}
                           viewport={{ once: true }}
                           transition={{ duration: 0.4, delay: 4.7 }}
-                          className="text-sm text-green-300 font-medium relative z-10"
+                          className="text-sm text-orange-300 font-medium relative z-10"
                         >
                           ✓ Workflow deployed and active
                         </motion.div>
@@ -814,7 +800,7 @@ export default function FeaturesPage() {
                         delay: i * 0.7 + 5,
                         ease: "easeInOut"
                       }}
-                      className="absolute w-4 h-4 bg-gradient-to-r from-blue-400 to-purple-400 rounded-full"
+                      className="absolute w-4 h-4 bg-orange-400 rounded-full"
                     />
                   ))}
                 </motion.div>
@@ -824,7 +810,7 @@ export default function FeaturesPage() {
         </section>
 
         {/* All Features Grid */}
-        <section className="py-20 relative">
+        <section className="py-8 md:py-12 relative">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
@@ -833,10 +819,10 @@ export default function FeaturesPage() {
               transition={{ duration: 0.8 }}
               className="text-center mb-12"
             >
-              <h2 className="text-4xl font-bold text-white mb-4">
+              <h2 className="text-2xl md:text-3xl font-bold text-white mb-3">
                 Complete Feature Set
               </h2>
-              <p className="text-xl text-gray-200">
+              <p className="text-base md:text-lg text-gray-200">
                 {filteredFeatures.length} {filteredFeatures.length === 1 ? 'feature' : 'features'}
                 {activeCategory !== 'all' && ` in ${activeCategory}`}
               </p>
@@ -855,29 +841,23 @@ export default function FeaturesPage() {
                   }`}
                   onClick={() => setSelectedFeature(selectedFeature === feature.id ? null : feature.id)}
                 >
-                  <div className={`absolute -inset-0.5 rounded-xl blur-lg transition duration-500 ${
-                    selectedFeature === feature.id 
-                      ? 'bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 opacity-75' 
-                      : 'bg-gradient-to-r from-purple-500/50 to-blue-500/50 opacity-0 group-hover:opacity-50'
-                  }`} />
-                  
-                  <div className={`relative bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-xl rounded-xl p-6 border transition-all duration-300 shadow-lg h-full flex flex-col ${
+                  <div className={`bg-gradient-to-br from-zinc-900/90 to-zinc-800/90 backdrop-blur-xl rounded-xl p-6 border transition-all duration-300 shadow-lg h-full flex flex-col ${
                     selectedFeature === feature.id
-                      ? 'border-blue-400/50 shadow-blue-500/25 scale-105'
-                      : 'border-white/10 hover:border-purple-500/30 hover:scale-105 hover:shadow-purple-500/25'
+                      ? 'border-orange-400/50'
+                      : 'border-white/10'
                   }`}>
                     <div className="flex items-start justify-between mb-4">
                       <div className="flex items-center">
                         <div className="mr-3">{feature.icon}</div>
                         <div>
                           <h3 className="text-lg font-bold text-white">{feature.title}</h3>
-                          <span className="text-xs px-2 py-1 bg-blue-500/20 text-blue-300 rounded-full border border-blue-400/30">
+                          <span className="text-xs px-2 py-1 bg-orange-500/20 text-orange-300 rounded-full border border-orange-400/30">
                             {feature.category}
                           </span>
                         </div>
                       </div>
                       {feature.technical && (
-                        <span className="text-xs px-2 py-1 bg-purple-500/20 text-purple-300 rounded-full border border-purple-400/30">
+                        <span className="text-xs px-2 py-1 bg-amber-500/20 text-amber-300 rounded-full border border-amber-400/30">
                           Technical
                         </span>
                       )}
@@ -913,7 +893,7 @@ export default function FeaturesPage() {
                       )}
                     </AnimatePresence>
 
-                    <div className="mt-4 text-blue-300 text-sm font-medium">
+                    <div className="mt-4 text-orange-300 text-sm font-medium">
                       {selectedFeature === feature.id ? 'Click to collapse' : 'Click for details'}
                     </div>
                   </div>
@@ -924,7 +904,7 @@ export default function FeaturesPage() {
         </section>
 
         {/* Integration Showcase */}
-        <section className="py-20 relative">
+        <section className="py-8 md:py-12 relative">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
@@ -933,12 +913,12 @@ export default function FeaturesPage() {
               transition={{ duration: 0.8 }}
               className="text-center mb-12"
             >
-              <h2 className="text-4xl font-bold text-white mb-4">
-                <span className="bg-gradient-to-r from-cyan-300 via-blue-300 to-purple-300 bg-clip-text text-transparent">
+              <h2 className="text-2xl md:text-3xl font-bold text-white mb-3">
+                <span className="text-orange-400">
                   Enterprise Integrations
                 </span>
               </h2>
-              <p className="text-xl text-gray-200">Connect with the tools your team already uses</p>
+              <p className="text-base md:text-lg text-gray-200">Connect with the tools your team already uses</p>
             </motion.div>
 
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6 mb-12">
@@ -998,10 +978,8 @@ export default function FeaturesPage() {
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true }}
                   transition={{ duration: 0.6, delay: index * 0.1 }}
-                  className="relative group"
                 >
-                  <div className="absolute -inset-0.5 bg-gradient-to-r from-purple-500/50 to-blue-500/50 rounded-xl opacity-0 group-hover:opacity-75 blur-lg transition duration-500" />
-                  <div className="relative bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-xl rounded-xl p-4 border border-white/10 hover:scale-105 transition-all duration-300 text-center shadow-lg hover:shadow-purple-500/25">
+                  <div className="bg-gradient-to-br from-zinc-900/90 to-zinc-800/90 backdrop-blur-xl rounded-xl p-4 border border-white/10 transition-all duration-300 text-center shadow-lg">
                     <div className="mb-2">{integration.icon}</div>
                     <div className="text-sm font-medium text-white">{integration.name}</div>
                   </div>
@@ -1022,26 +1000,24 @@ export default function FeaturesPage() {
         </section>
 
         {/* CTA Section */}
-        <section className="py-20 relative">
+        <section className="py-8 md:py-12 relative">
           <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
             <motion.div 
               initial={{ opacity: 0, y: 40 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ duration: 0.8 }}
-              className="relative group"
             >
-              <div className="absolute -inset-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-3xl opacity-75 blur-2xl group-hover:opacity-100 transition duration-1000" />
-              <div className="relative bg-gradient-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-xl rounded-3xl p-12 border border-white/20 shadow-2xl">
-                <h2 className="text-4xl font-bold text-white mb-4">
+              <div className="bg-gradient-to-br from-zinc-900/95 to-zinc-800/95 backdrop-blur-xl rounded-3xl p-8 md:p-12 border border-white/20 shadow-2xl">
+                <h2 className="text-2xl md:text-3xl font-bold text-white mb-3">
                   Ready to Experience These Features?
                 </h2>
-                <p className="text-xl text-gray-200 mb-8 max-w-2xl mx-auto">
+                <p className="text-base md:text-lg text-gray-200 mb-6 max-w-2xl mx-auto">
                   Start with our free trial and discover how AI automation can transform your workflows.
                 </p>
 
                 <div className="flex justify-center">
-                  <button className="bg-gradient-to-r from-cyan-500 to-blue-600 text-white px-8 py-4 rounded-xl font-semibold hover:scale-105 transition-transform shadow-lg hover:shadow-cyan-500/25">
+                  <button className="bg-gradient-to-r from-orange-500 to-orange-600 text-white px-6 py-2.5 rounded-lg text-sm font-bold hover:scale-105 transition-transform shadow-lg hover:shadow-orange-500/50">
                     Start Free Trial
                   </button>
                 </div>

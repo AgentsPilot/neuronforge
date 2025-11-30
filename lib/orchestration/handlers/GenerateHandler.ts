@@ -28,14 +28,12 @@ export class GenerateHandler extends BaseHandler {
       // Resolve variables in input
       const resolvedInput = this.resolveInputVariables(context);
 
-      // Apply compression to input if enabled
-      const { compressed: input, result: compressionResult } = await this.compressInput(
-        JSON.stringify(resolvedInput),
-        context
-      );
+      // Prepare input for LLM
+      const input = JSON.stringify(resolvedInput);
 
       // Estimate token usage - generation typically needs more output tokens
-      const estimatedTokens = compressionResult.compressedTokens + 1500;
+      const inputTokens = this.estimateTokenCount(input);
+      const estimatedTokens = inputTokens + 1500;
       if (!this.checkBudget(context, estimatedTokens)) {
         return this.createErrorResult('Insufficient budget for generation');
       }
@@ -83,8 +81,6 @@ export class GenerateHandler extends BaseHandler {
         cost,
         Date.now() - startTime,
         {
-          compressionApplied: compressionResult.strategy !== 'none',
-          compressionRatio: compressionResult.ratio,
           model: context.routingDecision.model,
           provider: context.routingDecision.provider,
           temperature,

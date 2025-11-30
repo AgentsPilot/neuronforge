@@ -38,6 +38,32 @@ export async function POST(req: NextRequest) {
       return new Response(JSON.stringify({ error: error.message }), { status: 500 })
     }
 
+    // AUDIT TRAIL: Log plugin connection
+    try {
+      const { auditLog } = await import('@/lib/services/AuditTrailService');
+      const { AUDIT_EVENTS } = await import('@/lib/audit/events');
+
+      await auditLog({
+        action: AUDIT_EVENTS.PLUGIN_CONNECTED,
+        entityType: 'connection',
+        entityId: plugin_key,
+        userId: user_id,
+        resourceName: plugin_key.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+        details: {
+          plugin_key,
+          has_access_token: !!access_token,
+          connection_type: access_token ? 'oauth' : 'credentials'
+        },
+        severity: 'info',
+        complianceFlags: ['SOC2', 'GDPR'], // Third-party data access
+        request: req
+      });
+
+      console.log('✅ Audit trail logged for plugin connection');
+    } catch (auditError) {
+      console.error('⚠️ Audit logging failed (non-critical):', auditError);
+    }
+
     return new Response(JSON.stringify({ success: true }), { status: 200 })
   } catch (err: any) {
     console.error('❌ POST crash:', err)
@@ -66,6 +92,31 @@ export async function DELETE(req: NextRequest) {
     if (error) {
       console.error('❌ Supabase delete error:', error)
       return new Response(JSON.stringify({ error: error.message }), { status: 500 })
+    }
+
+    // AUDIT TRAIL: Log plugin disconnection
+    try {
+      const { auditLog } = await import('@/lib/services/AuditTrailService');
+      const { AUDIT_EVENTS } = await import('@/lib/audit/events');
+
+      await auditLog({
+        action: AUDIT_EVENTS.PLUGIN_DISCONNECTED,
+        entityType: 'connection',
+        entityId: plugin_key,
+        userId: user_id,
+        resourceName: plugin_key.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+        details: {
+          plugin_key,
+          disconnected_at: new Date().toISOString()
+        },
+        severity: 'warning',
+        complianceFlags: ['SOC2', 'GDPR'],
+        request: req
+      });
+
+      console.log('✅ Audit trail logged for plugin disconnection');
+    } catch (auditError) {
+      console.error('⚠️ Audit logging failed (non-critical):', auditError);
     }
 
     return new Response(JSON.stringify({ success: true }), { status: 200 })

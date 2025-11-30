@@ -6,6 +6,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { addManualExecution } from '@/lib/queues/qstashQueue';
 import parser from 'cron-parser';
+import { auditLog } from '@/lib/services/AuditTrailService';
+import { AUDIT_EVENTS } from '@/lib/audit/events';
 
 // Required exports for Vercel function detection
 export const runtime = 'nodejs';
@@ -210,6 +212,33 @@ export async function GET(request: NextRequest) {
             nextRun: nextRun.toISOString(),
             previousNextRun: agent.next_run,
           });
+
+          // AUDIT TRAIL: Log scheduled agent execution
+          try {
+            await auditLog({
+              action: AUDIT_EVENTS.AGENT_RUN_STARTED,
+              entityType: 'agent',
+              entityId: agent.id,
+              userId: agent.user_id,
+              resourceName: agent.agent_name,
+              details: {
+                execution_id: execution.id,
+                job_id: jobId,
+                execution_type: 'scheduled',
+                cron_expression: agent.schedule_cron,
+                timezone: agent.timezone || 'UTC',
+                scheduled_at: currentTime,
+                next_run: nextRun.toISOString(),
+                previous_next_run: agent.next_run,
+                trigger_type: 'cron'
+              },
+              severity: 'info',
+              complianceFlags: ['SOC2']
+            });
+            console.log('✅ Audit trail logged for scheduled execution');
+          } catch (auditError) {
+            console.error('⚠️ Audit logging failed (non-critical):', auditError);
+          }
 
           return {
             agentId: agent.id,

@@ -27,6 +27,8 @@ interface RunAgentRequest {
   execution_type?: string; // NEW: 'manual' (test mode) vs other types
   user_id?: string; // For queue-based execution
   session_id?: string; // NEW: For SSE correlation - pass to WorkflowPilot
+  debugMode?: boolean; // NEW: Enable debug mode for step-by-step execution
+  debugRunId?: string; // NEW: Pre-generated debug run ID from frontend
 }
 
 /**
@@ -43,7 +45,9 @@ export async function POST(req: Request) {
     use_agentkit = false, // NEW: Default to false (use old system)
     execution_type, // NEW: Track if this is test mode from AgentSandbox
     user_id: provided_user_id,
-    session_id: provided_session_id // NEW: For SSE correlation
+    session_id: provided_session_id, // NEW: For SSE correlation
+    debugMode = false, // NEW: Enable debug mode for step-by-step execution
+    debugRunId // NEW: Pre-generated debug run ID from frontend
   } = body
 
   const cookieStore = await cookies()
@@ -178,6 +182,10 @@ export async function POST(req: Request) {
         const sessionId = provided_session_id || uuidv4();
         console.log(`📋 Using session_id: ${sessionId} ${provided_session_id ? '(from request)' : '(generated)'}`);
 
+        if (debugMode) {
+          console.log(`🐛 Debug mode enabled for pilot execution with runId: ${debugRunId}`);
+        }
+
         // Execute using WorkflowPilot
         const pilot = new WorkflowPilot(supabase);
         executionResult = await pilot.execute(
@@ -185,7 +193,10 @@ export async function POST(req: Request) {
           user.id,
           userInput,
           inputValues,
-          sessionId
+          sessionId,
+          undefined, // stepEmitter
+          debugMode, // Pass debugMode to enable debugging
+          debugRunId // Pass pre-generated debugRunId from frontend
         );
 
         executionType = 'pilot';
@@ -573,6 +584,64 @@ export async function POST(req: Request) {
           console.log('✅ [SPENDING] Transaction logged successfully');
         }
 
+        // Update agent_executions with adjusted tokens for UI display
+        // This ensures all pages show the actual charged amount
+        const executionIdToUpdate = executionType === 'pilot' ?
+          executionResult.executionId : // Pilot uses the executionId from StateManager
+          null; // AgentKit execution ID is auto-generated, we need to find it
+
+        if (executionIdToUpdate) {
+          const { error: updateError } = await supabase
+            .from('agent_executions')
+            .update({
+              logs: {
+                ...(executionType === 'pilot' ? {
+                  success: true,
+                  executionTime: normalizedResult.executionTime,
+                  tokensUsed: {
+                    total: tokensUsed,
+                    prompt: 0,
+                    completion: 0,
+                    adjusted: adjustedTokens, // Add adjusted tokens with intensity
+                    intensityMultiplier: intensityMultiplier,
+                    intensityScore: intensityScore
+                  },
+                  iterations: 1,
+                  response: 'Workflow completed',
+                  model: 'workflow_orchestrator',
+                  provider: 'pilot',
+                  pilot: true,
+                  workflowExecution: true,
+                  stepsCompleted: executionResult.stepsCompleted,
+                  stepsFailed: executionResult.stepsFailed,
+                  stepsSkipped: executionResult.stepsSkipped,
+                  executionId: executionIdToUpdate
+                } : {
+                  // AgentKit logs
+                  agentkit: true,
+                  iterations: normalizedResult.iterations,
+                  toolCalls: sanitizeToolCalls(normalizedResult.toolCalls),
+                  tokensUsed: {
+                    ...normalizedResult.tokensUsed,
+                    adjusted: adjustedTokens,
+                    intensityMultiplier: intensityMultiplier,
+                    intensityScore: intensityScore
+                  },
+                  model: normalizedResult.model || 'gpt-4o',
+                  provider: normalizedResult.provider || 'openai',
+                  inputValuesUsed: Object.keys(inputValues || {}).length
+                })
+              }
+            })
+            .eq('id', executionIdToUpdate);
+
+          if (updateError) {
+            console.error('❌ [SPENDING] Failed to update agent_executions with adjusted tokens:', updateError);
+          } else {
+            console.log(`✅ [SPENDING] Updated agent_executions with adjusted tokens: ${adjustedTokens}`);
+          }
+        }
+
       } catch (spendingError) {
         console.error('❌ [SPENDING] Failed to track token consumption:', spendingError);
         // Non-fatal error - continue execution
@@ -608,10 +677,35 @@ export async function POST(req: Request) {
         console.error('⚠️ Audit log failed (non-blocking):', err);
       });
 
+      // Fetch the execution record to get adjusted tokens (calculated in step 5 above)
+      // This ensures we return the actual charged amount to the UI
+      const executionIdForFetch = executionType === 'pilot' ? executionResult.executionId : null;
+      let tokensToReturn = executionType === 'pilot' ? executionResult.totalTokensUsed : normalizedResult.tokensUsed.total;
+      let rawTokensValue = tokensToReturn;
+      let intensityMult = 1.0;
+
+      if (executionIdForFetch) {
+        // Fetch from database to get the adjusted tokens that were stored in step 5
+        const { data: executionData } = await supabase
+          .from('agent_executions')
+          .select('logs')
+          .eq('id', executionIdForFetch)
+          .single();
+
+        // Use adjusted tokens if available (from step 5 spending calculation)
+        if (executionData?.logs?.tokensUsed?.adjusted) {
+          tokensToReturn = executionData.logs.tokensUsed.adjusted; // Actual charged amount
+          rawTokensValue = executionData.logs.tokensUsed.total; // Raw LLM tokens
+          intensityMult = executionData.logs.tokensUsed.intensityMultiplier; // Multiplier from intensity score
+          console.log(`[RUN-AGENT] 📊 Returning adjusted tokens: ${tokensToReturn} (raw: ${rawTokensValue}, multiplier: ${intensityMult.toFixed(2)}x)`);
+        }
+      }
+
       // Return unified response format
       return NextResponse.json({
         success: normalizedResult.success,
         message: normalizedResult.response,
+        debugRunId: executionType === 'pilot' ? executionResult.debugRunId : undefined,
         data: executionType === 'pilot' ? {
           agent_id: agent.id,
           agent_name: agent.agent_name,
@@ -621,7 +715,9 @@ export async function POST(req: Request) {
           stepsFailed: executionResult.stepsFailed,
           stepsSkipped: executionResult.stepsSkipped,
           totalSteps: executionResult.stepsCompleted + executionResult.stepsFailed + executionResult.stepsSkipped,
-          tokens_used: normalizedResult.tokensUsed.total,
+          tokens_used: tokensToReturn, // Adjusted tokens (actual charged amount)
+          raw_tokens: rawTokensValue, // Raw LLM tokens before intensity adjustment
+          intensity_multiplier: intensityMult, // Intensity multiplier applied
           execution_time_ms: normalizedResult.executionTime,
           output: executionResult.output,
           // Include step IDs for visualization
@@ -635,7 +731,9 @@ export async function POST(req: Request) {
           tool_calls_count: normalizedResult.toolCalls.length,
           successful_tool_calls: normalizedResult.toolCalls.filter((tc: any) => tc.success).length,
           failed_tool_calls: normalizedResult.toolCalls.filter((tc: any) => !tc.success).length,
-          tokens_used: normalizedResult.tokensUsed.total,
+          tokens_used: tokensToReturn, // Adjusted tokens (actual charged amount)
+          raw_tokens: rawTokensValue, // Raw LLM tokens before intensity adjustment
+          intensity_multiplier: intensityMult, // Intensity multiplier applied
           execution_time_ms: normalizedResult.executionTime,
           iterations: normalizedResult.iterations,
           input_values_used: Object.keys(inputValues || {}).length

@@ -5,6 +5,7 @@ import { motion } from 'framer-motion'
 import PilotCreditCalculator from '@/components/billing/PilotCreditCalculator'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
+import { Calculator, Zap, Repeat, CheckCircle } from 'lucide-react'
 
 export default function PricingPage() {
   const router = useRouter()
@@ -65,8 +66,8 @@ export default function PricingPage() {
       answer: "Pilot Credits are our branded pricing currency for tracking AI automation usage. They represent the computational resources your agents consume. The more agents and plugins you use, the more Pilot Credits you'll need each month."
     },
     {
-      question: "Do unused Pilot Credits expire?",
-      answer: "No! Your Pilot Credits roll over indefinitely as long as your account remains active. We believe in fair pricing - you shouldn't lose what you've paid for."
+      question: "How are Pilot Credits managed?",
+      answer: "Pilot Credits are allocated monthly based on your subscription. You can purchase additional Boost Packs anytime for extra capacity. Adjust your subscription up or down as your needs change."
     },
     {
       question: "What happens if I run out of Pilot Credits?",
@@ -86,12 +87,12 @@ export default function PricingPage() {
     },
     {
       question: "Is there a free trial?",
-      answer: "Yes! Every new user gets 1,000 free Pilot Credits to explore the platform. That's enough for hundreds of agent executions. No credit card required to start building."
+      answer: "Yes! Every new user gets 10,417 free Pilot Credits, 100MB of storage space, and up to 50 total executions (whichever limit is reached first). No credit card required to start building."
     }
   ]
 
   return (
-    <div className="min-h-screen bg-black text-white overflow-hidden">
+    <div className="min-h-screen bg-zinc-950 text-white overflow-hidden">
       {/* Background Effects */}
       <div className="fixed inset-0 pointer-events-none">
         <motion.div
@@ -99,97 +100,100 @@ export default function PricingPage() {
             backgroundPosition: ['0% 0%', '100% 100%', '0% 0%'],
           }}
           transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
-          className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,_var(--tw-gradient-stops))] from-blue-900/40 via-purple-900/30 to-pink-900/40 bg-[length:200%_200%]"
+          className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,_var(--tw-gradient-stops))] from-orange-900/20 via-zinc-900/30 to-transparent bg-[length:200%_200%]"
         />
         <motion.div
           animate={{
             backgroundPosition: ['100% 100%', '0% 0%', '100% 100%'],
           }}
           transition={{ duration: 30, repeat: Infinity, ease: "linear" }}
-          className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_var(--tw-gradient-stops))] from-indigo-900/30 via-transparent to-fuchsia-900/30 bg-[length:200%_200%]"
+          className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_var(--tw-gradient-stops))] from-orange-900/15 via-transparent to-transparent bg-[length:200%_200%]"
         />
         <motion.div
           animate={{
             x: [0, 150, 0],
             y: [0, -150, 0],
             scale: [1, 1.3, 1],
-            opacity: [0.3, 0.5, 0.3]
+            opacity: [0.15, 0.3, 0.15]
           }}
           transition={{ duration: 20, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute top-20 left-20 w-[500px] h-[500px] bg-blue-500/20 rounded-full blur-3xl"
+          className="absolute top-20 left-20 w-[500px] h-[500px] bg-orange-600/10 rounded-full blur-3xl"
         />
         <motion.div
           animate={{
             x: [0, -150, 0],
             y: [0, 150, 0],
             scale: [1, 1.4, 1],
-            opacity: [0.3, 0.5, 0.3]
+            opacity: [0.15, 0.3, 0.15]
           }}
           transition={{ duration: 25, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute bottom-20 right-20 w-[500px] h-[500px] bg-purple-500/20 rounded-full blur-3xl"
+          className="absolute bottom-20 right-20 w-[500px] h-[500px] bg-orange-600/10 rounded-full blur-3xl"
         />
         <motion.div
           animate={{
             x: [0, 100, -100, 0],
             y: [0, -100, 100, 0],
             scale: [1, 1.2, 1.3, 1],
-            opacity: [0.2, 0.4, 0.3, 0.2]
+            opacity: [0.1, 0.2, 0.15, 0.1]
           }}
           transition={{ duration: 30, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-pink-500/15 rounded-full blur-3xl"
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-orange-500/8 rounded-full blur-3xl"
         />
       </div>
 
       <div className="relative z-10">
         {/* Header Section */}
         <section className="relative z-10 pt-20 pb-16">
-          <div className="max-w-7xl mx-auto px-6">
+          <div className="max-w-7xl mx-auto px-4 lg:px-6">
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.8 }}
-              className="text-center"
+              className="text-center space-y-8"
             >
-              <motion.h1
-                className="text-5xl md:text-7xl font-black mb-6 leading-tight"
+              <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.8, delay: 0.2 }}
+                className="space-y-2"
               >
-                <span className="bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
-                  Pay Only for
-                </span>
-                <br />
-                <span className="text-white">What You Use</span>
-              </motion.h1>
+                <h1 className="text-3xl md:text-4xl lg:text-5xl font-black leading-tight">
+                  <span className="text-orange-400 block">
+                    Pay Only for
+                  </span>
+                  <span className="text-white block">
+                    What You Use
+                  </span>
+                </h1>
+              </motion.div>
 
               <motion.p
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.8, delay: 0.4 }}
-                className="text-xl md:text-2xl text-slate-300 max-w-4xl mx-auto mb-8 leading-relaxed"
+                className="text-base md:text-lg text-slate-300 max-w-4xl mx-auto leading-relaxed"
               >
                 Smart Fuel Auto-Plan: Calculate your exact needs. No fixed tiers.
                 <br />
-                Pilot Credits roll over forever. Pay only for what you use.
+                Pay only for what you use.
               </motion.p>
 
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.8, delay: 0.6 }}
-                className="flex items-center justify-center gap-6 text-sm text-slate-400"
+                className="flex flex-wrap items-center justify-center gap-4 pt-4 border-t border-white/10 text-sm text-slate-400"
               >
                 <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-green-400 rounded-full"></div>
-                  <span>Credits never expire</span>
+                  <CheckCircle className="w-4 h-4 text-green-400" />
+                  <span>Flexible pricing</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
+                  <CheckCircle className="w-4 h-4 text-green-400" />
                   <span>Cancel anytime</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-purple-400 rounded-full"></div>
+                  <CheckCircle className="w-4 h-4 text-green-400" />
                   <span>1,000 free trial credits</span>
                 </div>
               </motion.div>
@@ -199,7 +203,7 @@ export default function PricingPage() {
 
         {/* Calculator Section */}
         <section className="relative z-10 py-16">
-          <div className="max-w-4xl mx-auto px-6">
+          <div className="max-w-4xl mx-auto px-4 lg:px-6">
             <motion.div
               initial={{ opacity: 0, y: 40 }}
               whileInView={{ opacity: 1, y: 0 }}
@@ -216,7 +220,7 @@ export default function PricingPage() {
 
         {/* Pricing Transparency Section */}
         <section className="relative z-10 py-20">
-          <div className="max-w-6xl mx-auto px-6">
+          <div className="max-w-6xl mx-auto px-4 lg:px-6">
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               whileInView={{ opacity: 1, y: 0 }}
@@ -224,8 +228,8 @@ export default function PricingPage() {
               transition={{ duration: 0.8 }}
               className="text-center mb-12"
             >
-              <h2 className="text-4xl md:text-5xl font-black mb-4">
-                <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+              <h2 className="text-3xl md:text-4xl lg:text-5xl font-black">
+                <span className="text-orange-400">
                   How Pricing Works
                 </span>
               </h2>
@@ -237,13 +241,11 @@ export default function PricingPage() {
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ duration: 0.6, delay: 0.1 }}
-                className="relative group"
               >
-                <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-2xl opacity-50 group-hover:opacity-75 blur-lg transition duration-500" />
-                <div className="relative bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-xl rounded-2xl p-8 border border-white/10 h-full">
-                  <div className="text-5xl mb-4">💳</div>
-                  <h3 className="text-xl font-bold text-white mb-3">1. Calculate</h3>
-                  <p className="text-slate-300">
+                <div className="bg-zinc-900/90 backdrop-blur-xl rounded-xl p-6 border border-white/10 hover:border-orange-400/30 transition-all duration-300 h-full">
+                  <div className="mb-4"><Calculator className="w-12 h-12 text-orange-400" /></div>
+                  <h3 className="text-xl font-bold mb-3">1. Calculate</h3>
+                  <p className="text-sm text-slate-400 leading-relaxed">
                     Use the calculator above to estimate your monthly credit needs based on agents, plugins, and execution frequency.
                   </p>
                 </div>
@@ -254,13 +256,11 @@ export default function PricingPage() {
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ duration: 0.6, delay: 0.2 }}
-                className="relative group"
               >
-                <div className="absolute -inset-0.5 bg-gradient-to-r from-purple-500 to-pink-500 rounded-2xl opacity-50 group-hover:opacity-75 blur-lg transition duration-500" />
-                <div className="relative bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-xl rounded-2xl p-8 border border-white/10 h-full">
-                  <div className="text-5xl mb-4">⚡</div>
-                  <h3 className="text-xl font-bold text-white mb-3">2. Subscribe</h3>
-                  <p className="text-slate-300">
+                <div className="bg-zinc-900/90 backdrop-blur-xl rounded-xl p-6 border border-white/10 hover:border-orange-400/30 transition-all duration-300 h-full">
+                  <div className="mb-4"><Zap className="w-12 h-12 text-amber-400" /></div>
+                  <h3 className="text-xl font-bold mb-3">2. Subscribe</h3>
+                  <p className="text-sm text-slate-400 leading-relaxed">
                     Your Pilot Credit subscription is set to the calculated amount. Update anytime as your needs change - it's completely flexible.
                   </p>
                 </div>
@@ -271,14 +271,12 @@ export default function PricingPage() {
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ duration: 0.6, delay: 0.3 }}
-                className="relative group"
               >
-                <div className="absolute -inset-0.5 bg-gradient-to-r from-green-500 to-emerald-500 rounded-2xl opacity-50 group-hover:opacity-75 blur-lg transition duration-500" />
-                <div className="relative bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-xl rounded-2xl p-8 border border-white/10 h-full">
-                  <div className="text-5xl mb-4">🚀</div>
-                  <h3 className="text-xl font-bold text-white mb-3">3. Run & Rollover</h3>
-                  <p className="text-slate-300">
-                    Pilot Credits are consumed as agents run. Unused Pilot Credits roll over forever. Need more? Buy Boost Packs instantly.
+                <div className="bg-zinc-900/90 backdrop-blur-xl rounded-xl p-6 border border-white/10 hover:border-orange-400/30 transition-all duration-300 h-full">
+                  <div className="mb-4"><Zap className="w-12 h-12 text-orange-400" /></div>
+                  <h3 className="text-xl font-bold mb-3">3. Run & Scale</h3>
+                  <p className="text-sm text-slate-400 leading-relaxed">
+                    Pilot Credits are consumed as agents run. Need more? Buy Boost Packs instantly or adjust your subscription anytime.
                   </p>
                 </div>
               </motion.div>
@@ -288,16 +286,16 @@ export default function PricingPage() {
 
         {/* FAQ Section */}
         <section id="faq" className="relative z-10 py-20">
-          <div className="max-w-4xl mx-auto px-6">
+          <div className="max-w-4xl mx-auto px-4 lg:px-6">
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ duration: 0.8 }}
-              className="text-center mb-16"
+              className="text-center mb-16 space-y-2"
             >
-              <h2 className="text-4xl md:text-5xl font-black mb-4">
-                <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+              <h2 className="text-3xl md:text-4xl lg:text-5xl font-black">
+                <span className="text-orange-400">
                   Frequently Asked Questions
                 </span>
               </h2>
@@ -311,10 +309,10 @@ export default function PricingPage() {
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true }}
                   transition={{ duration: 0.6, delay: index * 0.1 }}
-                  className="bg-gradient-to-br from-slate-900/50 to-slate-800/50 backdrop-blur-xl rounded-2xl p-8 border border-white/10 hover:border-white/20 transition"
+                  className="bg-gradient-to-br from-slate-900/50 to-slate-800/50 backdrop-blur-xl rounded-2xl p-6 md:p-8 border border-white/10 hover:border-white/20 transition"
                 >
-                  <h3 className="text-xl font-bold mb-3 text-white">{faq.question}</h3>
-                  <p className="text-slate-400 leading-relaxed">{faq.answer}</p>
+                  <h3 className="text-lg md:text-xl font-bold mb-3 text-white">{faq.question}</h3>
+                  <p className="text-sm md:text-base text-slate-400 leading-relaxed">{faq.answer}</p>
                 </motion.div>
               ))}
             </div>
@@ -323,26 +321,28 @@ export default function PricingPage() {
 
         {/* CTA Section */}
         <section className="relative z-10 py-20">
-          <div className="max-w-4xl mx-auto px-6">
+          <div className="max-w-4xl mx-auto px-4 lg:px-6">
             <motion.div
               initial={{ opacity: 0, y: 40 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ duration: 0.8 }}
-              className="relative group"
             >
-              <div className="absolute -inset-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-3xl opacity-50 group-hover:opacity-75 blur-2xl transition duration-1000"></div>
-              <div className="relative bg-gradient-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-2xl rounded-3xl p-12 border border-white/20 text-center">
-                <h3 className="text-3xl font-bold text-white mb-4">Ready to Automate?</h3>
-                <p className="text-slate-300 mb-8 max-w-2xl mx-auto text-lg">
-                  Start with 1,000 free trial credits. No credit card required.
-                  Build your first agent in minutes.
-                </p>
+              <div className="bg-gradient-to-br from-zinc-900/95 to-zinc-800/95 backdrop-blur-2xl rounded-3xl p-8 md:p-12 border border-white/20 text-center space-y-8">
+                <div className="space-y-2">
+                  <h3 className="text-2xl md:text-3xl font-bold text-white">Ready to Automate?</h3>
+                  <p className="text-sm md:text-base text-slate-300 max-w-2xl mx-auto leading-relaxed">
+                    Start with 10,417 free Pilot Credits. No credit card required.
+                    Build your first agent in minutes.
+                  </p>
+                </div>
                 <button
                   onClick={() => router.push('/signup')}
-                  className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-10 py-4 rounded-xl font-bold text-lg transition-all duration-300 hover:scale-105 shadow-lg"
+                  className="group relative px-6 py-2.5 bg-orange-500 rounded-lg font-bold text-sm text-white hover:shadow-xl hover:shadow-orange-500/50 hover:bg-orange-600 transition-all duration-300 hover:scale-105 overflow-hidden"
                 >
-                  Start Free Trial
+                  <span className="relative flex items-center justify-center gap-2">
+                    Start Free Trial
+                  </span>
                 </button>
               </div>
             </motion.div>

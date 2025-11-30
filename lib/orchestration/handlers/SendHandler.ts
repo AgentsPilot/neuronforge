@@ -34,14 +34,12 @@ export class SendHandler extends BaseHandler {
 
       console.log(`[SendHandler] Variables resolved successfully`);
 
-      // Apply compression to input if enabled
-      const { compressed: input, result: compressionResult } = await this.compressInput(
-        JSON.stringify(resolvedInput),  // ✅ Use resolved input instead of original
-        context
-      );
+      // Prepare input for LLM
+      const input = JSON.stringify(resolvedInput);
 
       // Estimate token usage - send typically needs less output
-      const estimatedTokens = compressionResult.compressedTokens + 400;
+      const inputTokens = this.estimateTokenCount(input);
+      const estimatedTokens = inputTokens + 400;
       if (!this.checkBudget(context, estimatedTokens)) {
         return this.createErrorResult('Insufficient budget for send');
       }
@@ -85,8 +83,6 @@ export class SendHandler extends BaseHandler {
         cost,
         Date.now() - startTime,
         {
-          compressionApplied: compressionResult.strategy !== 'none',
-          compressionRatio: compressionResult.ratio,
           model: context.routingDecision.model,
           provider: context.routingDecision.provider,
           messageType: sendResult.messageType,

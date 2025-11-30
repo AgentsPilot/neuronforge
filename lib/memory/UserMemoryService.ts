@@ -277,6 +277,10 @@ export class UserMemoryService {
     userInput: string,
     agentOutput: string
   ): string {
+    // Safely truncate inputs with null checks
+    const safeUserInput = (userInput || '').substring(0, 1000);
+    const safeAgentOutput = (agentOutput || '').substring(0, 1000);
+
     return `You are a user preference extraction AI for NeuronForge.
 
 Your task: Analyze this agent interaction and extract PERSISTENT user preferences/context that should be remembered across ALL future agent executions.
@@ -285,10 +289,10 @@ Agent: ${agentName}
 ${agentDescription ? `Description: ${agentDescription}` : ''}
 
 User Input:
-${userInput.substring(0, 1000)}
+${safeUserInput}
 
 Agent Output:
-${agentOutput.substring(0, 1000)}
+${safeAgentOutput}
 
 EXTRACT USER MEMORIES (JSON only):
 {

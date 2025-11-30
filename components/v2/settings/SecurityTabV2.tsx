@@ -159,51 +159,64 @@ export default function SecurityTabV2() {
   const handleDeleteAccount = async () => {
     if (!user) return
 
-    if (confirm('This action cannot be undone. Are you absolutely sure you want to delete your account?')) {
-      if (confirm('Final confirmation: This will permanently delete all your data, agents, and settings.')) {
+    const firstConfirm = confirm(
+      'This action cannot be undone.\n\n' +
+      'Your account will be anonymized:\n' +
+      '• Personal information will be removed\n' +
+      '• Agents will be archived (retained for AI training)\n' +
+      '• Financial records anonymized (required by law)\n\n' +
+      'Are you sure you want to proceed?'
+    )
+
+    if (firstConfirm) {
+      const typedConfirmation = prompt(
+        'Type "DELETE_MY_ACCOUNT" to confirm account deletion:'
+      )
+
+      if (typedConfirmation === 'DELETE_MY_ACCOUNT') {
+        const reason = prompt('Optional: Please tell us why you\'re leaving (this helps us improve):')
+
         try {
           setSuccessMessage('')
           setErrorMessage('')
+          setErrorMessage('Processing account deletion...')
 
-          // AUDIT TRAIL: Log account deletion attempt
-          try {
-            await fetch('/api/audit/log', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'x-user-id': user.id
-              },
-              body: JSON.stringify({
-                action: 'USER_ACCOUNT_DELETION_INITIATED',
-                entityType: 'user',
-                entityId: user.id,
-                userId: user.id,
-                resourceName: user.email || 'User Account',
-                details: {
-                  timestamp: new Date().toISOString(),
-                  method: 'user_initiated',
-                  deletion_scope: ['profiles', 'preferences', 'notifications', 'connections']
-                },
-                severity: 'critical',
-                complianceFlags: ['SOC2', 'GDPR', 'CCPA']
-              })
+          // Call our GDPR-compliant deletion endpoint
+          const response = await fetch('/api/user/delete-account', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              confirmation: 'DELETE_MY_ACCOUNT',
+              reason: reason || 'No reason provided'
             })
-          } catch (auditError) {
-            console.error('Audit logging failed (non-critical):', auditError)
+          })
+
+          const result = await response.json()
+
+          if (response.ok && result.success) {
+            setSuccessMessage(
+              'Account deleted successfully. ' +
+              'Your personal data has been removed and agents have been anonymized. ' +
+              'You will be signed out shortly.'
+            )
+
+            // Sign out after 3 seconds
+            setTimeout(async () => {
+              await supabase.auth.signOut()
+              window.location.href = '/'
+            }, 3000)
+          } else {
+            setErrorMessage(result.message || 'Failed to delete account. Please contact support.')
           }
-
-          await Promise.all([
-            supabase.from('profiles').delete().eq('id', user.id),
-            supabase.from('user_preferences').delete().eq('user_id', user.id),
-            supabase.from('notification_settings').delete().eq('user_id', user.id),
-            supabase.from('plugin_connections').delete().eq('user_id', user.id)
-          ])
-
-          setErrorMessage('Account deletion initiated. Please check your email within 24 hours to complete the process.')
         } catch (error) {
           console.error('Error deleting account:', error)
-          setErrorMessage('Failed to delete account. Please contact support.')
+          setErrorMessage('Failed to delete account. Please try again or contact support.')
         }
+      } else if (typedConfirmation !== null) {
+        // User typed something but not the correct confirmation
+        setErrorMessage('Incorrect confirmation. Account deletion cancelled.')
       }
     }
   }

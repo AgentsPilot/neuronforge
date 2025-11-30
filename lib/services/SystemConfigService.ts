@@ -169,6 +169,7 @@ export class SystemConfigService {
 
     if (existing) {
       // Update existing
+      console.log(`[SystemConfig] Updating existing key '${key}' with value:`, value);
       const { error } = await supabase
         .from('system_settings_config')
         .update({ value, updated_at: new Date().toISOString() })
@@ -178,14 +179,20 @@ export class SystemConfigService {
         console.error(`[SystemConfig] Failed to update config '${key}':`, error);
         throw error;
       }
+      console.log(`[SystemConfig] Successfully updated '${key}'`);
     } else {
       // Insert new - infer category from key prefix
       const category = key.startsWith('pilot_') || key.startsWith('workflow_orchestrator_')
         ? 'pilot'
         : key.startsWith('routing_') || key.startsWith('intelligent_routing_')
         ? 'routing'
+        : key.startsWith('helpbot_')
+        ? 'helpbot'
+        : key.startsWith('memory_')
+        ? 'memory'
         : 'general';
 
+      console.log(`[SystemConfig] Inserting new key '${key}' with category '${category}' and value:`, value);
       const { error } = await supabase
         .from('system_settings_config')
         .insert({
@@ -199,6 +206,7 @@ export class SystemConfigService {
         console.error(`[SystemConfig] Failed to create config '${key}':`, error);
         throw error;
       }
+      console.log(`[SystemConfig] Successfully created '${key}'`);
     }
 
     // Invalidate cache

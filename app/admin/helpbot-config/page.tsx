@@ -12,11 +12,13 @@ import {
   Settings,
   Brain,
   Database,
+  FileText,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import { Textarea } from '@/components/ui/textarea'
 
 interface HelpBotConfig {
   general: {
@@ -37,6 +39,21 @@ interface HelpBotConfig {
     autoPromoteEnabled: boolean
     autoPromoteThreshold: number
     autoPromoteMinThumbsUp: number
+  }
+  prompts?: {
+    generalPrompt: string | null
+    inputPrompt: string | null
+  }
+  theme?: {
+    primaryColor: string
+    secondaryColor: string
+    borderColor: string
+    shadowColor: string
+    closeButtonColor: string
+  }
+  welcomeMessages?: {
+    default: string | null
+    inputHelp: string | null
   }
   provider: string
   enabled: boolean
@@ -69,6 +86,21 @@ export default function HelpBotConfigPage() {
       autoPromoteEnabled: false,
       autoPromoteThreshold: 10,
       autoPromoteMinThumbsUp: 3,
+    },
+    prompts: {
+      generalPrompt: null,
+      inputPrompt: null,
+    },
+    theme: {
+      primaryColor: '#8b5cf6',
+      secondaryColor: '#9333ea',
+      borderColor: '#e2e8f0',
+      shadowColor: 'rgba(139, 92, 246, 0.2)',
+      closeButtonColor: '#ef4444',
+    },
+    welcomeMessages: {
+      default: null,
+      inputHelp: null,
     },
     provider: 'groq',
     enabled: true,
@@ -538,11 +570,311 @@ export default function HelpBotConfigPage() {
         </div>
       </motion.div>
 
-      {/* Info Panel */}
+      {/* System Prompts Configuration */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.4 }}
+        className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10"
+      >
+        <h2 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
+          <FileText className="w-5 h-5 text-purple-400" />
+          System Prompts
+        </h2>
+        <p className="text-sm text-slate-400 mb-6">
+          Customize AI behavior by editing system prompts. Leave blank to use default prompts.
+          Use placeholders: <code className="text-purple-300">{"{{pageTitle}}"}</code>, <code className="text-purple-300">{"{{pageDescription}}"}</code> for general prompt;
+          <code className="text-purple-300 ml-1">{"{{agentId}}"}</code>, <code className="text-purple-300">{"{{fieldName}}"}</code>, etc. for input prompt.
+        </p>
+
+        <div className="space-y-6">
+          {/* General Help Prompt */}
+          <div>
+            <Label className="text-white font-medium mb-2 block">General Help Prompt</Label>
+            <p className="text-xs text-slate-400 mb-3">
+              Used for general page assistance and navigation help. Supports markdown formatting.
+            </p>
+            <Textarea
+              value={config.prompts?.generalPrompt || ''}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  prompts: { ...config.prompts, generalPrompt: e.target.value || null },
+                })
+              }
+              placeholder="Leave blank to use default general help prompt..."
+              rows={12}
+              className="bg-slate-700/50 border-white/10 text-white font-mono text-sm"
+            />
+            <p className="text-xs text-slate-500 mt-2">
+              Default prompt includes page context, formatting rules, and available features.
+            </p>
+          </div>
+
+          {/* Input Field Assistance Prompt */}
+          <div>
+            <Label className="text-white font-medium mb-2 block">Input Field Assistance Prompt</Label>
+            <p className="text-xs text-slate-400 mb-3">
+              Used when users need help filling agent input fields. Handles URL extraction and guidance.
+            </p>
+            <Textarea
+              value={config.prompts?.inputPrompt || ''}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  prompts: { ...config.prompts, inputPrompt: e.target.value || null },
+                })
+              }
+              placeholder="Leave blank to use default input assistance prompt..."
+              rows={12}
+              className="bg-slate-700/50 border-white/10 text-white font-mono text-sm"
+            />
+            <p className="text-xs text-slate-500 mt-2">
+              Default prompt handles field types, URL extraction, and JSON response formatting.
+            </p>
+          </div>
+        </div>
+      </motion.div>
+
+      {/* Welcome Messages Configuration */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.5 }}
+        className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10"
+      >
+        <h2 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
+          <MessageCircle className="w-5 h-5 text-green-400" />
+          Welcome Messages
+        </h2>
+        <p className="text-sm text-slate-400 mb-6">
+          Customize the initial greeting messages users see when opening HelpBot. Leave blank to use smart context-aware defaults.
+          Use placeholders for dynamic content.
+        </p>
+
+        <div className="space-y-6">
+          {/* Default Welcome Message */}
+          <div>
+            <Label className="text-white font-medium mb-2 block">General Help Welcome</Label>
+            <p className="text-xs text-slate-400 mb-3">
+              Shown when users open HelpBot for general page assistance. Supports <code className="text-purple-300">{"{{pageTitle}}"}</code> placeholder.
+            </p>
+            <Textarea
+              value={config.welcomeMessages?.default || ''}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  welcomeMessages: { ...config.welcomeMessages, default: e.target.value || null },
+                })
+              }
+              placeholder="e.g., 👋 Welcome to {{pageTitle}}! How can I help you today?"
+              rows={3}
+              className="bg-slate-700/50 border-white/10 text-white"
+            />
+            <p className="text-xs text-slate-500 mt-2">
+              Default: Context-aware welcome based on current page
+            </p>
+          </div>
+
+          {/* Input Help Welcome Message */}
+          <div>
+            <Label className="text-white font-medium mb-2 block">Input Field Assistance Welcome</Label>
+            <p className="text-xs text-slate-400 mb-3">
+              Shown when users click help on an input field. Supports <code className="text-purple-300">{"{{fieldName}}"}</code>, <code className="text-purple-300">{"{{agentName}}"}</code> placeholders.
+            </p>
+            <Textarea
+              value={config.welcomeMessages?.inputHelp || ''}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  welcomeMessages: { ...config.welcomeMessages, inputHelp: e.target.value || null },
+                })
+              }
+              placeholder="e.g., I'll help you fill the {{fieldName}} field for {{agentName}}. What do you have?"
+              rows={3}
+              className="bg-slate-700/50 border-white/10 text-white"
+            />
+            <p className="text-xs text-slate-500 mt-2">
+              Default: Field-specific guidance based on input type
+            </p>
+          </div>
+        </div>
+      </motion.div>
+
+      {/* UI Theme Configuration */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.6 }}
+        className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10"
+      >
+        <h2 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
+          <Zap className="w-5 h-5 text-pink-400" />
+          UI Theme Colors
+        </h2>
+        <p className="text-sm text-slate-400 mb-6">
+          Customize HelpBot's visual appearance with your brand colors. Changes will apply when the component is updated to use theme config.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {/* Primary Color */}
+          <div>
+            <Label className="text-white font-medium mb-2 block">Primary Color</Label>
+            <p className="text-xs text-slate-400 mb-3">Main accent color for buttons and highlights</p>
+            <div className="flex items-center gap-3">
+              <Input
+                type="color"
+                value={config.theme?.primaryColor || '#8b5cf6'}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    theme: { ...config.theme, primaryColor: e.target.value },
+                  })
+                }
+                className="w-16 h-16 p-1 cursor-pointer bg-slate-700/50 border-white/10"
+              />
+              <Input
+                type="text"
+                value={config.theme?.primaryColor || '#8b5cf6'}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    theme: { ...config.theme, primaryColor: e.target.value },
+                  })
+                }
+                className="flex-1 bg-slate-700/50 border-white/10 text-white font-mono"
+                placeholder="#8b5cf6"
+              />
+            </div>
+          </div>
+
+          {/* Secondary Color */}
+          <div>
+            <Label className="text-white font-medium mb-2 block">Secondary Color</Label>
+            <p className="text-xs text-slate-400 mb-3">Secondary gradient color for visual effects</p>
+            <div className="flex items-center gap-3">
+              <Input
+                type="color"
+                value={config.theme?.secondaryColor || '#9333ea'}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    theme: { ...config.theme, secondaryColor: e.target.value },
+                  })
+                }
+                className="w-16 h-16 p-1 cursor-pointer bg-slate-700/50 border-white/10"
+              />
+              <Input
+                type="text"
+                value={config.theme?.secondaryColor || '#9333ea'}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    theme: { ...config.theme, secondaryColor: e.target.value },
+                  })
+                }
+                className="flex-1 bg-slate-700/50 border-white/10 text-white font-mono"
+                placeholder="#9333ea"
+              />
+            </div>
+          </div>
+
+          {/* Border Color */}
+          <div>
+            <Label className="text-white font-medium mb-2 block">Border Color</Label>
+            <p className="text-xs text-slate-400 mb-3">Color for borders and dividers</p>
+            <div className="flex items-center gap-3">
+              <Input
+                type="color"
+                value={config.theme?.borderColor || '#e2e8f0'}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    theme: { ...config.theme, borderColor: e.target.value },
+                  })
+                }
+                className="w-16 h-16 p-1 cursor-pointer bg-slate-700/50 border-white/10"
+              />
+              <Input
+                type="text"
+                value={config.theme?.borderColor || '#e2e8f0'}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    theme: { ...config.theme, borderColor: e.target.value },
+                  })
+                }
+                className="flex-1 bg-slate-700/50 border-white/10 text-white font-mono"
+                placeholder="#e2e8f0"
+              />
+            </div>
+          </div>
+
+          {/* Shadow Color */}
+          <div>
+            <Label className="text-white font-medium mb-2 block">Shadow Color</Label>
+            <p className="text-xs text-slate-400 mb-3">Color for shadows and glows (rgba format)</p>
+            <Input
+              type="text"
+              value={config.theme?.shadowColor || 'rgba(139, 92, 246, 0.2)'}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  theme: { ...config.theme, shadowColor: e.target.value },
+                })
+              }
+              className="bg-slate-700/50 border-white/10 text-white font-mono"
+              placeholder="rgba(139, 92, 246, 0.2)"
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 mt-6">
+          {/* Close Button Color */}
+          <div>
+            <Label className="text-white font-medium mb-2 block">Close Button Color</Label>
+            <p className="text-xs text-slate-400 mb-3">Color for the floating close button</p>
+            <div className="flex items-center gap-3">
+              <Input
+                type="color"
+                value={config.theme?.closeButtonColor || '#ef4444'}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    theme: { ...config.theme, closeButtonColor: e.target.value },
+                  })
+                }
+                className="w-16 h-16 p-1 cursor-pointer bg-slate-700/50 border-white/10"
+              />
+              <Input
+                type="text"
+                value={config.theme?.closeButtonColor || '#ef4444'}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    theme: { ...config.theme, closeButtonColor: e.target.value },
+                  })
+                }
+                className="flex-1 bg-slate-700/50 border-white/10 text-white font-mono"
+                placeholder="#ef4444"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 p-4 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+          <p className="text-xs text-amber-200">
+            <strong>Note:</strong> Theme colors are configured but require frontend implementation in HelpBot component to apply visually.
+            See documentation for implementation details.
+          </p>
+        </div>
+      </motion.div>
+
+      {/* Info Panel */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.7 }}
         className="bg-blue-500/20 border border-blue-500/30 rounded-xl p-4 flex items-start gap-3"
       >
         <Database className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />

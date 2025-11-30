@@ -38,6 +38,21 @@ export async function GET() {
         autoPromoteThreshold: settings.find((s) => s.key === 'helpbot_auto_promote_threshold')?.value || 10,
         autoPromoteMinThumbsUp: settings.find((s) => s.key === 'helpbot_auto_promote_min_thumbs_up')?.value || 3,
       },
+      prompts: {
+        generalPrompt: settings.find((s) => s.key === 'helpbot_general_prompt')?.value || null,
+        inputPrompt: settings.find((s) => s.key === 'helpbot_input_prompt')?.value || null,
+      },
+      theme: {
+        primaryColor: settings.find((s) => s.key === 'helpbot_theme_primary_color')?.value || '#8b5cf6',
+        secondaryColor: settings.find((s) => s.key === 'helpbot_theme_secondary_color')?.value || '#9333ea',
+        borderColor: settings.find((s) => s.key === 'helpbot_theme_border_color')?.value || '#e2e8f0',
+        shadowColor: settings.find((s) => s.key === 'helpbot_theme_shadow_color')?.value || 'rgba(139, 92, 246, 0.2)',
+        closeButtonColor: settings.find((s) => s.key === 'helpbot_theme_close_button_color')?.value || '#ef4444',
+      },
+      welcomeMessages: {
+        default: settings.find((s) => s.key === 'helpbot_welcome_default')?.value || null,
+        inputHelp: settings.find((s) => s.key === 'helpbot_welcome_input_help')?.value || null,
+      },
       provider: settings.find((s) => s.key === 'helpbot_provider')?.value || 'groq',
       enabled: settings.find((s) => s.key === 'helpbot_enabled')?.value ?? true,
       cacheEnabled: settings.find((s) => s.key === 'helpbot_cache_enabled')?.value ?? true,
@@ -63,7 +78,7 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Config object required' }, { status: 400 })
     }
 
-    const updates = {
+    const updates: Record<string, any> = {
       helpbot_general_model: config.general.model,
       helpbot_general_temperature: config.general.temperature,
       helpbot_general_max_tokens: config.general.maxTokens,
@@ -82,6 +97,58 @@ export async function PUT(request: NextRequest) {
       helpbot_cache_enabled: config.cacheEnabled,
       helpbot_faq_enabled: config.faqEnabled,
     }
+
+    // Add prompts if provided (skip null values - database has NOT NULL constraint)
+    if (config.prompts) {
+      if (config.prompts.generalPrompt !== undefined && config.prompts.generalPrompt !== null) {
+        updates.helpbot_general_prompt = config.prompts.generalPrompt
+      }
+      if (config.prompts.inputPrompt !== undefined && config.prompts.inputPrompt !== null) {
+        updates.helpbot_input_prompt = config.prompts.inputPrompt
+      }
+    }
+
+    // Add theme if provided (skip null/empty values - database has NOT NULL constraint)
+    if (config.theme) {
+      console.log('[HelpBot Config API] Theme received:', config.theme)
+      if (config.theme.primaryColor !== undefined && config.theme.primaryColor !== null && config.theme.primaryColor !== '') {
+        updates.helpbot_theme_primary_color = config.theme.primaryColor
+        console.log('[HelpBot Config API] Adding primaryColor:', config.theme.primaryColor)
+      }
+      if (config.theme.secondaryColor !== undefined && config.theme.secondaryColor !== null && config.theme.secondaryColor !== '') {
+        updates.helpbot_theme_secondary_color = config.theme.secondaryColor
+        console.log('[HelpBot Config API] Adding secondaryColor:', config.theme.secondaryColor)
+      }
+      if (config.theme.borderColor !== undefined && config.theme.borderColor !== null && config.theme.borderColor !== '') {
+        updates.helpbot_theme_border_color = config.theme.borderColor
+        console.log('[HelpBot Config API] Adding borderColor:', config.theme.borderColor)
+      }
+      if (config.theme.shadowColor !== undefined && config.theme.shadowColor !== null && config.theme.shadowColor !== '') {
+        updates.helpbot_theme_shadow_color = config.theme.shadowColor
+        console.log('[HelpBot Config API] Adding shadowColor:', config.theme.shadowColor)
+      }
+      if (config.theme.closeButtonColor !== undefined && config.theme.closeButtonColor !== null && config.theme.closeButtonColor !== '') {
+        updates.helpbot_theme_close_button_color = config.theme.closeButtonColor
+        console.log('[HelpBot Config API] Adding closeButtonColor:', config.theme.closeButtonColor)
+      }
+    }
+
+    // Add welcome messages if provided (skip null values - database has NOT NULL constraint)
+    if (config.welcomeMessages) {
+      if (config.welcomeMessages.default !== undefined && config.welcomeMessages.default !== null) {
+        updates.helpbot_welcome_default = config.welcomeMessages.default
+      }
+      if (config.welcomeMessages.inputHelp !== undefined && config.welcomeMessages.inputHelp !== null) {
+        updates.helpbot_welcome_input_help = config.welcomeMessages.inputHelp
+      }
+    }
+
+    console.log('[HelpBot Config API] Final updates object keys:', Object.keys(updates))
+    console.log('[HelpBot Config API] Theme-related updates:', {
+      primaryColor: updates.helpbot_theme_primary_color,
+      borderColor: updates.helpbot_theme_border_color,
+      shadowColor: updates.helpbot_theme_shadow_color
+    })
 
     await SystemConfigService.setMultiple(supabase, updates)
 

@@ -24,7 +24,8 @@ import {
   AlertCircle,
   RefreshCw,
   PlugZap,
-  XCircle
+  XCircle,
+  Sparkles
 } from 'lucide-react'
 import {
   SiGithub,
@@ -708,6 +709,16 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
                 <div className="absolute right-0 bottom-full mb-2 w-48 bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] border border-[var(--v2-border)] z-50 overflow-hidden" style={{ borderRadius: 'var(--v2-radius-card)' }}>
                   <button
                     onClick={() => {
+                      router.push('/v2/dashboard')
+                      setMenuOpen(false)
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                  >
+                    <LayoutDashboard className="w-4 h-4 text-[var(--v2-text-secondary)]" />
+                    <span className="text-sm font-medium text-[var(--v2-text-primary)]">Dashboard</span>
+                  </button>
+                  <button
+                    onClick={() => {
                       router.push('/v2/agent-list')
                       setMenuOpen(false)
                     }}
@@ -718,13 +729,13 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
                   </button>
                   <button
                     onClick={() => {
-                      router.push('/v2/dashboard')
+                      router.push('/v2/templates')
                       setMenuOpen(false)
                     }}
                     className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                   >
-                    <LayoutDashboard className="w-4 h-4 text-[var(--v2-text-secondary)]" />
-                    <span className="text-sm font-medium text-[var(--v2-text-primary)]">Dashboard</span>
+                    <Sparkles className="w-4 h-4 text-[var(--v2-text-secondary)]" />
+                    <span className="text-sm font-medium text-[var(--v2-text-primary)]">Templates</span>
                   </button>
                   <button
                     onClick={() => {

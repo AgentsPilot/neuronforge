@@ -108,7 +108,18 @@ export const PILOT_DSL_SCHEMA = {
       maximum: 1
     }
   },
-  required: ["agent_name", "workflow_steps"],
+  required: [
+    "agent_name",
+    "description",
+    "system_prompt",
+    "workflow_type",
+    "suggested_plugins",
+    "required_inputs",
+    "workflow_steps",
+    "suggested_outputs",
+    "reasoning",
+    "confidence"
+  ],
   additionalProperties: false,
   "$defs": {
     "Condition": {
@@ -155,7 +166,7 @@ export const PILOT_DSL_SCHEMA = {
           description: "Condition to negate"
         }
       },
-      required: ["field", "operator"],
+      required: [],  // Empty required array - this is a union type where fields are mutually exclusive
       additionalProperties: false
     },
     "WorkflowStepLevel1": {
@@ -608,7 +619,7 @@ export const PILOT_DSL_SCHEMA = {
         },
         operation: {
           type: "string",
-          enum: ["map", "filter", "reduce", "sort", "group", "aggregate", "join", "match", "deduplicate"]
+          enum: ["map", "filter", "reduce", "sort", "group", "aggregate", "join", "match", "deduplicate", "equals", "deep_equals", "diff", "contains", "subset"]
         },
         input: { type: "string" },
         config: { type: "object", additionalProperties: true },
@@ -750,7 +761,7 @@ export const PILOT_DSL_SCHEMA = {
         },
         operation: {
           type: "string",
-          enum: ["map", "filter", "reduce", "sort", "group", "aggregate", "join", "match", "deduplicate"]
+          enum: ["map", "filter", "reduce", "sort", "group", "aggregate", "join", "match", "deduplicate", "equals", "deep_equals", "diff", "contains", "subset"]
         },
         input: { type: "string" },
         config: { type: "object", additionalProperties: true },
@@ -892,7 +903,7 @@ export const PILOT_DSL_SCHEMA = {
         },
         operation: {
           type: "string",
-          enum: ["map", "filter", "reduce", "sort", "group", "aggregate", "join", "match", "deduplicate"]
+          enum: ["map", "filter", "reduce", "sort", "group", "aggregate", "join", "match", "deduplicate", "equals", "deep_equals", "diff", "contains", "subset"]
         },
         input: { type: "string" },
         config: { type: "object", additionalProperties: true },
@@ -997,7 +1008,7 @@ export const PILOT_DSL_SCHEMA = {
         default: { type: "array", items: { type: "string" } },
         operation: {
           type: "string",
-          enum: ["map", "filter", "reduce", "sort", "group", "aggregate", "join", "match", "deduplicate"]
+          enum: ["map", "filter", "reduce", "sort", "group", "aggregate", "join", "match", "deduplicate", "equals", "deep_equals", "diff", "contains", "subset"]
         },
         input: { type: "string" },
         config: { type: "object", additionalProperties: true },
@@ -1067,7 +1078,7 @@ export const PILOT_DSL_SCHEMA = {
       additionalProperties: false
     }
   }
-} as const;
+};
 
 /**
  * Estimate schema size in bytes

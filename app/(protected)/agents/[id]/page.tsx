@@ -269,6 +269,7 @@ export default function AgentPage() {
   const [isOwner, setIsOwner] = useState(false)
   const [showSuccessNotification, setShowSuccessNotification] = useState(false)
   const [creditsAwarded, setCreditsAwarded] = useState(0)
+  const [qualityScoreAwarded, setQualityScoreAwarded] = useState(0)
   const [sharingRewardAmount, setSharingRewardAmount] = useState(500)
   const [sharingValidation, setSharingValidation] = useState<any>(null)
   const [sharingStatus, setSharingStatus] = useState<any>(null)
@@ -741,6 +742,27 @@ export default function AgentPage() {
         return
       }
 
+      // Calculate quality score
+      const { AgentScoreService } = await import('@/lib/services/AgentScoreService')
+      const scoreService = new AgentScoreService(supabase)
+      const qualityScore = await scoreService.calculateQualityScore(agent.id)
+
+      // Get execution diversity penalty (anti-abuse)
+      const diversityPenalty = await scoreService.getExecutionDiversityPenalty(agent.id)
+
+      // Apply penalty if suspicious execution pattern detected
+      const finalScore = {
+        ...qualityScore,
+        overall_score: qualityScore.overall_score * diversityPenalty
+      }
+
+      // Get base metrics for snapshot
+      const { data: metrics } = await supabase
+        .from('agent_intensity_metrics')
+        .select('success_rate, total_executions')
+        .eq('agent_id', agent.id)
+        .maybeSingle()
+
       const { error: insertError } = await supabase.from('shared_agents').insert([{
         original_agent_id: agent.id,
         user_id: user.id,
@@ -754,7 +776,17 @@ export default function AgentPage() {
         plugins_required: agent.plugins_required,
         workflow_steps: agent.workflow_steps,
         mode: agent.mode,
-        shared_at: new Date().toISOString()
+        shared_at: new Date().toISOString(),
+        // Quality scores
+        quality_score: finalScore.overall_score,
+        reliability_score: finalScore.reliability_score,
+        efficiency_score: finalScore.efficiency_score,
+        adoption_score: finalScore.adoption_score,
+        complexity_score: finalScore.complexity_score,
+        score_calculated_at: new Date().toISOString(),
+        // Base metrics snapshot
+        base_executions: metrics?.total_executions || 0,
+        base_success_rate: metrics?.success_rate || 0
       }])
 
       if (insertError) {
@@ -770,13 +802,15 @@ export default function AgentPage() {
 
       if (rewardResult.success) {
         setCreditsAwarded(rewardResult.creditsAwarded)
+        setQualityScoreAwarded(Math.round(finalScore.overall_score))
         await fetchUserCredits()
         setShowSuccessNotification(true)
-        setTimeout(() => setShowSuccessNotification(false), 4000)
+        setTimeout(() => setShowSuccessNotification(false), 5000)
       } else {
         setCreditsAwarded(0)
+        setQualityScoreAwarded(Math.round(finalScore.overall_score))
         setShowSuccessNotification(true)
-        setTimeout(() => setShowSuccessNotification(false), 4000)
+        setTimeout(() => setShowSuccessNotification(false), 5000)
       }
 
       setHasBeenShared(true)
@@ -935,6 +969,11 @@ export default function AgentPage() {
                 <p className="text-xs text-slate-600 mt-1">
                   {creditsAwarded > 0 ? `+${creditsAwarded} credits earned` : 'Agent shared with community'}
                 </p>
+                {qualityScoreAwarded > 0 && (
+                  <p className="text-xs text-indigo-600 font-medium mt-1">
+                    Quality Score: {qualityScoreAwarded}/100
+                  </p>
+                )}
               </div>
               <button
                 onClick={() => setShowSuccessNotification(false)}

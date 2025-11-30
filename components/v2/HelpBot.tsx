@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { usePathname, useRouter } from 'next/navigation'
 import { MessageCircle, X, Send, Loader2, ThumbsUp, ThumbsDown, BookOpen, Database, Zap, Sparkles, Bot, XCircle } from 'lucide-react'
 import { useAuth } from '@/components/UserProvider'
@@ -19,16 +20,15 @@ interface PageContext {
   helpTopics: string[]
 }
 
-const PAGE_CONTEXTS: Record<string, PageContext> = {
+// Default fallback contexts (will be replaced by database contexts)
+const DEFAULT_PAGE_CONTEXTS: Record<string, PageContext> = {
   '/v2/dashboard': {
     title: 'Dashboard',
     description: 'Your command center for agents, credits, and system activity',
     helpTopics: [
       'How do I view my agent performance?',
       'What do Pilot Credits mean?',
-      'How do I create a new agent?',
-      'What are the different agent statuses?',
-      'How do I check my remaining credits?'
+      'How do I create a new agent?'
     ]
   },
   '/v2/agent-list': {
@@ -37,93 +37,9 @@ const PAGE_CONTEXTS: Record<string, PageContext> = {
     helpTopics: [
       'How do I filter agents by status?',
       'What do agent statuses mean?',
-      'How do I edit an agent?',
-      'How do I delete an agent?',
       'What is the AIS score?'
     ]
-  },
-  '/v2/agents': {
-    title: 'Agents',
-    description: 'Browse and manage your AI automation agents',
-    helpTopics: [
-      'How do I create a new agent?',
-      'What types of agents can I build?',
-      'How do I view agent details?'
-    ]
-  },
-  '/v2/agents/new': {
-    title: 'Create Agent',
-    description: 'Build a new AI agent using our conversational builder',
-    helpTopics: [
-      'How does the agent builder work?',
-      'What information do I need to provide?',
-      'How do I connect plugins?',
-      'Can I test my agent before saving?',
-      'What are input and output schemas?'
-    ]
-  },
-  '/v2/analytics': {
-    title: 'Analytics',
-    description: 'Track performance metrics, costs, and usage patterns',
-    helpTopics: [
-      'How do I interpret the cost breakdown?',
-      'What metrics are tracked?',
-      'How do I export analytics data?',
-      'What is token usage?',
-      'How do I optimize costs?'
-    ]
-  },
-  '/v2/billing': {
-    title: 'Billing',
-    description: 'Manage your subscription, credits, and payment methods',
-    helpTopics: [
-      'How do I add more Pilot Credits?',
-      'What are Pilot Credits vs Raw Tokens?',
-      'How is usage calculated?',
-      'How do I upgrade my plan?',
-      'What happens when I run out of credits?'
-    ]
-  },
-  '/v2/settings': {
-    title: 'Settings',
-    description: 'Configure your account, API keys, and integrations',
-    helpTopics: [
-      'How do I add API keys?',
-      'How do I manage plugin connections?',
-      'How do I update my profile?',
-      'How do I connect to Slack?',
-      'What security settings are available?'
-    ]
-  },
-  '/v2/templates': {
-    title: 'Templates',
-    description: 'Browse pre-built agent templates for common use cases',
-    helpTopics: [
-      'How do I use a template?',
-      'Can I customize templates?',
-      'What templates are available?'
-    ]
-  },
-  '/v2/monitoring': {
-    title: 'Monitoring',
-    description: 'Real-time monitoring and logs for your agents',
-    helpTopics: [
-      'How do I view agent execution logs?',
-      'What does the monitoring dashboard show?',
-      'How do I troubleshoot failed executions?',
-      'What are execution statuses?'
-    ]
-  },
-  '/v2/notifications': {
-    title: 'Notifications',
-    description: 'Manage alerts and notifications for your agents',
-    helpTopics: [
-      'How do I set up notifications?',
-      'What types of alerts are available?',
-      'How do I configure Slack notifications?',
-      'Can I customize notification preferences?'
-    ]
-  },
+  }
 }
 
 // ---- ADDED TYPES FOR FIELD-SPECIFIC HELP ----
@@ -140,6 +56,7 @@ type HelpBotProps = {
   context?: InputHelpContext
   onFill?: (value: string) => void
   onClose?: () => void
+  onOpen?: () => void  // Called when user clicks the floating button (for controlled mode)
 }
 // ---------------------------------------------
 
@@ -173,7 +90,7 @@ function renderMarkdown(text: string) {
 
 // ---- MAIN COMPONENT ----
 export function HelpBot(props: HelpBotProps) {
-  const { isOpen: controlledOpen, context, onFill, onClose } = props
+  const { isOpen: controlledOpen, context, onFill, onClose, onOpen } = props
 
   const pathname = usePathname()
   const router = useRouter()
@@ -183,6 +100,28 @@ export function HelpBot(props: HelpBotProps) {
   const isInputHelp = !!context && context.mode === 'input_help'
   const isOpen = controlledOpen !== undefined ? controlledOpen : isOpenInternal
 
+  // Load page contexts from database
+  const [pageContexts, setPageContexts] = useState<Record<string, PageContext>>(DEFAULT_PAGE_CONTEXTS)
+  const [contextsLoaded, setContextsLoaded] = useState(false)
+
+  // Load HelpBot theme colors from database
+  const [themeColors, setThemeColors] = useState<{
+    primary: string
+    secondary: string
+    border: string
+    shadow: string
+    closeButton: string
+  }>({
+    primary: '#8b5cf6',  // Default purple
+    secondary: '#9333ea', // Default darker purple for gradients
+    border: '#e2e8f0',   // Default gray
+    shadow: 'rgba(139, 92, 246, 0.2)',  // Default purple shadow
+    closeButton: '#ef4444'  // Default red
+  })
+  const [themeLoaded, setThemeLoaded] = useState(false)
+  const [isMounted, setIsMounted] = useState(false)
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null)
+
   // Persist messages across page refreshes using sessionStorage
   // Initialize as empty - useEffect will load the correct messages
   const [messages, setMessages] = useState<Message[]>([])
@@ -190,11 +129,68 @@ export function HelpBot(props: HelpBotProps) {
   const [isLoading, setIsLoading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
+  // Load page contexts and theme colors from API on mount
+  useEffect(() => {
+    async function loadPageContexts() {
+      try {
+        const response = await fetch('/api/helpbot/page-contexts')
+        const result = await response.json()
+
+        if (result.success && result.contexts) {
+          // Convert array to object keyed by page_route
+          const contextsMap: Record<string, PageContext> = {}
+          result.contexts.forEach((ctx: any) => {
+            contextsMap[ctx.page_route] = {
+              title: ctx.title,
+              description: ctx.description || '',
+              helpTopics: ctx.quick_questions || []
+            }
+          })
+          setPageContexts({ ...DEFAULT_PAGE_CONTEXTS, ...contextsMap })
+          setContextsLoaded(true)
+        }
+      } catch (error) {
+        console.error('[HelpBot] Failed to load page contexts:', error)
+        // Continue with default contexts
+        setContextsLoaded(true)
+      }
+    }
+
+    async function loadThemeColors() {
+      try {
+        const response = await fetch('/api/admin/helpbot-config')
+        const result = await response.json()
+
+        if (result.success && result.config?.theme) {
+          const primaryColor = result.config.theme.primaryColor || '#8b5cf6'
+          setThemeColors({
+            primary: primaryColor,
+            secondary: result.config.theme.secondaryColor || primaryColor, // Use primary if secondary not set
+            border: result.config.theme.borderColor || '#e2e8f0',
+            shadow: result.config.theme.shadowColor || 'rgba(139, 92, 246, 0.2)',
+            closeButton: result.config.theme.closeButtonColor || '#ef4444'
+          })
+          console.log('[HelpBot] Loaded theme colors:', result.config.theme)
+        }
+      } catch (error) {
+        console.error('[HelpBot] Failed to load theme colors:', error)
+        // Continue with default colors
+      } finally {
+        setThemeLoaded(true)
+      }
+    }
+
+    loadPageContexts()
+    loadThemeColors()
+    setIsMounted(true)
+    setPortalTarget(document.body)
+  }, [])
+
   // Dynamic page context matching for parameterized routes
   const getPageContext = (path: string): PageContext => {
     // Try exact match first
-    if (PAGE_CONTEXTS[path]) {
-      return PAGE_CONTEXTS[path]
+    if (pageContexts[path]) {
+      return pageContexts[path]
     }
 
     // Check for dynamic routes
@@ -225,6 +221,22 @@ export function HelpBot(props: HelpBotProps) {
           'How do I view execution results?',
           'What are execution logs?',
           'How much does it cost to run an agent?'
+        ]
+      }
+    }
+
+    if (path.match(/^\/v2\/sandbox\/[^/]+$/)) {
+      // Sandbox/Debugger page: /v2/sandbox/[agentId]
+      return {
+        title: 'Agent Debugger',
+        description: 'Step through agent execution and debug workflows',
+        helpTopics: [
+          'How do I use the debugger?',
+          'What do the debug controls do?',
+          'How do I step through execution?',
+          'How do I inspect step data?',
+          'What are Pilot Credits?',
+          'How do I pause and resume execution?'
         ]
       }
     }
@@ -464,7 +476,7 @@ What would you like to know?`,
     const originalInput = input.trim()
 
     // Check if user typed a number to select a quick question (only if we have help topics)
-    if (!isInputHelp && messages.length === 1 && pageContext.helpTopics.length > 0) {
+    if (!isInputHelp && pageContext.helpTopics.length > 0) {
       const numberMatch = originalInput.match(/^(\d+)$/)
       if (numberMatch) {
         const selectedIndex = parseInt(numberMatch[1], 10) - 1
@@ -638,7 +650,70 @@ What would you like to know?`,
     }
   }
 
-  const handleQuickQuestion = (question: string) => { setInput(question) }
+  const handleQuickQuestion = (question: string) => {
+    // Set the input to the full question and send it
+    setInput(question)
+    // Use setTimeout to ensure state updates before sending
+    setTimeout(() => {
+      // Manually trigger send with the question text
+      handleSendWithText(question)
+    }, 0)
+  }
+
+  // Helper to send a specific text (bypasses input field)
+  const handleSendWithText = async (text: string) => {
+    if (!text.trim() || isLoading) return
+
+    const userMessage: Message = { role: 'user', content: text }
+    const apiMessage: Message = { role: 'user', content: text }
+
+    setMessages((prev) => [...prev, userMessage])
+    setInput('') // Clear input field
+    setIsLoading(true)
+
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (user?.id) headers['x-user-id'] = user.id
+
+      const body = isInputHelp
+        ? { messages: [...messages, apiMessage], context }
+        : { messages: [...messages, apiMessage], pageContext: { ...pageContext, path: pathname } }
+
+      const response = await fetch('/api/help-bot-v2', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      })
+
+      if (!response.ok) throw new Error('Failed to get response')
+
+      const data = await response.json()
+
+      // Note: Fill action handling is done in the main handleSend function
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: data.response,
+          source: data.source,
+          cacheId: data.cacheId,
+          feedbackGiven: null,
+        },
+      ])
+    } catch (error) {
+      console.error('[HelpBot] Error:', error)
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: "I'm having trouble connecting right now. Please try again or contact support.",
+        },
+      ])
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   const handleFeedback = async (messageIndex: number, feedbackType: 'up' | 'down') => {
     const message = messages[messageIndex]
@@ -693,14 +768,31 @@ What would you like to know?`,
     console.log(`  Message ${idx} (${msg.role}):`, msg.content.substring(0, 100))
   })
 
-  return (
+  // Don't render until mounted on client and portal target is available
+  if (!isMounted || !portalTarget) {
+    return null
+  }
+
+  const content = (
     <>
-      {/* Floating Button - only show if not in input help mode (modal) */}
-      {!isInputHelp && !isOpen && (
+      {/* Floating Button - stays visible on scroll (only show after theme loaded) */}
+      {themeLoaded && !isInputHelp && !isOpen && (
         <button
-          onClick={() => setIsOpenInternal(true)}
-          className="fixed bottom-20 right-4 sm:bottom-6 sm:right-6 w-12 h-12 sm:w-14 sm:h-14 bg-gradient-to-br from-[var(--v2-primary)] to-purple-600 text-white shadow-lg hover:shadow-2xl hover:scale-110 active:scale-95 transition-all duration-300 flex items-center justify-center z-40 group"
-          style={{ borderRadius: 'var(--v2-radius-card)' }}
+          onClick={() => {
+            // If controlled mode (parent passed isOpen), notify parent to open
+            if (controlledOpen !== undefined && onOpen) {
+              onOpen()
+            } else {
+              // Uncontrolled mode - manage internally
+              setIsOpenInternal(true)
+            }
+          }}
+          className="fixed bottom-6 right-6 w-12 h-12 sm:w-14 sm:h-14 text-white hover:shadow-2xl hover:scale-110 active:scale-95 transition-all duration-300 flex items-center justify-center z-40 group"
+          style={{
+            borderRadius: 'var(--v2-radius-card)',
+            background: `linear-gradient(to bottom right, ${themeColors.primary}, ${themeColors.secondary})`,
+            boxShadow: themeColors.shadow
+          }}
           title="Help & Support"
         >
           <Bot className="w-5 h-5 sm:w-6 sm:h-6 group-hover:rotate-12 transition-transform duration-300" />
@@ -709,11 +801,23 @@ What would you like to know?`,
         </button>
       )}
 
-      {/* Chat Window */}
-      {isOpen && (
-        <div className="fixed bottom-20 left-2 right-2 sm:bottom-28 sm:left-auto sm:right-6 sm:w-[440px] h-[calc(100vh-10rem)] sm:h-[calc(100vh-11rem)] max-h-[700px] sm:max-h-[600px] bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] z-50 flex flex-col border border-[var(--v2-border)] backdrop-blur-xl animate-in slide-in-from-bottom-4 duration-300 rounded-[16px] overflow-hidden">
+      {/* Chat Window - stays visible on scroll (only show after theme loaded) */}
+      {themeLoaded && isOpen && (
+        <div
+          className="fixed bottom-20 left-2 right-2 sm:bottom-[88px] sm:left-auto sm:right-6 sm:w-[440px] h-[calc(100vh-10rem)] sm:h-[calc(100vh-11rem)] max-h-[700px] sm:max-h-[600px] bg-[var(--v2-surface)] z-50 flex flex-col backdrop-blur-xl animate-in slide-in-from-bottom-4 duration-300 rounded-[16px] overflow-hidden"
+          style={{
+            border: `1px solid ${themeColors.border}`,
+            boxShadow: themeColors.shadow
+          }}
+        >
           {/* Header */}
-          <div className="flex items-center justify-between px-4 sm:px-5 py-4 border-b border-[var(--v2-border)]/50 bg-gradient-to-r from-[var(--v2-primary)] via-purple-600 to-[var(--v2-primary)] text-white backdrop-blur-xl rounded-t-[16px]">
+          <div
+            className="flex items-center justify-between px-4 sm:px-5 py-4 text-white backdrop-blur-xl rounded-t-[16px]"
+            style={{
+              background: `linear-gradient(to right, ${themeColors.primary}, ${themeColors.secondary}, ${themeColors.primary})`,
+              borderBottom: `1px solid ${themeColors.border}50`
+            }}
+          >
             <div className="flex items-center gap-3">
               <div className="relative">
                 <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center ring-2 ring-white/30 shadow-lg">
@@ -731,26 +835,24 @@ What would you like to know?`,
                 </div>
               </div>
             </div>
-            <button
-              onClick={() => { if (onClose) onClose(); setIsOpenInternal(false); }}
-              className="p-2 hover:bg-white/20 rounded-lg transition-all duration-200 active:scale-95 backdrop-blur-sm"
-              title="Close"
-            >
-              <X className="w-5 h-5" />
-            </button>
           </div>
           {/* Messages */}
           <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 space-y-4 bg-gradient-to-b from-gray-50/50 to-transparent dark:from-gray-900/20" onClick={handleMessageClick}>
             {messages.map((message, index) => (
               <div key={`${sessionIdRef.current}-${index}`} className={`flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
-                <div className={`max-w-[85%] sm:max-w-[80%] px-4 py-3 shadow-sm ${
-                  message.role === 'user'
-                    ? 'bg-gradient-to-br from-[var(--v2-primary)] to-purple-600 text-white'
-                    : 'bg-white dark:bg-gray-800 text-[var(--v2-text-primary)] border border-[var(--v2-border)]'
-                }`}
+                <div
+                  className={`max-w-[85%] sm:max-w-[80%] px-4 py-3 shadow-sm ${
+                    message.role === 'user'
+                      ? 'text-white'
+                      : 'bg-white dark:bg-gray-800 text-[var(--v2-text-primary)]'
+                  }`}
                   style={{
                     borderRadius: message.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                  }}>
+                    ...(message.role === 'user'
+                      ? { background: `linear-gradient(to bottom right, ${themeColors.primary}, ${themeColors.secondary})` }
+                      : { border: `1px solid ${themeColors.border}` })
+                  }}
+                >
                   <div
                     className={`text-sm leading-relaxed break-words overflow-hidden ${message.role === 'user' ? 'text-white' : ''}`}
                     dangerouslySetInnerHTML={{
@@ -814,8 +916,21 @@ What would you like to know?`,
                   <button
                     key={index}
                     onClick={() => handleQuickQuestion(topic)}
-                    className="text-xs px-3 py-1.5 bg-white dark:bg-gray-800 border border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:bg-[var(--v2-primary)]/5 active:scale-95 transition-all duration-200 font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-primary)]"
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    className="text-xs px-3 py-1.5 bg-white dark:bg-gray-800 border active:scale-95 transition-all duration-200 font-medium text-[var(--v2-text-secondary)]"
+                    style={{
+                      borderRadius: 'var(--v2-radius-button)',
+                      borderColor: themeColors.border
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.borderColor = themeColors.primary
+                      e.currentTarget.style.backgroundColor = `${themeColors.primary}0D` // 5% opacity
+                      e.currentTarget.style.color = themeColors.primary
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.borderColor = themeColors.border
+                      e.currentTarget.style.backgroundColor = ''
+                      e.currentTarget.style.color = ''
+                    }}
                   >
                     {topic}
                   </button>
@@ -832,15 +947,30 @@ What would you like to know?`,
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSend()}
                 placeholder={isInputHelp ? 'Paste your link or info here...' : 'Ask me anything...'}
-                className="flex-1 px-4 py-3 bg-white dark:bg-gray-800 border border-[var(--v2-border)] text-sm text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] focus:border-transparent transition-all duration-200"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
+                className="flex-1 px-4 py-3 bg-white dark:bg-gray-800 text-sm text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)] focus:outline-none transition-all duration-200"
+                style={{
+                  borderRadius: 'var(--v2-radius-button)',
+                  border: `1px solid ${themeColors.border}`
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.outline = 'none'
+                  e.currentTarget.style.boxShadow = `0 0 0 2px ${themeColors.primary}40`
+                  e.currentTarget.style.borderColor = themeColors.primary
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.boxShadow = 'none'
+                  e.currentTarget.style.borderColor = themeColors.border
+                }}
                 disabled={isLoading}
               />
               <button
                 onClick={handleSend}
                 disabled={!input.trim() || isLoading}
-                className="px-4 py-3 bg-gradient-to-br from-[var(--v2-primary)] to-purple-600 text-white hover:shadow-lg hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 transition-all duration-200 flex items-center justify-center"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
+                className="px-4 py-3 text-white hover:shadow-lg hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 transition-all duration-200 flex items-center justify-center"
+                style={{
+                  borderRadius: 'var(--v2-radius-button)',
+                  background: `linear-gradient(to bottom right, ${themeColors.primary}, ${themeColors.secondary})`
+                }}
               >
                 <Send className="w-4 h-4" />
               </button>
@@ -848,6 +978,25 @@ What would you like to know?`,
           </div>
         </div>
       )}
+
+      {/* Close Button - stays visible on scroll (only show after theme loaded) */}
+      {themeLoaded && isOpen && (
+        <button
+          onClick={() => { if (onClose) onClose(); setIsOpenInternal(false); }}
+          className="fixed bottom-6 right-6 w-10 h-10 sm:w-12 sm:h-12 text-white hover:shadow-2xl hover:scale-110 active:scale-95 transition-all duration-300 flex items-center justify-center z-[60] group"
+          style={{
+            borderRadius: 'var(--v2-radius-card)',
+            backgroundColor: themeColors.closeButton,
+            boxShadow: `0 4px 16px ${themeColors.closeButton}60`
+          }}
+          title="Close Help"
+        >
+          <X className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+        </button>
+      )}
     </>
   )
+
+  // Use portal to render outside the normal DOM hierarchy to avoid positioning issues
+  return createPortal(content, portalTarget)
 }

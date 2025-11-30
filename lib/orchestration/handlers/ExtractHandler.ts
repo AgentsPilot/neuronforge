@@ -28,14 +28,15 @@ export class ExtractHandler extends BaseHandler {
       // Resolve variables in input
       const resolvedInput = this.resolveInputVariables(context);
 
-      // Apply compression to input if enabled
-      const { compressed: input, result: compressionResult } = await this.compressInput(
-        JSON.stringify(resolvedInput),
-        context
-      );
+      // Apply preprocessing to clean data and extract metadata
+      const { data: cleanedData, metadata } = await this.applyPreprocessing(resolvedInput);
+
+      // Prepare input for LLM
+      const input = JSON.stringify(cleanedData);
 
       // Estimate token usage
-      const estimatedTokens = compressionResult.compressedTokens + 500; // Add buffer for output
+      const inputTokens = this.estimateTokenCount(input);
+      const estimatedTokens = inputTokens + 500; // Add buffer for output
       if (!this.checkBudget(context, estimatedTokens)) {
         return this.createErrorResult('Insufficient budget for extraction');
       }
@@ -47,11 +48,17 @@ export class ExtractHandler extends BaseHandler {
         context
       );
 
+      // Calculate dataset size for smart metadata filtering
+      const dataSize = Array.isArray(cleanedData) ? cleanedData.length : 0;
+
+      // Inject preprocessing metadata facts into user prompt
+      const enrichedUser = this.injectPreprocessingFacts(user, metadata, dataSize);
+
       // Execute extraction using provider-agnostic method
       const llmResponse = await this.callLLM(
         context,
         system,
-        user,
+        enrichedUser, // Use enriched prompt with metadata facts
         0.3, // Lower temperature for more consistent extraction
         Math.min(context.budget.remaining, context.routingDecision.estimatedLatency > 3000 ? 2048 : 1024)
       );
@@ -75,8 +82,6 @@ export class ExtractHandler extends BaseHandler {
         cost,
         Date.now() - startTime,
         {
-          compressionApplied: compressionResult.strategy !== 'none',
-          compressionRatio: compressionResult.ratio,
           model: context.routingDecision.model,
           provider: context.routingDecision.provider,
         }

@@ -10,6 +10,7 @@ import {
   CheckCircle,
   ArrowRight,
   Play,
+  Pause,
   Sparkles,
   BookOpen,
   Settings,
@@ -72,14 +73,14 @@ const Icon = ({ type, label, pulse = false, delay = 0 }: { type: 'mail' | 'brain
             repeat: Infinity,
             ease: "easeInOut"
           }}
-          className="absolute inset-0 bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 rounded-2xl md:rounded-3xl blur-xl md:blur-2xl"
+          className="absolute inset-0 bg-orange-500 rounded-2xl md:rounded-3xl blur-xl md:blur-2xl"
         />
       )}
 
-      <div className="relative w-16 h-16 md:w-24 md:h-24 bg-gradient-to-br from-slate-800/90 to-slate-900/90 backdrop-blur-xl rounded-2xl md:rounded-3xl flex items-center justify-center shadow-xl md:shadow-2xl border border-white/20">
-        <div className="absolute inset-1 md:inset-2 bg-gradient-to-br from-blue-500/10 to-purple-500/10 rounded-xl md:rounded-2xl blur-sm" />
+      <div className="relative w-16 h-16 md:w-24 md:h-24 bg-zinc-800/90 backdrop-blur-xl rounded-2xl md:rounded-3xl flex items-center justify-center shadow-xl md:shadow-2xl border border-white/20">
+        <div className="absolute inset-1 md:inset-2 bg-orange-500/10 rounded-xl md:rounded-2xl blur-sm" />
 
-        <IconComponent className="w-10 h-10 text-blue-500" />
+        <IconComponent className="w-10 h-10 text-orange-500" />
       </div>
 
       <span className="text-xs md:text-sm text-slate-300 font-bold">
@@ -96,8 +97,8 @@ const Arrow = ({ delay = 0 }: { delay?: number }) => (
     transition={{ duration: 0.5, delay }}
     className="flex items-center relative hidden md:flex"
   >
-    <div className="w-12 md:w-24 h-1 md:h-1.5 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-full relative overflow-hidden">
-      <div className="w-0 h-0 border-t-[6px] md:border-t-[8px] border-t-transparent border-l-[10px] md:border-l-[14px] border-l-pink-500 border-b-[6px] md:border-b-[8px] border-b-transparent absolute right-0 top-1/2 -translate-y-1/2" />
+    <div className="w-12 md:w-24 h-1 md:h-1.5 bg-orange-500 rounded-full relative overflow-hidden">
+      <div className="w-0 h-0 border-t-[6px] md:border-t-[8px] border-t-transparent border-l-[10px] md:border-l-[14px] border-l-orange-500 border-b-[6px] md:border-b-[8px] border-b-transparent absolute right-0 top-1/2 -translate-y-1/2" />
     </div>
   </motion.div>
 );
@@ -109,21 +110,21 @@ const DashboardCard = ({ status }: { status: string }) => (
     transition={{ duration: 0.6 }}
     className="relative max-w-lg w-full"
   >
-    <div className="absolute -inset-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-2xl opacity-50 md:opacity-75 blur-lg md:blur-xl" />
+    <div className="absolute -inset-1 bg-orange-500 rounded-2xl opacity-15 md:opacity-25 blur-lg md:blur-xl" />
 
-    <div className="relative bg-gradient-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-2xl rounded-2xl p-4 md:p-8 shadow-2xl border border-white/20">
+    <div className="relative bg-zinc-900/95 backdrop-blur-2xl rounded-2xl p-4 md:p-8 shadow-2xl border border-white/20">
       <div className="flex items-center justify-between mb-4 md:mb-6 flex-wrap gap-2">
         <div className="flex items-center gap-2 md:gap-3">
-          <div className="w-10 h-10 md:w-12 md:h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
-            <Bot className="w-7 h-7 text-white" />
+          <div className="w-6 h-6 md:w-7 md:h-7 flex items-center justify-center">
+            <Bot className="w-6 h-6 md:w-7 md:h-7 text-orange-400" />
           </div>
-          <h3 className="text-base md:text-xl font-bold text-white">Email Summary Bot</h3>
+          <h3 className="text-base md:text-xl font-bold text-white">Email Summary Agent</h3>
         </div>
         <div
           className={`px-3 md:px-5 py-2 md:py-2.5 rounded-xl text-xs md:text-sm font-bold backdrop-blur-sm flex items-center gap-2 ${
             status === 'running'
-              ? 'bg-gradient-to-r from-blue-500/30 to-purple-500/30 text-blue-200 border-2 border-blue-400/50'
-              : 'bg-gradient-to-r from-green-500/30 to-emerald-500/30 text-green-200 border-2 border-green-400/50'
+              ? 'bg-orange-500/30 text-orange-200 border-2 border-orange-400/50'
+              : 'bg-green-500/30 text-green-200 border-2 border-green-400/50'
           }`}
         >
           {status === 'running' ? (
@@ -142,12 +143,12 @@ const DashboardCard = ({ status }: { status: string }) => (
 
       {status === 'running' && (
         <div className="mb-4 md:mb-6">
-          <div className="w-full h-2 md:h-2.5 bg-slate-700/50 rounded-full overflow-hidden">
+          <div className="w-full h-2 md:h-2.5 bg-zinc-700/50 rounded-full overflow-hidden">
             <motion.div
               initial={{ width: '0%' }}
               animate={{ width: '100%' }}
               transition={{ duration: 3, ease: "easeInOut" }}
-              className="h-full bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500"
+              className="h-full bg-orange-500"
             />
           </div>
         </div>
@@ -161,7 +162,7 @@ const DashboardCard = ({ status }: { status: string }) => (
             transition={{ duration: 0.5 }}
             className="relative"
           >
-            <div className="relative bg-slate-800/60 backdrop-blur-sm rounded-xl p-4 md:p-6 border border-green-500/30">
+            <div className="relative bg-zinc-800/60 backdrop-blur-sm rounded-xl p-4 md:p-6 border border-green-500/30">
               <div className="flex items-center gap-2 mb-4">
                 <motion.div
                   initial={{ scale: 0 }}
@@ -237,9 +238,9 @@ const TypingPrompt = ({ text }: { text: string }) => {
       transition={{ duration: 0.5 }}
       className="relative max-w-3xl w-full"
     >
-      <div className="absolute -inset-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-xl md:rounded-2xl opacity-30 md:opacity-50 blur-lg md:blur-xl"></div>
+      <div className="absolute -inset-1 bg-orange-500 rounded-xl md:rounded-2xl opacity-15 md:opacity-25 blur-lg md:blur-xl"></div>
 
-      <div className="relative bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-xl rounded-xl md:rounded-2xl p-4 md:p-8 shadow-xl md:shadow-2xl border border-white/10">
+      <div className="relative bg-zinc-900/90 backdrop-blur-xl rounded-xl md:rounded-2xl p-4 md:p-8 shadow-xl md:shadow-2xl border border-white/10">
         <div className="flex items-center gap-1.5 md:gap-2 mb-4 md:mb-6">
           <div className="w-2.5 h-2.5 md:w-3.5 md:h-3.5 bg-gradient-to-br from-red-400 to-red-600 rounded-full"></div>
           <div className="w-2.5 h-2.5 md:w-3.5 md:h-3.5 bg-gradient-to-br from-yellow-400 to-yellow-600 rounded-full"></div>
@@ -247,10 +248,10 @@ const TypingPrompt = ({ text }: { text: string }) => {
           <div className="ml-auto text-xs text-slate-500 font-mono hidden sm:block">prompt.ai</div>
         </div>
 
-        <div className="bg-gradient-to-br from-slate-800/80 to-slate-900/80 rounded-lg md:rounded-xl p-3 md:p-6 min-h-[80px] md:min-h-[100px] flex items-center border border-white/5">
+        <div className="bg-zinc-800/80 rounded-lg md:rounded-xl p-3 md:p-6 min-h-[80px] md:min-h-[100px] flex items-center border border-white/5">
           <p className="relative text-white font-mono text-sm md:text-base lg:text-lg leading-relaxed break-words">
             {displayText}
-            <span className="inline-block w-0.5 h-4 md:h-6 bg-gradient-to-b from-blue-400 to-purple-400 ml-1 rounded-full animate-pulse"></span>
+            <span className="inline-block w-0.5 h-4 md:h-6 bg-orange-400 ml-1 rounded-full animate-pulse"></span>
           </p>
         </div>
       </div>
@@ -261,6 +262,7 @@ const TypingPrompt = ({ text }: { text: string }) => {
 const HeroAnimation = () => {
   const [step, setStep] = useState('typing');
   const [dashboardStatus, setDashboardStatus] = useState('running');
+  const [isPaused, setIsPaused] = useState(false);
 
   const TIMINGS = {
     typing: 5000,
@@ -270,7 +272,11 @@ const HeroAnimation = () => {
     tagline: 4500,
   };
 
+  const steps = ['typing', 'building', 'connecting', 'dashboard', 'tagline'];
+
   useEffect(() => {
+    if (isPaused) return;
+
     let timeout;
 
     switch (step) {
@@ -290,11 +296,11 @@ const HeroAnimation = () => {
         timeout = setTimeout(() => {
           setDashboardStatus('completed');
         }, 2000);
-        
+
         const taglineTimeout = setTimeout(() => {
           setStep('tagline');
         }, TIMINGS.dashboard);
-        
+
         return () => {
           clearTimeout(timeout);
           clearTimeout(taglineTimeout);
@@ -307,12 +313,13 @@ const HeroAnimation = () => {
     }
 
     return () => clearTimeout(timeout);
-  }, [step]);
+  }, [step, isPaused]);
 
   return (
-    <div className="min-h-[400px] md:min-h-[600px] flex items-center justify-center p-3 md:p-6">
-      <div className="relative z-10 w-full max-w-6xl mx-auto">
-        <AnimatePresence mode="wait">
+    <div className="flex flex-col items-center">
+      <div className="min-h-[400px] md:min-h-[600px] flex items-center justify-center p-3 md:p-6 w-full">
+        <div className="relative z-10 w-full max-w-6xl mx-auto">
+          <AnimatePresence mode="wait">
           {step === 'typing' && (
             <motion.div
               key="typing"
@@ -327,7 +334,7 @@ const HeroAnimation = () => {
                 animate={{ opacity: 1, y: 0 }}
                 className="text-xl md:text-3xl text-transparent bg-clip-text bg-gradient-to-r from-slate-300 to-slate-500 font-bold mb-2 md:mb-4 flex items-center justify-center gap-2 md:gap-3"
               >
-                <Sparkles className="w-6 h-6 md:w-8 md:h-8 text-blue-400" />
+                <Sparkles className="w-6 h-6 md:w-8 md:h-8 text-orange-400" />
                 Create Your Agent
               </motion.h2>
               <TypingPrompt text="Summarize my last 10 emails and send to Slack." />
@@ -341,39 +348,41 @@ const HeroAnimation = () => {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.4 }}
-              className="flex flex-col items-center gap-3 md:gap-5 w-full max-w-2xl mx-auto"
+              className="flex flex-col items-center gap-4 md:gap-8 w-full max-w-3xl mx-auto"
             >
               <motion.h2
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="text-lg md:text-2xl text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400 font-bold flex items-center justify-center gap-2 text-center"
+                className="text-xl md:text-3xl text-orange-400 font-bold mb-2 md:mb-4 flex items-center justify-center gap-2 md:gap-3 text-center"
               >
                 <motion.div
                   animate={{ rotate: [0, 360] }}
                   transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
                 >
-                  <Settings className="w-5 h-5 md:w-6 md:h-6 text-blue-400 flex-shrink-0" />
+                  <Settings className="w-6 h-6 md:w-8 md:h-8 text-orange-400 flex-shrink-0" />
                 </motion.div>
                 Building Your Workflow
               </motion.h2>
 
               {/* Workflow Builder Visualization - Compact Modern Design */}
-              <div className="relative w-full bg-slate-900/50 backdrop-blur-sm rounded-lg md:rounded-xl p-4 md:p-5 border border-blue-500/20 shadow-xl">
+              <div className="relative max-w-3xl w-full">
+                <div className="absolute -inset-1 bg-orange-500 rounded-xl md:rounded-2xl opacity-15 md:opacity-25 blur-lg md:blur-xl"></div>
+                <div className="relative bg-zinc-900/95 backdrop-blur-2xl rounded-xl md:rounded-2xl p-4 md:p-6 border border-white/20 shadow-xl md:shadow-2xl">
                 <div className="relative">
                   {/* Building Steps - Compact grid layout */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 md:gap-3">
                     {[
-                      { icon: <FileSearch className="w-4 h-4 text-blue-400" />, text: 'Analyzing prompt', delay: 0 },
-                      { icon: <Link className="w-4 h-4 text-purple-400" />, text: 'Detecting plugins', delay: 0.3 },
-                      { icon: <Settings className="w-4 h-4 text-cyan-400" />, text: 'Building logic', delay: 0.6 },
-                      { icon: <BarChart3 className="w-4 h-4 text-green-400" />, text: 'Creating schemas', delay: 0.9 }
+                      { icon: <FileSearch className="w-5 h-5 md:w-6 md:h-6 text-orange-400" />, text: 'Analyzing prompt', delay: 0 },
+                      { icon: <Link className="w-5 h-5 md:w-6 md:h-6 text-amber-400" />, text: 'Detecting plugins', delay: 0.3 },
+                      { icon: <Settings className="w-5 h-5 md:w-6 md:h-6 text-orange-400" />, text: 'Building logic', delay: 0.6 },
+                      { icon: <BarChart3 className="w-5 h-5 md:w-6 md:h-6 text-green-400" />, text: 'Creating schemas', delay: 0.9 }
                     ].map((step, index) => (
                       <motion.div
                         key={index}
                         initial={{ opacity: 0, scale: 0.9 }}
                         animate={{ opacity: 1, scale: 1 }}
                         transition={{ delay: step.delay, duration: 0.4 }}
-                        className="flex items-center gap-2 bg-slate-800/50 rounded-lg p-2 border border-white/5 relative overflow-hidden"
+                        className="flex items-center gap-2.5 bg-zinc-800/50 rounded-lg p-2.5 md:p-3 border border-white/5 relative overflow-hidden"
                       >
                         <motion.div
                           initial={{ scale: 0 }}
@@ -384,11 +393,11 @@ const HeroAnimation = () => {
                             type: "spring",
                             stiffness: 200
                           }}
-                          className="flex-shrink-0"
+                          className="flex-shrink-0 w-6 h-6 md:w-7 md:h-7 flex items-center justify-center"
                         >
                           {step.icon}
                         </motion.div>
-                        <p className="text-white font-medium text-xs flex-1">{step.text}</p>
+                        <p className="text-white font-medium text-xs md:text-sm flex-1">{step.text}</p>
                         <motion.div
                           initial={{ scale: 0 }}
                           animate={{ scale: 1 }}
@@ -397,16 +406,16 @@ const HeroAnimation = () => {
                             type: "spring",
                             stiffness: 200
                           }}
-                          className="flex-shrink-0"
+                          className="flex-shrink-0 w-6 h-6 md:w-7 md:h-7 bg-green-500 rounded-full flex items-center justify-center"
                         >
-                          <CheckCircle className="w-4 h-4 text-green-400" />
+                          <CheckCircle className="w-4 h-4 md:w-5 md:h-5 text-white" />
                         </motion.div>
                         {/* Progress bar */}
                         <motion.div
                           initial={{ scaleX: 0 }}
                           animate={{ scaleX: 1 }}
                           transition={{ delay: step.delay + 0.2, duration: 0.6 }}
-                          className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-blue-500 to-purple-500 origin-left"
+                          className="absolute bottom-0 left-0 right-0 h-0.5 bg-orange-500 origin-left"
                         />
                       </motion.div>
                     ))}
@@ -417,37 +426,38 @@ const HeroAnimation = () => {
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 1.5, duration: 0.4 }}
-                    className="mt-4 pt-4 border-t border-blue-500/20"
+                    className="mt-4 md:mt-5 pt-3 md:pt-4 border-t border-orange-500/30"
                   >
-                    <div className="flex items-center justify-center gap-2 flex-wrap">
-                      <div className="flex items-center gap-1.5 bg-slate-800/50 px-2 py-1.5 rounded-md border border-white/5">
-                        <PluginIcon pluginId="google-mail" className="w-4 h-4 text-red-500" alt="Gmail" />
-                        <span className="text-white font-medium text-xs">Gmail</span>
+                    <div className="flex items-center justify-center gap-2 md:gap-3 flex-wrap">
+                      <div className="flex items-center gap-1.5 md:gap-2 bg-zinc-800/50 px-2.5 md:px-3 py-1.5 md:py-2 rounded-md border border-white/5">
+                        <PluginIcon pluginId="google-mail" className="w-4 h-4 md:w-5 md:h-5 text-red-500" alt="Gmail" />
+                        <span className="text-white font-medium text-xs md:text-sm">Gmail</span>
                       </div>
                       <motion.div
                         animate={{ x: [0, 3, 0] }}
                         transition={{ duration: 1.5, repeat: Infinity }}
-                        className="text-blue-400 text-sm"
+                        className="text-orange-400 text-sm md:text-base"
                       >
                         →
                       </motion.div>
-                      <div className="flex items-center gap-1.5 bg-slate-800/50 px-2 py-1.5 rounded-md border border-white/5">
-                        <Brain className="w-4 h-4 text-purple-500" />
-                        <span className="text-white font-medium text-xs">AI Agent</span>
+                      <div className="flex items-center gap-1.5 md:gap-2 bg-zinc-800/50 px-2.5 md:px-3 py-1.5 md:py-2 rounded-md border border-white/5">
+                        <Brain className="w-4 h-4 md:w-5 md:h-5 text-amber-500" />
+                        <span className="text-white font-medium text-xs md:text-sm">AI Agent</span>
                       </div>
                       <motion.div
                         animate={{ x: [0, 3, 0] }}
                         transition={{ duration: 1.5, repeat: Infinity, delay: 0.3 }}
-                        className="text-purple-400 text-sm"
+                        className="text-amber-400 text-sm md:text-base"
                       >
                         →
                       </motion.div>
-                      <div className="flex items-center gap-1.5 bg-slate-800/50 px-2 py-1.5 rounded-md border border-white/5">
-                        <PluginIcon pluginId="slack" className="w-4 h-4 text-[#4A154B]" alt="Slack" />
-                        <span className="text-white font-medium text-xs">Slack</span>
+                      <div className="flex items-center gap-1.5 md:gap-2 bg-zinc-800/50 px-2.5 md:px-3 py-1.5 md:py-2 rounded-md border border-white/5">
+                        <PluginIcon pluginId="slack" className="w-4 h-4 md:w-5 md:h-5 text-[#4A154B]" alt="Slack" />
+                        <span className="text-white font-medium text-xs md:text-sm">Slack</span>
                       </div>
                     </div>
                   </motion.div>
+                </div>
                 </div>
               </div>
             </motion.div>
@@ -465,14 +475,16 @@ const HeroAnimation = () => {
               <motion.h2
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="text-xl md:text-3xl text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-teal-400 font-bold mb-2 md:mb-4 flex items-center justify-center gap-2 md:gap-3 text-center"
+                className="text-xl md:text-3xl text-orange-400 font-bold mb-2 md:mb-4 flex items-center justify-center gap-2 md:gap-3 text-center"
               >
-                <Zap className="w-6 h-6 md:w-8 md:h-8 text-cyan-400 flex-shrink-0" />
+                <Zap className="w-6 h-6 md:w-8 md:h-8 text-orange-400 flex-shrink-0" />
                 Connecting Plugins
               </motion.h2>
 
               {/* Vertical connection visualization with checkmarks */}
-              <div className="relative bg-gradient-to-br from-slate-900 to-slate-800 rounded-xl md:rounded-2xl p-4 md:p-6 border border-cyan-500/30 shadow-2xl max-w-md w-full">
+              <div className="relative max-w-3xl w-full">
+                <div className="absolute -inset-1 bg-orange-500 rounded-xl md:rounded-2xl opacity-15 md:opacity-25 blur-lg md:blur-xl"></div>
+                <div className="relative bg-zinc-900/95 backdrop-blur-2xl rounded-xl md:rounded-2xl p-4 md:p-6 border border-white/20 shadow-xl md:shadow-2xl">
                 <div className="relative space-y-2.5 md:space-y-3">
                   {[
                     { type: 'mail', label: 'Gmail', delay: 0 },
@@ -484,12 +496,12 @@ const HeroAnimation = () => {
                       initial={{ opacity: 0, x: -20 }}
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ delay: item.delay, duration: 0.5 }}
-                      className="flex items-center gap-2.5 md:gap-3 bg-slate-800 rounded-lg md:rounded-xl p-2.5 md:p-3 border border-white/10 relative z-10"
+                      className="flex items-center gap-2.5 bg-zinc-800 rounded-lg md:rounded-xl p-2.5 md:p-3 border border-white/10 relative z-10"
                     >
-                      <div className="w-10 h-10 md:w-12 md:h-12 flex items-center justify-center flex-shrink-0">
-                        {item.type === 'mail' && <PluginIcon pluginId="google-mail" className="w-6 h-6 md:w-8 md:h-8 text-red-500" alt="Gmail" />}
-                        {item.type === 'brain' && <Brain className="w-6 h-6 md:w-8 md:h-8 text-purple-500" />}
-                        {item.type === 'slack' && <PluginIcon pluginId="slack" className="w-6 h-6 md:w-8 md:h-8 text-[#4A154B]" alt="Slack" />}
+                      <div className="w-6 h-6 md:w-7 md:h-7 flex items-center justify-center flex-shrink-0">
+                        {item.type === 'mail' && <PluginIcon pluginId="google-mail" className="w-5 h-5 md:w-6 md:h-6 text-red-500" alt="Gmail" />}
+                        {item.type === 'brain' && <Brain className="w-5 h-5 md:w-6 md:h-6 text-purple-500" />}
+                        {item.type === 'slack' && <PluginIcon pluginId="slack" className="w-5 h-5 md:w-6 md:h-6 text-[#4A154B]" alt="Slack" />}
                       </div>
 
                       <div className="flex-1">
@@ -498,7 +510,7 @@ const HeroAnimation = () => {
                           initial={{ opacity: 0 }}
                           animate={{ opacity: 1 }}
                           transition={{ delay: item.delay + 0.3 }}
-                          className="text-cyan-400 text-xs font-medium"
+                          className="text-orange-400 text-xs font-medium"
                         >
                           Authenticating...
                         </motion.p>
@@ -508,7 +520,7 @@ const HeroAnimation = () => {
                         initial={{ scale: 0 }}
                         animate={{ scale: 1 }}
                         transition={{ delay: item.delay + 0.6, type: "spring", stiffness: 200 }}
-                        className="w-7 h-7 md:w-8 md:h-8 bg-gradient-to-br from-cyan-500 to-teal-600 rounded-full flex items-center justify-center flex-shrink-0"
+                        className="w-6 h-6 md:w-7 md:h-7 bg-orange-500 rounded-full flex items-center justify-center flex-shrink-0"
                       >
                         <CheckCircle className="w-4 h-4 md:w-5 md:h-5 text-white" />
                       </motion.div>
@@ -520,10 +532,11 @@ const HeroAnimation = () => {
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 1.2, duration: 0.5 }}
-                    className="mt-4 md:mt-5 pt-3 md:pt-4 border-t border-cyan-500/30 text-center"
+                    className="mt-4 md:mt-5 pt-3 md:pt-4 border-t border-orange-500/30 text-center"
                   >
-                    <p className="text-cyan-400 font-bold text-xs md:text-sm">All plugins connected successfully!</p>
+                    <p className="text-orange-400 font-bold text-xs md:text-sm">All plugins connected successfully!</p>
                   </motion.div>
+                </div>
                 </div>
               </div>
             </motion.div>
@@ -536,14 +549,14 @@ const HeroAnimation = () => {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.6 }}
-              className="flex flex-col items-center gap-8"
+              className="flex flex-col items-center gap-4 md:gap-8"
             >
               <motion.h2
-                initial={{ opacity: 0, y: -20 }}
+                initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="text-3xl text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400 font-bold mb-4 flex items-center justify-center gap-3"
+                className="text-xl md:text-3xl text-orange-400 font-bold mb-2 md:mb-4 flex items-center justify-center gap-2 md:gap-3"
               >
-                <Bot className="w-8 h-8 text-purple-400" />
+                <Bot className="w-6 h-6 md:w-8 md:h-8 text-orange-400" />
                 Your Agent Dashboard
               </motion.h2>
               <DashboardCard status={dashboardStatus} />
@@ -565,7 +578,7 @@ const HeroAnimation = () => {
                 transition={{ duration: 1.2, type: "spring" }}
                 className="text-center relative"
               >
-                <motion.div 
+                <motion.div
                   animate={{
                     scale: [1, 1.2, 1],
                     opacity: [0.3, 0.6, 0.3]
@@ -575,16 +588,16 @@ const HeroAnimation = () => {
                     repeat: Infinity,
                     ease: "easeInOut"
                   }}
-                  className="absolute inset-0 bg-gradient-to-r from-blue-500/30 via-purple-500/30 to-pink-500/30 blur-3xl"
+                  className="absolute inset-0 bg-orange-500/30 blur-3xl"
                 />
-                
+
                 <motion.h2
                   initial={{ backgroundPosition: '0% 50%' }}
-                  animate={{ 
+                  animate={{
                     backgroundPosition: ['0% 50%', '100% 50%', '0% 50%'],
                   }}
                   transition={{ duration: 6, repeat: Infinity, ease: "linear" }}
-                  className="relative text-5xl md:text-7xl font-black bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent mb-6 bg-[length:200%_auto] drop-shadow-2xl"
+                  className="relative text-3xl md:text-4xl lg:text-5xl font-black text-orange-400 mb-4 drop-shadow-2xl"
                 >
                   Your Personal AI Workforce
                 </motion.h2>
@@ -615,7 +628,87 @@ const HeroAnimation = () => {
             </motion.div>
           )}
         </AnimatePresence>
+        </div>
       </div>
+
+      {/* Animation Controls */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.6, delay: 0.5 }}
+        className="w-full px-4 md:px-8 mt-8 md:mt-12"
+      >
+        <div className="max-w-7xl mx-auto">
+          <div className="flex items-center justify-center gap-8 md:gap-20 w-full">
+            {/* Play/Pause Button */}
+            <button
+              onClick={() => setIsPaused(!isPaused)}
+              className="group relative flex items-center justify-center w-8 h-8 md:w-10 md:h-10 bg-gradient-to-br from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 rounded-md transition-all duration-300 hover:scale-110 hover:shadow-lg hover:shadow-orange-500/50"
+              aria-label={isPaused ? 'Play animation' : 'Pause animation'}
+            >
+              {isPaused ? (
+                <Play className="w-4 h-4 md:w-5 md:h-5 text-white ml-0.5" />
+              ) : (
+                <Pause className="w-4 h-4 md:w-5 md:h-5 text-white" />
+              )}
+            </button>
+
+            {/* Step Indicators */}
+            <div className="flex items-center gap-4 md:gap-10">
+              {steps.map((stepName, index) => {
+                const isActive = step === stepName;
+                const stepLabels = {
+                  typing: 'Create',
+                  building: 'Build',
+                  connecting: 'Connect',
+                  dashboard: 'Dashboard',
+                  tagline: 'Launch'
+                };
+
+                return (
+                  <button
+                    key={stepName}
+                    onClick={() => {
+                      setStep(stepName);
+                      if (stepName === 'dashboard') {
+                        setDashboardStatus('running');
+                      }
+                    }}
+                    className="group relative flex flex-col items-center gap-1.5"
+                    aria-label={`Go to step ${index + 1}: ${stepLabels[stepName]}`}
+                  >
+                    {/* Step dot */}
+                    <div
+                      className={`relative w-2.5 h-2.5 md:w-3 md:h-3 rounded-full transition-all duration-300 ${
+                        isActive
+                          ? 'bg-orange-400 shadow-lg shadow-orange-500/50 scale-125'
+                          : 'bg-zinc-600 hover:bg-zinc-500 hover:scale-110'
+                      }`}
+                    >
+                      {isActive && (
+                        <motion.div
+                          layoutId="activeStepIndicator"
+                          className="absolute -inset-1 bg-orange-400/30 rounded-full blur-sm"
+                          transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }}
+                        />
+                      )}
+                    </div>
+
+                    {/* Step label */}
+                    <span
+                      className={`text-[10px] md:text-xs font-medium transition-all duration-300 whitespace-nowrap ${
+                        isActive ? 'text-orange-400' : 'text-zinc-500 group-hover:text-zinc-400'
+                      }`}
+                    >
+                      {stepLabels[stepName]}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </motion.div>
     </div>
   );
 };
@@ -628,7 +721,7 @@ export default function AgentPilotLanding() {
   const [email, setEmail] = useState('');
 
   return (
-    <div className="min-h-screen bg-black text-white overflow-hidden">
+    <div className="min-h-screen bg-zinc-950 text-white overflow-hidden">
       {/* Background Effects */}
       <div className="fixed inset-0 pointer-events-none">
         <motion.div
@@ -636,82 +729,51 @@ export default function AgentPilotLanding() {
             backgroundPosition: ['0% 0%', '100% 100%', '0% 0%'],
           }}
           transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
-          className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,_var(--tw-gradient-stops))] from-blue-900/40 via-purple-900/30 to-pink-900/40 bg-[length:200%_200%]"
+          className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,_var(--tw-gradient-stops))] from-orange-900/20 via-zinc-900/30 to-transparent bg-[length:200%_200%]"
         />
         <motion.div
           animate={{
             backgroundPosition: ['100% 100%', '0% 0%', '100% 100%'],
           }}
           transition={{ duration: 30, repeat: Infinity, ease: "linear" }}
-          className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_var(--tw-gradient-stops))] from-indigo-900/30 via-transparent to-fuchsia-900/30 bg-[length:200%_200%]"
+          className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_var(--tw-gradient-stops))] from-orange-900/15 via-transparent to-transparent bg-[length:200%_200%]"
         />
         <motion.div
           animate={{
             x: [0, 150, 0],
             y: [0, -150, 0],
             scale: [1, 1.3, 1],
-            opacity: [0.3, 0.5, 0.3]
+            opacity: [0.15, 0.3, 0.15]
           }}
           transition={{ duration: 20, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute top-20 left-20 w-[500px] h-[500px] bg-blue-500/20 rounded-full blur-3xl"
+          className="absolute top-20 left-20 w-[500px] h-[500px] bg-orange-600/10 rounded-full blur-3xl"
         />
         <motion.div
           animate={{
             x: [0, -150, 0],
             y: [0, 150, 0],
             scale: [1, 1.4, 1],
-            opacity: [0.3, 0.5, 0.3]
+            opacity: [0.15, 0.3, 0.15]
           }}
           transition={{ duration: 25, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute bottom-20 right-20 w-[500px] h-[500px] bg-purple-500/20 rounded-full blur-3xl"
+          className="absolute bottom-20 right-20 w-[500px] h-[500px] bg-orange-600/10 rounded-full blur-3xl"
         />
         <motion.div
           animate={{
             x: [0, 100, -100, 0],
             y: [0, -100, 100, 0],
             scale: [1, 1.2, 1.3, 1],
-            opacity: [0.2, 0.4, 0.3, 0.2]
+            opacity: [0.1, 0.2, 0.15, 0.1]
           }}
           transition={{ duration: 30, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-pink-500/15 rounded-full blur-3xl"
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-orange-500/8 rounded-full blur-3xl"
         />
       </div>
 
       {/* AI Intelligence Hero Banner - Full Width Top Section */}
       <section className="relative z-10 w-full overflow-hidden">
-        {/* Animated gradient background */}
-        <div className="absolute inset-0 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
-          <motion.div
-            animate={{
-              backgroundPosition: ['0% 0%', '100% 100%'],
-            }}
-            transition={{ duration: 20, repeat: Infinity, repeatType: "reverse", ease: "linear" }}
-            className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-blue-900/20 via-transparent to-purple-900/20 bg-[length:200%_200%]"
-          />
-        </div>
-
-        {/* Subtle circuit board pattern */}
-        <div className="absolute inset-0 opacity-5">
-          <svg className="w-full h-full" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <pattern id="circuit-hero" x="0" y="0" width="120" height="120" patternUnits="userSpaceOnUse">
-                <path d="M10 10h30v30M40 40v30h30M90 10h-30v30M60 40v30h-30"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      fill="none"
-                      className="text-blue-400" />
-                <circle cx="10" cy="10" r="2" fill="currentColor" className="text-blue-400" />
-                <circle cx="40" cy="40" r="2" fill="currentColor" className="text-purple-400" />
-                <circle cx="70" cy="70" r="2" fill="currentColor" className="text-pink-400" />
-                <circle cx="90" cy="10" r="2" fill="currentColor" className="text-cyan-400" />
-              </pattern>
-            </defs>
-            <rect width="100%" height="100%" fill="url(#circuit-hero)" />
-          </svg>
-        </div>
-
-        <div className="relative max-w-7xl mx-auto px-6 lg:px-8 py-12 md:py-16 lg:py-20">
-          <div className="grid lg:grid-cols-2 gap-12 items-center">
+        <div className="relative max-w-7xl mx-auto px-4 lg:px-6 py-8 md:py-12 lg:py-14">
+          <div className="grid lg:grid-cols-2 gap-8 items-center">
 
             {/* Left side - Text content - Reorganized */}
             <motion.div
@@ -727,15 +789,15 @@ export default function AgentPilotLanding() {
                 transition={{ duration: 0.8, delay: 0.3 }}
                 className="space-y-2"
               >
-                <h1 className="text-4xl md:text-5xl lg:text-6xl font-black leading-tight">
-                  <span className="bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent block">
+                <h1 className="text-3xl md:text-4xl lg:text-5xl font-black leading-tight">
+                  <span className="text-orange-400 block">
                     Your Personal
                   </span>
-                  <span className="bg-gradient-to-r from-purple-400 via-pink-400 to-blue-400 bg-clip-text text-transparent block">
+                  <span className="text-orange-400 block">
                     AI Workforce
                   </span>
                 </h1>
-                <p className="text-xl md:text-2xl text-slate-400 font-medium">
+                <p className="text-lg md:text-xl text-slate-400 font-medium">
                   Ready in Minutes
                 </p>
               </motion.div>
@@ -757,8 +819,7 @@ export default function AgentPilotLanding() {
                 transition={{ duration: 0.8, delay: 0.5 }}
               >
                 <a href="/signup">
-                  <button className="group relative px-8 py-3 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-xl font-bold text-base text-white hover:shadow-2xl hover:shadow-purple-500/50 transition-all duration-300 hover:scale-105 overflow-hidden">
-                    <div className="absolute inset-0 bg-gradient-to-r from-pink-500 via-purple-500 to-blue-500 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                  <button className="group relative px-6 py-2.5 bg-orange-500 rounded-lg font-bold text-sm text-white hover:shadow-xl hover:shadow-orange-500/50 hover:bg-orange-600 transition-all duration-300 hover:scale-105 overflow-hidden">
                     <span className="relative flex items-center justify-center gap-2">
                       Create Your First Agent
                       <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
@@ -851,17 +912,17 @@ export default function AgentPilotLanding() {
                       opacity: [0.3, 0.6, 0.3]
                     }}
                     transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-                    className="absolute inset-0 bg-gradient-to-r from-blue-500/40 via-purple-500/40 to-pink-500/40 blur-3xl rounded-full"
+                    className="absolute inset-0 bg-orange-500/40 blur-3xl rounded-full"
                   />
 
                   {/* Main sphere */}
-                  <div className="relative w-80 h-80 md:w-96 md:h-96 rounded-full bg-gradient-to-br from-slate-800/80 via-slate-900/80 to-slate-800/80 backdrop-blur-xl border border-white/10 shadow-2xl flex items-center justify-center overflow-visible">
+                  <div className="relative w-64 h-64 md:w-80 md:h-80 rounded-full bg-zinc-800/80 backdrop-blur-xl border border-white/10 shadow-2xl flex items-center justify-center overflow-visible">
 
                     {/* Inner gradient orb */}
-                    <div className="absolute inset-12 rounded-full bg-gradient-to-br from-blue-500/20 via-purple-500/20 to-pink-500/20 blur-2xl" />
+                    <div className="absolute inset-12 rounded-full bg-orange-500/20 blur-2xl" />
 
                     {/* Bot Icon */}
-                    <Bot className="w-40 h-40 md:w-48 md:h-48 text-blue-400 relative z-10" />
+                    <Bot className="w-32 h-32 md:w-40 md:h-40 text-orange-400 relative z-10" />
 
                     {/* Rotating orbital rings with icons */}
                     {/* Outer ring - 7 icons evenly spaced ON the ring */}
@@ -870,35 +931,35 @@ export default function AgentPilotLanding() {
                       transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
                       className="absolute inset-[-20px] overflow-visible"
                     >
-                      <div className="absolute inset-[20px] border-2 border-blue-400/20 rounded-full" style={{ borderStyle: 'dashed', borderSpacing: '10px' }} />
+                      <div className="absolute inset-[20px] border-2 border-orange-500/20 rounded-full" style={{ borderStyle: 'dashed', borderSpacing: '10px' }} />
 
                       {/* Gmail - 0deg */}
-                      <div className="absolute top-[20px] left-1/2 -translate-x-1/2 -translate-y-1/2 w-10 h-10 bg-slate-800/90 backdrop-blur-sm border border-blue-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                      <div className="absolute top-[20px] left-1/2 -translate-x-1/2 -translate-y-1/2 w-10 h-10 bg-zinc-800/90 backdrop-blur-sm border border-orange-400/30 rounded-lg flex items-center justify-center shadow-lg">
                         <PluginIcon pluginId="google-mail" className="w-5 h-5 text-red-400" alt="Gmail" />
                       </div>
                       {/* Slack - 51.4deg */}
-                      <div className="absolute top-1/2 right-[20px] translate-x-1/2 -translate-y-1/2 w-10 h-10 bg-slate-800/90 backdrop-blur-sm border border-blue-400/30 rounded-lg flex items-center justify-center shadow-lg" style={{ transform: 'rotate(-51.4deg) translateX(170px) rotate(51.4deg) translate(-50%, -50%)' }}>
+                      <div className="absolute top-1/2 right-[20px] translate-x-1/2 -translate-y-1/2 w-10 h-10 bg-zinc-800/90 backdrop-blur-sm border border-orange-400/30 rounded-lg flex items-center justify-center shadow-lg" style={{ transform: 'rotate(-51.4deg) translateX(170px) rotate(51.4deg) translate(-50%, -50%)' }}>
                         <PluginIcon pluginId="slack" className="w-5 h-5 text-purple-300" alt="Slack" />
                       </div>
                       {/* Drive - 102.8deg */}
-                      <div className="absolute right-[20px] top-1/2 translate-x-1/2 -translate-y-1/2 w-10 h-10 bg-slate-800/90 backdrop-blur-sm border border-blue-400/30 rounded-lg flex items-center justify-center shadow-lg">
-                        <PluginIcon pluginId="google-drive" className="w-5 h-5 text-blue-400" alt="Google Drive" />
+                      <div className="absolute right-[20px] top-1/2 translate-x-1/2 -translate-y-1/2 w-10 h-10 bg-zinc-800/90 backdrop-blur-sm border border-orange-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                        <PluginIcon pluginId="google-drive" className="w-5 h-5 text-orange-400" alt="Google Drive" />
                       </div>
                       {/* Google Sheets - 154.2deg */}
-                      <div className="absolute bottom-[20px] right-[20px] translate-x-1/2 translate-y-1/2 w-10 h-10 bg-slate-800/90 backdrop-blur-sm border border-blue-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                      <div className="absolute bottom-[20px] right-[20px] translate-x-1/2 translate-y-1/2 w-10 h-10 bg-zinc-800/90 backdrop-blur-sm border border-orange-400/30 rounded-lg flex items-center justify-center shadow-lg">
                         <PluginIcon pluginId="google-sheets" className="w-5 h-5 text-green-400" alt="Google Sheets" />
                       </div>
                       {/* Calendar - 205.7deg */}
-                      <div className="absolute bottom-[20px] left-1/2 -translate-x-1/2 translate-y-1/2 w-10 h-10 bg-slate-800/90 backdrop-blur-sm border border-blue-400/30 rounded-lg flex items-center justify-center shadow-lg">
-                        <PluginIcon pluginId="google-calendar" className="w-5 h-5 text-cyan-400" alt="Google Calendar" />
+                      <div className="absolute bottom-[20px] left-1/2 -translate-x-1/2 translate-y-1/2 w-10 h-10 bg-zinc-800/90 backdrop-blur-sm border border-orange-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                        <PluginIcon pluginId="google-calendar" className="w-5 h-5 text-amber-400" alt="Google Calendar" />
                       </div>
                       {/* HubSpot - 257.1deg */}
-                      <div className="absolute bottom-[20px] left-[20px] -translate-x-1/2 translate-y-1/2 w-10 h-10 bg-slate-800/90 backdrop-blur-sm border border-blue-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                      <div className="absolute bottom-[20px] left-[20px] -translate-x-1/2 translate-y-1/2 w-10 h-10 bg-zinc-800/90 backdrop-blur-sm border border-orange-400/30 rounded-lg flex items-center justify-center shadow-lg">
                         <PluginIcon pluginId="hubspot" className="w-5 h-5 text-orange-400" alt="HubSpot" />
                       </div>
                       {/* Brain - 308.5deg */}
-                      <div className="absolute left-[20px] top-1/2 -translate-x-1/2 -translate-y-1/2 w-10 h-10 bg-slate-800/90 backdrop-blur-sm border border-blue-400/30 rounded-lg flex items-center justify-center shadow-lg">
-                        <Brain className="w-4 h-4 text-cyan-300" />
+                      <div className="absolute left-[20px] top-1/2 -translate-x-1/2 -translate-y-1/2 w-10 h-10 bg-zinc-800/90 backdrop-blur-sm border border-orange-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                        <Brain className="w-4 h-4 text-amber-300" />
                       </div>
                     </motion.div>
 
@@ -908,35 +969,35 @@ export default function AgentPilotLanding() {
                       transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
                       className="absolute inset-[-12px] overflow-visible"
                     >
-                      <div className="absolute inset-[20px] border-2 border-purple-400/20 rounded-full" style={{ borderStyle: 'dashed' }} />
+                      <div className="absolute inset-[20px] border-2 border-amber-500/20 rounded-full" style={{ borderStyle: 'dashed' }} />
 
                       {/* Zap - 0deg */}
-                      <div className="absolute top-[20px] left-1/2 -translate-x-1/2 -translate-y-1/2 w-9 h-9 bg-slate-800/90 backdrop-blur-sm border border-purple-400/30 rounded-lg flex items-center justify-center shadow-lg">
-                        <Zap className="w-4 h-4 text-yellow-400" />
+                      <div className="absolute top-[20px] left-1/2 -translate-x-1/2 -translate-y-1/2 w-9 h-9 bg-zinc-800/90 backdrop-blur-sm border border-amber-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                        <Zap className="w-4 h-4 text-amber-400" />
                       </div>
                       {/* Workflow - 51.4deg */}
-                      <div className="absolute top-[20px] right-[20px] translate-x-1/2 -translate-y-1/2 w-9 h-9 bg-slate-800/90 backdrop-blur-sm border border-purple-400/30 rounded-lg flex items-center justify-center shadow-lg">
-                        <Workflow className="w-4 h-4 text-cyan-400" />
+                      <div className="absolute top-[20px] right-[20px] translate-x-1/2 -translate-y-1/2 w-9 h-9 bg-zinc-800/90 backdrop-blur-sm border border-amber-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                        <Workflow className="w-4 h-4 text-orange-400" />
                       </div>
                       {/* Lock - 102.8deg */}
-                      <div className="absolute right-[20px] top-1/2 translate-x-1/2 -translate-y-1/2 w-9 h-9 bg-slate-800/90 backdrop-blur-sm border border-purple-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                      <div className="absolute right-[20px] top-1/2 translate-x-1/2 -translate-y-1/2 w-9 h-9 bg-zinc-800/90 backdrop-blur-sm border border-amber-400/30 rounded-lg flex items-center justify-center shadow-lg">
                         <Lock className="w-4 h-4 text-green-400" />
                       </div>
                       {/* Repeat - 154.2deg */}
-                      <div className="absolute bottom-[20px] right-[20px] translate-x-1/2 translate-y-1/2 w-9 h-9 bg-slate-800/90 backdrop-blur-sm border border-purple-400/30 rounded-lg flex items-center justify-center shadow-lg">
-                        <Repeat className="w-4 h-4 text-purple-400" />
+                      <div className="absolute bottom-[20px] right-[20px] translate-x-1/2 translate-y-1/2 w-9 h-9 bg-zinc-800/90 backdrop-blur-sm border border-amber-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                        <Repeat className="w-4 h-4 text-amber-400" />
                       </div>
                       {/* Network - 205.7deg */}
-                      <div className="absolute bottom-[20px] left-1/2 -translate-x-1/2 translate-y-1/2 w-9 h-9 bg-slate-800/90 backdrop-blur-sm border border-purple-400/30 rounded-lg flex items-center justify-center shadow-lg">
-                        <Network className="w-4 h-4 text-purple-300" />
+                      <div className="absolute bottom-[20px] left-1/2 -translate-x-1/2 translate-y-1/2 w-9 h-9 bg-zinc-800/90 backdrop-blur-sm border border-amber-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                        <Network className="w-4 h-4 text-amber-300" />
                       </div>
                       {/* Sparkles - 257.1deg */}
-                      <div className="absolute bottom-[20px] left-[20px] -translate-x-1/2 translate-y-1/2 w-9 h-9 bg-slate-800/90 backdrop-blur-sm border border-purple-400/30 rounded-lg flex items-center justify-center shadow-lg">
-                        <Sparkles className="w-4 h-4 text-pink-400" />
+                      <div className="absolute bottom-[20px] left-[20px] -translate-x-1/2 translate-y-1/2 w-9 h-9 bg-zinc-800/90 backdrop-blur-sm border border-amber-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                        <Sparkles className="w-4 h-4 text-orange-400" />
                       </div>
                       {/* Agent Bot - 308.5deg */}
-                      <div className="absolute left-[20px] top-1/2 -translate-x-1/2 -translate-y-1/2 w-9 h-9 bg-slate-800/90 backdrop-blur-sm border border-purple-400/30 rounded-lg flex items-center justify-center shadow-lg">
-                        <Bot className="w-4 h-4 text-blue-300" />
+                      <div className="absolute left-[20px] top-1/2 -translate-x-1/2 -translate-y-1/2 w-9 h-9 bg-zinc-800/90 backdrop-blur-sm border border-amber-400/30 rounded-lg flex items-center justify-center shadow-lg">
+                        <Bot className="w-4 h-4 text-orange-300" />
                       </div>
                     </motion.div>
 
@@ -946,7 +1007,7 @@ export default function AgentPilotLanding() {
                       transition={{ duration: 30, repeat: Infinity, ease: "linear" }}
                       className="absolute inset-[44px] overflow-visible"
                     >
-                      <div className="absolute inset-0 border-2 border-pink-400/20 rounded-full" style={{ borderStyle: 'dashed' }} />
+                      <div className="absolute inset-0 border-2 border-orange-600/20 rounded-full" style={{ borderStyle: 'dashed' }} />
                     </motion.div>
                   </div>
                 </motion.div>
@@ -972,47 +1033,47 @@ export default function AgentPilotLanding() {
       </section>
 
       {/* How It Works */}
-      <section id="how-it-works" className="relative z-10 py-32">
-        <div className="max-w-7xl mx-auto px-6">
+      <section id="how-it-works" className="relative z-10 py-16">
+        <div className="max-w-7xl mx-auto px-4">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             transition={{ duration: 0.8 }}
-            className="text-center mb-20"
+            className="text-center mb-12"
           >
-            <h2 className="text-4xl md:text-5xl font-black mb-4">
-              <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+            <h2 className="text-3xl md:text-4xl font-black mb-3">
+              <span className="text-orange-400">
                 How It Works
               </span>
             </h2>
-            <p className="text-xl text-slate-400 max-w-2xl mx-auto">
+            <p className="text-lg text-slate-400 max-w-2xl mx-auto">
               From prompt to production in three simple steps
             </p>
           </motion.div>
 
-          <div className="grid md:grid-cols-3 gap-8">
+          <div className="grid md:grid-cols-3 gap-6">
             {[
               {
                 step: "01",
                 title: "Describe Your Goal",
                 description: "Tell AgentPilot what you want in plain English. No technical knowledge required.",
-                icon: <MessageSquare className="w-12 h-12 text-blue-400" />,
-                color: "blue"
+                icon: <MessageSquare className="w-12 h-12 text-orange-400" />,
+                color: "orange"
               },
               {
                 step: "02",
                 title: "AI Builds Your Agent",
                 description: "Our AI automatically creates the workflow, connects the right tools, and configures everything.",
-                icon: <Sparkles className="w-12 h-12 text-purple-400" />,
-                color: "purple"
+                icon: <Sparkles className="w-12 h-12 text-amber-400" />,
+                color: "amber"
               },
               {
                 step: "03",
                 title: "Connect & Run",
                 description: "Authorize your tools once with OAuth, then run on demand or schedule automatically.",
-                icon: <Zap className="w-12 h-12 text-pink-400" />,
-                color: "pink"
+                icon: <Zap className="w-12 h-12 text-orange-400" />,
+                color: "orange"
               }
             ].map((item, index) => (
               <motion.div
@@ -1023,12 +1084,12 @@ export default function AgentPilotLanding() {
                 transition={{ duration: 0.6, delay: index * 0.2 }}
                 className="relative group"
               >
-                <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-2xl opacity-0 group-hover:opacity-75 blur-lg transition duration-500" />
-                <div className="relative bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-xl rounded-2xl p-8 border border-white/10 h-full">
-                  <div className="mb-6">{item.icon}</div>
-                  <div className="text-sm font-bold text-slate-500 mb-2">STEP {item.step}</div>
-                  <h3 className="text-2xl font-bold mb-4">{item.title}</h3>
-                  <p className="text-slate-400 leading-relaxed">{item.description}</p>
+                <div className="absolute -inset-0.5 bg-orange-500 rounded-xl opacity-0 group-hover:opacity-30 blur-lg transition duration-500" />
+                <div className="relative bg-zinc-900/90 backdrop-blur-xl rounded-xl p-6 border border-white/10 h-full">
+                  <div className="mb-4">{item.icon}</div>
+                  <div className="text-xs font-bold text-slate-500 mb-2">STEP {item.step}</div>
+                  <h3 className="text-xl font-bold mb-3">{item.title}</h3>
+                  <p className="text-sm text-slate-400 leading-relaxed">{item.description}</p>
                 </div>
               </motion.div>
             ))}
@@ -1105,26 +1166,26 @@ export default function AgentPilotLanding() {
       </section>
 
       {/* Use Cases */}
-      <section id="use-cases" className="relative z-10 py-32 bg-gradient-to-b from-transparent via-slate-900/20 to-transparent">
-        <div className="max-w-7xl mx-auto px-6">
+      <section id="use-cases" className="relative z-10 py-16">
+        <div className="max-w-7xl mx-auto px-4">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             transition={{ duration: 0.8 }}
-            className="text-center mb-20"
+            className="text-center mb-12"
           >
-            <h2 className="text-4xl md:text-5xl font-black mb-4">
-              <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+            <h2 className="text-3xl md:text-4xl font-black mb-3">
+              <span className="text-orange-400">
                 What You Can Do
               </span>
             </h2>
-            <p className="text-xl text-slate-400 max-w-2xl mx-auto">
+            <p className="text-lg text-slate-400 max-w-2xl mx-auto">
               Automate your work across the tools you already use
             </p>
           </motion.div>
 
-          <div className="grid md:grid-cols-2 gap-6">
+          <div className="grid md:grid-cols-2 gap-4">
             {[
               {
                 title: "Email → Notion",
@@ -1159,10 +1220,10 @@ export default function AgentPilotLanding() {
                 transition={{ duration: 0.6, delay: index * 0.1 }}
                 className="group relative"
               >
-                <div className={`absolute -inset-0.5 bg-gradient-to-r ${useCase.gradient} rounded-2xl opacity-50 group-hover:opacity-75 blur-lg transition duration-500`} />
-                <div className="relative bg-slate-900/90 backdrop-blur-xl rounded-2xl p-8 border border-white/10">
-                  <h3 className="text-2xl font-bold mb-3">{useCase.title}</h3>
-                  <p className="text-slate-400 mb-6 leading-relaxed">{useCase.description}</p>
+                <div className={`absolute -inset-0.5 bg-gradient-to-r ${useCase.gradient} rounded-xl opacity-20 group-hover:opacity-40 blur-lg transition duration-500`} />
+                <div className="relative bg-zinc-900/90 backdrop-blur-xl rounded-xl p-6 border border-white/10">
+                  <h3 className="text-xl font-bold mb-2">{useCase.title}</h3>
+                  <p className="text-sm text-slate-400 mb-4 leading-relaxed">{useCase.description}</p>
                   <div className="flex items-center gap-3">
                     {useCase.tools.map((tool, i) => (
                       <React.Fragment key={i}>
@@ -1183,44 +1244,44 @@ export default function AgentPilotLanding() {
       </section>
 
       {/* Features / Why AgentPilot */}
-      <section id="features" className="relative z-10 py-32">
-        <div className="max-w-7xl mx-auto px-6">
+      <section id="features" className="relative z-10 py-16">
+        <div className="max-w-7xl mx-auto px-4">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             transition={{ duration: 0.8 }}
-            className="text-center mb-20"
+            className="text-center mb-12"
           >
-            <h2 className="text-4xl md:text-5xl font-black mb-4">
-              <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+            <h2 className="text-3xl md:text-4xl font-black mb-3">
+              <span className="text-orange-400">
                 Why AgentPilot
               </span>
             </h2>
-            <p className="text-xl text-slate-400 max-w-2xl mx-auto">
+            <p className="text-lg text-slate-400 max-w-2xl mx-auto">
               Built for everyone, from solopreneurs to teams
             </p>
           </motion.div>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {[
               {
-                icon: <Sparkles className="w-12 h-12 text-blue-400" />,
+                icon: <Sparkles className="w-12 h-12 text-orange-400" />,
                 title: "No Code Required",
                 description: "Just describe what you want in natural language. No programming, no complex workflows.",
-                color: "blue"
+                color: "orange"
               },
               {
-                icon: <Volume2 className="w-12 h-12 text-purple-400" />,
+                icon: <Volume2 className="w-12 h-12 text-amber-400" />,
                 title: "Works With Your Tools",
                 description: "Connect Gmail, Notion, Slack, Drive, Calendar, and more. We integrate with the apps you love.",
-                color: "purple"
+                color: "amber"
               },
               {
-                icon: <Brain className="w-12 h-12 text-pink-400" />,
+                icon: <Brain className="w-12 h-12 text-orange-400" />,
                 title: "Smart Agent Builder",
                 description: "Our AI understands context and builds sophisticated automations from simple descriptions.",
-                color: "pink"
+                color: "orange"
               },
               {
                 icon: <Clock className="w-12 h-12 text-green-400" />,
@@ -1229,16 +1290,16 @@ export default function AgentPilotLanding() {
                 color: "green"
               },
               {
-                icon: <Lock className="w-12 h-12 text-blue-400" />,
+                icon: <Lock className="w-12 h-12 text-orange-400" />,
                 title: "Secure OAuth",
                 description: "Industry-standard OAuth connections keep your data safe. We never store your passwords.",
-                color: "blue"
+                color: "orange"
               },
               {
-                icon: <Zap className="w-12 h-12 text-purple-400" />,
+                icon: <Zap className="w-12 h-12 text-amber-400" />,
                 title: "Lightning Fast",
                 description: "Go from idea to working automation in minutes, not hours or days.",
-                color: "purple"
+                color: "amber"
               }
             ].map((feature, index) => (
               <motion.div
@@ -1247,11 +1308,11 @@ export default function AgentPilotLanding() {
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ duration: 0.6, delay: index * 0.1 }}
-                className="bg-gradient-to-br from-slate-900/50 to-slate-800/50 backdrop-blur-xl rounded-2xl p-8 border border-white/10 hover:border-white/20 transition"
+                className="bg-gradient-to-br from-zinc-900/50 to-zinc-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10 hover:border-white/20 transition"
               >
-                <div className="mb-6">{feature.icon}</div>
-                <h3 className="text-xl font-bold mb-3">{feature.title}</h3>
-                <p className="text-slate-400 leading-relaxed">{feature.description}</p>
+                <div className="mb-4">{feature.icon}</div>
+                <h3 className="text-lg font-bold mb-2">{feature.title}</h3>
+                <p className="text-sm text-slate-400 leading-relaxed">{feature.description}</p>
               </motion.div>
             ))}
           </div>
@@ -1259,23 +1320,23 @@ export default function AgentPilotLanding() {
       </section>
 
       {/* Testimonials */}
-      <section className="relative z-10 py-32 bg-gradient-to-b from-transparent via-slate-900/20 to-transparent">
-        <div className="max-w-7xl mx-auto px-6">
+      <section className="relative z-10 py-16">
+        <div className="max-w-7xl mx-auto px-4">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             transition={{ duration: 0.8 }}
-            className="text-center mb-20"
+            className="text-center mb-12"
           >
-            <h2 className="text-4xl md:text-5xl font-black mb-4">
-              <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+            <h2 className="text-3xl md:text-4xl font-black mb-3">
+              <span className="text-orange-400">
                 Loved by Early Users
               </span>
             </h2>
           </motion.div>
 
-          <div className="grid md:grid-cols-2 gap-8 max-w-5xl mx-auto">
+          <div className="grid md:grid-cols-2 gap-6 max-w-5xl mx-auto">
             {[
               {
                 quote: "AgentPilot saved me 10 hours a week. I just tell it what I need, and it handles all my email-to-Notion workflows automatically.",
@@ -1296,21 +1357,20 @@ export default function AgentPilotLanding() {
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ duration: 0.6, delay: index * 0.2 }}
-                className="relative group"
+                className="h-full"
               >
-                <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500 to-purple-500 rounded-2xl opacity-50 group-hover:opacity-75 blur-lg transition duration-500" />
-                <div className="relative bg-slate-900/90 backdrop-blur-xl rounded-2xl p-8 border border-white/10">
-                  <div className="text-4xl mb-4 text-slate-600">"</div>
-                  <p className="text-lg text-slate-300 mb-6 leading-relaxed italic">
+                <div className="bg-zinc-900/90 backdrop-blur-xl rounded-xl p-6 border border-white/10 h-full flex flex-col">
+                  <div className="text-3xl mb-3 text-slate-600">"</div>
+                  <p className="text-base text-slate-300 mb-4 leading-relaxed italic flex-grow">
                     {testimonial.quote}
                   </p>
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center font-bold">
+                  <div className="flex items-center gap-3 mt-auto">
+                    <div className="w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center font-bold text-sm">
                       {testimonial.avatar}
                     </div>
                     <div>
-                      <div className="font-semibold">{testimonial.author}</div>
-                      <div className="text-sm text-slate-400">{testimonial.role}</div>
+                      <div className="font-semibold text-sm">{testimonial.author}</div>
+                      <div className="text-xs text-slate-400">{testimonial.role}</div>
                     </div>
                   </div>
                 </div>
@@ -1321,37 +1381,35 @@ export default function AgentPilotLanding() {
       </section>
 
       {/* Final CTA */}
-      <section className="relative z-10 py-32">
-        <div className="max-w-4xl mx-auto px-6">
+      <section className="relative z-10 py-16">
+        <div className="max-w-4xl mx-auto px-4">
           <motion.div
             initial={{ opacity: 0, y: 40 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             transition={{ duration: 0.8 }}
-            className="relative group"
           >
-            <div className="absolute -inset-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-3xl opacity-75 blur-2xl group-hover:opacity-100 transition duration-1000" />
-            <div className="relative bg-gradient-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-2xl rounded-3xl p-12 md:p-16 border border-white/20 text-center">
-              <h2 className="text-4xl md:text-5xl font-black mb-6">
+            <div className="bg-zinc-900/95 backdrop-blur-2xl rounded-2xl p-8 md:p-12 border border-white/20 text-center">
+              <h2 className="text-3xl md:text-4xl font-black mb-4">
                 Be Among the First to Build
                 <br />
-                <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                <span className="text-orange-400">
                   Your Personal AI Workforce
                 </span>
               </h2>
-              <p className="text-xl text-slate-300 mb-8 max-w-2xl mx-auto">
+              <p className="text-lg text-slate-300 mb-6 max-w-2xl mx-auto">
                 No code. No setup. Start automating in minutes.
               </p>
-              
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
+
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mb-6">
                 <input
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="Enter your email"
-                  className="w-full sm:w-80 px-6 py-4 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 transition"
+                  className="w-full sm:w-80 px-5 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-orange-500 transition text-sm"
                 />
-                <button className="w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl font-bold text-lg hover:shadow-2xl hover:shadow-purple-500/50 transition whitespace-nowrap">
+                <button className="w-full sm:w-auto px-6 py-3 bg-orange-500 rounded-lg font-bold text-sm hover:bg-orange-600 hover:shadow-xl hover:shadow-orange-500/50 transition whitespace-nowrap">
                   Join Beta Now
                 </button>
               </div>

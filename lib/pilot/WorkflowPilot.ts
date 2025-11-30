@@ -38,6 +38,7 @@ import { ApprovalTracker } from './ApprovalTracker';
 import { NotificationService } from './NotificationService';
 import { MemoryInjector } from '@/lib/memory/MemoryInjector';
 import { MemorySummarizer } from '@/lib/memory/MemorySummarizer';
+import { MemoryConfigService } from '@/lib/memory/MemoryConfigService';
 import { updateAgentIntensityMetrics } from '@/lib/utils/updateAgentIntensity';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
@@ -46,6 +47,7 @@ import { ExecutionEventEmitter } from '@/lib/execution/ExecutionEventEmitter';
 import { WorkflowOrchestrator } from '@/lib/orchestration';
 import { PilotConfigService } from './PilotConfigService';
 import { StepCache } from './StepCache';
+import { DebugSessionManager } from '@/lib/debug/DebugSessionManager';
 
 export class WorkflowPilot {
   private supabase: SupabaseClient;
@@ -139,15 +141,39 @@ export class WorkflowPilot {
       onStepStarted?: (stepId: string, stepName: string) => void;
       onStepCompleted?: (stepId: string, stepName: string) => void;
       onStepFailed?: (stepId: string, stepName: string, error: string) => void;
-    }
+    },
+    debugMode?: boolean,
+    providedDebugRunId?: string
   ): Promise<WorkflowExecutionResult> {
     console.log(`🚀 [WorkflowPilot] Starting execution for agent ${agent.id}: ${agent.agent_name}`);
 
     // Generate sessionId if not provided (must be UUID format for database)
     const finalSessionId = sessionId || crypto.randomUUID();
 
-    // Store stepEmitter in instance for use during execution
+    // Create debug session if debug mode is enabled
+    let debugRunId: string | null = null;
+    if (debugMode) {
+      console.log(`🐛 [WorkflowPilot] Debug mode enabled, providedDebugRunId: ${providedDebugRunId}`);
+
+      // Use provided debugRunId if available, otherwise generate new one
+      debugRunId = providedDebugRunId || crypto.randomUUID();
+      console.log(`🐛 [WorkflowPilot] Using debugRunId: ${debugRunId} ${providedDebugRunId ? '(from frontend)' : '(generated)'}`);
+
+      // Create or get the session (idempotent)
+      const existingSession = DebugSessionManager.getSession(debugRunId);
+      if (!existingSession) {
+        DebugSessionManager.createSession(debugRunId, agent.id, userId);
+        console.log(`🐛 [WorkflowPilot] Created debug session: ${debugRunId}`);
+      } else {
+        console.log(`🐛 [WorkflowPilot] Using existing debug session: ${debugRunId}`);
+      }
+    } else {
+      console.log(`🐛 [WorkflowPilot] Debug mode is NOT enabled (debugMode=${debugMode})`);
+    }
+
+    // Store stepEmitter and debugRunId in instance for use during execution
     (this as any).stepEmitter = stepEmitter;
+    (this as any).debugRunId = debugRunId;
 
     // 0a. Load Pilot configuration from database (with 5-min cache)
     const options = await this.loadConfig();
@@ -230,45 +256,70 @@ export class WorkflowPilot {
       inputValues
     );
 
-    // 3. Load memory context (skip if optimizations enabled for faster execution)
-    if (!this.optimizationsEnabled) {
+    // 3. Load memory context and initialize orchestration IN PARALLEL
+    const memoryConfig = await MemoryConfigService.getGlobalConfig(this.supabase);
+
+    // Helper function for memory loading with timeout
+    const loadMemoryWithTimeout = async (): Promise<void> => {
+      if (!memoryConfig.enabled) {
+        console.log(`🔇 [WorkflowPilot] Memory disabled via config`);
+        return;
+      }
+
       try {
         const memoryInjector = new MemoryInjector(this.supabase);
-        const memoryContext = await memoryInjector.buildMemoryContext(
+
+        // Race between memory loading and 1000ms timeout
+        const memoryContext = await Promise.race([
+          memoryInjector.buildMemoryContext(agent.id, userId, { userInput, inputValues }),
+          new Promise<null>((_, reject) =>
+            setTimeout(() => reject(new Error('Memory loading timeout (1000ms)')), 1000)
+          )
+        ]);
+
+        if (memoryContext) {
+          context.memoryContext = memoryContext;
+          if (memoryConfig.debug_mode) {
+            console.log(`🧠 [WorkflowPilot] Loaded memory context: ${memoryContext.token_count} tokens`);
+          }
+        }
+      } catch (error: any) {
+        if (error.message.includes('timeout')) {
+          console.warn(`⏱️  [WorkflowPilot] Memory loading timed out - proceeding without memory`);
+        } else {
+          console.warn(`⚠️  [WorkflowPilot] Failed to load memory (non-critical):`, error.message);
+        }
+      }
+    };
+
+    // Helper function for orchestration initialization
+    const initializeOrchestration = async (): Promise<void> => {
+      try {
+        const orchestrator = new WorkflowOrchestrator(this.supabase);
+        const orchestrationEnabled = await orchestrator.initialize(
+          executionId,  // Use executionId as workflowId
           agent.id,
           userId,
-          { userInput, inputValues }
+          workflowSteps
         );
-        context.memoryContext = memoryContext;
 
-        console.log(`🧠 [WorkflowPilot] Loaded memory context: ${memoryContext.token_count} tokens`);
+        if (orchestrationEnabled) {
+          console.log('🎯 [WorkflowPilot] Orchestration enabled for this execution');
+          context.orchestrator = orchestrator;
+        } else {
+          console.log('ℹ️  [WorkflowPilot] Orchestration disabled, using normal execution');
+        }
       } catch (error: any) {
-        console.warn(`⚠️  [WorkflowPilot] Failed to load memory (non-critical):`, error.message);
+        console.warn('⚠️  [WorkflowPilot] Orchestration initialization failed (non-critical):', error.message);
+        // Continue with normal execution
       }
-    } else {
-      console.log(`⚡ [WorkflowPilot] Optimizations enabled: Skipping memory context loading`);
-    }
+    };
 
-    // 3b. Initialize orchestration (Phase 4)
-    try {
-      const orchestrator = new WorkflowOrchestrator(this.supabase);
-      const orchestrationEnabled = await orchestrator.initialize(
-        executionId,  // Use executionId as workflowId
-        agent.id,
-        userId,
-        workflowSteps
-      );
-
-      if (orchestrationEnabled) {
-        console.log('🎯 [WorkflowPilot] Orchestration enabled for this execution');
-        context.orchestrator = orchestrator;
-      } else {
-        console.log('ℹ️  [WorkflowPilot] Orchestration disabled, using normal execution');
-      }
-    } catch (error: any) {
-      console.warn('⚠️  [WorkflowPilot] Orchestration initialization failed (non-critical):', error.message);
-      // Continue with normal execution
-    }
+    // Run memory loading and orchestration initialization in parallel
+    await Promise.all([
+      loadMemoryWithTimeout(),
+      initializeOrchestration()
+    ]);
 
     // 4. Audit: Execution started (skip detailed logging if optimizations enabled)
     if (!this.optimizationsEnabled) {
@@ -314,15 +365,37 @@ export class WorkflowPilot {
         // Don't fail execution, just log warning
       }
 
-      // 8. Summarize for memory (SYNCHRONOUS - must wait to get token count)
-      // ✅ CRITICAL: Calculate memory tokens BEFORE marking as completed
+      // 8. Summarize for memory (ASYNC - fire and forget, don't block response)
       let memoryTokens = 0;
-      try {
-        memoryTokens = await this.summarizeForMemory(agent.id, userId, executionId, context);
-        console.log(`✅ Memory summarization complete (${memoryTokens} tokens)`);
-      } catch (err) {
-        console.error('❌ Memory summarization failed (non-critical):', err);
-      }
+
+      // Fire-and-forget: Don't await, let it run in background
+      this.summarizeForMemory(agent.id, userId, executionId, context)
+        .then((tokens) => {
+          memoryTokens = tokens;
+          console.log(`✅ Memory summarization complete (${tokens} tokens)`);
+        })
+        .catch((err) => {
+          console.error('❌ Memory summarization failed (non-critical):', err);
+        });
+
+      // Extract user memories (preferences, context) - also fire-and-forget
+      import('@/lib/memory/UserMemoryService').then(({ UserMemoryService }) => {
+        const userMemoryService = new UserMemoryService(this.supabase, process.env.OPENAI_API_KEY!);
+        userMemoryService.extractMemoriesFromExecution(
+          userId,
+          agent.id,
+          JSON.stringify({ userInput, inputValues }),
+          JSON.stringify(context.finalOutput),
+          agent.user_prompt || agent.system_prompt || ''
+        ).then(() => {
+          console.log(`✅ User memory extraction complete for execution ${executionId}`);
+        }).catch((err) => {
+          console.error('❌ User memory extraction failed (non-critical):', err);
+        });
+      });
+
+      // Note: memoryTokens will be 0 in execution record since summarization runs async
+      // This is acceptable - memory summarization shouldn't block user response
 
       // 9. Complete orchestration and collect metrics (Phase 4)
       // ✅ CRITICAL: Calculate orchestration tokens BEFORE marking as completed
@@ -419,6 +492,12 @@ export class WorkflowPilot {
 
       console.log(`✅ [WorkflowPilot] Execution completed successfully: ${executionId}`);
 
+      // Cleanup debug session
+      if (debugRunId) {
+        DebugSessionManager.cleanup(debugRunId);
+        console.log(`🐛 [WorkflowPilot] Debug session cleaned up: ${debugRunId}`);
+      }
+
       // Emit execution complete event globally
       ExecutionEventEmitter.emitExecutionComplete(executionId, agent.id, {
         success: true,
@@ -439,6 +518,8 @@ export class WorkflowPilot {
         completedStepIds: context.completedSteps,
         failedStepIds: context.failedSteps,
         skippedStepIds: context.skippedSteps,
+        // Include debugRunId if debug mode was enabled
+        debugRunId: debugRunId || undefined,
         // Orchestration metrics (Phase 4)
         orchestrationMetrics: orchestrationMetrics ? {
           totalTokensUsed: orchestrationMetrics.totalTokensUsed,
@@ -452,6 +533,12 @@ export class WorkflowPilot {
       };
     } catch (error: any) {
       console.error(`❌ [WorkflowPilot] Execution failed:`, error);
+
+      // Cleanup debug session
+      if (debugRunId) {
+        DebugSessionManager.cleanup(debugRunId);
+        console.log(`🐛 [WorkflowPilot] Debug session cleaned up after failure: ${debugRunId}`);
+      }
 
       // Mark as failed
       await this.stateManager.failExecution(executionId, error, context);
@@ -542,8 +629,35 @@ export class WorkflowPilot {
 
     console.log(`  → Executing: ${stepDef.id} (${stepDef.name})`);
 
-    // Get step emitter reference once at the beginning
+    // Get step emitter and debug runId references once at the beginning
     const stepEmitter = (this as any).stepEmitter;
+    const debugRunId = (this as any).debugRunId;
+
+    // Emit debug step_start event
+    if (debugRunId) {
+      console.log(`🐛 [DEBUG] debugRunId is set: ${debugRunId}, emitting step_start for ${stepDef.name}`);
+      DebugSessionManager.emitEvent(debugRunId, {
+        type: 'step_start',
+        stepId: stepDef.id,
+        stepName: stepDef.name,
+        data: {
+          stepType: stepDef.type,
+          config: stepDef,
+          stepIndex: context.completedSteps.length
+        }
+      });
+
+      // Add delay to give time to click pause
+      console.log(`⏱️  [DEBUG] Waiting 5 seconds before step execution to allow pause testing...`);
+      await new Promise(resolve => setTimeout(resolve, 5000));
+
+      // Check if paused before executing
+      console.log(`🔍 [DEBUG] Checking pause state before executing step ${stepDef.name}...`);
+      await DebugSessionManager.checkPause(debugRunId);
+      console.log(`✅ [DEBUG] Pause check complete, proceeding with step execution`);
+    } else {
+      console.log(`⚠️  [DEBUG] debugRunId is NOT set, skipping pause checkpoints`);
+    }
 
     // Emit step started event (both local and global)
     if (stepEmitter?.onStepStarted) {
@@ -783,6 +897,23 @@ export class WorkflowPilot {
     // Emit appropriate event (both local and global)
     if (output.metadata.success) {
       console.log(`  ✓ Completed in ${output.metadata.executionTime}ms`);
+
+      // Emit debug step_complete event with real data
+      if (debugRunId) {
+        DebugSessionManager.emitEvent(debugRunId, {
+          type: 'step_complete',
+          stepId: stepDef.id,
+          stepName: stepDef.name,
+          data: {
+            output: output.data,
+            duration: output.metadata.executionTime || 0,
+            plugin: output.plugin,
+            action: output.action,
+            metadata: output.metadata
+          }
+        });
+      }
+
       // Emit step completed event
       if (stepEmitter?.onStepCompleted) {
         stepEmitter.onStepCompleted(stepDef.id, stepDef.name);
@@ -796,6 +927,23 @@ export class WorkflowPilot {
       });
     } else {
       console.error(`  ✗ Failed: ${output.metadata.error}`);
+
+      // Emit debug step_failed event
+      if (debugRunId) {
+        DebugSessionManager.emitEvent(debugRunId, {
+          type: 'step_failed',
+          stepId: stepDef.id,
+          stepName: stepDef.name,
+          error: output.metadata.error || 'Unknown error',
+          data: {
+            duration: output.metadata.executionTime || 0,
+            plugin: output.plugin,
+            action: output.action,
+            errorCode: output.metadata.errorCode
+          }
+        });
+      }
+
       // Emit step failed event
       if (stepEmitter?.onStepFailed) {
         stepEmitter.onStepFailed(stepDef.id, stepDef.name, output.metadata.error || 'Unknown error');
@@ -809,7 +957,7 @@ export class WorkflowPilot {
       });
 
       // Check if we should continue on error
-      if (!stepDef.continueOnError && !options.continueOnError) {
+      if (!stepDef.continueOnError && !this.options?.continueOnError) {
         throw new ExecutionError(
           `Step ${stepDef.id} failed: ${output.metadata.error}`,
           output.metadata.errorCode || 'STEP_EXECUTION_FAILED',
@@ -1498,14 +1646,18 @@ export class WorkflowPilot {
         console.error('❌ AIS update failed (non-critical):', err)
       );
 
-      // 13. Summarize for memory (SYNCHRONOUS - must wait to get token count)
+      // 13. Summarize for memory (ASYNC - fire and forget, don't block response)
       let memoryTokens = 0;
-      try {
-        memoryTokens = await this.summarizeForMemory(agent.id, context.userId, executionId, context);
-        console.log(`✅ Memory summarization complete (${memoryTokens} tokens)`);
-      } catch (err) {
-        console.error('❌ Memory summarization failed (non-critical):', err);
-      }
+
+      // Fire-and-forget: Don't await, let it run in background
+      this.summarizeForMemory(agent.id, context.userId, executionId, context)
+        .then((tokens) => {
+          memoryTokens = tokens;
+          console.log(`✅ Memory summarization complete (${tokens} tokens)`);
+        })
+        .catch((err) => {
+          console.error('❌ Memory summarization failed (non-critical):', err);
+        });
 
       // Add memory tokens to total
       const totalTokensWithMemory = context.totalTokensUsed + memoryTokens;

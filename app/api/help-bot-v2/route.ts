@@ -35,6 +35,33 @@ function normalizeQuestion(question: string): string {
 }
 
 /**
+ * Normalize page path to match FAQ storage patterns
+ * Converts actual URLs like /v2/sandbox/123 to patterns like /v2/sandbox/[agentId]
+ */
+function normalizePageContext(path: string): string {
+  // UUID pattern (8-4-4-4-12 format)
+  const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
+
+  // Replace UUIDs in known patterns
+  let normalized = path
+
+  // /v2/agents/{uuid} -> /v2/agents/[id]
+  if (/^\/v2\/agents\/[0-9a-f-]{36}$/i.test(normalized)) {
+    normalized = '/v2/agents/[id]'
+  }
+  // /v2/agents/{uuid}/run -> /v2/agents/[id]/run
+  else if (/^\/v2\/agents\/[0-9a-f-]{36}\/run$/i.test(normalized)) {
+    normalized = '/v2/agents/[id]/run'
+  }
+  // /v2/sandbox/{uuid} -> /v2/sandbox/[agentId]
+  else if (/^\/v2\/sandbox\/[0-9a-f-]{36}$/i.test(normalized)) {
+    normalized = '/v2/sandbox/[agentId]'
+  }
+
+  return normalized
+}
+
+/**
  * Generate SHA256 hash of normalized question
  */
 function hashQuestion(question: string): string {
@@ -135,7 +162,15 @@ async function searchFAQ(
   pageContext: string
 ): Promise<string | null> {
   const normalized = normalizeQuestion(question)
-  const keywords = normalized.split(' ').filter(w => w.length > 2) // Filter out short words
+
+  // Extract keywords: filter only very short words (≤2 chars), keep everything else
+  // No stop word filtering - let scoring algorithm handle common words naturally
+  const keywords = normalized.split(' ').filter(w => w.length > 2)
+
+  console.log(`[FAQ Search] Question: "${question}"`)
+  console.log(`[FAQ Search] Normalized: "${normalized}"`)
+  console.log(`[FAQ Search] Keywords: [${keywords.join(', ')}] (${keywords.length} keywords)`)
+  console.log(`[FAQ Search] Page context: ${pageContext}`)
 
   try {
     // Search by keywords using array overlap
@@ -147,20 +182,29 @@ async function searchFAQ(
 
     if (error) throw error
 
+    console.log(`[FAQ Search] Found ${data?.length || 0} articles for page context: ${pageContext}`)
+
     // Find best match by keyword overlap with weighted scoring
     let bestMatch: any = null
     let bestScore = 0
+    const scoringDetails: Array<{ topic: string; score: number }> = []
 
     for (const article of data || []) {
       const articleKeywords = article.keywords || []
       let score = 0
+      let exactMatches = 0
 
       // Calculate score based on keyword matches
       for (const kw of keywords) {
+        let keywordMatched = false
         for (const ak of articleKeywords) {
           // Exact match: highest score
           if (ak === kw) {
             score += 10
+            if (!keywordMatched) {
+              exactMatches++
+              keywordMatched = true
+            }
           }
           // Article keyword contains query keyword
           else if (ak.includes(kw)) {
@@ -173,11 +217,18 @@ async function searchFAQ(
         }
       }
 
+      // Bonus for matching multiple keywords (prefers more specific matches)
+      if (exactMatches > 1) {
+        score += exactMatches * 5
+      }
+
       // Check for phrase matches (multiple consecutive words)
       const normalizedArticleKeywords = articleKeywords.join(' ')
       if (normalizedArticleKeywords.includes(normalized)) {
         score += 20 // Bonus for phrase match
       }
+
+      scoringDetails.push({ topic: article.topic, score })
 
       if (score > bestScore) {
         bestScore = score
@@ -185,12 +236,30 @@ async function searchFAQ(
       }
     }
 
-    // Require minimum score threshold (at least one strong match)
-    if (bestScore >= 8) {
-      console.log(`[HelpBot] FAQ hit: ${bestMatch.topic} (score: ${bestScore})`)
+    // Log top 3 matches for debugging
+    console.log(`[FAQ Search] Top matches:`)
+    scoringDetails
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+      .forEach((detail, idx) => {
+        console.log(`  ${idx + 1}. "${detail.topic}" - score: ${detail.score}`)
+      })
+
+    // Dynamic threshold based on question length
+    // Short questions (1-2 keywords): threshold = 8 (one strong match needed)
+    // Medium questions (3-4 keywords): threshold = 12 (multiple matches needed)
+    // Long questions (5+ keywords): threshold = 15 (comprehensive match needed)
+    const dynamicThreshold = Math.max(8, Math.min(15, keywords.length * 3))
+
+    console.log(`[FAQ Search] Best match: ${bestMatch?.topic || 'none'} with score: ${bestScore}`)
+    console.log(`[FAQ Search] Threshold: ${dynamicThreshold} (based on ${keywords.length} keywords)`)
+
+    if (bestScore >= dynamicThreshold) {
+      console.log(`[HelpBot] ✅ FAQ hit: "${bestMatch.topic}" (score: ${bestScore} >= ${dynamicThreshold})`)
       return bestMatch.body
     }
 
+    console.log(`[FAQ Search] ❌ Score too low (${bestScore} < ${dynamicThreshold} threshold), no FAQ match`)
     return null
   } catch (error) {
     console.error('[HelpBot] FAQ search error:', error)
@@ -349,12 +418,20 @@ async function callGroqForInputHelp(
   messages: Array<{ role: 'user' | 'assistant'; content: string }>,
   context: any
 ): Promise<string> {
-  // Load input assistant prompt template
-  const templatePath = path.join(process.cwd(), 'app/api/prompt-templates/Input-Assistant-Prompt-v1.txt')
+  // Load input assistant prompt template - try database first, fallback to file
   let systemPrompt = ''
 
   try {
-    systemPrompt = fs.readFileSync(templatePath, 'utf-8')
+    // Try loading from database config
+    const configPrompt = await SystemConfigService.get(supabase, 'helpbot_input_prompt', null)
+
+    if (configPrompt) {
+      systemPrompt = configPrompt
+    } else {
+      // Fallback to file-based template
+      const templatePath = path.join(process.cwd(), 'app/api/prompt-templates/Input-Assistant-Prompt-v1.txt')
+      systemPrompt = fs.readFileSync(templatePath, 'utf-8')
+    }
 
     // Replace placeholders
     systemPrompt = systemPrompt
@@ -416,10 +493,15 @@ async function callGroq(
   messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
   pageContext: any
 ): Promise<string> {
-  const systemPrompt = `You are a helpful support assistant for NeuronForge, an AI agent automation platform.
+  // Load general help prompt - try database first, fallback to default
+  let systemPromptTemplate = await SystemConfigService.get(supabase, 'helpbot_general_prompt', null)
 
-📍 CURRENT PAGE: ${pageContext.title || pageContext.path}
-${pageContext.description ? `📝 Context: ${pageContext.description}` : ''}
+  if (!systemPromptTemplate) {
+    // Default prompt if not configured
+    systemPromptTemplate = `You are a helpful support assistant for NeuronForge, an AI agent automation platform.
+
+📍 CURRENT PAGE: {{pageTitle}}
+{{pageDescription}}
 
 🎯 YOUR ROLE:
 - Provide clear, contextual answers focused on the current page
@@ -465,7 +547,13 @@ ${pageContext.description ? `📝 Context: ${pageContext.description}` : ''}
 4. If question is about an error, provide troubleshooting steps
 5. Always end with a helpful next step or related question
 
-Answer the user's question based on the current page context: "${pageContext.title}"`
+Answer the user's question based on the current page context: "{{pageTitle}}"`
+  }
+
+  // Replace placeholders
+  const systemPrompt = systemPromptTemplate
+    .replace(/\{\{pageTitle\}\}/g, pageContext.title || pageContext.path)
+    .replace(/\{\{pageDescription\}\}/g, pageContext.description ? `📝 Context: ${pageContext.description}` : '')
 
   const aiMessages = [
     { role: 'system' as const, content: systemPrompt },
@@ -633,11 +721,15 @@ export async function POST(request: NextRequest) {
     // ========================================================================
     // Step 2: Try FAQ lookup (free, instant)
     // ========================================================================
-    const faqAnswer = await searchFAQ(question, pagePath)
+    const normalizedPagePath = normalizePageContext(pagePath)
+    console.log(`[HelpBot] Searching FAQ for question: "${question}" on page: ${pagePath} (normalized: ${normalizedPagePath})`)
+    const faqAnswer = await searchFAQ(question, normalizedPagePath)
     if (faqAnswer) {
+      console.log(`[HelpBot] ✅ FAQ match found!`)
       await updateAnalytics('FAQ', Date.now() - startTime)
       return NextResponse.json({ response: faqAnswer, source: 'FAQ' })
     }
+    console.log(`[HelpBot] ❌ No FAQ match found, trying cache...`)
 
     // ========================================================================
     // Step 3: Try cache lookup (hybrid: exact hash + semantic search)

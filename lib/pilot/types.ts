@@ -607,6 +607,9 @@ export interface WorkflowExecutionResult {
   failedStepIds?: string[];
   skippedStepIds?: string[];
 
+  // Debug mode support
+  debugRunId?: string;
+
   // Orchestration metrics (Phase 4)
   orchestrationMetrics?: {
     totalTokensUsed: number;
