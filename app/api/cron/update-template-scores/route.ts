@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
+// Force dynamic rendering since this route uses request.headers
+export const dynamic = 'force-dynamic'
+
 /**
  * Cron job to update shared agent template scores periodically
  * Runs daily to recalculate adoption scores based on import counts and freshness
