@@ -4,6 +4,20 @@ import { BaseAIProvider, CallContext } from './baseProvider';
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 import { calculateCostSync } from '@/lib/ai/pricing';
 
+/**
+ * OpenAI model name constants
+ * Use these instead of raw strings when specifying models
+ */
+export const OPENAI_MODELS = {
+  GPT_4O: 'gpt-4o',
+  GPT_4O_MINI: 'gpt-4o-mini',
+  GPT_4_TURBO: 'gpt-4-turbo',
+  GPT_4: 'gpt-4',
+  GPT_35_TURBO: 'gpt-3.5-turbo'
+} as const;
+
+export type OpenAIModelName = typeof OPENAI_MODELS[keyof typeof OPENAI_MODELS];
+
 export class OpenAIProvider extends BaseAIProvider {
   private openai: OpenAI;
 
@@ -58,6 +72,31 @@ export class OpenAIProvider extends BaseAIProvider {
         responseSize: JSON.stringify(result).length
       })
     ) as Promise<OpenAI.Chat.ChatCompletion>;
+  }
+
+  /**
+   * Chat completion with automatic JSON parsing
+   * Convenience method for structured output workflows
+   *
+   * @param params - OpenAI chat completion parameters
+   * @param context - Analytics tracking context
+   * @returns Parsed JSON data and token usage
+   */
+  async chatCompletionJson<T>(
+    params: OpenAI.Chat.ChatCompletionCreateParams,
+    context: CallContext
+  ): Promise<{ data: T; tokensUsed: { prompt: number; completion: number; total: number } }> {
+    const completion = await this.chatCompletion(params, context);
+    const content = completion.choices[0]?.message?.content || '{}';
+
+    return {
+      data: JSON.parse(content) as T,
+      tokensUsed: {
+        prompt: completion.usage?.prompt_tokens || 0,
+        completion: completion.usage?.completion_tokens || 0,
+        total: completion.usage?.total_tokens || 0
+      }
+    };
   }
 
   /**

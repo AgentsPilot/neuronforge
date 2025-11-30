@@ -10,6 +10,18 @@ import { AIAnalyticsService } from '../analytics/aiAnalytics';
 import { createClient } from '@supabase/supabase-js';
 
 /**
+ * Provider name constants
+ * Use these instead of raw strings when calling getProvider()
+ */
+export const PROVIDERS = {
+  OPENAI: 'openai',
+  ANTHROPIC: 'anthropic',
+  KIMI: 'kimi'
+} as const;
+
+export type ProviderName = typeof PROVIDERS[keyof typeof PROVIDERS];
+
+/**
  * Provider Factory - Creates and manages AI provider instances
  *
  * Uses singleton pattern to reuse provider instances and avoid
@@ -40,11 +52,11 @@ export class ProviderFactory {
   /**
    * Get provider instance by name
    *
-   * @param provider - Provider name ('openai', 'anthropic', or 'kimi')
+   * @param provider - Provider name (use PROVIDERS.OPENAI, PROVIDERS.ANTHROPIC, or PROVIDERS.KIMI)
    * @returns Provider instance
    * @throws Error if API key not configured
    */
-  static getProvider(provider: 'openai' | 'anthropic' | 'kimi'): BaseAIProvider {
+  static getProvider(provider: ProviderName): BaseAIProvider {
     switch (provider) {
       case 'openai':
         return this.getOpenAIProvider();
@@ -159,7 +171,7 @@ export class ProviderFactory {
    * @param provider - Provider name to check
    * @returns true if provider is available, false otherwise
    */
-  static isProviderAvailable(provider: 'openai' | 'anthropic' | 'kimi'): boolean {
+  static isProviderAvailable(provider: ProviderName): boolean {
     switch (provider) {
       case 'openai':
         return !!process.env.OPENAI_API_KEY;
@@ -177,8 +189,8 @@ export class ProviderFactory {
    *
    * @returns Array of available provider names
    */
-  static getAvailableProviders(): ('openai' | 'anthropic' | 'kimi')[] {
-    const providers: ('openai' | 'anthropic' | 'kimi')[] = [];
+  static getAvailableProviders(): ProviderName[] {
+    const providers: ProviderName[] = [];
 
     if (this.isProviderAvailable('openai')) {
       providers.push('openai');
