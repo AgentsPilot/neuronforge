@@ -694,7 +694,128 @@ Test File: ✅ Generated
 
 ---
 
-### **STEP 13: Summary & Next Steps**
+### **STEP 13: Generate Plugin Documentation**
+
+Generate a comprehensive Markdown documentation file for the plugin.
+
+**File**: `docs/plugins/{pluginName}-plugin.md`
+
+**Structure**:
+
+```markdown
+# {Plugin Display Name} Plugin Documentation
+
+**Plugin Version**: {version}
+**Category**: {category}
+**Last Updated**: {date}
+
+---
+
+## Overview
+
+{One paragraph describing what the plugin does and its use cases}
+
+---
+
+## Research Sources
+
+### OAuth Configuration
+| Information | URL | Summary |
+|-------------|-----|---------|
+| OAuth 2.0 Setup | {url} | {Brief summary of what was found} |
+| Authorization Endpoint | {url} | {Brief summary} |
+| Token Endpoint | {url} | {Brief summary} |
+| Scopes Reference | {url} | {Brief summary} |
+
+### API Documentation
+| Information | URL | Summary |
+|-------------|-----|---------|
+| API Overview | {url} | {Brief summary} |
+| Endpoint Reference | {url} | {Brief summary} |
+| ... | ... | ... |
+
+---
+
+## High-Level Decisions
+
+- **OAuth Flow**: {OAuth flow type chosen and why}
+- **Required Scopes**: {List of scopes}
+- **Rate Limits**: {Rate limit info from research}
+- {Other key decisions made during generation}
+
+---
+
+## Actions
+
+### 1. {action_name}
+**Description**: {action description}
+
+| Property | Value |
+|----------|-------|
+| HTTP Method | {GET/POST/PUT/DELETE} |
+| Endpoint | `{endpoint_url}` |
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| {param_name} | {type} | {Yes/No} | {description} |
+| ... | ... | ... | ... |
+
+**Response Structure**:
+| Field | Type | Description |
+|-------|------|-------------|
+| {field_name} | {type} | {description} |
+| ... | ... | ... |
+
+---
+
+{Repeat for each action}
+
+---
+
+## Generated Files
+
+| File Path | Description |
+|-----------|-------------|
+| `lib/plugins/definitions/{pluginName}-plugin-v2.json` | Plugin definition with OAuth config, actions, and schemas |
+| `lib/server/{pluginName}-plugin-executor.ts` | Executor class implementing all {pluginName} actions |
+
+---
+
+## Environment Variables
+
+```bash
+{PLUGIN_NAME}_CLIENT_ID=your_{pluginName}_client_id_here
+{PLUGIN_NAME}_CLIENT_SECRET=your_{pluginName}_client_secret_here
+```
+
+To obtain credentials:
+1. {Step 1}
+2. {Step 2}
+3. ...
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0.0 | {date} | Initial plugin with {N} actions: {action_list} |
+```
+
+**Documentation Content Sources**:
+- **Research Sources**: Capture URLs and summaries from STEP 3 (OAuth) and STEP 4-5 (API)
+- **High-Level Decisions**: Document key choices made during the generation process
+- **Actions**: Extract from the generated plugin definition JSON
+- **Response Structure**: Include all fields from `output_schema` in the action definition
+
+**Write the file** using the Write tool.
+
+Log: `✅ Generated: docs/plugins/{pluginName}-plugin.md`
+
+---
+
+### **STEP 14: Summary & Next Steps**
 
 Present final summary:
 
@@ -707,6 +828,7 @@ Generated Files:
 {mode === "new" ? "✅" : "⏭️"} lib/server/plugin-executer-v2.ts (registered)
 ✅ app/test-plugins-v2/{pluginName}-test.ts
 ✅ .env.example (updated)
+✅ docs/plugins/{pluginName}-plugin.md
 
 Plugin: {pluginName}
 Actions: {selectedActions.length}
@@ -730,9 +852,9 @@ Mode: {mode === "new" ? "New Plugin" : "Extended Existing Plugin"}
    - Connect {pluginName}
    - Create an agent that uses {pluginName}
 
-5. 📝 Documentation (optional):
-   - Add plugin to README
-   - Document action examples
+5. 📚 Review Documentation:
+   - Check docs/plugins/{pluginName}-plugin.md
+   - Verify all research sources and decisions are captured
 
 Need help with any of these steps? Just ask!
 ```
