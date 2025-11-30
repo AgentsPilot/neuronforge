@@ -4,6 +4,7 @@ import { UserPluginConnections } from './user-plugin-connections';
 import { PluginManagerV2 } from './plugin-manager-v2';
 import { BasePluginExecutor } from './base-plugin-executor';
 import { ExecutionResult } from '@/lib/types/plugin-types';
+import { createLogger } from '@/lib/logger';
 
 // Import all plugin executors
 import { GmailPluginExecutor } from './gmail-plugin-executor';
@@ -18,6 +19,7 @@ import { ChatGPTResearchPluginExecutor } from './chatgpt-research-plugin-executo
 import { LinkedInPluginExecutor } from './linkedin-plugin-executor';
 import { AirtablePluginExecutor } from './airtable-plugin-executor';
 
+const logger = createLogger({ module: 'PluginExecuter', service: 'plugin-system' });
 let pluginExecuterInstance: PluginExecuterV2 | null = null;
 
 // Type for plugin executor constructor
@@ -53,15 +55,13 @@ export class PluginExecuterV2 {
   private constructor(userConnections: UserPluginConnections, pluginManager: PluginManagerV2) {
     this.userConnections = userConnections;
     this.pluginManager = pluginManager;
-    if (this.debug) console.log('DEBUG: PluginExecuterV2 initialized');
+    logger.debug('PluginExecuterV2 initialized');
   }
 
   // Singleton factory for serverless functions
   static async getInstance(): Promise<PluginExecuterV2> {
     if (!pluginExecuterInstance) {
-      if (PluginExecuterV2.debug) {
-        console.log('DEBUG: Creating new PluginExecuterV2 instance for serverless function');
-      }
+      logger.debug('Creating new PluginExecuterV2 instance for serverless function');
 
       const userConnections = UserPluginConnections.getInstance();
       const pluginManager = await PluginManagerV2.getInstance();
@@ -74,20 +74,18 @@ export class PluginExecuterV2 {
   // Initialize plugin executer
   async initialize(): Promise<void> {
     if (this.initialized) {
-      if (this.debug) console.log('DEBUG: PluginExecuterV2 already initialized, skipping');
+      logger.debug('PluginExecuterV2 already initialized, skipping');
       return;
     }
-    
+
     // Plugin instances will be created lazily on-demand
     this.initialized = true;
-    if (this.debug) console.log('DEBUG: PluginExecuterV2 initialization complete');
+    logger.info('PluginExecuterV2 initialization complete');
   }
 
   // Unified execute method - routes to appropriate plugin executor
   async execute(userId: string, pluginName: string, actionName: string, parameters: any): Promise<ExecutionResult> {
-    if (this.debug) {
-      console.log(`DEBUG: PluginExecuterV2.execute - ${pluginName}.${actionName} for user ${userId}`);
-    }
+    logger.info({ userId, pluginName, actionName }, 'Executing plugin action');
 
     try {
       // Get or create the executor instance for this plugin
@@ -98,9 +96,7 @@ export class PluginExecuterV2 {
 
       return result;
     } catch (error: any) {
-      if (this.debug) {
-        console.error(`DEBUG: PluginExecuterV2.execute - Error executing ${pluginName}.${actionName}:`, error);
-      }
+      logger.error({ err: error, pluginName, actionName }, 'Plugin execution error');
 
       return {
         success: false,
@@ -114,9 +110,7 @@ export class PluginExecuterV2 {
   private getOrCreateExecutor(pluginName: string): BasePluginExecutor {
     // Check if we already have an instance
     if (this.pluginInstances.has(pluginName)) {
-      if (this.debug) {
-        console.log(`DEBUG: PluginExecuterV2 - Reusing existing executor for ${pluginName}`);
-      }
+      logger.debug({ pluginName }, 'Reusing existing executor');
       return this.pluginInstances.get(pluginName)!;
     }
 
@@ -127,9 +121,7 @@ export class PluginExecuterV2 {
     }
 
     // Create new instance
-    if (this.debug) {
-      console.log(`DEBUG: PluginExecuterV2 - Creating new executor instance for ${pluginName}`);
-    }
+    logger.debug({ pluginName }, 'Creating new executor instance');
 
     const executor = new ExecutorClass(this.userConnections, this.pluginManager);
 
