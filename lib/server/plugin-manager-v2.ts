@@ -787,7 +787,7 @@ export class PluginManagerV2 {
       
       // Check for external domains (simplified - replace with actual domain logic)
       context.has_external_recipients = [...to, ...cc, ...bcc].some((email: string) => 
-        !email.includes('@yourdomain.com')
+        email && typeof email === 'string' && !email.includes('@yourdomain.com')
       );
     }
     

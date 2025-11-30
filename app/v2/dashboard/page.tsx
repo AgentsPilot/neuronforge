@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 import { Card } from '@/components/v2/ui/card'
-import { V2Header } from '@/components/v2/V2Header'
+import { PageLoading } from '@/components/v2/ui/loading'
+import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import { getPricingConfig } from '@/lib/utils/pricingConfig'
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts'
 import {
@@ -498,17 +499,6 @@ export default function V2DashboardPage() {
     return 'Just now'
   }
 
-  // Auto-resize textarea when searchQuery changes
-  React.useEffect(() => {
-    if (textareaRef.current) {
-      // Reset height to auto first to get accurate scrollHeight
-      textareaRef.current.style.height = 'auto'
-      // Set height based on content, capped at 128px
-      const newHeight = textareaRef.current.scrollHeight
-      textareaRef.current.style.height = Math.min(newHeight, 128) + 'px'
-    }
-  }, [searchQuery])
-
   // Initialize textarea height on mount
   React.useEffect(() => {
     if (textareaRef.current) {
@@ -538,14 +528,7 @@ export default function V2DashboardPage() {
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[600px]">
-        <div className="text-center space-y-4">
-          <div className="w-16 h-16 border-4 border-[var(--v2-primary)] border-t-transparent rounded-full animate-spin mx-auto"></div>
-          <p className="text-[var(--v2-text-secondary)] font-medium">Loading dashboard...</p>
-        </div>
-      </div>
-    )
+    return <PageLoading message="Loading dashboard..." />
   }
 
   // Use full name from profile if available, otherwise fallback to email
@@ -556,21 +539,24 @@ export default function V2DashboardPage() {
 
   return (
     <div className="space-y-2 sm:space-y-3 lg:space-y-4">
-      {/* Top Bar: Header + Token Display + User Menu */}
-      <div className="flex items-start justify-between gap-4">
-        {/* Header */}
-        <div className="flex-1 min-w-0">
-          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-semibold text-[var(--v2-text-primary)] mb-1 leading-tight">
-            Hi {capitalizedName},
-          </h1>
-          <p className="text-base sm:text-lg lg:text-xl text-[var(--v2-text-secondary)] font-normal">
-            what do you want to automate today?
-          </p>
-        </div>
-        {/* Token Display + User Menu */}
-        <div className="flex-shrink-0">
-          <V2Header />
-        </div>
+      {/* Logo - First Line */}
+      <div className="mb-3">
+        <V2Logo />
+      </div>
+
+      {/* Controls - Second Line */}
+      <div className="flex justify-end mb-3">
+        <V2Controls />
+      </div>
+
+      {/* Greeting Section */}
+      <div className="mb-4 sm:mb-5 lg:mb-6">
+        <h1 className="text-2xl sm:text-3xl lg:text-4xl font-semibold text-[var(--v2-text-primary)] mb-1 leading-tight">
+          Hi {capitalizedName},
+        </h1>
+        <p className="text-base sm:text-lg lg:text-xl text-[var(--v2-text-secondary)] font-normal">
+          what do you want to automate today?
+        </p>
       </div>
 
       {/* Search Box */}
@@ -585,11 +571,21 @@ export default function V2DashboardPage() {
               onChange={(e) => {
                 if (!(accountFrozen || stats.creditBalance < 2000)) {
                   setSearchQuery(e.target.value)
+                  // Auto-grow textarea up to max height
+                  const target = e.target as HTMLTextAreaElement
+                  target.style.height = 'auto'
+                  const newHeight = Math.min(target.scrollHeight, 128)
+                  target.style.height = newHeight + 'px'
                 }
               }}
               placeholder={accountFrozen ? "Account frozen - Purchase tokens to continue" : stats.creditBalance < 2000 ? "Insufficient balance - Need 2000 tokens to create agent" : "Describe what you want to automate..."}
-              className="flex-1 bg-transparent border-none outline-none text-sm sm:text-base text-[var(--v2-text-secondary)] placeholder:text-[var(--v2-text-muted)] resize-none max-h-32"
-              style={{ height: 'auto', overflowY: 'auto' }}
+              className="flex-1 bg-transparent border-none outline-none text-sm sm:text-base text-[var(--v2-text-secondary)] placeholder:text-[var(--v2-text-muted)] resize-none max-h-32 overflow-y-auto scroll-smooth scrollbar-thin"
+              style={{
+                height: 'auto',
+                minHeight: '24px',
+                scrollbarWidth: 'thin',
+                scrollbarColor: 'rgba(209, 213, 219, 0.5) transparent'
+              }}
               disabled={accountFrozen || stats.creditBalance < 2000}
               rows={1}
               onKeyDown={(e) => {

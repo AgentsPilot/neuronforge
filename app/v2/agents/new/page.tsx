@@ -7,7 +7,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import { Suspense, useState, useEffect, useRef } from 'react'
 import { useAuth } from '@/components/UserProvider'
 import { Card } from '@/components/v2/ui/card'
-import { V2Header } from '@/components/v2/V2Header'
+import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import { ArrowLeft, Bot, Sparkles, MessageSquare, Zap, CheckCircle2, Clock,
   Settings,
   Loader2,
@@ -1279,7 +1279,12 @@ function V2AgentBuilderContent() {
 
   return (
     <div className="space-y-4 sm:space-y-5 lg:space-y-6">
-      {/* Top Bar: Back Button + User Menu */}
+      {/* Logo - First Line */}
+      <div className="mb-3">
+        <V2Logo />
+      </div>
+
+      {/* Back Button + Controls */}
       <div className="flex items-center justify-between">
         <button
           onClick={() => router.push('/v2/dashboard')}
@@ -1290,7 +1295,7 @@ function V2AgentBuilderContent() {
           <span className="hidden xs:inline">Back to Dashboard</span>
           <span className="xs:hidden">Back</span>
         </button>
-        <V2Header />
+        <V2Controls />
       </div>
 
       {/* Main Grid Layout - Two Columns: Setup Progress → Chat (Extended) */}
