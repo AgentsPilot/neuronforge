@@ -42,7 +42,7 @@ export class LinkedInPluginExecutor extends BasePluginExecutor {
 
   // Action 1: Get Profile
   private async getProfile(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Getting LinkedIn profile');
+    this.logger.debug('Getting LinkedIn profile');
 
     const { projection } = parameters;
 
@@ -70,7 +70,7 @@ export class LinkedInPluginExecutor extends BasePluginExecutor {
 
   // Action 2: Get User Info (OpenID Connect)
   private async getUserInfo(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Getting LinkedIn user info via OpenID Connect');
+    this.logger.debug('Getting LinkedIn user info via OpenID Connect');
 
     const response = await fetch(`${this.apiBaseUrl}/v2/userinfo`, {
       headers: this.buildAuthHeader(connection.access_token)
@@ -92,7 +92,7 @@ export class LinkedInPluginExecutor extends BasePluginExecutor {
 
   // Action 3: Create Post
   private async createPost(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Creating LinkedIn post');
+    this.logger.debug('Creating LinkedIn post');
 
     const { text, visibility = 'PUBLIC', media_url, media_title, media_description } = parameters;
 
@@ -147,7 +147,7 @@ export class LinkedInPluginExecutor extends BasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error('DEBUG: create_post failed:', errorData);
+      this.logger.error({ err: errorData }, 'create_post failed:');
       throw new Error(`LinkedIn create post failed: ${response.status} - ${errorData}`);
     }
 
@@ -165,7 +165,7 @@ export class LinkedInPluginExecutor extends BasePluginExecutor {
 
   // Action 4: Get Posts
   private async getPosts(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Getting LinkedIn posts');
+    this.logger.debug('Getting LinkedIn posts');
 
     const { count = 10, sort_by = 'LAST_MODIFIED' } = parameters;
 
@@ -206,7 +206,7 @@ export class LinkedInPluginExecutor extends BasePluginExecutor {
 
   // Action 6: Get Organization
   private async getOrganization(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Getting LinkedIn organization');
+    this.logger.debug('Getting LinkedIn organization');
 
     const { organization_id } = parameters;
 
@@ -238,7 +238,7 @@ export class LinkedInPluginExecutor extends BasePluginExecutor {
 
   // Action 7: Search Organizations
   private async searchOrganizations(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Searching LinkedIn organizations');
+    this.logger.debug('Searching LinkedIn organizations');
 
     const { keywords, industry, company_size, max_results = 10 } = parameters;
 
@@ -288,7 +288,7 @@ export class LinkedInPluginExecutor extends BasePluginExecutor {
 
   // Action 8: Get Organization Posts
   private async getOrganizationPosts(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Getting organization posts');
+    this.logger.debug('Getting organization posts');
 
     const { organization_id, count = 10 } = parameters;
 
@@ -325,7 +325,7 @@ export class LinkedInPluginExecutor extends BasePluginExecutor {
 
   // Action 9: Get Connections
   private async getConnections(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Getting LinkedIn connections');
+    this.logger.debug('Getting LinkedIn connections');
 
     const { start = 0, count = 50 } = parameters;
 

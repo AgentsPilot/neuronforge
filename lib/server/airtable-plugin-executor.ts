@@ -43,7 +43,7 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
 
   // Action 0: List Bases
   private async listBases(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Listing Airtable bases');
+    this.logger.debug('Listing Airtable bases');
 
     const url = `${this.metaApiUrl}/bases`;
 
@@ -67,7 +67,7 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
 
   // Action 1: List Records
   private async listRecords(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Listing Airtable records');
+    this.logger.debug('Listing Airtable records');
 
     const {
       base_id,
@@ -137,7 +137,7 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
 
   // Action 2: Get Record
   private async getRecord(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Getting Airtable record');
+    this.logger.debug('Getting Airtable record');
 
     const { base_id, table_name, record_id } = parameters;
 
@@ -159,7 +159,7 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
 
   // Action 3: Create Records
   private async createRecords(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Creating Airtable records');
+    this.logger.debug('Creating Airtable records');
 
     const { base_id, table_name, records, typecast = false } = parameters;
 
@@ -191,7 +191,7 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
 
   // Action 4: Update Records
   private async updateRecords(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Updating Airtable records');
+    this.logger.debug('Updating Airtable records');
 
     const { base_id, table_name, records, typecast = false, destructive = false } = parameters;
 
@@ -227,7 +227,7 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
 
   // Action 8: List Tables
   private async listTables(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Listing Airtable tables');
+    this.logger.debug('Listing Airtable tables');
 
     const { base_id } = parameters;
 
@@ -255,7 +255,7 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
 
   // Action 9: Upload Attachment
   private async uploadAttachment(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Uploading attachment to Airtable record');
+    this.logger.debug('Uploading attachment to Airtable record');
 
     const { base_id, table_name, record_id, field_name, attachment } = parameters;
 
@@ -323,7 +323,7 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
 
   // Action 10: Get Attachment URLs
   private async getAttachmentUrls(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Getting attachment URLs from Airtable record');
+    this.logger.debug('Getting attachment URLs from Airtable record');
 
     const { base_id, table_name, record_id, field_name } = parameters;
 

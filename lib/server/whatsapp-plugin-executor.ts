@@ -50,7 +50,7 @@ export class WhatsAppPluginExecutor extends BasePluginExecutor {
 
   // Send a template message to initiate conversation
   private async sendTemplateMessage(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Sending WhatsApp template message');
+    this.logger.debug('Sending WhatsApp template message');
 
     const { recipient_phone, template_name, language_code, template_parameters } = parameters;
 
@@ -130,7 +130,7 @@ export class WhatsAppPluginExecutor extends BasePluginExecutor {
 
   // Send a free-form text message
   private async sendTextMessage(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Sending WhatsApp text message');
+    this.logger.debug('Sending WhatsApp text message');
 
     const { recipient_phone, message_text, preview_url, reply_to_message_id } = parameters;
 
@@ -183,7 +183,7 @@ export class WhatsAppPluginExecutor extends BasePluginExecutor {
 
   // Send an interactive message with buttons or lists
   private async sendInteractiveMessage(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Sending WhatsApp interactive message');
+    this.logger.debug('Sending WhatsApp interactive message');
 
     const {
       recipient_phone,
@@ -286,7 +286,7 @@ export class WhatsAppPluginExecutor extends BasePluginExecutor {
 
   // List all available message templates
   private async listMessageTemplates(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Listing WhatsApp message templates');
+    this.logger.debug('Listing WhatsApp message templates');
 
     const { limit, status_filter, name_filter } = parameters;
 
@@ -341,7 +341,7 @@ export class WhatsAppPluginExecutor extends BasePluginExecutor {
 
   // Mark an incoming message as read
   private async markMessageRead(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Marking WhatsApp message as read');
+    this.logger.debug('Marking WhatsApp message as read');
 
     const { message_id } = parameters;
 

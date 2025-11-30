@@ -64,7 +64,7 @@ export class SlackPluginExecutor extends BasePluginExecutor {
 
   // Send a message to a channel, DM, or thread
   private async sendMessage(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Sending Slack message');
+    this.logger.debug('Sending Slack message');
 
     const { channel_id, message_text, thread_timestamp, as_user } = parameters;
 
@@ -92,7 +92,7 @@ export class SlackPluginExecutor extends BasePluginExecutor {
 
     // If bot is not in channel, try to join it first
     if (!responseData.ok && responseData.error === 'not_in_channel') {
-      if (this.debug) console.log('DEBUG: Bot not in channel, attempting to join...');
+      this.logger.debug('Bot not in channel, attempting to join...');
 
       try {
         // Try to join the channel
@@ -108,7 +108,7 @@ export class SlackPluginExecutor extends BasePluginExecutor {
         const joinData = await joinResponse.json();
 
         if (joinData.ok) {
-          if (this.debug) console.log('DEBUG: Successfully joined channel, retrying message send...');
+          this.logger.debug('Successfully joined channel, retrying message send...');
 
           // Retry sending the message
           response = await fetch('https://slack.com/api/chat.postMessage', {
@@ -122,10 +122,10 @@ export class SlackPluginExecutor extends BasePluginExecutor {
 
           responseData = await response.json();
         } else {
-          if (this.debug) console.log('DEBUG: Failed to join channel:', joinData.error);
+          this.logger.debug({ data: joinData.error }, 'Failed to join channel:');
         }
       } catch (joinError) {
-        if (this.debug) console.error('DEBUG: Error joining channel:', joinError);
+        this.logger.error({ err: joinError }, 'Error joining channel:');
         // Continue to error handling below
       }
     }
@@ -133,13 +133,13 @@ export class SlackPluginExecutor extends BasePluginExecutor {
     // Handle the final response
     if (!response.ok) {
       const errorText = await response.text();
-      if (this.debug) console.error('DEBUG: send_message HTTP failed:', errorText);
+      this.logger.error({ err: errorText }, 'send_message HTTP failed:');
       throw new Error(`Slack API HTTP error: ${response.status} - ${errorText}`);
     }
 
     if (!responseData.ok) {
       const errorMsg = responseData.error || 'Unknown Slack error';
-      if (this.debug) console.error('DEBUG: send_message Slack error:', errorMsg);
+      this.logger.error({ err: errorMsg }, 'send_message Slack error:');
       throw new Error(`Slack API error: ${errorMsg}`);
     }
 
@@ -154,7 +154,7 @@ export class SlackPluginExecutor extends BasePluginExecutor {
 
   // Read message history from a channel or DM
   private async readMessages(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Reading Slack messages');
+    this.logger.debug('Reading Slack messages');
 
     const { channel_id, limit, oldest_timestamp, latest_timestamp, include_all_metadata } = parameters;
 
@@ -204,7 +204,7 @@ export class SlackPluginExecutor extends BasePluginExecutor {
 
   // Update/edit a previously sent message
   private async updateMessage(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Updating Slack message');
+    this.logger.debug('Updating Slack message');
 
     const { channel_id, message_timestamp, new_message_text } = parameters;
 
@@ -236,7 +236,7 @@ export class SlackPluginExecutor extends BasePluginExecutor {
 
   // Add emoji reaction to a message
   private async addReaction(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Adding Slack reaction');
+    this.logger.debug('Adding Slack reaction');
 
     const { channel_id, message_timestamp, emoji_name } = parameters;
 
@@ -267,7 +267,7 @@ export class SlackPluginExecutor extends BasePluginExecutor {
 
   // Remove emoji reaction from a message
   private async removeReaction(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Removing Slack reaction');
+    this.logger.debug('Removing Slack reaction');
 
     const { channel_id, message_timestamp, emoji_name } = parameters;
 
@@ -298,7 +298,7 @@ export class SlackPluginExecutor extends BasePluginExecutor {
 
   // Create a new public or private channel
   private async createChannel(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Creating Slack channel');
+    this.logger.debug('Creating Slack channel');
 
     const { channel_name, is_private, description } = parameters;
 
@@ -350,7 +350,7 @@ export class SlackPluginExecutor extends BasePluginExecutor {
 
   // List all channels the bot has access to
   private async listChannels(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Listing Slack channels');
+    this.logger.debug('Listing Slack channels');
 
     const { types, limit, exclude_archived } = parameters;
 
@@ -387,7 +387,7 @@ export class SlackPluginExecutor extends BasePluginExecutor {
 
   // List all users in the workspace
   private async listUsers(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Listing Slack users');
+    this.logger.debug('Listing Slack users');
 
     const { limit, include_deleted } = parameters;
 
@@ -430,7 +430,7 @@ export class SlackPluginExecutor extends BasePluginExecutor {
 
   // Get detailed information about a specific user
   private async getUserInfo(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Getting Slack user info');
+    this.logger.debug('Getting Slack user info');
 
     const { user_id } = parameters;
 
@@ -471,7 +471,7 @@ export class SlackPluginExecutor extends BasePluginExecutor {
 
   // Upload and share a file (using new 3-step workflow)
   private async uploadFile(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Uploading file to Slack (new workflow)');
+    this.logger.debug('Uploading file to Slack (new workflow)');
 
     const { filename, file_content, channel_ids, title, initial_comment } = parameters;
 

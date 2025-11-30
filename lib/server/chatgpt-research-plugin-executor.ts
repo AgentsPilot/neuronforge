@@ -41,7 +41,7 @@ export class ChatGPTResearchPluginExecutor extends BasePluginExecutor {
    * Research a topic using web search and AI analysis
    */
   private async researchTopic(parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Researching topic via ChatGPT Research');
+    this.logger.debug('Researching topic via ChatGPT Research');
 
     const { topic, depth = 'standard', focus = 'general', output_format = 'detailed', max_length = 3000 } = parameters;
 
@@ -92,7 +92,7 @@ export class ChatGPTResearchPluginExecutor extends BasePluginExecutor {
    * Summarize provided content using AI
    */
   private async summarizeContent(parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Summarizing content via ChatGPT');
+    this.logger.debug('Summarizing content via ChatGPT');
 
     const { content, length = 'standard', style = 'professional', focus_on = [] } = parameters;
 
@@ -102,7 +102,7 @@ export class ChatGPTResearchPluginExecutor extends BasePluginExecutor {
     }
 
     if (content.length < 50) {
-      if (this.debug) console.log('DEBUG: Content too short for summarization, returning as-is');
+      this.logger.debug('Content too short for summarization, returning as-is');
       return {
         summary: content,
         original_length: content.length,
@@ -156,7 +156,7 @@ export class ChatGPTResearchPluginExecutor extends BasePluginExecutor {
         tokens_used: completion.usage?.total_tokens || 0
       };
     } catch (error: any) {
-      if (this.debug) console.error('DEBUG: OpenAI summarization failed:', error);
+      this.logger.error({ err: error }, 'OpenAI summarization failed:');
       throw new Error(`AI summarization failed: ${error.message}`);
     }
   }
@@ -165,7 +165,7 @@ export class ChatGPTResearchPluginExecutor extends BasePluginExecutor {
    * Answer questions using AI with optional web research
    */
   private async answerQuestion(parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Answering question via ChatGPT');
+    this.logger.debug('Answering question via ChatGPT');
 
     const { question, use_web_search = true, detail_level = 'standard', include_sources = true } = parameters;
 
@@ -228,7 +228,7 @@ export class ChatGPTResearchPluginExecutor extends BasePluginExecutor {
         tokens_used: completion.usage?.total_tokens || 0
       };
     } catch (error: any) {
-      if (this.debug) console.error('DEBUG: OpenAI question answering failed:', error);
+      this.logger.error({ err: error }, 'OpenAI question answering failed:');
       throw new Error(`AI answering failed: ${error.message}`);
     }
   }
@@ -258,7 +258,7 @@ export class ChatGPTResearchPluginExecutor extends BasePluginExecutor {
       const response = await fetch(searchUrl);
 
       if (!response.ok) {
-        if (this.debug) console.error('DEBUG: Google Search API failed:', response.status);
+        this.logger.error({ err: response.status }, 'Google Search API failed:');
         return [];
       }
 
@@ -292,7 +292,7 @@ export class ChatGPTResearchPluginExecutor extends BasePluginExecutor {
 
       return results;
     } catch (error: any) {
-      if (this.debug) console.error('DEBUG: Web search error:', error);
+      this.logger.error({ err: error }, 'Web search error:');
       return [];
     }
   }
@@ -400,7 +400,7 @@ REQUIREMENTS:
         key_points: keyPoints
       };
     } catch (error: any) {
-      if (this.debug) console.error('DEBUG: OpenAI research summary failed:', error);
+      this.logger.error({ err: error }, 'OpenAI research summary failed:');
       throw new Error(`AI research summary failed: ${error.message}`);
     }
   }

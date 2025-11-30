@@ -49,7 +49,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
 
   // List calendar events within a time range
   private async listEvents(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Listing events from Google Calendar');
+    this.logger.debug('DEBUG: Listing events from Google Calendar');
 
     const {
       calendar_id = 'primary',
@@ -82,7 +82,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error('DEBUG: Calendar list failed:', errorData);
+      this.logger.error({ err: error }, 'DEBUG: Calendar list failed:', errorData);
       throw new Error(`Calendar API error: ${response.status} - ${errorData}`);
     }
 
@@ -120,7 +120,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
 
   // Create a new calendar event
   private async createEvent(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Creating event in Google Calendar');
+    this.logger.debug('DEBUG: Creating event in Google Calendar');
 
     const {
       calendar_id = 'primary',
@@ -198,7 +198,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error('DEBUG: Event creation failed:', errorData);
+      this.logger.error({ err: error }, 'DEBUG: Event creation failed:', errorData);
       throw new Error(`Calendar API error: ${response.status} - ${errorData}`);
     }
 
@@ -219,7 +219,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
 
   // Update an existing calendar event
   private async updateEvent(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Updating event in Google Calendar');
+    this.logger.debug('DEBUG: Updating event in Google Calendar');
 
     const {
       calendar_id = 'primary',
@@ -245,7 +245,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!getResponse.ok) {
       const errorData = await getResponse.text();
-      if (this.debug) console.error('DEBUG: Get event failed:', errorData);
+      this.logger.error({ err: error }, 'DEBUG: Get event failed:', errorData);
       throw new Error(`Calendar API error: ${getResponse.status} - ${errorData}`);
     }
 
@@ -295,7 +295,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error('DEBUG: Event update failed:', errorData);
+      this.logger.error({ err: error }, 'DEBUG: Event update failed:', errorData);
       throw new Error(`Calendar API error: ${response.status} - ${errorData}`);
     }
 
@@ -313,7 +313,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
 
   // Delete a calendar event
   private async deleteEvent(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Deleting event from Google Calendar');
+    this.logger.debug('DEBUG: Deleting event from Google Calendar');
 
     const {
       calendar_id = 'primary',
@@ -338,7 +338,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error('DEBUG: Event deletion failed:', errorData);
+      this.logger.error({ err: error }, 'DEBUG: Event deletion failed:', errorData);
       throw new Error(`Calendar API error: ${response.status} - ${errorData}`);
     }
 
@@ -351,7 +351,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
 
   // Get details about a specific event
   private async getEventDetails(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Getting event details from Google Calendar');
+    this.logger.debug('DEBUG: Getting event details from Google Calendar');
 
     const {
       calendar_id = 'primary',
@@ -370,7 +370,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error('DEBUG: Get event details failed:', errorData);
+      this.logger.error({ err: error }, 'DEBUG: Get event details failed:', errorData);
       throw new Error(`Calendar API error: ${response.status} - ${errorData}`);
     }
 

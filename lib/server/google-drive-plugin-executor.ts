@@ -49,7 +49,7 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
 
   // List files with optional filtering
   private async listFiles(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Listing files via Google Drive API');
+    this.logger.debug('DEBUG: Listing files via Google Drive API');
 
     // Build query
     let query = this.buildListQuery(parameters);
@@ -83,7 +83,7 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error('DEBUG: Drive list failed:', errorData);
+      this.logger.error({ err: error }, 'DEBUG: Drive list failed:', errorData);
       throw new Error(`Drive API error: ${response.status} - ${errorData}`);
     }
 
@@ -101,7 +101,7 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
 
   // Search files using Drive's query syntax
   private async searchFiles(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Searching files via Google Drive API');
+    this.logger.debug('DEBUG: Searching files via Google Drive API');
 
     // Build search query
     let query = parameters.query || '';
@@ -146,7 +146,7 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error('DEBUG: Drive search failed:', errorData);
+      this.logger.error({ err: error }, 'DEBUG: Drive search failed:', errorData);
       throw new Error(`Drive search failed: ${response.status} - ${errorData}`);
     }
 
@@ -173,7 +173,7 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
 
   // Get detailed metadata for a specific file
   private async getFileMetadata(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Getting file metadata via Google Drive API');
+    this.logger.debug('DEBUG: Getting file metadata via Google Drive API');
 
     const fileId = parameters.file_id;
     let fields = 'id, name, mimeType, size, createdTime, modifiedTime, description, owners, lastModifyingUser, webViewLink, webContentLink, iconLink, thumbnailLink, parents, shared, starred, trashed, version, originalFilename, fileExtension, md5Checksum, headRevisionId, sharingUser, capabilities';
@@ -198,7 +198,7 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error('DEBUG: Get file metadata failed:', errorData);
+      this.logger.error({ err: error }, 'DEBUG: Get file metadata failed:', errorData);
       throw new Error(`Failed to get file metadata: ${response.status} - ${errorData}`);
     }
 
@@ -222,7 +222,7 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
 
   // Read file content
   private async readFileContent(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Reading file content via Google Drive API');
+    this.logger.debug('DEBUG: Reading file content via Google Drive API');
 
     const fileId = parameters.file_id;
     
@@ -302,7 +302,7 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
 
   // Get folder contents
   private async getFolderContents(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Getting folder contents via Google Drive API');
+    this.logger.debug('DEBUG: Getting folder contents via Google Drive API');
 
     const folderId = parameters.folder_id === 'root' ? 'root' : parameters.folder_id;
     
@@ -333,7 +333,7 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error('DEBUG: Get folder contents failed:', errorData);
+      this.logger.error({ err: error }, 'DEBUG: Get folder contents failed:', errorData);
       throw new Error(`Failed to get folder contents: ${response.status} - ${errorData}`);
     }
 
@@ -346,7 +346,7 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
         const folderMetadata = await this.getFileMetadata(connection, { file_id: folderId });
         folderName = folderMetadata.file_name;
       } catch (error) {
-        if (this.debug) console.warn('DEBUG: Could not get folder name:', error);
+        this.logger.warn({ err: error }, 'DEBUG: Could not get folder name:', error);
       }
     }
     
