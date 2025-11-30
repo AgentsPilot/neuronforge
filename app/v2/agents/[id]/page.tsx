@@ -8,7 +8,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 import { Card } from '@/components/v2/ui/card'
-import { V2Header } from '@/components/v2/V2Header'
+import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import {
   ArrowLeft,
   Play,
@@ -19,13 +19,17 @@ import {
   Activity,
   Clock,
   CheckCircle,
+  CheckCircle2,
   AlertCircle,
+  AlertTriangle,
+  Shield,
   Bot,
   Copy,
   Check,
   Loader2,
   TrendingUp,
   XCircle,
+  X,
   Zap,
   ChevronLeft,
   ChevronRight,
@@ -33,7 +37,8 @@ import {
   Share2,
   FlaskConical,
   Rocket,
-  Brain
+  Brain,
+  PlayCircle
 } from 'lucide-react'
 import {
   SiNotion,
@@ -43,7 +48,8 @@ import { Mail, Phone, Cloud, Database, Globe, Puzzle } from 'lucide-react'
 import { PluginIcon } from '@/components/PluginIcon'
 import { AgentIntensityCardV2 } from '@/components/v2/agents/AgentIntensityCardV2'
 import { AgentHealthCardV2 } from '@/components/v2/agents/AgentHealthCardV2'
-import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
+import { formatScheduleDisplay, formatNextRun } from '@/lib/utils/scheduleFormatter'
+import { InlineLoading } from '@/components/v2/ui/loading'
 
 type Agent = {
   id: string
@@ -51,8 +57,8 @@ type Agent = {
   description?: string
   status: string
   mode?: string
-  schedule_cron?: string
-  timezone?: string
+  schedule_cron?: string | null
+  timezone?: string | null
   next_run?: string
   created_at?: string
   plugins_required?: string[]
@@ -76,6 +82,10 @@ type Execution = {
       total: number
       prompt: number
       completion: number
+      adjusted?: number
+      intensityMultiplier?: number
+      intensityScore?: number
+      _source?: string
     }
     pilot?: boolean
     agentkit?: boolean
@@ -134,14 +144,53 @@ export default function V2AgentDetailPage() {
   const [executionPage, setExecutionPage] = useState(1)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showShareConfirm, setShowShareConfirm] = useState(false)
+  const [showShareSuccess, setShowShareSuccess] = useState(false)
+  const [shareCreditsAwarded, setShareCreditsAwarded] = useState(0)
+  const [shareQualityScore, setShareQualityScore] = useState(0)
+  const [sharingRewardAmount, setSharingRewardAmount] = useState(500) // Default fallback
+  const [sharingValidation, setSharingValidation] = useState<any>(null) // Validation result
+  const [sharingStatus, setSharingStatus] = useState<any>(null) // User sharing limits
+  const [sharingConfig, setSharingConfig] = useState<any>(null) // Validator config (requirements)
+  const [shareRewardActive, setShareRewardActive] = useState(true) // Track if share_agent reward is active
+  const [hasBeenShared, setHasBeenShared] = useState(false)
   const [memoryCount, setMemoryCount] = useState(0)
+  const [tokensPerPilotCredit, setTokensPerPilotCredit] = useState<number>(10) // Default to 10
   const EXECUTIONS_PER_PAGE = 10
+
+  // Inline editing state
+  const [isEditing, setIsEditing] = useState(false)
+  const [editedName, setEditedName] = useState('')
+  const [editedDescription, setEditedDescription] = useState('')
+  const [editedScheduleCron, setEditedScheduleCron] = useState('')
+  const [editedMode, setEditedMode] = useState('')
+  const [editedTimezone, setEditedTimezone] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
+
+  // Schedule editing state (matching agent creation page)
+  const [scheduleMode, setScheduleMode] = useState<'manual' | 'scheduled'>('manual')
+  const [scheduleType, setScheduleType] = useState<'hourly' | 'daily' | 'weekly' | 'monthly' | ''>('')
+  const [scheduleTime, setScheduleTime] = useState<string>('09:00')
+  const [selectedDays, setSelectedDays] = useState<string[]>([])
+  const [selectedMonthDay, setSelectedMonthDay] = useState<string>('1')
+  const [hourlyInterval, setHourlyInterval] = useState<string>('1')
+  const [dailyOption, setDailyOption] = useState<'everyday' | 'weekdays' | 'weekends'>('everyday')
 
   useEffect(() => {
     if (user && agentId) {
       fetchAgentData()
+      fetchTokensPerPilotCredit()
+      fetchSharingRewardAmount()
+      fetchShareRewardStatus()
     }
   }, [user, agentId])
+
+  // Pre-fetch sharing eligibility when agent data is loaded (for instant modal)
+  useEffect(() => {
+    if (agentId && user && shareRewardActive && agent) {
+      checkSharingEligibility()
+    }
+  }, [agentId, user?.id, shareRewardActive])
 
   const fetchMemoryCount = async () => {
     if (!agentId) return
@@ -157,6 +206,95 @@ export default function V2AgentDetailPage() {
       }
     } catch (error) {
       console.error('Error fetching memory count:', error)
+    }
+  }
+
+  const fetchTokensPerPilotCredit = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('ais_system_config')
+        .select('config_value')
+        .eq('config_key', 'tokens_per_pilot_credit')
+        .single()
+
+      if (!error && data) {
+        const value = parseInt(data.config_value)
+        if (value > 0 && value <= 1000) {
+          setTokensPerPilotCredit(value)
+          console.log(`[AGENT PAGE] Fetched tokens_per_pilot_credit: ${value}`)
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching tokens_per_pilot_credit:', error)
+      // Keep default value of 10
+    }
+  }
+
+  const fetchSharingRewardAmount = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('reward_config')
+        .select('credits_amount')
+        .eq('reward_key', 'agent_sharing')
+        .eq('is_active', true)
+        .maybeSingle()
+
+      if (!error && data) {
+        setSharingRewardAmount(data.credits_amount)
+      }
+    } catch (error) {
+      console.error('Error fetching sharing reward amount:', error)
+    }
+  }
+
+  const fetchShareRewardStatus = async () => {
+    try {
+      const response = await fetch('/api/admin/reward-config')
+      const result = await response.json()
+
+      if (!result.success || !result.rewards) {
+        setShareRewardActive(false)
+        return
+      }
+
+      const shareReward = result.rewards.find((r: any) => r.reward_key === 'agent_sharing')
+
+      if (!shareReward) {
+        setShareRewardActive(false)
+        return
+      }
+
+      const isActive = shareReward.is_active ?? false
+      setShareRewardActive(isActive)
+    } catch (error) {
+      console.error('Error fetching share reward config:', error)
+      setShareRewardActive(false)
+    }
+  }
+
+  const checkSharingEligibility = async () => {
+    if (!user?.id || !agent?.id) return
+
+    console.log('[SHARE VALIDATION] Starting eligibility check')
+
+    try {
+      const { AgentSharingValidator } = await import('@/lib/credits/agentSharingValidation')
+      const validator = new AgentSharingValidator(supabase)
+
+      const validation = await validator.validateSharing(user.id, agent.id)
+      console.log('[SHARE VALIDATION] Validation result:', validation)
+      setSharingValidation(validation)
+
+      const status = await validator.getSharingStatus(user.id)
+      console.log('[SHARE VALIDATION] Status:', status)
+      setSharingStatus(status)
+
+      // Get validator config for displaying requirements
+      const config = validator.getConfig()
+      console.log('[SHARE VALIDATION] Config:', config)
+      setSharingConfig(config)
+    } catch (error) {
+      console.error('[SHARE VALIDATION] Error checking sharing eligibility:', error)
     }
   }
 
@@ -250,10 +388,13 @@ export default function V2AgentDetailPage() {
               logs: {
                 ...(execution.logs || {}),
                 tokensUsed: {
-                  prompt: inputTokens,
-                  completion: outputTokens,
-                  total: totalTokens,
-                  _source: 'token_usage_table_batched'
+                  // Preserve adjusted tokens if they exist (from new intensity system)
+                  ...(execution.logs?.tokensUsed || {}),
+                  // Only add prompt/completion/total if they don't already exist
+                  prompt: execution.logs?.tokensUsed?.prompt || inputTokens,
+                  completion: execution.logs?.tokensUsed?.completion || outputTokens,
+                  total: execution.logs?.tokensUsed?.total || totalTokens,
+                  _source: execution.logs?.tokensUsed?.adjusted ? 'agent_executions_with_fallback' : 'token_usage_table_batched'
                 }
               }
             };
@@ -276,7 +417,16 @@ export default function V2AgentDetailPage() {
 
         // Set first execution as selected by default
         if (enrichedExecutions.length > 0) {
-          setSelectedExecution(enrichedExecutions[0])
+          const firstExec = enrichedExecutions[0];
+          console.log('[V2 Agent Page] Auto-selecting first execution:', {
+            id: firstExec.id?.slice(0, 8),
+            started_at: firstExec.started_at,
+            tokensUsed: firstExec.logs?.tokensUsed,
+            hasAdjusted: !!firstExec.logs?.tokensUsed?.adjusted,
+            adjustedValue: firstExec.logs?.tokensUsed?.adjusted,
+            totalValue: firstExec.logs?.tokensUsed?.total
+          });
+          setSelectedExecution(firstExec)
         }
       }
 
@@ -328,6 +478,234 @@ export default function V2AgentDetailPage() {
       }
     } catch (error) {
       console.error('Error toggling status:', error)
+    }
+  }
+
+  // ==================== SCHEDULE HELPERS ====================
+
+  const getDaySuffix = (day: number) => {
+    if (day >= 11 && day <= 13) return 'th'
+    switch (day % 10) {
+      case 1: return 'st'
+      case 2: return 'nd'
+      case 3: return 'rd'
+      default: return 'th'
+    }
+  }
+
+  const getScheduleDescription = () => {
+    if (!scheduleType) return 'No schedule set'
+
+    if (scheduleType === 'hourly') {
+      return hourlyInterval === '1' ? 'Every hour' : `Every ${hourlyInterval} hours`
+    }
+
+    if (scheduleType === 'daily') {
+      if (dailyOption === 'everyday') return `Every day at ${scheduleTime}`
+      if (dailyOption === 'weekdays') return `Weekdays at ${scheduleTime}`
+      if (dailyOption === 'weekends') return `Weekends at ${scheduleTime}`
+    }
+
+    if (scheduleType === 'weekly') {
+      if (selectedDays.length === 0) return 'Weekly - Select days'
+      const dayNames = selectedDays.map(d => d.charAt(0).toUpperCase() + d.slice(0, 3))
+      return `${dayNames.join(', ')} at ${scheduleTime}`
+    }
+
+    if (scheduleType === 'monthly') {
+      return `${selectedMonthDay}${getDaySuffix(parseInt(selectedMonthDay))} of month at ${scheduleTime}`
+    }
+
+    return 'Configure schedule'
+  }
+
+  const buildCronExpression = (): string | null => {
+    if (scheduleMode === 'manual') return null
+    if (!scheduleType) return null
+
+    // Parse time (HH:MM format)
+    const [hour, minute] = scheduleTime.split(':').map(Number)
+
+    // Hourly: "0 * * * *" or "0 */N * * *"
+    if (scheduleType === 'hourly') {
+      const interval = parseInt(hourlyInterval) || 1
+      return interval === 1 ? '0 * * * *' : `0 */${interval} * * *`
+    }
+
+    // Daily
+    if (scheduleType === 'daily') {
+      if (dailyOption === 'everyday') {
+        return `${minute} ${hour} * * *`
+      }
+      if (dailyOption === 'weekdays') {
+        return `${minute} ${hour} * * 1-5` // Mon-Fri
+      }
+      if (dailyOption === 'weekends') {
+        return `${minute} ${hour} * * 0,6` // Sun, Sat
+      }
+    }
+
+    // Weekly: specific days
+    if (scheduleType === 'weekly' && selectedDays.length > 0) {
+      const dayMap: Record<string, number> = {
+        sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
+        thursday: 4, friday: 5, saturday: 6
+      }
+      const cronDays = selectedDays
+        .map(d => dayMap[d.toLowerCase()])
+        .sort((a, b) => a - b)
+        .join(',')
+      return `${minute} ${hour} * * ${cronDays}`
+    }
+
+    // Monthly: specific day of month
+    if (scheduleType === 'monthly') {
+      const day = parseInt(selectedMonthDay) || 1
+      return `${minute} ${hour} ${day} * *`
+    }
+
+    return null
+  }
+
+  const handleDayToggle = (day: string) => {
+    setSelectedDays(prev => {
+      if (prev.includes(day)) {
+        if (prev.length === 1) return prev
+        return prev.filter(d => d !== day)
+      } else {
+        return [...prev, day]
+      }
+    })
+  }
+
+  const handleOnDemand = () => {
+    setScheduleMode('manual')
+    setScheduleType('')
+  }
+
+  // ==================== EDIT HANDLERS ====================
+
+  const handleEditClick = () => {
+    if (!agent) return
+
+    // Initialize edit state with current values
+    setEditedName(agent.agent_name)
+    setEditedDescription(agent.description || '')
+    setEditedScheduleCron(agent.schedule_cron || '')
+    setEditedMode(agent.mode || 'on_demand')
+    setEditedTimezone(agent.timezone || '')
+
+    // Parse existing cron to initialize schedule UI state
+    if (agent.mode === 'scheduled' && agent.schedule_cron) {
+      setScheduleMode('scheduled')
+      const parts = agent.schedule_cron.split(' ')
+      if (parts.length === 5) {
+        const [minute, hour, dayOfMonth, month, dayOfWeek] = parts
+
+        // Hourly schedule
+        if (hour.includes('*')) {
+          setScheduleType('hourly')
+          const match = hour.match(/\*\/(\d+)/)
+          if (match) {
+            setHourlyInterval(match[1])
+          } else {
+            setHourlyInterval('1')
+          }
+        }
+        // Monthly schedule
+        else if (dayOfMonth !== '*' && !dayOfMonth.includes('-') && !dayOfMonth.includes(',')) {
+          setScheduleType('monthly')
+          setSelectedMonthDay(dayOfMonth)
+          setScheduleTime(`${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`)
+        }
+        // Weekly schedule
+        else if (dayOfWeek !== '*' && dayOfWeek.includes(',')) {
+          setScheduleType('weekly')
+          const dayMap = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+          const days = dayOfWeek.split(',').map(d => dayMap[parseInt(d)])
+          setSelectedDays(days)
+          setScheduleTime(`${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`)
+        }
+        // Daily schedule
+        else if (dayOfMonth === '*' && month === '*') {
+          setScheduleType('daily')
+          setScheduleTime(`${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`)
+          // Determine daily option
+          if (dayOfWeek === '*') {
+            setDailyOption('everyday')
+          } else if (dayOfWeek === '1-5') {
+            setDailyOption('weekdays')
+          } else if (dayOfWeek === '0,6') {
+            setDailyOption('weekends')
+          }
+        }
+      }
+    } else {
+      setScheduleMode('manual')
+      setScheduleType('')
+    }
+
+    setIsEditing(true)
+  }
+
+  const handleCancelEdit = () => {
+    setIsEditing(false)
+    setEditedName('')
+    setEditedDescription('')
+    setEditedScheduleCron('')
+    setEditedMode('')
+    setEditedTimezone('')
+    // Reset schedule state
+    setScheduleMode('manual')
+    setScheduleType('')
+    setScheduleTime('09:00')
+    setSelectedDays([])
+    setSelectedMonthDay('1')
+    setHourlyInterval('1')
+    setDailyOption('everyday')
+  }
+
+  const handleSaveEdit = async () => {
+    if (!agent || !user) return
+
+    setIsSaving(true)
+    try {
+      // Build cron from schedule UI state
+      const cronExpression = buildCronExpression()
+      const mode = scheduleMode === 'manual' ? 'on_demand' : 'scheduled'
+
+      const { error } = await supabase
+        .from('agents')
+        .update({
+          agent_name: editedName,
+          description: editedDescription,
+          schedule_cron: cronExpression,
+          mode: mode,
+          timezone: editedTimezone || null
+        })
+        .eq('id', agent.id)
+        .eq('user_id', user.id)
+
+      if (error) {
+        console.error('Error updating agent:', error)
+        return
+      }
+
+      // Update local state
+      setAgent({
+        ...agent,
+        agent_name: editedName,
+        description: editedDescription,
+        schedule_cron: cronExpression,
+        mode: mode,
+        timezone: editedTimezone || null
+      })
+
+      setIsEditing(false)
+    } catch (error) {
+      console.error('Error saving agent:', error)
+    } finally {
+      setIsSaving(false)
     }
   }
 
@@ -461,6 +839,141 @@ export default function V2AgentDetailPage() {
     }
   }
 
+  const handleShareAgentClick = () => {
+    console.log('[SHARE] Click handler called', {
+      hasAgent: !!agent,
+      hasUser: !!user,
+      status: agent?.status,
+      showShareConfirm
+    })
+
+    if (!agent || !user || agent.status !== 'active') {
+      console.log('[SHARE] Validation failed, not opening modal')
+      return
+    }
+
+    // Validation is pre-fetched in useEffect, so modal opens instantly
+    console.log('[SHARE] Opening modal')
+    setShowShareConfirm(true)
+  }
+
+  const handleShareAgent = async () => {
+    if (!agent || !user || agent.status !== 'active') {
+      return
+    }
+
+    setShowShareConfirm(false)
+    setActionLoading('share')
+    try {
+      // Import validation and reward services
+      const { AgentSharingValidator } = await import('@/lib/credits/agentSharingValidation')
+      const { RewardService } = await import('@/lib/credits/rewardService')
+      const { AgentScoreService } = await import('@/lib/services/AgentScoreService')
+
+      const validator = new AgentSharingValidator(supabase)
+      const rewardService = new RewardService(supabase)
+      const scoreService = new AgentScoreService(supabase)
+
+      // Validate sharing requirements
+      const validation = await validator.validateSharing(user.id, agent.id)
+      if (!validation.valid) {
+        alert(validation.reason || 'This agent does not meet sharing requirements')
+        return
+      }
+
+      // Check if already shared
+      const { data: existingShared } = await supabase
+        .from('shared_agents')
+        .select('id')
+        .eq('original_agent_id', agent.id)
+        .eq('user_id', user.id)
+        .maybeSingle()
+
+      if (existingShared) {
+        alert('This agent has already been shared!')
+        return
+      }
+
+      // Calculate quality score
+      const qualityScore = await scoreService.calculateQualityScore(agent.id)
+
+      // Get execution diversity penalty (anti-abuse)
+      const diversityPenalty = await scoreService.getExecutionDiversityPenalty(agent.id)
+
+      // Apply penalty if suspicious execution pattern detected
+      const finalScore = {
+        ...qualityScore,
+        overall_score: qualityScore.overall_score * diversityPenalty
+      }
+
+      // Get base metrics for snapshot
+      const { data: metrics } = await supabase
+        .from('agent_intensity_metrics')
+        .select('success_rate, total_executions')
+        .eq('agent_id', agent.id)
+        .maybeSingle()
+
+      // Insert into shared_agents with calculated scores
+      const { error: insertError } = await supabase.from('shared_agents').insert([{
+        original_agent_id: agent.id,
+        user_id: user.id,
+        agent_name: agent.agent_name,
+        description: agent.description,
+        user_prompt: agent.user_prompt,
+        input_schema: agent.input_schema,
+        output_schema: agent.output_schema,
+        connected_plugins: agent.connected_plugins,
+        plugins_required: agent.plugins_required,
+        workflow_steps: agent.workflow_steps,
+        mode: agent.mode,
+        shared_at: new Date().toISOString(),
+        // Quality scores
+        quality_score: finalScore.overall_score,
+        reliability_score: finalScore.reliability_score,
+        efficiency_score: finalScore.efficiency_score,
+        adoption_score: finalScore.adoption_score,
+        complexity_score: finalScore.complexity_score,
+        score_calculated_at: new Date().toISOString(),
+        // Base metrics snapshot
+        base_executions: metrics?.total_executions || 0,
+        base_success_rate: metrics?.success_rate || 0
+      }])
+
+      if (insertError) {
+        console.error('Error sharing agent:', insertError)
+        alert(`Failed to share agent: ${insertError.message}`)
+        return
+      }
+
+      // Award credits
+      const rewardResult = await rewardService.awardAgentSharingReward(
+        user.id,
+        agent.id,
+        agent.agent_name
+      )
+
+      // Set success state and show notification
+      if (rewardResult.success) {
+        setShareCreditsAwarded(rewardResult.creditsAwarded || 0)
+        setShareQualityScore(Math.round(finalScore.overall_score))
+        setShowShareSuccess(true)
+        setHasBeenShared(true)
+
+        // Auto-hide notification after 5 seconds
+        setTimeout(() => setShowShareSuccess(false), 5000)
+      }
+
+      // Refresh page to show updated state
+      await fetchAgentData()
+    } catch (error) {
+      console.error('Error in handleShareAgent:', error)
+      alert('Failed to share agent. Please try again.')
+    } finally {
+      setActionLoading(null)
+      setShowShareConfirm(false)
+    }
+  }
+
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
     return date.toLocaleString('en-US', {
@@ -487,11 +1000,7 @@ export default function V2AgentDetailPage() {
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Loader2 className="w-8 h-8 animate-spin text-[var(--v2-primary)]" />
-      </div>
-    )
+    return <InlineLoading size="md" />
   }
 
   if (!agent) {
@@ -503,7 +1012,12 @@ export default function V2AgentDetailPage() {
 
   return (
     <div className="space-y-4 sm:space-y-5 lg:space-y-6">
-      {/* Top Bar: Back Button + User Menu */}
+      {/* Logo - First Line */}
+      <div className="mb-3">
+        <V2Logo />
+      </div>
+
+      {/* Back Button + Controls */}
       <div className="flex items-center justify-between">
         <button
           onClick={() => router.push('/v2/agent-list')}
@@ -513,7 +1027,7 @@ export default function V2AgentDetailPage() {
           <ArrowLeft className="w-4 h-4" />
           Back to Agents
         </button>
-        <V2Header />
+        <V2Controls />
       </div>
 
       {/* Main Grid Layout */}
@@ -525,9 +1039,19 @@ export default function V2AgentDetailPage() {
             <div className="flex items-center gap-3 mb-4">
               <Bot className="w-7 h-7 sm:w-8 sm:h-8 text-[#10B981]" />
               <div className="flex-1">
-                <h2 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)]">
-                  {agent.agent_name}
-                </h2>
+                {isEditing ? (
+                  <input
+                    type="text"
+                    value={editedName}
+                    onChange={(e) => setEditedName(e.target.value)}
+                    className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg px-3 py-1.5 w-full focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] dark:bg-slate-700"
+                    placeholder="Agent name"
+                  />
+                ) : (
+                  <h2 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)]">
+                    {agent.agent_name}
+                  </h2>
+                )}
                 <p className="text-xs sm:text-sm text-[var(--v2-text-secondary)]">
                   {agent.mode === 'scheduled' ? 'Scheduled Agent' : 'On-Demand Agent'}
                 </p>
@@ -585,23 +1109,283 @@ export default function V2AgentDetailPage() {
 
             {/* Schedule */}
             <div className="mb-4">
-              <label className="text-xs font-medium text-[var(--v2-text-muted)] mb-1 block">
-                Schedule
-              </label>
-              <p className="text-sm text-[var(--v2-text-primary)]">
-                {formatScheduleDisplay(agent.mode || 'on_demand', agent.schedule_cron)}
-              </p>
+              {!isEditing && (
+                <label className="text-xs font-medium text-[var(--v2-text-muted)] mb-2 block">
+                  Schedule
+                </label>
+              )}
+              {isEditing ? (
+                <div className="space-y-3">
+                  {/* Schedule Mode Selection */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={handleOnDemand}
+                      className={`p-2 border transition-all ${
+                        scheduleMode === 'manual'
+                          ? 'border-[var(--v2-primary)] bg-[var(--v2-primary)]/10'
+                          : 'border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:bg-[var(--v2-surface-hover)]'
+                      }`}
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <PlayCircle className="h-4 w-4 text-[var(--v2-primary)] flex-shrink-0" />
+                        <div className="text-left">
+                          <p className="font-semibold text-[var(--v2-text-primary)] text-xs">On-demand</p>
+                          <p className="text-[10px] text-[var(--v2-text-muted)] leading-tight">Manual</p>
+                        </div>
+                      </div>
+                    </button>
+
+                    <button
+                      onClick={() => setScheduleMode('scheduled')}
+                      className={`p-2 border transition-all ${
+                        scheduleMode === 'scheduled'
+                          ? 'border-[var(--v2-primary)] bg-[var(--v2-primary)]/10'
+                          : 'border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:bg-[var(--v2-surface-hover)]'
+                      }`}
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Clock className="h-4 w-4 text-[var(--v2-primary)] flex-shrink-0" />
+                        <div className="text-left">
+                          <p className="font-semibold text-[var(--v2-text-primary)] text-xs">Scheduled</p>
+                          <p className="text-[10px] text-[var(--v2-text-muted)] leading-tight">Auto run</p>
+                        </div>
+                      </div>
+                    </button>
+                  </div>
+
+                  {/* Schedule Configuration (shown when scheduled is selected) */}
+                  {scheduleMode === 'scheduled' && (
+                    <div className="space-y-2.5 pt-2 border-t border-[var(--v2-border)]">
+                      {/* Frequency Selection */}
+                      <div>
+                        <label className="block text-xs font-medium text-[var(--v2-text-secondary)] mb-2">
+                          Frequency
+                        </label>
+                        <div className="grid grid-cols-4 gap-2">
+                          {(['hourly', 'daily', 'weekly', 'monthly'] as const).map((type) => (
+                            <button
+                              key={type}
+                              onClick={() => setScheduleType(type)}
+                              className={`px-2 py-1.5 text-xs font-medium transition-all ${
+                                scheduleType === type
+                                  ? 'bg-[var(--v2-primary)] text-white'
+                                  : 'bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:border-[var(--v2-primary)]'
+                              }`}
+                              style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            >
+                              {type.charAt(0).toUpperCase() + type.slice(1)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Hourly Interval */}
+                      {scheduleType === 'hourly' && (
+                        <div>
+                          <label className="block text-xs font-medium text-[var(--v2-text-secondary)] mb-2">
+                            Every N hours
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="24"
+                            value={hourlyInterval}
+                            onChange={(e) => setHourlyInterval(e.target.value)}
+                            className="w-full px-3 py-1.5 text-sm bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] focus:outline-none focus:border-[var(--v2-primary)]"
+                            style={{ borderRadius: 'var(--v2-radius-button)' }}
+                          />
+                        </div>
+                      )}
+
+                      {/* Time Selection (for daily/weekly/monthly) */}
+                      {scheduleType && scheduleType !== 'hourly' && (
+                        <div>
+                          <label className="block text-xs font-medium text-[var(--v2-text-secondary)] mb-2">
+                            Time
+                          </label>
+                          <input
+                            type="time"
+                            value={scheduleTime}
+                            onChange={(e) => setScheduleTime(e.target.value)}
+                            className="w-full px-3 py-1.5 text-sm bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] focus:outline-none focus:border-[var(--v2-primary)]"
+                            style={{ borderRadius: 'var(--v2-radius-button)' }}
+                          />
+                        </div>
+                      )}
+
+                      {/* Daily Options */}
+                      {scheduleType === 'daily' && (
+                        <div>
+                          <label className="block text-xs font-medium text-[var(--v2-text-secondary)] mb-2">
+                            Days
+                          </label>
+                          <div className="flex gap-2">
+                            {(['everyday', 'weekdays', 'weekends'] as const).map((option) => (
+                              <button
+                                key={option}
+                                onClick={() => setDailyOption(option)}
+                                className={`px-3 py-1.5 text-xs font-medium transition-all ${
+                                  dailyOption === option
+                                    ? 'bg-[var(--v2-primary)] text-white'
+                                    : 'bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:border-[var(--v2-primary)]'
+                                }`}
+                                style={{ borderRadius: 'var(--v2-radius-button)' }}
+                              >
+                                {option === 'everyday' ? 'Every day' : option.charAt(0).toUpperCase() + option.slice(1)}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Weekly Day Selection */}
+                      {scheduleType === 'weekly' && (
+                        <div>
+                          <label className="block text-xs font-medium text-[var(--v2-text-secondary)] mb-2">
+                            Days of week
+                          </label>
+                          <div className="grid grid-cols-7 gap-1">
+                            {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day) => (
+                              <button
+                                key={day}
+                                onClick={() => handleDayToggle(day)}
+                                className={`px-1 py-1.5 text-xs font-medium transition-all ${
+                                  selectedDays.includes(day)
+                                    ? 'bg-[var(--v2-primary)] text-white'
+                                    : 'bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:border-[var(--v2-primary)]'
+                                }`}
+                                style={{ borderRadius: 'var(--v2-radius-button)' }}
+                              >
+                                {day.slice(0, 3)}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Monthly Day Selection */}
+                      {scheduleType === 'monthly' && (
+                        <div>
+                          <label className="block text-xs font-medium text-[var(--v2-text-secondary)] mb-2">
+                            Day of month
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="31"
+                            value={selectedMonthDay}
+                            onChange={(e) => setSelectedMonthDay(e.target.value)}
+                            className="w-full px-3 py-1.5 text-sm bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] focus:outline-none focus:border-[var(--v2-primary)]"
+                            style={{ borderRadius: 'var(--v2-radius-button)' }}
+                          />
+                        </div>
+                      )}
+
+                      {/* Schedule Preview */}
+                      {scheduleType && (
+                        <div className="p-2 bg-[var(--v2-surface-hover)] border border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                          <p className="text-xs text-[var(--v2-text-secondary)]">
+                            <span className="font-medium">Schedule: </span>
+                            {getScheduleDescription()}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {/* Schedule Mode Card */}
+                  <div className={`p-3 border-2 transition-all ${
+                    agent.mode === 'scheduled'
+                      ? 'border-[var(--v2-primary)] bg-[var(--v2-primary)]/5'
+                      : 'border-[var(--v2-border)] bg-[var(--v2-surface)]'
+                  }`}
+                  style={{ borderRadius: 'var(--v2-radius-card)' }}>
+                    <div className="flex items-center gap-3">
+                      {agent.mode === 'scheduled' ? (
+                        <Clock className="h-6 w-6 text-[var(--v2-primary)]" />
+                      ) : (
+                        <Play className="h-6 w-6 text-[var(--v2-primary)]" />
+                      )}
+                      <div className="flex-1">
+                        <p className="font-semibold text-[var(--v2-text-primary)] text-sm">
+                          {agent.mode === 'scheduled' ? 'Scheduled' : 'On-demand'}
+                        </p>
+                        <p className="text-xs text-[var(--v2-text-muted)] mt-0.5">
+                          {agent.mode === 'scheduled'
+                            ? formatScheduleDisplay(agent.mode, agent.schedule_cron)
+                            : 'Run manually when needed'
+                          }
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Next Run Badge (only for scheduled agents) */}
+                  {agent.mode === 'scheduled' && agent.next_run && (
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-700">
+                      <CheckCircle className="w-3 h-3" />
+                      Next: {formatNextRun(agent.next_run, agent.timezone || undefined)}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Description */}
-            {agent.description && (
+            {(agent.description || isEditing) && (
               <div className="mb-4">
                 <label className="text-xs font-medium text-[var(--v2-text-muted)] mb-1 block">
                   Description
                 </label>
-                <p className="text-sm text-[var(--v2-text-primary)]">
-                  {agent.description}
-                </p>
+                {isEditing ? (
+                  <textarea
+                    value={editedDescription}
+                    onChange={(e) => setEditedDescription(e.target.value)}
+                    className="text-sm text-[var(--v2-text-primary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] dark:bg-slate-700 min-h-[80px]"
+                    placeholder="Agent description"
+                  />
+                ) : (
+                  <p className="text-sm text-[var(--v2-text-primary)]">
+                    {agent.description}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Save/Cancel Buttons for Edit Mode */}
+            {isEditing && (
+              <div className="mb-4 flex items-center gap-2">
+                <button
+                  onClick={handleSaveEdit}
+                  disabled={isSaving || !editedName.trim()}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-[var(--v2-primary)] text-white hover:bg-[var(--v2-primary-dark)] transition-colors font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  {isSaving ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4" />
+                      Save Changes
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={handleCancelEdit}
+                  disabled={isSaving}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-colors font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  <X className="w-4 h-4" />
+                  Cancel
+                </button>
               </div>
             )}
 
@@ -678,7 +1462,7 @@ export default function V2AgentDetailPage() {
               {/* Edit */}
               <div className="relative group">
                 <button
-                  onClick={() => router.push(`/agents/${agent.id}/edit`)}
+                  onClick={handleEditClick}
                   className="flex items-center justify-center w-10 h-10 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:border-blue-200 dark:hover:border-blue-800 hover:scale-110 transition-all duration-200 shadow-sm"
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 >
@@ -689,7 +1473,22 @@ export default function V2AgentDetailPage() {
                 </div>
               </div>
 
-              {/* Export */}
+              {/* Sandbox */}
+              <div className="relative group">
+                <button
+                  onClick={() => router.push(`/v2/sandbox/${agent.id}`)}
+                  className="flex items-center justify-center w-10 h-10 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 hover:border-purple-200 dark:hover:border-purple-800 hover:scale-110 transition-all duration-200 shadow-sm"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  <FlaskConical className="w-4 h-4" />
+                </button>
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                  Agent Sandbox
+                </div>
+              </div>
+
+              {/* Export - Hidden for now */}
+              {false && (
               <div className="relative group">
                 <button
                   onClick={handleExportConfiguration}
@@ -702,6 +1501,7 @@ export default function V2AgentDetailPage() {
                   Export Config
                 </div>
               </div>
+              )}
 
               {/* Duplicate */}
               <div className="relative group">
@@ -721,14 +1521,15 @@ export default function V2AgentDetailPage() {
               {/* Share */}
               <div className="relative group">
                 <button
-                  disabled={agent.status !== 'active'}
+                  onClick={handleShareAgentClick}
+                  disabled={agent.status !== 'active' || actionLoading === 'share'}
                   className="flex items-center justify-center w-10 h-10 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 hover:border-indigo-200 dark:hover:border-indigo-800 hover:scale-110 transition-all duration-200 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 >
-                  <Share2 className="w-4 h-4" />
+                  {actionLoading === 'share' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Share2 className="w-4 h-4" />}
                 </button>
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
-                  {agent.status !== 'active' ? 'Activate to share' : 'Share Agent'}
+                  {actionLoading === 'share' ? 'Sharing...' : (agent.status !== 'active' ? 'Activate to share' : 'Share to Templates')}
                 </div>
               </div>
 
@@ -1040,7 +1841,11 @@ export default function V2AgentDetailPage() {
                       </div>
                       <div className="text-lg font-bold capitalize text-[var(--v2-text-primary)]">
                         {selectedExecution.logs?.pilot
-                          ? `${selectedExecution.logs.stepsCompleted || 0}/${selectedExecution.logs.totalSteps || 0}`
+                          ? `${selectedExecution.logs.stepsCompleted || 0}/${
+                              (selectedExecution.logs.stepsCompleted || 0) +
+                              (selectedExecution.logs.stepsFailed || 0) +
+                              (selectedExecution.logs.stepsSkipped || 0)
+                            }`
                           : selectedExecution.logs?.agentkit
                           ? selectedExecution.logs.iterations || 'N/A'
                           : selectedExecution.status}
@@ -1049,7 +1854,7 @@ export default function V2AgentDetailPage() {
                   </div>
 
                   {/* Execution Progress (Pilot only) */}
-                  {selectedExecution.logs?.pilot && selectedExecution.logs.totalSteps && (
+                  {selectedExecution.logs?.pilot && (
                     <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-4">
                       <h4 className="text-sm font-semibold text-[var(--v2-text-primary)] mb-3">
                         Execution Progress
@@ -1060,7 +1865,13 @@ export default function V2AgentDetailPage() {
                           <div
                             className="h-full bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] transition-all"
                             style={{
-                              width: `${((selectedExecution.logs.stepsCompleted || 0) / selectedExecution.logs.totalSteps) * 100}%`
+                              width: `${(() => {
+                                const completed = selectedExecution.logs.stepsCompleted || 0;
+                                const failed = selectedExecution.logs.stepsFailed || 0;
+                                const skipped = selectedExecution.logs.stepsSkipped || 0;
+                                const total = completed + failed + skipped;
+                                return total > 0 ? (completed / total) * 100 : 0;
+                              })()}%`
                             }}
                           />
                         </div>
@@ -1167,43 +1978,50 @@ export default function V2AgentDetailPage() {
                       Pilot Credits Usage
                     </h4>
                     <div className="space-y-3">
-                      {/* Total Pilot Credits */}
+                      {/* Pilot Tokens - Convert LLM tokens to Pilot Tokens */}
                       <div className="flex justify-between items-center">
-                        <span className="text-xs text-[var(--v2-text-muted)]">Total Credits:</span>
+                        <span className="text-xs text-[var(--v2-text-muted)]">Pilot Tokens:</span>
                         <span className="text-base font-bold text-[var(--v2-primary)]">
-                          {selectedExecution.logs?.tokensUsed?.total
-                            ? Math.ceil(selectedExecution.logs.tokensUsed.total / 10).toLocaleString()
-                            : '0'}
+                          {(() => {
+                            // Get adjusted tokens (with intensity multiplier) or raw total
+                            const adjusted = selectedExecution.logs?.tokensUsed?.adjusted;
+                            const total = selectedExecution.logs?.tokensUsed?.total;
+                            const llmTokens = adjusted || total || 0;
+
+                            // Convert to Pilot Tokens (divide by tokens_per_pilot_credit from DB)
+                            const pilotTokens = Math.ceil(llmTokens / tokensPerPilotCredit);
+
+                            console.log('[AGENT PAGE] Token Display Debug:', {
+                              executionId: selectedExecution.id?.slice(0, 8),
+                              llmTokens,
+                              tokensPerPilotCredit,
+                              pilotTokens,
+                              source: selectedExecution.logs?.tokensUsed?._source
+                            });
+
+                            return pilotTokens.toLocaleString();
+                          })()}
                         </span>
                       </div>
 
-                      {/* Credit Breakdown - Show breakdown only if we have real data */}
-                      {selectedExecution.logs?.tokensUsed?.prompt && selectedExecution.logs?.tokensUsed?.completion ? (
-                        <div className="grid grid-cols-2 gap-2">
-                          <div className="bg-blue-50 dark:bg-slate-800 border border-blue-200 dark:border-blue-700 rounded-lg p-2">
-                            <div className="text-[10px] text-blue-600 dark:text-blue-400 mb-0.5">Input</div>
-                            <div className="text-sm font-bold text-blue-700 dark:text-blue-300">
-                              {Math.ceil(selectedExecution.logs.tokensUsed.prompt / 10).toLocaleString()}
-                            </div>
-                          </div>
-                          <div className="bg-purple-50 dark:bg-slate-800 border border-purple-200 dark:border-purple-700 rounded-lg p-2">
-                            <div className="text-[10px] text-purple-600 dark:text-purple-400 mb-0.5">Output</div>
-                            <div className="text-sm font-bold text-purple-700 dark:text-purple-300">
-                              {Math.ceil(selectedExecution.logs.tokensUsed.completion / 10).toLocaleString()}
-                            </div>
-                          </div>
+                      {/* Pilot Tokens - Convert LLM tokens to Pilot Tokens */}
+                      <div className="border rounded-lg p-2 text-center" style={{ backgroundColor: 'var(--v2-bg)', borderColor: 'var(--v2-border)' }}>
+                        <div className="text-[10px] mb-0.5" style={{ color: 'var(--v2-text-muted)' }}>Pilot Tokens</div>
+                        <div className="text-sm font-bold" style={{ color: 'var(--v2-text-primary)' }}>
+                          {(() => {
+                            // Get adjusted tokens (with intensity multiplier) or raw total
+                            const adjusted = selectedExecution.logs?.tokensUsed?.adjusted;
+                            const total = selectedExecution.logs?.tokensUsed?.total;
+                            const llmTokens = adjusted || total || 0;
+
+                            // Convert to Pilot Tokens (divide by tokens_per_pilot_credit from DB)
+                            const pilotTokens = Math.ceil(llmTokens / tokensPerPilotCredit);
+
+                            return pilotTokens.toLocaleString();
+                          })()}
                         </div>
-                      ) : (
-                        <div className="border rounded-lg p-2 text-center" style={{ backgroundColor: 'var(--v2-bg)', borderColor: 'var(--v2-border)' }}>
-                          <div className="text-[10px] mb-0.5" style={{ color: 'var(--v2-text-muted)' }}>Tokens Used</div>
-                          <div className="text-sm font-bold" style={{ color: 'var(--v2-text-primary)' }}>
-                            {selectedExecution.logs?.tokensUsed?.total
-                              ? Math.ceil(selectedExecution.logs.tokensUsed.total / 10).toLocaleString()
-                              : '0'}
-                          </div>
-                          <div className="text-[9px] mt-0.5" style={{ color: 'var(--v2-text-muted)' }}>Total</div>
-                        </div>
-                      )}
+                        <div className="text-[9px] mt-0.5" style={{ color: 'var(--v2-text-muted)' }}>Total</div>
+                      </div>
                     </div>
                   </div>
 
@@ -1305,6 +2123,167 @@ export default function V2AgentDetailPage() {
                 ) : (
                   'Delete Agent'
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Share Confirmation Modal */}
+      {showShareConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-[var(--v2-surface)] rounded-2xl shadow-2xl max-w-md w-full p-6 border border-[var(--v2-border)]">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-[var(--v2-primary)]/10 rounded-full flex items-center justify-center">
+                <Share2 className="w-6 h-6 text-[var(--v2-primary)]" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">Share Agent</h3>
+                <p className="text-sm text-[var(--v2-text-muted)]">Share with the community</p>
+              </div>
+            </div>
+
+            {!shareRewardActive ? (
+              <div className="bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] rounded-lg p-4 mb-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <AlertCircle className="h-5 w-5 text-[var(--v2-text-secondary)]" />
+                  <span className="font-semibold text-[var(--v2-text-primary)]">Sharing Temporarily Unavailable</span>
+                </div>
+                <p className="text-[var(--v2-text-secondary)] text-sm">
+                  The agent sharing feature is currently disabled by the administrator. Please check back later or contact support for more information.
+                </p>
+              </div>
+            ) : hasBeenShared || (sharingValidation?.details?.alreadyShared) ? (
+              <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-4 mb-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Shield className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+                  <span className="font-semibold text-amber-800 dark:text-amber-200">Already Shared</span>
+                </div>
+                <p className="text-amber-700 dark:text-amber-300 text-sm">
+                  This agent has already been shared with the community. Each agent can only be shared once.
+                </p>
+              </div>
+            ) : sharingValidation && !sharingValidation.valid ? (
+              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 mb-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400" />
+                  <span className="font-semibold text-red-800 dark:text-red-200">Cannot Share Yet</span>
+                </div>
+                <p className="text-red-700 dark:text-red-300 text-sm mb-3">
+                  {sharingValidation.reason}
+                </p>
+                <div className="text-xs text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-900/40 rounded px-3 py-2">
+                  <strong>Requirements to share:</strong>
+                  <ul className="mt-1 space-y-1 ml-4 list-disc">
+                    <li>Agent must be at least {sharingConfig?.minAgentAgeHours || 1} hour{(sharingConfig?.minAgentAgeHours || 1) !== 1 ? 's' : ''} old</li>
+                    <li>Agent must have at least {sharingConfig?.minExecutions || 3} successful test runs</li>
+                    <li>Agent must have ≥{sharingConfig?.minSuccessRate || 66}% success rate</li>
+                    <li>Agent must have a description ({sharingConfig?.minDescriptionLength || 20}+ characters)</li>
+                    <li>Daily limit: {sharingStatus?.limits.daily || 5} shares per day</li>
+                    <li>Monthly limit: {sharingStatus?.limits.monthly || 20} shares per month</li>
+                  </ul>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3 mb-4">
+                {/* Quality Check Passed */}
+                {sharingValidation && sharingValidation.valid && (
+                  <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-lg p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                      <span className="font-semibold text-emerald-800 dark:text-emerald-200 text-sm">Quality Requirements Met ✓</span>
+                    </div>
+                    <div className="text-xs text-emerald-700 dark:text-emerald-300 grid grid-cols-2 gap-2">
+                      <div>✓ {sharingValidation.details?.agentQuality?.executions || 0} test runs</div>
+                      <div>✓ {sharingValidation.details?.agentQuality?.successRate || 0}% success rate</div>
+                      <div>✓ {sharingValidation.details?.agentQuality?.agentAgeHours || 0}h old</div>
+                      <div>✓ Description included</div>
+                    </div>
+                    {sharingStatus && (
+                      <div className="mt-2 pt-2 border-t border-emerald-200 dark:border-emerald-800 text-xs text-emerald-600 dark:text-emerald-400">
+                        <strong>Your sharing limits:</strong> {sharingStatus.remaining.daily} today, {sharingStatus.remaining.monthly} this month
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Reward Info */}
+                <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-[var(--v2-primary)]/10 rounded-full flex items-center justify-center">
+                        <Zap className="w-5 h-5 text-[var(--v2-primary)]" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-semibold text-[var(--v2-text-primary)]">Share Reward</div>
+                        <div className="text-xs text-[var(--v2-text-muted)]">Help the community grow</div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-2xl font-bold text-[var(--v2-primary)]">{sharingRewardAmount}</div>
+                      <div className="text-xs text-[var(--v2-text-muted)]">credits</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowShareConfirm(false)}
+                className="flex-1 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-colors font-medium text-sm"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                {(hasBeenShared || sharingValidation?.details?.alreadyShared) ? 'Close' : 'Cancel'}
+              </button>
+              {!hasBeenShared && !sharingValidation?.details?.alreadyShared && (sharingValidation && !sharingValidation.valid ? null : (
+                <button
+                  onClick={handleShareAgent}
+                  disabled={actionLoading === 'share' || (sharingValidation && !sharingValidation.valid) || !shareRewardActive}
+                  className="flex-1 px-4 py-2.5 bg-[var(--v2-primary)] text-white hover:bg-[var(--v2-primary-dark)] transition-colors font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-sm"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  {actionLoading === 'share' ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Sharing...</>
+                  ) : (
+                    'Share & Earn Credits'
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Share Success Notification */}
+      {showShareSuccess && (
+        <div className="fixed top-4 right-4 z-50 max-w-md animate-in slide-in-from-top-5">
+          <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-2xl shadow-2xl p-6">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 bg-emerald-100 dark:bg-emerald-900/30 rounded-full flex items-center justify-center flex-shrink-0">
+                <CheckCircle2 className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
+              </div>
+              <div className="flex-1">
+                <h3 className="font-semibold text-[var(--v2-text-primary)] text-lg mb-1">Agent Shared Successfully!</h3>
+                <p className="text-sm text-[var(--v2-text-secondary)] mb-3">
+                  Your agent is now available in the community templates.
+                </p>
+                <div className="flex items-center gap-4 text-sm">
+                  <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
+                    <Zap className="w-4 h-4" />
+                    <span className="font-semibold">{shareCreditsAwarded} credits earned</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[var(--v2-primary)]">
+                    <Brain className="w-4 h-4" />
+                    <span className="font-semibold">Score: {shareQualityScore}/100</span>
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowShareSuccess(false)}
+                className="text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
+              >
+                <X className="w-5 h-5" />
               </button>
             </div>
           </div>

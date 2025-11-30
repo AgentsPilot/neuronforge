@@ -12,6 +12,7 @@ import {
   PlayCircle, Cpu, BarChart3, Shield, Workflow, History, Globe, X, Info, Brain
 } from 'lucide-react'
 import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
+import { InlineLoading } from '@/components/v2/ui/loading'
 
 // Add animation styles
 const styles = `
@@ -1206,6 +1207,14 @@ export default function AgentList() {
           <Settings className="h-3 w-3 group-hover:rotate-90 transition-transform duration-300" />
           Manage
         </Link>
+
+        <Link
+          href={`/v2/sandbox/${agent.id}`}
+          className="group flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-xs font-semibold rounded-lg transition-all duration-200 shadow-md hover:shadow-lg hover:scale-105 active:scale-95"
+        >
+          <Brain className="h-3 w-3 group-hover:scale-110 transition-transform" />
+          Sandbox
+        </Link>
       </div>
     );
   };
@@ -1400,20 +1409,7 @@ export default function AgentList() {
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-purple-50/30 to-blue-50">
-        <div className="flex items-center justify-center py-32">
-          <div className="text-center">
-            <div className="w-20 h-20 bg-gradient-to-br from-violet-600 via-purple-600 to-blue-600 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-2xl">
-              <Bot className="h-10 w-10 text-white animate-pulse" />
-            </div>
-            <h3 className="text-2xl font-bold text-gray-900 mb-3">Loading your agents</h3>
-            <p className="text-gray-600 text-lg">Gathering your AI assistants...</p>
-            <div className="mt-4 flex items-center justify-center gap-1">
-              <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" />
-              <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce delay-100" />
-              <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce delay-200" />
-            </div>
-          </div>
-        </div>
+        <InlineLoading size="lg" />
       </div>
     )
   }
