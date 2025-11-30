@@ -199,14 +199,16 @@ Store as `selectedActions[]`.
 
 For each selected action, use web search to get detailed specifications:
 
-**Search Query**: `"{pluginName} API {action_name} endpoint parameters"`
+**Search Query 1**: `"{pluginName} API {action_name} endpoint parameters"`
+
+**Search Query 2**: `"{pluginName} API {action_name} response format JSON"`
 
 **Extract for each action**:
 - HTTP method (GET, POST, PUT, DELETE)
 - Endpoint URL
-- Required parameters
-- Optional parameters
-- Response format
+- Required parameters (with types and descriptions)
+- Optional parameters (with types and descriptions)
+- **Response structure** (field names, types, nesting)
 - Rate limits
 - Common errors
 
@@ -218,13 +220,32 @@ For each selected action, use web search to get detailed specifications:
   description: "Send a message to a channel",
   http_method: "POST",
   endpoint: "/api/v1/messages",
-  required_params: ["channel_id", "message_text"],
-  optional_params: ["thread_id", "attachments"],
-  response_format: { message_id, timestamp },
+  required_params: [
+    { name: "channel_id", type: "string", description: "Channel ID to send to" },
+    { name: "message_text", type: "string", description: "Message content" }
+  ],
+  optional_params: [
+    { name: "thread_id", type: "string", description: "Parent thread timestamp" },
+    { name: "attachments", type: "array", description: "File attachments" }
+  ],
+  response_schema: {
+    type: "object",
+    properties: {
+      message_id: { type: "string", description: "Unique message identifier" },
+      timestamp: { type: "string", description: "Message timestamp (Slack ts format)" },
+      channel: { type: "string", description: "Channel where message was posted" }
+    }
+  },
   rate_limit: "100 requests per minute",
   common_errors: ["channel_not_found", "rate_limited", "auth_failed"]
 }
 ```
+
+**Important**: The `response_schema` must be extracted from API documentation. Look for:
+- Example responses in API docs
+- Response field descriptions
+- Data types for each field
+- Nested object structures
 
 ---
 
@@ -316,10 +337,58 @@ Wait for user confirmation.
       /* Generate confirmation rules for destructive actions */
     }
   },
+  "output_schema": {
+    "type": "object",
+    "description": "{Brief description of what the action returns}",
+    "properties": {
+      /* Generate JSON Schema for each response field from STEP 5 research */
+      "field_name": {
+        "type": "string|number|boolean|array|object",
+        "description": "{field description}"
+      }
+    }
+  },
   "output_guidance": {
-    "success_message": "{action completed successfully}",
+    "success_description": "{Human-readable description of successful response}",
+    "sample_output": {
+      /* Example response matching output_schema structure */
+    },
     "common_errors": {
       /* Map common errors from API docs */
+    }
+  }
+}
+```
+
+**`output_schema` Generation Rules**:
+1. Use standard JSON Schema types: `string`, `number`, `integer`, `boolean`, `array`, `object`
+2. For arrays, include `items` to describe array element structure
+3. For nested objects, fully define the `properties` of child objects
+4. Include `description` for every field to aid AI understanding
+5. Use `enum` for fields with fixed possible values
+6. Mark fields as required in the schema if they're always present in the response
+
+**Example `output_schema` for complex response**:
+```json
+"output_schema": {
+  "type": "object",
+  "description": "List of records with pagination info",
+  "properties": {
+    "records": {
+      "type": "array",
+      "description": "Array of matching records",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "Unique record ID" },
+          "fields": { "type": "object", "description": "Record field values" },
+          "createdTime": { "type": "string", "description": "ISO 8601 timestamp" }
+        }
+      }
+    },
+    "offset": {
+      "type": "string",
+      "description": "Pagination cursor for next page (null if no more results)"
     }
   }
 }

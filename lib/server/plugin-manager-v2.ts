@@ -595,7 +595,7 @@ export class PluginManagerV2 {
             action.rules = {};
           }
           if (!includeOutputGuidence) {
-            action.output_guidance = { success_message: "", common_errors: {} };
+            action.output_guidance = { success_description: "", common_errors: {} };
           }
         }
       }
@@ -619,7 +619,7 @@ export class PluginManagerV2 {
   }
 
   // Get output guidance for action
-  getOutputGuidance(pluginName: string, actionName: string): { success_message: string; common_errors: Record<string, string> } | undefined {
+  getOutputGuidance(pluginName: string, actionName: string): { success_description: string; sample_output?: any; common_errors: Record<string, string> } | undefined {
     logger.debug({ pluginName, actionName }, 'Getting output guidance');
 
     const action = this.getActionDefinition(pluginName, actionName);
@@ -860,19 +860,20 @@ export class PluginManagerV2 {
   // Format actions for LLM consumption
   private formatActionsForLLM(actions: Record<string, ActionDefinition>): Record<string, any> {
     logger.debug('Formatting actions for LLM');
-    
+
     const formatted: Record<string, any> = {};
-    
+
     for (const [actionName, action] of Object.entries(actions)) {
       formatted[actionName] = {
         description: action.description,
         usage_context: action.usage_context,
         parameters: action.parameters,
         rules: action.rules,
-        output_guidance: action.output_guidance        
+        output_schema: action.output_schema,
+        output_guidance: action.output_guidance
       };
     }
-    
+
     return formatted;
   }
 }

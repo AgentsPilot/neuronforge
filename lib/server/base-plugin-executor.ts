@@ -83,7 +83,7 @@ export abstract class BasePluginExecutor {
       // Step 4: Format success response using output guidance
       const outputGuidance = this.pluginManager.getOutputGuidance(this.pluginName, actionName);
       const successMessage = this.formatSuccessMessage(
-        outputGuidance?.success_message || 'Action completed',
+        outputGuidance?.success_description || 'Action completed',
         result,
         parameters
       );

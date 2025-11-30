@@ -40,6 +40,28 @@
           "timeout_seconds": 10
         }
       },
+      "output_schema": {
+        "type": "object",
+        "description": "List of accessible Airtable bases with metadata",
+        "properties": {
+          "bases": {
+            "type": "array",
+            "description": "Array of accessible bases",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "description": "Base ID (starts with 'app')" },
+                "name": { "type": "string", "description": "Base display name" },
+                "permission_level": { "type": "string", "description": "User's permission level (owner, editor, commenter, read)" }
+              }
+            }
+          },
+          "base_count": {
+            "type": "integer",
+            "description": "Total number of bases returned"
+          }
+        }
+      },
       "output_guidance": {
         "success_description": "Returns array of bases with IDs, names, and permission details",
         "sample_output": {
@@ -49,7 +71,8 @@
               "name": "My Projects",
               "permission_level": "owner"
             }
-          ]
+          ],
+          "base_count": 1
         }
       }
     },
@@ -124,6 +147,36 @@
           "timeout_seconds": 30
         }
       },
+      "output_schema": {
+        "type": "object",
+        "description": "Paginated list of records with metadata",
+        "properties": {
+          "records": {
+            "type": "array",
+            "description": "Array of matching records",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "description": "Unique record ID (starts with 'rec')" },
+                "fields": { "type": "object", "description": "Record field values as key-value pairs" },
+                "createdTime": { "type": "string", "description": "ISO 8601 timestamp of record creation" }
+              }
+            }
+          },
+          "record_count": {
+            "type": "integer",
+            "description": "Number of records returned in this response"
+          },
+          "offset": {
+            "type": "string",
+            "description": "Pagination cursor for next page (null if no more results)"
+          },
+          "has_more": {
+            "type": "boolean",
+            "description": "Whether more records are available via pagination"
+          }
+        }
+      },
       "output_guidance": {
         "success_description": "Returns an array of records with their IDs, fields, and metadata",
         "sample_output": {
@@ -137,7 +190,9 @@
               "createdTime": "2025-01-01T00:00:00.000Z"
             }
           ],
-          "offset": "itrXXXXXXXXXXXXXX/recXXXXXXXXXXXXXX"
+          "record_count": 1,
+          "offset": "itrXXXXXXXXXXXXXX/recXXXXXXXXXXXXXX",
+          "has_more": true
         }
       }
     },
@@ -171,6 +226,15 @@
           "timeout_seconds": 10
         }
       },
+      "output_schema": {
+        "type": "object",
+        "description": "Single record with all field values and metadata",
+        "properties": {
+          "id": { "type": "string", "description": "Unique record ID (starts with 'rec')" },
+          "fields": { "type": "object", "description": "Record field values as key-value pairs" },
+          "created_time": { "type": "string", "description": "ISO 8601 timestamp of record creation" }
+        }
+      },
       "output_guidance": {
         "success_description": "Returns the record with ID, fields, and metadata",
         "sample_output": {
@@ -180,7 +244,7 @@
             "Status": "Active",
             "Created": "2025-01-01"
           },
-          "createdTime": "2025-01-01T00:00:00.000Z"
+          "created_time": "2025-01-01T00:00:00.000Z"
         }
       }
     },
@@ -238,6 +302,32 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "description": "Array of newly created records with their assigned IDs",
+        "properties": {
+          "records": {
+            "type": "array",
+            "description": "Array of created records",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "description": "Assigned record ID (starts with 'rec')" },
+                "fields": { "type": "object", "description": "Record field values as key-value pairs" },
+                "createdTime": { "type": "string", "description": "ISO 8601 timestamp of record creation" }
+              }
+            }
+          },
+          "record_count": {
+            "type": "integer",
+            "description": "Number of records successfully created"
+          },
+          "created_at": {
+            "type": "string",
+            "description": "ISO 8601 timestamp of when the operation completed"
+          }
+        }
+      },
       "output_guidance": {
         "success_description": "Returns array of created records with their new IDs and field values",
         "sample_output": {
@@ -250,7 +340,9 @@
               },
               "createdTime": "2025-01-01T00:00:00.000Z"
             }
-          ]
+          ],
+          "record_count": 1,
+          "created_at": "2025-01-01T00:00:00.000Z"
         }
       }
     },
@@ -322,6 +414,36 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "description": "Array of updated records with their modified field values",
+        "properties": {
+          "records": {
+            "type": "array",
+            "description": "Array of updated records",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "description": "Record ID (starts with 'rec')" },
+                "fields": { "type": "object", "description": "Updated record field values as key-value pairs" },
+                "createdTime": { "type": "string", "description": "ISO 8601 timestamp of original record creation" }
+              }
+            }
+          },
+          "record_count": {
+            "type": "integer",
+            "description": "Number of records successfully updated"
+          },
+          "updated_at": {
+            "type": "string",
+            "description": "ISO 8601 timestamp of when the operation completed"
+          },
+          "destructive": {
+            "type": "boolean",
+            "description": "Whether destructive mode was used (true = full replacement, false = partial update)"
+          }
+        }
+      },
       "output_guidance": {
         "success_description": "Returns array of updated records with their IDs and new field values",
         "sample_output": {
@@ -334,7 +456,10 @@
               },
               "createdTime": "2025-01-01T00:00:00.000Z"
             }
-          ]
+          ],
+          "record_count": 1,
+          "updated_at": "2025-01-01T00:00:00.000Z",
+          "destructive": false
         }
       }
     },
@@ -358,6 +483,30 @@
           "timeout_seconds": 10
         }
       },
+      "output_schema": {
+        "type": "object",
+        "description": "List of tables in the base with metadata",
+        "properties": {
+          "tables": {
+            "type": "array",
+            "description": "Array of tables in the base",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "description": "Table ID (starts with 'tbl')" },
+                "name": { "type": "string", "description": "Table display name" },
+                "primary_field_id": { "type": "string", "description": "ID of the primary field (starts with 'fld')" },
+                "field_count": { "type": "integer", "description": "Number of fields in the table" },
+                "view_count": { "type": "integer", "description": "Number of views in the table" }
+              }
+            }
+          },
+          "table_count": {
+            "type": "integer",
+            "description": "Total number of tables in the base"
+          }
+        }
+      },
       "output_guidance": {
         "success_description": "Returns array of tables with their IDs, names, and metadata",
         "sample_output": {
@@ -365,11 +514,12 @@
             {
               "id": "tblXXXXXXXXXXXXXX",
               "name": "Contacts",
-              "primaryFieldId": "fldXXXXXXXXXXXXXX",
-              "fields": [],
-              "views": []
+              "primary_field_id": "fldXXXXXXXXXXXXXX",
+              "field_count": 8,
+              "view_count": 3
             }
-          ]
+          ],
+          "table_count": 1
         }
       }
     },
@@ -424,21 +574,47 @@
           "timeout_seconds": 60
         }
       },
+      "output_schema": {
+        "type": "object",
+        "description": "Updated record with attachment details",
+        "properties": {
+          "record_id": { "type": "string", "description": "Record ID that was updated (starts with 'rec')" },
+          "field_name": { "type": "string", "description": "Name of the attachment field" },
+          "attachments": {
+            "type": "array",
+            "description": "Array of all attachments in the field (including newly added)",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "description": "Attachment ID (starts with 'att')" },
+                "url": { "type": "string", "description": "URL to download the attachment" },
+                "filename": { "type": "string", "description": "Original filename" },
+                "size": { "type": "integer", "description": "File size in bytes" },
+                "type": { "type": "string", "description": "MIME type of the file" }
+              }
+            }
+          },
+          "attachment_count": {
+            "type": "integer",
+            "description": "Total number of attachments in the field after upload"
+          }
+        }
+      },
       "output_guidance": {
         "success_description": "Returns the updated record with the new attachment added to the specified field",
         "sample_output": {
-          "id": "recXXXXXXXXXXXXXX",
-          "fields": {
-            "Attachments": [
-              {
-                "id": "attXXXXXXXXXXXXXX",
-                "url": "https://dl.airtable.com/.attachments/...",
-                "filename": "document.pdf",
-                "size": 123456,
-                "type": "application/pdf"
-              }
-            ]
-          }
+          "record_id": "recXXXXXXXXXXXXXX",
+          "field_name": "Attachments",
+          "attachments": [
+            {
+              "id": "attXXXXXXXXXXXXXX",
+              "url": "https://dl.airtable.com/.attachments/...",
+              "filename": "document.pdf",
+              "size": 123456,
+              "type": "application/pdf"
+            }
+          ],
+          "attachment_count": 1
         }
       }
     },
@@ -477,6 +653,37 @@
           "timeout_seconds": 10
         }
       },
+      "output_schema": {
+        "type": "object",
+        "description": "Attachment download URLs with metadata (URLs expire in ~2 hours)",
+        "properties": {
+          "attachments": {
+            "type": "array",
+            "description": "Array of attachment objects with download URLs",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "description": "Attachment ID (starts with 'att')" },
+                "url": { "type": "string", "description": "Temporary download URL (expires in ~2 hours)" },
+                "filename": { "type": "string", "description": "Original filename" },
+                "size": { "type": "integer", "description": "File size in bytes" },
+                "type": { "type": "string", "description": "MIME type of the file" },
+                "width": { "type": "integer", "description": "Image width in pixels (null for non-images)" },
+                "height": { "type": "integer", "description": "Image height in pixels (null for non-images)" },
+                "expires_warning": { "type": "string", "description": "Warning about URL expiration" }
+              }
+            }
+          },
+          "attachment_count": {
+            "type": "integer",
+            "description": "Number of attachments in the field"
+          },
+          "expiry_note": {
+            "type": "string",
+            "description": "Note about URL expiration policy"
+          }
+        }
+      },
       "output_guidance": {
         "success_description": "Returns array of attachment objects with temporary download URLs (expire in ~2 hours)",
         "sample_output": {
@@ -489,9 +696,11 @@
               "type": "application/pdf",
               "width": null,
               "height": null,
-              "expires_at": "~2 hours from request time"
+              "expires_warning": "URL expires in approximately 2 hours"
             }
-          ]
+          ],
+          "attachment_count": 1,
+          "expiry_note": "Download URLs expire after ~2 hours for security"
         }
       }
     }

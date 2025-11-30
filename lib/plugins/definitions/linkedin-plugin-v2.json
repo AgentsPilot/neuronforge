@@ -43,8 +43,26 @@
         "limits": {},
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "LinkedIn user ID" },
+          "first_name": { "type": "string", "description": "User's first name" },
+          "last_name": { "type": "string", "description": "User's last name" },
+          "profile_picture": { "type": "string", "description": "URL to profile picture" },
+          "vanity_name": { "type": "string", "description": "LinkedIn vanity/custom URL name" },
+          "raw_data": { "type": "object", "description": "Complete raw profile data from API" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Retrieved LinkedIn profile successfully",
+        "success_description": "Returns basic profile information including name and profile picture.",
+        "sample_output": {
+          "id": "abc123xyz",
+          "first_name": "John",
+          "last_name": "Doe",
+          "profile_picture": "https://media.licdn.com/dms/image/...",
+          "vanity_name": "johndoe"
+        },
         "common_errors": {
           "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
           "insufficient_permissions": "Missing required 'profile' scope. Please reconnect with full permissions.",
@@ -65,8 +83,31 @@
         "limits": {},
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "sub": { "type": "string", "description": "OpenID Connect subject identifier" },
+          "name": { "type": "string", "description": "Full name" },
+          "given_name": { "type": "string", "description": "First name" },
+          "family_name": { "type": "string", "description": "Last name" },
+          "picture": { "type": "string", "description": "Profile picture URL" },
+          "email": { "type": "string", "description": "Email address" },
+          "email_verified": { "type": "boolean", "description": "Whether email is verified" },
+          "locale": { "type": "string", "description": "User's locale/language" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Retrieved user info successfully",
+        "success_description": "Returns OpenID Connect user info including email and verification status.",
+        "sample_output": {
+          "sub": "abc123xyz",
+          "name": "John Doe",
+          "given_name": "John",
+          "family_name": "Doe",
+          "picture": "https://media.licdn.com/dms/image/...",
+          "email": "john.doe@example.com",
+          "email_verified": true,
+          "locale": "en-US"
+        },
         "common_errors": {
           "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
           "insufficient_permissions": "Missing required 'openid' scope. Please reconnect with OpenID Connect permissions.",
@@ -131,8 +172,27 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "post_id": { "type": "string", "description": "Unique post identifier" },
+          "post_urn": { "type": "string", "description": "LinkedIn URN for the post" },
+          "text": { "type": "string", "description": "Text content of the post" },
+          "visibility": { "type": "string", "description": "Post visibility (PUBLIC or CONNECTIONS)" },
+          "created_at": { "type": "string", "description": "Timestamp when post was created (ISO 8601)" },
+          "has_media": { "type": "boolean", "description": "Whether the post includes media" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Post published successfully on LinkedIn",
+        "success_description": "Returns the created post's ID and URN for reference.",
+        "sample_output": {
+          "post_id": "7123456789012345678",
+          "post_urn": "urn:li:ugcPost:7123456789012345678",
+          "text": "Excited to share our latest product update...",
+          "visibility": "PUBLIC",
+          "created_at": "2024-01-15T10:00:00Z",
+          "has_media": false
+        },
         "common_errors": {
           "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
           "insufficient_permissions": "Missing 'w_member_social' scope required to create posts. Please reconnect with posting permissions.",
@@ -176,8 +236,43 @@
         },
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "posts": {
+            "type": "array",
+            "description": "List of user's posts",
+            "items": {
+              "type": "object",
+              "properties": {
+                "post_id": { "type": "string", "description": "Unique post identifier" },
+                "post_urn": { "type": "string", "description": "LinkedIn URN for the post" },
+                "text": { "type": "string", "description": "Post text content" },
+                "created_at": { "type": "integer", "description": "Creation timestamp (Unix ms)" },
+                "last_modified_at": { "type": "integer", "description": "Last modified timestamp (Unix ms)" },
+                "visibility": { "type": "string", "description": "Post visibility setting" }
+              }
+            }
+          },
+          "post_count": { "type": "integer", "description": "Number of posts returned" },
+          "total_available": { "type": "integer", "description": "Total posts available" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Retrieved {post_count} LinkedIn posts",
+        "success_description": "Returns list of user's posts with text content and timestamps.",
+        "sample_output": {
+          "posts": [
+            {
+              "post_id": "7123456789012345678",
+              "post_urn": "urn:li:ugcPost:7123456789012345678",
+              "text": "Excited to share our latest update...",
+              "created_at": 1705312800000,
+              "visibility": "PUBLIC"
+            }
+          ],
+          "post_count": 1,
+          "total_available": 25
+        },
         "common_errors": {
           "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
           "insufficient_permissions": "Missing 'r_member_social' scope required to read posts. Please reconnect with read permissions.",
@@ -204,8 +299,34 @@
         "limits": {},
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "organization_id": { "type": "string", "description": "LinkedIn organization ID" },
+          "organization_urn": { "type": "string", "description": "LinkedIn URN for the organization" },
+          "name": { "type": "string", "description": "Organization name" },
+          "vanity_name": { "type": "string", "description": "LinkedIn vanity URL name" },
+          "logo_url": { "type": "string", "description": "URL to organization logo" },
+          "website": { "type": "string", "description": "Organization website URL" },
+          "industry": { "type": "array", "description": "List of industry classifications" },
+          "employee_count": { "type": "integer", "description": "Number of employees" },
+          "description": { "type": "string", "description": "Organization description" },
+          "locations": { "type": "array", "description": "List of office locations" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Retrieved organization '{organization_name}' details",
+        "success_description": "Returns organization details including name, logo, industry, and employee count.",
+        "sample_output": {
+          "organization_id": "123456789",
+          "organization_urn": "urn:li:organization:123456789",
+          "name": "Acme Corporation",
+          "vanity_name": "acme-corp",
+          "logo_url": "https://media.licdn.com/dms/image/...",
+          "website": "https://www.acme.com",
+          "industry": ["Technology"],
+          "employee_count": 5000,
+          "description": "Leading provider of innovative solutions..."
+        },
         "common_errors": {
           "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
           "organization_not_found": "Organization not found. Check the organization ID or vanity name.",
@@ -258,8 +379,45 @@
         },
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "organizations": {
+            "type": "array",
+            "description": "List of matching organizations",
+            "items": {
+              "type": "object",
+              "properties": {
+                "organization_id": { "type": "string", "description": "Organization ID" },
+                "name": { "type": "string", "description": "Organization name" },
+                "vanity_name": { "type": "string", "description": "LinkedIn vanity URL" },
+                "logo_url": { "type": "string", "description": "Logo URL" },
+                "industry": { "type": "string", "description": "Industry classification" },
+                "employee_count": { "type": "integer", "description": "Number of employees" }
+              }
+            }
+          },
+          "result_count": { "type": "integer", "description": "Number of results returned" },
+          "total_available": { "type": "integer", "description": "Total matching organizations" },
+          "search_query": { "type": "string", "description": "The search keywords used" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Found {result_count} organizations matching '{keywords}'",
+        "success_description": "Returns matching organizations with basic info.",
+        "sample_output": {
+          "organizations": [
+            {
+              "organization_id": "123456",
+              "name": "Tech Solutions Inc",
+              "vanity_name": "tech-solutions",
+              "industry": "Technology",
+              "employee_count": 500
+            }
+          ],
+          "result_count": 1,
+          "total_available": 15,
+          "search_query": "tech solutions"
+        },
         "common_errors": {
           "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
           "insufficient_permissions": "This endpoint requires LinkedIn Partner Program approval. Your application may not have access.",
@@ -301,8 +459,45 @@
         },
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "organization_id": { "type": "string", "description": "Organization ID that was queried" },
+          "posts": {
+            "type": "array",
+            "description": "List of organization posts",
+            "items": {
+              "type": "object",
+              "properties": {
+                "post_id": { "type": "string", "description": "Unique post identifier" },
+                "post_urn": { "type": "string", "description": "LinkedIn URN for the post" },
+                "text": { "type": "string", "description": "Post text content" },
+                "created_at": { "type": "integer", "description": "Creation timestamp (Unix ms)" },
+                "last_modified_at": { "type": "integer", "description": "Last modified timestamp (Unix ms)" },
+                "author_urn": { "type": "string", "description": "Author URN" }
+              }
+            }
+          },
+          "post_count": { "type": "integer", "description": "Number of posts returned" },
+          "total_available": { "type": "integer", "description": "Total posts available" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Retrieved {post_count} posts from organization",
+        "success_description": "Returns organization posts with text and timestamps.",
+        "sample_output": {
+          "organization_id": "123456789",
+          "posts": [
+            {
+              "post_id": "7123456789012345678",
+              "post_urn": "urn:li:ugcPost:7123456789012345678",
+              "text": "We're excited to announce...",
+              "created_at": 1705312800000,
+              "author_urn": "urn:li:organization:123456789"
+            }
+          ],
+          "post_count": 1,
+          "total_available": 50
+        },
         "common_errors": {
           "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
           "insufficient_permissions": "Missing 'r_organization_social' scope or you must be an admin of this organization.",
@@ -347,8 +542,40 @@
         },
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "connections": {
+            "type": "array",
+            "description": "List of 1st-degree connections",
+            "items": {
+              "type": "object",
+              "properties": {
+                "person_urn": { "type": "string", "description": "LinkedIn URN for the person" },
+                "person_id": { "type": "string", "description": "LinkedIn person ID" }
+              }
+            }
+          },
+          "connection_count": { "type": "integer", "description": "Number of connections returned" },
+          "start": { "type": "integer", "description": "Pagination offset used" },
+          "total_available": { "type": "integer", "description": "Total connections available" },
+          "has_more": { "type": "boolean", "description": "Whether more connections are available" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Retrieved {connection_count} connections",
+        "success_description": "Returns list of connection URNs with pagination info.",
+        "sample_output": {
+          "connections": [
+            {
+              "person_urn": "urn:li:person:abc123",
+              "person_id": "abc123"
+            }
+          ],
+          "connection_count": 1,
+          "start": 0,
+          "total_available": 500,
+          "has_more": true
+        },
         "common_errors": {
           "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
           "insufficient_permissions": "This endpoint requires LinkedIn Partner Program approval. Your application may not have access to the Connections API.",

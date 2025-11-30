@@ -14,8 +14,7 @@ const globalForUserConnections = globalThis as unknown as {
 };
 
 export class UserPluginConnections {
-  private supabase: any;
-  private debug = process.env.NODE_ENV === 'development';
+  private supabase: any;  
   // Cache for token validation to avoid redundant logs and calculations
   private tokenValidationCache = new Map<string, { isValid: boolean, checkedAt: number }>();
   private readonly TOKEN_CACHE_TTL = 1000; // 1 second cache
