@@ -1,6 +1,12 @@
+/**
+ * @deprecated This entire file is deprecated and should not be used.
+ * Please use the v2 plugin system instead.
+ */
+
 // lib/plugins/strategies/googleDriveDataStrategy.ts
 import type { PluginStrategy } from '../pluginRegistry'
 
+/** @deprecated Use v2 plugin system instead */
 export const googleDriveDataStrategy: PluginStrategy = {
   pluginKey: 'google-drive',
   name: 'Google Drive',

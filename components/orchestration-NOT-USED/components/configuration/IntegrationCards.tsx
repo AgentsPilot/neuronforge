@@ -1,9 +1,15 @@
+/**
+ * @deprecated This entire file is deprecated and should not be used.
+ * This component is part of the old orchestration system.
+ */
+
 // components/orchestration/components/configuration/IntegrationCards.tsx
 import React from 'react'
 import { Mail, Database, FileText, Users, Folder, Globe, Calendar, MessageSquare, BarChart3, FileSpreadsheet, Package, Zap, AlertCircle } from 'lucide-react'
 import { PluginConnection } from './PluginConnectionManager'
 
 // Plugin registry for display
+/** @deprecated This component is part of the old orchestration system */
 export const pluginRegistry = [
   { id: 'google-mail', name: 'Gmail', description: 'Connect to Gmail for email processing', icon: Mail, category: 'Email' },
   { id: 'outlook', name: 'Outlook', description: 'Connect to Microsoft Outlook', icon: Mail, category: 'Email' },
@@ -24,6 +30,7 @@ interface IntegrationCardsProps {
   currentUserId: string | null
 }
 
+/** @deprecated This component is part of the old orchestration system */
 export const getPluginConfig = (pluginKey: string) => {
   const plugin = pluginRegistry.find(p => p.id === pluginKey)
   return plugin || {
@@ -35,6 +42,7 @@ export const getPluginConfig = (pluginKey: string) => {
   }
 }
 
+/** @deprecated This component is part of the old orchestration system */
 export const IntegrationCards: React.FC<IntegrationCardsProps> = ({
   pluginConnections,
   currentUserId

@@ -1,9 +1,15 @@
+/**
+ * @deprecated This entire file is deprecated and should not be used.
+ * Please use the v2 plugin system instead.
+ */
+
 // /app/api/plugin-connections/save/route.ts
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabaseServer'
 import { pluginStatusCache } from '@/app/api/plugins/user-status/route'
 
+/** @deprecated Use v2 plugin system instead */
 export async function POST(req: NextRequest) {
   const supabase = createServerSupabaseClient()
   const body = await req.json()

@@ -1,8 +1,14 @@
+/**
+ * @deprecated This entire file is deprecated and should not be used.
+ * Please use the v2 plugin system instead.
+ */
+
 import { NextRequest } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { pluginRegistry } from '@/lib/plugins/pluginRegistry'
 
+/** @deprecated Use v2 plugin system instead */
 export async function GET(req: NextRequest, { params }: { params: { plugin: string } }) {
   const pluginKey = params.plugin
   const strategy = pluginRegistry[pluginKey]

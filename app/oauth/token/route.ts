@@ -1,9 +1,15 @@
+/**
+ * @deprecated This entire file is deprecated and should not be used.
+ * Please use the v2 plugin system instead.
+ */
+
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { pluginRegistry } from '@/lib/plugins/pluginRegistry'
 import { savePluginConnection } from '@/lib/plugins/savePluginConnection'
 
+/** @deprecated Use v2 plugin system instead */
 export async function GET(req: NextRequest) {
   const url = new URL(req.url)
   const code = url.searchParams.get('code')

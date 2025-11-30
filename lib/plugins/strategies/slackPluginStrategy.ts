@@ -1,3 +1,8 @@
+/**
+ * @deprecated This entire file is deprecated and should not be used.
+ * Please use the v2 plugin system instead.
+ */
+
 // Required environment variables:
 // NEXT_PUBLIC_SLACK_CLIENT_ID - Slack OAuth client ID (public)
 // NEXT_PUBLIC_SLACK_CLIENT_SECRET - Slack OAuth client secret (server-side only)
@@ -398,6 +403,7 @@ const storeConnection = async ({
 };
 
 // Main strategy object export
+/** @deprecated Use v2 plugin system instead */
 export const slackStrategy: PluginStrategy = {
   pluginKey: 'slack',
   name: 'Slack',

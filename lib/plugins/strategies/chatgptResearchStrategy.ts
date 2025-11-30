@@ -1,3 +1,8 @@
+/**
+ * @deprecated This entire file is deprecated and should not be used.
+ * Please use the v2 plugin system instead.
+ */
+
 // lib/plugins/strategies/chatgptResearchStrategy.ts
 import { PluginStrategy } from '../pluginRegistry'
 
@@ -275,6 +280,7 @@ function buildContextualPrompt(userPrompt: string, dataToAnalyze: any, webResear
   return finalPrompt
 }
 
+/** @deprecated Use v2 plugin system instead */
 export const chatgptResearchStrategy: PluginStrategy = {
   pluginKey: 'chatgpt-research',
   name: 'ChatGPT Universal Processor',

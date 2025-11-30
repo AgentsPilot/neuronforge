@@ -1,3 +1,8 @@
+/**
+ * @deprecated This entire file is deprecated and should not be used.
+ * This component is part of the old orchestration system.
+ */
+
 // components/orchestration/components/configuration/ConfigurationForms.tsx
 import React, { useState } from 'react'
 import { ChevronDown, AlertCircle, Check } from 'lucide-react'
@@ -6,6 +11,7 @@ import { pluginRegistry, getPluginConfig } from './IntegrationCards'
 import { WorkflowStep } from '../../types/workflow'
 
 // Define what plugin categories each agent type can use
+/** @deprecated This component is part of the old orchestration system */
 const agentPluginCategories = {
   'email': ['Email', 'Marketing'],
   'crm': ['CRM'],
@@ -30,6 +36,7 @@ interface ConfigurationFormsProps {
 }
 
 // Determine what plugin categories an agent can use
+/** @deprecated This component is part of the old orchestration system */
 const getAgentPluginCategories = (step: WorkflowStep): string[] => {
   if (!step.selectedAgent) return []
 
@@ -60,6 +67,7 @@ const getAgentPluginCategories = (step: WorkflowStep): string[] => {
   return ['Database', 'Storage', 'Communication']
 }
 
+/** @deprecated This component is part of the old orchestration system */
 const getStepStatus = (
   stepIndex: number,
   selectedPlugins: Record<number, string>,
@@ -77,6 +85,7 @@ const getStepStatus = (
   return 'ready'
 }
 
+/** @deprecated This component is part of the old orchestration system */
 export const ConfigurationForms: React.FC<ConfigurationFormsProps> = ({
   step,
   stepIndex,

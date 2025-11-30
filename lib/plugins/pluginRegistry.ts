@@ -1,3 +1,8 @@
+/**
+ * @deprecated This entire file is deprecated and should not be used.
+ * Please use the v2 plugin system instead.
+ */
+
 // Import data/run strategies (execution logic)
 import { gmailDataStrategy } from './strategies/gmailDataStrategy';
 import { googleDriveDataStrategy } from './strategies/googleDriveDataStrategy';
@@ -11,6 +16,7 @@ import { googleDriveStrategy as googleDriveOAuthStrategy } from './strategies/go
 import { slackStrategy } from './strategies/slackPluginStrategy';
 
 // Input template types
+/** @deprecated Use v2 plugin system instead */
 export interface InputTemplate {
   name: string;
   type: string;
@@ -23,12 +29,14 @@ export interface InputTemplate {
   dependsOn?: string;
 }
 
+/** @deprecated Use v2 plugin system instead */
 export interface OutputTemplate {
   type: string;
   description: string;
   schema?: Record<string, any>;
 }
 
+/** @deprecated Use v2 plugin system instead */
 export interface PluginDefinition {
   key: string;
   label: string;
@@ -60,6 +68,7 @@ export interface PluginDefinition {
 }
 
 // Single source of truth - Plugin Registry
+/** @deprecated Use v2 plugin system instead */
 export const pluginRegistry: Record<string, PluginDefinition> = {
   'google-mail': {
     key: 'google-mail',
@@ -433,18 +442,21 @@ export const pluginRegistry: Record<string, PluginDefinition> = {
 };
 
 // Utility to get input templates for a specific capability
+/** @deprecated Use v2 plugin system instead */
 export const getInputTemplatesForCapability = (pluginKey: string, capability: string): InputTemplate[] => {
   const plugin = getPluginDefinition(pluginKey);
   return plugin?.inputTemplates?.[capability] || [];
 };
 
 // Utility to get output template for a specific capability
+/** @deprecated Use v2 plugin system instead */
 export const getOutputTemplateForCapability = (pluginKey: string, capability: string): OutputTemplate | null => {
   const plugin = getPluginDefinition(pluginKey);
   return plugin?.outputTemplates?.[capability] || null;
 };
 
 // Generate input schema for agent based on capabilities used
+/** @deprecated Use v2 plugin system instead */
 export const generateInputSchemaForCapabilities = (pluginCapabilities: { plugin: string; capability: string }[]): InputTemplate[] => {
   const inputSchema: InputTemplate[] = [];
   
@@ -462,18 +474,22 @@ export const generateInputSchemaForCapabilities = (pluginCapabilities: { plugin:
 };
 
 // Utility functions
+/** @deprecated Use v2 plugin system instead */
 export const isPluginAvailable = (pluginKey: string): boolean => {
   return pluginKey in pluginRegistry && !!pluginRegistry[pluginKey].run;
 }
 
+/** @deprecated Use v2 plugin system instead */
 export const getAvailablePlugins = (): string[] => {
   return Object.keys(pluginRegistry);
 }
 
+/** @deprecated Use v2 plugin system instead */
 export const getPluginDefinition = (pluginKey: string): PluginDefinition | undefined => {
   return pluginRegistry[pluginKey];
 }
 
+/** @deprecated Use v2 plugin system instead */
 export const getConnectedPluginsWithMetadata = (connectedPluginKeys: string[]) => {
   return connectedPluginKeys
     .map(key => {
@@ -489,6 +505,7 @@ export const getConnectedPluginsWithMetadata = (connectedPluginKeys: string[]) =
     .filter(Boolean) as (PluginDefinition & { isConnected: boolean })[];
 }
 
+/** @deprecated Use v2 plugin system instead */
 export const getPluginDisplayNames = (pluginKeys: string[], pluginData?: PluginDefinition[]): string[] => {
   return pluginKeys.map(key => {
     if (pluginData) {
@@ -504,6 +521,7 @@ export const getPluginDisplayNames = (pluginKeys: string[], pluginData?: PluginD
 }
 
 // Dynamic service detection using plugin registry
+/** @deprecated Use v2 plugin system instead */
 export function detectRequiredPlugins(prompt: string): string[] {
   const lowerPrompt = prompt.toLowerCase();
   const detectedServices: string[] = [];
@@ -541,6 +559,7 @@ export function detectRequiredPlugins(prompt: string): string[] {
   return uniqueServices;
 }
 
+/** @deprecated Use v2 plugin system instead */
 export function validatePluginRequirements(prompt: string, connectedPlugins: string[]): {
   isValid: boolean;
   missingPlugins: string[];
@@ -580,6 +599,7 @@ export function validatePluginRequirements(prompt: string, connectedPlugins: str
   };
 }
 
+/** @deprecated Use v2 plugin system instead */
 export function getPluginCapabilitiesContext(connectedPluginKeys: string[]): string {
   const connectedPlugins = getConnectedPluginsWithMetadata(connectedPluginKeys);
 
@@ -589,6 +609,7 @@ export function getPluginCapabilitiesContext(connectedPluginKeys: string[]): str
 }
 
 // Feature flag to gradually migrate plugins
+/** @deprecated Use v2 plugin system instead */
 export const PLUGIN_VERSION_MAP: Record<string, 'v1' | 'v2'> = {
   'google-mail': 'v1',
   'google-drive': 'v1',
