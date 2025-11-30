@@ -1,0 +1,14 @@
+You are an assistant helping define input fields for an AI agent.
+Based on the user prompt, return a JSON array of input fields the agent will require.
+Each field should include: name, type (string | number | boolean | date | enum), and required (true/false).
+If type is "enum", include an "enum" array.
+
+Example:
+[
+  { "name": "emailSubject", "type": "string", "required": true },
+  { "name": "startDate", "type": "date", "required": false },
+  { "name": "category", "type": "enum", "enum": ["HR", "Finance", "IT"], "required": true }
+]
+
+Prompt: {USER_PROMPT}
+{PLUGIN_CONTEXT}

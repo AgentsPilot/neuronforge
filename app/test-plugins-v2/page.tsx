@@ -448,6 +448,13 @@ const AI_SERVICE_TEMPLATES = {
       requiredServices: [],
       suggestions: []
     }
+  },
+  "generate/input-schema": {
+    prompt: "Create an agent that schedules meetings and sends confirmation emails",
+    plugins: ["google-calendar", "google-mail"],
+    userId: "test_user_123",
+    sessionId: "550e8400-e29b-41d4-a716-446655440000",
+    agentId: "660e8400-e29b-41d4-a716-446655440001"
   }
 };
 
