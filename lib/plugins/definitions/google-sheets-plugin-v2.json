@@ -70,8 +70,38 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "range": { "type": "string", "description": "The actual range that was read (may differ from requested)" },
+          "values": {
+            "type": "array",
+            "description": "2D array of cell values (rows of cells)",
+            "items": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          },
+          "row_count": { "type": "integer", "description": "Number of rows returned" },
+          "column_count": { "type": "integer", "description": "Number of columns returned" },
+          "major_dimension": { "type": "string", "description": "How data is organized (ROWS or COLUMNS)" },
+          "retrieved_at": { "type": "string", "description": "Timestamp when data was retrieved (ISO 8601)" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Read {row_count} rows and {column_count} columns from {range}",
+        "success_description": "Returns cell values as a 2D array with row and column counts.",
+        "sample_output": {
+          "range": "Sheet1!A1:C3",
+          "values": [
+            ["Name", "Email", "Status"],
+            ["John Doe", "john@example.com", "Active"],
+            ["Jane Smith", "jane@example.com", "Pending"]
+          ],
+          "row_count": 3,
+          "column_count": 3,
+          "major_dimension": "ROWS",
+          "retrieved_at": "2024-01-15T10:00:00Z"
+        },
         "common_errors": {
           "auth_failed": "Your Google Sheets connection has expired. Please go to Settings → Connected Apps to reconnect Google Sheets.",
           "spreadsheet_not_found": "The spreadsheet was not found. Please check the spreadsheet ID and ensure you have access.",
@@ -141,8 +171,27 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "updated_range": { "type": "string", "description": "The range that was updated" },
+          "updated_rows": { "type": "integer", "description": "Number of rows updated" },
+          "updated_columns": { "type": "integer", "description": "Number of columns updated" },
+          "updated_cells": { "type": "integer", "description": "Total number of cells updated" },
+          "values": { "type": "array", "description": "The values that were written" },
+          "updated_at": { "type": "string", "description": "Timestamp when data was written (ISO 8601)" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Updated {updated_cells} cells in {updated_range}",
+        "success_description": "Confirms the write with counts of updated rows, columns, and cells.",
+        "sample_output": {
+          "updated_range": "Sheet1!A1:C3",
+          "updated_rows": 3,
+          "updated_columns": 3,
+          "updated_cells": 9,
+          "values": [["Name", "Email", "Status"], ["John", "john@example.com", "Active"]],
+          "updated_at": "2024-01-15T10:30:00Z"
+        },
         "common_errors": {
           "auth_failed": "Your Google Sheets connection has expired. Please reconnect in Settings → Connected Apps.",
           "spreadsheet_not_found": "The spreadsheet was not found. Please check the spreadsheet ID.",
@@ -209,8 +258,31 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "updated_range": { "type": "string", "description": "The range where data was appended" },
+          "appended_rows": { "type": "integer", "description": "Number of rows appended" },
+          "appended_columns": { "type": "integer", "description": "Number of columns in appended data" },
+          "appended_cells": { "type": "integer", "description": "Total number of cells appended" },
+          "table_range": { "type": "string", "description": "Full range of the table including appended data" },
+          "sheet_name": { "type": "string", "description": "Name of the sheet where data was appended" },
+          "values": { "type": "array", "description": "The values that were appended" },
+          "appended_at": { "type": "string", "description": "Timestamp when data was appended (ISO 8601)" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Appended {appended_rows} rows to {sheet_name}",
+        "success_description": "Confirms the append with the updated range and counts of appended rows and cells.",
+        "sample_output": {
+          "updated_range": "Sheet1!A5:C6",
+          "appended_rows": 2,
+          "appended_columns": 3,
+          "appended_cells": 6,
+          "table_range": "Sheet1!A1:C6",
+          "sheet_name": "Sheet1",
+          "values": [["New User", "new@example.com", "Active"]],
+          "appended_at": "2024-01-15T11:00:00Z"
+        },
         "common_errors": {
           "auth_failed": "Your Google Sheets connection has expired. Please reconnect in Settings → Connected Apps.",
           "spreadsheet_not_found": "The spreadsheet was not found. Please check the spreadsheet ID.",
@@ -284,8 +356,41 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "spreadsheet_id": { "type": "string", "description": "Unique identifier for the new spreadsheet" },
+          "spreadsheet_url": { "type": "string", "description": "URL to open the spreadsheet in Google Sheets" },
+          "title": { "type": "string", "description": "Title of the created spreadsheet" },
+          "sheet_count": { "type": "integer", "description": "Number of sheets in the spreadsheet" },
+          "sheets": {
+            "type": "array",
+            "description": "List of sheets in the spreadsheet",
+            "items": {
+              "type": "object",
+              "properties": {
+                "sheet_id": { "type": "integer", "description": "Unique sheet ID" },
+                "title": { "type": "string", "description": "Sheet name" },
+                "index": { "type": "integer", "description": "Sheet position (0-based)" }
+              }
+            }
+          },
+          "created_at": { "type": "string", "description": "Timestamp when spreadsheet was created (ISO 8601)" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Created spreadsheet '{title}' with ID {spreadsheet_id}",
+        "success_description": "Returns the new spreadsheet ID, URL, and list of created sheets.",
+        "sample_output": {
+          "spreadsheet_id": "1abc123xyz789",
+          "spreadsheet_url": "https://docs.google.com/spreadsheets/d/1abc123xyz789",
+          "title": "Sales Report Q1 2024",
+          "sheet_count": 2,
+          "sheets": [
+            {"sheet_id": 0, "title": "Summary", "index": 0},
+            {"sheet_id": 1234567, "title": "Details", "index": 1}
+          ],
+          "created_at": "2024-01-15T11:30:00Z"
+        },
         "common_errors": {
           "auth_failed": "Your Google Sheets connection has expired. Please reconnect in Settings → Connected Apps.",
           "quota_exceeded": "You've reached your spreadsheet creation limit. Please try again later.",
@@ -323,8 +428,48 @@
         "limits": {},
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "spreadsheet_id": { "type": "string", "description": "Unique spreadsheet identifier" },
+          "spreadsheet_url": { "type": "string", "description": "URL to open the spreadsheet" },
+          "title": { "type": "string", "description": "Spreadsheet title" },
+          "locale": { "type": "string", "description": "Locale setting of the spreadsheet" },
+          "time_zone": { "type": "string", "description": "Time zone of the spreadsheet" },
+          "sheet_count": { "type": "integer", "description": "Number of sheets in the spreadsheet" },
+          "sheets": {
+            "type": "array",
+            "description": "List of sheets with details",
+            "items": {
+              "type": "object",
+              "properties": {
+                "sheet_id": { "type": "integer", "description": "Unique sheet ID" },
+                "title": { "type": "string", "description": "Sheet name" },
+                "index": { "type": "integer", "description": "Sheet position (0-based)" },
+                "sheet_type": { "type": "string", "description": "Type of sheet (GRID, CHART, etc.)" },
+                "row_count": { "type": "integer", "description": "Number of rows (when include_sheet_data is true)" },
+                "column_count": { "type": "integer", "description": "Number of columns (when include_sheet_data is true)" }
+              }
+            }
+          },
+          "retrieved_at": { "type": "string", "description": "Timestamp when info was retrieved (ISO 8601)" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Retrieved information for spreadsheet '{title}' with {sheet_count} sheets",
+        "success_description": "Returns spreadsheet metadata including title, locale, and list of sheets with details.",
+        "sample_output": {
+          "spreadsheet_id": "1abc123xyz789",
+          "spreadsheet_url": "https://docs.google.com/spreadsheets/d/1abc123xyz789",
+          "title": "Sales Report Q1 2024",
+          "locale": "en_US",
+          "time_zone": "America/New_York",
+          "sheet_count": 2,
+          "sheets": [
+            {"sheet_id": 0, "title": "Summary", "index": 0, "sheet_type": "GRID", "row_count": 100, "column_count": 26},
+            {"sheet_id": 1234567, "title": "Details", "index": 1, "sheet_type": "GRID", "row_count": 500, "column_count": 10}
+          ],
+          "retrieved_at": "2024-01-15T12:00:00Z"
+        },
         "common_errors": {
           "auth_failed": "Your Google Sheets connection has expired. Please reconnect in Settings → Connected Apps.",
           "spreadsheet_not_found": "The spreadsheet was not found. Please check the spreadsheet ID and ensure you have access.",

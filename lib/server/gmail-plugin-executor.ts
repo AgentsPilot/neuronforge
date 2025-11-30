@@ -37,11 +37,11 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
 
   // Send email via Gmail API
   private async sendEmail(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Sending email via Gmail API');
+    this.logger.debug('Sending email via Gmail API');
 
     // Build email message
     const message = this.buildEmailMessage(parameters);
-    
+
     // Send via Gmail API
     const response = await fetch(`${this.gmailApisUrl}/users/me/messages/send`, {
       method: 'POST',
@@ -54,7 +54,7 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error('DEBUG: Gmail send failed:', errorData);
+      this.logger.error({ status: response.status, errorData }, 'Gmail send failed');
       throw new Error(`Gmail API error: ${response.status} - ${errorData}`);
     }
 
@@ -75,11 +75,11 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
 
   // Search emails via Gmail API
   private async searchEmails(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Searching emails via Gmail API');
+    this.logger.debug('Searching emails via Gmail API');
 
     // Build search query
     const searchQuery = this.buildSearchQuery(parameters);
-    
+
     // Search messages
     const listUrl = new URL(`${this.gmailApisUrl}/users/me/messages`);
     listUrl.searchParams.set('maxResults', parameters.max_results?.toString() || '10');
@@ -94,7 +94,7 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!listResponse.ok) {
       const errorData = await listResponse.text();
-      if (this.debug) console.error('DEBUG: Gmail search failed:', errorData);
+      this.logger.error({ status: listResponse.status, errorData }, 'Gmail search failed');
       throw new Error(`Gmail search failed: ${listResponse.status} - ${errorData}`);
     }
 
@@ -118,7 +118,7 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
         const emailDetail = await this.fetchEmailDetail(connection.access_token, message.id, parameters.include_attachments || false);
         emails.push(emailDetail);
       } catch (error) {
-        if (this.debug) console.warn(`DEBUG: Failed to fetch email ${message.id}:`, error);
+        this.logger.warn({ err: error, messageId: message.id }, 'Failed to fetch email');
       }
     }
 
@@ -133,11 +133,11 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
 
   // Create draft via Gmail API
   private async createDraft(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Creating draft via Gmail API');
+    this.logger.debug('Creating draft via Gmail API');
 
     // Build email message
     const message = this.buildEmailMessage(parameters);
-    
+
     // Create draft
     const response = await fetch(`${this.gmailApisUrl}/users/me/drafts`, {
       method: 'POST',
@@ -152,7 +152,7 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error('DEBUG: Gmail draft creation failed:', errorData);
+      this.logger.error({ status: response.status, errorData }, 'Gmail draft creation failed');
       throw new Error(`Gmail draft creation failed: ${response.status} - ${errorData}`);
     }
 
@@ -338,7 +338,7 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
             // Could add: downloadUrl, processedContent, etc.
           });
         } catch (error) {
-          if (this.debug) console.warn(`DEBUG: Failed to process attachment ${part.filename}:`, error);
+          this.logger.warn({ err: error, filename: part.filename }, 'Failed to process attachment');
         }
       }
     };
@@ -356,7 +356,7 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
       const padding = '='.repeat((4 - base64.length % 4) % 4);
       return atob(base64 + padding);
     } catch (error) {
-      if (this.debug) console.warn('DEBUG: Failed to decode base64url:', error);
+      this.logger.warn({ err: error }, 'Failed to decode base64url');
       return '';
     }
   }  

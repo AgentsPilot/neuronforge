@@ -65,8 +65,27 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "document_id": { "type": "string", "description": "Unique document identifier" },
+          "title": { "type": "string", "description": "Document title" },
+          "char_count": { "type": "integer", "description": "Total character count in the document" },
+          "content": { "type": "string", "description": "Plain text content of the document" },
+          "structured_content": { "type": "array", "description": "Document structure with paragraphs and elements (when plain_text_only is false)" },
+          "full_document": { "type": "object", "description": "Complete document object with formatting (when include_formatting is true)" },
+          "retrieved_at": { "type": "string", "description": "Timestamp when document was retrieved (ISO 8601)" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Read document '{title}' with {char_count} characters",
+        "success_description": "Returns document content as plain text or structured data with character count.",
+        "sample_output": {
+          "document_id": "1abc123xyz",
+          "title": "Project Proposal",
+          "char_count": 3542,
+          "content": "Project Proposal\n\nOverview\nThis document outlines the project scope and objectives...",
+          "retrieved_at": "2024-01-15T10:00:00Z"
+        },
         "common_errors": {
           "auth_failed": "Your Google Docs connection has expired. Please go to Settings → Connected Apps to reconnect Google Docs.",
           "document_not_found": "The document was not found. Please check the document ID and ensure you have access.",
@@ -113,8 +132,23 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "document_id": { "type": "string", "description": "ID of the document that was modified" },
+          "char_count": { "type": "integer", "description": "Number of characters inserted" },
+          "index": { "type": "integer", "description": "Position where text was inserted" },
+          "inserted_at": { "type": "string", "description": "Timestamp when text was inserted (ISO 8601)" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Inserted {char_count} characters at position {index}",
+        "success_description": "Confirms the text insertion with position and character count.",
+        "sample_output": {
+          "document_id": "1abc123xyz",
+          "char_count": 256,
+          "index": 150,
+          "inserted_at": "2024-01-15T10:30:00Z"
+        },
         "common_errors": {
           "auth_failed": "Your Google Docs connection has expired. Please reconnect in Settings → Connected Apps.",
           "document_not_found": "The document was not found. Please check the document ID.",
@@ -163,8 +197,23 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "document_id": { "type": "string", "description": "ID of the document that was modified" },
+          "title": { "type": "string", "description": "Title of the document" },
+          "char_count": { "type": "integer", "description": "Number of characters appended" },
+          "appended_at": { "type": "string", "description": "Timestamp when text was appended (ISO 8601)" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Appended {char_count} characters to document '{title}'",
+        "success_description": "Confirms the text was appended with document title and character count.",
+        "sample_output": {
+          "document_id": "1abc123xyz",
+          "title": "Meeting Notes",
+          "char_count": 428,
+          "appended_at": "2024-01-15T11:00:00Z"
+        },
         "common_errors": {
           "auth_failed": "Your Google Docs connection has expired. Please reconnect in Settings → Connected Apps.",
           "document_not_found": "The document was not found. Please check the document ID.",
@@ -213,8 +262,23 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "document_id": { "type": "string", "description": "Unique identifier for the new document" },
+          "document_url": { "type": "string", "description": "URL to open the document in Google Docs" },
+          "title": { "type": "string", "description": "Title of the created document" },
+          "created_at": { "type": "string", "description": "Timestamp when document was created (ISO 8601)" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Created document '{title}' with ID {document_id}",
+        "success_description": "Returns the new document ID, URL, and title.",
+        "sample_output": {
+          "document_id": "1newdoc789xyz",
+          "document_url": "https://docs.google.com/document/d/1newdoc789xyz/edit",
+          "title": "Quarterly Report Q1 2024",
+          "created_at": "2024-01-15T11:30:00Z"
+        },
         "common_errors": {
           "auth_failed": "Your Google Docs connection has expired. Please reconnect in Settings → Connected Apps.",
           "quota_exceeded": "You've reached your document creation limit. Please try again later.",
@@ -246,8 +310,27 @@
         "limits": {},
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "document_id": { "type": "string", "description": "Unique document identifier" },
+          "title": { "type": "string", "description": "Document title" },
+          "char_count": { "type": "integer", "description": "Character count (when include_content_summary is true)" },
+          "paragraph_count": { "type": "integer", "description": "Paragraph count (when include_content_summary is true)" },
+          "end_index": { "type": "integer", "description": "End index of document content for positioning text" },
+          "retrieved_at": { "type": "string", "description": "Timestamp when info was retrieved (ISO 8601)" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Retrieved information for document '{title}'",
+        "success_description": "Returns document metadata and optionally content statistics.",
+        "sample_output": {
+          "document_id": "1abc123xyz",
+          "title": "Project Proposal",
+          "char_count": 3542,
+          "paragraph_count": 24,
+          "end_index": 3543,
+          "retrieved_at": "2024-01-15T12:00:00Z"
+        },
         "common_errors": {
           "auth_failed": "Your Google Docs connection has expired. Please reconnect in Settings → Connected Apps.",
           "document_not_found": "The document was not found. Please check the document ID and ensure you have access.",

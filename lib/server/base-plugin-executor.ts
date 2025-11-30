@@ -3,29 +3,32 @@
 import { UserPluginConnections } from './user-plugin-connections';
 import { PluginManagerV2 } from './plugin-manager-v2';
 import { ExecutionResult } from '@/lib/types/plugin-types';
+import { createLogger } from '@/lib/logger';
 
 export abstract class BasePluginExecutor {
   protected userConnections: UserPluginConnections;
   protected pluginManager: PluginManagerV2;
   protected debug = process.env.NODE_ENV === 'development';
   protected pluginName: string;
+  protected logger: ReturnType<typeof createLogger>;
 
   constructor(pluginName: string, userConnections: UserPluginConnections, pluginManager: PluginManagerV2) {
     this.pluginName = pluginName;
     this.userConnections = userConnections;
     this.pluginManager = pluginManager;
-    
-    if (this.debug) console.log(`DEBUG: ${pluginName} executor initialized`);
+    this.logger = createLogger({ module: 'PluginExecutor', plugin: pluginName });
+
+    this.logger.debug('Plugin executor initialized');
   }
 
   // Template method - implements common execution flow
   async executeAction(userId: string, actionName: string, parameters: any): Promise<ExecutionResult> {
-    if (this.debug) console.log(`DEBUG: Executing ${this.pluginName}.${actionName} for user ${userId}`);
+    this.logger.info({ userId, actionName }, 'Executing plugin action');
 
     try {
       // Step 1: Validate parameters against plugin schema
       const validation = this.pluginManager.validateActionParameters(this.pluginName, actionName, parameters);
-      
+
       if (validation.blocked) {
         return {
           success: false,
@@ -35,7 +38,9 @@ export abstract class BasePluginExecutor {
       }
 
       if (validation.confirmations_required.length > 0) {
-        if (this.debug) console.log('DEBUG: Confirmations required:', validation.confirmations_required);
+        this.logger.debug({
+          confirmations: validation.confirmations_required
+        }, 'Confirmations required (would be handled via UI)');
         // In production, confirmations would be handled via UI
       }
 
@@ -78,7 +83,7 @@ export abstract class BasePluginExecutor {
       // Step 4: Format success response using output guidance
       const outputGuidance = this.pluginManager.getOutputGuidance(this.pluginName, actionName);
       const successMessage = this.formatSuccessMessage(
-        outputGuidance?.success_message || 'Action completed',
+        outputGuidance?.success_description || 'Action completed',
         result,
         parameters
       );
@@ -90,11 +95,11 @@ export abstract class BasePluginExecutor {
       };
 
     } catch (error: any) {
-      if (this.debug) console.error(`DEBUG: ${this.pluginName}.${actionName} failed:`, error);
-      
+      this.logger.error({ err: error, actionName }, 'Plugin action execution failed');
+
       // Map error to user-friendly message
       const errorMessage = this.mapErrorToMessage(actionName, error);
-      
+
       return {
         success: false,
         error: error.code || 'execution_error',
@@ -184,14 +189,14 @@ export abstract class BasePluginExecutor {
 
   // Common utility: Get connection status
   async getConnectionStatus(userId: string): Promise<any> {
-    if (this.debug) console.log(`DEBUG: Getting ${this.pluginName} connection status for user ${userId}`);
-    
+    this.logger.debug({ userId }, 'Getting connection status');
+
     return await this.userConnections.getConnectionStatus(userId, this.pluginName);
   }
 
   // Common utility: Test connection with a simple API call
   async testConnection(userId: string): Promise<ExecutionResult> {
-    if (this.debug) console.log(`DEBUG: Testing ${this.pluginName} connection for user ${userId}`);
+    this.logger.debug({ userId }, 'Testing connection');
     
     try {
       // Get plugin definition for auth config
@@ -253,7 +258,11 @@ export abstract class BasePluginExecutor {
   protected async handleApiResponse(response: Response, operationName: string): Promise<any> {
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error(`DEBUG: ${operationName} failed:`, errorData);
+      this.logger.error({
+        operationName,
+        status: response.status,
+        errorData
+      }, 'API operation failed');
       throw new Error(`${operationName} failed: ${response.status} - ${errorData}`);
     }
 

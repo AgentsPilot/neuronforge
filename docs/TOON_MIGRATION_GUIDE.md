@@ -6,6 +6,36 @@ This guide enables Claude Code to intelligently refactor your TypeScript/JavaScr
 
 ---
 
+## Quick Start: Using ToonDataHelper
+
+The helper class is implemented and ready to use:
+
+```typescript
+import ToonDataHelper from '@/lib/utils/toon-data-helper';
+
+// Basic conversion
+const { toon, eligibilityScore } = ToonDataHelper.toToon(data);
+
+// Conditional conversion (returns TOON if eligible, JSON otherwise)
+const { content, format } = ToonDataHelper.toToonOrJson(data, 0.6);
+
+// Check eligibility before converting
+const score = ToonDataHelper.calculateEligibility(data);
+
+// Estimate token savings
+const savings = ToonDataHelper.estimateTokenSavings(data, toon);
+console.log(`Saved ${savings.savingsPercent}% (~${savings.estimatedTokensSaved} tokens)`);
+
+// Generate a full eligibility report
+console.log(ToonDataHelper.generateReport(data));
+```
+
+**Location:** `lib/utils/toon-data-helper.ts`
+
+**Package dependency:** `@toon-format/toon`
+
+---
+
 ## What is TOON?
 
 **TOON (Token-Oriented Object Notation)** is a compact, schema-aware serialization format optimized for LLM prompts and structured data exchange.
@@ -308,7 +338,7 @@ class PluginExecutor {
 
 **After (TOON):**
 ```typescript
-import ToonDataHelper from "./ToonDataHelper";
+import ToonDataHelper from "@/lib/utils/toon-data-helper";
 
 class PluginExecutor {
   async executeWithParams(pluginId: string, params: Record<string, any>) {

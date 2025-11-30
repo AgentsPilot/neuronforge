@@ -80,8 +80,122 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "calendar_id": {
+            "type": "string",
+            "description": "The calendar identifier that was queried"
+          },
+          "event_count": {
+            "type": "integer",
+            "description": "Number of events returned"
+          },
+          "events": {
+            "type": "array",
+            "description": "List of calendar events",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Unique event identifier"
+                },
+                "summary": {
+                  "type": "string",
+                  "description": "Event title/summary"
+                },
+                "description": {
+                  "type": "string",
+                  "description": "Event description"
+                },
+                "location": {
+                  "type": "string",
+                  "description": "Event location"
+                },
+                "start": {
+                  "type": "string",
+                  "description": "Event start time (ISO 8601 format)"
+                },
+                "end": {
+                  "type": "string",
+                  "description": "Event end time (ISO 8601 format)"
+                },
+                "attendees": {
+                  "type": "array",
+                  "description": "List of event attendees",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "email": {
+                        "type": "string",
+                        "description": "Attendee email address"
+                      },
+                      "response_status": {
+                        "type": "string",
+                        "description": "Attendee response status (needsAction, declined, tentative, accepted)"
+                      }
+                    }
+                  }
+                },
+                "organizer": {
+                  "type": "string",
+                  "description": "Organizer email address"
+                },
+                "html_link": {
+                  "type": "string",
+                  "description": "URL to view event in Google Calendar"
+                },
+                "conference_data": {
+                  "type": "object",
+                  "description": "Conference/meeting data if present"
+                }
+              }
+            }
+          },
+          "time_range": {
+            "type": "object",
+            "description": "The time range that was queried",
+            "properties": {
+              "start": {
+                "type": "string",
+                "description": "Start of time range (ISO 8601)"
+              },
+              "end": {
+                "type": "string",
+                "description": "End of time range (ISO 8601) or 'unbounded'"
+              }
+            }
+          },
+          "retrieved_at": {
+            "type": "string",
+            "description": "Timestamp when events were retrieved (ISO 8601)"
+          }
+        }
+      },
       "output_guidance": {
-        "success_message": "Retrieved {event_count} events from {calendar_id}",
+        "success_description": "Returns calendar events within the specified time range with full details including attendees and conference links.",
+        "sample_output": {
+          "calendar_id": "primary",
+          "event_count": 2,
+          "events": [
+            {
+              "id": "abc123xyz",
+              "summary": "Team Meeting",
+              "description": "Weekly sync",
+              "location": "Conference Room A",
+              "start": "2024-01-15T10:00:00Z",
+              "end": "2024-01-15T11:00:00Z",
+              "attendees": [
+                {"email": "john@example.com", "response_status": "accepted"}
+              ],
+              "organizer": "jane@example.com",
+              "html_link": "https://calendar.google.com/event?eid=abc123"
+            }
+          ],
+          "time_range": {"start": "2024-01-15T00:00:00Z", "end": "2024-01-16T00:00:00Z"},
+          "retrieved_at": "2024-01-15T08:30:00Z"
+        },
         "common_errors": {
           "auth_failed": "Your Google Calendar connection has expired. Please go to Settings → Connected Apps to reconnect Google Calendar.",
           "calendar_not_found": "The calendar was not found. Please check the calendar ID and ensure you have access.",
@@ -191,8 +305,59 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "description": "Unique identifier for the created event"
+          },
+          "summary": {
+            "type": "string",
+            "description": "Event title/summary"
+          },
+          "start_time": {
+            "type": "string",
+            "description": "Event start time (ISO 8601 format)"
+          },
+          "end_time": {
+            "type": "string",
+            "description": "Event end time (ISO 8601 format)"
+          },
+          "html_link": {
+            "type": "string",
+            "description": "URL to view event in Google Calendar"
+          },
+          "hangout_link": {
+            "type": "string",
+            "description": "Google Hangout link if conference was created"
+          },
+          "meet_link": {
+            "type": "string",
+            "description": "Google Meet video call link if conference was created"
+          },
+          "attendee_count": {
+            "type": "integer",
+            "description": "Number of attendees added to the event"
+          },
+          "created_at": {
+            "type": "string",
+            "description": "Timestamp when event was created (ISO 8601)"
+          }
+        }
+      },
       "output_guidance": {
-        "success_message": "Created event '{summary}' on {start_time}",
+        "success_description": "Returns the created event details including ID, calendar link, and any conference links.",
+        "sample_output": {
+          "event_id": "abc123xyz",
+          "summary": "Team Meeting",
+          "start_time": "2024-01-15T10:00:00Z",
+          "end_time": "2024-01-15T11:00:00Z",
+          "html_link": "https://calendar.google.com/event?eid=abc123",
+          "meet_link": "https://meet.google.com/abc-defg-hij",
+          "attendee_count": 5,
+          "created_at": "2024-01-14T15:30:00Z"
+        },
         "common_errors": {
           "auth_failed": "Your Google Calendar connection has expired. Please reconnect in Settings → Connected Apps.",
           "calendar_not_found": "The calendar was not found. Please check the calendar ID.",
@@ -264,8 +429,45 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "description": "Unique identifier of the updated event"
+          },
+          "summary": {
+            "type": "string",
+            "description": "Updated event title/summary"
+          },
+          "start_time": {
+            "type": "string",
+            "description": "Event start time (ISO 8601 format)"
+          },
+          "end_time": {
+            "type": "string",
+            "description": "Event end time (ISO 8601 format)"
+          },
+          "html_link": {
+            "type": "string",
+            "description": "URL to view event in Google Calendar"
+          },
+          "updated_at": {
+            "type": "string",
+            "description": "Timestamp when event was updated (ISO 8601)"
+          }
+        }
+      },
       "output_guidance": {
-        "success_message": "Updated event '{summary}' successfully",
+        "success_description": "Returns the updated event details with new values and timestamp.",
+        "sample_output": {
+          "event_id": "abc123xyz",
+          "summary": "Updated Team Meeting",
+          "start_time": "2024-01-15T14:00:00Z",
+          "end_time": "2024-01-15T15:00:00Z",
+          "html_link": "https://calendar.google.com/event?eid=abc123",
+          "updated_at": "2024-01-14T16:00:00Z"
+        },
         "common_errors": {
           "auth_failed": "Your Google Calendar connection has expired. Please reconnect in Settings → Connected Apps.",
           "event_not_found": "The event was not found. Please check the event ID.",
@@ -315,8 +517,30 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "description": "ID of the deleted event"
+          },
+          "deleted": {
+            "type": "boolean",
+            "description": "Whether the event was successfully deleted"
+          },
+          "deleted_at": {
+            "type": "string",
+            "description": "Timestamp when event was deleted (ISO 8601)"
+          }
+        }
+      },
       "output_guidance": {
-        "success_message": "Deleted event successfully",
+        "success_description": "Confirms the event was deleted with the event ID and timestamp.",
+        "sample_output": {
+          "event_id": "abc123xyz",
+          "deleted": true,
+          "deleted_at": "2024-01-14T16:30:00Z"
+        },
         "common_errors": {
           "auth_failed": "Your Google Calendar connection has expired. Please reconnect in Settings → Connected Apps.",
           "event_not_found": "The event was not found. It may have already been deleted.",
@@ -349,8 +573,140 @@
         "limits": {},
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "description": "Unique event identifier"
+          },
+          "summary": {
+            "type": "string",
+            "description": "Event title/summary"
+          },
+          "description": {
+            "type": "string",
+            "description": "Event description"
+          },
+          "location": {
+            "type": "string",
+            "description": "Event location"
+          },
+          "start": {
+            "type": "string",
+            "description": "Event start time (ISO 8601 format)"
+          },
+          "end": {
+            "type": "string",
+            "description": "Event end time (ISO 8601 format)"
+          },
+          "attendees": {
+            "type": "array",
+            "description": "List of event attendees with details",
+            "items": {
+              "type": "object",
+              "properties": {
+                "email": {
+                  "type": "string",
+                  "description": "Attendee email address"
+                },
+                "display_name": {
+                  "type": "string",
+                  "description": "Attendee display name"
+                },
+                "organizer": {
+                  "type": "boolean",
+                  "description": "Whether attendee is the organizer"
+                },
+                "response_status": {
+                  "type": "string",
+                  "description": "Attendee response status (needsAction, declined, tentative, accepted)"
+                },
+                "optional": {
+                  "type": "boolean",
+                  "description": "Whether attendee is optional"
+                }
+              }
+            }
+          },
+          "organizer": {
+            "type": "object",
+            "description": "Event organizer information",
+            "properties": {
+              "email": {
+                "type": "string",
+                "description": "Organizer email address"
+              },
+              "display_name": {
+                "type": "string",
+                "description": "Organizer display name"
+              }
+            }
+          },
+          "reminders": {
+            "type": "object",
+            "description": "Event reminder settings"
+          },
+          "html_link": {
+            "type": "string",
+            "description": "URL to view event in Google Calendar"
+          },
+          "hangout_link": {
+            "type": "string",
+            "description": "Google Hangout link if present"
+          },
+          "meet_link": {
+            "type": "string",
+            "description": "Google Meet video call link if present"
+          },
+          "status": {
+            "type": "string",
+            "description": "Event status (confirmed, tentative, cancelled)"
+          },
+          "created": {
+            "type": "string",
+            "description": "When the event was created (ISO 8601)"
+          },
+          "updated": {
+            "type": "string",
+            "description": "When the event was last updated (ISO 8601)"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "description": "Timestamp when details were retrieved (ISO 8601)"
+          }
+        }
+      },
       "output_guidance": {
-        "success_message": "Retrieved event details for '{summary}'",
+        "success_description": "Returns complete event details including attendees, organizer, reminders, and conference links.",
+        "sample_output": {
+          "event_id": "abc123xyz",
+          "summary": "Team Meeting",
+          "description": "Weekly team sync",
+          "location": "Conference Room A",
+          "start": "2024-01-15T10:00:00Z",
+          "end": "2024-01-15T11:00:00Z",
+          "attendees": [
+            {
+              "email": "john@example.com",
+              "display_name": "John Doe",
+              "organizer": false,
+              "response_status": "accepted",
+              "optional": false
+            }
+          ],
+          "organizer": {
+            "email": "jane@example.com",
+            "display_name": "Jane Smith"
+          },
+          "reminders": {"useDefault": true},
+          "html_link": "https://calendar.google.com/event?eid=abc123",
+          "meet_link": "https://meet.google.com/abc-defg-hij",
+          "status": "confirmed",
+          "created": "2024-01-10T09:00:00Z",
+          "updated": "2024-01-14T12:00:00Z",
+          "retrieved_at": "2024-01-14T16:00:00Z"
+        },
         "common_errors": {
           "auth_failed": "Your Google Calendar connection has expired. Please reconnect in Settings → Connected Apps.",
           "event_not_found": "The event was not found. Please check the event ID and ensure you have access.",

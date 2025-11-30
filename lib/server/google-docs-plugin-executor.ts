@@ -53,7 +53,7 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
 
   // Read full document content
   private async readDocument(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Reading document from Google Docs');
+    this.logger.debug('DEBUG: Reading document from Google Docs');
 
     const { document_id, include_formatting, plain_text_only } = parameters;
 
@@ -69,7 +69,7 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error('DEBUG: Docs read failed:', errorData);
+      this.logger.error({ err: error }, 'DEBUG: Docs read failed:', errorData);
       throw new Error(`Docs API error: ${response.status} - ${errorData}`);
     }
 
@@ -134,7 +134,7 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
 
   // Insert text at a specific position
   private async insertText(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Inserting text into Google Docs');
+    this.logger.debug('DEBUG: Inserting text into Google Docs');
 
     const { document_id, text, index } = parameters;
 
@@ -171,7 +171,7 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error('DEBUG: Docs insert failed:', errorData);
+      this.logger.error({ err: error }, 'DEBUG: Docs insert failed:', errorData);
       throw new Error(`Docs API error: ${response.status} - ${errorData}`);
     }
 
@@ -187,7 +187,7 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
 
   // Append text to the end of document
   private async appendText(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Appending text to Google Docs');
+    this.logger.debug('DEBUG: Appending text to Google Docs');
 
     const { document_id, text, add_line_break } = parameters;
 
@@ -202,7 +202,7 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!docResponse.ok) {
       const errorData = await docResponse.text();
-      if (this.debug) console.error('DEBUG: Docs get failed:', errorData);
+      this.logger.error({ err: error }, 'DEBUG: Docs get failed:', errorData);
       throw new Error(`Docs API error: ${docResponse.status} - ${errorData}`);
     }
 
@@ -238,7 +238,7 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error('DEBUG: Docs append failed:', errorData);
+      this.logger.error({ err: error }, 'DEBUG: Docs append failed:', errorData);
       throw new Error(`Docs API error: ${response.status} - ${errorData}`);
     }
 
@@ -254,7 +254,7 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
 
   // Create a new document
   private async createDocument(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Creating new document');
+    this.logger.debug('DEBUG: Creating new document');
 
     const { title, initial_content } = parameters;
 
@@ -276,7 +276,7 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error('DEBUG: Document creation failed:', errorData);
+      this.logger.error({ err: error }, 'DEBUG: Document creation failed:', errorData);
       throw new Error(`Docs API error: ${response.status} - ${errorData}`);
     }
 
@@ -291,7 +291,7 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
           add_line_break: false
         });
       } catch (error) {
-        if (this.debug) console.warn('DEBUG: Failed to add initial content:', error);
+        this.logger.warn({ err: error }, 'DEBUG: Failed to add initial content:', error);
         // Continue anyway - document was created successfully
       }
     }
@@ -306,7 +306,7 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
 
   // Get document metadata and information
   private async getDocumentInfo(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Getting document info');
+    this.logger.debug('DEBUG: Getting document info');
 
     const { document_id, include_content_summary } = parameters;
 
@@ -322,7 +322,7 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error('DEBUG: Get document info failed:', errorData);
+      this.logger.error({ err: error }, 'DEBUG: Get document info failed:', errorData);
       throw new Error(`Docs API error: ${response.status} - ${errorData}`);
     }
 

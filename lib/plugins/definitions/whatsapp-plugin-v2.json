@@ -107,8 +107,25 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "description": "Whether the message was sent successfully" },
+          "message_id": { "type": "string", "description": "WhatsApp message ID (WAMID) for tracking" },
+          "recipient": { "type": "string", "description": "Phone number message was sent to" },
+          "template_name": { "type": "string", "description": "Name of the template used" },
+          "message": { "type": "string", "description": "Status message describing the result" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Template message '{template_name}' sent successfully to {recipient_phone}. Message ID: {message_id}",
+        "success_description": "Returns message ID for tracking and confirmation of template delivery.",
+        "sample_output": {
+          "success": true,
+          "message_id": "wamid.HBgLMTU1NTEyMzQ1NjcVAgARGBI2QTNEME...",
+          "recipient": "+15551234567",
+          "template_name": "order_confirmation",
+          "message": "Template message 'order_confirmation' sent successfully to +15551234567"
+        },
         "common_errors": {
           "template_not_found": "Template '{template_name}' not found or not approved. Use list_message_templates to see available templates.",
           "invalid_phone": "Invalid phone number format. Use international format with country code (e.g., +15551234567).",
@@ -161,8 +178,25 @@
         },
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "description": "Whether the message was sent successfully" },
+          "message_id": { "type": "string", "description": "WhatsApp message ID (WAMID) for tracking" },
+          "recipient": { "type": "string", "description": "Phone number message was sent to" },
+          "is_reply": { "type": "boolean", "description": "Whether this was a reply to another message" },
+          "message": { "type": "string", "description": "Status message describing the result" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Text message sent successfully to {recipient_phone}. Message ID: {message_id}. Status updates will be sent via webhook.",
+        "success_description": "Returns message ID for tracking delivery status via webhook.",
+        "sample_output": {
+          "success": true,
+          "message_id": "wamid.HBgLMTU1NTEyMzQ1NjcVAgARGBI2QTNEME...",
+          "recipient": "+15551234567",
+          "is_reply": false,
+          "message": "Text message sent successfully to +15551234567"
+        },
         "common_errors": {
           "outside_service_window": "Cannot send free-form message outside 24-hour customer service window. Use send_template_message instead.",
           "invalid_phone": "Invalid phone number. Ensure customer has WhatsApp and phone is in correct format.",
@@ -282,8 +316,25 @@
         },
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "description": "Whether the message was sent successfully" },
+          "message_id": { "type": "string", "description": "WhatsApp message ID (WAMID) for tracking" },
+          "recipient": { "type": "string", "description": "Phone number message was sent to" },
+          "interaction_type": { "type": "string", "description": "Type of interactive message (button or list)" },
+          "message": { "type": "string", "description": "Status message describing the result" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Interactive message sent successfully to {recipient_phone}. Customer responses will be received via webhook with the selected button/list item ID.",
+        "success_description": "Returns message ID. Customer selections will be delivered via webhook with the button/list item ID.",
+        "sample_output": {
+          "success": true,
+          "message_id": "wamid.HBgLMTU1NTEyMzQ1NjcVAgARGBI2QTNEME...",
+          "recipient": "+15551234567",
+          "interaction_type": "button",
+          "message": "Interactive button message sent successfully to +15551234567"
+        },
         "common_errors": {
           "outside_service_window": "Cannot send interactive message outside 24-hour customer service window.",
           "invalid_interaction_type": "Interaction type must be 'button' or 'list'.",
@@ -327,8 +378,54 @@
         },
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "description": "Whether templates were retrieved successfully" },
+          "templates": {
+            "type": "array",
+            "description": "List of available message templates",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string", "description": "Template name for use with send_template_message" },
+                "status": { "type": "string", "description": "Template approval status (APPROVED, PENDING, REJECTED)" },
+                "language": { "type": "string", "description": "Language code (e.g., en_US)" },
+                "category": { "type": "string", "description": "Template category (MARKETING, UTILITY, etc.)" },
+                "components": { "type": "array", "description": "Template components (header, body, footer, buttons)" },
+                "parameter_count": { "type": "integer", "description": "Number of parameters required in body" }
+              }
+            }
+          },
+          "total_count": { "type": "integer", "description": "Total number of templates returned" },
+          "has_more": { "type": "boolean", "description": "Whether more templates are available" },
+          "message": { "type": "string", "description": "Status message describing the result" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Retrieved {count} message templates. Use template names and language codes with send_template_message action.",
+        "success_description": "Returns list of templates with names, statuses, and parameter requirements.",
+        "sample_output": {
+          "success": true,
+          "templates": [
+            {
+              "name": "order_confirmation",
+              "status": "APPROVED",
+              "language": "en_US",
+              "category": "UTILITY",
+              "parameter_count": 2
+            },
+            {
+              "name": "welcome_message",
+              "status": "APPROVED",
+              "language": "en_US",
+              "category": "MARKETING",
+              "parameter_count": 1
+            }
+          ],
+          "total_count": 2,
+          "has_more": false,
+          "message": "Retrieved 2 message templates"
+        },
         "common_errors": {
           "no_templates": "No message templates found. Create templates in WhatsApp Manager at business.facebook.com.",
           "api_rate_limit": "API rate limit exceeded. WhatsApp Business Management API allows 5000 calls per hour per WABA.",
@@ -351,8 +448,21 @@
         "limits": {},
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "description": "Whether the message was marked as read successfully" },
+          "message_id": { "type": "string", "description": "The message ID that was marked as read" },
+          "message": { "type": "string", "description": "Status message describing the result" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Message {message_id} marked as read successfully. Customer will see read receipt.",
+        "success_description": "Confirms the message was marked as read. Customer will see blue check marks.",
+        "sample_output": {
+          "success": true,
+          "message_id": "wamid.HBgLMTU1NTEyMzQ1NjcVAgARGBI2QTNEME...",
+          "message": "Message wamid.HBgLMTU1NTEyMzQ1NjcVAgARGBI2QTNEME... marked as read successfully"
+        },
         "common_errors": {
           "message_not_found": "Message ID not found. The message may be too old or the ID is incorrect.",
           "already_read": "Message has already been marked as read.",

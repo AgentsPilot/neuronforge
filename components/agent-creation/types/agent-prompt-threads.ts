@@ -105,13 +105,29 @@ export interface ProcessMessageResponse {
   success: boolean;
   phase: ThreadPhase;
 
-  // Phase 1 & 2 fields
+  // Phase 1 specific fields (diagnostic narrative)
+  workflow_draft?: string[];
+  entities_detected?: string[];
+  sources_detected?: string[];
+  operations_detected?: string[];
+  outputs_detected?: string[];
+  delivery_detected?: string[];
+  ambiguities?: string[];
+  choices_identified?: Record<string, string[]>;
+  serviceConfidenceNotes?: Record<string, string>;
+  user_inputs_required?: string[];  // Labels for inputs still missing (Phase 1 top-level)
+  resolved_user_inputs?: ResolvedUserInput[];  // Phase 1 top-level resolved inputs
+
+  // Phase 1 & 2 shared fields
   analysis?: AnalysisObject;
   questionsSequence?: ClarificationQuestion[];
   needsClarification?: boolean;
   clarityScore?: number;
   suggestions?: string[];
   connectedPlugins?: string[]; // Phase 1: List of user's connected plugin keys (e.g., ['google-mail', 'slack'])
+
+  // Phase 2 specific fields
+  workflow_refined_preview?: string[];
 
   // Phase 3 specific fields
   enhanced_prompt?: EnhancedPrompt;

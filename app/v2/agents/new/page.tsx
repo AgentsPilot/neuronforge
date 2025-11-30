@@ -7,7 +7,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import { Suspense, useState, useEffect, useRef } from 'react'
 import { useAuth } from '@/components/UserProvider'
 import { Card } from '@/components/v2/ui/card'
-import { V2Header } from '@/components/v2/V2Header'
+import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import { ArrowLeft, Bot, Sparkles, MessageSquare, Zap, CheckCircle2, Clock,
   Settings,
   Loader2,
@@ -471,7 +471,7 @@ function V2AgentBuilderContent() {
 
         // Show message asking user to connect plugins
         const oauthMessage = data.metadata?.oauth_message ||
-          'To complete your automation, please connect the following services:'
+          'To complete your setup, please connect the following services:'
         addAIMessage(oauthMessage)
 
         return // Stop here, wait for user to connect/skip plugins
@@ -587,7 +587,7 @@ function V2AgentBuilderContent() {
       if (remainingMissing.length === 0) {
         console.log('✅ All plugins connected! Re-running Phase 3...')
         setShowPluginCards(false)
-        addTypingIndicator('All services connected! Creating your automation plan...')
+        addTypingIndicator('All services connected! Creating your enhanced plan...')
         await processPhase3(threadId!, updatedPlugins)
       }
 
@@ -724,31 +724,32 @@ function V2AgentBuilderContent() {
       addAIMessage("✨ Agent draft ready!")
 
       // Add resolved_user_inputs to inputParameterValues if available
+      // Keep resolvedInputs in scope so we can filter out already-provided parameters
+      let resolvedInputs: Record<string, any> = {}
       if (enhancedPromptData?.specifics?.resolved_user_inputs) {
-        const resolvedInputs: Record<string, any> = {}
         enhancedPromptData.specifics.resolved_user_inputs.forEach((input: { key: string; value: string }) => {
           resolvedInputs[input.key] = input.value
         })
         setInputParameterValues(prev => ({ ...prev, ...resolvedInputs }))
       }
 
-      // Check for required input parameters
+      // Check for required input parameters that don't already have values from resolved_user_inputs
       const requiredParams = generatedAgent.agent.input_schema?.filter(
-        (input: any) => input.required === true
+        (input: any) => input.required === true && !(input.name in resolvedInputs)
       ) || []
 
       if (requiredParams.length > 0) {
-        // Start input parameters flow
+        // Start input parameters flow for missing parameters only
         setRequiredInputs(requiredParams)
         setCurrentInputIndex(0)
         setIsAwaitingInputParameter(true)
-        addAIMessage("Great! Now let's configure the agent's settings.")
+        addAIMessage("Great! Now let's configure the remaining agent settings.")
 
         // Ask first parameter question
         const firstParam = requiredParams[0]
         addAIMessage(`What value should I use for **${firstParam.label || firstParam.name}**?\n\n${firstParam.description || ''}`)
       } else {
-        // No required parameters, mark step complete and go to scheduling
+        // No required parameters or all already have values, mark step complete and go to scheduling
         setInputParametersComplete(true)
         addAIMessage("Great! Now let's decide when the agent will run.")
         setIsAwaitingSchedule(true)
@@ -1278,7 +1279,12 @@ function V2AgentBuilderContent() {
 
   return (
     <div className="space-y-4 sm:space-y-5 lg:space-y-6">
-      {/* Top Bar: Back Button + User Menu */}
+      {/* Logo - First Line */}
+      <div className="mb-3">
+        <V2Logo />
+      </div>
+
+      {/* Back Button + Controls */}
       <div className="flex items-center justify-between">
         <button
           onClick={() => router.push('/v2/dashboard')}
@@ -1289,7 +1295,7 @@ function V2AgentBuilderContent() {
           <span className="hidden xs:inline">Back to Dashboard</span>
           <span className="xs:hidden">Back</span>
         </button>
-        <V2Header />
+        <V2Controls />
       </div>
 
       {/* Main Grid Layout - Two Columns: Setup Progress → Chat (Extended) */}
@@ -1333,13 +1339,13 @@ function V2AgentBuilderContent() {
                 <div className={`flex items-start gap-3 p-3 rounded-lg border ${
                   builderState.workflowPhase === 'analysis'
                     ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
-                    : builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted
+                    : builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted
                     ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
                     : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
                 }`}>
                   {builderState.workflowPhase === 'analysis' ? (
                     <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
-                  ) : builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted ? (
+                  ) : builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted ? (
                     <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
                   ) : (
                     <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
@@ -1357,13 +1363,13 @@ function V2AgentBuilderContent() {
                 <div className={`flex items-start gap-3 p-3 rounded-lg border ${
                   builderState.workflowPhase === 'questions'
                     ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
-                    : builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted
+                    : builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted
                     ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
                     : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
                 }`}>
                   {builderState.workflowPhase === 'questions' ? (
                     <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
-                  ) : builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted ? (
+                  ) : builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted ? (
                     <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
                   ) : (
                     <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
@@ -1384,13 +1390,13 @@ function V2AgentBuilderContent() {
                 <div className={`flex items-start gap-3 p-3 rounded-lg border ${
                   builderState.workflowPhase === 'enhancement'
                     ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
-                    : builderState.workflowPhase === 'approval' || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted
+                    : builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted
                     ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
                     : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
                 }`}>
                   {builderState.workflowPhase === 'enhancement' ? (
                     <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
-                  ) : builderState.workflowPhase === 'approval' || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted ? (
+                  ) : builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted ? (
                     <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
                   ) : (
                     <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>

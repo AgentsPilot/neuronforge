@@ -82,8 +82,48 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "summary": { "type": "string", "description": "Comprehensive research summary based on analyzed sources" },
+          "key_points": {
+            "type": "array",
+            "description": "Key findings extracted from research",
+            "items": { "type": "string" }
+          },
+          "sources": {
+            "type": "array",
+            "description": "List of web sources used in research",
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": { "type": "string", "description": "Source page title" },
+                "url": { "type": "string", "description": "Source URL" },
+                "snippet": { "type": "string", "description": "Brief excerpt from source" }
+              }
+            }
+          },
+          "source_count": { "type": "integer", "description": "Number of sources analyzed" },
+          "research_depth": { "type": "string", "description": "Depth level used (quick, standard, comprehensive, deep_dive)" },
+          "focus": { "type": "string", "description": "Research focus used (general, recent, technical, academic, news)" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Research completed successfully with {source_count} sources analyzed",
+        "success_description": "Returns comprehensive research summary with key points and source citations.",
+        "sample_output": {
+          "summary": "Based on analysis of multiple sources, the research indicates...",
+          "key_points": [
+            "Key finding 1: Market trends show...",
+            "Key finding 2: Industry experts suggest...",
+            "Key finding 3: Recent developments include..."
+          ],
+          "sources": [
+            {"title": "Industry Report 2024", "url": "https://example.com/report", "snippet": "The latest findings..."}
+          ],
+          "source_count": 5,
+          "research_depth": "standard",
+          "focus": "general"
+        },
         "common_errors": {
           "api_key_missing": "Google Search API key is not configured. Please contact support to enable web research.",
           "rate_limit_exceeded": "Research rate limit exceeded. Please wait a moment and try again.",
@@ -136,8 +176,28 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "summary": { "type": "string", "description": "The summarized content" },
+          "original_length": { "type": "integer", "description": "Character count of original content" },
+          "summary_length": { "type": "integer", "description": "Character count of summary" },
+          "style": { "type": "string", "description": "Writing style used (professional, casual, technical, academic)" },
+          "length_type": { "type": "string", "description": "Summary length type (brief, standard, detailed, or original)" },
+          "tokens_used": { "type": "integer", "description": "OpenAI tokens consumed" },
+          "note": { "type": "string", "description": "Optional note if content was already concise" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Content summarized successfully ({original_length} → {summary_length} characters)",
+        "success_description": "Returns summarized content with length comparison and tokens used.",
+        "sample_output": {
+          "summary": "The article discusses the key developments in AI technology, highlighting recent breakthroughs in natural language processing and their impact on various industries.",
+          "original_length": 5432,
+          "summary_length": 186,
+          "style": "professional",
+          "length_type": "standard",
+          "tokens_used": 350
+        },
         "common_errors": {
           "content_too_short": "Content is too short to summarize meaningfully. Minimum 50 characters required.",
           "api_error": "AI summarization failed. Please try again or contact support.",
@@ -185,8 +245,42 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "answer": { "type": "string", "description": "The AI-generated answer to the question" },
+          "question": { "type": "string", "description": "The original question asked" },
+          "detail_level": { "type": "string", "description": "Detail level used (concise, standard, detailed)" },
+          "used_web_search": { "type": "boolean", "description": "Whether web search was used for current information" },
+          "sources": {
+            "type": "array",
+            "description": "List of sources used (if include_sources was true)",
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": { "type": "string", "description": "Source page title" },
+                "url": { "type": "string", "description": "Source URL" },
+                "snippet": { "type": "string", "description": "Brief excerpt from source" }
+              }
+            }
+          },
+          "source_count": { "type": "integer", "description": "Number of sources used" },
+          "tokens_used": { "type": "integer", "description": "OpenAI tokens consumed" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Question answered successfully{with_sources}",
+        "success_description": "Returns the answer with optional source citations and usage statistics.",
+        "sample_output": {
+          "answer": "Based on current information, the answer to your question is...",
+          "question": "What are the latest AI trends in 2024?",
+          "detail_level": "standard",
+          "used_web_search": true,
+          "sources": [
+            {"title": "AI Trends Report", "url": "https://example.com/ai-trends", "snippet": "Key developments in AI..."}
+          ],
+          "source_count": 3,
+          "tokens_used": 450
+        },
         "common_errors": {
           "unclear_question": "The question is unclear or too vague. Please provide more context.",
           "no_information": "Unable to find reliable information to answer this question.",

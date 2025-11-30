@@ -81,8 +81,55 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "description": "List of files and folders",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "description": "Unique file ID" },
+                "name": { "type": "string", "description": "File or folder name" },
+                "mimeType": { "type": "string", "description": "MIME type of the file" },
+                "size": { "type": "string", "description": "File size in bytes" },
+                "createdTime": { "type": "string", "description": "Creation timestamp (ISO 8601)" },
+                "modifiedTime": { "type": "string", "description": "Last modification timestamp (ISO 8601)" },
+                "webViewLink": { "type": "string", "description": "URL to view the file" },
+                "shared": { "type": "boolean", "description": "Whether file is shared" },
+                "starred": { "type": "boolean", "description": "Whether file is starred" }
+              }
+            }
+          },
+          "file_count": { "type": "integer", "description": "Number of files returned" },
+          "next_page_token": { "type": "string", "description": "Token for fetching next page of results" },
+          "has_more": { "type": "boolean", "description": "Whether more files are available" },
+          "query_used": { "type": "string", "description": "The query used to filter results" },
+          "retrieved_at": { "type": "string", "description": "Timestamp when data was retrieved (ISO 8601)" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Found {file_count} files in Google Drive",
+        "success_description": "Returns a list of files and folders with metadata including size, dates, and sharing status.",
+        "sample_output": {
+          "files": [
+            {
+              "id": "1abc123xyz",
+              "name": "Project Report.docx",
+              "mimeType": "application/vnd.google-apps.document",
+              "size": "15360",
+              "createdTime": "2024-01-10T09:00:00Z",
+              "modifiedTime": "2024-01-14T15:30:00Z",
+              "webViewLink": "https://docs.google.com/document/d/1abc123xyz",
+              "shared": true,
+              "starred": false
+            }
+          ],
+          "file_count": 1,
+          "has_more": false,
+          "query_used": "trashed = false",
+          "retrieved_at": "2024-01-15T10:00:00Z"
+        },
         "common_errors": {
           "auth_failed": "Your Google Drive connection has expired. Please go to Settings → Connected Apps to reconnect Google Drive.",
           "folder_not_found": "The specified folder was not found. Please check the folder ID and try again.",
@@ -142,8 +189,55 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "description": "List of matching files and folders",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "description": "Unique file ID" },
+                "name": { "type": "string", "description": "File or folder name" },
+                "mimeType": { "type": "string", "description": "MIME type of the file" },
+                "size": { "type": "string", "description": "File size in bytes" },
+                "createdTime": { "type": "string", "description": "Creation timestamp (ISO 8601)" },
+                "modifiedTime": { "type": "string", "description": "Last modification timestamp (ISO 8601)" },
+                "webViewLink": { "type": "string", "description": "URL to view the file" },
+                "shared": { "type": "boolean", "description": "Whether file is shared" },
+                "starred": { "type": "boolean", "description": "Whether file is starred" }
+              }
+            }
+          },
+          "file_count": { "type": "integer", "description": "Number of files found" },
+          "search_query": { "type": "string", "description": "The search query that was executed" },
+          "next_page_token": { "type": "string", "description": "Token for fetching next page of results" },
+          "has_more": { "type": "boolean", "description": "Whether more results are available" },
+          "searched_at": { "type": "string", "description": "Timestamp when search was performed (ISO 8601)" },
+          "message": { "type": "string", "description": "Status message if no results found" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Found {file_count} files matching your search",
+        "success_description": "Returns files matching the search query with metadata and pagination info.",
+        "sample_output": {
+          "files": [
+            {
+              "id": "1xyz789abc",
+              "name": "Q4 Budget.xlsx",
+              "mimeType": "application/vnd.google-apps.spreadsheet",
+              "size": "24576",
+              "modifiedTime": "2024-01-13T11:00:00Z",
+              "webViewLink": "https://docs.google.com/spreadsheets/d/1xyz789abc",
+              "shared": false,
+              "starred": true
+            }
+          ],
+          "file_count": 1,
+          "search_query": "(fullText contains 'budget') and trashed = false",
+          "has_more": false,
+          "searched_at": "2024-01-15T10:30:00Z"
+        },
         "common_errors": {
           "auth_failed": "Your Google Drive connection has expired. Please reconnect in Settings → Connected Apps.",
           "invalid_query": "The search query format is invalid. Please check your search terms and try again.",
@@ -180,8 +274,38 @@
         "limits": {},
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "file": { "type": "object", "description": "Complete file metadata from Google Drive API" },
+          "file_id": { "type": "string", "description": "Unique file identifier" },
+          "file_name": { "type": "string", "description": "Name of the file or folder" },
+          "file_type": { "type": "string", "description": "Friendly file type (document, spreadsheet, folder, etc.)" },
+          "mime_type": { "type": "string", "description": "MIME type of the file" },
+          "size_bytes": { "type": "integer", "description": "File size in bytes" },
+          "created_at": { "type": "string", "description": "Creation timestamp (ISO 8601)" },
+          "modified_at": { "type": "string", "description": "Last modification timestamp (ISO 8601)" },
+          "owner": { "type": "string", "description": "File owner name or email" },
+          "web_view_link": { "type": "string", "description": "URL to view the file in browser" },
+          "is_folder": { "type": "boolean", "description": "Whether this is a folder" },
+          "retrieved_at": { "type": "string", "description": "Timestamp when metadata was retrieved (ISO 8601)" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Retrieved metadata for file: {file_name}",
+        "success_description": "Returns comprehensive file metadata including ownership, size, and access links.",
+        "sample_output": {
+          "file_id": "1abc123xyz",
+          "file_name": "Annual Report 2024.docx",
+          "file_type": "document",
+          "mime_type": "application/vnd.google-apps.document",
+          "size_bytes": 52428,
+          "created_at": "2024-01-05T08:00:00Z",
+          "modified_at": "2024-01-14T16:45:00Z",
+          "owner": "jane.doe@company.com",
+          "web_view_link": "https://docs.google.com/document/d/1abc123xyz",
+          "is_folder": false,
+          "retrieved_at": "2024-01-15T11:00:00Z"
+        },
         "common_errors": {
           "auth_failed": "Your Google Drive connection has expired. Please reconnect in Settings → Connected Apps.",
           "file_not_found": "The specified file was not found. It may have been deleted or you don't have access.",
@@ -233,8 +357,31 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "file_id": { "type": "string", "description": "ID of the file that was read" },
+          "file_name": { "type": "string", "description": "Name of the file" },
+          "file_size": { "type": "string", "description": "Human-readable file size (e.g., '1.5 MB')" },
+          "mime_type": { "type": "string", "description": "MIME type of the file" },
+          "content": { "type": "string", "description": "Text content extracted from the file" },
+          "content_length": { "type": "integer", "description": "Length of the extracted content in characters" },
+          "export_format": { "type": "string", "description": "Format the file was exported as (text/plain, text/html, or 'original')" },
+          "read_at": { "type": "string", "description": "Timestamp when file was read (ISO 8601)" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Successfully read content from {file_name} ({file_size})",
+        "success_description": "Returns the text content of the file along with metadata about size and format.",
+        "sample_output": {
+          "file_id": "1abc123xyz",
+          "file_name": "Meeting Notes.docx",
+          "file_size": "2.34 KB",
+          "mime_type": "application/vnd.google-apps.document",
+          "content": "Meeting Notes - January 15, 2024\n\nAttendees: John, Jane, Bob\n\nAgenda:\n1. Q4 Review...",
+          "content_length": 1523,
+          "export_format": "text/plain",
+          "read_at": "2024-01-15T11:30:00Z"
+        },
         "common_errors": {
           "auth_failed": "Your Google Drive connection has expired. Please reconnect in Settings → Connected Apps.",
           "file_not_found": "The specified file was not found or you don't have access.",
@@ -293,8 +440,53 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "folder_id": { "type": "string", "description": "ID of the folder that was explored" },
+          "folder_name": { "type": "string", "description": "Name of the folder" },
+          "items": {
+            "type": "array",
+            "description": "All items (files and folders) in the folder",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "description": "Unique item ID" },
+                "name": { "type": "string", "description": "Item name" },
+                "mimeType": { "type": "string", "description": "MIME type" },
+                "size": { "type": "string", "description": "Size in bytes (files only)" },
+                "modifiedTime": { "type": "string", "description": "Last modification timestamp" },
+                "webViewLink": { "type": "string", "description": "URL to view the item" }
+              }
+            }
+          },
+          "item_count": { "type": "integer", "description": "Total number of items" },
+          "folder_count": { "type": "integer", "description": "Number of subfolders" },
+          "file_count": { "type": "integer", "description": "Number of files" },
+          "folders": { "type": "array", "description": "List of subfolders only" },
+          "files": { "type": "array", "description": "List of files only" },
+          "next_page_token": { "type": "string", "description": "Token for fetching next page of results" },
+          "has_more": { "type": "boolean", "description": "Whether more items are available" },
+          "retrieved_at": { "type": "string", "description": "Timestamp when data was retrieved (ISO 8601)" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Found {item_count} items in folder: {folder_name}",
+        "success_description": "Returns folder contents separated into files and subfolders with counts and pagination.",
+        "sample_output": {
+          "folder_id": "1folder789xyz",
+          "folder_name": "Projects",
+          "items": [
+            {"id": "1abc", "name": "Project A", "mimeType": "application/vnd.google-apps.folder"},
+            {"id": "2def", "name": "Report.docx", "mimeType": "application/vnd.google-apps.document", "size": "10240"}
+          ],
+          "item_count": 2,
+          "folder_count": 1,
+          "file_count": 1,
+          "folders": [{"id": "1abc", "name": "Project A", "mimeType": "application/vnd.google-apps.folder"}],
+          "files": [{"id": "2def", "name": "Report.docx", "mimeType": "application/vnd.google-apps.document", "size": "10240"}],
+          "has_more": false,
+          "retrieved_at": "2024-01-15T12:00:00Z"
+        },
         "common_errors": {
           "auth_failed": "Your Google Drive connection has expired. Please reconnect in Settings → Connected Apps.",
           "folder_not_found": "The specified folder was not found. Please check the folder ID and try again.",

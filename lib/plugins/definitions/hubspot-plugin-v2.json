@@ -57,8 +57,51 @@
         "limits": {},
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "description": "Contact information with properties and optional associations",
+        "properties": {
+          "success": { "type": "boolean", "description": "Whether the request was successful" },
+          "data": {
+            "type": "object",
+            "description": "Contact data",
+            "properties": {
+              "contact_id": { "type": "string", "description": "HubSpot contact ID" },
+              "properties": { "type": "object", "description": "Contact properties (firstname, lastname, email, etc.)" },
+              "created_at": { "type": "string", "description": "ISO 8601 timestamp of contact creation" },
+              "updated_at": { "type": "string", "description": "ISO 8601 timestamp of last update" },
+              "archived": { "type": "boolean", "description": "Whether the contact is archived" },
+              "associations": {
+                "type": "object",
+                "description": "Associated records (if include_associations=true)",
+                "properties": {
+                  "deals": { "type": "array", "description": "Associated deal IDs" },
+                  "companies": { "type": "array", "description": "Associated company IDs" }
+                }
+              }
+            }
+          },
+          "message": { "type": "string", "description": "Success message" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Present contact information in a clear, organized format. Include name, email, phone, company, lifecycle stage, and any other relevant properties. If associations are included, summarize the number of associated deals and companies.",
+        "success_description": "Returns contact information with properties and optional associations",
+        "sample_output": {
+          "success": true,
+          "data": {
+            "contact_id": "123456",
+            "properties": {
+              "firstname": "John",
+              "lastname": "Smith",
+              "email": "john@example.com",
+              "company": "Acme Corp"
+            },
+            "created_at": "2025-01-01T00:00:00.000Z",
+            "updated_at": "2025-01-15T00:00:00.000Z",
+            "archived": false
+          },
+          "message": "Contact retrieved successfully"
+        },
         "common_errors": {
           "contact_not_found": "Contact not found. Verify the contact ID or email address is correct.",
           "invalid_property": "One or more requested properties do not exist. Check property names.",
@@ -104,8 +147,62 @@
         },
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "description": "Deals associated with a contact",
+        "properties": {
+          "success": { "type": "boolean", "description": "Whether the request was successful" },
+          "data": {
+            "type": "object",
+            "properties": {
+              "contact_id": { "type": "string", "description": "HubSpot contact ID" },
+              "deals": {
+                "type": "array",
+                "description": "Array of associated deals",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "deal_id": { "type": "string", "description": "Deal ID" },
+                    "deal_name": { "type": "string", "description": "Deal name" },
+                    "amount": { "type": "string", "description": "Deal amount" },
+                    "stage": { "type": "string", "description": "Deal stage" },
+                    "close_date": { "type": "string", "description": "Expected close date" },
+                    "pipeline": { "type": "string", "description": "Pipeline identifier" },
+                    "owner_id": { "type": "string", "description": "HubSpot owner ID" },
+                    "created_at": { "type": "string", "description": "Deal creation date" },
+                    "properties": { "type": "object", "description": "Additional deal properties" }
+                  }
+                }
+              },
+              "total_count": { "type": "integer", "description": "Number of deals" },
+              "total_deal_value": { "type": "number", "description": "Sum of all deal amounts" }
+            }
+          },
+          "message": { "type": "string", "description": "Success message" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Present deals in a structured format showing deal name, amount, stage, close date, and owner. Group by deal stage if multiple deals exist. Include total deal value if applicable.",
+        "success_description": "Returns deals associated with the contact including amounts and stages",
+        "sample_output": {
+          "success": true,
+          "data": {
+            "contact_id": "123456",
+            "deals": [
+              {
+                "deal_id": "789",
+                "deal_name": "Enterprise License",
+                "amount": "50000",
+                "stage": "contractsent",
+                "close_date": "2025-03-01",
+                "pipeline": "default",
+                "owner_id": "111"
+              }
+            ],
+            "total_count": 1,
+            "total_deal_value": 50000
+          },
+          "message": "Found 1 deal(s) for this contact"
+        },
         "common_errors": {
           "contact_not_found": "Contact ID not found. Verify the contact exists in HubSpot.",
           "no_deals_found": "No deals are associated with this contact.",
@@ -151,8 +248,59 @@
         },
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "description": "Contact activities and engagement history",
+        "properties": {
+          "success": { "type": "boolean", "description": "Whether the request was successful" },
+          "data": {
+            "type": "object",
+            "properties": {
+              "contact_id": { "type": "string", "description": "HubSpot contact ID" },
+              "activities": {
+                "type": "array",
+                "description": "Array of activities sorted by date (newest first)",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "activity_id": { "type": "string", "description": "Activity ID" },
+                    "type": { "type": "string", "description": "Activity type (calls, emails, notes, meetings, tasks)" },
+                    "timestamp": { "type": "string", "description": "Activity timestamp" },
+                    "owner_id": { "type": "string", "description": "HubSpot owner ID" },
+                    "created_at": { "type": "string", "description": "Creation timestamp" },
+                    "title": { "type": "string", "description": "Activity title/subject" },
+                    "body": { "type": "string", "description": "Activity content/description" }
+                  }
+                }
+              },
+              "total_count": { "type": "integer", "description": "Total number of activities" },
+              "counts_by_type": { "type": "object", "description": "Activity counts grouped by type" }
+            }
+          },
+          "message": { "type": "string", "description": "Success message" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Present activities chronologically (newest first), organized by type. Include activity date, type, subject/title, and brief description. For large result sets, summarize activity counts by type.",
+        "success_description": "Returns activities chronologically with counts by type",
+        "sample_output": {
+          "success": true,
+          "data": {
+            "contact_id": "123456",
+            "activities": [
+              {
+                "activity_id": "555",
+                "type": "emails",
+                "timestamp": "2025-01-15T10:30:00.000Z",
+                "owner_id": "111",
+                "subject": "Follow-up on proposal",
+                "direction": "OUTGOING"
+              }
+            ],
+            "total_count": 1,
+            "counts_by_type": { "emails": 1 }
+          },
+          "message": "Found 1 activity for this contact"
+        },
         "common_errors": {
           "contact_not_found": "Contact ID not found. Verify the contact exists in HubSpot.",
           "no_activities_found": "No activities found for this contact matching the specified criteria.",
@@ -214,8 +362,57 @@
         },
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "description": "Search results for contacts",
+        "properties": {
+          "success": { "type": "boolean", "description": "Whether the request was successful" },
+          "data": {
+            "type": "object",
+            "properties": {
+              "contacts": {
+                "type": "array",
+                "description": "Array of matching contacts",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "contact_id": { "type": "string", "description": "HubSpot contact ID" },
+                    "properties": { "type": "object", "description": "Contact properties" },
+                    "created_at": { "type": "string", "description": "Contact creation timestamp" },
+                    "updated_at": { "type": "string", "description": "Last update timestamp" }
+                  }
+                }
+              },
+              "total_count": { "type": "integer", "description": "Number of contacts returned" },
+              "has_more": { "type": "boolean", "description": "Whether more results are available" }
+            }
+          },
+          "message": { "type": "string", "description": "Success message" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Present search results in a clear list format with key contact details. Show total results count and indicate if more results are available. Highlight which search criteria matched.",
+        "success_description": "Returns contacts matching search criteria",
+        "sample_output": {
+          "success": true,
+          "data": {
+            "contacts": [
+              {
+                "contact_id": "123456",
+                "properties": {
+                  "firstname": "John",
+                  "lastname": "Smith",
+                  "email": "john@example.com",
+                  "company": "Acme Corp"
+                },
+                "created_at": "2025-01-01T00:00:00.000Z",
+                "updated_at": "2025-01-15T00:00:00.000Z"
+              }
+            ],
+            "total_count": 1,
+            "has_more": false
+          },
+          "message": "Found 1 contact(s) matching search criteria"
+        },
         "common_errors": {
           "no_results_found": "No contacts found matching the search criteria. Try broadening your search terms or filters.",
           "invalid_filter_property": "One or more filter properties do not exist in HubSpot. Check property names.",
@@ -250,8 +447,55 @@
         "limits": {},
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "description": "Detailed deal information with associations",
+        "properties": {
+          "success": { "type": "boolean", "description": "Whether the request was successful" },
+          "data": {
+            "type": "object",
+            "properties": {
+              "deal_id": { "type": "string", "description": "HubSpot deal ID" },
+              "properties": { "type": "object", "description": "Deal properties (dealname, amount, dealstage, etc.)" },
+              "created_at": { "type": "string", "description": "Deal creation timestamp" },
+              "updated_at": { "type": "string", "description": "Last update timestamp" },
+              "archived": { "type": "boolean", "description": "Whether the deal is archived" },
+              "associations": {
+                "type": "object",
+                "description": "Associated records (if include_associations=true)",
+                "properties": {
+                  "contacts": { "type": "array", "description": "Associated contact IDs" },
+                  "companies": { "type": "array", "description": "Associated company IDs" }
+                }
+              }
+            }
+          },
+          "message": { "type": "string", "description": "Success message" }
+        }
+      },
       "output_guidance": {
-        "success_message": "Present deal information in a structured format including deal name, amount, stage, close date, owner, and pipeline. If associations are included, list associated contacts and companies with their roles.",
+        "success_description": "Returns deal information with properties and associations",
+        "sample_output": {
+          "success": true,
+          "data": {
+            "deal_id": "789",
+            "properties": {
+              "dealname": "Enterprise License",
+              "amount": "50000",
+              "dealstage": "contractsent",
+              "closedate": "2025-03-01",
+              "pipeline": "default"
+            },
+            "created_at": "2025-01-01T00:00:00.000Z",
+            "updated_at": "2025-01-15T00:00:00.000Z",
+            "archived": false,
+            "associations": {
+              "contacts": [{ "id": "123456" }],
+              "companies": [{ "id": "111" }]
+            }
+          },
+          "message": "Deal retrieved successfully"
+        },
         "common_errors": {
           "deal_not_found": "Deal ID not found. Verify the deal exists in HubSpot.",
           "invalid_property": "One or more requested properties do not exist. Check property names.",

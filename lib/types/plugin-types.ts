@@ -90,16 +90,34 @@ export interface PluginAuthConfig {
   token_expiry_seconds?: number; // Token expiration time in seconds
 }
 
+// JSON Schema for action output structure (machine-readable)
+export interface ActionOutputSchema {
+  type: string;
+  properties?: Record<string, {
+    type: string;
+    description?: string;
+    items?: any;
+    properties?: Record<string, any>;
+  }>;
+  items?: any;
+  description?: string;
+}
+
+// Human-readable output guidance for LLM and runtime
+export interface ActionOutputGuidance {
+  success_description: string;
+  sample_output?: any;
+  common_errors: Record<string, string>;
+}
+
 // Individual action definition within a plugin
 export interface ActionDefinition {
   description: string;
   usage_context: string;
   parameters: any; // JSON Schema object
   rules: ActionRuleDefinition;
-  output_guidance: {
-    success_message: string;
-    common_errors: Record<string, string>;
-  };
+  output_schema?: ActionOutputSchema; // Machine-readable JSON Schema for output
+  output_guidance: ActionOutputGuidance; // Human-readable guidance
 }
 
 // Action Rule definitions structure

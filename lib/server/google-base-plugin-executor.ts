@@ -86,9 +86,9 @@ export abstract class GoogleBasePluginExecutor extends BasePluginExecutor {
           'Authorization': `Bearer ${accessToken}`,
         },
       });
-      if (this.debug) console.log(`DEBUG: Cleaned up test resource ${resourceId}`);
+      this.logger.debug({ resourceId }, 'Cleaned up test resource');
     } catch (cleanupError) {
-      if (this.debug) console.warn(`DEBUG: Could not clean up test resource ${resourceId}:`, cleanupError);
+      this.logger.warn({ err: cleanupError, resourceId }, 'Could not clean up test resource');
       // Don't throw - cleanup failure shouldn't fail the operation
     }
   }

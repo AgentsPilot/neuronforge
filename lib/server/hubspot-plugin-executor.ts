@@ -50,7 +50,7 @@ export class HubSpotPluginExecutor extends BasePluginExecutor {
 
   // Get contact by ID or email
   private async getContact(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Getting HubSpot contact');
+    this.logger.debug('Getting HubSpot contact');
 
     const { contact_identifier, identifier_type, properties, include_associations } = parameters;
     const idType = identifier_type || 'email';
@@ -142,14 +142,14 @@ export class HubSpotPluginExecutor extends BasePluginExecutor {
       };
 
     } catch (error: any) {
-      if (this.debug) console.error('DEBUG: Error getting contact:', error);
+      this.logger.error({ err: error }, 'Error getting contact:');
       throw error;
     }
   }
 
   // Get all deals associated with a contact
   private async getContactDeals(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Getting contact deals');
+    this.logger.debug('Getting contact deals');
 
     const { contact_id, limit, include_deal_details, deal_properties } = parameters;
     const maxLimit = Math.min(limit || 50, 100);
@@ -244,14 +244,14 @@ export class HubSpotPluginExecutor extends BasePluginExecutor {
       };
 
     } catch (error: any) {
-      if (this.debug) console.error('DEBUG: Error getting contact deals:', error);
+      this.logger.error({ err: error }, 'Error getting contact deals:');
       throw error;
     }
   }
 
   // Get contact activities (engagements)
   private async getContactActivities(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Getting contact activities');
+    this.logger.debug('Getting contact activities');
 
     const { contact_id, activity_types, limit, since_date } = parameters;
     const maxLimit = Math.min(limit || 25, 100);
@@ -327,14 +327,14 @@ export class HubSpotPluginExecutor extends BasePluginExecutor {
       };
 
     } catch (error: any) {
-      if (this.debug) console.error('DEBUG: Error getting contact activities:', error);
+      this.logger.error({ err: error }, 'Error getting contact activities:');
       throw error;
     }
   }
 
   // Search for contacts
   private async searchContacts(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Searching contacts');
+    this.logger.debug('Searching contacts');
 
     const { query, filters, limit, properties, sort_by, sort_direction } = parameters;
     const maxLimit = Math.min(limit || 25, 100);
@@ -446,14 +446,14 @@ export class HubSpotPluginExecutor extends BasePluginExecutor {
       };
 
     } catch (error: any) {
-      if (this.debug) console.error('DEBUG: Error searching contacts:', error);
+      this.logger.error({ err: error }, 'Error searching contacts:');
       throw error;
     }
   }
 
   // Get deal details
   private async getDeal(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Getting deal');
+    this.logger.debug('Getting deal');
 
     const { deal_id, properties, include_associations } = parameters;
 
@@ -501,7 +501,7 @@ export class HubSpotPluginExecutor extends BasePluginExecutor {
       };
 
     } catch (error: any) {
-      if (this.debug) console.error('DEBUG: Error getting deal:', error);
+      this.logger.error({ err: error }, 'Error getting deal:');
       throw error;
     }
   }

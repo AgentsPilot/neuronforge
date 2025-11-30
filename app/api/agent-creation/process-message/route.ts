@@ -1,16 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { getUser } from '@/lib/auth';
-import { useThreadBasedAgentCreation } from '@/lib/utils/featureFlags';
 import { OpenAIProvider } from '@/lib/ai/providers/openaiProvider';
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 import { PluginDefinitionContext } from '@/lib/types/plugin-definition-context';
+import { createLogger } from '@/lib/logger';
+import { getAgentPromptThreadRepository } from '@/lib/agent-creation/agent-prompt-thread-repository';
 import type {
   ProcessMessageRequest,
   ProcessMessageResponse,
   ThreadErrorResponse,
-  UpdateAgentPromptThread,
   ClarificationQuestion,
   ConnectedService,
   UserContext
@@ -18,7 +18,7 @@ import type {
 import { validatePhase3Response } from '@/lib/validation/phase3-schema';
 
 
-// Initialize Supabase client
+// Initialize Supabase client (still needed for AIAnalyticsService)
 const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -31,6 +31,12 @@ const aiAnalytics = new AIAnalyticsService(supabase, {
   enablePerformanceMetrics: true
 });
 
+// Initialize repository
+const threadRepository = getAgentPromptThreadRepository();
+
+// Create logger instance for this route
+const logger = createLogger({ module: 'API', route: '/api/agent-creation/process-message' });
+
 /**
  * POST /api/agent-creation/process-message
  *
@@ -38,26 +44,18 @@ const aiAnalytics = new AIAnalyticsService(supabase, {
  * Uses the same thread for all phases to leverage OpenAI's prompt caching.
  */
 export async function POST(request: NextRequest) {
-  console.log('💬 POST /api/agent-creation/process-message - Processing message');
+  // Generate or extract correlation ID for request tracing
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+  const startTime = Date.now();
+
+  requestLogger.info('Process message request received');
 
   try {
-    // Step 1: Check feature flag
-    if (!useThreadBasedAgentCreation()) {
-      console.log('⚠️ Thread-based agent creation is disabled');
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Thread-based agent creation is not enabled',
-          details: 'Set NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION=true in environment variables'
-        } as ThreadErrorResponse,
-        { status: 403 }
-      );
-    }
-
-    // Step 2: Authenticate user
+    // Step 1: Authenticate user
     const user = await getUser();
     if (!user) {
-      console.error('❌ Unauthorized: No user found');
+      requestLogger.warn('Unauthorized access attempt');
       return NextResponse.json(
         {
           success: false,
@@ -68,14 +66,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log('✅ User authenticated:', user.id);
+    requestLogger.debug({ userId: user.id }, 'User authenticated');
 
     // Step 3: Parse request body
     let requestBody: ProcessMessageRequest;
     try {
       requestBody = await request.json();
     } catch (parseError: any) {
-      console.error('❌ Failed to parse request body:', parseError);
+      requestLogger.error({ err: parseError }, 'Failed to parse request body');
       return NextResponse.json(
         {
           success: false,
@@ -148,32 +146,41 @@ export async function POST(request: NextRequest) {
       ...user_context
     };
 
-    console.log('✅ User Context (server):', serverUserContext);
-    console.log('✅ User Context (merged with client):', mergedUserContext);
+    requestLogger.debug({
+      userContext: mergedUserContext,
+      hasClientOverrides: !!user_context
+    }, 'User context prepared');
 
     let user_connected_services: string[] = [];
     let user_available_services: ConnectedService[] = [];
-    console.log('✅ Connected plugins retrieved from client side:', connected_services);
 
     // Step 4: Get User's Connected Plugins (simple string array of plugin keys)
     if (!connected_services || connected_services.length === 0)
     {
-      console.log('❌ No connected_services received from client for user:', user.id);
+      requestLogger.debug('No connected services from client, fetching from server');
       try {
         const pluginManager = await PluginManagerV2.getInstance();
 
         // Get ALL active plugin keys (including expired OAuth tokens + system plugins)
         user_connected_services = await pluginManager.getAllActivePluginKeys(user.id);
 
-        console.log('✅ All active plugin keys retrieved (including expired):', user_connected_services);
+        requestLogger.debug({
+          connectedServices: user_connected_services,
+          count: user_connected_services.length
+        }, 'Active plugin keys retrieved from server');
       } catch (error: any) {
-        console.log('UNEXPECTED_ERROR', error)
+        requestLogger.error({ err: error }, 'Failed to retrieve active plugin keys');
       }
     } else {
       // If connected_services passed from client, ensure it's a string array
       user_connected_services = Array.isArray(connected_services)
         ? connected_services.map((s: any) => typeof s === 'string' ? s : s.name)
         : [];
+
+      requestLogger.debug({
+        connectedServices: user_connected_services,
+        count: user_connected_services.length
+      }, 'Connected services received from client');
     }
 
     // Step 4.5: Get ALL available plugins with full context (for LLM to understand capabilities)
@@ -181,7 +188,6 @@ export async function POST(request: NextRequest) {
       const pluginManager = await PluginManagerV2.getInstance();
       const allAvailablePlugins = pluginManager.getAvailablePlugins();
       const availablePluginsKeys = Object.keys(allAvailablePlugins);
-      console.log('✅ All available plugins retrieved:', availablePluginsKeys);
 
       // Convert to full LLM context with actions and capabilities
       const allPluginsContext = pluginManager.convertToPluginDefinitionContext(
@@ -197,38 +203,44 @@ export async function POST(request: NextRequest) {
           name: p.key,
           context: p.context
         }));
-      console.log('✅ Available services formatted for LLM:', user_available_services.length, 'total');
+
+      requestLogger.debug({
+        availablePlugins: availablePluginsKeys,
+        totalAvailable: user_available_services.length
+      }, 'Available plugins retrieved');
     } catch (error: any) {
-      console.error('❌ Failed to fetch available plugins:', error);
+      requestLogger.error({ err: error }, 'Failed to fetch available plugins');
       // Don't fail the request, just log the error
     }
 
-    console.log('✅ Request validated:', { thread_id, phase, user_id: user.id });
-    console.log('✅ Request validated Full:', requestBody);
+    requestLogger.debug({
+      threadId: thread_id,
+      phase,
+      userId: user.id,
+      hasUserPrompt: !!user_prompt,
+      hasClarificationAnswers: !!clarification_answers,
+      hasEnhancedPrompt: !!enhanced_prompt
+    }, 'Request validated');
 
-    // Step 5: Verify thread belongs to user and is active
-    const { data: threadRecord, error: threadError } = await supabase
-      .from('agent_prompt_threads')
-      .select('*')
-      .eq('openai_thread_id', thread_id)
-      .eq('user_id', user.id)
-      .single();
+    // Step 5: Verify thread belongs to user and is active using repository
+    const threadRecord = await threadRepository.getThreadByOpenAIId(thread_id, user.id);
 
-    if (threadError || !threadRecord) {
-      console.error('❌ Thread not found or unauthorized:', threadError);
+    if (!threadRecord) {
+      requestLogger.error({ threadId: thread_id }, 'Thread not found or unauthorized');
       return NextResponse.json(
         {
           success: false,
           error: 'Thread not found or unauthorized',
           phase,
-          details: threadError?.message || 'Thread does not exist or does not belong to this user'
+          details: 'Thread does not exist or does not belong to this user'
         } as ThreadErrorResponse,
         { status: 404 }
       );
     }
 
     // Check if thread is expired
-    if (threadRecord.status === 'expired') {
+    if (threadRepository.isThreadExpired(threadRecord)) {
+      requestLogger.warn({ threadId: thread_id, status: threadRecord.status }, 'Thread has expired');
       return NextResponse.json(
         {
           success: false,
@@ -240,11 +252,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log('✅ Thread verified:', {
-      id: threadRecord.id,
+    requestLogger.debug({
+      dbRecordId: threadRecord.id,
       status: threadRecord.status,
-      current_phase: threadRecord.current_phase
-    });
+      currentPhase: threadRecord.current_phase
+    }, 'Thread verified');
 
     // Step 6: Build user message based on phase
     let userMessage: any;
@@ -279,21 +291,22 @@ export async function POST(request: NextRequest) {
       };
     }
 
-    console.log('✅ User message constructed for phase', phase);
-    console.log('✅ User message', userMessage);
+    requestLogger.debug({ phase, userMessage }, 'User message constructed');
 
     // Get OpenAI provider instance with validation
     const openaiProvider = OpenAIProvider.getInstance(aiAnalytics);
 
     // Step 7: Add message to thread using OpenAIProvider
+    const addMessageStartTime = Date.now();
     try {
       await openaiProvider.addMessageToThread(
         thread_id,
         { role: 'user', content: JSON.stringify(userMessage) }
       );
-      console.log('✅ Message added to thread');
+      const addMessageDuration = Date.now() - addMessageStartTime;
+      requestLogger.debug({ threadId: thread_id, duration: addMessageDuration }, 'Message added to thread');
     } catch (messageError: any) {
-      console.error('❌ Failed to add message to thread:', messageError);
+      requestLogger.error({ err: messageError, threadId: thread_id }, 'Failed to add message to thread');
       return NextResponse.json(
         {
           success: false,
@@ -307,13 +320,19 @@ export async function POST(request: NextRequest) {
 
     // Step 8: Retrieve all messages from thread using OpenAIProvider
     let allMessages;
+    const retrieveMessagesStartTime = Date.now();
     try {
       allMessages = await openaiProvider.getThreadMessages(thread_id, {
         order: 'asc' // Oldest first to build proper conversation history
       });
-      console.log('✅ Retrieved thread messages:', allMessages.data.length);
+      const retrieveMessagesDuration = Date.now() - retrieveMessagesStartTime;
+      requestLogger.debug({
+        threadId: thread_id,
+        messageCount: allMessages.data.length,
+        duration: retrieveMessagesDuration
+      }, 'Thread messages retrieved');
     } catch (messageError: any) {
-      console.error('❌ Failed to retrieve messages:', messageError);
+      requestLogger.error({ err: messageError, threadId: thread_id }, 'Failed to retrieve messages');
       return NextResponse.json(
         {
           success: false,
@@ -327,11 +346,14 @@ export async function POST(request: NextRequest) {
 
     // Step 9: Build conversation for Chat Completions API using OpenAIProvider
     const conversationMessages = openaiProvider.buildConversationFromThread(allMessages.data);
-    console.log('✅ Conversation built:', conversationMessages.length, 'messages');
-    console.log('✅ Conversation:', conversationMessages);
+    requestLogger.debug({
+      messageCount: conversationMessages.length,
+      conversationMessages
+    }, 'Conversation built from thread');
 
     // Step 10: Call Chat Completions API with conversation history and analytics tracking
     let completion;
+    const chatCompletionStartTime = Date.now();
     try {
       completion = await openaiProvider.chatCompletion(
         {
@@ -352,9 +374,14 @@ export async function POST(request: NextRequest) {
           workflow_step: `phase_${phase}`
         }
       );
-      console.log('✅ Chat completion received with analytics tracking');
+      const chatCompletionDuration = Date.now() - chatCompletionStartTime;
+      requestLogger.info({
+        phase,
+        model: 'gpt-4o',
+        duration: chatCompletionDuration
+      }, 'Chat completion received with analytics tracking');
     } catch (completionError: any) {
-      console.error('❌ Chat completion failed:', completionError);
+      requestLogger.error({ err: completionError, phase }, 'Chat completion failed');
       return NextResponse.json(
         {
           success: false,
@@ -368,7 +395,7 @@ export async function POST(request: NextRequest) {
 
     const aiResponseText = completion.choices[0]?.message?.content;
     if (!aiResponseText) {
-      console.error('❌ Empty AI response');
+      requestLogger.error({ phase }, 'Empty AI response');
       return NextResponse.json(
         {
           success: false,
@@ -386,27 +413,30 @@ export async function POST(request: NextRequest) {
         thread_id,
         { role: 'assistant', content: aiResponseText }
       );
-      console.log('✅ AI response stored in thread');
+      requestLogger.debug({ threadId: thread_id }, 'AI response stored in thread');
     } catch (storeError: any) {
-      console.error('⚠️ Failed to store AI response in thread (non-critical):', storeError);
+      requestLogger.warn({ err: storeError, threadId: thread_id }, 'Failed to store AI response in thread (non-critical)');
       // Don't fail the request if storing fails
     }
 
     // Step 12: Parse and validate response JSON
     let aiResponse: ProcessMessageResponse;
     try {
-      console.log('📝 AI response preview:', aiResponseText);
+      requestLogger.debug({ responsePreview: aiResponseText.substring(0, 200) }, 'AI response preview');
 
       const parsedJson = JSON.parse(aiResponseText);
 
       // Strict validation for Phase 3 responses
       if (phase === 3) {
-        console.log('🔍 Validating Phase 3 response structure...');
+        requestLogger.debug('Validating Phase 3 response structure');
 
         const validation = validatePhase3Response(parsedJson);
 
         if (!validation.success) {
-          console.error('❌ Phase 3 response validation failed:', validation.errors);
+          requestLogger.error({
+            validationErrors: validation.errors,
+            phase
+          }, 'Phase 3 response validation failed');
           return NextResponse.json(
             {
               success: false,
@@ -418,7 +448,7 @@ export async function POST(request: NextRequest) {
           );
         }
 
-        console.log('✅ Phase 3 response validated successfully');
+        requestLogger.debug('Phase 3 response validated successfully');
         aiResponse = validation.data as ProcessMessageResponse;
       } else {
         // Phase 1 & 2: No strict validation yet
@@ -428,31 +458,31 @@ export async function POST(request: NextRequest) {
       aiResponse.success = true;
       aiResponse.phase = phase;
 
-      console.log('✅ AI response parsed successfully');
+      requestLogger.debug({ phase }, 'AI response parsed successfully');
 
       // Step 12.4: Enrich Phase 1 response with connectedPlugins
       if (phase === 1) {
         // Return the list of connected plugin keys to frontend (already strings)
         aiResponse.connectedPlugins = user_connected_services;
-        console.log('✅ Phase 1 - Returning connected plugins to frontend:', aiResponse.connectedPlugins);
+        requestLogger.debug({
+          connectedPlugins: aiResponse.connectedPlugins,
+          count: aiResponse.connectedPlugins.length
+        }, 'Phase 1 - Connected plugins added to response');
       }
 
       // Step 12.6: Log Phase 3 OAuth gate details
       if (phase === 3) {
-        console.log('🔒 Phase 3 - OAuth Gate Check:');
-        console.log('  Required services:', aiResponse.requiredServices);
-        console.log('  Missing plugins:', aiResponse.missingPlugins);
-        console.log('  Ready for generation:', aiResponse.metadata?.ready_for_generation);
-        if (aiResponse.metadata?.declined_plugins_blocking) {
-          console.log('  ⚠️ Declined plugins blocking:', aiResponse.metadata.declined_plugins_blocking);
-        }
-        if (aiResponse.error) {
-          console.log('  ❌ Error:', aiResponse.error);
-        }
+        requestLogger.info({
+          requiredServices: aiResponse.requiredServices,
+          missingPlugins: aiResponse.missingPlugins,
+          readyForGeneration: aiResponse.metadata?.ready_for_generation,
+          declinedPluginsBlocking: aiResponse.metadata?.declined_plugins_blocking,
+          hasError: !!aiResponse.error
+        }, 'Phase 3 - OAuth gate check complete');
       }
 
     } catch (parseError: any) {
-      console.error('❌ Failed to parse AI response:', parseError);
+      requestLogger.error({ err: parseError, phase }, 'Failed to parse AI response');
       return NextResponse.json(
         {
           success: false,
@@ -464,45 +494,51 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Step 13: Update thread record in database
-    const updateData: UpdateAgentPromptThread = {
-      current_phase: phase,
-      status: phase === 3 ? 'completed' : 'active',
-      metadata: {
-        ...threadRecord.metadata,
-        last_phase: phase,
-        last_updated: new Date().toISOString(),
-        // Store Phase 1 context for Phase 2 reference (v8 requirement)
-        ...(phase === 1 && {
-          phase1_connected_services: user_connected_services,
-          phase1_available_services: user_available_services
-        })
-      }
+    // Step 13: Update thread record in database using repository
+    const updatedMetadata = {
+      ...threadRecord.metadata,
+      last_phase: phase,
+      last_updated: new Date().toISOString(),
+      // Store Phase 1 context for Phase 2 reference (v8 requirement)
+      ...(phase === 1 && {
+        phase1_connected_services: user_connected_services,
+        phase1_available_services: user_available_services
+      })
     };
 
     try {
-      await supabase
-        .from('agent_prompt_threads')
-        .update(updateData)
-        .eq('id', threadRecord.id);
+      await threadRepository.updateThreadPhase(
+        threadRecord.id,
+        phase,
+        phase === 3 ? 'completed' : 'active',
+        updatedMetadata
+      );
 
-      console.log('✅ Thread record updated');
+      requestLogger.debug({
+        dbRecordId: threadRecord.id,
+        newPhase: phase,
+        newStatus: phase === 3 ? 'completed' : 'active'
+      }, 'Thread record updated');
     } catch (updateError: any) {
-      console.error('⚠️ Failed to update thread record (non-critical):', updateError);
+      requestLogger.warn({ err: updateError, dbRecordId: threadRecord.id }, 'Failed to update thread record (non-critical)');
       // Don't fail the request if database update fails
     }
 
-    // Step 13: Return response
-    console.log('✅ Process message complete:', {
-      thread_id,
+    // Step 14: Return response
+    const totalDuration = Date.now() - startTime;
+    requestLogger.info({
+      threadId: thread_id,
       phase,
-      user_id: user.id
-    });
+      userId: user.id,
+      duration: totalDuration
+    }, 'Process message complete');
+
+    requestLogger.debug({ response: aiResponse }, 'Returning response to client');
 
     return NextResponse.json(aiResponse);
 
   } catch (error: any) {
-    console.error('❌ Unexpected error in process-message:', error);
+    requestLogger.error({ err: error }, 'Unexpected error in process-message');
     return NextResponse.json(
       {
         success: false,

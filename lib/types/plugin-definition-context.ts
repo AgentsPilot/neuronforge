@@ -168,12 +168,14 @@ export class PluginDefinitionContext implements IPluginDefinitionContext {
       description: string;
       usage_context: string;
       parameters: any;
+      output_schema?: any;
     }>;
   } {
     const actions: Record<string, {
       description: string;
       usage_context: string;
       parameters: any;
+      output_schema?: any;
     }> = {};
 
     Object.entries(this.actions).forEach(([actionName, actionDef]) => {
@@ -181,6 +183,7 @@ export class PluginDefinitionContext implements IPluginDefinitionContext {
         description: actionDef.description,
         usage_context: actionDef.usage_context,
         parameters: actionDef.parameters,
+        output_schema: actionDef.output_schema,
       };
     });
 

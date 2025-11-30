@@ -53,7 +53,7 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
 
   // Read data from a specific range
   private async readRange(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Reading range from Google Sheets');
+    this.logger.debug('DEBUG: Reading range from Google Sheets');
 
     const { spreadsheet_id, range, include_formula_values, major_dimension } = parameters;
 
@@ -79,7 +79,7 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error('DEBUG: Sheets read failed:', errorData);
+      this.logger.error({ err: error }, 'DEBUG: Sheets read failed:', errorData);
       throw new Error(`Sheets API error: ${response.status} - ${errorData}`);
     }
 
@@ -100,7 +100,7 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
 
   // Write data to a specific range
   private async writeRange(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Writing range to Google Sheets');
+    this.logger.debug('DEBUG: Writing range to Google Sheets');
 
     const { spreadsheet_id, range, values, input_option } = parameters;
 
@@ -127,7 +127,7 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error('DEBUG: Sheets write failed:', errorData);
+      this.logger.error({ err: error }, 'DEBUG: Sheets write failed:', errorData);
       throw new Error(`Sheets API error: ${response.status} - ${errorData}`);
     }
 
@@ -145,7 +145,7 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
 
   // Append rows to the end of a sheet
   private async appendRows(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Appending rows to Google Sheets');
+    this.logger.debug('DEBUG: Appending rows to Google Sheets');
 
     const { spreadsheet_id, range, values, input_option, insert_data_option } = parameters;
 
@@ -219,7 +219,7 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
 
   // Create a new spreadsheet
   private async createSpreadsheet(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Creating new spreadsheet');
+    this.logger.debug('DEBUG: Creating new spreadsheet');
 
     const { title, sheet_names, initial_data } = parameters;
 
@@ -252,7 +252,7 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error('DEBUG: Spreadsheet creation failed:', errorData);
+      this.logger.error({ err: error }, 'DEBUG: Spreadsheet creation failed:', errorData);
       throw new Error(`Sheets API error: ${response.status} - ${errorData}`);
     }
 
@@ -272,7 +272,7 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
           input_option: 'USER_ENTERED'
         });
       } catch (error) {
-        if (this.debug) console.warn('DEBUG: Failed to write initial data:', error);
+        this.logger.warn({ err: error }, 'DEBUG: Failed to write initial data:', error);
         // Continue anyway - spreadsheet was created successfully
       }
     }
@@ -293,7 +293,7 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
 
   // Get spreadsheet metadata and information
   private async getSpreadsheetInfo(connection: any, parameters: any): Promise<any> {
-    if (this.debug) console.log('DEBUG: Getting spreadsheet info');
+    this.logger.debug('DEBUG: Getting spreadsheet info');
 
     const { spreadsheet_id, include_sheet_data, include_data_ranges } = parameters;
 
@@ -323,7 +323,7 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      if (this.debug) console.error('DEBUG: Get spreadsheet info failed:', errorData);
+      this.logger.error({ err: error }, 'DEBUG: Get spreadsheet info failed:', errorData);
       throw new Error(`Sheets API error: ${response.status} - ${errorData}`);
     }
 

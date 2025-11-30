@@ -3,8 +3,12 @@
 import { UserPluginConnections } from './user-plugin-connections';
 import { PluginDefinition, ActionDefinition, ValidationResult, RuleDefinition, ActionablePlugin, UserConnection, ActionRuleDefinition } from '@/lib/types/plugin-types'
 import { PluginDefinitionContext } from '@/lib/types/plugin-definition-context'
+import { createLogger } from '@/lib/logger';
 import * as fs from 'fs';
 import * as path from 'path';
+
+// Create logger instance for plugin manager
+const logger = createLogger({ module: 'PluginManager', service: 'plugin-system' });
 
 const corePluginFiles = [
       'google-mail-plugin-v2.json',
@@ -29,10 +33,10 @@ const globalForPluginManager = globalThis as unknown as {
 
 // Only log on first module load, not on every access
 if (!globalForPluginManager.pluginManagerInstance) {
-  console.log('Plugin-Manager-v2 Loaded:', {
-    Plugin_Definitions: Object.values(corePluginFiles),
-    Total_Plugins: Object.keys(corePluginFiles).length
-  });
+  logger.info({
+    pluginDefinitions: corePluginFiles,
+    totalPlugins: corePluginFiles.length
+  }, 'Plugin-Manager-v2 module loaded');
 }
 
 export class PluginManagerV2 {
@@ -44,7 +48,7 @@ export class PluginManagerV2 {
 
   constructor(userConnections: UserPluginConnections) {
     this.userConnections = userConnections;
-    if (this.debug) console.log('DEBUG: Server PluginManagerV2 initialized');
+    logger.debug('PluginManagerV2 instance created');
   }
 
   // Singleton factory for serverless functions
@@ -63,9 +67,7 @@ export class PluginManagerV2 {
 
     // Start initialization and cache the promise to prevent race conditions
     globalForPluginManager.pluginManagerInitPromise = (async () => {
-      if (PluginManagerV2.debug) {
-        console.log('DEBUG: Creating new PluginManagerV2 instance for serverless function');
-      }
+      logger.debug('Creating new PluginManagerV2 instance for serverless function');
 
       const userConnections = UserPluginConnections.getInstance();
       const instance = new PluginManagerV2(userConnections);
@@ -87,19 +89,19 @@ export class PluginManagerV2 {
   // Initialize plugin manager with core plugins (called once per cold start)
   async initializeWithCorePlugins(): Promise<void> {
     if (this.initialized) {
-      if (this.debug) console.log('DEBUG: PluginManagerV2 already initialized, skipping');
+      logger.debug('PluginManagerV2 already initialized, skipping');
       return;
     }
 
     await this.loadCorePlugins();
     this.initialized = true;
-    if (this.debug) console.log(`DEBUG: Plugin manager initialized with ${this.plugins.size} plugins`);
+    logger.info({ pluginCount: this.plugins.size }, 'Plugin manager initialized with core plugins');
   }
 
   // Load core plugins from JSON files with environment variable substitution
   private async loadCorePlugins(): Promise<void> {
-    if (this.debug) console.log('DEBUG: Loading core plugins from filesystem');
-        
+    logger.debug('Loading core plugins from filesystem');
+
     // Get the plugins directory path (relative to project root)
     const pluginsDir = path.join(process.cwd(), 'lib', 'plugins', 'definitions');
 
@@ -107,25 +109,25 @@ export class PluginManagerV2 {
       try {
         const pluginName = fileName.replace('-plugin-v2.json', '');
         const filePath = path.join(pluginsDir, fileName);
-        
-        if (this.debug) console.log(`DEBUG: Loading plugin from ${filePath}`);
-        
+
+        logger.debug({ fileName, filePath }, 'Loading plugin file');
+
         // Read and parse JSON file
         const fileContent = fs.readFileSync(filePath, 'utf8');
         const pluginDefinition = JSON.parse(fileContent);
-        
+
         // Process environment variables
         const processedDefinition = this.processEnvironmentVariables(pluginDefinition);
-        
+
         // Validate plugin definition
         this.validatePluginDefinition(processedDefinition);
-        
+
         // Load the plugin
         this.plugins.set(pluginName, processedDefinition);
-        
-        if (this.debug) console.log(`DEBUG: Successfully loaded plugin ${pluginName}`);
+
+        logger.debug({ pluginName }, 'Successfully loaded plugin');
       } catch (error) {
-        console.error(`DEBUG: Failed to load plugin from ${fileName}:`, error);
+        logger.error({ err: error, fileName }, 'Failed to load plugin');
         // Continue loading other plugins even if one fails
       }
     }
@@ -133,10 +135,10 @@ export class PluginManagerV2 {
 
   // Process environment variables in plugin definition
   private processEnvironmentVariables(definition: any): any {
-    if (this.debug) console.log('DEBUG: Processing environment variables in plugin definition');
-    
+    logger.debug('Processing environment variables in plugin definition');
+
     const processed = JSON.parse(JSON.stringify(definition)); // Deep clone
-    
+
     const replaceEnvVars = (obj: any): void => {
       for (const key in obj) {
         if (typeof obj[key] === 'string') {
@@ -144,10 +146,10 @@ export class PluginManagerV2 {
           obj[key] = obj[key].replace(/\$\{([^}]+)\}/g, (match: string, varName: string) => {
             const envValue = process.env[varName];
             if (!envValue) {
-              console.warn(`DEBUG: Environment variable ${varName} not found, keeping placeholder`);
+              logger.warn({ varName }, 'Environment variable not found, keeping placeholder');
               return match;
             }
-            if (this.debug) console.log(`DEBUG: Replaced ${varName} with environment value`);
+            logger.debug({ varName }, 'Replaced environment variable');
             return envValue;
           });
         } else if (typeof obj[key] === 'object' && obj[key] !== null) {
@@ -155,14 +157,14 @@ export class PluginManagerV2 {
         }
       }
     };
-    
+
     replaceEnvVars(processed);
     return processed;
   }
 
   // Get all available plugins in registry (static)
   getAvailablePlugins(): Record<string, PluginDefinition> {
-    if (this.debug) console.log(`DEBUG: Getting available plugins, total: ${this.plugins.size}`);
+    logger.debug({ totalPlugins: this.plugins.size }, 'Getting available plugins');
 
     const result: Record<string, PluginDefinition> = {};
     for (const [name, definition] of this.plugins) {
@@ -173,14 +175,14 @@ export class PluginManagerV2 {
 
   // Get actionable system plugins (no OAuth required, auto-available for all users)
   getActionableSystemPlugins(userId: string): Record<string, ActionablePlugin> {
-    if (this.debug) console.log(`DEBUG: Getting actionable system plugins for user ${userId}`);
+    logger.debug({ userId }, 'Getting actionable system plugins');
 
     const systemPlugins: Record<string, ActionablePlugin> = {};
 
     for (const [pluginKey, definition] of this.plugins.entries()) {
       // Check if this is a system plugin
       if (definition.plugin.isSystem) {
-        if (this.debug) console.log(`DEBUG: Found system plugin: ${pluginKey}`);
+        logger.debug({ pluginKey }, 'Found system plugin');
 
         // Create a virtual connection for system plugins (no database record needed)
         systemPlugins[pluginKey] = {
@@ -206,14 +208,14 @@ export class PluginManagerV2 {
       }
     }
 
-    if (this.debug) console.log(`DEBUG: Found ${Object.keys(systemPlugins).length} system plugins`);
+    logger.debug({ count: Object.keys(systemPlugins).length }, 'System plugins retrieved');
     return systemPlugins;
   }
 
   // Get all active plugin keys (including expired tokens) + system plugins
   // Use for: Showing users all their active services regardless of token status
   async getAllActivePluginKeys(userId: string): Promise<string[]> {
-    if (this.debug) console.log(`DEBUG: Getting all active plugin keys for user ${userId} (including expired)`);
+    logger.debug({ userId }, 'Getting all active plugin keys (including expired)');
 
     // Get ALL active OAuth plugins (including those with expired tokens)
     const allActiveOAuthConnections = await this.userConnections.getAllActivePlugins(userId);
@@ -226,7 +228,11 @@ export class PluginManagerV2 {
     // Combine both (deduplicate in case of overlap)
     const allActiveKeys = [...new Set([...activeOAuthKeys, ...systemPluginKeys])];
 
-    if (this.debug) console.log(`DEBUG: Found ${allActiveKeys.length} total active plugin keys (OAuth: ${activeOAuthKeys.length}, System: ${systemPluginKeys.length})`);
+    logger.debug({
+      totalKeys: allActiveKeys.length,
+      oauthKeys: activeOAuthKeys.length,
+      systemKeys: systemPluginKeys.length
+    }, 'All active plugin keys retrieved');
 
     return allActiveKeys;
   }
@@ -241,14 +247,14 @@ export class PluginManagerV2 {
   ): Promise<Record<string, ActionablePlugin>> {
     const { includeSystemPlugins = true } = options;
 
-    if (this.debug) console.log(`DEBUG: Getting connected plugins (status only) for user ${userId}, includeSystemPlugins: ${includeSystemPlugins}`);
+    logger.debug({ userId, includeSystemPlugins }, 'Getting connected plugins (status only)');
 
     const actionablePlugins: Record<string, ActionablePlugin> = {};
 
     // Get connected plugin connections (simple query, no token operations)
     const connections = await this.userConnections.getConnectedPlugins(userId);
 
-    if (this.debug) console.log(`DEBUG: Found ${connections.length} connected plugins`);
+    logger.debug({ connectionCount: connections.length }, 'Connected plugins retrieved from database');
 
     // Build actionable plugins from connections
     for (const connection of connections) {
@@ -256,7 +262,7 @@ export class PluginManagerV2 {
       const definition = this.plugins.get(pluginKey);
 
       if (!definition) {
-        if (this.debug) console.log(`DEBUG: Plugin ${pluginKey} connected but not in registry, skipping`);
+        logger.debug({ pluginKey }, 'Plugin connected but not in registry, skipping');
         continue;
       }
 
@@ -264,7 +270,7 @@ export class PluginManagerV2 {
         definition,
         connection
       };
-      if (this.debug) console.log(`DEBUG: Plugin ${pluginKey} is connected (status='active')`);
+      logger.debug({ pluginKey }, 'Plugin is connected (status=active)');
     }
 
     // Add system plugins (no database connection required, always available)
@@ -275,13 +281,20 @@ export class PluginManagerV2 {
         // Only add if not already present (OAuth connection takes precedence)
         if (!actionablePlugins[pluginKey]) {
           actionablePlugins[pluginKey] = systemPlugin;
-          if (this.debug) console.log(`DEBUG: Added system plugin ${pluginKey} to connected plugins`);
+          logger.debug({ pluginKey }, 'Added system plugin to connected plugins');
         }
       }
 
-      if (this.debug) console.log(`DEBUG: Returning ${Object.keys(actionablePlugins).length} connected plugins (${connections.length} OAuth + ${Object.keys(systemPlugins).length} system)`);
+      logger.debug({
+        totalPlugins: Object.keys(actionablePlugins).length,
+        oauthPlugins: connections.length,
+        systemPlugins: Object.keys(systemPlugins).length
+      }, 'Returning connected plugins with system plugins');
     } else {
-      if (this.debug) console.log(`DEBUG: Returning ${Object.keys(actionablePlugins).length} connected plugins (${connections.length} OAuth, system plugins excluded)`);
+      logger.debug({
+        totalPlugins: Object.keys(actionablePlugins).length,
+        oauthPlugins: connections.length
+      }, 'Returning connected plugins (system plugins excluded)');
     }
 
     return actionablePlugins;
@@ -290,7 +303,7 @@ export class PluginManagerV2 {
   // Get plugins with expired tokens (active but need refresh)
   // Returns plugin keys that are active in DB but have expired tokens
   async getActiveExpiredPluginKeys(userId: string): Promise<string[]> {
-    if (this.debug) console.log(`DEBUG: Getting active expired plugin keys for user ${userId}`);
+    logger.debug({ userId }, 'Getting active expired plugin keys');
 
     // Get all active connections (including expired)
     const allActive = await this.userConnections.getAllActivePlugins(userId);
@@ -304,7 +317,7 @@ export class PluginManagerV2 {
       .filter(conn => !validKeys.has(conn.plugin_key))
       .map(conn => conn.plugin_key);
 
-    if (this.debug) console.log(`DEBUG: Found ${expiredKeys.length} active plugins with expired tokens`);
+    logger.debug({ expiredCount: expiredKeys.length }, 'Active plugins with expired tokens retrieved');
 
     return expiredKeys;
   }
@@ -312,7 +325,7 @@ export class PluginManagerV2 {
   // Get user's executable plugins (with valid refreshed tokens - SLOW but READY)
   // Use for: Before actual plugin execution, ensuring tokens are valid
   async getExecutablePlugins(userId: string, options = { forceRefresh: false }): Promise<Record<string, ActionablePlugin>> {
-    if (this.debug) console.log(`DEBUG: Getting executable plugins for user ${userId} (forceRefresh: ${options.forceRefresh})`);
+    logger.debug({ userId, forceRefresh: options.forceRefresh }, 'Getting executable plugins');
 
     // Get ALL active plugins (including expired ones) so we can refresh them
     const allActiveConnections = await this.userConnections.getAllActivePlugins(userId);
@@ -324,7 +337,7 @@ export class PluginManagerV2 {
       const definition = this.plugins.get(pluginKey);
 
       if (!definition) {
-        if (this.debug) console.log(`DEBUG: Plugin ${pluginKey} connected but not in registry, skipping`);
+        logger.debug({ pluginKey }, 'Plugin connected but not in registry, skipping');
         continue;
       }
 
@@ -334,7 +347,7 @@ export class PluginManagerV2 {
           definition,
           connection: conn
         };
-        if (this.debug) console.log(`DEBUG: System plugin ${pluginKey} is always executable`);
+        logger.debug({ pluginKey }, 'System plugin is always executable');
         continue;
       }
 
@@ -349,9 +362,15 @@ export class PluginManagerV2 {
           const minutesUntilExpiry = Math.floor((new Date(conn.expires_at).getTime() - Date.now()) / 60000);
 
           if (isExpired) {
-            console.log(`🔄 Token Refresh: ${pluginKey} token EXPIRED (${-minutesUntilExpiry} minutes ago), attempting refresh...`);
+            logger.info({
+              pluginKey,
+              minutesAgo: -minutesUntilExpiry
+            }, 'Token EXPIRED, attempting refresh');
           } else {
-            console.log(`🔄 Token Refresh: ${pluginKey} token expires in ${minutesUntilExpiry} minutes, refreshing for execution...`);
+            logger.info({
+              pluginKey,
+              minutesUntilExpiry
+            }, 'Token expires soon, refreshing for execution');
           }
 
           // Get auth config for token refresh
@@ -361,13 +380,13 @@ export class PluginManagerV2 {
           const refreshedConnection = await this.userConnections.refreshToken(conn, authConfig);
 
           if (refreshedConnection) {
-            console.log(`✅ Token Refresh Success: ${pluginKey} is now executable`);
+            logger.info({ pluginKey }, 'Token refresh success - plugin is now executable');
             executablePlugins[pluginKey] = {
               definition,
               connection: refreshedConnection
             };
           } else {
-            console.error(`❌ Token Refresh Failed: ${pluginKey} - user needs to reconnect, skipping from executable list`);
+            logger.error({ pluginKey }, 'Token refresh failed - user needs to reconnect, skipping from executable list');
             // Plugin not executable - skip it
           }
           continue;
@@ -379,10 +398,13 @@ export class PluginManagerV2 {
         definition,
         connection: conn
       };
-      if (this.debug) console.log(`DEBUG: Plugin ${pluginKey} token is valid, executable`);
+      logger.debug({ pluginKey }, 'Plugin token is valid, executable');
     }
 
-    if (this.debug) console.log(`DEBUG: Returning ${Object.keys(executablePlugins).length} executable plugins out of ${allActiveConnections.length} active`);
+    logger.debug({
+      executableCount: Object.keys(executablePlugins).length,
+      totalActive: allActiveConnections.length
+    }, 'Executable plugins retrieved');
 
     return executablePlugins;
   }
@@ -396,8 +418,10 @@ export class PluginManagerV2 {
    * - For plugin execution: use getExecutablePlugins(userId)
    */
   async getUserActionablePlugins(userId: string, options = { skipTokenRefresh: false }): Promise<Record<string, ActionablePlugin>> {
-    if (this.debug) console.log(`DEBUG: [DEPRECATED] getUserActionablePlugins called (skipTokenRefresh: ${options.skipTokenRefresh})`);
-    console.warn('⚠️ DEPRECATION WARNING: getUserActionablePlugins() is deprecated. Use getConnectedPlugins() for status or getExecutablePlugins() for execution.');
+    logger.warn({
+      userId,
+      skipTokenRefresh: options.skipTokenRefresh
+    }, 'DEPRECATED: getUserActionablePlugins() called - use getConnectedPlugins() or getExecutablePlugins()');
 
     // Redirect to new methods based on option
     if (options.skipTokenRefresh) {
@@ -413,7 +437,7 @@ export class PluginManagerV2 {
     userId: string,
     connectedKeys?: string[]
   ): Promise<Record<string, { plugin: PluginDefinition; reason: string; auth_url: string }>> {
-    if (this.debug) console.log(`DEBUG: Getting disconnected plugins for user ${userId}`);
+    logger.debug({ userId }, 'Getting disconnected plugins');
 
     const allPlugins = this.getAvailablePlugins();
     const availablePluginKeys = Object.keys(allPlugins);
@@ -425,7 +449,7 @@ export class PluginManagerV2 {
       connectedKeys
     );
 
-    if (this.debug) console.log(`DEBUG: Found ${disconnectedKeys.length} disconnected plugin keys`);
+    logger.debug({ disconnectedCount: disconnectedKeys.length }, 'Disconnected plugin keys retrieved');
 
     const disconnectedPlugins: Record<string, { plugin: PluginDefinition; reason: string; auth_url: string }> = {};
 
@@ -435,7 +459,7 @@ export class PluginManagerV2 {
       if (definition) {
         // Skip system plugins (they're never "disconnected" - always available)
         if (definition.plugin.isSystem) {
-          if (this.debug) console.log(`DEBUG: Skipping system plugin ${pluginKey} from disconnected list`);
+          logger.debug({ pluginKey }, 'Skipping system plugin from disconnected list');
           continue;
         }
 
@@ -445,18 +469,18 @@ export class PluginManagerV2 {
           auth_url: definition.plugin.auth_config.auth_url
         };
 
-        if (this.debug) console.log(`DEBUG: Plugin ${pluginKey} is disconnected`);
+        logger.debug({ pluginKey }, 'Plugin is disconnected');
       }
     }
 
-    if (this.debug) console.log(`DEBUG: Returning ${Object.keys(disconnectedPlugins).length} disconnected plugins`);
+    logger.debug({ count: Object.keys(disconnectedPlugins).length }, 'Disconnected plugins retrieved');
 
     return disconnectedPlugins;
   }
 
   // Validate action parameters against plugin schema and rules
   validateActionParameters(pluginName: string, actionName: string, parameters: any): ValidationResult {
-    if (this.debug) console.log(`DEBUG: Validating parameters for ${pluginName}.${actionName}`);
+    logger.debug({ pluginName, actionName }, 'Validating action parameters');
     
     const plugin = this.plugins.get(pluginName);
     if (!plugin) {
@@ -494,8 +518,8 @@ export class PluginManagerV2 {
       block_reason: ruleValidation.block_reason
     };
 
-    if (this.debug) console.log(`DEBUG: Validation result for ${pluginName}.${actionName}:`, result);
-    
+    logger.debug({ pluginName, actionName, result }, 'Validation result');
+
     return result;
   }
 
@@ -504,7 +528,7 @@ export class PluginManagerV2 {
     connected_plugins: Record<string, any>;
     available_plugins: Record<string, any>;
   }> {
-    if (this.debug) console.log(`DEBUG: Generating LLM context for user ${userId}`);
+    logger.debug({ userId }, 'Generating LLM context');
     
     const actionablePlugins = await this.getUserActionablePlugins(userId);
     const disconnectedPlugins = await this.getDisconnectedPlugins(userId);
@@ -538,22 +562,30 @@ export class PluginManagerV2 {
       available_plugins: llmAvailablePlugins
     };
 
-    if (this.debug) console.log(`DEBUG: LLM context generated - Connected: ${Object.keys(llmConnectedPlugins).length}, Available: ${Object.keys(llmAvailablePlugins).length}`);
-    
+    logger.debug({
+      connectedCount: Object.keys(llmConnectedPlugins).length,
+      availableCount: Object.keys(llmAvailablePlugins).length
+    }, 'LLM context generated');
+
     return context;
   }
 
   // Generate a Skinny LLM context (actionable filtered plugins)
   async generateSkinnyLLMContextByPluginName(userId: string, filteredPlugins: string[], includeRules?: boolean, includeOutputGuidence?: boolean): Promise<Record<string, PluginDefinition>>
   {
-    if (this.debug) console.log(`DEBUG: Generating Skinny LLM context user: ${userId} with filtered plugins: ${filteredPlugins.join(', ')}`);  
-    
+    logger.debug({
+      userId,
+      filteredPlugins,
+      includeRules,
+      includeOutputGuidence
+    }, 'Generating Skinny LLM context');
+
     // Format actionable plugins for LLM (can perform actions)
     const llmPluginsContext: Record<string, PluginDefinition> = {};
     for (const pluginName of filteredPlugins) {
       const pluginDef = this.getPluginDefinition(pluginName);
       if (!pluginDef) {
-        if (this.debug) console.log(`DEBUG: Plugin ${pluginName} not found in registry, skipping`);
+        logger.debug({ pluginName }, 'Plugin not found in registry, skipping');
         continue;
       }
       llmPluginsContext[pluginName] = pluginDef;
@@ -563,33 +595,33 @@ export class PluginManagerV2 {
             action.rules = {};
           }
           if (!includeOutputGuidence) {
-            action.output_guidance = { success_message: "", common_errors: {} };
+            action.output_guidance = { success_description: "", common_errors: {} };
           }
-        }      
-      }      
+        }
+      }
     }
-    if (this.debug) console.log(`DEBUG: Skinny LLM context generated: ${Object.keys(llmPluginsContext).length}`);
+    logger.debug({ contextCount: Object.keys(llmPluginsContext).length }, 'Skinny LLM context generated');
     return llmPluginsContext;
   }
 
   // Get plugin definition by name
   getPluginDefinition(pluginName: string): PluginDefinition | undefined {
-    if (this.debug) console.log(`DEBUG: Getting plugin definition for ${pluginName}`);
+    logger.debug({ pluginName }, 'Getting plugin definition');
     return this.plugins.get(pluginName);
   }
 
     // Get action definition
   getActionDefinition(pluginName: string, actionName: string): ActionDefinition | undefined {
-    if (this.debug) console.log(`DEBUG: Getting action definition for ${pluginName}.${actionName}`);
-    
+    logger.debug({ pluginName, actionName }, 'Getting action definition');
+
     const plugin = this.plugins.get(pluginName);
     return plugin?.actions[actionName];
   }
 
   // Get output guidance for action
-  getOutputGuidance(pluginName: string, actionName: string): { success_message: string; common_errors: Record<string, string> } | undefined {
-    if (this.debug) console.log(`DEBUG: Getting output guidance for ${pluginName}.${actionName}`);
-    
+  getOutputGuidance(pluginName: string, actionName: string): { success_description: string; sample_output?: any; common_errors: Record<string, string> } | undefined {
+    logger.debug({ pluginName, actionName }, 'Getting output guidance');
+
     const action = this.getActionDefinition(pluginName, actionName);
     return action?.output_guidance;
   }
@@ -613,7 +645,7 @@ export class PluginManagerV2 {
 
   // Get plugin Display Name by name
   getPluginDisplayName(pluginName: string): string {
-    if (this.debug) console.log(`DEBUG: Getting plugin display name for ${pluginName}`);
+    logger.debug({ pluginName }, 'Getting plugin display name');
     const plugin = this.getPluginDefinition(pluginName);
     return plugin?.plugin.displayName || plugin?.plugin.label || pluginName;
   }
@@ -622,7 +654,7 @@ export class PluginManagerV2 {
 
   // Validate plugin definition structure
   private validatePluginDefinition(definition: PluginDefinition): void {
-    if (this.debug) console.log('DEBUG: Validating plugin definition structure');
+    logger.debug('Validating plugin definition structure');
     
     if (!definition.plugin?.name) {
       throw new Error('Plugin definition missing required field: plugin.name');
@@ -642,13 +674,13 @@ export class PluginManagerV2 {
         throw new Error(`Action ${actionName} missing required fields`);
       }
     }
-    
-    if (this.debug) console.log('DEBUG: Plugin definition validation passed');
+
+    logger.debug('Plugin definition validation passed');
   }
 
   // Validate parameters against JSON Schema
   private validateParametersAgainstSchema(parameters: any, schema: any): string[] {
-    if (this.debug) console.log('DEBUG: Validating parameters against schema');
+    logger.debug('Validating parameters against schema');
 
     const errors: string[] = [];
     
@@ -691,7 +723,7 @@ export class PluginManagerV2 {
       }
     }
 
-    if (this.debug) console.log(`DEBUG: Schema validation found ${errors.length} errors`);
+    logger.debug({ errorCount: errors.length }, 'Schema validation complete');
 
     return errors;
   }
@@ -703,7 +735,7 @@ export class PluginManagerV2 {
     confirmations: string[];
     errors: string[];
   } {
-    if (this.debug) console.log('DEBUG: Validating rules');
+    logger.debug('Validating rules');
     
     const result = {
       blocked: false,
@@ -721,28 +753,28 @@ export class PluginManagerV2 {
         if (this.evaluateCondition(rule.condition, ruleContext)) {
           result.blocked = true;
           result.block_reason = rule.message;
-          if (this.debug) console.log(`DEBUG: Rule ${ruleName} blocked action: ${rule.message}`);
+          logger.debug({ ruleName, message: rule.message }, 'Rule blocked action');
           break;
         }
       }
     }
-    
+
     // Check confirmation rules
     if (rules.confirmations && !result.blocked) {
       for (const [ruleName, rule] of Object.entries(rules.confirmations)) {
         if (this.evaluateCondition(rule.condition, ruleContext)) {
           result.confirmations.push(rule.message);
-          if (this.debug) console.log(`DEBUG: Rule ${ruleName} requires confirmation: ${rule.message}`);
+          logger.debug({ ruleName, message: rule.message }, 'Rule requires confirmation');
         }
       }
     }
-    
+
     return result;
   }
 
   // Extract values from parameters for rule evaluation
   private extractRuleContext(parameters: any): Record<string, any> {
-    if (this.debug) console.log('DEBUG: Extracting rule context from parameters');
+    logger.debug('Extracting rule context from parameters');
     
     const context: Record<string, any> = {};
     
@@ -755,7 +787,7 @@ export class PluginManagerV2 {
       
       // Check for external domains (simplified - replace with actual domain logic)
       context.has_external_recipients = [...to, ...cc, ...bcc].some((email: string) => 
-        !email.includes('@yourdomain.com')
+        email && typeof email === 'string' && !email.includes('@yourdomain.com')
       );
     }
     
@@ -764,31 +796,31 @@ export class PluginManagerV2 {
       context.subject = parameters.content.subject;
       context.subject_length = parameters.content.subject.length;
     }
-    
-    if (this.debug) console.log('DEBUG: Rule context extracted:', context);
-    
+
+    logger.debug({ context }, 'Rule context extracted');
+
     return context;
   }
 
   // Simple condition evaluation (supports basic comparisons)
   private evaluateCondition(condition: string, context: Record<string, any>): boolean {
-    if (this.debug) console.log(`DEBUG: Evaluating condition: ${condition}`);
+    logger.debug({ condition }, 'Evaluating condition');
     
     try {
       // Simple regex-based condition parsing
       const match = condition.match(/(\w+)\s*(>|<|==|!=|>=|<=)\s*(\w+)/);
-      
+
       if (!match) {
-        if (this.debug) console.log('DEBUG: Could not parse condition');
+        logger.debug('Could not parse condition');
         return false;
       }
-      
+
       const [, variable, operator, value] = match;
       const contextValue = context[variable];
       const compareValue = isNaN(Number(value)) ? value : Number(value);
-      
+
       let result = false;
-      
+
       switch (operator) {
         case '>':
           result = contextValue > compareValue;
@@ -809,32 +841,39 @@ export class PluginManagerV2 {
           result = contextValue != compareValue;
           break;
       }
-      
-      if (this.debug) console.log(`DEBUG: Condition ${condition} evaluated to ${result} (${contextValue} ${operator} ${compareValue})`);
-      
+
+      logger.debug({
+        condition,
+        result,
+        contextValue,
+        operator,
+        compareValue
+      }, 'Condition evaluated');
+
       return result;
     } catch (error) {
-      if (this.debug) console.log('DEBUG: Error evaluating condition:', error);
+      logger.debug({ err: error, condition }, 'Error evaluating condition');
       return false;
     }
   }
 
   // Format actions for LLM consumption
   private formatActionsForLLM(actions: Record<string, ActionDefinition>): Record<string, any> {
-    if (this.debug) console.log('DEBUG: Formatting actions for LLM');
-    
+    logger.debug('Formatting actions for LLM');
+
     const formatted: Record<string, any> = {};
-    
+
     for (const [actionName, action] of Object.entries(actions)) {
       formatted[actionName] = {
         description: action.description,
         usage_context: action.usage_context,
         parameters: action.parameters,
         rules: action.rules,
-        output_guidance: action.output_guidance        
+        output_schema: action.output_schema,
+        output_guidance: action.output_guidance
       };
     }
-    
+
     return formatted;
   }
 }

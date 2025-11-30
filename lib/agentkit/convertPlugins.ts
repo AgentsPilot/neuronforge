@@ -174,13 +174,44 @@ export async function getPluginContextPrompt(
             paramDetails.push(`      "${paramName}": { type: array of ${paramDef.items?.type || 'any'} }`);
           } else {
             // Simple type
-            paramDetails.push(`      "${paramName}": { type: ${paramDef.type}${paramDef.description ? `, desc: "${paramDef.description.substring(0, 50)}..."` : ''} }`);
+            paramDetails.push(`      "${paramName}": { type: ${paramDef.type}${paramDef.description ? `, desc: "${paramDef.description}"` : ''} }`);
           }
         });
 
         if (paramDetails.length > 0) {
           contextLines.push(`    Parameter structure:`);
           paramDetails.forEach(detail => contextLines.push(detail));
+        }
+      }
+
+      // Include output schema so AI knows what data the action returns
+      if (actionInfo.output_schema?.properties) {
+        const outputProps = actionInfo.output_schema.properties;
+        const outputDetails: string[] = [];
+
+        Object.entries(outputProps).forEach(([propName, propDef]: [string, any]) => {
+          if (propDef.type === 'object' && propDef.properties) {
+            // Nested object - show structure
+            const nestedProps = Object.keys(propDef.properties).join(', ');
+            outputDetails.push(`      "${propName}": { type: object, properties: [${nestedProps}] }`);
+          } else if (propDef.type === 'array') {
+            const itemType = propDef.items?.type || 'any';
+            // If array items are objects, show their properties
+            if (propDef.items?.properties) {
+              const itemProps = Object.keys(propDef.items.properties).join(', ');
+              outputDetails.push(`      "${propName}": { type: array of object, item_properties: [${itemProps}] }`);
+            } else {
+              outputDetails.push(`      "${propName}": { type: array of ${itemType} }`);
+            }
+          } else {
+            // Simple type with description
+            outputDetails.push(`      "${propName}": { type: ${propDef.type}${propDef.description ? `, desc: "${propDef.description}"` : ''} }`);
+          }
+        });
+
+        if (outputDetails.length > 0) {
+          contextLines.push(`    OUTPUT returns:`);
+          outputDetails.forEach(detail => contextLines.push(detail));
         }
       }
     });
