@@ -1,17 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { getUser } from '@/lib/auth';
-import { useThreadBasedAgentCreation } from '@/lib/utils/featureFlags';
 import { OpenAIProvider } from '@/lib/ai/providers/openaiProvider';
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 import { PluginDefinitionContext } from '@/lib/types/plugin-definition-context';
 import { createLogger } from '@/lib/logger';
+import { getAgentPromptThreadRepository } from '@/lib/agent-creation/agent-prompt-thread-repository';
 import type {
   ProcessMessageRequest,
   ProcessMessageResponse,
   ThreadErrorResponse,
-  UpdateAgentPromptThread,
   ClarificationQuestion,
   ConnectedService,
   UserContext
@@ -19,7 +18,7 @@ import type {
 import { validatePhase3Response } from '@/lib/validation/phase3-schema';
 
 
-// Initialize Supabase client
+// Initialize Supabase client (still needed for AIAnalyticsService)
 const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -31,6 +30,9 @@ const aiAnalytics = new AIAnalyticsService(supabase, {
   enableCostTracking: true,
   enablePerformanceMetrics: true
 });
+
+// Initialize repository
+const threadRepository = getAgentPromptThreadRepository();
 
 // Create logger instance for this route
 const logger = createLogger({ module: 'API', route: '/api/agent-creation/process-message' });
@@ -50,20 +52,7 @@ export async function POST(request: NextRequest) {
   requestLogger.info('Process message request received');
 
   try {
-    // Step 1: Check feature flag
-    if (!useThreadBasedAgentCreation()) {
-      requestLogger.warn('Thread-based agent creation is disabled');
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Thread-based agent creation is not enabled',
-          details: 'Set NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION=true in environment variables'
-        } as ThreadErrorResponse,
-        { status: 403 }
-      );
-    }
-
-    // Step 2: Authenticate user
+    // Step 1: Authenticate user
     const user = await getUser();
     if (!user) {
       requestLogger.warn('Unauthorized access attempt');
@@ -233,30 +222,24 @@ export async function POST(request: NextRequest) {
       hasEnhancedPrompt: !!enhanced_prompt
     }, 'Request validated');
 
-    // Step 5: Verify thread belongs to user and is active
-    const dbThreadStartTime = Date.now();
-    const { data: threadRecord, error: threadError } = await supabase
-      .from('agent_prompt_threads')
-      .select('*')
-      .eq('openai_thread_id', thread_id)
-      .eq('user_id', user.id)
-      .single();
+    // Step 5: Verify thread belongs to user and is active using repository
+    const threadRecord = await threadRepository.getThreadByOpenAIId(thread_id, user.id);
 
-    if (threadError || !threadRecord) {
-      requestLogger.error({ err: threadError, threadId: thread_id }, 'Thread not found or unauthorized');
+    if (!threadRecord) {
+      requestLogger.error({ threadId: thread_id }, 'Thread not found or unauthorized');
       return NextResponse.json(
         {
           success: false,
           error: 'Thread not found or unauthorized',
           phase,
-          details: threadError?.message || 'Thread does not exist or does not belong to this user'
+          details: 'Thread does not exist or does not belong to this user'
         } as ThreadErrorResponse,
         { status: 404 }
       );
     }
 
     // Check if thread is expired
-    if (threadRecord.status === 'expired') {
+    if (threadRepository.isThreadExpired(threadRecord)) {
       requestLogger.warn({ threadId: thread_id, status: threadRecord.status }, 'Thread has expired');
       return NextResponse.json(
         {
@@ -269,12 +252,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const dbThreadDuration = Date.now() - dbThreadStartTime;
     requestLogger.debug({
       dbRecordId: threadRecord.id,
       status: threadRecord.status,
-      currentPhase: threadRecord.current_phase,
-      duration: dbThreadDuration
+      currentPhase: threadRecord.current_phase
     }, 'Thread verified');
 
     // Step 6: Build user message based on phase
@@ -513,35 +494,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Step 13: Update thread record in database
-    const updateData: UpdateAgentPromptThread = {
-      current_phase: phase,
-      status: phase === 3 ? 'completed' : 'active',
-      metadata: {
-        ...threadRecord.metadata,
-        last_phase: phase,
-        last_updated: new Date().toISOString(),
-        // Store Phase 1 context for Phase 2 reference (v8 requirement)
-        ...(phase === 1 && {
-          phase1_connected_services: user_connected_services,
-          phase1_available_services: user_available_services
-        })
-      }
+    // Step 13: Update thread record in database using repository
+    const updatedMetadata = {
+      ...threadRecord.metadata,
+      last_phase: phase,
+      last_updated: new Date().toISOString(),
+      // Store Phase 1 context for Phase 2 reference (v8 requirement)
+      ...(phase === 1 && {
+        phase1_connected_services: user_connected_services,
+        phase1_available_services: user_available_services
+      })
     };
 
-    const updateDbStartTime = Date.now();
     try {
-      await supabase
-        .from('agent_prompt_threads')
-        .update(updateData)
-        .eq('id', threadRecord.id);
+      await threadRepository.updateThreadPhase(
+        threadRecord.id,
+        phase,
+        phase === 3 ? 'completed' : 'active',
+        updatedMetadata
+      );
 
-      const updateDbDuration = Date.now() - updateDbStartTime;
       requestLogger.debug({
         dbRecordId: threadRecord.id,
         newPhase: phase,
-        newStatus: updateData.status,
-        duration: updateDbDuration
+        newStatus: phase === 3 ? 'completed' : 'active'
       }, 'Thread record updated');
     } catch (updateError: any) {
       requestLogger.warn({ err: updateError, dbRecordId: threadRecord.id }, 'Failed to update thread record (non-critical)');
@@ -556,6 +532,8 @@ export async function POST(request: NextRequest) {
       userId: user.id,
       duration: totalDuration
     }, 'Process message complete');
+
+    requestLogger.debug({ response: aiResponse }, 'Returning response to client');
 
     return NextResponse.json(aiResponse);
 

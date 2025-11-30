@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { getUser } from '@/lib/auth';
-import { useThreadBasedAgentCreation } from '@/lib/utils/featureFlags';
 import { PromptLoader } from '@/app/api/types/PromptLoader';
 import { OpenAIProvider } from '@/lib/ai/providers/openaiProvider';
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 import { createLogger } from '@/lib/logger';
+import {
+  getAgentPromptThreadRepository,
+  RepositoryError
+} from '@/lib/agent-creation/agent-prompt-thread-repository';
 import type {
   InitThreadResponse,
   ThreadErrorResponse,
@@ -15,7 +18,7 @@ import type {
 //const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v9-chatgpt";
 const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v10-chatgpt";
 
-// Initialize Supabase client
+// Initialize Supabase client (still needed for AIAnalyticsService)
 const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -27,6 +30,9 @@ const aiAnalytics = new AIAnalyticsService(supabase, {
   enableCostTracking: true,
   enablePerformanceMetrics: true
 });
+
+// Initialize repository
+const threadRepository = getAgentPromptThreadRepository();
 
 // Create logger instance for this route
 const logger = createLogger({ module: 'API', route: '/api/agent-creation/init-thread' });
@@ -46,20 +52,7 @@ export async function POST(request: NextRequest) {
   requestLogger.info('Thread creation request received');
 
   try {
-    // Step 1: Check feature flag
-    if (!useThreadBasedAgentCreation()) {
-      requestLogger.warn('Thread-based agent creation is disabled');
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Thread-based agent creation is not enabled',
-          details: 'Set NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION=true in environment variables'
-        } as ThreadErrorResponse,
-        { status: 403 }
-      );
-    }
-
-    // Step 2: Authenticate user
+    // Step 1: Authenticate user
     const user = await getUser();
     if (!user) {
       requestLogger.warn('Unauthorized access attempt');
@@ -145,8 +138,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Step 6: Store thread in database
-    const threadRecord: CreateAgentPromptThread = {
+    // Step 6: Store thread in database using repository
+    const threadData: CreateAgentPromptThread = {
       user_id: user.id,
       openai_thread_id: thread.id,
       status: 'active',
@@ -156,44 +149,14 @@ export async function POST(request: NextRequest) {
       metadata: {}
     };
 
-    const dbStartTime = Date.now();
     try {
-      const { data, error } = await supabase
-        .from('agent_prompt_threads')
-        .insert(threadRecord)
-        .select()
-        .single();
-
-      if (error) {
-        const dbDuration = Date.now() - dbStartTime;
-        requestLogger.error(
-          { err: error, threadId: thread.id, duration: dbDuration },
-          'Failed to store thread in database'
-        );
-
-        // Clean up: delete the OpenAI thread since we couldn't store it
-        const openaiProvider = OpenAIProvider.getInstance(aiAnalytics);
-        await openaiProvider.deleteThread(thread.id);
-        requestLogger.info({ threadId: thread.id }, 'Cleaned up OpenAI thread after database failure');
-
-        return NextResponse.json(
-          {
-            success: false,
-            error: 'Failed to store thread in database',
-            details: error.message
-          } as ThreadErrorResponse,
-          { status: 500 }
-        );
-      }
-
-      const dbDuration = Date.now() - dbStartTime;
-      requestLogger.debug({ dbRecordId: data.id, duration: dbDuration }, 'Thread stored in database');
+      const dbRecord = await threadRepository.createThread(threadData);
 
       // Step 7: Return success response
       const response: InitThreadResponse = {
         success: true,
         thread_id: thread.id,
-        created_at: data.created_at,
+        created_at: dbRecord.created_at,
         message: 'Thread created successfully'
       };
 
@@ -202,18 +165,19 @@ export async function POST(request: NextRequest) {
         {
           threadId: thread.id,
           userId: user.id,
-          dbRecordId: data.id,
+          dbRecordId: dbRecord.id,
           duration: totalDuration
         },
         'Thread initialization complete'
       );
 
+      requestLogger.debug({ response }, 'Returning response to client');
+
       return NextResponse.json(response);
 
     } catch (dbError: any) {
-      const dbDuration = Date.now() - dbStartTime;
       requestLogger.error(
-        { err: dbError, threadId: thread.id, duration: dbDuration },
+        { err: dbError, threadId: thread.id },
         'Database error during thread storage'
       );
 
@@ -226,7 +190,7 @@ export async function POST(request: NextRequest) {
         {
           success: false,
           error: 'Database error',
-          details: dbError.message
+          details: dbError instanceof RepositoryError ? dbError.message : dbError.message
         } as ThreadErrorResponse,
         { status: 500 }
       );

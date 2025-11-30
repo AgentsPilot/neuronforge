@@ -1,16 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { getUser } from '@/lib/auth';
-import { useThreadBasedAgentCreation } from '@/lib/utils/featureFlags';
 import { OpenAIProvider } from '@/lib/ai/providers/openaiProvider';
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 import { createLogger } from '@/lib/logger';
+import { getAgentPromptThreadRepository } from '@/lib/agent-creation/agent-prompt-thread-repository';
 import type {
   AgentPromptThread,
   ThreadErrorResponse
 } from '@/components/agent-creation/types/agent-prompt-threads';
 
-// Initialize Supabase client
+// Initialize Supabase client (still needed for AIAnalyticsService)
 const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -22,6 +22,9 @@ const aiAnalytics = new AIAnalyticsService(supabase, {
   enableCostTracking: true,
   enablePerformanceMetrics: true
 });
+
+// Initialize repository
+const threadRepository = getAgentPromptThreadRepository();
 
 // Create logger instance for this route
 const logger = createLogger({ module: 'API', route: '/api/agent-creation/thread/:id' });
@@ -57,20 +60,7 @@ export async function GET(
   requestLogger.info('Thread retrieval request received');
 
   try {
-    // Step 1: Check feature flag
-    if (!useThreadBasedAgentCreation()) {
-      requestLogger.warn('Thread-based agent creation is disabled');
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Thread-based agent creation is not enabled',
-          details: 'Set NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION=true in environment variables'
-        } as ThreadErrorResponse,
-        { status: 403 }
-      );
-    }
-
-    // Step 2: Authenticate user
+    // Step 1: Authenticate user
     const user = await getUser();
     if (!user) {
       requestLogger.warn('Unauthorized access attempt');
@@ -98,48 +88,36 @@ export async function GET(
       );
     }
 
-    // Step 4: Retrieve thread from database
-    const dbStartTime = Date.now();
-    const { data: threadRecord, error: threadError } = await supabase
-      .from('agent_prompt_threads')
-      .select('*')
-      .eq('openai_thread_id', threadId)
-      .eq('user_id', user.id)
-      .single();
+    // Step 4: Retrieve thread from database using repository
+    const threadRecord = await threadRepository.getThreadByOpenAIId(threadId, user.id);
 
-    if (threadError || !threadRecord) {
-      const dbDuration = Date.now() - dbStartTime;
+    if (!threadRecord) {
       requestLogger.error(
-        { err: threadError, userId: user.id, duration: dbDuration },
+        { userId: user.id },
         'Thread not found or unauthorized'
       );
       return NextResponse.json(
         {
           success: false,
           error: 'Thread not found or unauthorized',
-          details: threadError?.message || 'Thread does not exist or does not belong to this user'
+          details: 'Thread does not exist or does not belong to this user'
         } as ThreadErrorResponse,
         { status: 404 }
       );
     }
 
-    const dbDuration = Date.now() - dbStartTime;
     requestLogger.debug(
       {
         dbRecordId: threadRecord.id,
         status: threadRecord.status,
         currentPhase: threadRecord.current_phase,
-        expiresAt: threadRecord.expires_at,
-        duration: dbDuration
+        expiresAt: threadRecord.expires_at
       },
       'Thread found in database'
     );
 
     // Step 5: Check if thread is expired
-    const now = new Date();
-    const expiresAt = new Date(threadRecord.expires_at);
-
-    if (threadRecord.status === 'expired' || now > expiresAt) {
+    if (threadRepository.isThreadExpired(threadRecord)) {
       requestLogger.info(
         { status: threadRecord.status, expiresAt: threadRecord.expires_at },
         'Thread has expired'
@@ -147,10 +125,7 @@ export async function GET(
 
       // Update status to expired if not already
       if (threadRecord.status !== 'expired') {
-        await supabase
-          .from('agent_prompt_threads')
-          .update({ status: 'expired' })
-          .eq('id', threadRecord.id);
+        await threadRepository.markThreadExpired(threadRecord.id);
       }
 
       return NextResponse.json(
@@ -218,6 +193,8 @@ export async function GET(
       },
       'Thread retrieval complete'
     );
+
+    requestLogger.debug({ response }, 'Returning response to client');
 
     return NextResponse.json(response);
 
