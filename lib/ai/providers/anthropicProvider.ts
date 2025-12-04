@@ -5,6 +5,23 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { BaseAIProvider, CallContext } from './baseProvider';
 import { calculateCostSync } from '../pricing';
+import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
+
+/**
+ * Anthropic model name constants
+ * Use these instead of raw strings when specifying models
+ */
+export const ANTHROPIC_MODELS = {
+  CLAUDE_4_OPUS: 'claude-opus-4-20250514',
+  CLAUDE_4_SONNET: 'claude-sonnet-4-20250514',
+  CLAUDE_35_SONNET: 'claude-3-5-sonnet-20241022',
+  CLAUDE_35_HAIKU: 'claude-3-5-haiku-20241022',
+  CLAUDE_3_OPUS: 'claude-3-opus-20240229',
+  CLAUDE_3_SONNET: 'claude-3-sonnet-20240229',
+  CLAUDE_3_HAIKU: 'claude-3-haiku-20240307'
+} as const;
+
+export type AnthropicModelName = typeof ANTHROPIC_MODELS[keyof typeof ANTHROPIC_MODELS];
 
 interface ChatCompletionParams {
   model: string;
@@ -40,6 +57,27 @@ export class AnthropicProvider extends BaseAIProvider {
     this.client = new Anthropic({
       apiKey: apiKey
     });
+  }
+
+  /**
+   * Static factory method to get an AnthropicProvider instance with validation
+   *
+   * @param aiAnalytics - The AI analytics service instance
+   * @returns A configured AnthropicProvider instance
+   * @throws Error if ANTHROPIC_API_KEY is not configured or aiAnalytics is not provided
+   */
+  static getInstance(aiAnalytics: AIAnalyticsService): AnthropicProvider {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      console.error('❌ Missing Anthropic API key');
+      throw new Error('Anthropic API key not configured', { cause: 400 } as any);
+    }
+
+    if (!aiAnalytics) {
+      console.error('❌ AI Analytics service not provided');
+      throw new Error('AI Analytics service not initialized', { cause: 500 } as any);
+    }
+
+    return new AnthropicProvider(process.env.ANTHROPIC_API_KEY!, aiAnalytics);
   }
 
   /**
@@ -126,6 +164,175 @@ export class AnthropicProvider extends BaseAIProvider {
         };
       }
     );
+  }
+
+  /**
+   * Chat completion with automatic JSON parsing
+   * Convenience method for structured output workflows
+   *
+   * @param params - Chat completion parameters in OpenAI format
+   * @param context - Analytics tracking context
+   * @returns Parsed JSON data and token usage
+   */
+  async chatCompletionJson<T>(
+    params: ChatCompletionParams,
+    context: CallContext
+  ): Promise<{ data: T; tokensUsed: { prompt: number; completion: number; total: number } }> {
+    const completion = await this.chatCompletion(params, context);
+    const rawContent = completion.choices[0]?.message?.content || '{}';
+
+    // Debug: Log raw response before any manipulation
+    console.log('🔍 [AnthropicProvider] Raw response content (length: ' + rawContent.length + '):\n', rawContent);
+
+    // Extract JSON from response - Claude often wraps JSON in markdown code blocks
+    const jsonContent = this.extractJsonFromResponse(rawContent);
+
+    // Debug: Log after extraction
+    console.log('🔍 [AnthropicProvider] After JSON extraction (length: ' + jsonContent.length + '):\n', jsonContent);
+
+    return {
+      data: JSON.parse(jsonContent) as T,
+      tokensUsed: {
+        prompt: completion.usage?.prompt_tokens || 0,
+        completion: completion.usage?.completion_tokens || 0,
+        total: completion.usage?.total_tokens || 0
+      }
+    };
+  }
+
+  /**
+   * Extract JSON from a response that may contain markdown code blocks or extra text
+   * @private
+   */
+  private extractJsonFromResponse(content: string): string {
+    let jsonStr = content;
+
+    // Try to extract from markdown code blocks first (```json ... ``` or ``` ... ```)
+    const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeBlockMatch) {
+      jsonStr = codeBlockMatch[1].trim();
+    } else {
+      // Try to find JSON object or array in the content
+      const jsonMatch = content.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+      if (jsonMatch) {
+        jsonStr = jsonMatch[1].trim();
+      }
+    }
+
+    // Fix common JSON issues from LLM responses
+    jsonStr = this.fixJsonSyntax(jsonStr);
+
+    return jsonStr;
+  }
+
+  /**
+   * Fix common JSON syntax issues from LLM responses
+   * Handles: trailing commas, truncated responses, unclosed brackets
+   * @private
+   */
+  private fixJsonSyntax(jsonStr: string): string {
+    // Remove trailing commas before } or ]
+    // Match comma followed by optional whitespace/newlines, then } or ]
+    let fixed = jsonStr.replace(/,(\s*[\}\]])/g, '$1');
+
+    // Remove any BOM or invisible characters at the start
+    fixed = fixed.replace(/^\uFEFF/, '');
+
+    // Try to parse, if it fails, attempt more aggressive fixes
+    try {
+      JSON.parse(fixed);
+      return fixed;
+    } catch (e) {
+      // More aggressive trailing comma removal (handles nested cases)
+      fixed = fixed.replace(/,\s*,/g, ','); // Remove double commas
+      fixed = fixed.replace(/,(\s*[\}\]])/g, '$1'); // Another pass for trailing commas
+
+      // Try again after comma fixes
+      try {
+        JSON.parse(fixed);
+        return fixed;
+      } catch {
+        // Response may be truncated - try to auto-close brackets
+        fixed = this.autoCloseBrackets(fixed);
+      }
+
+      return fixed;
+    }
+  }
+
+  /**
+   * Auto-close unclosed brackets in truncated JSON responses
+   * Counts open/close brackets and adds missing closures
+   * @private
+   */
+  private autoCloseBrackets(jsonStr: string): string {
+    let fixed = jsonStr;
+
+    // Remove any incomplete key-value pair at the end (e.g., "key": or "key": "incomplete)
+    // This handles cases where response was cut mid-value
+    fixed = fixed
+      .replace(/,\s*"[^"]*":\s*"[^"]*$/, '')  // incomplete string value
+      .replace(/,\s*"[^"]*":\s*$/, '')         // incomplete key with no value
+      .replace(/,\s*"[^"]*$/, '')              // incomplete key
+      .replace(/,\s*$/, '');                   // trailing comma
+
+    // Count brackets to find what's missing
+    let openBraces = 0;
+    let openBrackets = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = 0; i < fixed.length; i++) {
+      const char = fixed[i];
+
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        escaped = true;
+        continue;
+      }
+
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+
+      if (inString) continue;
+
+      if (char === '{') openBraces++;
+      else if (char === '}') openBraces--;
+      else if (char === '[') openBrackets++;
+      else if (char === ']') openBrackets--;
+    }
+
+    // If we're still inside a string, close it
+    if (inString) {
+      fixed += '"';
+    }
+
+    // Remove trailing comma before adding closures
+    fixed = fixed.replace(/,\s*$/, '');
+
+    // Add missing brackets (in reverse order of nesting)
+    // Arrays typically close before objects in our schema
+    while (openBrackets > 0) {
+      fixed += ']';
+      openBrackets--;
+    }
+    while (openBraces > 0) {
+      fixed += '}';
+      openBraces--;
+    }
+
+    console.log('🔧 [AnthropicProvider] Auto-closed brackets:', {
+      addedBrackets: openBrackets < 0 ? 0 : -openBrackets,
+      addedBraces: openBraces < 0 ? 0 : -openBraces
+    });
+
+    return fixed;
   }
 
   /**

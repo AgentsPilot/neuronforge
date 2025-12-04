@@ -26,6 +26,22 @@ export abstract class BaseAIProvider {
   // Abstract method that must be implemented by subclasses
   abstract chatCompletion(params: any, context: CallContext): Promise<any>;
 
+  /**
+   * Chat completion with automatic JSON parsing
+   * Default implementation - subclasses should override with provider-specific logic
+   *
+   * @param params - Provider-specific chat completion parameters
+   * @param context - Analytics tracking context
+   * @returns Parsed JSON data and token usage
+   * @throws Error if not implemented by subclass
+   */
+  async chatCompletionJson<T>(
+    params: any,
+    context: CallContext
+  ): Promise<{ data: T; tokensUsed: { prompt: number; completion: number; total: number } }> {
+    throw new Error(`chatCompletionJson not implemented for ${this.constructor.name}`);
+  }
+
   async callWithTracking<T>(
     context: CallContext,
     provider: string,

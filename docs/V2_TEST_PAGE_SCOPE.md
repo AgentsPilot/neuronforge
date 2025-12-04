@@ -21,9 +21,13 @@ Test plugin connectivity, authentication, and action execution for integrated th
 
 #### 1.1 Plugin Management
 - **View Available Plugins**: Lists all registered plugins from the system
-- **Plugin Status Indicator**: Shows connected (green) vs disconnected (red) status
+- **Plugin Status Indicator**: Shows three connection states:
+  - 🟢 **Connected** (green): Plugin is connected with valid token
+  - 🟠 **Token Expired** (orange): Plugin connected but OAuth token has expired
+  - 🔴 **Not Connected** (red): Plugin not connected for this user
 - **Connect Plugin**: Initiates OAuth flow for plugin authentication
 - **Disconnect Plugin**: Removes plugin connection for a user
+- **Refresh Token**: Refreshes expired OAuth token without re-authentication (shown when token is expired)
 
 **Supported Plugins:**
 - Google Mail
@@ -61,9 +65,10 @@ The system includes pre-configured JSON templates for common actions across all 
 
 **API Endpoints Used:**
 - `GET /api/plugins/available` - List all available plugins
-- `GET /api/plugins/user-status` - Get user's plugin connection status
+- `GET /api/plugins/user-status` - Get user's plugin connection status (includes `active_expired` array)
 - `POST /api/plugins/execute` - Execute a plugin action
 - `POST /api/plugins/disconnect` - Disconnect a plugin
+- `POST /api/plugins/refresh-token` - Refresh expired OAuth token for a plugin
 
 ---
 
@@ -308,7 +313,10 @@ If user already has a subscription, free tier allocation is ADDED to existing ba
 ### User Configuration Panel
 Present on all tabs:
 - **User ID Input**: Enter user UUID for testing
-- **Status Display**: Shows connected/disconnected plugin count
+- **Status Display**: Shows plugin counts by status:
+  - Connected count
+  - Expired count (shown in orange when > 0)
+  - Disconnected count
 
 ### Control Panel
 - **Refresh Status**: Reloads plugins and user status
@@ -384,8 +392,10 @@ Present on all tabs:
 **Plugin Management:**
 - `loadAvailablePlugins()` - Fetch all plugins
 - `loadUserStatus()` - Get user's connection status
+- `getPluginStatus(pluginKey)` - Returns 'connected', 'token_expired', or 'not_connected'
 - `connectPlugin(pluginKey)` - Initiate OAuth
 - `disconnectPlugin(pluginKey)` - Remove connection
+- `refreshPluginToken(pluginKey)` - Refresh expired OAuth token
 - `executeAction()` - Execute plugin action
 - `updateParameterTemplate()` - Load action template
 
@@ -426,15 +436,23 @@ Present on all tabs:
 5. View connection status
 6. Check Debug Logs for OAuth flow
 
-### UC-2: Execute Plugin Action
-1. Ensure plugin is connected
+### UC-2: Refresh Expired Plugin Token
+1. Enter User ID
+2. Navigate to Plugins tab
+3. Select plugin showing "Token Expired" (orange)
+4. Click "Refresh Token" button
+5. Check Debug Logs for refresh result
+6. If failed, reconnect plugin via OAuth
+
+### UC-3: Execute Plugin Action
+1. Ensure plugin is connected (not expired)
 2. Select action from dropdown
 3. Review/edit JSON parameters
 4. Click "Execute Action"
 5. View response in display panel
 6. Copy response if needed
 
-### UC-3: Test AI Prompt Analysis
+### UC-4: Test AI Prompt Analysis
 1. Navigate to AI Services tab
 2. Select "analyze-prompt-clarity"
 3. Edit prompt in request body
@@ -442,7 +460,7 @@ Present on all tabs:
 5. Click "Execute AI Service"
 6. Review clarity score and analysis
 
-### UC-4: Run Complete Thread Conversation
+### UC-5: Run Complete Thread Conversation
 1. Enter User ID
 2. Navigate to Thread Conversation tab
 3. Enter initial prompt
@@ -452,7 +470,7 @@ Present on all tabs:
 7. Review Phase 3 enhanced prompt
 8. Download communication history
 
-### UC-5: Create Free Tier User
+### UC-6: Create Free Tier User
 1. Navigate to Free Tier Users tab
 2. Enter user UUID
 3. Review allocation details
@@ -460,7 +478,7 @@ Present on all tabs:
 5. View success/error response
 6. Check Debug Logs for details
 
-### UC-6: Debug Mini-Cycle Workflow
+### UC-7: Debug Mini-Cycle Workflow
 1. Start thread with vague prompt requiring user inputs
 2. Complete Phase 1 and Phase 2
 3. Observe Phase 3 generating `user_inputs_required`
@@ -585,8 +603,15 @@ All errors are:
 - Check plugin status in database
 - Review Debug Logs for OAuth errors
 
+### Issue: Plugin Shows Token Expired
+- Click "Refresh Token" button to refresh OAuth token
+- If refresh fails, the refresh token may have expired - reconnect the plugin
+- Check Debug Logs for specific refresh error messages
+- Some plugins may not support token refresh - reconnect required
+
 ### Issue: Action Execution Fails
-- Ensure plugin is connected
+- Ensure plugin is connected (not expired)
+- If token expired, refresh token first
 - Validate JSON parameters syntax
 - Check parameter template matches action schema
 - Verify user has permissions for action
@@ -617,7 +642,14 @@ All errors are:
 
 ## Changelog
 
-### Version 1.0 (Current)
+### Version 1.1 (Current)
+- Added three-state plugin status: Connected, Token Expired, Not Connected
+- Added "Refresh Token" button for expired plugins
+- Updated status summary to show expired plugin count
+- Plugin dropdown now shows [Expired] suffix for expired tokens
+- Color-coded status: green (connected), orange (expired), red (disconnected)
+
+### Version 1.0
 - Initial release with 4 tabs
 - Plugin management and testing
 - AI service testing
@@ -638,5 +670,5 @@ For issues or questions about the Test Page:
 
 ---
 
-**Last Updated:** January 2025
+**Last Updated:** December 2025
 **Maintained By:** NeuronForge Development Team

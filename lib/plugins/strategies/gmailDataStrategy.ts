@@ -1,3 +1,8 @@
+/**
+ * @deprecated This entire file is deprecated and should not be used.
+ * Please use the v2 plugin system instead.
+ */
+
 // lib/plugins/strategies/gmailDataStrategy.ts
 import { gmailStrategy } from './gmailPluginStrategy'
 import { extractPdfTextFromBase64 } from '@/lib/utils/extractPdfTextFromBase64'
@@ -19,6 +24,7 @@ export interface GmailDataStrategy {
   cleanExtractedText(text: string): string
 }
 
+/** @deprecated Use v2 plugin system instead */
 export const gmailDataStrategy: GmailDataStrategy = {
   ...gmailStrategy, // Inherit OAuth connection functionality
 

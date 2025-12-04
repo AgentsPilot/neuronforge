@@ -617,9 +617,9 @@ export const PLUGIN_VERSION_MAP: Record<string, 'v1' | 'v2'> = {
   'slack': 'v1'
 }
 
-console.log('Plugin Registry Loaded:', {
-  totalPlugins: Object.keys(pluginRegistry).length,
-  categories: [...new Set(Object.values(pluginRegistry).map(p => p.category))],
-  pluginsWithInputTemplates: Object.values(pluginRegistry).filter(p => p.inputTemplates).length,
-  pluginsWithOutputTemplates: Object.values(pluginRegistry).filter(p => p.outputTemplates).length
-});
+// console.log('Plugin Registry Loaded:', {
+//   totalPlugins: Object.keys(pluginRegistry).length,
+//   categories: [...new Set(Object.values(pluginRegistry).map(p => p.category))],
+//   pluginsWithInputTemplates: Object.values(pluginRegistry).filter(p => p.inputTemplates).length,
+//   pluginsWithOutputTemplates: Object.values(pluginRegistry).filter(p => p.outputTemplates).length
+// });

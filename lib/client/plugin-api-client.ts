@@ -296,7 +296,7 @@ export class PluginAPIClient {
     for (const pluginKey of pluginKeys) {
       try {
         statuses[pluginKey] = await this.getPluginConnectionStatus(userId, pluginKey);
-      } catch (error) {
+      } catch (error: any) {
         statuses[pluginKey] = { error: error.message };
       }
     }

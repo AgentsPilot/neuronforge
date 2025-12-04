@@ -14,6 +14,33 @@ interface DebugLog {
 
 type TabType = 'plugins' | 'ai-services' | 'thread-conversation' | 'free-tier-users';
 
+// Provider and model options for AI provider selection
+const PROVIDER_OPTIONS = ['openai', 'anthropic', 'kimi'] as const;
+type ProviderOption = typeof PROVIDER_OPTIONS[number];
+
+const MODELS_BY_PROVIDER: Record<ProviderOption, { value: string; label: string }[]> = {
+  openai: [
+    { value: 'gpt-4o', label: 'GPT-4o (Latest)' },
+    { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Fast)' },
+    { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
+    { value: 'gpt-4', label: 'GPT-4' },
+    { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' }
+  ],
+  anthropic: [
+    { value: 'claude-sonnet-4-20250514', label: 'Claude 4 Sonnet (Latest)' },
+    { value: 'claude-opus-4-20250514', label: 'Claude 4 Opus' },
+    { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
+    { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku (Fast)' },
+    { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus' },
+    { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku' }
+  ],
+  kimi: [
+    { value: 'kimi-k2-0905-preview', label: 'Kimi K2 Preview (Latest)' },
+    { value: 'kimi-k2-thinking', label: 'Kimi K2 Thinking (Reasoning)' },
+    { value: 'kimi-k2-0711-preview', label: 'Kimi K2 Original' }
+  ]
+};
+
 const PARAMETER_TEMPLATES = {
   "google-mail": {
     send_email: {
@@ -455,6 +482,24 @@ const AI_SERVICE_TEMPLATES = {
     userId: "test_user_123",
     sessionId: "550e8400-e29b-41d4-a716-446655440000",
     agentId: "660e8400-e29b-41d4-a716-446655440001"
+  },
+  "test/analyze-prompt": {
+    userId: "test_user_123",
+    prompt: "Research the top 10 retail technology blogs from Israel and send me a daily summary via email",
+    availablePlugins: ["google-mail", "chatgpt-research"],
+    sessionId: "550e8400-e29b-41d4-a716-446655440000",
+    // Provider configuration (optional - defaults to OpenAI GPT-4o)
+    // Options: "openai", "anthropic", "kimi"
+    provider: "openai",
+    // Model options per provider:
+    // OpenAI: "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"
+    // Anthropic: "claude-opus-4-20250514", "claude-sonnet-4-20250514", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"
+    // Kimi: "kimi-k2-0905-preview", "kimi-k2-thinking", "kimi-k2-0711-preview"
+    model: "gpt-4o"
+  },
+  "generate-agent-v2": {
+    prompt: "Research the top 10 retail technology blogs from Israel and send me a daily summary via email",
+    sessionId: "550e8400-e29b-41d4-a716-446655440000"
   }
 };
 
@@ -463,7 +508,8 @@ export default function TestPluginsPage() {
   const [activeTab, setActiveTab] = useState<TabType>('plugins');
 
   // Core state
-  const [userId, setUserId] = useState('');
+  // Initialize userId from env variable if available (add NEXT_PUBLIC_TEST_PAGE_USER_ID to .env.local)
+  const [userId, setUserId] = useState(process.env.NEXT_PUBLIC_TEST_PAGE_USER_ID || '');
   const [apiClient] = useState(() => new PluginAPIClient());
   
   // Plugin data
@@ -481,6 +527,14 @@ export default function TestPluginsPage() {
   const [selectedAIService, setSelectedAIService] = useState<string>('');
   const [aiServiceRequestBody, setAiServiceRequestBody] = useState<string>('{}');
   const [aiServiceResponse, setAiServiceResponse] = useState<any>(null);
+
+  // Provider/Model selection state (for test/analyze-prompt)
+  const [selectedProvider, setSelectedProvider] = useState<ProviderOption>('openai');
+  const [selectedModel, setSelectedModel] = useState<string>('gpt-4o');
+
+  // Plugin loading state (for test/analyze-prompt)
+  const [userConnectedPluginKeys, setUserConnectedPluginKeys] = useState<string[]>([]);
+  const [isLoadingPlugins, setIsLoadingPlugins] = useState(false);
 
   // Thread Conversation state
   const [threadId, setThreadId] = useState<string | null>(null);
@@ -579,7 +633,7 @@ export default function TestPluginsPage() {
       addDebugLog('info', `Loading status for user: ${userId}`);
       const status = await apiClient.getUserPluginStatus(userId);
       setUserStatus(status);
-      addDebugLog('success', `User has ${status.summary.connected_count} connected, ${status.summary.disconnected_count} disconnected plugins`);
+      addDebugLog('success', `User has ${status.summary.connected_count} connected, ${status.summary.active_expired_count} expired, ${status.summary.disconnected_count} disconnected plugins`);
     } catch (error: any) {
       addDebugLog('error', `Failed to load user status: ${error.message}`);
       setUserStatus(null);
@@ -640,6 +694,47 @@ export default function TestPluginsPage() {
     }
   };
 
+  const refreshPluginToken = async (pluginKey: string) => {
+    if (!userId.trim()) {
+      addDebugLog('error', 'User ID is required to refresh token');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      addDebugLog('info', `Refreshing token for ${pluginKey}...`);
+      const response = await fetch('/api/plugins/refresh-token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': userId,
+        },
+        body: JSON.stringify({ pluginKeys: [pluginKey] }),
+      });
+
+      const result = await response.json();
+      setLastResponse(result);
+
+      if (result.success && result.refreshed?.includes(pluginKey)) {
+        addDebugLog('success', `Token refreshed for ${pluginKey}`);
+      } else if (result.failed?.includes(pluginKey)) {
+        addDebugLog('error', `Token refresh failed for ${pluginKey}`);
+      } else {
+        addDebugLog('info', `Token refresh skipped for ${pluginKey} (already valid or no refresh token)`);
+      }
+
+      // Always refresh status after any refresh-token operation to sync UI with backend
+      console.log('DEBUG: About to call loadUserStatus after token refresh');
+      await loadUserStatus();
+      console.log('DEBUG: loadUserStatus completed');
+    } catch (error: any) {
+      addDebugLog('error', `Token refresh error: ${error.message}`);
+      setLastResponse({ success: false, error: error.message });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const executeAction = async () => {
     if (!userId.trim() || !selectedPlugin || !selectedAction) {
       addDebugLog('error', 'User ID, plugin, and action are required');
@@ -694,6 +789,18 @@ export default function TestPluginsPage() {
     return userStatus?.connected.some(p => p.key === pluginKey) || false;
   };
 
+  type PluginConnectionStatus = 'connected' | 'token_expired' | 'not_connected';
+
+  const getPluginStatus = (pluginKey: string): PluginConnectionStatus => {
+    if (userStatus?.connected.some(p => p.key === pluginKey)) {
+      return 'connected';
+    }
+    if (userStatus?.active_expired?.includes(pluginKey)) {
+      return 'token_expired';
+    }
+    return 'not_connected';
+  };
+
   const refreshAll = async () => {
     await loadAvailablePlugins();
     if (userId.trim()) {
@@ -741,9 +848,93 @@ export default function TestPluginsPage() {
           sessionId: uuidv4(),
           agentId: uuidv4()
         };
+        // Copy userId from input box if available (for test/analyze-prompt and other services)
+        if (userId.trim()) {
+          templateWithNewIds.userId = userId;
+        }
         setAiServiceRequestBody(JSON.stringify(templateWithNewIds, null, 2));
-        addDebugLog('info', `Reset to template for ${selectedAIService} with new IDs`);
+        addDebugLog('info', `Reset to template for ${selectedAIService} with new IDs${userId.trim() ? ` and userId: ${userId}` : ''}`);
       }
+    }
+  };
+
+  // Update provider/model in request body (for test/analyze-prompt)
+  const updateProviderInRequestBody = (provider: ProviderOption, model: string) => {
+    try {
+      const currentBody = JSON.parse(aiServiceRequestBody);
+      currentBody.provider = provider;
+      currentBody.model = model;
+      setAiServiceRequestBody(JSON.stringify(currentBody, null, 2));
+      addDebugLog('info', `Updated provider to ${provider} with model ${model}`);
+    } catch (error: any) {
+      addDebugLog('error', `Failed to update provider/model: ${error.message}`);
+    }
+  };
+
+  const handleProviderChange = (newProvider: ProviderOption) => {
+    setSelectedProvider(newProvider);
+    // Set default model for the new provider
+    const defaultModel = MODELS_BY_PROVIDER[newProvider][0].value;
+    setSelectedModel(defaultModel);
+    updateProviderInRequestBody(newProvider, defaultModel);
+  };
+
+  const handleModelChange = (newModel: string) => {
+    setSelectedModel(newModel);
+    updateProviderInRequestBody(selectedProvider, newModel);
+  };
+
+  // Update availablePlugins in request body (for test/analyze-prompt)
+  const updatePluginsInRequestBody = (pluginKeys: string[]) => {
+    try {
+      const currentBody = JSON.parse(aiServiceRequestBody);
+      currentBody.availablePlugins = pluginKeys;
+      setAiServiceRequestBody(JSON.stringify(currentBody, null, 2));
+      addDebugLog('info', `Updated availablePlugins: ${pluginKeys.join(', ') || '(none)'}`);
+    } catch (error: any) {
+      addDebugLog('error', `Failed to update plugins: ${error.message}`);
+    }
+  };
+
+  // Load user's connected plugins from /api/plugins/user-status
+  const loadUserPluginsForTest = async () => {
+    // Get userId from request body
+    let bodyUserId = '';
+    try {
+      const currentBody = JSON.parse(aiServiceRequestBody);
+      bodyUserId = currentBody.userId || '';
+    } catch {
+      addDebugLog('error', 'Invalid JSON in request body');
+      return;
+    }
+
+    if (!bodyUserId.trim()) {
+      addDebugLog('error', 'userId is required in request body to load plugins');
+      return;
+    }
+
+    setIsLoadingPlugins(true);
+    try {
+      addDebugLog('info', `Loading plugins for user: ${bodyUserId}`);
+      const response = await fetch(`/api/plugins/user-status?userId=${bodyUserId}`);
+      const data = await response.json();
+
+      if (data.success) {
+        // Include both connected and active_expired plugins
+        const connectedKeys = data.connected.map((p: any) => p.key);
+        const expiredKeys = data.active_expired || [];
+        const allPluginKeys = [...connectedKeys, ...expiredKeys];
+
+        setUserConnectedPluginKeys(allPluginKeys);
+        updatePluginsInRequestBody(allPluginKeys);
+        addDebugLog('success', `Loaded ${allPluginKeys.length} plugins (${connectedKeys.length} connected, ${expiredKeys.length} expired): ${allPluginKeys.join(', ') || '(none)'}`);
+      } else {
+        addDebugLog('error', `Failed to load plugins: ${data.error || 'Unknown error'}`);
+      }
+    } catch (error: any) {
+      addDebugLog('error', `Error loading plugins: ${error.message}`);
+    } finally {
+      setIsLoadingPlugins(false);
     }
   };
 
@@ -796,6 +987,14 @@ export default function TestPluginsPage() {
   useEffect(() => {
     if (selectedAIService) {
       resetToAITemplate();
+      // Sync provider/model state from template for test/analyze-prompt
+      if (selectedAIService === 'test/analyze-prompt') {
+        const template = (AI_SERVICE_TEMPLATES as any)[selectedAIService];
+        if (template?.provider && PROVIDER_OPTIONS.includes(template.provider)) {
+          setSelectedProvider(template.provider);
+          setSelectedModel(template.model || MODELS_BY_PROVIDER[template.provider][0].value);
+        }
+      }
     }
   }, [selectedAIService]);
 
@@ -1254,7 +1453,11 @@ export default function TestPluginsPage() {
         </div>
         {userStatus && (
           <div style={{ fontSize: '14px', color: '#666' }}>
-            Status: {userStatus.summary.connected_count} connected, {userStatus.summary.disconnected_count} disconnected
+            Status: {userStatus.summary.connected_count} connected
+            {userStatus.summary.active_expired_count > 0 && (
+              <span style={{ color: 'orange' }}>, {userStatus.summary.active_expired_count} expired</span>
+            )}
+            , {userStatus.summary.disconnected_count} disconnected
           </div>
         )}
       </div>
@@ -1277,48 +1480,75 @@ export default function TestPluginsPage() {
             style={{ width: '300px', padding: '8px', fontSize: '14px' }}
           >
             <option value="">-- Select Plugin --</option>
-            {availablePlugins.map(plugin => (
-              <option
-                key={plugin.key}
-                value={plugin.key}
-                style={{
-                  color: isPluginConnected(plugin.key) ? 'green' : 'red'
-                }}
-              >
-                {plugin.name} (v{plugin.version})
-              </option>
-            ))}
+            {availablePlugins.map(plugin => {
+              const status = getPluginStatus(plugin.key);
+              const statusColor = status === 'connected' ? 'green' : status === 'token_expired' ? 'orange' : 'red';
+              return (
+                <option
+                  key={plugin.key}
+                  value={plugin.key}
+                  style={{ color: statusColor }}
+                >
+                  {plugin.name} (v{plugin.version}){status === 'token_expired' ? ' [Expired]' : ''}
+                </option>
+              );
+            })}
           </select>
         </div>
         
         {selectedPlugin && (
           <div style={{ marginBottom: '15px' }}>
             <div style={{ marginBottom: '10px', fontSize: '14px' }}>
-              Status: {isPluginConnected(selectedPlugin) ? 
-                <span style={{ color: 'green' }}>✓ Connected</span> : 
-                <span style={{ color: 'red' }}>✗ Not Connected</span>
-              }
+              Status: {(() => {
+                const status = getPluginStatus(selectedPlugin);
+                switch (status) {
+                  case 'connected':
+                    return <span style={{ color: 'green' }}>✓ Connected</span>;
+                  case 'token_expired':
+                    return <span style={{ color: 'orange' }}>⚠ Token Expired</span>;
+                  default:
+                    return <span style={{ color: 'red' }}>✗ Not Connected</span>;
+                }
+              })()}
             </div>
-            <button
-              onClick={() => isPluginConnected(selectedPlugin) ? 
-                disconnectPlugin(selectedPlugin) : 
-                connectPlugin(selectedPlugin)
-              }
-              disabled={isLoading || !userId.trim()}
-              style={{ 
-                padding: '10px 20px', 
-                marginRight: '10px',
-                backgroundColor: isPluginConnected(selectedPlugin) ? '#dc3545' : '#007bff',
-                color: 'white',
-                border: 'none',
-                borderRadius: '3px',
-                cursor: isLoading || !userId.trim() ? 'not-allowed' : 'pointer'
-              }}
-            >
-              {isLoading ? 'Processing...' : 
-                isPluginConnected(selectedPlugin) ? 'Disconnect' : 'Connect'
-              }
-            </button>
+            {getPluginStatus(selectedPlugin) === 'token_expired' ? (
+              <button
+                onClick={() => refreshPluginToken(selectedPlugin)}
+                disabled={isLoading || !userId.trim()}
+                style={{
+                  padding: '10px 20px',
+                  marginRight: '10px',
+                  backgroundColor: '#ffc107',
+                  color: 'black',
+                  border: 'none',
+                  borderRadius: '3px',
+                  cursor: isLoading || !userId.trim() ? 'not-allowed' : 'pointer'
+                }}
+              >
+                {isLoading ? 'Refreshing...' : 'Refresh Token'}
+              </button>
+            ) : (
+              <button
+                onClick={() => isPluginConnected(selectedPlugin) ?
+                  disconnectPlugin(selectedPlugin) :
+                  connectPlugin(selectedPlugin)
+                }
+                disabled={isLoading || !userId.trim()}
+                style={{
+                  padding: '10px 20px',
+                  marginRight: '10px',
+                  backgroundColor: isPluginConnected(selectedPlugin) ? '#dc3545' : '#007bff',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '3px',
+                  cursor: isLoading || !userId.trim() ? 'not-allowed' : 'pointer'
+                }}
+              >
+                {isLoading ? 'Processing...' :
+                  isPluginConnected(selectedPlugin) ? 'Disconnect' : 'Connect'
+                }
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -1455,6 +1685,112 @@ export default function TestPluginsPage() {
             <>
               <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
                 <h2>Request Body Configuration</h2>
+
+                {/* Provider/Model Selector - only for test/analyze-prompt */}
+                {selectedAIService === 'test/analyze-prompt' && (
+                  <div style={{
+                    marginBottom: '20px',
+                    padding: '15px',
+                    backgroundColor: '#e7f3ff',
+                    borderRadius: '5px',
+                    border: '1px solid #b3d7ff'
+                  }}>
+                    <h3 style={{ marginTop: 0, marginBottom: '15px', color: '#0056b3' }}>
+                      AI Provider Selection
+                    </h3>
+                    <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                      <div>
+                        <label htmlFor="providerSelect" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                          Provider:
+                        </label>
+                        <select
+                          id="providerSelect"
+                          value={selectedProvider}
+                          onChange={(e) => handleProviderChange(e.target.value as ProviderOption)}
+                          style={{
+                            padding: '8px 12px',
+                            fontSize: '14px',
+                            borderRadius: '3px',
+                            border: '1px solid #ccc',
+                            minWidth: '150px'
+                          }}
+                        >
+                          {PROVIDER_OPTIONS.map(provider => (
+                            <option key={provider} value={provider}>
+                              {provider.charAt(0).toUpperCase() + provider.slice(1)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label htmlFor="modelSelect" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                          Model:
+                        </label>
+                        <select
+                          id="modelSelect"
+                          value={selectedModel}
+                          onChange={(e) => handleModelChange(e.target.value)}
+                          style={{
+                            padding: '8px 12px',
+                            fontSize: '14px',
+                            borderRadius: '3px',
+                            border: '1px solid #ccc',
+                            minWidth: '280px'
+                          }}
+                        >
+                          {MODELS_BY_PROVIDER[selectedProvider].map(model => (
+                            <option key={model.value} value={model.value}>
+                              {model.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: '10px', fontSize: '12px', color: '#666' }}>
+                      Note: OpenAI supports native JSON schema mode. Other providers use prompt-based JSON instructions.
+                    </div>
+                  </div>
+                )}
+
+                {/* Plugin Loader - only for test/analyze-prompt */}
+                {selectedAIService === 'test/analyze-prompt' && (
+                  <div style={{
+                    marginBottom: '20px',
+                    padding: '15px',
+                    backgroundColor: '#f0fff0',
+                    borderRadius: '5px',
+                    border: '1px solid #90ee90'
+                  }}>
+                    <h3 style={{ marginTop: 0, marginBottom: '15px', color: '#228b22' }}>
+                      Plugin Context
+                    </h3>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                      <button
+                        onClick={loadUserPluginsForTest}
+                        disabled={isLoadingPlugins}
+                        style={{
+                          padding: '8px 16px',
+                          backgroundColor: isLoadingPlugins ? '#ccc' : '#228b22',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '3px',
+                          cursor: isLoadingPlugins ? 'not-allowed' : 'pointer',
+                          fontSize: '14px'
+                        }}
+                      >
+                        {isLoadingPlugins ? 'Loading...' : 'Load My Plugins'}
+                      </button>
+                      <span style={{ fontSize: '14px', color: '#555' }}>
+                        {userConnectedPluginKeys.length > 0
+                          ? `Loaded: ${userConnectedPluginKeys.join(', ')}`
+                          : 'Click to load user\'s connected plugins'}
+                      </span>
+                    </div>
+                    <div style={{ marginTop: '10px', fontSize: '12px', color: '#666' }}>
+                      Loads connected plugins from /api/plugins/user-status and updates availablePlugins in request body.
+                    </div>
+                  </div>
+                )}
 
                 {/* Helper Buttons */}
                 <div style={{ marginBottom: '15px', display: 'flex', gap: '10px' }}>
