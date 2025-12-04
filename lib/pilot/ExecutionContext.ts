@@ -257,8 +257,27 @@ export class ExecutionContext {
       return this.getNestedValue(this.variables, parts.slice(1));
     }
 
-    // Check if it's a current item reference (for loops)
-    if (root === 'current') {
+    // Check if it's a current item reference (for loops/filters)
+    if (root === 'current' || root === 'item') {
+      // Get the variable value (e.g., this.variables['item'])
+      const itemValue = this.variables[root];
+
+      if (itemValue === undefined) {
+        throw new VariableResolutionError(
+          `Variable '${root}' is not defined in current context`,
+          reference,
+          root
+        );
+      }
+
+      // Navigate nested path if present: item[5], item.field, etc.
+      return parts.length > 1 ? this.getNestedValue(itemValue, parts.slice(1)) : itemValue;
+    }
+
+    // Check if it's a loop variable reference (loop.item, loop.index, etc.)
+    if (root === 'loop') {
+      // For loop.item or loop.index, look in variables with the specific key
+      // The loop context should have set these variables
       return this.getNestedValue(this.variables, parts);
     }
 
@@ -468,6 +487,7 @@ export class ExecutionContext {
     cloned.stepOutputs = new Map(this.stepOutputs);
     cloned.variables = { ...this.variables };
     cloned.memoryContext = this.memoryContext;
+    cloned.orchestrator = this.orchestrator; // Copy orchestrator reference for consistent routing
     cloned.startedAt = this.startedAt;
     cloned.totalTokensUsed = this.totalTokensUsed;
     cloned.totalExecutionTime = this.totalExecutionTime;

@@ -21,7 +21,17 @@ import {
   Settings,
   Bot,
   GitBranch,
-  CreditCard
+  CreditCard,
+  RefreshCw,
+  Zap,
+  Filter,
+  Search,
+  FileText,
+  Send,
+  CheckSquare,
+  Layers,
+  GitMerge,
+  UserCheck
 } from 'lucide-react'
 
 type Field = {
@@ -46,6 +56,7 @@ type Agent = {
   plugins_required?: string[]
   connected_plugins?: Record<string, any>
   workflow_steps?: any[]
+  pilot_steps?: any[]
 }
 
 export default function V2RunAgentPage() {
@@ -290,7 +301,7 @@ export default function V2RunAgentPage() {
     try {
       const { data: agentData, error: agentError } = await supabase
         .from('agents')
-        .select('*, workflow_steps')
+        .select('*, workflow_steps, pilot_steps')
         .eq('id', agentId)
         .eq('user_id', user.id)
         .single()
@@ -515,7 +526,8 @@ export default function V2RunAgentPage() {
 
       // STEP 2: For workflow-based agents, connect SSE stream FIRST (in background)
       // SSE will wait for events from the execution we're about to start
-      const hasWorkflowSteps = agent.workflow_steps && agent.workflow_steps.length > 0
+      const workflowSteps = agent.pilot_steps || agent.workflow_steps
+      const hasWorkflowSteps = workflowSteps && workflowSteps.length > 0
 
       if (hasWorkflowSteps) {
         // Start SSE connection immediately (runs in parallel with execution)
@@ -940,7 +952,7 @@ export default function V2RunAgentPage() {
         </div>
 
         {/* Right Column - Results */}
-        <Card className="!p-4 sm:!p-6">
+        <Card className="!p-4 sm:!p-6 max-h-[calc(100vh-12rem)] overflow-y-auto">
           <div className="flex items-center gap-2 mb-6">
             <Sparkles className="w-5 h-5 text-[var(--v2-primary)]" />
             <div>
@@ -1211,13 +1223,14 @@ export default function V2RunAgentPage() {
       </div>
 
       {/* Execution Steps Visualization Card */}
-      {agent.workflow_steps && agent.workflow_steps.length > 0 && (() => {
-        const steps = agent.workflow_steps!
+      {(() => {
+        const steps = agent.pilot_steps || agent.workflow_steps
+        if (!steps || steps.length === 0) return null
 
         // Get step execution status from result if available (final state)
-        const completedSteps = result?.data?.completed_step_ids || []
-        const failedSteps = result?.data?.failed_step_ids || []
-        const skippedSteps = result?.data?.skipped_step_ids || []
+        const completedSteps = result?.data?.completedStepIds || []
+        const failedSteps = result?.data?.failedStepIds || []
+        const skippedSteps = result?.data?.skippedStepIds || []
 
         // Helper to get step status (combines live and final states)
         const getStepStatus = (stepId: string) => {
@@ -1334,19 +1347,40 @@ export default function V2RunAgentPage() {
                                     status === 'skipped' ? 'var(--v2-status-warning-text)' :
                                     'var(--v2-text-primary)'
                             }}>
-                            {step.action || step.operation}
+                            {step.name || step.action || step.operation}
                           </span>
 
                           {/* Step Type Badge */}
-                          {step.plugin && step.plugin_action ? (
-                            <div className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-orange-50 dark:bg-slate-700 border border-orange-200 dark:border-orange-700 rounded">
-                              <Settings className="h-2.5 w-2.5 text-orange-600 dark:text-orange-400" />
-                            </div>
-                          ) : (
-                            <div className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-purple-50 dark:bg-slate-700 border border-purple-200 dark:border-purple-600 rounded">
-                              <Bot className="h-2.5 w-2.5 text-purple-600 dark:text-purple-400" />
-                            </div>
-                          )}
+                          {(() => {
+                            // Determine badge based on step type (pilot DSL) or legacy fields
+                            const stepType = step.type || (step.plugin && step.plugin_action ? 'action' : 'ai_processing')
+
+                            const badges: Record<string, { icon: any, className: string }> = {
+                              'action': { icon: Settings, className: 'bg-orange-50 dark:bg-orange-500/30 border-orange-200 dark:border-orange-400 text-orange-600 dark:text-orange-200' },
+                              'conditional': { icon: GitBranch, className: 'bg-blue-50 dark:bg-blue-500/30 border-blue-200 dark:border-blue-400 text-blue-600 dark:text-blue-200' },
+                              'loop': { icon: RefreshCw, className: 'bg-indigo-50 dark:bg-indigo-500/30 border-indigo-200 dark:border-indigo-400 text-indigo-600 dark:text-indigo-200' },
+                              'transform': { icon: Zap, className: 'bg-yellow-50 dark:bg-yellow-500/30 border-yellow-200 dark:border-yellow-400 text-yellow-600 dark:text-yellow-200' },
+                              'filter': { icon: Filter, className: 'bg-teal-50 dark:bg-teal-500/30 border-teal-200 dark:border-teal-400 text-teal-600 dark:text-teal-200' },
+                              'extract': { icon: Search, className: 'bg-cyan-50 dark:bg-cyan-500/30 border-cyan-200 dark:border-cyan-400 text-cyan-600 dark:text-cyan-200' },
+                              'summarize': { icon: FileText, className: 'bg-slate-50 dark:bg-slate-500/30 border-slate-200 dark:border-slate-300 text-slate-600 dark:text-slate-200' },
+                              'send': { icon: Send, className: 'bg-green-50 dark:bg-green-500/30 border-green-200 dark:border-green-400 text-green-600 dark:text-green-200' },
+                              'validation': { icon: CheckSquare, className: 'bg-emerald-50 dark:bg-emerald-500/30 border-emerald-200 dark:border-emerald-400 text-emerald-600 dark:text-emerald-200' },
+                              'parallel_group': { icon: Layers, className: 'bg-violet-50 dark:bg-violet-500/30 border-violet-200 dark:border-violet-400 text-violet-600 dark:text-violet-200' },
+                              'scatter_gather': { icon: GitMerge, className: 'bg-fuchsia-50 dark:bg-fuchsia-500/30 border-fuchsia-200 dark:border-fuchsia-400 text-fuchsia-600 dark:text-fuchsia-200' },
+                              'human_approval': { icon: UserCheck, className: 'bg-pink-50 dark:bg-pink-500/30 border-pink-200 dark:border-pink-400 text-pink-600 dark:text-pink-200' },
+                              'llm_decision': { icon: Bot, className: 'bg-purple-50 dark:bg-purple-500/30 border-purple-200 dark:border-purple-400 text-purple-600 dark:text-purple-200' },
+                              'ai_processing': { icon: Bot, className: 'bg-purple-50 dark:bg-purple-500/30 border-purple-200 dark:border-purple-400 text-purple-600 dark:text-purple-200' },
+                            }
+
+                            const badge = badges[stepType] || badges['ai_processing']
+                            const Icon = badge.icon
+
+                            return (
+                              <div className={`inline-flex items-center gap-1 px-1.5 py-0.5 border rounded ${badge.className}`}>
+                                <Icon className="h-2.5 w-2.5" />
+                              </div>
+                            )
+                          })()}
                         </div>
                       </div>
                     </div>

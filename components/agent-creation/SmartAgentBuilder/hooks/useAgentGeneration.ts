@@ -67,19 +67,19 @@ export const useAgentGeneration = () => {
       });
 
       // ========================================
-      // 🎯 TRY V2 FIRST (AgentKit Direct) -> OPTION 3
+      // 🎯 TRY V3 FIRST (Two-Stage Generation)
       // ========================================
-      // V2 uses direct AgentKit prompt injection with clear instructions
-      // Falls back to V1 (original) if it fails
+      // V3 uses two-stage generation: Stage 1 (Claude Sonnet 4 for structure) + Stage 2 (Claude Haiku for parameters)
+      // Falls back to V2 (AgentKit Direct) if it fails, then V1 (original) as final fallback
 
       let response;
       let result;
       let usedVersion = 'v1';
 
-      // OPTION 3: Try AgentKit Direct (v3-direct - reliable workflow steps + AI system prompt)
+      // Try V3: Two-Stage Generation (Claude Sonnet 4 + Claude Haiku)
       try {
-        console.log('🎯 Attempting V2 (AgentKit Direct) generation...');
-        response = await fetch('/api/generate-agent-v2', {
+        console.log('🎯 Attempting V3 (Two-Stage) generation...');
+        response = await fetch('/api/generate-agent-v3', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -91,36 +91,65 @@ export const useAgentGeneration = () => {
 
         if (response.ok) {
           result = await response.json();
-          usedVersion = 'v2';
-          console.log('✅ V2 (AgentKit Direct) generation successful!');
+          usedVersion = 'v3';
+          console.log('✅ V3 (Two-Stage) generation successful!');
         } else {
-          throw new Error(`V2 failed with status ${response.status}`);
+          throw new Error(`V3 failed with status ${response.status}`);
         }
-      } catch (v2Error) {
-        console.warn('⚠️ V2 (AgentKit Direct) generation failed, falling back to V1:', v2Error);
-
-        // ========================================
-        // 📦 FALLBACK TO V1 (Original GPT-based)
-        // ========================================
-        console.log('📦 Using V1 (Original) generation as fallback...');
-        response = await fetch('/api/generate-agent', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(options.sessionId && { 'x-session-id': options.sessionId }),
-            ...(options.agentId && { 'x-agent-id': options.agentId }),
-          },
-          body: JSON.stringify(requestPayload)
+      } catch (v3Error) {
+        console.error('❌ [V3 Failed] Two-Stage generation failed:', {
+          error: v3Error instanceof Error ? v3Error.message : String(v3Error),
+          prompt_length: prompt.length,
+          timestamp: new Date().toISOString()
         });
+        console.warn('⚠️ Falling back to V2 (AgentKit Direct)...');
 
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || `All versions failed. HTTP ${response.status}: ${response.statusText}`);
+        // Try V2: AgentKit Direct
+        try {
+          console.log('🎯 Attempting V2 (AgentKit Direct) generation...');
+          response = await fetch('/api/generate-agent-v2', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(options.sessionId && { 'x-session-id': options.sessionId }),
+              ...(options.agentId && { 'x-agent-id': options.agentId }),
+            },
+            body: JSON.stringify(requestPayload)
+          });
+
+          if (response.ok) {
+            result = await response.json();
+            usedVersion = 'v2';
+            console.log('✅ V2 (AgentKit Direct) generation successful!');
+          } else {
+            throw new Error(`V2 failed with status ${response.status}`);
+          }
+        } catch (v2Error) {
+          console.warn('⚠️ V2 (AgentKit Direct) generation failed, falling back to V1:', v2Error);
+
+          // ========================================
+          // 📦 FALLBACK TO V1 (Original GPT-based)
+          // ========================================
+          console.log('📦 Using V1 (Original) generation as fallback...');
+          response = await fetch('/api/generate-agent', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(options.sessionId && { 'x-session-id': options.sessionId }),
+              ...(options.agentId && { 'x-agent-id': options.agentId }),
+            },
+            body: JSON.stringify(requestPayload)
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || `All versions failed. HTTP ${response.status}: ${response.statusText}`);
+          }
+
+          result = await response.json();
+          usedVersion = 'v1';
+          console.log('✅ V1 (Original) generation successful');
         }
-
-        result = await response.json();
-        usedVersion = 'v1';
-        console.log('✅ V1 (Original) generation successful');
       }
       console.log('✅ Agent generation result with ID tracking:', {
         hasAgent: !!result.agent,

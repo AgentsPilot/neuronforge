@@ -304,7 +304,10 @@ export class MemoryInjector {
 
     if (error) {
       // If RPC function doesn't exist, fall back to manual query
-      console.warn('⚠️  [MemoryInjector] RPC function not found, using manual query');
+      // This is expected on first run before migration is applied
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('⚠️  [MemoryInjector] RPC function not found, using manual query. Run migration: supabase/migrations/20251201000000_create_search_similar_memories_function.sql');
+      }
 
       const { data: manualData, error: manualError } = await this.supabase
         .from('run_memories')

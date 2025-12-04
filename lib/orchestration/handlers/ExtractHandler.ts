@@ -32,7 +32,7 @@ export class ExtractHandler extends BaseHandler {
       const { data: cleanedData, metadata } = await this.applyPreprocessing(resolvedInput);
 
       // Prepare input for LLM
-      const input = JSON.stringify(cleanedData);
+      const input = this.safeStringify(cleanedData);
 
       // Estimate token usage
       const inputTokens = this.estimateTokenCount(input);

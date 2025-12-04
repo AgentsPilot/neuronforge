@@ -124,7 +124,8 @@ function validateWorkflowStep(
     case 'action':
       if (!step.plugin) errors.push(`${path}: Action step missing required field "plugin"`);
       if (!step.action) errors.push(`${path}: Action step missing required field "action"`);
-      if (!step.params) errors.push(`${path}: Action step missing required field "params"`);
+      // params is optional - some actions don't require parameters
+      // Validation of required params happens elsewhere
       break;
 
     case 'ai_processing':

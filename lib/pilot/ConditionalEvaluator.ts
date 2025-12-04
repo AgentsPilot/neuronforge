@@ -4,9 +4,13 @@
  * Security: NO eval() or Function() - uses safe expression parsing
  *
  * Supports:
- * - Simple conditions: { field: "step1.data.score", operator: ">", value: 70 }
- * - Complex conditions: { and: [...], or: [...], not: {...} }
+ * - Simple conditions: { conditionType: "simple", field: "step1.data.score", operator: ">", value: 70 }
+ * - Complex AND: { conditionType: "complex_and", conditions: [...] }
+ * - Complex OR: { conditionType: "complex_or", conditions: [...] }
+ * - Complex NOT: { conditionType: "complex_not", condition: {...} }
  * - String expressions: "step1.data.score > 70 && step2.success"
+ *
+ * Uses conditionType discriminator for strict mode compatibility
  *
  * @module lib/orchestrator/ConditionalEvaluator
  */
@@ -16,13 +20,13 @@ import type {
   SimpleCondition,
   ComplexCondition,
   ComparisonOperator,
-  ExecutionContext,
 } from './types';
 import {
   ConditionError,
   isSimpleCondition,
   isComplexCondition,
 } from './types';
+import { ExecutionContext } from './ExecutionContext';
 
 export class ConditionalEvaluator {
   /**
@@ -83,27 +87,30 @@ export class ConditionalEvaluator {
 
   /**
    * Evaluate complex condition (and/or/not)
+   * Uses conditionType discriminator for strict mode compatibility
    */
   private evaluateComplexCondition(
     condition: ComplexCondition,
     context: ExecutionContext
   ): boolean {
     // AND: All conditions must be true
-    if (condition.and) {
-      return condition.and.every(c => this.evaluate(c, context));
+    if (condition.conditionType === 'complex_and' && condition.conditions) {
+      return condition.conditions.every(c => this.evaluate(c, context));
     }
 
     // OR: At least one condition must be true
-    if (condition.or) {
-      return condition.or.some(c => this.evaluate(c, context));
+    if (condition.conditionType === 'complex_or' && condition.conditions) {
+      return condition.conditions.some(c => this.evaluate(c, context));
     }
 
     // NOT: Negate the result
-    if (condition.not) {
-      return !this.evaluate(condition.not, context);
+    if (condition.conditionType === 'complex_not' && condition.condition) {
+      return !this.evaluate(condition.condition, context);
     }
 
-    throw new ConditionError('Invalid complex condition: missing and/or/not');
+    throw new ConditionError(
+      `Invalid complex condition: conditionType=${condition.conditionType}, missing required fields`
+    );
   }
 
   /**
@@ -126,7 +133,9 @@ export class ConditionalEvaluator {
     expression: string,
     context: ExecutionContext
   ): string {
-    return expression.replace(/\{\{([^}]+)\}\}|(\w+\.\w+[\w.\[\]]*)/g, (match, explicit, implicit) => {
+    // Match {{...}} or identifiers with property/array access (e.g., item[5], item.field, step1.data)
+    // Requires at least one . or [ to avoid matching standalone identifiers or numbers
+    return expression.replace(/\{\{([^}]+)\}\}|(\w+(?:\.\w+|\[\d+\])[\w.\[\]]*)/g, (match, explicit, implicit) => {
       const ref = explicit || implicit;
 
       try {
@@ -146,7 +155,6 @@ export class ConditionalEvaluator {
         return JSON.stringify(value);
       } catch (error) {
         // If variable resolution fails, keep the original reference
-        console.warn(`Failed to resolve ${ref} in condition:`, error);
         return match;
       }
     });
@@ -498,31 +506,29 @@ export class ConditionalEvaluator {
           errors.push('Simple condition missing value');
         }
       } else if (isComplexCondition(condition)) {
-        if (condition.and) {
-          condition.and.forEach((c, i) => {
-            const result = this.validateCondition(c);
-            if (!result.valid) {
-              errors.push(...result.errors.map(e => `and[${i}]: ${e}`));
-            }
-          });
-        }
-        if (condition.or) {
-          condition.or.forEach((c, i) => {
-            const result = this.validateCondition(c);
-            if (!result.valid) {
-              errors.push(...result.errors.map(e => `or[${i}]: ${e}`));
-            }
-          });
-        }
-        if (condition.not) {
-          const result = this.validateCondition(condition.not);
-          if (!result.valid) {
-            errors.push(...result.errors.map(e => `not: ${e}`));
+        // Validate based on conditionType
+        if (condition.conditionType === 'complex_and' || condition.conditionType === 'complex_or') {
+          if (!condition.conditions || !Array.isArray(condition.conditions)) {
+            errors.push(`${condition.conditionType} requires conditions array`);
+          } else {
+            condition.conditions.forEach((c: Condition, i: number) => {
+              const result = this.validateCondition(c);
+              if (!result.valid) {
+                errors.push(...result.errors.map(e => `${condition.conditionType}[${i}]: ${e}`));
+              }
+            });
           }
-        }
-
-        if (!condition.and && !condition.or && !condition.not) {
-          errors.push('Complex condition must have and, or, or not');
+        } else if (condition.conditionType === 'complex_not') {
+          if (!condition.condition) {
+            errors.push('complex_not requires condition field');
+          } else {
+            const result = this.validateCondition(condition.condition);
+            if (!result.valid) {
+              errors.push(...result.errors.map(e => `not: ${e}`));
+            }
+          }
+        } else {
+          errors.push(`Invalid conditionType: ${condition.conditionType}`);
         }
       } else {
         errors.push('Invalid condition format');

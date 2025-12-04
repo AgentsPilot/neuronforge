@@ -259,7 +259,9 @@ export interface IntensityBreakdown {
     token_stats: {
       avg_tokens_per_run: number;
       peak_tokens: number;
-      total_tokens: number;
+      total_tokens_execution_only: number; // Execution tokens only (adjusted with intensity)
+      total_tokens_creation: number; // Creation tokens from token_usage table
+      total_tokens: number; // Total = execution + creation
       input_output_ratio: number;
     };
     execution_stats: {

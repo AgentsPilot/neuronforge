@@ -137,11 +137,13 @@ export async function POST(req: Request) {
   let inputValues: Record<string, any> = {}; // Shared across both execution paths
   let inputSchema: any = null;
 
-  // Check if agent has workflow_steps AND pilot is enabled
-  const hasWorkflowSteps = agent.workflow_steps && Array.isArray(agent.workflow_steps) && agent.workflow_steps.length > 0;
+  // Check if agent has workflow_steps OR pilot_steps AND pilot is enabled
+  // Priority: pilot_steps > workflow_steps (for backward compatibility)
+  const workflowStepsToUse = agent.pilot_steps || agent.workflow_steps;
+  const hasWorkflowSteps = workflowStepsToUse && Array.isArray(workflowStepsToUse) && workflowStepsToUse.length > 0;
 
   if (hasWorkflowSteps) {
-    console.log(`🔍 Agent has ${agent.workflow_steps.length} workflow steps - checking pilot status...`);
+    console.log(`🔍 Agent has ${workflowStepsToUse.length} workflow steps - checking pilot status...`);
 
     // Check if pilot is enabled in system config
     const pilotEnabled = await SystemConfigService.getBoolean(
@@ -475,10 +477,15 @@ export async function POST(req: Request) {
           parallel: workflowSteps.filter((s: any) => s.parallel === true).length,
         };
 
+        // IMPORTANT: AIS should track adjusted tokens (what was charged) not raw tokens
+        // This matches what users see in billing and execution results
+        const rawTokens = normalizedResult.tokensUsed.total;
+        const adjustedTokensForAIS = Math.ceil(rawTokens * (1.0 + (intensityScore / 10)));
+
         const executionData: AgentExecutionData = {
           agent_id: agent.id,
           user_id: user.id,
-          tokens_used: normalizedResult.tokensUsed.total,
+          tokens_used: adjustedTokensForAIS, // Use adjusted tokens for accurate billing tracking
           input_tokens: normalizedResult.tokensUsed.prompt || 0,
           output_tokens: normalizedResult.tokensUsed.completion || normalizedResult.tokensUsed.total,
           execution_duration_ms: normalizedResult.executionTime,

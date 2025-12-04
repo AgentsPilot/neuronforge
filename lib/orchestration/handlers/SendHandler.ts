@@ -35,7 +35,7 @@ export class SendHandler extends BaseHandler {
       console.log(`[SendHandler] Variables resolved successfully`);
 
       // Prepare input for LLM
-      const input = JSON.stringify(resolvedInput);
+      const input = this.safeStringify(resolvedInput);
 
       // Estimate token usage - send typically needs less output
       const inputTokens = this.estimateTokenCount(input);
@@ -137,7 +137,7 @@ INSTRUCTIONS:
   private extractMessageType(context: HandlerContext): string {
     // ✅ Use extractInputData to avoid circular references
     const inputData = this.extractInputData(context);
-    const inputStr = JSON.stringify(inputData).toLowerCase();
+    const inputStr = this.safeStringify(inputData).toLowerCase();
 
     if (inputStr.includes('email')) {
       return 'email';
@@ -160,7 +160,7 @@ INSTRUCTIONS:
   private getTemperature(context: HandlerContext): number {
     // ✅ Use extractInputData to avoid circular references
     const inputData = this.extractInputData(context);
-    const inputStr = JSON.stringify(inputData).toLowerCase();
+    const inputStr = this.safeStringify(inputData).toLowerCase();
 
     // Lower temperature for formal communications
     if (inputStr.includes('formal') || inputStr.includes('professional')) {

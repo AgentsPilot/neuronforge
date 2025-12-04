@@ -32,7 +32,7 @@ export class EnrichHandler extends BaseHandler {
       const { data: cleanedData, metadata } = await this.applyPreprocessing(resolvedInput);
 
       // Prepare input for LLM
-      const input = JSON.stringify(cleanedData);
+      const input = this.safeStringify(cleanedData);
 
       // Estimate token usage
       const inputTokens = this.estimateTokenCount(input);
@@ -130,7 +130,7 @@ Return enriched data in JSON format with:
    * Extract enrichment type from input
    */
   private extractEnrichmentType(input: any): string {
-    const inputStr = JSON.stringify(input).toLowerCase();
+    const inputStr = this.safeStringify(input).toLowerCase();
 
     // Data source enrichment
     if (inputStr.includes('lookup') || inputStr.includes('fetch')) {

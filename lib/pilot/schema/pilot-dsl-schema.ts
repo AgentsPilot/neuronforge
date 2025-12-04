@@ -124,12 +124,18 @@ export const PILOT_DSL_SCHEMA = {
   "$defs": {
     "Condition": {
       type: "object",
-      description: "Condition for conditional execution (supports string expression, simple condition, or complex logic)",
+      description: "Condition for conditional execution with discriminator for strict mode compatibility",
       properties: {
-        // Simple condition fields
+        // Discriminator field (REQUIRED for strict mode)
+        conditionType: {
+          type: "string",
+          enum: ["simple", "complex_and", "complex_or", "complex_not"],
+          description: "Type of condition (discriminator for strict mode). Use 'simple' for field/operator/value comparisons, 'complex_and/or/not' for logical operations."
+        },
+        // Simple condition fields (used when conditionType="simple")
         field: {
           type: "string",
-          description: "Field path to evaluate (e.g., 'step1.data.score')"
+          description: "Field path to evaluate (e.g., 'step1.data.score'). Required for simple conditions."
         },
         operator: {
           type: "string",
@@ -144,29 +150,24 @@ export const PILOT_DSL_SCHEMA = {
             "is_empty", "is_not_empty",
             "matches", "starts_with", "ends_with"
           ],
-          description: "Comparison operator"
+          description: "Comparison operator. Required for simple conditions."
         },
         value: {
           type: "string",
-          description: "Value to compare against (use string representation for any type)"
+          description: "Value to compare against (use string representation for any type). Required for simple conditions."
         },
-        // Complex condition fields (logical operators)
-        and: {
+        // Complex condition fields (used when conditionType starts with "complex_")
+        conditions: {
           type: "array",
           items: { "$ref": "#/$defs/Condition" },
-          description: "Array of conditions that must all be true"
+          description: "Array of conditions for AND/OR operations. Required for complex_and and complex_or."
         },
-        or: {
-          type: "array",
-          items: { "$ref": "#/$defs/Condition" },
-          description: "Array of conditions where at least one must be true"
-        },
-        not: {
+        condition: {
           "$ref": "#/$defs/Condition",
-          description: "Condition to negate"
+          description: "Single condition for NOT operation. Required for complex_not."
         }
       },
-      required: [],  // Empty required array - this is a union type where fields are mutually exclusive
+      required: ["conditionType"],  // conditionType is REQUIRED for strict mode
       additionalProperties: false
     },
     "WorkflowStepLevel1": {

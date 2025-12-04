@@ -67,6 +67,20 @@ export class IntentClassifier implements IIntentClassifier {
       const inputSchema = step.input_schema || {};
       const outputSchema = step.output_schema || {};
 
+      // CRITICAL: If step has BOTH explicit input AND prompt, treat as generic generate task
+      // This prevents intent classification from misrouting based on keywords in the prompt
+      // Example: "extract info and format with summary field" shouldn't route to SummarizeHandler
+      if (step.input && step.prompt) {
+        const explicitResult: IntentClassification = {
+          intent: 'generate',
+          confidence: 1.0,
+          reasoning: 'Step has explicit input and prompt - using generic generate handler'
+        };
+        this.classificationCache.set(cacheKey, explicitResult);
+        console.log(`[IntentClassifier] Step has explicit input+prompt, classified as "generate" (bypassing intent analysis)`);
+        return explicitResult;
+      }
+
       // Quick pattern-based pre-filter for obvious cases (optimization)
       const quickCheck = this.quickPatternCheck(prompt, stepType, pluginKey);
       if (quickCheck && quickCheck.confidence >= 0.9) {

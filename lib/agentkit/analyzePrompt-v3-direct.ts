@@ -347,16 +347,11 @@ Return a JSON object with:
     },
     {
       "id": "step2",
-      "operation": "Summarize email content",
+      "name": "Summarize email content",
       "type": "ai_processing",
-      "plugin": "ai_processing",
-      "plugin_action": "process",
-      "params": {
-        "prompt": "Summarize these emails: {{step1.data.emails}}",
-        "output_format": "summary"
-      },
-      "dependencies": ["step1"],
-      "reasoning": "Summarization is AI processing"
+      "prompt": "Summarize these emails: {{step1.data.emails}}",
+      "params": {},
+      "dependencies": ["step1"]
     },
     {
       "id": "step3",
@@ -530,15 +525,11 @@ This example shows ALL patterns working together (study this carefully!):
   },
   {
     "id": "s2",
-    "operation": "Extract customer data from all contracts",
+    "name": "Extract customer data from all contracts",
     "type": "ai_processing",
-    "plugin": "ai_processing",
-    "plugin_action": "process",
-    "params": {
-      "prompt": "For EACH contract file in {{s1.data.files}}, extract: customer_name, email, package_tier, start_date. Return as JSON array."
-    },
-    "dependencies": ["s1"],
-    "reasoning": "BATCH AI EXTRACTION - 1 call for ALL contracts (not loop with N calls!)"
+    "prompt": "For EACH contract file in {{s1.data.files}}, extract: customer_name, email, package_tier, start_date. Return as JSON array.",
+    "params": {},
+    "dependencies": ["s1"]
   },
   {
     "id": "s3",
@@ -552,15 +543,11 @@ This example shows ALL patterns working together (study this carefully!):
   },
   {
     "id": "s4",
-    "operation": "Summarize issues from all emails",
+    "name": "Summarize issues from all emails",
     "type": "ai_processing",
-    "plugin": "ai_processing",
-    "plugin_action": "process",
-    "params": {
-      "prompt": "For each customer email in {{s3.data}}, extract: customer_email, issue_summary, urgency_level. Return as JSON array."
-    },
-    "dependencies": ["s3"],
-    "reasoning": "BATCH AI SUMMARIZATION - 1 call for ALL emails (not loop!)"
+    "prompt": "For each customer email in {{s3.data}}, extract: customer_email, issue_summary, urgency_level. Return as JSON array.",
+    "params": {},
+    "dependencies": ["s3"]
   },
   {
     "id": "s5",
@@ -597,20 +584,16 @@ This example shows ALL patterns working together (study this carefully!):
   },
   {
     "id": "s8",
-    "operation": "Classify each mismatch urgency",
+    "name": "Classify each mismatch urgency",
     "type": "ai_processing",
-    "plugin": "ai_processing",
-    "plugin_action": "process",
-    "params": {
-      "prompt": "For each customer in {{s6.data.added}}, classify urgency: 'Upgrade Opportunity' if high-tier package, 'Billing Risk' if missing payment info, 'Standard Onboarding' otherwise. Return JSON array with email and classification."
-    },
+    "prompt": "For each customer in {{s6.data.added}}, classify urgency: 'Upgrade Opportunity' if high-tier package, 'Billing Risk' if missing payment info, 'Standard Onboarding' otherwise. Return JSON array with email and classification.",
+    "params": {},
     "dependencies": ["s6"],
     "executeIf": {
       "field": "s7.data.result",
       "operator": "==",
       "value": true
-    },
-    "reasoning": "BATCH AI CLASSIFICATION - 1 call for ALL mismatches, only if they exist"
+    }
   },
   {
     "id": "s9",
@@ -725,10 +708,32 @@ When workflow says "check if", "if exists", "match and update", "new vs existing
   {"id": "s4", "operation": "Update existing contact", "type": "action", "plugin": "crm", "plugin_action": "update_contact", "params": {"email": "{{input.email}}"}, "executeIf": {"field": "s2.data.result", "operator": "==", "value": false}, "dependencies": ["s2"], "reasoning": "Only update if exists"}
 ]
 
-**2. AI PROCESSING - PARAMS STRUCTURE (CRITICAL!):**
-AI processing steps MUST have params object with prompt inside:
-✅ CORRECT: {"type": "ai_processing", "params": {"prompt": "Extract data from {{s1.data}}"}}
-❌ WRONG: {"type": "ai_processing", "prompt": "Extract data from {{s1.data}}"}
+**2. AI PROCESSING - CRITICAL FORMAT RULES:**
+
+⚡ CRITICAL: ai_processing is a NATIVE STEP TYPE, NOT A PLUGIN! ⚡
+
+✅ CORRECT ai_processing format:
+{
+  "type": "ai_processing",
+  "prompt": "Summarize these emails: {{step1.data}}",
+  "params": {}
+}
+
+❌ WRONG - NEVER DO THIS:
+{
+  "type": "ai_processing",
+  "plugin": "ai_processing",     // ❌ NO! ai_processing is NOT a plugin
+  "plugin_action": "process",    // ❌ NO! ai_processing has no actions
+  "params": {
+    "prompt": "..."              // ❌ NO! prompt goes at TOP level, not in params
+  }
+}
+
+**KEY RULES:**
+- Use "prompt" field at TOP LEVEL (not inside params)
+- Do NOT add "plugin" or "plugin_action" fields
+- Keep "params" empty {} or use for additional configuration only
+- ai_processing is for AI reasoning, NOT for plugin calls
 
 **3. COMPARISON - TOP LEVEL FIELDS (CRITICAL!):**
 Comparison steps MUST have left/right/operation at TOP level (all 3 required!):
@@ -940,8 +945,7 @@ CRITICAL: Every plugin_action step MUST have a "params" field with proper variab
       id: 'step1',
       operation: 'Process user request',
       type: 'ai_processing',
-      plugin: 'ai_processing',
-      plugin_action: 'process',
+      params: {},
       dependencies: [],
       reasoning: 'Fallback due to analysis error'
     }];

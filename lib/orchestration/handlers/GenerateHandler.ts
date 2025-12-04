@@ -29,7 +29,7 @@ export class GenerateHandler extends BaseHandler {
       const resolvedInput = this.resolveInputVariables(context);
 
       // Prepare input for LLM
-      const input = JSON.stringify(resolvedInput);
+      const input = this.safeStringify(resolvedInput);
 
       // Estimate token usage - generation typically needs more output tokens
       const inputTokens = this.estimateTokenCount(input);
@@ -73,7 +73,10 @@ export class GenerateHandler extends BaseHandler {
       // Create success result
       const result = this.createSuccessResult(
         {
-          generated: output,
+          result: output,           // PRIMARY field - matches StepExecutor and Stage 1 expectations
+          response: output,         // Alias for compatibility
+          output: output,           // Alias for compatibility
+          generated: output,        // Keep for backwards compatibility
           quality,
           tokensGenerated: tokensUsed.output,
         },
@@ -136,7 +139,7 @@ INSTRUCTIONS:
    * Extract generation type from input
    */
   private extractGenerationType(input: any): string {
-    const inputStr = JSON.stringify(input).toLowerCase();
+    const inputStr = this.safeStringify(input).toLowerCase();
 
     if (inputStr.includes('report') || inputStr.includes('analysis')) {
       return 'report';
@@ -157,7 +160,7 @@ INSTRUCTIONS:
    * Get temperature based on generation type
    */
   private getTemperature(context: HandlerContext): number {
-    const inputStr = JSON.stringify(context.input).toLowerCase();
+    const inputStr = this.safeStringify(context.input).toLowerCase();
 
     // Lower temperature for technical/factual content
     if (inputStr.includes('code') || inputStr.includes('technical') || inputStr.includes('formal')) {
@@ -199,7 +202,7 @@ INSTRUCTIONS:
     }
 
     // Check for code blocks if code generation
-    const inputStr = JSON.stringify(context.input).toLowerCase();
+    const inputStr = this.safeStringify(context.input).toLowerCase();
     if (inputStr.includes('code')) {
       if (output.includes('```')) {
         quality += 0.1; // Proper code formatting

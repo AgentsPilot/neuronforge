@@ -29,7 +29,7 @@ export class ConditionalHandler extends BaseHandler {
       const resolvedInput = this.resolveInputVariables(context);
 
       // Prepare input for LLM
-      const input = JSON.stringify(resolvedInput);
+      const input = this.safeStringify(resolvedInput);
 
       // Estimate token usage - conditionals need minimal output
       const inputTokens = this.estimateTokenCount(input);

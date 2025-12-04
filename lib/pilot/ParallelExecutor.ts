@@ -12,12 +12,12 @@
 
 import type {
   WorkflowStep,
-  ExecutionContext,
   StepOutput,
   LoopStep,
   ScatterGatherStep,
 } from './types';
 import { ExecutionError } from './types';
+import { ExecutionContext } from './ExecutionContext';
 import { StepExecutor } from './StepExecutor';
 
 export class ParallelExecutor {
@@ -369,6 +369,15 @@ export class ParallelExecutor {
 
     // Create temporary context for this iteration
     const loopContext = parentContext.clone();
+
+    // Set loop variables with proper nested structure for {{loop.item.X}} and {{loop.index}} syntax
+    loopContext.setVariable('loop', {
+      item: item,
+      index: index,
+      iteration: index + 1  // 1-based for user display
+    });
+
+    // Backward compatibility: Also set 'current' and 'index' for old workflows
     loopContext.setVariable('current', item);
     loopContext.setVariable('index', index);
 
@@ -385,6 +394,12 @@ export class ParallelExecutor {
         // Collect result
         iterationResults[step.id] = output.data;
 
+        // Propagate step output to parent context so subsequent steps can reference it
+        // Store both the namespaced version (stepId_iterationN) and the latest version (stepId)
+        const namespacedStepId = `${step.id}_iteration${index}`;
+        parentContext.setStepOutput(namespacedStepId, output);
+        parentContext.setStepOutput(step.id, output); // Latest iteration overwrites previous
+
         // If step failed and continueOnError is false, break
         if (!output.metadata.success && !loopStep.continueOnError) {
           throw new ExecutionError(
@@ -399,7 +414,8 @@ export class ParallelExecutor {
       // Merge loop context back to parent (only variables, not step outputs)
       // This allows loop iterations to affect global variables if needed
       Object.entries(loopContext.variables).forEach(([key, value]) => {
-        if (key !== 'current' && key !== 'index') {
+        // Don't override parent variables with loop-specific ones
+        if (key !== 'loop' && key !== 'current' && key !== 'index') {
           parentContext.setVariable(key, value);
         }
       });

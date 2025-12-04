@@ -232,8 +232,8 @@ export function AgentIntensityCardV2({ agentId }: AgentIntensityCardV2Props) {
         <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-2">
           <div className="text-[10px] text-[var(--v2-text-muted)] mb-0.5">Pilot Credit Execution</div>
           <div className="text-base font-bold text-[var(--v2-text-primary)]">
-            {breakdown.details?.token_stats?.total_tokens
-              ? Math.ceil(breakdown.details.token_stats.total_tokens / 10).toLocaleString()
+            {breakdown.details?.token_stats?.total_tokens_execution_only
+              ? Math.ceil(breakdown.details.token_stats.total_tokens_execution_only / 10).toLocaleString()
               : '0'}
           </div>
         </div>

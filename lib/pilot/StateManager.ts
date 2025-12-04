@@ -740,7 +740,11 @@ export class StateManager {
 
         // Extract metrics from metadata to dedicated columns
         if (metadata?.tokens_used) {
-          updateData.tokens_used = metadata.tokens_used;
+          // Convert token object to integer for database storage
+          const tokensUsed = typeof metadata.tokens_used === 'object'
+            ? (metadata.tokens_used.total || 0)
+            : metadata.tokens_used;
+          updateData.tokens_used = tokensUsed;
         }
         if (metadata?.execution_time) {
           updateData.execution_time_ms = metadata.execution_time;

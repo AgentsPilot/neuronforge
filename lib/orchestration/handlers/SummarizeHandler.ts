@@ -32,7 +32,7 @@ export class SummarizeHandler extends BaseHandler {
       const { data: cleanedData, metadata } = await this.applyPreprocessing(resolvedInput);
 
       // Prepare input for LLM
-      const input = JSON.stringify(cleanedData);
+      const input = this.safeStringify(cleanedData);
 
       // Estimate token usage
       const inputTokens = this.estimateTokenCount(input);
@@ -81,7 +81,10 @@ export class SummarizeHandler extends BaseHandler {
       // Create success result
       const result = this.createSuccessResult(
         {
-          summary: cleanSummary,  // Use cleaned version instead of raw output
+          result: cleanSummary,   // PRIMARY field - matches StepExecutor and Stage 1 expectations
+          response: cleanSummary, // Alias for compatibility
+          output: cleanSummary,   // Alias for compatibility
+          summary: cleanSummary,  // Semantic alias (Stage 1 mentions this for summarization)
           originalLength: inputTokens,
           summaryLength: tokensUsed.output,
           compressionRatio: 1 - (tokensUsed.output / inputTokens),
@@ -198,7 +201,7 @@ Example of POOR output:
       return parseInt(inputData.targetLength);
     }
 
-    const inputStr = JSON.stringify(inputData);
+    const inputStr = this.safeStringify(inputData);
     const lengthMatch = inputStr.match(/(\d+)\s*(words?|tokens?)/i);
     if (lengthMatch) {
       return parseInt(lengthMatch[1]);

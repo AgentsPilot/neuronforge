@@ -269,11 +269,13 @@ export class WorkflowPilot {
       try {
         const memoryInjector = new MemoryInjector(this.supabase);
 
-        // Race between memory loading and 1000ms timeout
+        // Race between memory loading and configurable timeout
+        // Default: 10s (allows for cold starts and database queries on Vercel)
+        const memoryTimeout = this.options.memoryLoadTimeoutMs || 10000;
         const memoryContext = await Promise.race([
           memoryInjector.buildMemoryContext(agent.id, userId, { userInput, inputValues }),
           new Promise<null>((_, reject) =>
-            setTimeout(() => reject(new Error('Memory loading timeout (1000ms)')), 1000)
+            setTimeout(() => reject(new Error(`Memory loading timeout (${memoryTimeout}ms)`)), memoryTimeout)
           )
         ]);
 

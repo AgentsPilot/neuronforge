@@ -658,9 +658,9 @@ function V2AgentBuilderContent() {
         enhancedPrompt: builderState.enhancedPrompt
       }
 
-      // Step 2: Call /api/generate-agent-v2
-      console.log('📞 Calling /api/generate-agent-v2...')
-      const generateRes = await fetch('/api/generate-agent-v2', {
+      // Step 2: Call /api/generate-agent-v3 (Two-Stage Generation)
+      console.log('📞 Calling /api/generate-agent-v3 (Two-Stage)...')
+      const generateRes = await fetch('/api/generate-agent-v3', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -32,7 +32,7 @@ export class TransformHandler extends BaseHandler {
       const { data: cleanedData, metadata } = await this.applyPreprocessing(resolvedInput);
 
       // Prepare input for LLM
-      const input = JSON.stringify(cleanedData);
+      const input = this.safeStringify(cleanedData);
 
       // Estimate token usage
       const inputTokens = this.estimateTokenCount(input);
@@ -125,7 +125,8 @@ Return the transformed data in the requested format. If the format is structured
    * Extract transformation type from input
    */
   private extractTransformationType(input: any): string {
-    const inputStr = JSON.stringify(input).toLowerCase();
+    // Use BaseHandler's safe stringify to handle circular references
+    const inputStr = this.safeStringify(input).toLowerCase();
 
     // Format conversions
     if (inputStr.includes('json') && inputStr.includes('xml')) {
@@ -165,7 +166,10 @@ Return the transformed data in the requested format. If the format is structured
    * Parse transformation result from LLM response
    */
   private parseTransformResult(output: string, context: HandlerContext): {
-    transformed: any;
+    result: any;          // PRIMARY field
+    response: any;        // Alias
+    output: any;          // Alias
+    transformed: any;     // Semantic field
     type: string;
     metadata?: any;
   } {
@@ -178,8 +182,12 @@ Return the transformed data in the requested format. If the format is structured
           output.trim().startsWith('[')) {
         const jsonMatch = output.match(/[\{\[][\s\S]*[\}\]]/);
         if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
           return {
-            transformed: JSON.parse(jsonMatch[0]),
+            result: parsed,        // PRIMARY field - matches StepExecutor expectations
+            response: parsed,      // Alias
+            output: parsed,        // Alias
+            transformed: parsed,   // Semantic field
             type: transformType,
             metadata: {
               format: 'json',
@@ -191,7 +199,10 @@ Return the transformed data in the requested format. If the format is structured
 
       // For other formats, return as-is
       return {
-        transformed: output,
+        result: output,        // PRIMARY field - matches StepExecutor expectations
+        response: output,      // Alias
+        output: output,        // Alias (note: different from 'output' parameter)
+        transformed: output,   // Semantic field
         type: transformType,
         metadata: {
           format: 'text',
@@ -201,7 +212,10 @@ Return the transformed data in the requested format. If the format is structured
     } catch (error) {
       console.warn('[TransformHandler] Failed to parse transformation result as JSON');
       return {
-        transformed: output,
+        result: output,        // PRIMARY field - matches StepExecutor expectations
+        response: output,      // Alias
+        output: output,        // Alias
+        transformed: output,   // Semantic field
         type: transformType,
         metadata: {
           format: 'text',

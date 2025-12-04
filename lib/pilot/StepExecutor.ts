@@ -73,7 +73,8 @@ export class StepExecutor {
     // Check cache before execution (for deterministic steps only)
     const cacheableTypes = ['action', 'transform', 'validation', 'comparison'];
     if (cacheableTypes.includes(step.type)) {
-      const cachedOutput = this.stepCache.get(step.id, step.type, step.params || {});
+      const stepParams = (step as any).params || {};
+      const cachedOutput = this.stepCache.get(step.id, step.type, stepParams);
       if (cachedOutput) {
         console.log(`💾 [StepExecutor] Cache hit for step ${step.id}, skipping execution`);
         return cachedOutput;
@@ -90,9 +91,22 @@ export class StepExecutor {
       try {
         // ✅ CRITICAL: Resolve variables BEFORE passing to orchestration
         // This ensures {{step1.data.emails}} is resolved to actual data for Step 2
-        const resolvedParams = context.resolveAllVariables(step.params || {});
+        // For AI processing steps, check BOTH params AND input fields
+        const stepAny = step as any;
+        const stepParams = stepAny.params || {};
 
-        console.log(`🔍 [StepExecutor] Orchestration step ${step.id} params BEFORE resolution:`, JSON.stringify(step.params, null, 2));
+        // ✅ FIX: Include 'input' field if present (used by ai_processing steps)
+        if (stepAny.input !== undefined) {
+          stepParams.input = stepAny.input;
+        }
+        // Include 'prompt' field if present
+        if (stepAny.prompt !== undefined) {
+          stepParams.prompt = stepAny.prompt;
+        }
+
+        const resolvedParams = context.resolveAllVariables(stepParams);
+
+        console.log(`🔍 [StepExecutor] Orchestration step ${step.id} params BEFORE resolution:`, JSON.stringify(stepParams, null, 2));
         console.log(`🔍 [StepExecutor] Orchestration step ${step.id} params AFTER resolution:`, JSON.stringify(resolvedParams, null, 2));
 
         // Execute via orchestration handlers
@@ -170,10 +184,33 @@ export class StepExecutor {
 
     try {
       // Resolve parameters with variable substitution
-      const resolvedParams = context.resolveAllVariables(step.params || {});
+      // For action steps: resolve step.params
+      // For other step types (transform, loop, etc.): resolve top-level fields
+      let resolvedParams: any;
+
+      if (step.type === 'action') {
+        resolvedParams = context.resolveAllVariables(step.params || {});
+      } else {
+        // For non-action steps, only include fields that actually exist on the step
+        const fieldsToResolve: any = {};
+        const stepAny = step as any;
+
+        if ('operation' in stepAny) fieldsToResolve.operation = stepAny.operation;
+        if ('input' in stepAny) fieldsToResolve.input = stepAny.input;
+        if ('config' in stepAny) fieldsToResolve.config = stepAny.config;
+        if ('condition' in stepAny) fieldsToResolve.condition = stepAny.condition;
+        if ('iterateOver' in stepAny) fieldsToResolve.iterateOver = stepAny.iterateOver;
+        if ('maxIterations' in stepAny) fieldsToResolve.maxIterations = stepAny.maxIterations;
+        if ('left' in stepAny) fieldsToResolve.left = stepAny.left;
+        if ('right' in stepAny) fieldsToResolve.right = stepAny.right;
+        if ('scatter' in stepAny) fieldsToResolve.scatter = stepAny.scatter;
+        if ('gather' in stepAny) fieldsToResolve.gather = stepAny.gather;
+
+        resolvedParams = context.resolveAllVariables(fieldsToResolve);
+      }
 
       // 🔍 DEBUG: Log variable resolution
-      console.log(`🔍 [StepExecutor] Step ${step.id} params BEFORE resolution:`, JSON.stringify(step.params, null, 2));
+      console.log(`🔍 [StepExecutor] Step ${step.id} params BEFORE resolution:`, JSON.stringify(step.type === 'action' ? step.params : step, null, 2));
       console.log(`🔍 [StepExecutor] Step ${step.id} params AFTER resolution:`, JSON.stringify(resolvedParams, null, 2));
 
       let result: any;
@@ -312,7 +349,8 @@ export class StepExecutor {
       // === CACHE STORAGE ===
       // Store in cache if step type is cacheable
       if (cacheableTypes.includes(step.type)) {
-        this.stepCache.set(step.id, step.type, step.params || {}, output);
+        const stepParams = (step as any).params || {};
+        this.stepCache.set(step.id, step.type, stepParams, output);
         console.log(`💾 [StepExecutor] Cached result for step ${step.id}`);
       }
 
@@ -483,8 +521,9 @@ export class StepExecutor {
       'llm_decision',    // LLM-based decisions
       'summarize',       // Content summarization
       'extract',         // Information extraction
-      'transform',       // Complex data transformation (LLM-based)
       'generate'         // Content generation
+      // NOTE: 'transform' removed - most transforms are deterministic (map, filter, group, etc.)
+      // Only complex transforms with AI analysis should use ai_processing type
     ];
 
     if (llmStepTypes.includes(step.type)) {
@@ -521,8 +560,8 @@ export class StepExecutor {
     // TODO: Re-enable once TaskComplexityAnalyzer and PerStepModelRouter are implemented
     // Analyze step complexity and route to optimal model
     try {
-      // const isRoutingEnabled = await this.modelRouter.isEnabled();
-      const isRoutingEnabled = false; // Disabled until classes are implemented
+      // Check if per-step routing is enabled in orchestrator config (admin UI)
+      const isRoutingEnabled = context.orchestrator?.config?.aisRoutingEnabled || false;
 
       if (isRoutingEnabled) {
         console.log(`🎯 [StepExecutor] Per-step routing enabled - analyzing complexity...`);
@@ -751,7 +790,8 @@ Please analyze the above and provide your decision/response.
     step: WorkflowStep,
     context: ExecutionContext
   ): Promise<any> {
-    if (!step.condition) {
+    const stepCondition = (step as any).condition;
+    if (!stepCondition) {
       throw new ExecutionError(
         `Conditional step ${step.id} missing condition`,
         'MISSING_CONDITION',
@@ -761,11 +801,11 @@ Please analyze the above and provide your decision/response.
 
     console.log(`[StepExecutor] Evaluating condition for step ${step.id}`);
 
-    const result = this.conditionalEvaluator.evaluate(step.condition, context);
+    const result = this.conditionalEvaluator.evaluate(stepCondition, context);
 
     return {
       result,
-      condition: step.condition,
+      condition: stepCondition,
     };
   }
 
@@ -930,8 +970,9 @@ Please analyze the above and provide your decision/response.
 
     console.log(`[StepExecutor] Executing transform: ${operation}`);
 
-    // Resolve input data
-    const data = input ? context.resolveVariable(input) : params.data;
+    // ✅ FIX: Input has already been resolved by resolveAllVariables (line 175-188)
+    // Don't try to resolve again, just use it directly
+    const data = input !== undefined ? input : params.data;
 
     if (!data) {
       throw new ExecutionError(
@@ -986,7 +1027,7 @@ Please analyze the above and provide your decision/response.
 
       // Create temporary context with current item
       const tempContext = context.clone();
-      tempContext.setVariable('current', item);
+      tempContext.setVariable('item', item);
 
       for (const [key, valueExpr] of Object.entries(mapping)) {
         if (typeof valueExpr === 'string' && valueExpr.includes('{{')) {
@@ -1002,19 +1043,56 @@ Please analyze the above and provide your decision/response.
 
   /**
    * Filter transformation
+   *
+   * Returns a structured object with backward compatibility:
+   * - New workflows: use {{stepX.data.items}} or {{stepX.data.filtered}}
+   * - Legacy workflows: array-like object with [index] access
    */
-  private transformFilter(data: any[], config: any, context: ExecutionContext): any[] {
+  private transformFilter(data: any[], config: any, context: ExecutionContext): any {
     if (!Array.isArray(data)) {
       throw new ExecutionError('Filter operation requires array input', 'INVALID_INPUT_TYPE');
     }
 
-    return data.filter(item => {
+    const originalCount = data.length;
+    const filtered = data.filter(item => {
       // Create temporary context with current item
       const tempContext = context.clone();
-      tempContext.setVariable('current', item);
+      tempContext.setVariable('item', item);
 
       return this.conditionalEvaluator.evaluate(config.condition, tempContext);
     });
+
+    // Return in format compatible with FilterHandler (orchestration)
+    // This ensures consistent output whether using deterministic or AI-based filtering
+    // PLUS backward compatibility for array-like access
+    const result: any = {
+      items: filtered,
+      filtered: filtered,  // For compatibility with FilterHandler output
+      removed: originalCount - filtered.length,
+      originalCount: originalCount,
+      count: filtered.length,
+
+      // ✅ BACKWARD COMPATIBILITY: Make object behave like array
+      // Allow {{stepX.data.length}}, {{stepX.data[0]}}, etc.
+      length: filtered.length,
+
+      // Array method proxies for backward compatibility
+      map: filtered.map.bind(filtered),
+      filter: filtered.filter.bind(filtered),
+      reduce: filtered.reduce.bind(filtered),
+      forEach: filtered.forEach.bind(filtered),
+      find: filtered.find.bind(filtered),
+      some: filtered.some.bind(filtered),
+      every: filtered.every.bind(filtered),
+      slice: filtered.slice.bind(filtered),
+    };
+
+    // Add numeric index accessors for backward compatibility
+    filtered.forEach((item, index) => {
+      result[index] = item;
+    });
+
+    return result;
   }
 
   /**
@@ -1070,22 +1148,50 @@ Please analyze the above and provide your decision/response.
 
   /**
    * Group transformation
+   *
+   * Returns a structured object with backward compatibility:
+   * - New workflows: use {{stepX.data.groups}}, {{stepX.data.keys}}, or {{stepX.data.grouped}}
+   * - Legacy workflows: direct key access via {{stepX.data['key']}} still works
    */
-  private transformGroup(data: any[], config: any): Record<string, any[]> {
+  private transformGroup(data: any[], config: any): any {
     if (!Array.isArray(data)) {
       throw new ExecutionError('Group operation requires array input', 'INVALID_INPUT_TYPE');
     }
 
-    const { field } = config;
+    const { field, groupBy } = config;
+    const groupKey = field || groupBy;
 
-    return data.reduce((acc, item) => {
-      const key = field ? item[field] : item;
+    // Build grouped object
+    const grouped = data.reduce((acc, item) => {
+      const key = groupKey ? item[groupKey] : item;
       if (!acc[key]) {
         acc[key] = [];
       }
       acc[key].push(item);
       return acc;
     }, {} as Record<string, any[]>);
+
+    // Return both grouped object and array of groups for iteration
+    const groups = Object.entries(grouped).map(([key, items]) => ({
+      key,
+      items: items as any[],
+      count: (items as any[]).length
+    }));
+
+    const result: any = {
+      grouped,        // Original grouped object: { "Offir Omer": [...], "David Mor": [...] }
+      groups,         // Array of groups for iteration: [{key: "Offir Omer", items: [...], count: 3}, ...]
+      keys: Object.keys(grouped),  // Array of unique keys: ["Offir Omer", "David Mor"]
+      count: groups.length         // Number of unique groups
+    };
+
+    // ✅ BACKWARD COMPATIBILITY: Add grouped keys directly to result
+    // Allows {{stepX.data['key']}} to work like before
+    Object.keys(grouped).forEach(key => {
+      result[key] = grouped[key];
+    });
+
+    return result;
   }
 
   /**

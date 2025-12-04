@@ -32,7 +32,7 @@ export class FilterHandler extends BaseHandler {
       const { data: cleanedData, metadata } = await this.applyPreprocessing(resolvedInput);
 
       // Prepare input for LLM
-      const input = JSON.stringify(cleanedData);
+      const input = this.safeStringify(cleanedData);
 
       // Estimate token usage
       const inputTokens = this.estimateTokenCount(input);
@@ -131,7 +131,7 @@ Return a JSON object with:
    * Extract filter type from input
    */
   private extractFilterType(input: any): string {
-    const inputStr = JSON.stringify(input).toLowerCase();
+    const inputStr = this.safeStringify(input).toLowerCase();
 
     // Value-based filters
     if (inputStr.includes('greater than') || inputStr.includes('>')) {

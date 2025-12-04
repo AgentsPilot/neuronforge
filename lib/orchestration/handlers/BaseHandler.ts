@@ -28,6 +28,46 @@ export abstract class BaseHandler implements IntentHandler {
   }
 
   /**
+   * Safely stringify objects, handling circular references and complex objects like Supabase clients
+   * @param value - Value to stringify
+   * @returns JSON string without circular references
+   */
+  protected safeStringify(value: any): string {
+    const seen = new WeakSet();
+
+    try {
+      return JSON.stringify(value, (key, val) => {
+        // Handle objects
+        if (val && typeof val === 'object') {
+          // Detect circular references
+          if (seen.has(val)) {
+            return '[Circular]';
+          }
+          seen.add(val);
+
+          // Skip client/connection objects that might have circular refs
+          const constructorName = val.constructor?.name || '';
+          if (constructorName.match(/^[a-z][0-9]$/i) || // Minified class names like 'pa', 'a6'
+              key === 'client' ||
+              key === 'supabase' ||
+              key === 'connection' ||
+              key === 'mfa' ||
+              key === 'auth' ||
+              key === 'webauthn' ||
+              constructorName.includes('Client') ||
+              constructorName.includes('SupabaseClient')) {
+            return '[Object]';
+          }
+        }
+        return val;
+      });
+    } catch (error) {
+      console.warn('[BaseHandler] safeStringify fallback:', error);
+      return String(value);
+    }
+  }
+
+  /**
    * Main handler method - to be implemented by concrete handlers
    */
   abstract handle(context: HandlerContext): Promise<HandlerResult>;
@@ -73,7 +113,7 @@ export abstract class BaseHandler implements IntentHandler {
   ): Promise<{ data: any; metadata: ExtractedMetadata }> {
     try {
       // Count tokens BEFORE preprocessing
-      const inputStr = JSON.stringify(input);
+      const inputStr = this.safeStringify(input);
       const tokensBefore = this.estimateTokenCount(inputStr);
 
       // Apply preprocessing with default config
@@ -86,7 +126,7 @@ export abstract class BaseHandler implements IntentHandler {
       }
 
       // Count tokens AFTER preprocessing
-      const cleanedStr = JSON.stringify(result.cleanedInput);
+      const cleanedStr = this.safeStringify(result.cleanedInput);
       const tokensAfter = this.estimateTokenCount(cleanedStr);
       const tokensSaved = tokensBefore - tokensAfter;
       const savingsPercent = tokensBefore > 0 ? ((tokensSaved / tokensBefore) * 100).toFixed(1) : '0.0';
@@ -208,7 +248,7 @@ export abstract class BaseHandler implements IntentHandler {
     // 🔍 DEBUG: Log input structure
     console.log(`🔍 [${this.intent}Handler] extractInputData called`);
     console.log(`🔍 [${this.intent}Handler] input has 'params'?`, input && typeof input === 'object' && 'params' in input);
-    console.log(`🔍 [${this.intent}Handler] input.params:`, JSON.stringify(input && typeof input === 'object' && 'params' in input ? input.params : 'N/A'));
+    console.log(`🔍 [${this.intent}Handler] input.params:`, this.safeStringify(input && typeof input === 'object' && 'params' in input ? input.params : 'N/A'));
     console.log(`🔍 [${this.intent}Handler] input has 'executionContext'?`, input && typeof input === 'object' && 'executionContext' in input);
 
     // If input has params field (from StepExecutor), use that
@@ -216,11 +256,14 @@ export abstract class BaseHandler implements IntentHandler {
       const params = input.params;
 
       // ✅ FIX: If params is empty or just has empty step refs, try to populate from executionContext
+      // BUT: Don't auto-populate if params.input is explicitly set (step wants specific data)
       const isEmptyParams = !params ||
                            Object.keys(params).length === 0 ||
                            (Object.keys(params).length === 1 && params.step1 && Object.keys(params.step1).length === 0);
 
-      if (isEmptyParams && input.executionContext) {
+      const hasExplicitInput = params && (params.input !== undefined || params.prompt !== undefined);
+
+      if (isEmptyParams && !hasExplicitInput && input.executionContext) {
         const executionContext = input.executionContext;
 
         // 🔍 DEBUG: Log executionContext structure

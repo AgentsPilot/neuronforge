@@ -658,16 +658,22 @@ Please use these input values when executing the task.`;
           iterations: iteration,
           model: selectedModel,
           provider: selectedProvider,
-          // Memory stats for UI display
-          memoryStats: {
+          // Memory stats for UI display (with null safety)
+          memoryStats: memoryContext ? {
             memoriesLoaded: memoryContext.recent_runs.length + memoryContext.user_context.length + memoryContext.relevant_patterns.length,
             recentRuns: memoryContext.recent_runs.length,
             userPreferences: memoryContext.user_context.length,
             patterns: memoryContext.relevant_patterns.length,
             tokenCount: memoryContext.token_count
+          } : {
+            memoriesLoaded: 0,
+            recentRuns: 0,
+            userPreferences: 0,
+            patterns: 0,
+            tokenCount: 0
           },
-          // Memory data for AIS tracking (NEW)
-          memoryData: {
+          // Memory data for AIS tracking (NEW) (with null safety)
+          memoryData: memoryContext ? {
             tokens: memoryContext.token_count,
             entryCount: memoryContext.recent_runs.length + memoryContext.user_context.length + memoryContext.relevant_patterns.length,
             types: [
@@ -675,6 +681,10 @@ Please use these input values when executing the task.`;
               ...(memoryContext.user_context.length > 0 ? ['user_context'] : []),
               ...(memoryContext.relevant_patterns.length > 0 ? ['patterns'] : [])
             ]
+          } : {
+            tokens: 0,
+            entryCount: 0,
+            types: []
           }
         };
 

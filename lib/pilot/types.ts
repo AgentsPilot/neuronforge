@@ -290,8 +290,10 @@ export type WorkflowStep =
 
 /**
  * Simple condition: field operator value
+ * NEW: Added conditionType discriminator for strict mode compatibility
  */
 export interface SimpleCondition {
+  conditionType: 'simple';
   field: string;
   operator: ComparisonOperator;
   value: any;
@@ -299,15 +301,19 @@ export interface SimpleCondition {
 
 /**
  * Complex condition: logical combinations
+ * Uses conditionType discriminator for strict mode compatibility
  */
 export interface ComplexCondition {
-  and?: Condition[];
-  or?: Condition[];
-  not?: Condition;
+  conditionType: 'complex_and' | 'complex_or' | 'complex_not';
+  // For AND/OR operations (used when conditionType is 'complex_and' or 'complex_or')
+  conditions?: Condition[];
+  // For NOT operation (used when conditionType is 'complex_not')
+  condition?: Condition;
 }
 
 /**
  * Condition union type
+ * Now includes conditionType discriminator for strict mode
  */
 export type Condition = SimpleCondition | ComplexCondition | string;
 
@@ -924,6 +930,9 @@ export interface PilotOptions {
   // Performance
   enableOptimizations?: boolean;
   cacheStepResults?: boolean;
+
+  // Memory configuration
+  memoryLoadTimeoutMs?: number;
 }
 
 // ============================================================================
@@ -1111,22 +1120,26 @@ export function isHumanApprovalStep(step: WorkflowStep): step is HumanApprovalSt
 
 /**
  * Type guard for SimpleCondition
+ * Uses conditionType discriminator for strict mode compatibility
  */
 export function isSimpleCondition(condition: Condition): condition is SimpleCondition {
   return (
     typeof condition === 'object' &&
-    'field' in condition &&
-    'operator' in condition &&
-    'value' in condition
+    'conditionType' in condition &&
+    condition.conditionType === 'simple'
   );
 }
 
 /**
  * Type guard for ComplexCondition
+ * Uses conditionType discriminator for strict mode compatibility
  */
 export function isComplexCondition(condition: Condition): condition is ComplexCondition {
   return (
     typeof condition === 'object' &&
-    ('and' in condition || 'or' in condition || 'not' in condition)
+    'conditionType' in condition &&
+    (condition.conditionType === 'complex_and' ||
+     condition.conditionType === 'complex_or' ||
+     condition.conditionType === 'complex_not')
   );
 }

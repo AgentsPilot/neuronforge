@@ -32,7 +32,7 @@ export class ValidateHandler extends BaseHandler {
       const { data: cleanedData, metadata } = await this.applyPreprocessing(resolvedInput);
 
       // Prepare input for LLM
-      const input = JSON.stringify(cleanedData);
+      const input = this.safeStringify(cleanedData);
 
       // Estimate token usage
       const inputTokens = this.estimateTokenCount(input);
@@ -132,7 +132,7 @@ Return a JSON object with:
    * Extract validation type from input
    */
   private extractValidationType(input: any): string {
-    const inputStr = JSON.stringify(input).toLowerCase();
+    const inputStr = this.safeStringify(input).toLowerCase();
 
     if (inputStr.includes('schema')) {
       return 'schema validation';
