@@ -90,12 +90,20 @@ export class ParallelExecutor {
     // Resolve array to iterate over
     const items = context.resolveVariable(iterateOver);
 
+    console.log(`[ParallelExecutor] Loop ${step.id}: iterateOver="${iterateOver}" resolved to:`, JSON.stringify(items).substring(0, 200));
+    console.log(`[ParallelExecutor] Resolved type: ${typeof items}, isArray: ${Array.isArray(items)}`);
+
     if (!Array.isArray(items)) {
+      // Try to show the structure of what was resolved
+      if (items && typeof items === 'object') {
+        console.error(`[ParallelExecutor] Resolved object keys:`, Object.keys(items));
+        console.error(`[ParallelExecutor] Resolved object structure:`, JSON.stringify(items, null, 2).substring(0, 500));
+      }
+
       throw new ExecutionError(
         `Loop step ${step.id}: iterateOver must resolve to an array, got ${typeof items}`,
         'INVALID_ITERATE_OVER',
-        step.id,
-        { iterateOver, resolvedType: typeof items }
+        step.id
       );
     }
 
