@@ -1005,6 +1005,9 @@ Please analyze the above and provide your decision/response.
       case 'aggregate':
         return this.transformAggregate(data, config);
 
+      case 'deduplicate':
+        return this.transformDeduplicate(data, config);
+
       default:
         throw new ExecutionError(
           `Unknown transform operation: ${operation}`,
@@ -1245,6 +1248,42 @@ Please analyze the above and provide your decision/response.
     });
 
     return result;
+  }
+
+  /**
+   * Deduplicate transformation
+   * Removes duplicate items from an array based on a specified field or the entire object
+   */
+  private transformDeduplicate(data: any[], config: any): any[] {
+    if (!Array.isArray(data)) {
+      throw new ExecutionError('Deduplicate operation requires array input', 'INVALID_INPUT_TYPE');
+    }
+
+    const { field } = config || {};
+
+    if (field) {
+      // Deduplicate based on a specific field
+      const seen = new Set();
+      return data.filter(item => {
+        const value = item[field];
+        if (seen.has(value)) {
+          return false;
+        }
+        seen.add(value);
+        return true;
+      });
+    } else {
+      // Deduplicate based on entire object (using JSON stringification)
+      const seen = new Set();
+      return data.filter(item => {
+        const serialized = JSON.stringify(item);
+        if (seen.has(serialized)) {
+          return false;
+        }
+        seen.add(serialized);
+        return true;
+      });
+    }
   }
 
   /**
