@@ -160,12 +160,15 @@ export class ParallelExecutor {
     // Resolve input array
     const items = context.resolveVariable?.(scatter.input) ?? [];
 
+    console.log(`🔍 [ParallelExecutor] Scatter input: ${scatter.input}`);
+    console.log(`🔍 [ParallelExecutor] Resolved to:`, JSON.stringify(items).substring(0, 200));
+    console.log(`🔍 [ParallelExecutor] Available variables:`, Object.keys(context.variables));
+
     if (!Array.isArray(items)) {
       throw new ExecutionError(
-        `Scatter-gather step ${step.id}: input must resolve to an array, got ${typeof items}`,
+        `Scatter-gather step ${step.id}: input must resolve to an array, got ${typeof items}. Input: ${scatter.input}, Available variables: ${Object.keys(context.variables).join(', ')}`,
         'INVALID_SCATTER_INPUT',
-        step.id,
-        { input: scatter.input, resolvedType: typeof items }
+        step.id
       );
     }
 
@@ -182,11 +185,13 @@ export class ParallelExecutor {
     );
 
     console.log(`🎯 [ParallelExecutor] Scatter complete, gathering ${scatterResults.length} results`);
+    console.log(`🔍 [ParallelExecutor] Scatter results sample:`, JSON.stringify(scatterResults[0]).substring(0, 300));
 
     // Gather: Aggregate results based on operation
     const gatheredResult = this.gatherResults(scatterResults, gather.operation, gather.reduceExpression);
 
     console.log(`✅ [ParallelExecutor] Scatter-gather complete for ${step.id}`);
+    console.log(`🔍 [ParallelExecutor] Gathered result:`, JSON.stringify(gatheredResult).substring(0, 300));
 
     return gatheredResult;
   }
