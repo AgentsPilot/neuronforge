@@ -969,14 +969,18 @@ Please analyze the above and provide your decision/response.
     }
 
     console.log(`[StepExecutor] Executing transform: ${operation}`);
+    console.log(`[StepExecutor] Transform params:`, JSON.stringify(params, null, 2));
 
     // ✅ FIX: Input has already been resolved by resolveAllVariables (line 175-188)
     // Don't try to resolve again, just use it directly
     const data = input !== undefined ? input : params.data;
 
     if (!data) {
+      console.error(`[StepExecutor] Transform step ${step.id} has no input data`);
+      console.error(`[StepExecutor] Available context variables:`, Object.keys(context.variables));
+      console.error(`[StepExecutor] Params received:`, JSON.stringify(params, null, 2));
       throw new ExecutionError(
-        `Transform step ${step.id} has no input data`,
+        `Transform step ${step.id} has no input data. Available variables: ${Object.keys(context.variables).join(', ')}`,
         'MISSING_INPUT_DATA',
         step.id
       );

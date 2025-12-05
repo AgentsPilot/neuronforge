@@ -32,7 +32,8 @@ export type IntentType =
   | 'conditional'  // Branching logic evaluation
   | 'aggregate'    // Data aggregation/collection
   | 'filter'       // Data filtering/selection
-  | 'enrich';      // Data enrichment from external sources
+  | 'enrich'       // Data enrichment from external sources
+  | 'scatter_gather'; // Parallel execution with result gathering
 
 /**
  * Intent classification result with confidence scoring

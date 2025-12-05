@@ -149,6 +149,7 @@ Analyze the following workflow step and classify it into ONE of these intent typ
 - aggregate: Combining multiple data sources or rolling up data
 - filter: Selecting subset of data based on criteria
 - enrich: Adding additional data to existing records (lookups, joins)
+- scatter_gather: Parallel execution with result gathering (fan-out/fan-in pattern)
 
 **Workflow Step Details:**
 Prompt/Instruction: ${prompt}
@@ -209,7 +210,7 @@ Respond with ONLY valid JSON, no additional text.`;
       // Validate intent type
       const validIntents: IntentType[] = [
         'extract', 'summarize', 'generate', 'validate', 'send',
-        'transform', 'conditional', 'aggregate', 'filter', 'enrich'
+        'transform', 'conditional', 'aggregate', 'filter', 'enrich', 'scatter_gather'
       ];
 
       if (!validIntents.includes(parsed.intent)) {
@@ -360,6 +361,15 @@ Respond with ONLY valid JSON, no additional text.`;
         intent: 'enrich',
         confidence: 0.9,
         reasoning: 'Enrichment keywords detected',
+      };
+    }
+
+    // 13. Scatter-gather patterns (parallel execution)
+    if (/\b(parallel|scatter|gather|fan-out|fan-in|concurrent|simultaneous|batch)\b/.test(lowerPrompt)) {
+      return {
+        intent: 'scatter_gather',
+        confidence: 0.9,
+        reasoning: 'Scatter-gather/parallel keywords detected',
       };
     }
 
@@ -514,6 +524,7 @@ Respond with ONLY valid JSON, no additional text.`;
       filter: /\b(filter|where|select|exclude|remove|keep|only)\b/,
       aggregate: /\b(sum|count|total|average|group|combine|merge|rollup)\b/,
       enrich: /\b(enrich|lookup|join|append|add|enhance|augment)\b/,
+      scatter_gather: /\b(parallel|scatter|gather|fan-out|fan-in|concurrent|simultaneous|batch)\b/,
     };
 
     // Check each pattern
@@ -668,6 +679,7 @@ Plugin: ${pluginKey || 'none'}
 - aggregate: Combining data
 - filter: Selecting subset
 - enrich: Adding additional data
+- scatter_gather: Parallel execution with result gathering
 
 **Instructions:**
 Consider the workflow context, previous steps, and next steps to determine the MOST appropriate intent for this step.
@@ -715,7 +727,7 @@ Respond with ONLY valid JSON, no additional text.`;
       // Validate intent type
       const validIntents: import('./types').IntentType[] = [
         'extract', 'summarize', 'generate', 'validate', 'send',
-        'transform', 'conditional', 'aggregate', 'filter', 'enrich'
+        'transform', 'conditional', 'aggregate', 'filter', 'enrich', 'scatter_gather'
       ];
 
       if (!validIntents.includes(parsed.intent)) {
