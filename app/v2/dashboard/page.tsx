@@ -855,9 +855,12 @@ export default function V2DashboardPage() {
                     </div>
                   </div>
 
-                  {/* Agent List */}
+                  {/* Agent List - Top 3 by execution count */}
                   <div className="space-y-2">
-                    {stats.agentStats.slice(0, 3).map((agent, index) => (
+                    {stats.agentStats
+                      .sort((a, b) => b.count - a.count)
+                      .slice(0, 3)
+                      .map((agent, index) => (
                       <div
                         key={index}
                         onClick={(e) => {

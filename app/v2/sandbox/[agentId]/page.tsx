@@ -958,73 +958,129 @@ export default function AgentSandboxPage() {
         </Card>
 
         {/* Middle Column - Timeline View (3 cols) */}
-        <Card className="!p-4 lg:!h-[600px] overflow-hidden !box-border lg:col-span-3">
+        <Card className="!p-3 lg:!h-[600px] overflow-hidden !box-border lg:col-span-3 relative">
           <div className="flex flex-col h-full">
             <div className="flex items-center gap-2 mb-3">
-              <Clock className="w-5 h-5 text-[var(--v2-primary)]" />
-              <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">Execution Timeline</h3>
+              <div className="relative">
+                <Zap className="w-4 h-4 text-[var(--v2-primary)]" />
+                {debugState.isRunning && (
+                  <span className="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full animate-ping"></span>
+                )}
+              </div>
+              <h3 className="text-base font-semibold text-[var(--v2-text-primary)]">Timeline</h3>
             </div>
 
-            <div className="flex-1 overflow-y-auto space-y-2 scrollbar-thin">
+            <div className="flex-1 overflow-y-auto scrollbar-thin px-0.5 py-0.5">
               {debugState.steps.length > 0 ? (
-                debugState.steps.map((step, index) => {
-                  const statusStyle = getStatusStyle(step.status)
-                  const StatusIcon = statusStyle.icon
-                  const isActive = selectedStepId === step.id
+                <div className="relative pl-6">
+                  {/* Animated vertical line */}
+                  <div className="absolute left-[11px] top-0 bottom-0 w-0.5 bg-gradient-to-b from-transparent via-gray-300 to-transparent dark:via-gray-600"></div>
 
-                  return (
-                    <div
-                      key={step.id}
-                      onClick={() => setSelectedStepId(step.id)}
-                      className={`
-                        p-3 rounded-lg border-2 transition-all cursor-pointer
-                        ${statusStyle.bg} ${statusStyle.border}
-                        ${isActive ? 'ring-2 ring-[var(--v2-primary)] ring-offset-2' : ''}
-                        hover:shadow-md
-                      `}
-                    >
-                      <div className="flex items-start gap-3">
-                        <div className="flex-shrink-0 pt-0.5">
-                          <StatusIcon className={`w-5 h-5 ${statusStyle.text}`} />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between mb-1">
-                            <h4 className={`text-sm font-semibold ${statusStyle.text}`}>
-                              {index + 1}. {step.name}
-                            </h4>
+                  <div className="space-y-3">
+                    {debugState.steps.map((step, index) => {
+                      const statusStyle = getStatusStyle(step.status)
+                      const StatusIcon = statusStyle.icon
+                      const isActive = selectedStepId === step.id
+
+                      return (
+                        <div
+                          key={step.id}
+                          onClick={() => setSelectedStepId(step.id)}
+                          className="relative group cursor-pointer"
+                        >
+                          {/* Timeline dot with glow effect */}
+                          <div className="absolute -left-6 top-2 z-10">
+                            <div className={`
+                              w-4 h-4 rounded-full flex items-center justify-center transition-all duration-300
+                              ${step.status === 'completed' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : ''}
+                              ${step.status === 'running' ? 'bg-blue-500 shadow-[0_0_12px_rgba(59,130,246,0.8)] animate-pulse' : ''}
+                              ${step.status === 'failed' ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]' : ''}
+                              ${step.status === 'pending' ? 'bg-gray-400 dark:bg-gray-600' : ''}
+                              ${isActive ? 'scale-125' : 'scale-100'}
+                            `}>
+                              {step.status === 'running' && (
+                                <div className="absolute inset-0 rounded-full bg-blue-500 animate-ping opacity-75"></div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Step card with gradient border for active */}
+                          <div className={`
+                            relative p-2.5 rounded-lg transition-all duration-300
+                            ${statusStyle.bg}
+                            ${isActive
+                              ? 'border-2 border-[var(--v2-primary)] shadow-lg shadow-[var(--v2-primary)]/20'
+                              : `border ${statusStyle.border} hover:shadow-md hover:-translate-y-0.5`
+                            }
+                          `}>
+                            {/* Animated gradient overlay for running state */}
                             {step.status === 'running' && (
-                              <div className="flex-shrink-0 ml-2">
-                                <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                              <div className="absolute inset-0 rounded-lg bg-gradient-to-r from-transparent via-blue-500/5 to-transparent animate-[shimmer_2s_infinite]"></div>
+                            )}
+
+                            <div className="relative">
+                              <div className="flex items-center justify-between gap-2 mb-1">
+                                <div className="flex items-center gap-2 flex-1 min-w-0">
+                                  <span className={`
+                                    text-[10px] font-bold px-1.5 py-0.5 rounded
+                                    ${step.status === 'completed' ? 'bg-green-500/20 text-green-700 dark:text-green-300' : ''}
+                                    ${step.status === 'running' ? 'bg-blue-500/20 text-blue-700 dark:text-blue-300' : ''}
+                                    ${step.status === 'failed' ? 'bg-red-500/20 text-red-700 dark:text-red-300' : ''}
+                                    ${step.status === 'pending' ? 'bg-gray-500/20 text-gray-600 dark:text-gray-400' : ''}
+                                  `}>
+                                    {index + 1}
+                                  </span>
+                                  <h4 className={`text-xs font-semibold truncate ${statusStyle.text}`}>
+                                    {step.name}
+                                  </h4>
+                                </div>
+
+                                <div className="flex items-center gap-1.5 flex-shrink-0">
+                                  {step.status === 'running' && (
+                                    <Loader2 className="w-3 h-3 text-blue-500 animate-spin" />
+                                  )}
+                                  <StatusIcon className={`w-3 h-3 ${statusStyle.text}`} />
+                                </div>
                               </div>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2 text-xs text-[var(--v2-text-muted)]">
-                            <span className="capitalize">{step.type}</span>
-                            {step.endTime && step.startTime && (
-                              <>
-                                <span>•</span>
-                                <span>{step.endTime - step.startTime}ms</span>
-                              </>
-                            )}
+
+                              <div className="flex items-center gap-2 text-[9px] text-[var(--v2-text-muted)]">
+                                <span className="capitalize">
+                                  {step.type === 'ai_processing' ? 'Processing' : step.type.replace(/_/g, ' ')}
+                                </span>
+                                {step.endTime && step.startTime && (
+                                  <>
+                                    <span>•</span>
+                                    <span className="font-mono">{step.endTime - step.startTime}ms</span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
                           </div>
                         </div>
-                        <ChevronRight
-                          className={`w-4 h-4 transition-transform ${
-                            isActive ? 'rotate-90' : ''
-                          } text-[var(--v2-text-muted)]`}
-                        />
-                      </div>
-                    </div>
-                  )
-                })
+                      )
+                    })}
+                  </div>
+                </div>
               ) : (
-                <div className="flex flex-col items-center justify-center h-full text-center py-12">
-                  <Clock className="w-12 h-12 opacity-20 mb-2" />
-                  <p className="text-sm text-[var(--v2-text-muted)]">No workflow steps defined</p>
+                <div className="flex flex-col items-center justify-center h-full text-center py-8">
+                  <div className="relative">
+                    <Clock className="w-10 h-10 opacity-20 mb-2" />
+                    <Sparkles className="w-4 h-4 text-[var(--v2-primary)] absolute -top-1 -right-1 animate-pulse" />
+                  </div>
+                  <p className="text-xs font-medium text-[var(--v2-text-primary)]">Ready to debug</p>
+                  <p className="text-[10px] text-[var(--v2-text-muted)] mt-1">Press play to start</p>
                 </div>
               )}
             </div>
           </div>
+
+          {/* Add shimmer animation */}
+          <style jsx>{`
+            @keyframes shimmer {
+              0% { transform: translateX(-100%); }
+              100% { transform: translateX(100%); }
+            }
+          `}</style>
         </Card>
 
         {/* Data Inspector (6 cols - wider) */}
@@ -1053,7 +1109,7 @@ export default function AgentSandboxPage() {
                       <div className="flex justify-between">
                         <span className="text-[var(--v2-text-muted)]">Type:</span>
                         <span className="text-[var(--v2-text-primary)] font-medium capitalize">
-                          {selectedStep.type}
+                          {selectedStep.type === 'ai_processing' ? 'Processing' : selectedStep.type.replace(/_/g, ' ')}
                         </span>
                       </div>
                       <div className="flex justify-between">

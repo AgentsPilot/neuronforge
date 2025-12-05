@@ -5,6 +5,7 @@ import { Inter } from 'next/font/google'
 import { UserProvider } from '@/components/UserProvider'
 import { Toaster } from 'sonner'
 import { SafeSystemInitializer } from '@/components/SafeSystemInitializer'
+import { SessionHandler } from '@/components/SessionHandler'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -17,6 +18,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className={inter.className}>
+        <SessionHandler />
         <UserProvider>
           <SafeSystemInitializer />
           {children}
