@@ -168,7 +168,7 @@ function inferInputType(fieldName: string): 'text' | 'number' | 'email' | 'url' 
     return 'email';
   }
 
-  // Number fields
+  // Number fields (including column/row indices)
   if (lower.includes('count') ||
       lower.includes('limit') ||
       lower.includes('max') ||
@@ -176,7 +176,11 @@ function inferInputType(fieldName: string): 'text' | 'number' | 'email' | 'url' 
       lower.includes('amount') ||
       lower.includes('number') ||
       lower.includes('quantity') ||
-      lower.includes('size')) {
+      lower.includes('size') ||
+      lower.includes('index') ||
+      lower.includes('position') ||
+      (lower.includes('column') && lower.includes('index')) ||
+      (lower.includes('row') && lower.includes('index'))) {
     return 'number';
   }
 
@@ -200,6 +204,14 @@ function inferInputType(fieldName: string): 'text' | 'number' | 'email' | 'url' 
       lower.includes('data') ||
       lower.includes('payload')) {
     return 'json';
+  }
+
+  // Column/field name fields (text type for user-friendly names)
+  // These are intentionally checked AFTER number checks for indices
+  if (lower.includes('column') ||
+      lower.includes('field') ||
+      lower.includes('property')) {
+    return 'text';  // User provides friendly names like "Sales Person"
   }
 
   // Default to text

@@ -1156,23 +1156,51 @@ Please analyze the above and provide your decision/response.
    * - New workflows: use {{stepX.data.groups}}, {{stepX.data.keys}}, or {{stepX.data.grouped}}
    * - Legacy workflows: direct key access via {{stepX.data['key']}} still works
    */
+  /**
+   * Group transformation - GENERIC for ALL data structure patterns
+   *
+   * Supports:
+   * - 2D arrays: group by column name
+   * - Arrays of objects: group by field name (including nested like "fields.Status")
+   * - Arrays of primitives: group by value
+   */
   private transformGroup(data: any[], config: any): any {
-    if (!Array.isArray(data)) {
-      throw new ExecutionError('Group operation requires array input', 'INVALID_INPUT_TYPE');
+    // CRITICAL: Unwrap structured output from previous steps
+    const unwrappedData = this.unwrapStructuredOutput(data);
+
+    if (!Array.isArray(unwrappedData)) {
+      throw new ExecutionError(
+        `Group operation requires array input. Received: ${typeof unwrappedData}. ` +
+        `If this is from a previous step, make sure to reference the array field (e.g., step1.values, step1.items, step1.records)`,
+        'INVALID_INPUT_TYPE'
+      );
     }
 
-    const { field, groupBy } = config;
-    const groupKey = field || groupBy;
+    const { field, groupBy, column } = config;
+    const groupKey = column || field || groupBy; // Support 'column', 'field', and 'groupBy'
 
-    // Build grouped object
-    const grouped = data.reduce((acc, item) => {
-      const key = groupKey ? item[groupKey] : item;
+    // Detect if 2D array pattern
+    const is2DArray = Array.isArray(unwrappedData[0]);
+
+    // Build grouped object using generic extractValueByKey
+    const grouped = unwrappedData.reduce((acc, item, index) => {
+      // Skip header row for 2D arrays
+      if (is2DArray && index === 0) {
+        return acc;
+      }
+
+      const key = groupKey
+        ? String(this.extractValueByKey(item, groupKey, unwrappedData))
+        : String(item);
+
       if (!acc[key]) {
         acc[key] = [];
       }
       acc[key].push(item);
       return acc;
     }, {} as Record<string, any[]>);
+
+    console.log(`[Group] Grouped ${is2DArray ? 'rows' : 'items'} by "${groupKey || 'value'}" into ${Object.keys(grouped).length} groups`);
 
     // Return both grouped object and array of groups for iteration
     const groups = Object.entries(grouped).map(([key, items]) => ({
@@ -1251,31 +1279,194 @@ Please analyze the above and provide your decision/response.
   }
 
   /**
-   * Deduplicate transformation
-   * Removes duplicate items from an array based on a specified field or the entire object
+   * Helper: Unwrap structured output from previous steps
+   * Many transform operations return {items: [...], count: N, ...} format
+   * This helper extracts the actual data array for chaining
    */
-  private transformDeduplicate(data: any[], config: any): any[] {
-    if (!Array.isArray(data)) {
-      throw new ExecutionError('Deduplicate operation requires array input', 'INVALID_INPUT_TYPE');
+  private unwrapStructuredOutput(data: any): any {
+    // If it's already an array, return as-is
+    if (Array.isArray(data)) {
+      return data;
     }
 
-    const { field } = config || {};
+    // If it's an object with 'items', 'filtered', 'deduplicated', or 'groups' property
+    if (data && typeof data === 'object') {
+      if (Array.isArray(data.items)) {
+        return data.items;
+      }
+      if (Array.isArray(data.filtered)) {
+        return data.filtered;
+      }
+      if (Array.isArray(data.deduplicated)) {
+        return data.deduplicated;
+      }
+      if (Array.isArray(data.groups)) {
+        return data.groups;
+      }
+      // For action step outputs, check common array field names
+      if (Array.isArray(data.values)) {  // Google Sheets
+        return data.values;
+      }
+      if (Array.isArray(data.records)) {  // Airtable
+        return data.records;
+      }
+      if (Array.isArray(data.emails)) {  // Gmail
+        return data.emails;
+      }
+      if (Array.isArray(data.files)) {  // Google Drive
+        return data.files;
+      }
+      if (Array.isArray(data.rows)) {  // Database-like outputs
+        return data.rows;
+      }
+    }
 
-    if (field) {
-      // Deduplicate based on a specific field
-      const seen = new Set();
-      return data.filter(item => {
-        const value = item[field];
-        if (seen.has(value)) {
-          return false;
+    // If we can't unwrap, return the data as-is (might be a single object)
+    return data;
+  }
+
+  /**
+   * GENERIC Helper: Get value from item based on key, supporting multiple data structure patterns
+   * Works with: 2D arrays, arrays of objects, nested objects, primitives
+   *
+   * @param item - The item to extract value from (can be array, object, or primitive)
+   * @param key - The key to access (can be column name, field name, or index)
+   * @param allData - Optional full dataset for header row detection (2D array pattern)
+   * @returns The extracted value
+   */
+  private extractValueByKey(item: any, key: string | number, allData?: any[]): any {
+    // Pattern 1: If item is an array (row in 2D array or tuple)
+    if (Array.isArray(item)) {
+      // Check if key is numeric (direct index access)
+      if (typeof key === 'number') {
+        return item[key];
+      }
+
+      // Check if key is string number (convert to index)
+      const numericKey = parseInt(String(key), 10);
+      if (!isNaN(numericKey)) {
+        return item[numericKey];
+      }
+
+      // Key is a column name - need to find index from header row
+      if (allData && Array.isArray(allData) && allData.length > 0) {
+        const headerRow = allData[0];
+        if (Array.isArray(headerRow)) {
+          // Case-sensitive exact match
+          const exactIndex = headerRow.indexOf(key);
+          if (exactIndex !== -1) {
+            return item[exactIndex];
+          }
+
+          // Case-insensitive match
+          const lowerKey = String(key).toLowerCase();
+          const caseInsensitiveIndex = headerRow.findIndex(
+            (h: any) => String(h).toLowerCase() === lowerKey
+          );
+          if (caseInsensitiveIndex !== -1) {
+            return item[caseInsensitiveIndex];
+          }
         }
-        seen.add(value);
-        return true;
-      });
+      }
+
+      // If no header found or not 2D array, return undefined
+      return undefined;
+    }
+
+    // Pattern 2: If item is an object (record from CRM, API, etc.)
+    if (typeof item === 'object' && item !== null) {
+      // Direct property access
+      if (key in item) {
+        return item[key];
+      }
+
+      // Nested property access (e.g., "fields.Name" for Airtable)
+      const keyParts = String(key).split('.');
+      let value = item;
+      for (const part of keyParts) {
+        if (value && typeof value === 'object' && part in value) {
+          value = value[part];
+        } else {
+          return undefined;
+        }
+      }
+      return value;
+    }
+
+    // Pattern 3: Primitive value (string, number, etc.)
+    // Can't extract a field from a primitive, return the value itself
+    return item;
+  }
+
+  /**
+   * Deduplicate transformation - GENERIC for ALL data structure patterns
+   *
+   * Supports:
+   * - 2D arrays (Google Sheets): column name → finds header, deduplicates by column
+   * - Arrays of objects (Airtable, CRMs): field name → deduplicates by field
+   * - Arrays of primitives: deduplicates entire values
+   * - Nested objects: supports dot notation (e.g., "fields.Name")
+   *
+   * Returns structured output compatible with filter and other transforms
+   */
+  private transformDeduplicate(data: any[], config: any): any {
+    // CRITICAL: Unwrap structured output from previous steps
+    // Previous steps may return {items: [...], count: N} or {values: [...]} format
+    const unwrappedData = this.unwrapStructuredOutput(data);
+
+    if (!Array.isArray(unwrappedData)) {
+      throw new ExecutionError(
+        `Deduplicate operation requires array input. Received: ${typeof unwrappedData}. ` +
+        `If this is from a previous step, make sure to reference the array field (e.g., step1.values, step1.items, step1.records)`,
+        'INVALID_INPUT_TYPE'
+      );
+    }
+
+    const { field, key, column } = config || {};
+    const deduplicateKey = column || field || key; // Support 'column', 'field', and 'key'
+    const originalCount = unwrappedData.length;
+
+    let deduplicated: any[];
+
+    if (deduplicateKey) {
+      // Deduplicate based on extracted value using generic helper
+      const seen = new Set();
+
+      // Detect if 2D array pattern (array of arrays)
+      const is2DArray = Array.isArray(unwrappedData[0]);
+
+      if (is2DArray) {
+        // For 2D arrays, preserve header row and deduplicate data rows
+        const headerRow = unwrappedData[0];
+        const dataRows = unwrappedData.slice(1);
+
+        const uniqueRows = dataRows.filter((row: any) => {
+          const value = this.extractValueByKey(row, deduplicateKey, unwrappedData);
+          if (seen.has(value)) {
+            return false;
+          }
+          seen.add(value);
+          return true;
+        });
+
+        deduplicated = [headerRow, ...uniqueRows];
+        console.log(`[Deduplicate] 2D array pattern: preserved header, deduplicated ${dataRows.length - uniqueRows.length} rows by "${deduplicateKey}"`);
+      } else {
+        // For objects or other patterns, deduplicate all items
+        deduplicated = unwrappedData.filter(item => {
+          const value = this.extractValueByKey(item, deduplicateKey, unwrappedData);
+          if (seen.has(value)) {
+            return false;
+          }
+          seen.add(value);
+          return true;
+        });
+        console.log(`[Deduplicate] Object/item pattern: deduplicated ${unwrappedData.length - deduplicated.length} items by "${deduplicateKey}"`);
+      }
     } else {
       // Deduplicate based on entire object (using JSON stringification)
       const seen = new Set();
-      return data.filter(item => {
+      deduplicated = unwrappedData.filter(item => {
         const serialized = JSON.stringify(item);
         if (seen.has(serialized)) {
           return false;
@@ -1283,7 +1474,35 @@ Please analyze the above and provide your decision/response.
         seen.add(serialized);
         return true;
       });
+      console.log(`[Deduplicate] No key specified: deduplicated ${unwrappedData.length - deduplicated.length} items by entire value`);
     }
+
+    // Return in structured format compatible with filter and other transforms
+    const result: any = {
+      items: deduplicated,
+      deduplicated: deduplicated,  // Alias for clarity
+      removed: originalCount - deduplicated.length,
+      originalCount: originalCount,
+      count: deduplicated.length,
+      length: deduplicated.length,
+
+      // Array method proxies for backward compatibility
+      map: deduplicated.map.bind(deduplicated),
+      filter: deduplicated.filter.bind(deduplicated),
+      reduce: deduplicated.reduce.bind(deduplicated),
+      forEach: deduplicated.forEach.bind(deduplicated),
+      find: deduplicated.find.bind(deduplicated),
+      some: deduplicated.some.bind(deduplicated),
+      every: deduplicated.every.bind(deduplicated),
+      slice: deduplicated.slice.bind(deduplicated),
+    };
+
+    // Add numeric index accessors for array-like access
+    deduplicated.forEach((item, index) => {
+      result[index] = item;
+    });
+
+    return result;
   }
 
   /**

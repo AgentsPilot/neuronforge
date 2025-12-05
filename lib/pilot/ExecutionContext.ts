@@ -331,16 +331,29 @@ export class ExecutionContext {
   /**
    * Parse variable path into parts
    * Example: "step1.data[0].email" → ["step1", "data", "[0]", "email"]
+   * Example: "loop.item['Sales Person']" → ["loop", "item", "['Sales Person']"]
    */
   private parsePath(path: string): string[] {
     const parts: string[] = [];
     let current = '';
     let inBracket = false;
+    let inQuote = false;
+    let quoteChar = '';
 
     for (let i = 0; i < path.length; i++) {
       const char = path[i];
 
-      if (char === '[') {
+      if ((char === '"' || char === "'") && inBracket) {
+        // Toggle quote state when inside brackets
+        if (!inQuote) {
+          inQuote = true;
+          quoteChar = char;
+        } else if (char === quoteChar) {
+          inQuote = false;
+          quoteChar = '';
+        }
+        current += char;
+      } else if (char === '[') {
         if (current) {
           parts.push(current);
           current = '';
@@ -352,7 +365,7 @@ export class ExecutionContext {
         parts.push(current);
         current = '';
         inBracket = false;
-      } else if (char === '.' && !inBracket) {
+      } else if (char === '.' && !inBracket && !inQuote) {
         if (current) {
           parts.push(current);
           current = '';
@@ -380,36 +393,47 @@ export class ExecutionContext {
         return undefined;
       }
 
-      // Handle array access: [0], [1], etc.
+      // Handle bracket notation: [0], [1], ['key'], ["key"], etc.
       if (part.startsWith('[') && part.endsWith(']')) {
-        const index = parseInt(part.slice(1, -1), 10);
+        const innerContent = part.slice(1, -1);
 
-        if (isNaN(index)) {
-          throw new VariableResolutionError(
-            `Invalid array index: ${part}`,
-            part
-          );
+        // Handle quoted string property access: ['Sales Person'] or ["Sales Person"]
+        if ((innerContent.startsWith("'") && innerContent.endsWith("'")) ||
+            (innerContent.startsWith('"') && innerContent.endsWith('"'))) {
+          const propertyName = innerContent.slice(1, -1);
+          current = current[propertyName];
         }
+        // Handle wildcard array access: [*]
+        else if (innerContent === '*') {
+          if (!Array.isArray(current)) {
+            throw new VariableResolutionError(
+              `Trying to access array wildcard on non-array value`,
+              part
+            );
+          }
+          // Return all items
+          return current;
+        }
+        // Handle numeric array index: [0], [1], etc.
+        else {
+          const index = parseInt(innerContent, 10);
 
-        if (!Array.isArray(current)) {
-          throw new VariableResolutionError(
-            `Trying to access array index on non-array value: ${part}`,
-            part
-          );
-        }
+          if (isNaN(index)) {
+            throw new VariableResolutionError(
+              `Invalid array index: ${part}`,
+              part
+            );
+          }
 
-        current = current[index];
-      }
-      // Handle wildcard array access: [*]
-      else if (part === '[*]') {
-        if (!Array.isArray(current)) {
-          throw new VariableResolutionError(
-            `Trying to access array wildcard on non-array value`,
-            part
-          );
+          if (!Array.isArray(current)) {
+            throw new VariableResolutionError(
+              `Trying to access array index on non-array value: ${part}`,
+              part
+            );
+          }
+
+          current = current[index];
         }
-        // Return all items
-        return current;
       }
       // Handle object property access
       else {

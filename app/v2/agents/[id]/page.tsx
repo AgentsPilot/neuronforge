@@ -50,6 +50,7 @@ import { AgentIntensityCardV2 } from '@/components/v2/agents/AgentIntensityCardV
 import { AgentHealthCardV2 } from '@/components/v2/agents/AgentHealthCardV2'
 import { formatScheduleDisplay, formatNextRun } from '@/lib/utils/scheduleFormatter'
 import { InlineLoading } from '@/components/v2/ui/loading'
+import { DraftAgentTour } from '@/components/agents/DraftAgentTour'
 
 type Agent = {
   id: string
@@ -1012,6 +1013,13 @@ export default function V2AgentDetailPage() {
 
   return (
     <div className="space-y-4 sm:space-y-5 lg:space-y-6">
+      {/* Draft Agent Tour */}
+      <DraftAgentTour
+        agentId={agent.id}
+        agentName={agent.agent_name}
+        agentStatus={agent.status}
+      />
+
       {/* Logo - First Line */}
       <div className="mb-3">
         <V2Logo />
@@ -1052,9 +1060,34 @@ export default function V2AgentDetailPage() {
                     {agent.agent_name}
                   </h2>
                 )}
-                <p className="text-xs sm:text-sm text-[var(--v2-text-secondary)]">
-                  {agent.mode === 'scheduled' ? 'Scheduled Agent' : 'On-Demand Agent'}
-                </p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-xs sm:text-sm text-[var(--v2-text-secondary)]">
+                    {agent.mode === 'scheduled' ? 'Scheduled Agent' : 'On-Demand Agent'}
+                  </p>
+                  <div
+                    data-tour="status-badge"
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border shadow-sm ${
+                      agent.status === 'active'
+                        ? 'bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 border-green-200 dark:border-green-700'
+                        : agent.status === 'draft'
+                        ? 'bg-gradient-to-r from-amber-50 to-yellow-50 dark:from-amber-900/20 dark:to-yellow-900/20 border-amber-200 dark:border-amber-700'
+                        : 'bg-gradient-to-r from-gray-50 to-slate-50 dark:from-gray-900/20 dark:to-slate-900/20 border-gray-200 dark:border-gray-700'
+                    }`}
+                  >
+                    <div className={`w-1.5 h-1.5 rounded-full ${
+                      agent.status === 'active' ? 'bg-green-500' : agent.status === 'draft' ? 'bg-amber-500' : 'bg-gray-400'
+                    }`}></div>
+                    <span className={`font-semibold text-xs ${
+                      agent.status === 'active'
+                        ? 'text-green-700 dark:text-green-300'
+                        : agent.status === 'draft'
+                        ? 'text-amber-700 dark:text-amber-300'
+                        : 'text-gray-700 dark:text-gray-300'
+                    }`}>
+                      {agent.status === 'active' ? 'Active' : agent.status === 'draft' ? 'Draft' : 'Inactive'}
+                    </span>
+                  </div>
+                </div>
                 {memoryCount > 0 && (
                   <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-purple-50 to-indigo-50 dark:from-purple-900/20 dark:to-indigo-900/20 border border-purple-200 dark:border-purple-700 shadow-sm mt-2">
                     <Brain className="h-4 w-4 text-purple-600 dark:text-purple-400" />
@@ -1430,6 +1463,7 @@ export default function V2AgentDetailPage() {
               {/* Launch/Pause */}
               <div className="relative group">
                 <button
+                  data-tour="activate-button"
                   onClick={handleToggleStatus}
                   className={`flex items-center justify-center w-10 h-10 hover:scale-110 transition-all duration-200 border shadow-sm ${
                     agent.status === 'active'
@@ -1476,6 +1510,7 @@ export default function V2AgentDetailPage() {
               {/* Sandbox */}
               <div className="relative group">
                 <button
+                  data-tour="test-button"
                   onClick={() => router.push(`/v2/sandbox/${agent.id}`)}
                   className="flex items-center justify-center w-10 h-10 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 hover:border-purple-200 dark:hover:border-purple-800 hover:scale-110 transition-all duration-200 shadow-sm"
                   style={{ borderRadius: 'var(--v2-radius-button)' }}

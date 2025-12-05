@@ -64,6 +64,7 @@ import {
   Phone,
   Cloud
 } from 'lucide-react'
+import { DraftAgentTour } from '@/components/agents/DraftAgentTour'
 
 // Ultra-Modern Modal with Dynamic Sizing
 const Modal = ({ isOpen, onClose, children }: { isOpen: boolean; onClose: () => void; children: React.ReactNode }) => {
@@ -955,6 +956,12 @@ export default function AgentPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
+      {/* Draft Agent Tour */}
+      <DraftAgentTour
+        agentId={agent.id}
+        agentName={agent.agent_name}
+        agentStatus={agent.status}
+      />
 
       {/* Success Notification */}
       {showSuccessNotification && (
@@ -1017,7 +1024,7 @@ export default function AgentPage() {
                   </div>
 
                   <div className="flex items-center gap-3 text-sm text-slate-600">
-                    <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full ${statusConfig.bg} border ${statusConfig.border} ${statusConfig.pulse} shadow-sm`}>
+                    <div data-tour="status-badge" className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full ${statusConfig.bg} border ${statusConfig.border} ${statusConfig.pulse} shadow-sm`}>
                       <div className={`w-1.5 h-1.5 ${statusConfig.color === 'text-emerald-600' ? 'bg-emerald-500' : statusConfig.color === 'text-amber-600' ? 'bg-amber-500' : 'bg-slate-400'} rounded-full ${statusConfig.pulse}`}></div>
                       <span className={`font-semibold text-xs ${statusConfig.color}`}>{statusConfig.label}</span>
                     </div>
@@ -1061,6 +1068,7 @@ export default function AgentPage() {
                         </button>
                       ) : (
                         <button
+                          data-tour="activate-button"
                           onClick={() => {
                             if (canActivate) {
                               handleToggleStatus()
@@ -1099,6 +1107,7 @@ export default function AgentPage() {
 
                       {/* Test Button */}
                       <button
+                        data-tour="test-button"
                         onClick={() => {
                           setExpandedTestPlayground(true)
                           setTimeout(() => {

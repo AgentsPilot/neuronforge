@@ -1,6 +1,7 @@
 // app/api/generate-agent-v2/route.ts
-// NEW: AgentKit-powered intelligent agent generation
-// This replaces blind GPT guessing with AgentKit's execution intelligence
+// ⚠️ DEPRECATED: This endpoint is kept for backward compatibility only
+// Please use /api/generate-agent-v3 (Two-Stage Generation) for all new implementations
+// This V2 endpoint uses single-stage direct analysis which is less reliable than V3
 
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'

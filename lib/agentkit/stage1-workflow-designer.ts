@@ -238,7 +238,106 @@ ${Object.entries(availablePlugins).map(([key, plugin]) => {
   return `   - ${key}: ${plugin.description}\n     - ${actionsList}`;
 }).join('\n')}
 
-5. **STEP TYPES**
+5. **CORE PRINCIPLE: NEVER GUESS - ALWAYS ASK**
+
+   When designing workflows:
+   1. **Analyze output_fields type hints** from plugin actions (see section 4)
+   2. **If data structure is ambiguous or user needs to specify a field/column** → Create {{input.X}} placeholder and add to required_inputs
+   3. **If user needs to specify which field/column to use** → Always ask via {{input.field_name}} or {{input.column_name}}
+   4. **Never hardcode field names** unless they're explicitly documented in the plugin's output_fields
+
+   Examples:
+   - ❌ BAD: "field": "Sales Person" (assumes field exists in data)
+   - ✅ GOOD: "field": "{{input.column_name}}" (asks user which column via required_inputs)
+
+6. **DATA STRUCTURE PATTERNS** (from output_fields type hints)
+
+   When you see these type hints in plugin output_fields:
+
+   **Pattern A: array<array> (2D Arrays - Table Data)**
+   - **Example**: google-sheets.read_sheet → outputs: {values:array<array>, row_count:integer}
+   - **What it is**: Rows and columns like [["Header1", "Header2"], ["Data1", "Data2"]]
+   - **How to access**: By row and column index, or lookup by header name
+   - **What to ask user**: "Which column?" → {{input.column_name}}
+   - **How to use**: Create transform step with column lookup helper
+
+   Example workflow for 2D array:
+   {
+     "type": "action",
+     "plugin": "google-sheets",
+     "action": "read_sheet",
+     "params": { "spreadsheet_id": "{{input.spreadsheet_id}}", "range": "{{input.sheet_name}}" }
+   },
+   {
+     "type": "transform",
+     "operation": "deduplicate",
+     "input": "{{step1.values}}",
+     "config": { "column": "{{input.column_name}}" }  // User provides column name like "Sales Person"
+   }
+
+   **Pattern B: array<object> (Record Arrays - Structured Data)**
+   - **Example**: airtable.list_records → outputs: {records:array<object>, record_count:integer}
+   - **Example**: gmail.search_emails → outputs: {emails:array<object>, total_found:integer}
+   - **What it is**: Array of objects like [{fields: {Name: "John", Email: "..."}}, ...]
+   - **How to access**: Dot notation {{item.fields.FieldName}} or bracket {{item['fields']['Field Name']}}
+   - **What to ask user**: "Which field name?" → {{input.field_name}}
+   - **How to use**: Loop with {{loop.item.fields[input.field_name]}}
+
+   Example workflow for array<object>:
+   {
+     "type": "action",
+     "plugin": "airtable",
+     "action": "list_records",
+     "params": { "base_id": "{{input.base_id}}", "table_name": "{{input.table_name}}" }
+   },
+   {
+     "type": "loop",
+     "iterateOver": "{{step1.records}}",
+     "loopSteps": [{
+       "type": "conditional",
+       "condition": {
+         "field": "loop.item.fields[{{input.field_name}}]",  // User specifies which field
+         "operator": "==",
+         "value": "{{input.field_value}}"
+       }
+     }]
+   }
+
+   **Pattern C: object (Single Result - Simple Data)**
+   - **Example**: chatgpt-research.research_topic → outputs: {summary:string, key_points:array<string>, sources:array<object>}
+   - **What it is**: Single object with fixed fields like {summary: "...", key_points: [...]}
+   - **How to access**: Direct reference {{step1.summary}}, {{step1.key_points}}
+   - **What to ask user**: Nothing about structure - use documented field names directly
+   - **How to use**: Reference fields by name from output_fields
+
+   Example workflow for simple object:
+   {
+     "type": "action",
+     "plugin": "chatgpt-research",
+     "action": "research_topic",
+     "params": { "topic": "{{input.research_topic}}", "depth": "standard" }
+   },
+   {
+     "type": "action",
+     "plugin": "google-mail",
+     "action": "send_email",
+     "params": {
+       "recipients": { "to": ["{{input.recipient_email}}"] },
+       "content": {
+         "subject": "Research Results",
+         "body": "{{step1.summary}}"  // Direct field access - no user input needed
+       }
+     }
+   }
+
+   **Pattern D: Nested object with arrays (Complex Responses)**
+   - **Example**: hubspot.search_contacts → outputs: {data:object, total_count:integer}
+   - **What it is**: Nested structure like {data: {contacts: [{properties: {...}}]}}
+   - **How to access**: Path navigation {{step1.data.contacts}}
+   - **What to ask user**: Depends on what they need from nested structure
+   - **How to use**: Check plugin's sample_output for exact structure
+
+7. **STEP TYPES**
    - action: Call a plugin action (Gmail, Slack, Sheets, etc.) - use "plugin" and "action" fields
    - ai_processing: Use AI to analyze/transform data
    - llm_decision: LLM makes a decision
@@ -348,6 +447,32 @@ get all customers → ai_processing (extract ALL at once) → transform results
    - Previous step: {{prev.data}} - output from last step
    - Loop current item: {{loop.item.field}} - current iteration item
    - Loop index: {{loop.index}} - current iteration number (0-based)
+
+   **IMPORTANT: Variable Reference Syntax Rules:**
+
+   **1. Step outputs** (from action steps):
+   - Simple fields: {{step1.fieldName}} or {{step1.data.fieldName}}
+   - Fields with dashes/spaces: {{step1['field-name']}} or {{step1.data['field with spaces']}}
+   - Nested paths: {{step1.data.contacts[0].email}}
+
+   **2. Loop items**:
+   - For objects: {{loop.item.fieldName}} or {{loop.item['field with spaces']}}
+   - For arrays: {{loop.item[0]}} (by index)
+   - For 2D arrays: {{loop.item[column_index]}} where column_index comes from user input
+   - Loop index: {{loop.index}} (0-based iteration number)
+
+   **3. User inputs** (from required_inputs):
+   - {{input.fieldName}} - Always use camelCase for input field names
+   - Example: {{input.columnName}}, {{input.spreadsheetId}}, {{input.recipientEmail}}
+
+   **4. Dynamic field access** (when user specifies field/column name):
+   - For 2D arrays: Use transform operation with column lookup (don't use bracket notation directly)
+   - For objects: {{loop.item.fields[{{input.fieldName}}]}} (nested bracket notation)
+
+   **KEY RULE**: Only use bracket notation for:
+   - Fields with spaces/dashes/special characters (e.g., {{item['Sales Person']}})
+   - Dynamic index access (e.g., {{item[{{input.columnIndex}}]}})
+   - NOT for assuming field names exist in data without checking output_fields
 
    **CRITICAL: ai_processing step outputs**
    ai_processing and llm_decision steps return data in {{stepN.data.result}} format:
@@ -681,6 +806,7 @@ get all customers → ai_processing (extract ALL at once) → transform results
    ✓ Action steps: params is nested object
    ✓ Transform steps: operation/input/config at TOP LEVEL (no params)
    ✓ Loop steps use "loopSteps" array with {{loop.item.X}} syntax
+   ✓ 🚨 **Use bracket notation ['...'] for field names with spaces or special characters**
    ✓ NO ai_processing steps inside loops (use batch processing instead)
    ✓ AI processes arrays in single calls, not loops
    ✓ 🚨 **NO $PLACEHOLDER format anywhere** (use required_inputs + {{input.field_name}})

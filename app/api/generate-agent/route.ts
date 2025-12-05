@@ -1,3 +1,7 @@
+// ⚠️ DEPRECATED: Original V1 endpoint - kept for backward compatibility only
+// Please use /api/generate-agent-v3 (Two-Stage Generation) for all new implementations
+// This V1 endpoint uses legacy OpenAI-based generation which is superseded by Claude-based V3
+
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
@@ -5,7 +9,7 @@ import { createClient } from '@supabase/supabase-js'
 import { v4 as uuidv4 } from 'uuid'
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics'
 import { OpenAIProvider } from '@/lib/ai/providers/openaiProvider'
-import { 
+import {
   pluginRegistry,
   getPluginDefinition,
   getConnectedPluginsWithMetadata,

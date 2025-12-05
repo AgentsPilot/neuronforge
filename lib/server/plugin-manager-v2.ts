@@ -205,14 +205,46 @@ export class PluginManagerV2 {
           description: actionDef.description,
           // Include ONLY required parameters (not full schema)
           required_params: actionDef.parameters?.required || [],
-          // ✅ CRITICAL FIX: Include output field names so LLM knows what to reference
-          // Compressed format: show top 3 fields + "+N" for remaining (68% token reduction)
+          // ✅ CRITICAL FIX: Include output field names WITH TYPE HINTS so LLM knows data structures
+          // Compressed format: show top 3 fields with types + "+N" for remaining (68% token reduction)
           output_fields: actionDef.output_schema?.properties
             ? (() => {
-                const allFields = Object.keys(actionDef.output_schema.properties);
-                const topFields = allFields.slice(0, 3);
-                const remaining = allFields.length - 3;
-                return remaining > 0 ? [...topFields, `+${remaining}`] : topFields;
+                const props = actionDef.output_schema.properties;
+                const allFieldNames = Object.keys(props);
+
+                // Generate type hints for top 3 fields
+                const fieldHints = allFieldNames.slice(0, 3).map((fieldName) => {
+                  const schema = props[fieldName];
+                  const type = schema.type;
+                  const isArray = type === 'array';
+
+                  if (!isArray) {
+                    // Simple type: fieldName:type
+                    return `${fieldName}:${type}`;
+                  }
+
+                  // Array type - detect structure
+                  const itemSchema = schema.items;
+                  if (!itemSchema) {
+                    return `${fieldName}:array`;
+                  }
+
+                  // Check if it's a 2D array (array of arrays)
+                  if (itemSchema.type === 'array') {
+                    return `${fieldName}:array<array>`;  // 2D array like Google Sheets
+                  }
+
+                  // Check if it's an array of objects
+                  if (itemSchema.type === 'object' || itemSchema.properties) {
+                    return `${fieldName}:array<object>`;  // Array of objects like Airtable
+                  }
+
+                  // Array of primitives
+                  return `${fieldName}:array<${itemSchema.type || 'any'}>`;
+                });
+
+                const remaining = allFieldNames.length - 3;
+                return remaining > 0 ? [...fieldHints, `+${remaining}`] : fieldHints;
               })()
             : []
         }))

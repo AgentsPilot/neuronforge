@@ -811,6 +811,10 @@ For each plugin action in workflow_steps:
    - {{step1.data.field_name}} for previous step outputs (plugin actions)
    - {{step2.data.X}} for AI processing results (see below for available fields)
 
+   IMPORTANT: Use bracket notation ['...'] for field names containing spaces or special characters:
+   - Simple fields: {{step1.data.email}} or {{loop.item.status}}
+   - Fields with spaces/special chars: {{step1.data['First Name']}} or {{loop.item['Sales Person']}}
+
 Example: append_rows needs "spreadsheet_id", "range", "values"
    - "values" comes from AI summary → "params": {"values": [[{{step2.data.summary}}]]}
    - "spreadsheet_id" NOT in prompt → add to required_inputs + use {{input.spreadsheet_id}} in params

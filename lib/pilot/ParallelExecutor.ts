@@ -90,14 +90,22 @@ export class ParallelExecutor {
     // Resolve array to iterate over
     const items = context.resolveVariable(iterateOver);
 
-    console.log(`[ParallelExecutor] Loop ${step.id}: iterateOver="${iterateOver}" resolved to:`, JSON.stringify(items).substring(0, 200));
+    console.log(`[ParallelExecutor] Loop ${step.id}: iterateOver="${iterateOver}"`);
     console.log(`[ParallelExecutor] Resolved type: ${typeof items}, isArray: ${Array.isArray(items)}`);
+
+    if (items !== undefined && items !== null) {
+      const itemsStr = JSON.stringify(items);
+      console.log(`[ParallelExecutor] Resolved to:`, itemsStr.substring(0, 200));
+    } else {
+      console.error(`[ParallelExecutor] ⚠️  iterateOver resolved to ${items === null ? 'null' : 'undefined'}`);
+    }
 
     if (!Array.isArray(items)) {
       // Try to show the structure of what was resolved
       if (items && typeof items === 'object') {
         console.error(`[ParallelExecutor] Resolved object keys:`, Object.keys(items));
-        console.error(`[ParallelExecutor] Resolved object structure:`, JSON.stringify(items, null, 2).substring(0, 500));
+        const itemsStr = JSON.stringify(items, null, 2);
+        console.error(`[ParallelExecutor] Resolved object structure:`, itemsStr.substring(0, 500));
       }
 
       throw new ExecutionError(

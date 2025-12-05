@@ -147,6 +147,190 @@
   animation: slideIn 0.4s ease-out;
 }
 
+/* React Joyride Tour Theming */
+.__floater__arrow polygon {
+  fill: white !important;
+}
+
+.dark .__floater__arrow polygon {
+  fill: rgb(30 41 59) !important; /* slate-800 */
+}
+
+.react-joyride__tooltip {
+  background-color: white !important;
+  border: 1px solid rgb(229 231 235) !important; /* gray-200 */
+  border-radius: 16px !important;
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.06) !important;
+  color: rgb(31 41 55) !important; /* gray-800 */
+}
+
+.dark .react-joyride__tooltip {
+  background-color: rgb(30 41 59) !important; /* slate-800 */
+  border-color: rgb(51 65 85) !important; /* slate-700 */
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3) !important;
+  color: rgb(241 245 249) !important; /* slate-100 */
+}
+
+/* Headings */
+.react-joyride__tooltip h2,
+.react-joyride__tooltip h3 {
+  color: rgb(31 41 55) !important; /* gray-800 */
+}
+
+.dark .react-joyride__tooltip h2,
+.dark .react-joyride__tooltip h3 {
+  color: rgb(241 245 249) !important; /* slate-100 */
+}
+
+/* Paragraph text */
+.react-joyride__tooltip p {
+  color: rgb(107 114 128) !important; /* gray-500 */
+}
+
+.dark .react-joyride__tooltip p {
+  color: rgb(203 213 225) !important; /* slate-400 */
+}
+
+/* Agent name span (font-medium) - darker for better visibility */
+.react-joyride__tooltip span.font-medium {
+  color: rgb(31 41 55) !important; /* gray-800 */
+}
+
+.dark .react-joyride__tooltip span.font-medium {
+  color: rgb(226 232 240) !important; /* slate-200 */
+}
+
+/* Badge spans with inline-flex - explicit amber styling for Draft badge */
+.react-joyride__tooltip span.inline-flex.bg-amber-100 {
+  background-color: rgb(254 243 199) !important; /* amber-100 */
+  color: rgb(146 64 14) !important; /* amber-700 */
+}
+
+.dark .react-joyride__tooltip span.inline-flex.bg-amber-100 {
+  background-color: rgba(217, 119, 6, 0.3) !important; /* amber-900/30 */
+  color: rgb(251 191 36) !important; /* amber-400 */
+}
+
+/* Status boxes in agent status step - informational only, no hover */
+.react-joyride__tooltip .space-y-2\.5 > div {
+  pointer-events: none !important;
+  cursor: default !important;
+}
+
+/* Status boxes - dark mode backgrounds */
+.dark .react-joyride__tooltip .bg-amber-50 {
+  background-color: rgba(217, 119, 6, 0.2) !important; /* amber-900/20 */
+}
+
+.dark .react-joyride__tooltip .bg-emerald-50 {
+  background-color: rgba(6, 95, 70, 0.2) !important; /* emerald-900/20 */
+}
+
+.dark .react-joyride__tooltip .bg-gray-50 {
+  background-color: rgba(51, 65, 85, 0.5) !important; /* slate-700/50 - lighter than tooltip bg */
+}
+
+.dark .react-joyride__tooltip .border-amber-100 {
+  border-color: rgb(146 64 14) !important; /* amber-800 */
+}
+
+.dark .react-joyride__tooltip .border-emerald-100 {
+  border-color: rgb(6 95 70) !important; /* emerald-800 */
+}
+
+.dark .react-joyride__tooltip .border-gray-100 {
+  border-color: rgb(51 65 85) !important; /* slate-700 */
+}
+
+.dark .react-joyride__tooltip .text-amber-900 {
+  color: rgb(253 230 138) !important; /* amber-200 */
+}
+
+.dark .react-joyride__tooltip .text-emerald-900 {
+  color: rgb(167 243 208) !important; /* emerald-200 */
+}
+
+.dark .react-joyride__tooltip .text-gray-900 {
+  color: rgb(226 232 240) !important; /* slate-200 */
+}
+
+.dark .react-joyride__tooltip .text-amber-700 {
+  color: rgb(251 191 36) !important; /* amber-400 */
+}
+
+.dark .react-joyride__tooltip .text-emerald-700 {
+  color: rgb(52 211 153) !important; /* emerald-400 */
+}
+
+.dark .react-joyride__tooltip .text-gray-600 {
+  color: rgb(148 163 184) !important; /* slate-400 */
+}
+
+/* Primary button - smaller size to fit better */
+.react-joyride__tooltip button[data-action="primary"] {
+  background: linear-gradient(to bottom right, #10B981, #059669) !important;
+  color: white !important;
+  border: none !important;
+  border-radius: 10px !important;
+  padding: 8px 18px !important;
+  font-weight: 600 !important;
+  font-size: 14px !important;
+  box-shadow: 0 4px 16px rgba(16, 185, 129, 0.3) !important;
+  transition: all 0.2s ease !important;
+}
+
+.react-joyride__tooltip button[data-action="primary"]:hover {
+  box-shadow: 0 8px 24px rgba(16, 185, 129, 0.4) !important;
+  transform: translateY(-2px) !important;
+}
+
+/* Secondary buttons - ghost variant */
+.react-joyride__tooltip button[data-action="back"],
+.react-joyride__tooltip button[data-action="skip"] {
+  color: rgb(55 65 81) !important; /* gray-700 */
+  background: transparent !important;
+  border: none !important;
+  padding: 8px 12px !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  border-radius: 8px !important;
+  transition: all 0.2s ease !important;
+  white-space: nowrap !important;
+}
+
+.dark .react-joyride__tooltip button[data-action="back"],
+.dark .react-joyride__tooltip button[data-action="skip"] {
+  color: rgb(229 231 235) !important; /* gray-200 */
+}
+
+.react-joyride__tooltip button[data-action="back"]:hover,
+.react-joyride__tooltip button[data-action="skip"]:hover {
+  background: rgb(243 244 246) !important; /* gray-100 */
+}
+
+.dark .react-joyride__tooltip button[data-action="back"]:hover,
+.dark .react-joyride__tooltip button[data-action="skip"]:hover {
+  background: rgb(51 65 85) !important; /* slate-700 */
+}
+
+.react-joyride__tooltip button[data-action="skip"] {
+  color: rgb(107 114 128) !important; /* gray-500 */
+  font-weight: 400 !important;
+}
+
+.dark .react-joyride__tooltip button[data-action="skip"] {
+  color: rgb(156 163 175) !important; /* gray-400 */
+}
+
+.react-joyride__tooltip__footer {
+  border-top: 1px solid rgb(229 231 235) !important; /* gray-200 */
+  background: transparent !important;
+}
+
+.dark .react-joyride__tooltip__footer {
+  border-top-color: rgb(51 65 85) !important; /* slate-700 */
+}
+
 /* Glass morphism effect */
 .glass {
   background: rgba(255, 255, 255, 0.8);

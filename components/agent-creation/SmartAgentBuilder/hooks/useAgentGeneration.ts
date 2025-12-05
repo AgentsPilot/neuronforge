@@ -67,90 +67,45 @@ export const useAgentGeneration = () => {
       });
 
       // ========================================
-      // 🎯 TRY V3 FIRST (Two-Stage Generation)
+      // 🎯 V3 ONLY - Two-Stage Generation (No Fallbacks)
       // ========================================
       // V3 uses two-stage generation: Stage 1 (Claude Sonnet 4 for structure) + Stage 2 (Claude Haiku for parameters)
-      // Falls back to V2 (AgentKit Direct) if it fails, then V1 (original) as final fallback
+      // NO FALLBACKS - If V3 fails, we surface the error to fix the root cause
 
-      let response;
-      let result;
-      let usedVersion = 'v1';
+      console.log('🎯 Using V3 (Two-Stage) generation - canonical system');
 
-      // Try V3: Two-Stage Generation (Claude Sonnet 4 + Claude Haiku)
-      try {
-        console.log('🎯 Attempting V3 (Two-Stage) generation...');
-        response = await fetch('/api/generate-agent-v3', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(options.sessionId && { 'x-session-id': options.sessionId }),
-            ...(options.agentId && { 'x-agent-id': options.agentId }),
-          },
-          body: JSON.stringify(requestPayload)
-        });
+      const response = await fetch('/api/generate-agent-v3', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(options.sessionId && { 'x-session-id': options.sessionId }),
+          ...(options.agentId && { 'x-agent-id': options.agentId }),
+        },
+        body: JSON.stringify(requestPayload)
+      });
 
-        if (response.ok) {
-          result = await response.json();
-          usedVersion = 'v3';
-          console.log('✅ V3 (Two-Stage) generation successful!');
-        } else {
-          throw new Error(`V3 failed with status ${response.status}`);
-        }
-      } catch (v3Error) {
-        console.error('❌ [V3 Failed] Two-Stage generation failed:', {
-          error: v3Error instanceof Error ? v3Error.message : String(v3Error),
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('❌ V3 generation failed:', {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorData.error,
+          details: errorData.details,
+          stage: errorData.stage, // Which stage failed (1 or 2)
           prompt_length: prompt.length,
           timestamp: new Date().toISOString()
         });
-        console.warn('⚠️ Falling back to V2 (AgentKit Direct)...');
 
-        // Try V2: AgentKit Direct
-        try {
-          console.log('🎯 Attempting V2 (AgentKit Direct) generation...');
-          response = await fetch('/api/generate-agent-v2', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(options.sessionId && { 'x-session-id': options.sessionId }),
-              ...(options.agentId && { 'x-agent-id': options.agentId }),
-            },
-            body: JSON.stringify(requestPayload)
-          });
-
-          if (response.ok) {
-            result = await response.json();
-            usedVersion = 'v2';
-            console.log('✅ V2 (AgentKit Direct) generation successful!');
-          } else {
-            throw new Error(`V2 failed with status ${response.status}`);
-          }
-        } catch (v2Error) {
-          console.warn('⚠️ V2 (AgentKit Direct) generation failed, falling back to V1:', v2Error);
-
-          // ========================================
-          // 📦 FALLBACK TO V1 (Original GPT-based)
-          // ========================================
-          console.log('📦 Using V1 (Original) generation as fallback...');
-          response = await fetch('/api/generate-agent', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(options.sessionId && { 'x-session-id': options.sessionId }),
-              ...(options.agentId && { 'x-agent-id': options.agentId }),
-            },
-            body: JSON.stringify(requestPayload)
-          });
-
-          if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.error || `All versions failed. HTTP ${response.status}: ${response.statusText}`);
-          }
-
-          result = await response.json();
-          usedVersion = 'v1';
-          console.log('✅ V1 (Original) generation successful');
-        }
+        throw new Error(
+          errorData.error ||
+          `Agent generation failed (${response.status}): ${response.statusText}. Please try again or contact support if the issue persists.`
+        );
       }
+
+      const result = await response.json();
+      const usedVersion = 'v3';
+
+      console.log('✅ V3 (Two-Stage) generation successful!');
       console.log('✅ Agent generation result with ID tracking:', {
         hasAgent: !!result.agent,
         agentName: result.agent?.agent_name,

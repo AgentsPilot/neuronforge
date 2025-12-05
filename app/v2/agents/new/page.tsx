@@ -834,10 +834,10 @@ function V2AgentBuilderContent() {
 
       // Remove typing indicator and show success message
       removeTypingIndicator()
-      addAIMessage('🎉 Your agent has been created successfully!')
+      addAIMessage('🎉 Your agent has been created successfully! Taking you to your new agent...')
 
       setTimeout(() => {
-        router.push(`/v2/agents/${result.agent.id}`)
+        router.push(`/agents/${result.agent.id}`)
       }, 1500)
 
     } catch (error: any) {
