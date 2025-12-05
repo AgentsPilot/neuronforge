@@ -161,7 +161,8 @@ export class ParallelExecutor {
     const items = context.resolveVariable?.(scatter.input) ?? [];
 
     console.log(`🔍 [ParallelExecutor] Scatter input: ${scatter.input}`);
-    console.log(`🔍 [ParallelExecutor] Resolved to:`, JSON.stringify(items).substring(0, 200));
+    const itemsStr = JSON.stringify(items || []);
+    console.log(`🔍 [ParallelExecutor] Resolved to:`, itemsStr.substring(0, Math.min(200, itemsStr.length)));
     console.log(`🔍 [ParallelExecutor] Available variables:`, Object.keys(context.variables));
 
     if (!Array.isArray(items)) {
@@ -185,13 +186,17 @@ export class ParallelExecutor {
     );
 
     console.log(`🎯 [ParallelExecutor] Scatter complete, gathering ${scatterResults.length} results`);
-    console.log(`🔍 [ParallelExecutor] Scatter results sample:`, JSON.stringify(scatterResults[0]).substring(0, 300));
+    if (scatterResults.length > 0) {
+      const sample = JSON.stringify(scatterResults[0] || {});
+      console.log(`🔍 [ParallelExecutor] Scatter results sample:`, sample.substring(0, Math.min(300, sample.length)));
+    }
 
     // Gather: Aggregate results based on operation
     const gatheredResult = this.gatherResults(scatterResults, gather.operation, gather.reduceExpression);
 
     console.log(`✅ [ParallelExecutor] Scatter-gather complete for ${step.id}`);
-    console.log(`🔍 [ParallelExecutor] Gathered result:`, JSON.stringify(gatheredResult).substring(0, 300));
+    const resultStr = JSON.stringify(gatheredResult || {});
+    console.log(`🔍 [ParallelExecutor] Gathered result:`, resultStr.substring(0, Math.min(300, resultStr.length)));
 
     return gatheredResult;
   }

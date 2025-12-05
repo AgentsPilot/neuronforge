@@ -1,0 +1,72 @@
+{
+  "workflow": {
+    "step1": {
+      "id": "step1",
+      "type": "plugin",
+      "plugin": "google-mail",
+      "action": "search_emails",
+      "parameters": {
+        "query": "has:attachment subject:(expense OR receipt OR invoice)",
+        "max_results": 10,
+        "include_attachments": true,
+        "folder": "inbox"
+      },
+      "output_variable": "gmail_results"
+    },
+    "step2": {
+      "id": "step2",
+      "type": "conditional",
+      "condition": {
+        "field": "{{step1.data.total_found}}",
+        "operator": "greater_than",
+        "value": "0"
+      },
+      "then": "step3",
+      "else": "end"
+    },
+    "step3": {
+      "id": "step3",
+      "type": "scatter_gather",
+      "scatter": {
+        "input": "{{step1.data.emails}}",
+        "itemVariable": "email",
+        "maxConcurrency": 3,
+        "steps": [
+          {
+            "id": "step3_extract",
+            "type": "ai_processing",
+            "llm_config": {
+              "provider": "openai",
+              "model": "gpt-4o-mini",
+              "temperature": 0.1
+            },
+            "prompt": "Extract expense data from this email and attachment:\n\nSubject: {{email.subject}}\nFrom: {{email.from}}\nBody: {{email.body}}\n\nExtract: date, vendor, amount, category, description. Return as JSON.",
+            "output_variable": "extracted_expense"
+          }
+        ]
+      },
+      "gather": {
+        "operation": "collect_all",
+        "output_variable": "all_expenses"
+      }
+    },
+    "step4": {
+      "id": "step4",
+      "type": "transform",
+      "operation": "flatten",
+      "input": "{{step3.data}}",
+      "output_variable": "flattened_expenses"
+    },
+    "step5": {
+      "id": "step5",
+      "type": "ai_processing",
+      "llm_config": {
+        "provider": "openai",
+        "model": "gpt-4o",
+        "temperature": 0.3
+      },
+      "prompt": "Create expense report from this data:\n\n{{step4.data}}\n\nFormat as professional expense report with totals by category.",
+      "output_variable": "expense_report"
+    }
+  }
+}

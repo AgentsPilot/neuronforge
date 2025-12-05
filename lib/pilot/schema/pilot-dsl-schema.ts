@@ -348,7 +348,7 @@ export const PILOT_DSL_SCHEMA = {
             },
             outputKey: {
               type: "string",
-              description: "Key to store the gathered result"
+              description: "DEPRECATED: This field is ignored. Results are always stored in {{stepN.data}}"
             },
             reduceExpression: {
               type: "string",

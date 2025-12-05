@@ -354,6 +354,19 @@ ${Object.entries(availablePlugins).map(([key, plugin]) => {
    - sub_workflow: Call another workflow
    - human_approval: Wait for human input
 
+   **CRITICAL: scatter_gather Output References**
+
+   Scatter-gather results are stored DIRECTLY in {{stepN.data}}, NOT in a nested field.
+   The gather.outputKey field in the schema is IGNORED by the execution engine.
+
+   ✅ CORRECT: {{step3.data}} - Always use this for scatter_gather outputs
+   ❌ WRONG: {{step3.data.outputKey}} - This will fail (outputKey is ignored)
+   ❌ WRONG: {{step3.data.all_results}} - This will fail (no nested structure)
+
+   Example:
+   Step 3: scatter_gather with gather: { operation: "collect", outputKey: "results" }
+   Step 4: Reference the gathered array using {{step3.data}} NOT {{step3.data.results}}
+
 6. **CONDITIONAL EXECUTION PATTERNS**
 
    **Pattern 1: Branching with 'conditional' step type** (use for if/else with different step sequences)
@@ -590,14 +603,13 @@ get all customers → ai_processing (extract ALL at once) → transform results
          "itemVariable": "item"
        },
        "gather": {
-         "operation": "collect",
-         "outputKey": "all_analyses"
+         "operation": "collect"
        }
      },
      {
        "id": "step5",
        "type": "ai_processing",
-       "input": "Best Practices: {{step3.data.result}}\n\nCurrent Documentation Analysis: {{step4.data.all_analyses}}",
+       "input": "Best Practices: {{step3.data.result}}\n\nCurrent Documentation Analysis: {{step4.data}}",
        "prompt": "Compare best practices against our current documentation. For EACH best practice, identify if it's: covered (yes/no), gap_severity (critical/high/medium/low), recommended_action. Return as structured array."
      },
      {
@@ -970,7 +982,7 @@ function buildStage1ToolSchema(): any {
               description: 'Gather configuration for scatter_gather steps (REQUIRED for scatter_gather steps)',
               properties: {
                 operation: { type: 'string', description: 'Gather operation: collect, merge, reduce', enum: ['collect', 'merge', 'reduce'] },
-                outputKey: { type: 'string', description: 'Key to store gathered results' },
+                outputKey: { type: 'string', description: 'DEPRECATED: This field is ignored. Results are always stored in {{stepN.data}}' },
                 reduceExpression: { type: 'string', description: 'Expression for reduce operation' }
               }
             },
