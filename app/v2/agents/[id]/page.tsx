@@ -7,6 +7,7 @@ import React, { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
+import { agentRepository } from '@/lib/repositories'
 import { Card } from '@/components/v2/ui/card'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import {
@@ -822,11 +823,7 @@ export default function V2AgentDetailPage() {
 
     setActionLoading('delete')
     try {
-      const { error } = await supabase
-        .from('agents')
-        .delete()
-        .eq('id', agentId)
-        .eq('user_id', user.id)
+      const { error } = await agentRepository.softDelete(agentId, user.id)
 
       if (error) {
         console.error('Error deleting agent:', error)
