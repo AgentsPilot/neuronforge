@@ -392,13 +392,19 @@ This diagram shows the complete user journey through `useConversationalBuilder.t
 │  id: uuid                                   │
 │  user_id: uuid                              │
 │  openai_thread_id: "thread_abc123"          │
-│  status: "active"                           │
+│  status: "active" → "completed"             │
 │  current_phase: 3                           │
-│  agent_id: null (until approved)            │
+│  agent_id: null → uuid (after create-agent) │
 │  created_at: 2025-10-26T10:00:00Z           │
 │  updated_at: 2025-10-26T10:05:23Z           │
 │  expires_at: 2025-10-27T10:00:00Z (24h)     │
-│  metadata: { ... }                          │
+│  metadata: {                                │
+│    last_phase: 3,                           │
+│    last_updated: "...",                     │
+│    iterations: [...],  ← Full audit trail   │
+│    phase1_connected_services: [...],        │
+│    phase1_available_services: [...]         │
+│  }                                          │
 │                                             │
 └─────────────────────────────────────────────┘
 ```
@@ -887,6 +893,227 @@ interface ResolvedUserInput {
 
 ---
 
+## 📝 Iterations Audit Trail (V11)
+
+### Overview
+Each phase iteration now stores the full request and response in `metadata.iterations[]`, providing a complete audit trail of the conversation including mini-cycles.
+
+### Data Structure
+
+```typescript
+metadata: {
+  last_phase: 3,
+  last_updated: "2025-12-05T13:12:36.963Z",
+  iterations: [
+    {
+      phase: 1,
+      timestamp: "2025-12-05T13:06:54.221Z",
+      request: {
+        phase: 1,
+        user_prompt: "share with my mail a summary...",
+        user_context: { full_name, email, ... },
+        connected_services: ["google-mail", "slack", ...],
+        available_services: [...]
+      },
+      response: {
+        success: true,
+        workflow_draft: [...],
+        analysis: {...},
+        clarityScore: 75,
+        requiredServices: ["chatgpt-research", "google-mail"],
+        missingPlugins: [],
+        conversationalSummary: "..."
+      }
+    },
+    {
+      phase: 2,
+      timestamp: "2025-12-05T13:07:01.728Z",
+      request: {
+        phase: 2,
+        connected_services: [...],
+        user_feedback: null,
+        enhanced_prompt: null,
+        declined_services: []
+      },
+      response: {
+        success: true,
+        questionsSequence: [
+          { id: "q1", question: "...", type: "text", theme: "Inputs" },
+          ...
+        ]
+      }
+    },
+    {
+      phase: 3,
+      timestamp: "2025-12-05T13:12:36.963Z",
+      request: {
+        phase: 3,
+        clarification_answers: { q1: "...", q2: "..." },
+        connected_services: [...],
+        declined_services: []
+      },
+      response: {
+        success: true,
+        enhanced_prompt: {
+          plan_title: "...",
+          plan_description: "...",
+          sections: { data: [...], actions: [...], ... },
+          specifics: { services_involved: [...], ... }
+        },
+        metadata: { ready_for_generation: true, ... }
+      }
+    }
+  ],
+  phase1_connected_services: [...],
+  phase1_available_services: [...]
+}
+```
+
+### Mini-Cycle Support
+
+When a phase runs multiple times (mini-cycles), each iteration is appended:
+
+```
+iterations: [
+  { phase: 1, ... },
+  { phase: 2, ... },
+  { phase: 2, ... },  // Mini-cycle iteration
+  { phase: 2, ... },  // Another refinement
+  { phase: 3, ... }
+]
+```
+
+### Implementation
+
+**File:** [app/api/agent-creation/process-message/route.ts:499-520](../app/api/agent-creation/process-message/route.ts#L499-L520)
+
+```typescript
+const iterationRecord = {
+  phase,
+  timestamp: new Date().toISOString(),
+  request: userMessage,
+  response: aiResponse
+};
+
+const updatedMetadata = {
+  ...threadRecord.metadata,
+  last_phase: phase,
+  last_updated: new Date().toISOString(),
+  iterations: [
+    ...(threadRecord.metadata?.iterations || []),
+    iterationRecord
+  ],
+  // Phase 1 context for fallback
+  ...(phase === 1 && {
+    phase1_connected_services: user_connected_services,
+    phase1_available_services: user_available_services
+  })
+};
+```
+
+---
+
+## 🔗 Agent-Thread Linking (V11)
+
+### Overview
+When an agent is created via `/api/create-agent`, the thread record is updated with the `agent_id`, linking the conversation history to the created agent.
+
+### Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  init-thread                                                        │
+│  Returns: { thread_id: "thread_abc123" }  ← OpenAI thread ID        │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  Phase 1-3 (process-message)                                        │
+│  • iterations saved to thread metadata                              │
+│  • ready_for_generation: true                                       │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  generate-agent-v3                                                  │
+│  Returns: { agent: {...}, agentId: "uuid" }  ← Generated config     │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  create-agent (with thread_id)                                      │
+│  ─────────────────────────────────────────────────────────────────  │
+│  1. Saves agent to `agents` table                                   │
+│  2. Looks up thread by OpenAI thread ID                             │
+│  3. Updates thread: agent_id = data.id, status = 'completed'        │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  Thread now linked to agent                                         │
+│  agent_prompt_threads.agent_id = agents.id                          │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Frontend Integration
+
+**File:** [app/v2/agents/new/page.tsx:793-798](../app/v2/agents/new/page.tsx#L793-L798)
+
+```typescript
+const createRes = await fetch('/api/create-agent', {
+  method: 'POST',
+  headers: { ... },
+  body: JSON.stringify({
+    agent: agentData,
+    sessionId: sessionId.current,
+    agentId: agentId.current,
+    thread_id: threadId  // ← OpenAI thread ID passed to backend
+  })
+})
+```
+
+### Backend Implementation
+
+**File:** [app/api/create-agent/route.ts:251-272](../app/api/create-agent/route.ts#L251-L272)
+
+```typescript
+// 🔗 Link agent to thread if thread_id (OpenAI thread ID) provided
+if (thread_id) {
+  try {
+    const threadRepository = getAgentPromptThreadRepository();
+
+    // Look up the internal DB record by OpenAI thread ID
+    const threadRecord = await threadRepository.getThreadByOpenAIId(
+      thread_id,
+      agentUserIdToUse
+    );
+
+    if (threadRecord) {
+      await threadRepository.updateThread(threadRecord.id, {
+        agent_id: data.id,
+        status: 'completed'
+      });
+      console.log('🔗 Linked agent to thread:', {
+        agentId: data.id,
+        thread_id,
+        dbRecordId: threadRecord.id
+      });
+    }
+  } catch (linkError: any) {
+    console.warn('⚠️ Failed to link agent to thread (non-critical):', linkError.message);
+  }
+}
+```
+
+### Benefits
+
+1. **Traceability**: Every agent can be traced back to its creation conversation
+2. **Audit Trail**: Full iterations history available for debugging
+3. **Analytics**: Track which prompts lead to successful agents
+4. **Resume Support**: Thread can be resumed to modify the agent
+
+---
+
 ## 📚 Related Documentation
 
 - **Main Flow:** You are here
@@ -896,7 +1123,7 @@ interface ResolvedUserInput {
 
 ---
 
-**Document Version**: 2.0
-**Last Updated**: 2025-01-23 (Added V10 Enhancements)
+**Document Version**: 3.0
+**Last Updated**: 2025-12-05 (Added V11: Iterations Audit Trail + Agent-Thread Linking)
 **Author**: Development Team
 

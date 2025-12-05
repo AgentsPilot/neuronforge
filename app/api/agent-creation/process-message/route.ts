@@ -495,10 +495,23 @@ export async function POST(request: NextRequest) {
     }
 
     // Step 13: Update thread record in database using repository
+    // Build iteration record for audit trail (supports mini cycles)
+    const iterationRecord = {
+      phase,
+      timestamp: new Date().toISOString(),
+      request: userMessage,
+      response: aiResponse
+    };
+
     const updatedMetadata = {
       ...threadRecord.metadata,
       last_phase: phase,
       last_updated: new Date().toISOString(),
+      // Append to iterations history for full audit trail
+      iterations: [
+        ...(threadRecord.metadata?.iterations || []),
+        iterationRecord
+      ],
       // Store Phase 1 context for Phase 2 reference (v8 requirement)
       ...(phase === 1 && {
         phase1_connected_services: user_connected_services,

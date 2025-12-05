@@ -793,7 +793,8 @@ function V2AgentBuilderContent() {
         body: JSON.stringify({
           agent: agentData,
           sessionId: sessionId.current,
-          agentId: agentId.current
+          agentId: agentId.current,
+          thread_id: threadId
         })
       })
 

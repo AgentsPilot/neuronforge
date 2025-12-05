@@ -49,11 +49,12 @@ export async function POST(request: NextRequest) {
     console.log('Request body keys:', Object.keys(body));
     
     // FIXED: Extract agent data AND IDs from the request body
-    const { agent, sessionId: providedSessionId, agentId: providedAgentId } = body;
+    const { agent, sessionId: providedSessionId, agentId: providedAgentId, thread_id } = body;
     
     console.log('🆔 CREATE-AGENT API - Extracted IDs:', {
       providedAgentId,
       providedSessionId,
+      thread_id,
       hasAgent: !!agent,
       agentIdType: typeof providedAgentId,
       sessionIdType: typeof providedSessionId
@@ -246,6 +247,29 @@ export async function POST(request: NextRequest) {
       // Silent failure - don't block agent creation
       console.error('⚠️ Audit log failed (non-blocking):', err);
     });
+
+    // 🔗 Link agent to thread if thread_id (OpenAI thread ID) provided
+    if (thread_id) {
+      try {
+        const { getAgentPromptThreadRepository } = await import('@/lib/agent-creation/agent-prompt-thread-repository');
+        const threadRepository = getAgentPromptThreadRepository();
+
+        // Look up the internal DB record by OpenAI thread ID (same as process-message)
+        const threadRecord = await threadRepository.getThreadByOpenAIId(thread_id, agentUserIdToUse);
+
+        if (threadRecord) {
+          await threadRepository.updateThread(threadRecord.id, {
+            agent_id: data.id,
+            status: 'completed'
+          });
+          console.log('🔗 Linked agent to thread:', { agentId: data.id, thread_id, dbRecordId: threadRecord.id });
+        } else {
+          console.warn('⚠️ Thread record not found for OpenAI thread ID:', thread_id);
+        }
+      } catch (linkError: any) {
+        console.warn('⚠️ Failed to link agent to thread (non-critical):', linkError.message);
+      }
+    }
 
     // Track creation costs in AIS system now that agent exists in database
     if (providedSessionId) {
