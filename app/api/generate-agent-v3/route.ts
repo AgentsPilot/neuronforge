@@ -315,7 +315,7 @@ export async function POST(req: Request) {
       agent: {
         user_id: user.id,
         agent_name: agent.agent_name,
-        user_prompt: prompt,
+        user_prompt: clarificationAnswers?.originalPrompt || prompt,  // Original user prompt (not enhanced)
         system_prompt: `You are an AI agent designed to ${agent.agent_description}`,
         description: agent.agent_description,
         plugins_required: agent.suggested_plugins,
@@ -365,7 +365,7 @@ export async function POST(req: Request) {
           timezone: 'UTC',
           agent_name: agent.agent_name,
           description: agent.agent_description,
-          user_prompt: prompt,
+          user_prompt: clarificationAnswers?.originalPrompt || prompt,  // Original user prompt
           input_schema: agent.required_inputs || [],
           output_schema: [],
           workflow_steps: agent.workflow_steps || [],

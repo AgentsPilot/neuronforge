@@ -465,7 +465,7 @@ export async function POST(req: Request) {
     const agentData = {
       user_id: user.id,
       agent_name: analysis.agent_name,
-      user_prompt: prompt,
+      user_prompt: clarificationAnswers?.originalPrompt || prompt,  // Original user prompt (not enhanced)
       system_prompt: analysis.system_prompt,  // Use AI-generated execution-optimized system prompt
       description: analysis.description,
       plugins_required: analysis.suggested_plugins,
@@ -515,7 +515,7 @@ export async function POST(req: Request) {
         timezone: 'America/New_York',
         agent_name: analysis.agent_name,
         description: analysis.description,
-        user_prompt: prompt,
+        user_prompt: clarificationAnswers?.originalPrompt || prompt,  // Original user prompt
         input_schema: analysis.required_inputs,
         output_schema: outputInference.outputs,
         workflow_steps: analysis.workflow_steps,
