@@ -281,6 +281,14 @@ export class ExecutionContext {
       return this.getNestedValue(this.variables, parts);
     }
 
+    // Check if root is a custom scatter/loop variable (e.g., 'email', 'customer', etc.)
+    // This handles itemVariable from scatter_gather steps
+    if (this.variables.hasOwnProperty(root)) {
+      const itemValue = this.variables[root];
+      // Navigate nested path if present: email.id, customer.name, etc.
+      return parts.length > 1 ? this.getNestedValue(itemValue, parts.slice(1)) : itemValue;
+    }
+
     throw new VariableResolutionError(
       `Unknown variable reference root: ${root}`,
       reference
