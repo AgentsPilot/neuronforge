@@ -3,20 +3,24 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { supabase as defaultSupabase } from '@/lib/supabaseClient';
+import { createLogger, Logger } from '@/lib/logger';
 import type {
   Agent,
   AgentStatus,
   CreateAgentInput,
   UpdateAgentInput,
+  UpdateAgentDetailsInput,
   AgentRepositoryResult,
 } from './types';
 import { STATUS_TRANSITIONS } from './types';
 
 export class AgentRepository {
   private supabase: SupabaseClient;
+  private logger: Logger;
 
   constructor(supabaseClient?: SupabaseClient) {
     this.supabase = supabaseClient || defaultSupabase;
+    this.logger = createLogger({ service: 'AgentRepository' });
   }
 
   // ============ Query Operations ============
@@ -144,7 +148,12 @@ export class AgentRepository {
    * Create a new agent
    */
   async create(input: CreateAgentInput): Promise<AgentRepositoryResult<Agent>> {
+    const methodLogger = this.logger.child({ method: 'create', userId: input.user_id });
+    const startTime = Date.now();
+
     try {
+      methodLogger.debug({ agentName: input.agent_name }, 'Creating agent');
+
       const { data, error } = await this.supabase
         .from('agents')
         .insert({
@@ -155,8 +164,14 @@ export class AgentRepository {
         .single();
 
       if (error) throw error;
+
+      const duration = Date.now() - startTime;
+      methodLogger.info({ agentId: data.id, duration }, 'Agent created');
+
       return { data, error: null };
     } catch (error) {
+      const duration = Date.now() - startTime;
+      methodLogger.error({ err: error, duration }, 'Failed to create agent');
       return { data: null, error: error as Error };
     }
   }
@@ -200,19 +215,23 @@ export class AgentRepository {
     newStatus: AgentStatus,
     reason?: string
   ): Promise<AgentRepositoryResult<Agent>> {
+    const methodLogger = this.logger.child({ method: 'updateStatus', agentId: id, userId });
+
     try {
       // Get current agent to validate transition
       const { data: current, error: fetchError } = await this.findById(id, userId);
       if (fetchError) throw fetchError;
       if (!current) throw new Error('Agent not found');
 
+      methodLogger.debug({ currentStatus: current.status, newStatus }, 'Validating status transition');
+
       // Validate status transition
       const allowedTransitions = STATUS_TRANSITIONS[current.status];
       if (!allowedTransitions.includes(newStatus)) {
-        throw new Error(
-          `Invalid status transition: ${current.status} → ${newStatus}. ` +
-            `Allowed transitions from '${current.status}': ${allowedTransitions.join(', ') || 'none'}`
-        );
+        const errorMsg = `Invalid status transition: ${current.status} → ${newStatus}. ` +
+          `Allowed transitions from '${current.status}': ${allowedTransitions.join(', ') || 'none'}`;
+        methodLogger.warn({ currentStatus: current.status, newStatus }, errorMsg);
+        throw new Error(errorMsg);
       }
 
       const updateData: Record<string, unknown> = {
@@ -239,8 +258,12 @@ export class AgentRepository {
         .single();
 
       if (error) throw error;
+
+      methodLogger.info({ previousStatus: current.status, newStatus }, 'Agent status updated');
+
       return { data, error: null };
     } catch (error) {
+      methodLogger.error({ err: error, newStatus }, 'Failed to update agent status');
       return { data: null, error: error as Error };
     }
   }
@@ -275,7 +298,11 @@ export class AgentRepository {
    * Soft delete - marks agent as deleted but keeps data for potential recovery
    */
   async softDelete(id: string, userId: string): Promise<AgentRepositoryResult<boolean>> {
+    const methodLogger = this.logger.child({ method: 'softDelete', agentId: id, userId });
+
     try {
+      methodLogger.debug('Soft deleting agent');
+
       const { error } = await this.supabase
         .from('agents')
         .update({
@@ -288,8 +315,11 @@ export class AgentRepository {
         .is('deleted_at', null);
 
       if (error) throw error;
+
+      methodLogger.info('Agent soft deleted');
       return { data: true, error: null };
     } catch (error) {
+      methodLogger.error({ err: error }, 'Failed to soft delete agent');
       return { data: false, error: error as Error };
     }
   }
@@ -299,7 +329,11 @@ export class AgentRepository {
    * Use with caution - this cannot be undone
    */
   async hardDelete(id: string, userId: string): Promise<AgentRepositoryResult<boolean>> {
+    const methodLogger = this.logger.child({ method: 'hardDelete', agentId: id, userId });
+
     try {
+      methodLogger.warn('Hard deleting agent - this cannot be undone');
+
       const { error } = await this.supabase
         .from('agents')
         .delete()
@@ -307,8 +341,11 @@ export class AgentRepository {
         .eq('user_id', userId);
 
       if (error) throw error;
+
+      methodLogger.info('Agent permanently deleted');
       return { data: true, error: null };
     } catch (error) {
+      methodLogger.error({ err: error }, 'Failed to hard delete agent');
       return { data: false, error: error as Error };
     }
   }
@@ -317,7 +354,11 @@ export class AgentRepository {
    * Restore a soft-deleted agent
    */
   async restore(id: string, userId: string): Promise<AgentRepositoryResult<Agent>> {
+    const methodLogger = this.logger.child({ method: 'restore', agentId: id, userId });
+
     try {
+      methodLogger.debug('Restoring soft-deleted agent');
+
       const { data, error } = await this.supabase
         .from('agents')
         .update({
@@ -332,8 +373,11 @@ export class AgentRepository {
         .single();
 
       if (error) throw error;
+
+      methodLogger.info('Agent restored to draft status');
       return { data, error: null };
     } catch (error) {
+      methodLogger.error({ err: error }, 'Failed to restore agent');
       return { data: null, error: error as Error };
     }
   }
@@ -359,6 +403,87 @@ export class AgentRepository {
       return { data: data?.length || 0, error: null };
     } catch (error) {
       return { data: 0, error: error as Error };
+    }
+  }
+
+  // ============ Additional Operations ============
+
+  /**
+   * Duplicate an agent with "(Copy)" suffix and draft status
+   */
+  async duplicate(agentId: string, userId: string): Promise<AgentRepositoryResult<Agent>> {
+    const methodLogger = this.logger.child({ method: 'duplicate', agentId, userId });
+    const startTime = Date.now();
+
+    try {
+      methodLogger.debug('Duplicating agent');
+
+      // First fetch the original agent
+      const { data: original, error: fetchError } = await this.findById(agentId, userId);
+      if (fetchError) throw fetchError;
+      if (!original) throw new Error('Agent not found');
+
+      // Create a copy with modified name and draft status
+      const { data, error } = await this.supabase
+        .from('agents')
+        .insert({
+          user_id: userId,
+          agent_name: `${original.agent_name} (Copy)`,
+          description: original.description,
+          config: original.config,
+          schedule_cron: original.schedule_cron,
+          timezone: original.timezone,
+          status: 'draft',
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      const duration = Date.now() - startTime;
+      methodLogger.info({ newAgentId: data.id, originalName: original.agent_name, duration }, 'Agent duplicated');
+
+      return { data, error: null };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      methodLogger.error({ err: error, duration }, 'Failed to duplicate agent');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Update agent details (name, description, schedule, mode, timezone)
+   */
+  async updateDetails(
+    id: string,
+    userId: string,
+    input: UpdateAgentDetailsInput
+  ): Promise<AgentRepositoryResult<Agent>> {
+    const methodLogger = this.logger.child({ method: 'updateDetails', agentId: id, userId });
+
+    try {
+      methodLogger.debug({ fields: Object.keys(input) }, 'Updating agent details');
+
+      const { data, error } = await this.supabase
+        .from('agents')
+        .update({
+          ...input,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .eq('user_id', userId)
+        .is('deleted_at', null)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      methodLogger.info({ updatedFields: Object.keys(input) }, 'Agent details updated');
+
+      return { data, error: null };
+    } catch (error) {
+      methodLogger.error({ err: error }, 'Failed to update agent details');
+      return { data: null, error: error as Error };
     }
   }
 }

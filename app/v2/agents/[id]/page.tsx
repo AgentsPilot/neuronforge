@@ -7,7 +7,17 @@ import React, { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
-import { agentRepository } from '@/lib/repositories'
+import {
+  agentRepository,
+  executionRepository,
+  sharedAgentRepository,
+  agentMetricsRepository,
+  configRepository,
+  memoryRepository,
+  type Agent,
+  type Execution,
+  type TokenUsage,
+} from '@/lib/repositories'
 import { Card } from '@/components/v2/ui/card'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import {
@@ -52,57 +62,9 @@ import { AgentHealthCardV2 } from '@/components/v2/agents/AgentHealthCardV2'
 import { formatScheduleDisplay, formatNextRun } from '@/lib/utils/scheduleFormatter'
 import { InlineLoading } from '@/components/v2/ui/loading'
 import { DraftAgentTour } from '@/components/agents/DraftAgentTour'
+import { clientLogger } from '@/lib/logger/client'
 
-type Agent = {
-  id: string
-  agent_name: string
-  description?: string
-  status: string
-  mode?: string
-  schedule_cron?: string | null
-  timezone?: string | null
-  next_run?: string
-  created_at?: string
-  plugins_required?: string[]
-  connected_plugins?: Record<string, any>
-  input_schema?: any[]
-  output_schema?: any[]
-  user_prompt?: string
-  workflow_steps?: any[]
-}
-
-type Execution = {
-  id: string
-  status: string
-  started_at: string
-  completed_at?: string
-  execution_duration_ms?: number
-  error_message?: string
-  output?: any
-  logs?: {
-    tokensUsed?: {
-      total: number
-      prompt: number
-      completion: number
-      adjusted?: number
-      intensityMultiplier?: number
-      intensityScore?: number
-      _source?: string
-    }
-    pilot?: boolean
-    agentkit?: boolean
-    model?: string
-    provider?: string
-    iterations?: number
-    toolCalls?: any[]
-    executionId?: string
-    stepsCompleted?: number
-    stepsFailed?: number
-    stepsSkipped?: number
-    totalSteps?: number
-    inputValuesUsed?: number
-  }
-}
+// Agent and Execution types are now imported from @/lib/repositories
 
 // Helper function to get plugin-specific icon (using local SVG files via PluginIcon)
 const getPluginIcon = (pluginName: string) => {
@@ -180,10 +142,18 @@ export default function V2AgentDetailPage() {
 
   useEffect(() => {
     if (user && agentId) {
+      clientLogger.setContext({ component: 'V2AgentDetailPage', agentId, userId: user.id })
+      clientLogger.info('Agent detail page mounted', { agentId })
+
       fetchAgentData()
       fetchTokensPerPilotCredit()
       fetchSharingRewardAmount()
       fetchShareRewardStatus()
+
+      return () => {
+        clientLogger.debug('Agent detail page unmounted')
+        clientLogger.clearContext()
+      }
     }
   }, [user, agentId])
 
@@ -197,56 +167,23 @@ export default function V2AgentDetailPage() {
   const fetchMemoryCount = async () => {
     if (!agentId) return
 
-    try {
-      const { count, error } = await supabase
-        .from('run_memories')
-        .select('*', { count: 'exact', head: true })
-        .eq('agent_id', agentId)
-
-      if (!error && count !== null) {
-        setMemoryCount(count)
-      }
-    } catch (error) {
-      console.error('Error fetching memory count:', error)
+    const { data: count, error } = await memoryRepository.countByAgentId(agentId)
+    if (!error && count !== null) {
+      setMemoryCount(count)
     }
   }
 
   const fetchTokensPerPilotCredit = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('ais_system_config')
-        .select('config_value')
-        .eq('config_key', 'tokens_per_pilot_credit')
-        .single()
-
-      if (!error && data) {
-        const value = parseInt(data.config_value)
-        if (value > 0 && value <= 1000) {
-          setTokensPerPilotCredit(value)
-          console.log(`[AGENT PAGE] Fetched tokens_per_pilot_credit: ${value}`)
-        }
-      }
-    } catch (error) {
-      console.error('Error fetching tokens_per_pilot_credit:', error)
-      // Keep default value of 10
+    const value = await configRepository.getSystemConfigAsNumber('tokens_per_pilot_credit', 10)
+    if (value > 0 && value <= 1000) {
+      setTokensPerPilotCredit(value)
+      clientLogger.debug('Fetched tokens per pilot credit', { value })
     }
   }
 
   const fetchSharingRewardAmount = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('reward_config')
-        .select('credits_amount')
-        .eq('reward_key', 'agent_sharing')
-        .eq('is_active', true)
-        .maybeSingle()
-
-      if (!error && data) {
-        setSharingRewardAmount(data.credits_amount)
-      }
-    } catch (error) {
-      console.error('Error fetching sharing reward amount:', error)
-    }
+    const amount = await configRepository.getRewardAmount('agent_sharing', 500)
+    setSharingRewardAmount(amount)
   }
 
   const fetchShareRewardStatus = async () => {
@@ -269,7 +206,7 @@ export default function V2AgentDetailPage() {
       const isActive = shareReward.is_active ?? false
       setShareRewardActive(isActive)
     } catch (error) {
-      console.error('Error fetching share reward config:', error)
+      clientLogger.error('Error fetching share reward config', error as Error)
       setShareRewardActive(false)
     }
   }
@@ -277,26 +214,25 @@ export default function V2AgentDetailPage() {
   const checkSharingEligibility = async () => {
     if (!user?.id || !agent?.id) return
 
-    console.log('[SHARE VALIDATION] Starting eligibility check')
+    clientLogger.debug('Starting sharing eligibility check')
 
     try {
       const { AgentSharingValidator } = await import('@/lib/credits/agentSharingValidation')
       const validator = new AgentSharingValidator(supabase)
 
       const validation = await validator.validateSharing(user.id, agent.id)
-      console.log('[SHARE VALIDATION] Validation result:', validation)
+      clientLogger.debug('Sharing validation result', { valid: validation.valid, reason: validation.reason })
       setSharingValidation(validation)
 
       const status = await validator.getSharingStatus(user.id)
-      console.log('[SHARE VALIDATION] Status:', status)
+      clientLogger.debug('Sharing status', { sharesRemaining: status?.sharesRemaining })
       setSharingStatus(status)
 
       // Get validator config for displaying requirements
       const config = validator.getConfig()
-      console.log('[SHARE VALIDATION] Config:', config)
       setSharingConfig(config)
     } catch (error) {
-      console.error('[SHARE VALIDATION] Error checking sharing eligibility:', error)
+      clientLogger.error('Error checking sharing eligibility', error as Error)
     }
   }
 
@@ -306,29 +242,20 @@ export default function V2AgentDetailPage() {
     setLoading(true)
     try {
       // Fetch agent details
-      const { data: agentData, error: agentError } = await supabase
-        .from('agents')
-        .select('*, connected_plugins, plugins_required')
-        .eq('id', agentId)
-        .eq('user_id', user.id)
-        .single()
+      const { data: agentData, error: agentError } = await agentRepository.findById(agentId, user.id)
 
       if (agentError) throw agentError
       setAgent(agentData)
 
       // Fetch ALL executions for health score calculation
-      const { data: allExecutionsData, error: allExecutionsError } = await supabase
-        .from('agent_executions')
-        .select('*')
-        .eq('agent_id', agentId)
-        .order('started_at', { ascending: false })
+      const { data: allExecutionsData, error: allExecutionsError } = await executionRepository.findByAgentId(agentId)
 
       if (allExecutionsError) {
-        console.error('Error fetching all executions:', allExecutionsError)
+        clientLogger.error('Error fetching all executions', allExecutionsError)
       }
 
       if (allExecutionsData) {
-        console.log(`[V2 Agent Page] Fetched ${allExecutionsData.length} executions for agent ${agentId}`);
+        clientLogger.debug('Fetched executions', { count: allExecutionsData.length });
 
         // Identify executions missing token data
         const executionsNeedingTokenData = allExecutionsData.filter(execution => {
@@ -339,30 +266,20 @@ export default function V2AgentDetailPage() {
           return !hasCompleteTokenData;
         });
 
-        console.log(`[V2 Agent Page] ${executionsNeedingTokenData.length} executions need token data from token_usage table`);
+        clientLogger.debug('Executions needing token data', { count: executionsNeedingTokenData.length });
 
         // Batch fetch ALL token data for executions missing data (single query!)
         let tokenDataByExecutionId = new Map();
         if (executionsNeedingTokenData.length > 0) {
           const executionIds = executionsNeedingTokenData.map(e => e.id);
 
-          const { data: allTokenDataRecords, error: tokenError } = await supabase
-            .from('token_usage')
-            .select('execution_id, input_tokens, output_tokens, activity_type')
-            .in('execution_id', executionIds);
+          const { data: tokenDataMap, error: tokenError } = await executionRepository.getTokenUsageMapByExecutionIds(executionIds);
 
-          if (!tokenError && allTokenDataRecords) {
-            console.log(`[V2 Agent Page] Fetched ${allTokenDataRecords.length} token records for ${executionIds.length} executions`);
-
-            // Group token records by execution_id
-            allTokenDataRecords.forEach(record => {
-              if (!tokenDataByExecutionId.has(record.execution_id)) {
-                tokenDataByExecutionId.set(record.execution_id, []);
-              }
-              tokenDataByExecutionId.get(record.execution_id).push(record);
-            });
+          if (!tokenError && tokenDataMap) {
+            clientLogger.debug('Fetched token records', { executionCount: executionIds.length });
+            tokenDataByExecutionId = tokenDataMap;
           } else if (tokenError) {
-            console.error(`[V2 Agent Page] Error fetching batch token data:`, tokenError);
+            clientLogger.error('Error fetching batch token data', tokenError);
           }
         }
 
@@ -381,8 +298,8 @@ export default function V2AgentDetailPage() {
           const tokenRecords = tokenDataByExecutionId.get(execution.id);
           if (tokenRecords && tokenRecords.length > 0) {
             // Sum ALL token records for this execution
-            const inputTokens = tokenRecords.reduce((sum, record) => sum + (record.input_tokens || 0), 0);
-            const outputTokens = tokenRecords.reduce((sum, record) => sum + (record.output_tokens || 0), 0);
+            const inputTokens = tokenRecords.reduce((sum: number, record: TokenUsage) => sum + (record.input_tokens || 0), 0);
+            const outputTokens = tokenRecords.reduce((sum: number, record: TokenUsage) => sum + (record.output_tokens || 0), 0);
             const totalTokens = inputTokens + outputTokens;
 
             return {
@@ -406,7 +323,7 @@ export default function V2AgentDetailPage() {
           return execution;
         });
 
-        console.log(`[V2 Agent Page] Enrichment complete. Summary:`, {
+        clientLogger.debug('Enrichment complete', {
           totalExecutions: enrichedExecutions.length,
           withTokenData: enrichedExecutions.filter(e => e.logs?.tokensUsed?.total).length,
           withoutTokenData: enrichedExecutions.filter(e => !e.logs?.tokensUsed?.total).length
@@ -420,14 +337,6 @@ export default function V2AgentDetailPage() {
         // Set first execution as selected by default
         if (enrichedExecutions.length > 0) {
           const firstExec = enrichedExecutions[0];
-          console.log('[V2 Agent Page] Auto-selecting first execution:', {
-            id: firstExec.id?.slice(0, 8),
-            started_at: firstExec.started_at,
-            tokensUsed: firstExec.logs?.tokensUsed,
-            hasAdjusted: !!firstExec.logs?.tokensUsed?.adjusted,
-            adjustedValue: firstExec.logs?.tokensUsed?.adjusted,
-            totalValue: firstExec.logs?.tokensUsed?.total
-          });
           setSelectedExecution(firstExec)
         }
       }
@@ -435,7 +344,7 @@ export default function V2AgentDetailPage() {
       // Fetch memory count (non-blocking)
       fetchMemoryCount()
     } catch (error) {
-      console.error('Error fetching agent data:', error)
+      clientLogger.error('Error fetching agent data', error as Error)
       router.push('/v2/agent-list')
     } finally {
       setLoading(false)
@@ -445,6 +354,7 @@ export default function V2AgentDetailPage() {
   const handleRunAgent = async () => {
     if (!agent) return
 
+    clientLogger.info('Running agent', { agentId: agent.id })
     setExecuting(true)
     try {
       const response = await fetch('/api/run-agent', {
@@ -454,32 +364,34 @@ export default function V2AgentDetailPage() {
       })
 
       if (response.ok) {
+        clientLogger.info('Agent run completed', { agentId: agent.id })
         // Refresh executions after running
         await fetchAgentData()
       }
     } catch (error) {
-      console.error('Error running agent:', error)
+      clientLogger.error('Error running agent', error as Error)
     } finally {
       setExecuting(false)
     }
   }
 
   const handleToggleStatus = async () => {
-    if (!agent) return
+    if (!agent || !user) return
 
     const newStatus = agent.status === 'active' ? 'inactive' : 'active'
+    clientLogger.info('Toggling agent status', { agentId: agent.id, currentStatus: agent.status, newStatus })
 
     try {
-      const { error } = await supabase
-        .from('agents')
-        .update({ status: newStatus })
-        .eq('id', agent.id)
+      const { data: updatedAgent, error } = agent.status === 'active'
+        ? await agentRepository.pause(agent.id, user.id)
+        : await agentRepository.activate(agent.id, user.id)
 
-      if (!error) {
-        setAgent({ ...agent, status: newStatus })
+      if (!error && updatedAgent) {
+        setAgent(updatedAgent)
+        clientLogger.info('Agent status toggled', { agentId: agent.id, newStatus: updatedAgent.status })
       }
     } catch (error) {
-      console.error('Error toggling status:', error)
+      clientLogger.error('Error toggling status', error as Error)
     }
   }
 
@@ -676,26 +588,7 @@ export default function V2AgentDetailPage() {
       const cronExpression = buildCronExpression()
       const mode = scheduleMode === 'manual' ? 'on_demand' : 'scheduled'
 
-      const { error } = await supabase
-        .from('agents')
-        .update({
-          agent_name: editedName,
-          description: editedDescription,
-          schedule_cron: cronExpression,
-          mode: mode,
-          timezone: editedTimezone || null
-        })
-        .eq('id', agent.id)
-        .eq('user_id', user.id)
-
-      if (error) {
-        console.error('Error updating agent:', error)
-        return
-      }
-
-      // Update local state
-      setAgent({
-        ...agent,
+      const { data: updatedAgent, error } = await agentRepository.updateDetails(agent.id, user.id, {
         agent_name: editedName,
         description: editedDescription,
         schedule_cron: cronExpression,
@@ -703,9 +596,29 @@ export default function V2AgentDetailPage() {
         timezone: editedTimezone || null
       })
 
+      if (error) {
+        clientLogger.error('Error updating agent', error)
+        return
+      }
+
+      // Update local state with returned data or fallback to manual update
+      if (updatedAgent) {
+        setAgent(updatedAgent)
+        clientLogger.info('Agent details saved', { agentId: agent.id })
+      } else {
+        setAgent({
+          ...agent,
+          agent_name: editedName,
+          description: editedDescription,
+          schedule_cron: cronExpression,
+          mode: mode,
+          timezone: editedTimezone || null
+        })
+      }
+
       setIsEditing(false)
     } catch (error) {
-      console.error('Error saving agent:', error)
+      clientLogger.error('Error saving agent', error as Error)
     } finally {
       setIsSaving(false)
     }
@@ -787,30 +700,18 @@ export default function V2AgentDetailPage() {
   const handleDuplicateAgent = async () => {
     if (!agent || !user) return
 
+    clientLogger.info('Duplicating agent', { agentId: agent.id })
     setActionLoading('duplicate')
     try {
-      const { data: newAgent, error } = await supabase
-        .from('agents')
-        .insert([{
-          user_id: user.id,
-          agent_name: `${agent.agent_name} (Copy)`,
-          description: agent.description,
-          connected_plugins: agent.connected_plugins,
-          plugins_required: agent.plugins_required,
-          mode: agent.mode,
-          schedule_cron: agent.schedule_cron,
-          timezone: agent.timezone,
-          status: 'draft'
-        }])
-        .select()
-        .single()
+      const { data: newAgent, error } = await agentRepository.duplicate(agentId, user.id)
 
       if (error) {
-        console.error('Error duplicating agent:', error)
+        clientLogger.error('Error duplicating agent', error)
         return
       }
 
       if (newAgent) {
+        clientLogger.info('Agent duplicated', { originalId: agent.id, newId: newAgent.id })
         router.push(`/v2/agents/${newAgent.id}`)
       }
     } finally {
@@ -821,15 +722,17 @@ export default function V2AgentDetailPage() {
   const handleDeleteAgent = async () => {
     if (!agent || !user) return
 
+    clientLogger.info('Deleting agent', { agentId: agent.id })
     setActionLoading('delete')
     try {
       const { error } = await agentRepository.softDelete(agentId, user.id)
 
       if (error) {
-        console.error('Error deleting agent:', error)
+        clientLogger.error('Error deleting agent', error)
         return
       }
 
+      clientLogger.info('Agent deleted', { agentId: agent.id })
       router.push('/v2/agent-list')
     } finally {
       setActionLoading(null)
@@ -838,20 +741,13 @@ export default function V2AgentDetailPage() {
   }
 
   const handleShareAgentClick = () => {
-    console.log('[SHARE] Click handler called', {
-      hasAgent: !!agent,
-      hasUser: !!user,
-      status: agent?.status,
-      showShareConfirm
-    })
-
     if (!agent || !user || agent.status !== 'active') {
-      console.log('[SHARE] Validation failed, not opening modal')
+      clientLogger.debug('Share validation failed', { hasAgent: !!agent, hasUser: !!user, status: agent?.status })
       return
     }
 
     // Validation is pre-fetched in useEffect, so modal opens instantly
-    console.log('[SHARE] Opening modal')
+    clientLogger.debug('Opening share modal', { agentId: agent.id })
     setShowShareConfirm(true)
   }
 
@@ -880,14 +776,8 @@ export default function V2AgentDetailPage() {
       }
 
       // Check if already shared
-      const { data: existingShared } = await supabase
-        .from('shared_agents')
-        .select('id')
-        .eq('original_agent_id', agent.id)
-        .eq('user_id', user.id)
-        .maybeSingle()
-
-      if (existingShared) {
+      const alreadyShared = await sharedAgentRepository.existsByOriginalAgent(agent.id, user.id)
+      if (alreadyShared) {
         alert('This agent has already been shared!')
         return
       }
@@ -905,14 +795,10 @@ export default function V2AgentDetailPage() {
       }
 
       // Get base metrics for snapshot
-      const { data: metrics } = await supabase
-        .from('agent_intensity_metrics')
-        .select('success_rate, total_executions')
-        .eq('agent_id', agent.id)
-        .maybeSingle()
+      const { data: metrics } = await agentMetricsRepository.getBasicMetrics(agent.id)
 
       // Insert into shared_agents with calculated scores
-      const { error: insertError } = await supabase.from('shared_agents').insert([{
+      const { error: insertError } = await sharedAgentRepository.create({
         original_agent_id: agent.id,
         user_id: user.id,
         agent_name: agent.agent_name,
@@ -924,21 +810,19 @@ export default function V2AgentDetailPage() {
         plugins_required: agent.plugins_required,
         workflow_steps: agent.workflow_steps,
         mode: agent.mode,
-        shared_at: new Date().toISOString(),
         // Quality scores
         quality_score: finalScore.overall_score,
         reliability_score: finalScore.reliability_score,
         efficiency_score: finalScore.efficiency_score,
         adoption_score: finalScore.adoption_score,
         complexity_score: finalScore.complexity_score,
-        score_calculated_at: new Date().toISOString(),
         // Base metrics snapshot
         base_executions: metrics?.total_executions || 0,
         base_success_rate: metrics?.success_rate || 0
-      }])
+      })
 
       if (insertError) {
-        console.error('Error sharing agent:', insertError)
+        clientLogger.error('Error sharing agent', insertError)
         alert(`Failed to share agent: ${insertError.message}`)
         return
       }
@@ -956,6 +840,7 @@ export default function V2AgentDetailPage() {
         setShareQualityScore(Math.round(finalScore.overall_score))
         setShowShareSuccess(true)
         setHasBeenShared(true)
+        clientLogger.info('Agent shared successfully', { agentId: agent.id, qualityScore: finalScore.overall_score, creditsAwarded: rewardResult.creditsAwarded })
 
         // Auto-hide notification after 5 seconds
         setTimeout(() => setShowShareSuccess(false), 5000)
@@ -964,7 +849,7 @@ export default function V2AgentDetailPage() {
       // Refresh page to show updated state
       await fetchAgentData()
     } catch (error) {
-      console.error('Error in handleShareAgent:', error)
+      clientLogger.error('Error in handleShareAgent', error as Error)
       alert('Failed to share agent. Please try again.')
     } finally {
       setActionLoading(null)
@@ -1346,7 +1231,7 @@ export default function V2AgentDetailPage() {
                         </p>
                         <p className="text-xs text-[var(--v2-text-muted)] mt-0.5">
                           {agent.mode === 'scheduled'
-                            ? formatScheduleDisplay(agent.mode, agent.schedule_cron)
+                            ? formatScheduleDisplay(agent.mode, agent.schedule_cron ?? undefined)
                             : 'Run manually when needed'
                           }
                         </p>
@@ -1355,10 +1240,10 @@ export default function V2AgentDetailPage() {
                   </div>
 
                   {/* Next Run Badge (only for scheduled agents) */}
-                  {agent.mode === 'scheduled' && agent.next_run && (
+                  {agent.mode === 'scheduled' && agent.next_run_at && (
                     <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-700">
                       <CheckCircle className="w-3 h-3" />
-                      Next: {formatNextRun(agent.next_run, agent.timezone || undefined)}
+                      Next: {formatNextRun(agent.next_run_at, agent.timezone ?? undefined)}
                     </div>
                   )}
                 </div>
@@ -1643,7 +1528,7 @@ export default function V2AgentDetailPage() {
                         </div>
                       </div>
                       <div className="text-xs font-medium text-[var(--v2-text-muted)]">
-                        {formatDuration(exec.execution_duration_ms)}
+                        {formatDuration(exec.execution_duration_ms ?? undefined)}
                       </div>
                     </button>
                   ))}
@@ -2022,14 +1907,6 @@ export default function V2AgentDetailPage() {
 
                             // Convert to Pilot Tokens (divide by tokens_per_pilot_credit from DB)
                             const pilotTokens = Math.ceil(llmTokens / tokensPerPilotCredit);
-
-                            console.log('[AGENT PAGE] Token Display Debug:', {
-                              executionId: selectedExecution.id?.slice(0, 8),
-                              llmTokens,
-                              tokensPerPilotCredit,
-                              pilotTokens,
-                              source: selectedExecution.logs?.tokensUsed?._source
-                            });
 
                             return pilotTokens.toLocaleString();
                           })()}
