@@ -207,7 +207,7 @@ All shared types are centralized in `lib/repositories/types.ts`:
 | Type | Description |
 |------|-------------|
 | `Agent` | Core agent entity with all fields |
-| `AgentStatus` | Status union type: `'draft' \| 'active' \| 'inactive'` |
+| `AgentStatus` | Status union type: `'draft' \| 'active' \| 'inactive' \| 'deleted'` |
 | `Execution` | Agent execution record with logs |
 | `ExecutionLogs` | Structured execution log data |
 | `TokenUsage` | Token consumption record |
@@ -288,9 +288,11 @@ All repositories integrate with the application's logging system following the g
 
 ### Logger Setup
 
-Each repository initializes a Pino logger in its constructor:
+Each repository initializes a Pino logger in its constructor and uses the server-side Supabase client:
 
 ```typescript
+import { SupabaseClient } from '@supabase/supabase-js';
+import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 
 export class AgentRepository {
@@ -303,6 +305,8 @@ export class AgentRepository {
   }
 }
 ```
+
+**Important:** All repositories must use `supabaseServer` from `@/lib/supabaseServer`, NOT the browser client from `@/lib/supabaseClient`. The browser client will fail when called from API routes.
 
 ### Method-Level Logging Pattern
 
@@ -401,6 +405,35 @@ export function AgentDetailPage({ agentId }: Props) {
     }
   };
 }
+```
+
+## API Routes Using Repositories
+
+The following API routes use the repository layer and can be called from client components:
+
+| Route | Method | Repository | Description |
+|-------|--------|------------|-------------|
+| `/api/agents` | GET | `agentRepository.findAllByUser()` | List agents with optional status filter |
+| `/api/agents/[id]` | GET | Direct Supabase | Get single agent |
+| `/api/agents/[id]` | PUT | Direct Supabase | Update agent |
+| `/api/agents/[id]/status` | PATCH | `agentRepository.updateStatus()` | Update agent status |
+
+**Client Component Pattern:**
+```typescript
+'use client'
+
+// Fetch agents via API route
+const response = await fetch('/api/agents?status=active', {
+  headers: { 'x-user-id': user.id }
+});
+const { agents } = await response.json();
+
+// Update status via API route
+await fetch(`/api/agents/${agentId}/status`, {
+  method: 'PATCH',
+  headers: { 'Content-Type': 'application/json', 'x-user-id': user.id },
+  body: JSON.stringify({ status: 'inactive' })
+});
 ```
 
 ## Adding New Repositories

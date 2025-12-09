@@ -6,7 +6,6 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
-import { supabase } from '@/lib/supabaseClient'
 import { Card } from '@/components/v2/ui/card'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import {
@@ -149,20 +148,28 @@ export default function V2AgentListPage() {
 
     setLoading(true)
     try {
-      let query = supabase
-        .from('agents')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-
+      const params = new URLSearchParams()
       if (filterType !== 'all') {
-        query = query.eq('status', filterType)
+        params.set('status', filterType)
+      }
+      params.set('includeInactive', 'true')
+
+      const response = await fetch(`/api/agents?${params.toString()}`, {
+        headers: {
+          'x-user-id': user.id,
+        },
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch agents')
       }
 
-      const { data, error } = await query
+      const result = await response.json()
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to fetch agents')
+      }
 
-      if (error) throw error
-      setAgents(data || [])
+      setAgents(result.agents || [])
     } catch (error) {
       console.error('Error fetching agents:', error)
       addToast('Failed to load agents', 'error')
@@ -266,19 +273,26 @@ export default function V2AgentListPage() {
   const handleToggleAgentStatus = async (e: React.MouseEvent, agentId: string, currentStatus: string, agentName: string) => {
     e.stopPropagation()
 
-    if (pausingAgents.has(agentId)) return
+    if (pausingAgents.has(agentId) || !user) return
 
     setPausingAgents(prev => new Set(prev).add(agentId))
 
     const newStatus = currentStatus === 'active' ? 'inactive' : 'active'
 
     try {
-      const { error } = await supabase
-        .from('agents')
-        .update({ status: newStatus })
-        .eq('id', agentId)
+      const response = await fetch(`/api/agents/${agentId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': user.id,
+        },
+        body: JSON.stringify({ status: newStatus }),
+      })
 
-      if (error) throw error
+      if (!response.ok) {
+        const result = await response.json()
+        throw new Error(result.error || 'Failed to update status')
+      }
 
       setAgents(prev => prev.map(agent =>
         agent.id === agentId ? { ...agent, status: newStatus } : agent

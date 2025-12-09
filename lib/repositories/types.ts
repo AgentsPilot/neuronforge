@@ -8,10 +8,11 @@ export enum AgentStatusEnum {
   DRAFT = 'draft',
   ACTIVE = 'active',
   INACTIVE = 'inactive',
+  DELETED = 'deleted',
 }
 
 // Type alias for flexibility (can use enum values or string literals)
-export type AgentStatus = 'draft' | 'active' | 'inactive';
+export type AgentStatus = 'draft' | 'active' | 'inactive' | 'deleted';
 
 export interface Agent {
   id: string;
@@ -70,9 +71,10 @@ export interface AgentRepositoryResult<T> {
 
 // Status transition rules
 export const STATUS_TRANSITIONS: Record<AgentStatus, AgentStatus[]> = {
-  draft: ['active'],        // Draft can only become active
-  active: ['inactive'],     // Active can only be paused
-  inactive: ['active'],     // Inactive can be reactivated
+  draft: ['active', 'deleted'],      // Draft can activate or be deleted
+  active: ['inactive', 'deleted'],   // Active can be paused or deleted
+  inactive: ['active', 'deleted'],   // Inactive can be reactivated or deleted
+  deleted: [],                        // Terminal state - only restore() bypasses this
 };
 
 // ============ Execution Types ============

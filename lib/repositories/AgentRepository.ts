@@ -2,7 +2,7 @@
 // Repository for managing agent persistence and status transitions
 
 import { SupabaseClient } from '@supabase/supabase-js';
-import { supabase as defaultSupabase } from '@/lib/supabaseClient';
+import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 import type {
   Agent,
@@ -26,7 +26,7 @@ export class AgentRepository {
   // ============ Query Operations ============
 
   /**
-   * Find an agent by ID (excludes soft-deleted)
+   * Find an agent by ID (excludes deleted)
    */
   async findById(id: string, userId: string): Promise<AgentRepositoryResult<Agent>> {
     try {
@@ -35,7 +35,7 @@ export class AgentRepository {
         .select('*')
         .eq('id', id)
         .eq('user_id', userId)
-        .is('deleted_at', null)
+        .neq('status', 'deleted')
         .single();
 
       if (error) throw error;
@@ -46,7 +46,7 @@ export class AgentRepository {
   }
 
   /**
-   * Find all agents for a user (excludes soft-deleted and inactive by default)
+   * Find all agents for a user (excludes deleted and inactive by default)
    * @param userId - The user ID
    * @param options.status - Filter by specific status (overrides includeInactive)
    * @param options.includeInactive - Include inactive agents (default: false)
@@ -62,7 +62,7 @@ export class AgentRepository {
         .from('agents')
         .select('*')
         .eq('user_id', userId)
-        .is('deleted_at', null)
+        .neq('status', 'deleted')
         .order('created_at', { ascending: false });
 
       // If specific status is requested, use that
@@ -89,7 +89,7 @@ export class AgentRepository {
   }
 
   /**
-   * Find inactive agents for a user (for admin/recovery purposes)
+   * Find inactive (paused) agents for a user (for admin/recovery purposes)
    */
   async findInactive(userId: string): Promise<AgentRepositoryResult<Agent[]>> {
     try {
@@ -98,7 +98,6 @@ export class AgentRepository {
         .select('*')
         .eq('user_id', userId)
         .eq('status', 'inactive')
-        .is('deleted_at', null)
         .order('updated_at', { ascending: false });
 
       if (error) throw error;
@@ -109,7 +108,7 @@ export class AgentRepository {
   }
 
   /**
-   * Find soft-deleted agents (for recovery/admin purposes)
+   * Find deleted agents (for recovery/admin purposes)
    */
   async findDeleted(userId: string): Promise<AgentRepositoryResult<Agent[]>> {
     try {
@@ -117,7 +116,7 @@ export class AgentRepository {
         .from('agents')
         .select('*')
         .eq('user_id', userId)
-        .not('deleted_at', 'is', null)
+        .eq('status', 'deleted')
         .order('deleted_at', { ascending: false });
 
       if (error) throw error;
@@ -128,7 +127,7 @@ export class AgentRepository {
   }
 
   /**
-   * Check if agent exists and belongs to user
+   * Check if agent exists and belongs to user (excludes deleted)
    */
   async exists(id: string, userId: string): Promise<boolean> {
     const { data } = await this.supabase
@@ -136,7 +135,7 @@ export class AgentRepository {
       .select('id')
       .eq('id', id)
       .eq('user_id', userId)
-      .is('deleted_at', null)
+      .neq('status', 'deleted')
       .single();
 
     return !!data;
@@ -193,7 +192,7 @@ export class AgentRepository {
         })
         .eq('id', id)
         .eq('user_id', userId)
-        .is('deleted_at', null)
+        .neq('status', 'deleted')
         .select()
         .single();
 
@@ -307,12 +306,12 @@ export class AgentRepository {
         .from('agents')
         .update({
           deleted_at: new Date().toISOString(),
-          status: 'inactive',
+          status: 'deleted',
           updated_at: new Date().toISOString(),
         })
         .eq('id', id)
         .eq('user_id', userId)
-        .is('deleted_at', null);
+        .neq('status', 'deleted');
 
       if (error) throw error;
 
@@ -351,13 +350,13 @@ export class AgentRepository {
   }
 
   /**
-   * Restore a soft-deleted agent
+   * Restore a deleted agent
    */
   async restore(id: string, userId: string): Promise<AgentRepositoryResult<Agent>> {
     const methodLogger = this.logger.child({ method: 'restore', agentId: id, userId });
 
     try {
-      methodLogger.debug('Restoring soft-deleted agent');
+      methodLogger.debug('Restoring deleted agent');
 
       const { data, error } = await this.supabase
         .from('agents')
@@ -368,7 +367,7 @@ export class AgentRepository {
         })
         .eq('id', id)
         .eq('user_id', userId)
-        .not('deleted_at', 'is', null)
+        .eq('status', 'deleted')
         .select()
         .single();
 
@@ -383,7 +382,7 @@ export class AgentRepository {
   }
 
   /**
-   * Permanently delete all soft-deleted agents older than specified days
+   * Permanently delete all deleted agents older than specified days
    * Useful for cleanup jobs
    */
   async purgeDeleted(userId: string, olderThanDays: number = 30): Promise<AgentRepositoryResult<number>> {
@@ -395,7 +394,7 @@ export class AgentRepository {
         .from('agents')
         .delete()
         .eq('user_id', userId)
-        .not('deleted_at', 'is', null)
+        .eq('status', 'deleted')
         .lt('deleted_at', cutoffDate.toISOString())
         .select('id');
 
@@ -472,7 +471,7 @@ export class AgentRepository {
         })
         .eq('id', id)
         .eq('user_id', userId)
-        .is('deleted_at', null)
+        .neq('status', 'deleted')
         .select()
         .single();
 

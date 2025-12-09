@@ -2,7 +2,7 @@
 // Repository for managing agent executions and token usage
 
 import { SupabaseClient } from '@supabase/supabase-js';
-import { supabase as defaultSupabase } from '@/lib/supabaseClient';
+import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 import type {
   Execution,
