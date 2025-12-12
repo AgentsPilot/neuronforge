@@ -5,6 +5,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { agentRepository } from '@/lib/repositories';
 import type { AgentStatus } from '@/lib/repositories';
 
+// Force dynamic rendering - this route uses request.headers
+export const dynamic = 'force-dynamic';
+
 // Helper function to extract user ID from request
 function getUserIdFromRequest(request: NextRequest): string | null {
   const userIdHeader = request.headers.get('x-user-id');

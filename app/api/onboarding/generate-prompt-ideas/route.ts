@@ -2,7 +2,7 @@
 // Backend endpoint for generating personalized agent prompt ideas based on user's onboarding context
 
 import { NextRequest, NextResponse } from 'next/server'
-import { createAuthenticatedServerClient } from '@/lib/supabaseServer'
+import { createAuthenticatedServerClient } from '@/lib/supabaseServerAuth'
 import OpenAI from 'openai'
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics'
 

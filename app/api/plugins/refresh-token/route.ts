@@ -1,7 +1,7 @@
 // app/api/plugins/refresh-token/route.ts
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createAuthenticatedServerClient } from '@/lib/supabaseServer';
+import { createAuthenticatedServerClient } from '@/lib/supabaseServerAuth';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 import { pluginStatusCache } from '@/app/api/plugins/user-status/route';
 

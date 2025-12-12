@@ -6,7 +6,7 @@
 // - Richer plugin data (connection details, action lists)
 // - Clean V2 response format
 
-import { createAuthenticatedServerClient } from '@/lib/supabaseServer'
+import { createAuthenticatedServerClient } from '@/lib/supabaseServerAuth'
 import { pluginList } from '@/lib/plugins/pluginList'
 
 // Import PluginManagerV2 for enhanced plugin management

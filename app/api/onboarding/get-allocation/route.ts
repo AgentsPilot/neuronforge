@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { createAuthenticatedServerClient } from '@/lib/supabaseServer';
+import { createAuthenticatedServerClient } from '@/lib/supabaseServerAuth';
 import { NextRequest, NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
