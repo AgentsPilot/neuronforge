@@ -12,7 +12,7 @@ interface DebugLog {
   message: string;
 }
 
-type TabType = 'plugins' | 'ai-services' | 'thread-conversation' | 'free-tier-users';
+type TabType = 'plugins' | 'ai-services' | 'thread-conversation' | 'free-tier-users' | 'agent-execution';
 
 // Provider and model options for AI provider selection
 const PROVIDER_OPTIONS = ['openai', 'anthropic', 'kimi'] as const;
@@ -500,6 +500,12 @@ const AI_SERVICE_TEMPLATES = {
   "generate-agent-v2": {
     prompt: "Research the top 10 retail technology blogs from Israel and send me a daily summary via email",
     sessionId: "550e8400-e29b-41d4-a716-446655440000"
+  },
+  "generate-agent-v3": {
+    prompt: "Research the top 10 retail technology blogs from Israel and send me a daily summary via email",
+    sessionId: "550e8400-e29b-41d4-a716-446655440000",
+    agentId: "660e8400-e29b-41d4-a716-446655440001",
+    clarificationAnswers: {}
   }
 };
 
@@ -570,6 +576,15 @@ export default function TestPluginsPage() {
   // Free Tier Users state
   const [freeTierUserId, setFreeTierUserId] = useState('');
   const [freeTierResponse, setFreeTierResponse] = useState<any>(null);
+
+  // Agent Execution state
+  const [agentId, setAgentId] = useState('');
+  const [agentInputVariables, setAgentInputVariables] = useState('{}');
+  const [agentOverridePrompt, setAgentOverridePrompt] = useState('');
+  const [agentExecutionResult, setAgentExecutionResult] = useState<any>(null);
+  const [isExecutingAgent, setIsExecutingAgent] = useState(false);
+  const [useAgentKit, setUseAgentKit] = useState(true);
+  const [agentsList, setAgentsList] = useState<Array<{id: string; agent_name: string; status: string}>>([]);
 
   // Debug logging
   const [debugLogs, setDebugLogs] = useState<DebugLog[]>([]);
@@ -1366,6 +1381,99 @@ export default function TestPluginsPage() {
     addDebugLog('info', 'Free tier form reset');
   };
 
+  // Agent Execution functions
+  const loadUserAgents = async () => {
+    if (!userId.trim()) {
+      addDebugLog('error', 'User ID is required to load agents');
+      return;
+    }
+
+    try {
+      addDebugLog('info', 'Loading user agents...');
+      const response = await fetch(`/api/agents?user_id=${userId}`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      const agents = result.agents || result.data || result || [];
+      setAgentsList(Array.isArray(agents) ? agents : []);
+      addDebugLog('success', `Loaded ${agents.length} agents`);
+    } catch (error: any) {
+      addDebugLog('error', `Failed to load agents: ${error.message}`);
+      setAgentsList([]);
+    }
+  };
+
+  const executeAgent = async () => {
+    if (!agentId.trim()) {
+      addDebugLog('error', 'Agent ID is required');
+      return;
+    }
+
+    let parsedInputs: Record<string, any> = {};
+    try {
+      parsedInputs = JSON.parse(agentInputVariables);
+    } catch (error) {
+      addDebugLog('error', 'Invalid JSON in input variables');
+      return;
+    }
+
+    setIsExecutingAgent(true);
+    setAgentExecutionResult(null);
+
+    try {
+      addDebugLog('info', `Executing agent ${agentId}...`);
+      const startTime = Date.now();
+
+      const response = await fetch('/api/run-agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent_id: agentId,
+          input_variables: parsedInputs,
+          override_user_prompt: agentOverridePrompt || undefined,
+          execution_type: 'test',
+          use_agentkit: useAgentKit,
+        }),
+      });
+
+      const result = await response.json();
+      const executionTime = Date.now() - startTime;
+
+      setAgentExecutionResult({
+        ...result,
+        _meta: {
+          executionTimeMs: executionTime,
+          timestamp: new Date().toISOString(),
+        }
+      });
+
+      if (result.success) {
+        addDebugLog('success', `Agent executed successfully in ${executionTime}ms | Tokens: ${result.data?.tokens_used || 'N/A'}`);
+      } else {
+        addDebugLog('error', `Agent execution failed: ${result.error || 'Unknown error'}`);
+      }
+    } catch (error: any) {
+      addDebugLog('error', `Execution error: ${error.message}`);
+      setAgentExecutionResult({ success: false, error: error.message });
+    } finally {
+      setIsExecutingAgent(false);
+    }
+  };
+
+  const resetAgentExecutionForm = () => {
+    setAgentId('');
+    setAgentInputVariables('{}');
+    setAgentOverridePrompt('');
+    setAgentExecutionResult(null);
+    addDebugLog('info', 'Agent execution form reset');
+  };
+
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px', fontFamily: 'monospace' }}>
       <h1>Plugin System Testing Interface</h1>
@@ -1424,6 +1532,7 @@ export default function TestPluginsPage() {
           onClick={() => setActiveTab('free-tier-users')}
           style={{
             padding: '10px 20px',
+            marginRight: '5px',
             backgroundColor: activeTab === 'free-tier-users' ? '#007bff' : '#f8f9fa',
             color: activeTab === 'free-tier-users' ? 'white' : '#333',
             border: 'none',
@@ -1434,6 +1543,21 @@ export default function TestPluginsPage() {
           }}
         >
           Free Tier Users
+        </button>
+        <button
+          onClick={() => setActiveTab('agent-execution')}
+          style={{
+            padding: '10px 20px',
+            backgroundColor: activeTab === 'agent-execution' ? '#007bff' : '#f8f9fa',
+            color: activeTab === 'agent-execution' ? 'white' : '#333',
+            border: 'none',
+            borderBottom: activeTab === 'agent-execution' ? '3px solid #0056b3' : 'none',
+            cursor: 'pointer',
+            fontSize: '16px',
+            fontWeight: activeTab === 'agent-execution' ? 'bold' : 'normal'
+          }}
+        >
+          Agent Execution
         </button>
       </div>
 
@@ -2466,6 +2590,265 @@ export default function TestPluginsPage() {
                   marginTop: '10px'
                 }}>
                   {JSON.stringify(freeTierResponse, null, 2)}
+                </pre>
+              </details>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Agent Execution Tab Content */}
+      {activeTab === 'agent-execution' && (
+        <>
+          {/* Agent Selection */}
+          <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
+            <h2>Execute Agent</h2>
+            <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#e7f3ff', borderRadius: '3px' }}>
+              <p style={{ margin: 0, fontSize: '14px', color: '#0066cc' }}>
+                <strong>Info:</strong> Test agent execution using the <code>/api/run-agent</code> endpoint.
+                Make sure a valid User ID is set in the User Configuration section above.
+              </p>
+            </div>
+
+            {/* Agent ID Input */}
+            <div style={{ marginBottom: '15px' }}>
+              <label htmlFor="agentIdInput" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                Agent ID (UUID):
+              </label>
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                <input
+                  id="agentIdInput"
+                  type="text"
+                  value={agentId}
+                  onChange={(e) => setAgentId(e.target.value)}
+                  placeholder="Enter agent UUID or select from list"
+                  style={{ flex: 1, padding: '10px', fontSize: '14px', fontFamily: 'monospace' }}
+                />
+                <button
+                  onClick={loadUserAgents}
+                  disabled={!userId.trim()}
+                  style={{
+                    padding: '10px 16px',
+                    backgroundColor: userId.trim() ? '#17a2b8' : '#6c757d',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: userId.trim() ? 'pointer' : 'not-allowed',
+                    fontSize: '14px'
+                  }}
+                >
+                  Load My Agents
+                </button>
+              </div>
+            </div>
+
+            {/* Agents List (if loaded) */}
+            {agentsList.length > 0 && (
+              <div style={{ marginBottom: '15px' }}>
+                <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                  Select from your agents:
+                </label>
+                <select
+                  value={agentId}
+                  onChange={(e) => setAgentId(e.target.value)}
+                  style={{ width: '100%', padding: '10px', fontSize: '14px' }}
+                >
+                  <option value="">-- Select an agent --</option>
+                  {agentsList.map(agent => (
+                    <option key={agent.id} value={agent.id}>
+                      {agent.agent_name} ({agent.status}) - {agent.id.substring(0, 8)}...
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Input Variables */}
+            <div style={{ marginBottom: '15px' }}>
+              <label htmlFor="agentInputVars" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                Input Variables (JSON):
+              </label>
+              <textarea
+                id="agentInputVars"
+                value={agentInputVariables}
+                onChange={(e) => setAgentInputVariables(e.target.value)}
+                placeholder='{"variable_name": "value"}'
+                style={{
+                  width: '100%',
+                  height: '120px',
+                  padding: '10px',
+                  fontSize: '14px',
+                  fontFamily: 'monospace',
+                  resize: 'vertical'
+                }}
+              />
+            </div>
+
+            {/* Override User Prompt */}
+            <div style={{ marginBottom: '15px' }}>
+              <label htmlFor="agentOverridePromptInput" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                Override User Prompt (optional):
+              </label>
+              <textarea
+                id="agentOverridePromptInput"
+                value={agentOverridePrompt}
+                onChange={(e) => setAgentOverridePrompt(e.target.value)}
+                placeholder="Leave empty to use agent's default prompt"
+                style={{
+                  width: '100%',
+                  height: '80px',
+                  padding: '10px',
+                  fontSize: '14px',
+                  resize: 'vertical'
+                }}
+              />
+            </div>
+
+            {/* Execution Options */}
+            <div style={{ marginBottom: '15px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={useAgentKit}
+                  onChange={(e) => setUseAgentKit(e.target.checked)}
+                />
+                <span>Use AgentKit execution (recommended)</span>
+              </label>
+            </div>
+
+            {/* Action Buttons */}
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                onClick={executeAgent}
+                disabled={isExecutingAgent || !agentId.trim()}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: isExecutingAgent || !agentId.trim() ? '#6c757d' : '#28a745',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '3px',
+                  cursor: isExecutingAgent || !agentId.trim() ? 'not-allowed' : 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 'bold'
+                }}
+              >
+                {isExecutingAgent ? 'Executing...' : 'Execute Agent'}
+              </button>
+              <button
+                onClick={resetAgentExecutionForm}
+                disabled={isExecutingAgent}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: '#6c757d',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '3px',
+                  cursor: isExecutingAgent ? 'not-allowed' : 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 'bold'
+                }}
+              >
+                Reset Form
+              </button>
+            </div>
+          </div>
+
+          {/* Execution Result Display */}
+          {agentExecutionResult && (
+            <div style={{
+              marginBottom: '30px',
+              padding: '15px',
+              border: `2px solid ${agentExecutionResult.success ? '#28a745' : '#dc3545'}`,
+              borderRadius: '5px',
+              backgroundColor: agentExecutionResult.success ? '#f0fff0' : '#fff0f0'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <h2 style={{ margin: 0 }}>
+                  {agentExecutionResult.success ? '✅ Execution Success' : '❌ Execution Failed'}
+                </h2>
+                <button
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(JSON.stringify(agentExecutionResult, null, 2));
+                      addDebugLog('success', 'Result copied to clipboard');
+                    } catch (error: any) {
+                      addDebugLog('error', `Failed to copy: ${error.message}`);
+                    }
+                  }}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: '#007bff',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: 'pointer',
+                    fontSize: '14px'
+                  }}
+                >
+                  Copy to Clipboard
+                </button>
+              </div>
+
+              {/* Success Details */}
+              {agentExecutionResult.success && agentExecutionResult.data && (
+                <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: 'white', borderRadius: '3px', border: '1px solid #28a745' }}>
+                  <h3 style={{ marginTop: 0 }}>Execution Details:</h3>
+                  <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '14px' }}>
+                    <li><strong>Agent:</strong> {agentExecutionResult.data.agent_name || agentExecutionResult.data.agent_id}</li>
+                    <li><strong>Execution Type:</strong> {agentExecutionResult.data.execution_type || 'N/A'}</li>
+                    <li><strong>Tokens Used:</strong> {agentExecutionResult.data.tokens_used?.toLocaleString() || 'N/A'}</li>
+                    {agentExecutionResult.data.raw_tokens && (
+                      <li><strong>Raw Tokens:</strong> {agentExecutionResult.data.raw_tokens?.toLocaleString()}</li>
+                    )}
+                    {agentExecutionResult.data.intensity_multiplier && (
+                      <li><strong>Intensity Multiplier:</strong> {agentExecutionResult.data.intensity_multiplier?.toFixed(2)}x</li>
+                    )}
+                    <li><strong>Execution Time:</strong> {agentExecutionResult.data.execution_time_ms || agentExecutionResult._meta?.executionTimeMs || 'N/A'}ms</li>
+                    {agentExecutionResult.data.tool_calls_count !== undefined && (
+                      <li><strong>Tool Calls:</strong> {agentExecutionResult.data.tool_calls_count} ({agentExecutionResult.data.successful_tool_calls} successful, {agentExecutionResult.data.failed_tool_calls} failed)</li>
+                    )}
+                    {agentExecutionResult.data.stepsCompleted !== undefined && (
+                      <li><strong>Steps:</strong> {agentExecutionResult.data.stepsCompleted} completed, {agentExecutionResult.data.stepsFailed} failed, {agentExecutionResult.data.stepsSkipped} skipped</li>
+                    )}
+                  </ul>
+                </div>
+              )}
+
+              {/* Message/Response */}
+              {agentExecutionResult.message && (
+                <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: 'white', borderRadius: '3px', border: '1px solid #ccc' }}>
+                  <h3 style={{ marginTop: 0 }}>Response Message:</h3>
+                  <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: '13px' }}>
+                    {agentExecutionResult.message}
+                  </pre>
+                </div>
+              )}
+
+              {/* Error Message */}
+              {!agentExecutionResult.success && (
+                <div style={{ padding: '10px', backgroundColor: 'white', borderRadius: '3px', border: '1px solid #dc3545' }}>
+                  <strong>Error:</strong>
+                  <div style={{ marginTop: '5px', color: '#dc3545' }}>
+                    {agentExecutionResult.error || 'Unknown error occurred'}
+                  </div>
+                </div>
+              )}
+
+              {/* Full Response */}
+              <details style={{ marginTop: '15px' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: '#007bff' }}>
+                  View Full API Response
+                </summary>
+                <pre style={{
+                  backgroundColor: '#f8f9fa',
+                  padding: '15px',
+                  borderRadius: '3px',
+                  overflow: 'auto',
+                  fontSize: '12px',
+                  maxHeight: '400px',
+                  marginTop: '10px'
+                }}>
+                  {JSON.stringify(agentExecutionResult, null, 2)}
                 </pre>
               </details>
             </div>
