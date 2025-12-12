@@ -36,7 +36,11 @@
           "calendar_id": {
             "type": "string",
             "default": "primary",
-            "description": "Calendar identifier (use 'primary' for user's primary calendar or specific calendar email)"
+            "description": "Calendar identifier (use 'primary' for user's primary calendar or specific calendar email)",
+            "x-dynamic-options": {
+              "source": "list_calendars",
+              "description": "Fetches available calendars dynamically"
+            }
           },
           "time_min": {
             "type": "string",
@@ -216,7 +220,11 @@
           "calendar_id": {
             "type": "string",
             "default": "primary",
-            "description": "Calendar identifier to create event in"
+            "description": "Calendar identifier to create event in",
+            "x-dynamic-options": {
+              "source": "list_calendars",
+              "description": "Fetches available calendars dynamically"
+            }
           },
           "summary": {
             "type": "string",
@@ -379,7 +387,11 @@
           "calendar_id": {
             "type": "string",
             "default": "primary",
-            "description": "Calendar identifier containing the event"
+            "description": "Calendar identifier containing the event",
+            "x-dynamic-options": {
+              "source": "list_calendars",
+              "description": "Fetches available calendars dynamically"
+            }
           },
           "event_id": {
             "type": "string",
@@ -489,7 +501,11 @@
           "calendar_id": {
             "type": "string",
             "default": "primary",
-            "description": "Calendar identifier containing the event"
+            "description": "Calendar identifier containing the event",
+            "x-dynamic-options": {
+              "source": "list_calendars",
+              "description": "Fetches available calendars dynamically"
+            }
           },
           "event_id": {
             "type": "string",
@@ -561,7 +577,11 @@
           "calendar_id": {
             "type": "string",
             "default": "primary",
-            "description": "Calendar identifier containing the event"
+            "description": "Calendar identifier containing the event",
+            "x-dynamic-options": {
+              "source": "list_calendars",
+              "description": "Fetches available calendars dynamically"
+            }
           },
           "event_id": {
             "type": "string",

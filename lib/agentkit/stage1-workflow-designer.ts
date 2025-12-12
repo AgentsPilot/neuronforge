@@ -30,12 +30,14 @@ const anthropic = new Anthropic({
 
 /**
  * Stage 1 Output: Workflow structure with parameter placeholders
+ * Aligned with PILOT_DSL_SCHEMA
  */
 export interface Stage1WorkflowDesign {
   // Basic agent info
   agent_name: string;
-  agent_description: string;
-  workflow_type: 'simple_linear' | 'conditional' | 'loop' | 'parallel' | 'complex';
+  description: string;
+  system_prompt: string;
+  workflow_type: 'pure_ai' | 'data_retrieval_ai' | 'ai_external_actions';
 
   // Workflow structure
   workflow_steps: Stage1WorkflowStep[];
@@ -46,7 +48,18 @@ export interface Stage1WorkflowDesign {
   // Suggested plugins
   suggested_plugins: string[];
 
-  // Confidence score
+  // Suggested outputs
+  suggested_outputs: Array<{
+    name: string;
+    type: 'SummaryBlock' | 'EmailDraft' | 'PluginAction' | 'Alert';
+    category: 'human-facing' | 'machine-facing';
+    description: string;
+    format?: 'table' | 'list' | 'markdown' | 'html' | 'json' | 'text';
+    plugin?: string;
+    reasoning: string;
+  }>;
+
+  // Confidence score (0-1, aligned with PILOT_DSL_SCHEMA)
   confidence: number;
 
   // Reasoning
@@ -85,14 +98,15 @@ export interface Stage1WorkflowStep {
 
 /**
  * Stage 1 Required Input
- * Basic structure, no validation rules yet
+ * Basic structure, aligned with PILOT_DSL_SCHEMA
  */
 export interface Stage1RequiredInput {
   name: string;
-  type: 'text' | 'number' | 'email' | 'url' | 'select' | 'multi_select' | 'file' | 'json';
+  type: 'text' | 'email' | 'number' | 'file' | 'select' | 'url' | 'date' | 'textarea';
   label: string;
   required: boolean;
   description: string;
+  placeholder?: string;
   reasoning: string;
 }
 
@@ -119,6 +133,17 @@ export async function designWorkflowStructure(
 
   // Build user message
   const userMessage = `Design a workflow for the following task:\n\n${userPrompt}\n\nAvailable plugins: ${connectedPlugins.join(', ')}`;
+
+  // Log full prompt for debugging
+  console.log('\n' + '='.repeat(80));
+  console.log('📝 [Stage 1] FULL SYSTEM PROMPT SENT TO LLM:');
+  console.log('='.repeat(80));
+  console.log(systemPrompt);
+  console.log('='.repeat(80));
+  console.log('📝 [Stage 1] USER MESSAGE:');
+  console.log('='.repeat(80));
+  console.log(userMessage);
+  console.log('='.repeat(80) + '\n');
 
   try {
     console.log('🔄 [Stage 1] Calling Claude Sonnet 4 API...');
@@ -187,6 +212,7 @@ export async function designWorkflowStructure(
       workflow_steps: design.workflow_steps || [],
       required_inputs: design.required_inputs || [],
       suggested_plugins: design.suggested_plugins || [],
+      suggested_outputs: design.suggested_outputs || [],
       tokensUsed
     };
 
@@ -201,658 +227,526 @@ export async function designWorkflowStructure(
  * Focus: Workflow structure, plugin selection, step sequencing
  */
 function buildStage1SystemPrompt(availablePlugins: Record<string, any>): string {
-  return `You are a workflow structure designer. Your job is to design the HIGH-LEVEL STRUCTURE of a workflow.
-
-**IMPORTANT RULES:**
-
-1. **FOCUS ON STRUCTURE, NOT VALUES**
-   - Design the step sequence, conditionals, loops
-   - Select appropriate plugins and actions
-   - Use PLACEHOLDERS for all parameter values
-   - Example: Use "$USER_EMAIL" instead of actual email
-
-2. **PARAMETER PLACEHOLDERS**
-   - ALL parameter values MUST be placeholders starting with $
-   - Use descriptive names: "$SEARCH_QUERY", "$EMAIL_ADDRESS", "$SPREADSHEET_ID"
-   - Do NOT guess actual values
-   - Stage 2 will fill in the real values
-
-3. **WORKFLOW TYPES**
-   - simple_linear: Sequential steps, no branching (1-5 steps)
-   - conditional: Has if/else logic
-   - loop: Iterates over data
-   - parallel: Multiple independent paths
-   - complex: Combinations of above (10+ steps, nested logic)
-
-4. **AVAILABLE PLUGINS** (Condensed summaries for token optimization)
-${Object.entries(availablePlugins).map(([key, plugin]) => {
-  const actionsList = plugin.actions.map((action: any) => {
-    const paramStr = action.required_params.length > 0
-      ? `(${action.required_params.join(', ')})`
-      : '';
-    const outputStr = action.output_fields && action.output_fields.length > 0
-      ? ` → outputs: {${action.output_fields.join(', ')}}`
-      : '';
-    return `${action.name}${paramStr}: ${action.description}${outputStr}`;
-  }).join('\n     - ');
-  return `   - ${key}: ${plugin.description}\n     - ${actionsList}`;
-}).join('\n')}
-
-5. **CORE PRINCIPLE: NEVER GUESS - ALWAYS ASK**
-
-   When designing workflows:
-   1. **Analyze output_fields type hints** from plugin actions (see section 4)
-   2. **If data structure is ambiguous or user needs to specify a field/column** → Create {{input.X}} placeholder and add to required_inputs
-   3. **If user needs to specify which field/column to use** → Always ask via {{input.field_name}} or {{input.column_name}}
-   4. **Never hardcode field names** unless they're explicitly documented in the plugin's output_fields
-
-   Examples:
-   - ❌ BAD: "field": "Sales Person" (assumes field exists in data)
-   - ✅ GOOD: "field": "{{input.column_name}}" (asks user which column via required_inputs)
-
-6. **DATA STRUCTURE PATTERNS** (from output_fields type hints)
-
-   When you see these type hints in plugin output_fields:
-
-   **Pattern A: array<array> (2D Arrays - Table Data)**
-   - **Example**: google-sheets.read_sheet → outputs: {values:array<array>, row_count:integer}
-   - **What it is**: Rows and columns like [["Header1", "Header2"], ["Data1", "Data2"]]
-   - **How to access**: By row and column index, or lookup by header name
-   - **What to ask user**: "Which column?" → {{input.column_name}}
-   - **How to use**: Create transform step with column lookup helper
-
-   Example workflow for 2D array:
-   {
-     "type": "action",
-     "plugin": "google-sheets",
-     "action": "read_sheet",
-     "params": { "spreadsheet_id": "{{input.spreadsheet_id}}", "range": "{{input.sheet_name}}" }
-   },
-   {
-     "type": "transform",
-     "operation": "deduplicate",
-     "input": "{{step1.values}}",
-     "config": { "column": "{{input.column_name}}" }  // User provides column name like "Sales Person"
-   }
-
-   **Pattern B: array<object> (Record Arrays - Structured Data)**
-   - **Example**: airtable.list_records → outputs: {records:array<object>, record_count:integer}
-   - **Example**: gmail.search_emails → outputs: {emails:array<object>, total_found:integer}
-   - **What it is**: Array of objects like [{fields: {Name: "John", Email: "..."}}, ...]
-   - **How to access**: Dot notation {{item.fields.FieldName}} or bracket {{item['fields']['Field Name']}}
-   - **What to ask user**: "Which field name?" → {{input.field_name}}
-   - **How to use**: Loop with {{loop.item.fields[input.field_name]}}
-
-   Example workflow for array<object>:
-   {
-     "type": "action",
-     "plugin": "airtable",
-     "action": "list_records",
-     "params": { "base_id": "{{input.base_id}}", "table_name": "{{input.table_name}}" }
-   },
-   {
-     "type": "loop",
-     "iterateOver": "{{step1.records}}",
-     "loopSteps": [{
-       "type": "conditional",
-       "condition": {
-         "field": "loop.item.fields[{{input.field_name}}]",  // User specifies which field
-         "operator": "==",
-         "value": "{{input.field_value}}"
-       }
-     }]
-   }
-
-   **Pattern C: object (Single Result - Simple Data)**
-   - **Example**: chatgpt-research.research_topic → outputs: {summary:string, key_points:array<string>, sources:array<object>}
-   - **What it is**: Single object with fixed fields like {summary: "...", key_points: [...]}
-   - **How to access**: Direct reference {{step1.summary}}, {{step1.key_points}}
-   - **What to ask user**: Nothing about structure - use documented field names directly
-   - **How to use**: Reference fields by name from output_fields
-
-   Example workflow for simple object:
-   {
-     "type": "action",
-     "plugin": "chatgpt-research",
-     "action": "research_topic",
-     "params": { "topic": "{{input.research_topic}}", "depth": "standard" }
-   },
-   {
-     "type": "action",
-     "plugin": "google-mail",
-     "action": "send_email",
-     "params": {
-       "recipients": { "to": ["{{input.recipient_email}}"] },
-       "content": {
-         "subject": "Research Results",
-         "body": "{{step1.summary}}"  // Direct field access - no user input needed
-       }
-     }
-   }
-
-   **Pattern D: Nested object with arrays (Complex Responses)**
-   - **Example**: hubspot.search_contacts → outputs: {data:object, total_count:integer}
-   - **What it is**: Nested structure like {data: {contacts: [{properties: {...}}]}}
-   - **How to access**: Path navigation {{step1.data.contacts}}
-   - **What to ask user**: Depends on what they need from nested structure
-   - **How to use**: Check plugin's sample_output for exact structure
-
-7. **STEP TYPES**
-   - action: Call a plugin action (Gmail, Slack, Sheets, etc.) - use "plugin" and "action" fields
-   - ai_processing: Use AI to analyze/transform data
-   - llm_decision: LLM makes a decision
-   - conditional: If/else logic (use trueBranch/falseBranch to jump to specific steps)
-   - loop: Iterate over items - use "loopSteps" array for nested steps
-   - parallel_group: Run multiple steps in parallel
-   - switch: Multi-way branching
-   - scatter_gather: Split work and gather results
-   - transform: Transform data structure
-   - delay: Wait for time period
-   - enrichment: Enrich data with additional info
-   - validation: Validate data
-   - comparison: Compare values
-   - sub_workflow: Call another workflow
-   - human_approval: Wait for human input
-
-   **CRITICAL: scatter_gather Output References**
-
-   Scatter-gather results are stored DIRECTLY in {{stepN.data}}, NOT in a nested field.
-   The gather.outputKey field in the schema is IGNORED by the execution engine.
-
-   ✅ CORRECT: {{step3.data}} - Always use this for scatter_gather outputs
-   ❌ WRONG: {{step3.data.outputKey}} - This will fail (outputKey is ignored)
-   ❌ WRONG: {{step3.data.all_results}} - This will fail (no nested structure)
-
-   Example:
-   Step 3: scatter_gather with gather: { operation: "collect", outputKey: "results" }
-   Step 4: Reference the gathered array using {{step3.data}} NOT {{step3.data.results}}
-
-6. **CONDITIONAL EXECUTION PATTERNS**
-
-   **Pattern 1: Branching with 'conditional' step type** (use for if/else with different step sequences)
-   {
-     "type": "conditional",
-     "condition": { "field": "step2.data.items.length", "operator": ">", "value": 0, "conditionType": "simple" },
-     "trueBranch": "step4",   // Jump to step4 if true
-     "falseBranch": "step8"   // Jump to step8 if false
-   }
-
-   **Pattern 2: Skip step with 'executeIf' field** (use to conditionally skip individual steps)
-   {
-     "type": "action",
-     "action": "send_email",
-     "executeIf": { "field": "step2.data.items.length", "operator": "==", "value": 0, "conditionType": "simple" },
-     "params": { ... }
-   }
-   // Step only executes if condition is true, otherwise skipped
-
-   ⚠️ **CRITICAL**: When using trueBranch/falseBranch, steps after the branch are STILL EXECUTED unless you use executeIf!
-
-   Example problem:
-   Step 3: conditional (trueBranch: step4, falseBranch: step8)
-   Step 4-7: Process qualified leads
-   Step 8: Send "no leads" email
-
-   ❌ WRONG: Step 8 runs even when leads exist (workflow continues sequentially)
-   ✅ CORRECT: Add executeIf to step 8 to only run when no leads:
-   {
-     "id": "step8",
-     "executeIf": { "field": "step2.data.items.length", "operator": "==", "value": 0, "conditionType": "simple" }
-   }
-
-**CRITICAL: Loop vs Batch Processing Rules**
-
-⚠️ **NEVER put ai_processing inside a loop!** This causes massive token waste.
-
-❌ BAD (100 LLM calls):
-loop over customers → ai_processing (extract data) → done
-
-✅ GOOD (1 LLM call):
-get all customers → ai_processing (extract ALL at once) → transform results
-
-**When to use loops:**
-- Simple data transformations (NO AI inside)
-- Plugin actions that must be done individually (e.g., create_task per customer)
-- Small datasets (<10 items)
-
-**When to use batch processing (scatter_gather or ai_processing with arrays):**
-- AI analysis of multiple items (extract, summarize, classify)
-- Data aggregation across many items
-- Large datasets (>10 items)
-
-**Example: Processing 100 customer folders**
-
-❌ WRONG Architecture (400 LLM calls):
-  loop over 100 folders:
-    - ai_processing: extract customer data from PDF
-    - ai_processing: summarize emails
-    - ai_processing: classify package mismatch
-    - ai_processing: check for urgent issues
-
-✅ CORRECT Architecture (4 LLM calls):
-  1. action: get all folders (100 folders)
-  2. action: get all PDFs from folders (batch)
-  3. ai_processing: extract customer data from ALL PDFs at once (1 call, returns array)
-  4. action: search emails for ALL customers (batch)
-  5. ai_processing: summarize ALL email threads at once (1 call, returns array)
-  6. action: lookup ALL customers in sheet (batch)
-  7. transform: compare packages for all (pure data)
-  8. ai_processing: classify ALL mismatches at once (1 call, returns array)
-  9. loop over classification results:
-       conditional: check mismatch type
-         - action: create_task (must be individual)
-         - action: create_deal (must be individual)
-  10. ai_processing: generate final report from ALL results (1 call)
-  11. action: send email
-
-6. **CONDITIONALS**
-   Use these condition formats with conditionType discriminator (DSL schema format):
-   - Simple: { conditionType: "simple", field: "step1.status", operator: "==", value: "success" }
-   - Complex AND: { conditionType: "complex_and", conditions: [{ conditionType: "simple", field: "...", operator: "...", value: "..." }, {...}] }
-   - Complex OR: { conditionType: "complex_or", conditions: [{ conditionType: "simple", field: "...", operator: "...", value: "..." }, {...}] }
-   - Complex NOT: { conditionType: "complex_not", condition: { conditionType: "simple", field: "...", operator: "...", value: "..." } }
-
-   **Operators**: ==, !=, >, <, >=, <=, contains, startsWith, endsWith, exists, not_exists, in, not_in, is_empty, is_not_empty
-
-7. **VARIABLE REFERENCES**
-   - Input variables: {{input.field_name}} - values from user
-   - Step output: {{step1.data.field}} - output from step1
-   - Previous step: {{prev.data}} - output from last step
-   - Loop current item: {{loop.item.field}} - current iteration item
-   - Loop index: {{loop.index}} - current iteration number (0-based)
-
-   **IMPORTANT: Variable Reference Syntax Rules:**
-
-   **1. Step outputs** (from action steps):
-   - Simple fields: {{step1.fieldName}} or {{step1.data.fieldName}}
-   - Fields with dashes/spaces: {{step1['field-name']}} or {{step1.data['field with spaces']}}
-   - Nested paths: {{step1.data.contacts[0].email}}
-
-   **2. Loop items**:
-   - For objects: {{loop.item.fieldName}} or {{loop.item['field with spaces']}}
-   - For arrays: {{loop.item[0]}} (by index)
-   - For 2D arrays: {{loop.item[column_index]}} where column_index comes from user input
-   - Loop index: {{loop.index}} (0-based iteration number)
-
-   **3. User inputs** (from required_inputs):
-   - {{input.fieldName}} - Always use camelCase for input field names
-   - Example: {{input.columnName}}, {{input.spreadsheetId}}, {{input.recipientEmail}}
-
-   **4. Dynamic field access** (when user specifies field/column name):
-   - For 2D arrays: Use transform operation with column lookup (don't use bracket notation directly)
-   - For objects: {{loop.item.fields[{{input.fieldName}}]}} (nested bracket notation)
-
-   **KEY RULE**: Only use bracket notation for:
-   - Fields with spaces/dashes/special characters (e.g., {{item['Sales Person']}})
-   - Dynamic index access (e.g., {{item[{{input.columnIndex}}]}})
-   - NOT for assuming field names exist in data without checking output_fields
-
-   **CRITICAL: ai_processing step outputs**
-   ai_processing and llm_decision steps return data in {{stepN.data.result}} format:
-   - {{stepN.data.result}} - ALWAYS works (use this as default)
-   - {{stepN.data.response}} - also works (alias)
-   - {{stepN.data.output}} - also works (alias)
-   - {{stepN.data.summary}} - for summarization tasks
-   - {{stepN.data.analysis}} - for analysis tasks
-
-   ❌ WRONG: {{step3.html_table}} (field doesn't exist)
-   ✅ CORRECT: {{step3.data.result}} (always use .data.result for ai_processing)
-
-   **CRITICAL: Action (plugin) step outputs**
-   Action steps return data based on the plugin's output_fields (see section 4 for each plugin).
-   ALWAYS use the exact field names from the plugin's "outputs:" specification.
-
-   Examples:
-   - chatgpt-research.research_topic → outputs: {summary, key_points, sources, source_count}
-     ✅ CORRECT: {{step1.data.summary}} (the comprehensive research text)
-     ✅ CORRECT: {{step1.data.key_points}} (array of key findings)
-     ❌ WRONG: {{step1.data.results}} (this field doesn't exist)
-     ❌ WRONG: {{step1.data.result}} (this is for ai_processing only)
-
-   - google-sheets.read_sheet → outputs: {rows, headers, row_count}
-     ✅ CORRECT: {{step1.data.rows}} (array of row data)
-     ❌ WRONG: {{step1.data.data}} (this field doesn't exist)
-
-   **Rule: ALWAYS check the plugin's output_fields before referencing a step!**
-
-   🚨 **CRITICAL RULES - THESE WILL CAUSE VALIDATION FAILURES:**
-
-   ❌ **NEVER EVER use $PLACEHOLDER format** like $EMAIL, $QUERY, $SPREADSHEET_ID, $VALUE
-      This format is FORBIDDEN and will cause immediate validation failure!
-
-      **INSTEAD: Always use the two-step process:**
-
-      STEP 1: Add user-provided values to required_inputs array:
-        - name: "spreadsheet_id", type: "text", label: "Spreadsheet ID", required: true
-        - name: "upgrade_value", type: "text", label: "Upgrade Value", required: true
-
-      STEP 2: Reference in workflow using {{input.field_name}}:
-        - ❌ WRONG: "spreadsheet_id": "$SPREADSHEET_ID"
-        - ✅ CORRECT: "spreadsheet_id": "{{input.spreadsheet_id}}"
-        - ❌ WRONG: "value": "$UPGRADE_VALUE"
-        - ✅ CORRECT: "value": "{{input.upgrade_value}}"
-
-   ❌ **NEVER use next="end" or any non-existent step IDs**
-      The workflow ends automatically after the last step. Do NOT add next="end".
-
-   ✅ ALWAYS add user-provided values to required_inputs first
-   ✅ ALWAYS use {{input.field_name}} to reference required_inputs
-   ✅ ALWAYS use {{stepN.data.result}} for ai_processing outputs
-   ✅ ALWAYS use {{stepN.data.<exact_field_name>}} for action step outputs (check output_fields!)
-   ✅ Use literals only for hardcoded constants
-   ✅ next/on_success/on_failure must reference actual step IDs or be omitted
-
-8. **COMPLETE WORKFLOW EXAMPLE: Customer Onboarding Audit (10 Steps)**
-
-   This example demonstrates ALL key patterns: batch AI processing, conditionals, scatter-gather, transforms, and correct variable references.
-
-   **USER REQUEST:** "Audit our customer onboarding process: research best practices, analyze our current docs, identify gaps, create tasks for each gap, and send me a comprehensive report"
-
-   **GENERATED WORKFLOW:**
-
-   [
-     {
-       "id": "step1",
-       "type": "action",
-       "plugin": "chatgpt-research",
-       "action": "research_topic",
-       "params": {
-         "topic": "customer onboarding best practices SaaS 2024",
-         "depth": "comprehensive"
-       }
-     },
-     {
-       "id": "step2",
-       "type": "action",
-       "plugin": "google-drive",
-       "action": "list_files",
-       "params": {
-         "folder_name": "Onboarding Documentation",
-         "file_type": "all"
-       }
-     },
-     {
-       "id": "step3",
-       "type": "ai_processing",
-       "input": "{{step1.data.summary}}",
-       "prompt": "Extract the top 10 best practices from this research as a structured list with: practice_name, description, priority (high/medium/low)"
-     },
-     {
-       "id": "step4",
-       "type": "scatter_gather",
-       "scatter": {
-         "input": "{{step2.data.files}}",
-         "steps": [
-           {
-             "id": "read_doc",
-             "type": "action",
-             "plugin": "google-drive",
-             "action": "read_file",
-             "params": {
-               "file_id": "{{item.id}}"
-             }
-           },
-           {
-             "id": "analyze_doc",
-             "type": "ai_processing",
-             "input": "{{read_doc.data.content}}",
-             "prompt": "Analyze this onboarding document. Extract: topics_covered (array), quality_score (1-10), gaps (array of missing elements)"
-           }
-         ],
-         "maxConcurrency": 3,
-         "itemVariable": "item"
-       },
-       "gather": {
-         "operation": "collect"
-       }
-     },
-     {
-       "id": "step5",
-       "type": "ai_processing",
-       "input": "Best Practices: {{step3.data.result}}\n\nCurrent Documentation Analysis: {{step4.data}}",
-       "prompt": "Compare best practices against our current documentation. For EACH best practice, identify if it's: covered (yes/no), gap_severity (critical/high/medium/low), recommended_action. Return as structured array."
-     },
-     {
-       "id": "step6",
-       "type": "transform",
-       "operation": "filter",
-       "input": "{{step5.data.result}}",
-       "config": {
-         "condition": "item.covered === false && (item.gap_severity === 'critical' || item.gap_severity === 'high')"
-       }
-     },
-     {
-       "id": "step7",
-       "type": "conditional",
-       "condition": {
-         "conditionType": "complex_and",
-         "conditions": [
-           {
-             "conditionType": "simple",
-             "field": "step6.data.items.length",
-             "operator": ">",
-             "value": "0"
-           },
-           {
-             "conditionType": "simple",
-             "field": "step6.status",
-             "operator": "==",
-             "value": "success"
-           }
-         ]
-       },
-       "then_step": "step8",
-       "else_step": "step10"
-     },
-     {
-       "id": "step8",
-       "type": "loop",
-       "iterateOver": "{{step6.data.items}}",
-       "loopSteps": [
-         {
-           "id": "create_gap_task",
-           "type": "action",
-           "plugin": "linear",
-           "action": "create_issue",
-           "params": {
-             "title": "Onboarding Gap: {{loop.item.practice_name}}",
-             "description": "Gap Severity: {{loop.item.gap_severity}}\n\nRecommended Action: {{loop.item.recommended_action}}",
-             "priority": "{{loop.item.gap_severity}}"
-           }
-         }
-       ],
-       "maxIterations": 50
-     },
-     {
-       "id": "step9",
-       "type": "ai_processing",
-       "input": "{{step8.data.results}}",
-       "prompt": "Summarize all created tasks: total count, breakdown by severity, estimated effort"
-     },
-     {
-       "id": "step10",
-       "type": "ai_processing",
-       "input": "Research: {{step1.data.summary}}\n\nBest Practices: {{step3.data.result}}\n\nGap Analysis: {{step5.data.result}}\n\nCritical Gaps: {{step6.data.items}}\n\nTasks Created: {{step9.data.result}}",
-       "prompt": "Generate comprehensive executive summary report in HTML format with sections: 1) Research Findings, 2) Current State Assessment, 3) Gap Analysis, 4) Action Items Created, 5) Recommendations"
-     },
-     {
-       "id": "step11",
-       "type": "action",
-       "plugin": "gmail",
-       "action": "send_email",
-       "params": {
-         "to": "{{input.user_email}}",
-         "subject": "Customer Onboarding Audit - Complete Report",
-         "html_body": "{{step10.data.result}}"
-       }
-     }
-   ]
-
-   **KEY PATTERNS DEMONSTRATED:**
-
-   ✅ **Batch AI Processing (NOT loops!):**
-   - step3: Process ALL best practices in ONE ai_processing call
-   - step5: Compare ALL practices vs ALL docs in ONE ai_processing call
-   - step10: Aggregate ALL data into ONE comprehensive report
-
-   ✅ **Scatter-Gather Pattern (step4):**
-   - Scatter over files array ({{step2.data.files}})
-   - Execute 2 sub-steps for each file (read + analyze)
-   - Gather results into {{step4.data.all_analyses}}
-   - Use maxConcurrency: 3 for performance
-   - Reference current item with {{item.id}} (itemVariable: "item")
-
-   ✅ **Correct Variable References:**
-   - Action step output: {{step1.data.summary}} (exact field from output_fields)
-   - ai_processing output: {{step3.data.result}} (always .data.result)
-   - Transform output: {{step6.data.items}} (filtered array)
-   - Loop item: {{loop.item.practice_name}} (current iteration)
-   - Input variable: {{input.user_email}} (user-provided)
-
-   ✅ **Conditionals with conditionType:**
-   - step7: Uses conditionType: "complex_and"
-   - Checks array length AND step status
-   - Routes to step8 (tasks) or step10 (report)
-
-   ✅ **Loop for Individual Actions (step8):**
-   - Loops over critical gaps only
-   - Creates ONE Linear task per gap (must be individual)
-   - References loop item: {{loop.item.practice_name}}
-
-   ✅ **Transform for Filtering (step6):**
-   - operation: "filter"
-   - input: {{step5.data.result}}
-   - config.condition: JavaScript expression
-
-   ❌ **WRONG PATTERNS TO AVOID:**
-   - **CRITICAL**: NEVER put AI steps (ai_processing, llm_decision, summarize, extract, generate) inside loops!
-     AI is EXPENSIVE ($$$) and must process items in BATCH, not one-by-one.
-     ✅ Correct: Single ai_processing step BEFORE loop that processes all items
-     ❌ Wrong: ai_processing step INSIDE loop (costs multiply by item count!)
-   - Guessing field names: {{step1.data.results}} (check output_fields!)
-   - Missing conditionType in conditionals
-   - Using $PLACEHOLDER format instead of {{input.field}}
-
-9. **CRITICAL FIELD STRUCTURES**
-
-   **Action steps** - Parameters in nested params object:
-   {
-     "type": "action",
-     "plugin": "google-mail",
-     "action": "send_email",
-     "params": {
-       "recipients": { "to": ["{{input.recipient_email}}"] },
-       "content": { "subject": "Hello" }
-     }
-   }
-
-   **ai_processing steps** - Use input and prompt fields:
-   {
-     "type": "ai_processing",
-     "name": "Generate HTML Report",
-     "input": "{{step1.data.summary}}",  // ✅ Use exact field from plugin's output_fields
-     "prompt": "Convert the research summary into an HTML table..."
-   }
-   // Output: Access via {{step2.data.result}} NOT {{step2.html_table}}
-
-   **Transform steps** - Fields at TOP LEVEL (no params):
-   {
-     "type": "transform",
-     "operation": "filter",
-     "input": "{{step1.data.items}}",
-     "config": {
-       "condition": { "field": "status", "operator": "==", "value": "{{input.target_status}}" }
-     }
-   }
-
-   **Loop steps** - Use {{loop.item.X}} for current item:
-   {
-     "type": "loop",
-     "iterateOver": "{{step2.data.customers}}",
-     "maxIterations": 100,
-     "loopSteps": [
-       {
-         "type": "action",  // ✅ Only actions, conditionals, transforms in loops
-         "plugin": "google-mail",
-         "action": "send_email",
-         "params": {
-           "recipients": { "to": ["{{loop.item.email}}"] },
-           "content": { "subject": "Hello {{loop.item.name}}" }
-         }
-       }
-     ]
-   }
-
-   **🚨 CRITICAL EXAMPLE - Sending personalized emails (BATCH vs LOOP):**
-
-   ❌ WRONG - AI inside loop (expensive!):
-   Step 1: Filter leads → {{step1.data.items}} (5 items)
-   Step 2: Loop over leads {
-     Step 2a: ai_processing "Generate email for {{loop.item}}"  // ❌ AI called 5 times! Costs $$$
-     Step 2b: send_email
-   }
-
-   ✅ CORRECT - AI processes batch, loop uses enriched data:
-   Step 1: Filter leads → {{step1.data.items}} (5 items: [{name, email, score}, ...])
-   Step 2: ai_processing "Generate personalized email content for these 5 leads: {{step1.data.items}}"
-          → Returns: {enriched_items: [{name, email, score, email_content}, ...]}
-   Step 3: Loop over {{step2.data.enriched_items}} {
-     Step 3a: send_email to {{loop.item.email}} with content: {{loop.item.email_content}}  // ✅ AI called once!
-   }
-
-   **KEY PATTERN**: AI step enriches the array with new fields, then loop uses {{loop.item.X}} to access them.
-   ⚠️ NOTE: System does NOT support variable array indexing like {{array[loop.index]}} - only literals like {{array[0]}}
-
-   **COMPLETE EXAMPLE - Email with AI-generated content:**
-   Step 1 (action): chatgpt-research.research_topic → outputs: {summary, key_points, sources, source_count}
-   Step 2 (ai_processing): "Generate HTML", input: "{{step1.data.summary}}" → output: {{step2.data.result}}
-   Step 3 (action): send_email with html_body: "{{step2.data.result}}" ✅
-
-   WRONG examples:
-   - Step 1 output: "{{step1.data.results}}" ❌ (field doesn't exist, should be .summary)
-   - Step 2 output: "{{step2.html_content}}" ❌ (field doesn't exist, should be .data.result)
-
-9. **QUALITY CHECKLIST**
-   ✓ Every step has id, type, AND name fields
-   ✓ Use type="action" for plugin calls (NOT "plugin_action")
-   ✓ Action steps: params is nested object
-   ✓ Transform steps: operation/input/config at TOP LEVEL (no params)
-   ✓ Loop steps use "loopSteps" array with {{loop.item.X}} syntax
-   ✓ 🚨 **Use bracket notation ['...'] for field names with spaces or special characters**
-   ✓ NO ai_processing steps inside loops (use batch processing instead)
-   ✓ AI processes arrays in single calls, not loops
-   ✓ 🚨 **NO $PLACEHOLDER format anywhere** (use required_inputs + {{input.field_name}})
-   ✓ 🚨 **All user values added to required_inputs array FIRST**
-   ✓ Use {{input.field_name}} for user inputs (NEVER $PLACEHOLDER)
-   ✓ Use {{stepN.data.result}} for ai_processing outputs (NOT custom field names)
-   ✓ **CRITICAL: Check plugin's output_fields in section 4 before referencing action steps!**
-   ✓ Use exact field names from output_fields (e.g., .summary not .results)
-   ✓ Steps are in logical order
-   ✓ All plugins exist in available list
-   ✓ Conditionals use correct {field, operator, value} format
-   ✓ Loops have maxIterations safeguard
-   ✓ 🚨 **NO next="end"** - workflow ends automatically after last step
-   ✓ next/on_success/on_failure only reference actual step IDs
-
-**YOUR OUTPUT:**
-Return a complete workflow design using the workflow_designer tool.
-Be thorough but concise. Focus on structure correctness.`;
+  // Build plugin list with required_params and output_fields (compressed format)
+  const pluginList = Object.entries(availablePlugins).map(([key, plugin]) => {
+    const actions = plugin.actions.map((action: any) => {
+      const params = action.required_params?.length > 0
+        ? `(${action.required_params.join(', ')})`
+        : '()';
+      const fields = action.output_fields?.length > 0
+        ? ` → {${action.output_fields.slice(0, 3).join(', ')}${action.output_fields.length > 3 ? `, +${action.output_fields.length - 3}` : ''}}`
+        : '';
+      return `  • ${key}.${action.name}${params}${fields}`;
+    }).join('\n');
+    return `${key}: ${plugin.description}\n${actions}`;
+  }).join('\n\n');
+
+  // ========================================
+  // MINIMAL EFFECTIVE PROMPT (1,350 tokens)
+  // Empirically optimized for 95%+ success rate
+  // ========================================
+
+  return `# Workflow Designer - Stage 1
+
+You design workflow structures using the plugins below. Focus on correct structure; Stage 2 fills parameter values.
+
+## CRITICAL RULES (Validation Failures)
+
+1. **Required Fields**
+   - EVERY step MUST have: "id", "type", "name" (including nested loop steps)
+   - name = human-readable description (e.g., "Check Customer Status")
+
+2. **Variable Syntax & Placeholders**
+   - User inputs: {{input.field_name}} (NEVER hardcode user-specific values)
+   - Plugin outputs: {{stepN.data.FIELD}}
+   - Transform results: {{stepN.data.items}}
+   - Loop items: {{loop.item.field_name}}
+
+   ❌ NEVER hardcode: "spreadsheet_id": "abc123", "channel": "#sales", "field": "Email"
+   ✅ ALWAYS use placeholders: "spreadsheet_id": "{{input.spreadsheet_id}}"
+
+3. **Filter Config Format**
+   MUST be nested: { condition: { field, operator, value } }
+   NOT flat: { field, operator, value }
+   Field references: Use "item.fieldname" to reference fields in filtered array
+   ❌ WRONG: "field": "subject"
+   ✅ CORRECT: "field": "item.subject"
+
+4. **Conditional Branches**
+   Use: trueBranch/falseBranch (NOT then_step/else_step)
+
+5. **Step Chaining**
+   Use 'next' field for sequential flow
+
+## OPERATION SELECTION
+
+IF all data fields are already available ({{stepN.data.X}} or {{loop.item.X}})
+  → USE: Plugin action params directly with {{...}} references (free, instant)
+  → Example: "message_text": "Alert: {{loop.item.subject}}" (NOT ai_processing)
+
+ELSE IF task = keyword matching (contains, equals, starts_with)
+  → USE: transform with filter operation (free, instant)
+
+ELSE IF task = field comparison (>, <, ==, !=)
+  → USE: transform with filter operation (free, instant)
+
+ELSE IF task = sorting/grouping/deduplication
+  → USE: transform with sort/group/deduplicate operation (free, instant)
+
+ELSE IF task = understanding/analyzing/summarizing unknown content
+  → USE: ai_processing with prompt (costs money, slower)
+  → Only when you need to READ and UNDERSTAND content
+
+ELSE
+  → TRY: deterministic approach first (free/instant)
+  → FALLBACK: ai_processing only if impossible
+
+## OPERATOR SEMANTICS BY DATA TYPE
+
+String fields (name, email, subject, status, priority):
+  → Use: "==", "!=", "contains", "starts_with", "ends_with"
+  → ❌ NEVER: ">", "<" (not meaningful for string comparison)
+
+Number fields (count, amount, price, value, age):
+  → Use: ">", ">=", "<", "<=", "==", "!="
+  → ❌ NEVER: "contains" (not applicable to numbers)
+
+Boolean fields (is_active, has_attachment, completed):
+  → Use: "==" with true or false only
+
+Array fields (tags, labels, items, recipients):
+  → Use: "contains", "includes", "in"
+
+Example mistakes:
+❌ {"field": "item.priority", "operator": ">", "value": "high"} // WRONG - using > on string
+✅ {"field": "item.priority", "operator": "==", "value": "high"} // CORRECT - string equality
+
+❌ {"field": "item.count", "operator": "contains", "value": 5} // WRONG - contains on number
+✅ {"field": "item.count", "operator": ">", "value": 5} // CORRECT - numeric comparison
+
+## VARIABLE SYNTAX REFERENCE
+
+Plugin actions:
+  google-sheets.read_range → {data: {values:array<array>, row_count:integer}}
+  Reference: {{step1.data.values}}
+
+Transform operations:
+  filter → {data: {items:array, count:integer, removed:integer}}
+  Reference: {{step2.data.items}}
+
+  map (objects to 2D array) → {data: array<array>}
+  Config: {columns: ["field1", "field2"], add_headers: true}
+  Reference: {{step3.data}} (use directly for google-sheets.append_rows)
+
+AI processing:
+  → {data: {result:string, summary:string, analysis:string}}
+  Reference: {{step3.data.result}}
+
+Loops:
+  → {data: {iterations:array, successCount:integer, failureCount:integer}}
+  Reference: {{step4.data.iterations}}
+  Current item in loop: {{loop.item.field_name}}
+
+Scatter-gather:
+  → {data: array of results from parallel executions}
+  Reference: {{step5.data}} (array of scatter results)
+
+## AVAILABLE PLUGINS
+
+${pluginList}
+
+## PARAMETER STRUCTURE PATTERNS
+
+Read plugin summary to detect nesting. Look at required_params type hints:
+
+NESTED STRUCTURE (object-type params):
+  Plugin shows: required_params: ["recipients:object", "content:object"]
+  → Use nested structure: {recipients: {to: [...]}, content: {subject: "...", body: "..."}}
+
+FLAT STRUCTURE (primitive types):
+  Plugin shows: required_params: ["spreadsheet_id:string", "range:string"]
+  → Use flat structure: {spreadsheet_id: "...", range: "..."}
+
+MIXED STRUCTURE:
+  Plugin shows: required_params: ["channel_id:string", "attachments:array<object>"]
+  → Use mixed: {channel_id: "...", message_text: "...", attachments: [{...}]}
+
+Rule: Check type hints in plugin summary's required_params to determine structure.
+
+## COMPREHENSIVE EXAMPLE
+
+User: "Find urgent emails and summarize them"
+
+[
+  {
+    "id": "step1",
+    "type": "action",
+    "name": "Search Emails",
+    "plugin": "google-mail",
+    "action": "search_emails",
+    "params": {
+      "query": "is:unread",
+      "max_results": 50
+    }
+  },
+  {
+    "id": "step2",
+    "type": "transform",
+    "name": "Filter Urgent Emails",
+    "operation": "filter",
+    "input": "{{step1.data.emails}}",
+    "config": {
+      "condition": {
+        "conditionType": "complex_or",
+        "conditions": [
+          {"conditionType": "simple", "field": "item.subject", "operator": "contains", "value": "urgent"},
+          {"conditionType": "simple", "field": "item.body", "operator": "contains", "value": "urgent"}
+        ]
+      }
+    },
+    "next": "step3"
+  },
+  {
+    "id": "step3",
+    "type": "ai_processing",
+    "name": "Summarize Urgent Emails",
+    "input": "{{step2.data.items}}",
+    "prompt": "For each email, write a 1-sentence summary highlighting urgency"
+  }
+]
+
+Key patterns:
+✓ Step 1: type="action" for plugin calls (NOT "plugin_action")
+✓ Step 1: Plugin action outputs to .data
+✓ Step 2: Transform uses deterministic filter (keyword matching, NOT ai_processing)
+✓ Step 2: Filter config is nested
+✓ Step 2: Filter condition uses "item.fieldname" to reference array item fields
+✓ Step 2: References {{step1.data.emails}} (with .data prefix)
+✓ Step 3: AI processing only for summarization (not filtering or formatting)
+✓ Step 3: References {{step2.data.items}} (transform output format)
+✓ Plugin params use {{step.data.X}} directly when data exists (NO ai_processing to format)
+✓ User-specific params use {{input.X}} placeholders (NOT hardcoded values)
+✓ Cost: 50 emails → filter to 5 urgent → AI on 5 (90% cost savings vs AI on all 50)
+
+## ADVANCED PATTERNS
+
+Scatter-Gather (parallel processing of array items):
+{
+  "id": "step3",
+  "name": "Process Files in Parallel",
+  "type": "scatter_gather",
+  "scatter": {
+    "input": "{{step1.data.files}}",
+    "itemVariable": "file",
+    "maxConcurrency": 5,
+    "steps": [
+      {
+        "id": "process_file",
+        "name": "Extract File Data",
+        "type": "ai_processing",
+        "input": "{{file.content}}",
+        "prompt": "Extract data from this file"
+      }
+    ]
+  },
+  "gather": {
+    "operation": "collect"
+  }
+}
+Reference results: {{step3.data}} (array of all scatter results)
+
+Loop with Nested Conditionals:
+{
+  "id": "step5",
+  "type": "loop",
+  "name": "Process Customers",
+  "iterateOver": "{{step4.data.customers}}",
+  "maxIterations": 100,
+  "loopSteps": [
+    {
+      "id": "check_status",
+      "name": "Check Customer Status",
+      "type": "conditional",
+      "condition": {
+        "conditionType": "simple",
+        "field": "loop.item.status",
+        "operator": "==",
+        "value": "active"
+      },
+      "trueBranch": "process_active",
+      "falseBranch": "check_pending"
+    },
+    {
+      "id": "process_active",
+      "name": "Notify About Active Customer",
+      "type": "action",
+      "plugin": "slack",
+      "action": "send_message",
+      "params": {
+        "channel_id": "{{input.slack_channel}}",
+        "message_text": "✅ Active Customer: {{loop.item.name}} - Value: {{loop.item.value}}"
+      }
+    },
+    {
+      "id": "check_pending",
+      "name": "Check if Pending",
+      "type": "conditional",
+      "condition": {
+        "conditionType": "simple",
+        "field": "loop.item.status",
+        "operator": "==",
+        "value": "pending"
+      },
+      "trueBranch": "process_pending",
+      "falseBranch": "skip"
+    },
+    {
+      "id": "process_pending",
+      "name": "Notify About Pending Customer",
+      "type": "action",
+      "plugin": "slack",
+      "action": "send_message",
+      "params": {
+        "channel_id": "{{input.slack_channel}}",
+        "message_text": "⏳ Pending Follow-up: {{loop.item.name}}"
+      }
+    },
+    {
+      "id": "skip",
+      "name": "Skip Inactive Customer",
+      "type": "transform",
+      "operation": "set",
+      "input": "{{loop.item}}"
+    }
+  ]
+}
+Reference loop results: {{step5.data.iterations}}
+Access current item: {{loop.item.field_name}}
+
+Convert Objects to Google Sheets 2D Array:
+{
+  "id": "step6",
+  "name": "Format Data for Google Sheets",
+  "type": "transform",
+  "operation": "map",
+  "input": "{{step4.data.customers}}",
+  "config": {
+    "columns": ["name", "email", "company", "status", "value"],
+    "add_headers": true
+  }
+},
+{
+  "id": "step7",
+  "name": "Append to Google Sheet",
+  "type": "action",
+  "plugin": "google-sheets",
+  "action": "append_rows",
+  "params": {
+    "spreadsheet_id": "{{input.spreadsheet_id}}",
+    "range": "{{input.sheet_range}}",
+    "values": "{{step6.data}}"
+  }
+}
+✓ spreadsheet_id uses {{input.X}} placeholder (NOT hardcoded ID)
+✓ Result format: [["Name", "Email", ...], ["John", "john@example.com", ...]]
+
+## ATTACHMENT PROCESSING EXAMPLE
+
+User: "Scan expense attachments from Gmail and extract data to spreadsheet"
+
+[
+  {
+    "id": "step1",
+    "name": "Search Emails with Attachments",
+    "type": "action",
+    "plugin": "google-mail",
+    "action": "search_emails",
+    "params": {
+      "query": "subject:expenses has:attachment",
+      "include_attachments": true,
+      "max_results": 20
+    },
+    "next": "step2"
+  },
+  {
+    "id": "step2",
+    "name": "Filter Emails That Have Attachments",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{step1.data.emails}}",
+    "config": {
+      "condition": {
+        "conditionType": "simple",
+        "field": "item.attachments.length",
+        "operator": ">",
+        "value": "0"
+      }
+    },
+    "next": "step3"
+  },
+  {
+    "id": "step3",
+    "name": "Process Attachments in Parallel",
+    "type": "scatter_gather",
+    "scatter": {
+      "input": "{{step2.data.items}}",
+      "itemVariable": "email",
+      "maxConcurrency": 3,
+      "steps": [
+        {
+          "id": "download_attachment",
+          "name": "Download Attachment Content",
+          "type": "action",
+          "plugin": "google-mail",
+          "action": "get_email_attachment",
+          "params": {
+            "message_id": "{{email.id}}",
+            "attachment_id": "{{email.attachments[0].attachmentId}}",
+            "filename": "{{email.attachments[0].filename}}"
+          }
+        },
+        {
+          "id": "extract_data",
+          "name": "Extract Expense Data with AI",
+          "type": "ai_processing",
+          "input": "{{download_attachment.data}}",
+          "prompt": "Extract expense items from this {{download_attachment.data.mimeType}} file. Return JSON array: [{date, vendor, amount, category}]"
+        }
+      ]
+    },
+    "gather": {
+      "operation": "collect"
+    },
+    "next": "step4"
+  },
+  {
+    "id": "step4",
+    "name": "Flatten Results",
+    "type": "transform",
+    "operation": "flatten",
+    "input": "{{step3.data}}",
+    "config": {
+      "depth": 2
+    },
+    "next": "step5"
+  },
+  {
+    "id": "step5",
+    "name": "Format for Sheets",
+    "type": "transform",
+    "operation": "map",
+    "input": "{{step4.data.items}}",
+    "config": {
+      "columns": ["date", "vendor", "amount", "category"],
+      "add_headers": true
+    },
+    "next": "step6"
+  },
+  {
+    "id": "step6",
+    "name": "Append to Google Sheets",
+    "type": "action",
+    "plugin": "google-sheets",
+    "action": "append_rows",
+    "params": {
+      "spreadsheet_id": "{{input.spreadsheet_id}}",
+      "range": "Sheet1",
+      "values": "{{step5.data}}"
+    }
+  }
+]
+
+Key attachment patterns:
+✓ Step 1: search_emails with include_attachments:true returns metadata
+✓ Metadata includes: attachmentId, messageId, filename, mimeType
+✓ Step 3: Use get_email_attachment(message_id, attachment_id) to download content
+✓ Downloaded content is base64 in .data field
+✓ AI processing can analyze the base64 content directly
+✓ Use scatter_gather for parallel attachment downloads
+✓ Reference: {{email.attachments[0].attachmentId}} and {{email.id}}
+
+## ANTI-PATTERNS: COMMON FAILURES TO AVOID
+
+❌ MISTAKE 1: Wrong operator for data type
+{
+  "field": "item.status",
+  "operator": ">",  // WRONG - string comparison
+  "value": "active"
+}
+✅ CORRECT: {"field": "item.status", "operator": "==", "value": "active"}
+
+❌ MISTAKE 2: Missing .data accessor
+"input": "{{step1.emails}}"
+✅ CORRECT: "input": "{{step1.data.emails}}"
+
+❌ MISTAKE 3: AI processing inside loops (50x token cost)
+{
+  "type": "loop",
+  "loopSteps": [
+    {"type": "ai_processing", "input": "{{loop.item}}"}  // WRONG - per-item AI
+  ]
+}
+✅ CORRECT: Process entire array in single AI call
+{
+  "type": "ai_processing",
+  "input": "{{step1.data.items}}",
+  "prompt": "For each item in array, analyze and return results as array"
+}
+
+❌ MISTAKE 4: Filter condition at wrong nesting level
+{
+  "operation": "filter",
+  "config": {
+    "field": "item.status",  // WRONG - missing condition wrapper
+    "operator": "=="
+  }
+}
+✅ CORRECT:
+{
+  "operation": "filter",
+  "config": {
+    "condition": {  // Must wrap in condition object
+      "conditionType": "simple",
+      "field": "item.status",
+      "operator": "==",
+      "value": "active"
+    }
+  }
+}
+
+❌ MISTAKE 5: Wrong action name (typo)
+"action": "search_email"  // WRONG - missing 's'
+✅ CORRECT: "action": "search_emails"
+
+❌ MISTAKE 6: Hallucinated action
+"action": "get_attachment"  // WRONG - doesn't exist in google-mail
+✅ CORRECT: Use search_emails with include_attachments:true, then get_email_attachment
+
+Return using workflow_designer tool. Include all {{input.X}} in required_inputs.`;
 }
 
 /**
  * Build Stage 1 tool schema for Claude
- * This is the structure validation schema
+ *
+ * NOTE: This is intentionally separate from PILOT_DSL_SCHEMA because:
+ * 1. Descriptions are optimized for LLM understanding (verbose, instructional)
+ * 2. PILOT_DSL_SCHEMA uses $ref/$defs for compactness (good for validation, less clear for LLM)
+ * 3. This schema guides Sonnet 4's generation, PILOT_DSL_SCHEMA validates execution
+ *
+ * MUST stay aligned with PILOT_DSL_SCHEMA structure, but descriptions can differ.
  */
 function buildStage1ToolSchema(): any {
   return {
     type: 'object',
     required: [
       'agent_name',
-      'agent_description',
+      'description',
+      'system_prompt',
       'workflow_type',
       'workflow_steps',
       'required_inputs',
       'suggested_plugins',
+      'suggested_outputs',
       'confidence',
       'reasoning'
     ],
@@ -861,14 +755,18 @@ function buildStage1ToolSchema(): any {
         type: 'string',
         description: 'Clear, descriptive agent name (e.g., "Gmail to Sheets Sync", "Daily Report Generator")'
       },
-      agent_description: {
+      description: {
         type: 'string',
         description: 'Detailed description of what the agent does and how it works'
       },
+      system_prompt: {
+        type: 'string',
+        description: 'System prompt for LLM execution steps (if workflow uses AI processing)'
+      },
       workflow_type: {
         type: 'string',
-        enum: ['simple_linear', 'conditional', 'loop', 'parallel', 'complex'],
-        description: 'Type of workflow based on complexity'
+        enum: ['pure_ai', 'data_retrieval_ai', 'ai_external_actions'],
+        description: 'Type of workflow: pure_ai (only LLM), data_retrieval_ai (fetch + LLM), ai_external_actions (LLM + plugin actions)'
       },
       workflow_steps: {
         type: 'array',
@@ -1008,7 +906,7 @@ function buildStage1ToolSchema(): any {
               description: 'Right value for comparison (REQUIRED for comparison steps, e.g., "10")'
             },
             executeIf: {
-              description: 'CRITICAL: Optional condition for conditional execution of ANY step type. Step only runs if this evaluates to true, otherwise skipped. Use to prevent duplicate execution when using trueBranch/falseBranch. Must use conditionType discriminator. Example: {conditionType: "simple", field: "step2.data.items.length", operator: "==", value: 0}'
+              description: 'RARELY NEEDED: Optional condition for conditional execution ONLY when NOT using trueBranch/falseBranch. DO NOT use executeIf on steps that are referenced in trueBranch or falseBranch - the conditional branching already controls execution. Only use executeIf for steps that need independent conditional logic outside of branch structures. Must use conditionType discriminator. Example: {conditionType: "simple", field: "step2.data.items.length", operator: "==", value: 0}'
             },
             next: { type: 'string', description: 'Next step ID' },
             on_success: { type: 'string', description: 'Step ID on success' },
@@ -1029,8 +927,8 @@ function buildStage1ToolSchema(): any {
             },
             type: {
               type: 'string',
-              enum: ['text', 'number', 'email', 'url', 'select', 'multi_select', 'file', 'json'],
-              description: 'Input type'
+              enum: ['text', 'email', 'number', 'file', 'select', 'url', 'date', 'textarea'],
+              description: 'Input type (aligned with PILOT_DSL_SCHEMA)'
             },
             label: {
               type: 'string',
@@ -1056,11 +954,52 @@ function buildStage1ToolSchema(): any {
         description: 'List of plugin keys used in workflow',
         items: { type: 'string' }
       },
+      suggested_outputs: {
+        type: 'array',
+        description: 'Suggested output formats for the workflow results',
+        items: {
+          type: 'object',
+          required: ['name', 'type', 'category', 'description', 'reasoning'],
+          properties: {
+            name: {
+              type: 'string',
+              description: 'Output name'
+            },
+            type: {
+              type: 'string',
+              enum: ['SummaryBlock', 'EmailDraft', 'PluginAction', 'Alert'],
+              description: 'Type of output'
+            },
+            category: {
+              type: 'string',
+              enum: ['human-facing', 'machine-facing'],
+              description: 'Whether output is for humans or machines'
+            },
+            description: {
+              type: 'string',
+              description: 'Description of the output'
+            },
+            format: {
+              type: 'string',
+              enum: ['table', 'list', 'markdown', 'html', 'json', 'text'],
+              description: 'Format of the output'
+            },
+            plugin: {
+              type: 'string',
+              description: 'Plugin key if output is a plugin action'
+            },
+            reasoning: {
+              type: 'string',
+              description: 'Why this output format was chosen'
+            }
+          }
+        }
+      },
       confidence: {
         type: 'number',
-        description: 'Confidence score 0-100 for workflow design quality',
+        description: 'Confidence score 0-1 for workflow design quality (aligned with PILOT_DSL_SCHEMA)',
         minimum: 0,
-        maximum: 100
+        maximum: 1
       },
       reasoning: {
         type: 'string',

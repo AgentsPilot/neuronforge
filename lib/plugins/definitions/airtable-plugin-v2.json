@@ -86,12 +86,20 @@
           "base_id": {
             "type": "string",
             "description": "The ID of the Airtable base (starts with 'app')",
-            "pattern": "^app[a-zA-Z0-9]{14}$"
+            "pattern": "^app[a-zA-Z0-9]{14}$",
+            "x-dynamic-options": {
+              "source": "list_bases",
+              "description": "Fetches available bases dynamically"
+            }
           },
           "table_name": {
             "type": "string",
             "description": "The name or ID of the table to query",
-            "minLength": 1
+            "minLength": 1,
+            "x-dynamic-options": {
+              "source": "list_tables_in_base",
+              "description": "Fetches available tables dynamically"
+            }
           },
           "view": {
             "type": "string",
@@ -206,12 +214,20 @@
           "base_id": {
             "type": "string",
             "description": "The ID of the Airtable base (starts with 'app')",
-            "pattern": "^app[a-zA-Z0-9]{14}$"
+            "pattern": "^app[a-zA-Z0-9]{14}$",
+            "x-dynamic-options": {
+              "source": "list_bases",
+              "description": "Fetches available bases dynamically"
+            }
           },
           "table_name": {
             "type": "string",
             "description": "The name or ID of the table",
-            "minLength": 1
+            "minLength": 1,
+            "x-dynamic-options": {
+              "source": "list_tables_in_base",
+              "description": "Fetches available tables dynamically"
+            }
           },
           "record_id": {
             "type": "string",
@@ -258,12 +274,20 @@
           "base_id": {
             "type": "string",
             "description": "The ID of the Airtable base (starts with 'app')",
-            "pattern": "^app[a-zA-Z0-9]{14}$"
+            "pattern": "^app[a-zA-Z0-9]{14}$",
+            "x-dynamic-options": {
+              "source": "list_bases",
+              "description": "Fetches available bases dynamically"
+            }
           },
           "table_name": {
             "type": "string",
             "description": "The name or ID of the table",
-            "minLength": 1
+            "minLength": 1,
+            "x-dynamic-options": {
+              "source": "list_tables_in_base",
+              "description": "Fetches available tables dynamically"
+            }
           },
           "records": {
             "type": "array",
@@ -356,12 +380,20 @@
           "base_id": {
             "type": "string",
             "description": "The ID of the Airtable base (starts with 'app')",
-            "pattern": "^app[a-zA-Z0-9]{14}$"
+            "pattern": "^app[a-zA-Z0-9]{14}$",
+            "x-dynamic-options": {
+              "source": "list_bases",
+              "description": "Fetches available bases dynamically"
+            }
           },
           "table_name": {
             "type": "string",
             "description": "The name or ID of the table",
-            "minLength": 1
+            "minLength": 1,
+            "x-dynamic-options": {
+              "source": "list_tables_in_base",
+              "description": "Fetches available tables dynamically"
+            }
           },
           "records": {
             "type": "array",
@@ -533,12 +565,20 @@
           "base_id": {
             "type": "string",
             "description": "The ID of the Airtable base (starts with 'app')",
-            "pattern": "^app[a-zA-Z0-9]{14}$"
+            "pattern": "^app[a-zA-Z0-9]{14}$",
+            "x-dynamic-options": {
+              "source": "list_bases",
+              "description": "Fetches available bases dynamically"
+            }
           },
           "table_name": {
             "type": "string",
             "description": "The name or ID of the table",
-            "minLength": 1
+            "minLength": 1,
+            "x-dynamic-options": {
+              "source": "list_tables_in_base",
+              "description": "Fetches available tables dynamically"
+            }
           },
           "record_id": {
             "type": "string",
@@ -628,12 +668,20 @@
           "base_id": {
             "type": "string",
             "description": "The ID of the Airtable base (starts with 'app')",
-            "pattern": "^app[a-zA-Z0-9]{14}$"
+            "pattern": "^app[a-zA-Z0-9]{14}$",
+            "x-dynamic-options": {
+              "source": "list_bases",
+              "description": "Fetches available bases dynamically"
+            }
           },
           "table_name": {
             "type": "string",
             "description": "The name or ID of the table",
-            "minLength": 1
+            "minLength": 1,
+            "x-dynamic-options": {
+              "source": "list_tables_in_base",
+              "description": "Fetches available tables dynamically"
+            }
           },
           "record_id": {
             "type": "string",

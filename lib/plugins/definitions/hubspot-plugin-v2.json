@@ -20,8 +20,11 @@
         "crm.objects.contacts.read",
         "crm.objects.contacts.write",
         "crm.objects.deals.read",
+        "crm.objects.deals.write",
         "crm.objects.companies.read",
-        "crm.objects.owners.read"
+        "crm.objects.owners.read",
+        "crm.schemas.contacts.read",
+        "crm.schemas.deals.read"
       ]
     }
   },
@@ -30,27 +33,27 @@
       "description": "Retrieve detailed contact information by ID or email address",
       "usage_context": "Use when you need to look up a specific contact's details, properties, or recent activity summary. Can search by contact ID or email address.",
       "parameters": {
-        "contact_identifier": {
-          "type": "string",
-          "description": "The contact ID or email address to look up",
-          "required": true
-        },
-        "identifier_type": {
-          "type": "string",
-          "description": "Type of identifier: 'id' or 'email' (default: 'email')",
-          "required": false,
-          "default": "email"
-        },
+        "type": "object",
+        "required": ["contact_identifier"],
         "properties": {
-          "type": "array",
-          "description": "Optional: List of specific contact properties to retrieve (e.g., ['firstname', 'lastname', 'phone', 'company']). If not specified, returns all properties.",
-          "required": false
-        },
-        "include_associations": {
-          "type": "boolean",
-          "description": "Include associated records like companies and deals (default: false)",
-          "required": false,
-          "default": false
+          "contact_identifier": {
+            "type": "string",
+            "description": "The contact ID or email address to look up"
+          },
+          "identifier_type": {
+            "type": "string",
+            "description": "Type of identifier: 'id' or 'email' (default: 'email')",
+            "default": "email"
+          },
+          "properties": {
+            "type": "array",
+            "description": "Optional: List of specific contact properties to retrieve (e.g., ['firstname', 'lastname', 'phone', 'company']). If not specified, returns all properties."
+          },
+          "include_associations": {
+            "type": "boolean",
+            "description": "Include associated records like companies and deals (default: false)",
+            "default": false
+          }
         }
       },
       "rules": {
@@ -114,27 +117,31 @@
       "description": "Get all deals associated with a specific contact",
       "usage_context": "Use to view a contact's deal pipeline, including deal amounts, stages, close dates, and deal ownership. Useful for understanding a contact's revenue opportunities.",
       "parameters": {
-        "contact_id": {
-          "type": "string",
-          "description": "The ID of the contact",
-          "required": true
-        },
-        "limit": {
-          "type": "number",
-          "description": "Maximum number of deals to retrieve (default: 50, max: 100)",
-          "required": false,
-          "default": 50
-        },
-        "include_deal_details": {
-          "type": "boolean",
-          "description": "Include full deal properties like amount, stage, close date, and owner (default: true)",
-          "required": false,
-          "default": true
-        },
-        "deal_properties": {
-          "type": "array",
-          "description": "Optional: Specific deal properties to retrieve (e.g., ['dealname', 'amount', 'dealstage', 'closedate'])",
-          "required": false
+        "type": "object",
+        "required": ["contact_id"],
+        "properties": {
+          "contact_id": {
+            "type": "string",
+            "description": "The ID of the contact",
+            "x-dynamic-options": {
+              "source": "list_contacts",
+              "description": "Fetches available contacts dynamically"
+            }
+          },
+          "limit": {
+            "type": "number",
+            "description": "Maximum number of deals to retrieve (default: 50, max: 100)",
+            "default": 50
+          },
+          "include_deal_details": {
+            "type": "boolean",
+            "description": "Include full deal properties like amount, stage, close date, and owner (default: true)",
+            "default": true
+          },
+          "deal_properties": {
+            "type": "array",
+            "description": "Optional: Specific deal properties to retrieve (e.g., ['dealname', 'amount', 'dealstage', 'closedate'])"
+          }
         }
       },
       "rules": {
@@ -215,27 +222,31 @@
       "description": "Retrieve recent activities and engagement history for a contact",
       "usage_context": "Use to view interaction timeline including calls, emails, notes, meetings, and tasks. Essential for understanding contact engagement and communication history.",
       "parameters": {
-        "contact_id": {
-          "type": "string",
-          "description": "The ID of the contact",
-          "required": true
-        },
-        "activity_types": {
-          "type": "array",
-          "description": "Types of activities to retrieve (options: 'calls', 'emails', 'notes', 'meetings', 'tasks'). Default: all types",
-          "required": false,
-          "default": ["calls", "emails", "notes", "meetings", "tasks"]
-        },
-        "limit": {
-          "type": "number",
-          "description": "Maximum number of activities to retrieve per type (default: 25, max: 100)",
-          "required": false,
-          "default": 25
-        },
-        "since_date": {
-          "type": "string",
-          "description": "Optional: Only retrieve activities after this date (ISO 8601 format: YYYY-MM-DD)",
-          "required": false
+        "type": "object",
+        "required": ["contact_id"],
+        "properties": {
+          "contact_id": {
+            "type": "string",
+            "description": "The ID of the contact",
+            "x-dynamic-options": {
+              "source": "list_contacts",
+              "description": "Fetches available contacts dynamically"
+            }
+          },
+          "activity_types": {
+            "type": "array",
+            "description": "Types of activities to retrieve (options: 'calls', 'emails', 'notes', 'meetings', 'tasks'). Default: all types",
+            "default": ["calls", "emails", "notes", "meetings", "tasks"]
+          },
+          "limit": {
+            "type": "number",
+            "description": "Maximum number of activities to retrieve per type (default: 25, max: 100)",
+            "default": 25
+          },
+          "since_date": {
+            "type": "string",
+            "description": "Optional: Only retrieve activities after this date (ISO 8601 format: YYYY-MM-DD)"
+          }
         }
       },
       "rules": {
@@ -314,37 +325,35 @@
       "description": "Search for contacts using filters and query terms",
       "usage_context": "Use to find contacts matching specific criteria such as name, email, company, job title, or custom properties. Supports flexible filtering for LLM-driven queries.",
       "parameters": {
-        "query": {
-          "type": "string",
-          "description": "Search query term (searches across name, email, and company fields)",
-          "required": false
-        },
-        "filters": {
-          "type": "object",
-          "description": "Property filters as key-value pairs (e.g., {'company': 'Acme Corp', 'lifecyclestage': 'customer'})",
-          "required": false
-        },
-        "limit": {
-          "type": "number",
-          "description": "Maximum number of contacts to return (default: 25, max: 100)",
-          "required": false,
-          "default": 25
-        },
+        "type": "object",
+        "required": [],
         "properties": {
-          "type": "array",
-          "description": "Specific properties to retrieve for each contact (e.g., ['firstname', 'lastname', 'email', 'company'])",
-          "required": false
-        },
-        "sort_by": {
-          "type": "string",
-          "description": "Property to sort results by (e.g., 'createdate', 'lastmodifieddate', 'lastname')",
-          "required": false
-        },
-        "sort_direction": {
-          "type": "string",
-          "description": "Sort direction: 'ASCENDING' or 'DESCENDING' (default: 'DESCENDING')",
-          "required": false,
-          "default": "DESCENDING"
+          "query": {
+            "type": "string",
+            "description": "Search query term (searches across name, email, and company fields)"
+          },
+          "filters": {
+            "type": "object",
+            "description": "Property filters as key-value pairs (e.g., {'company': 'Acme Corp', 'lifecyclestage': 'customer'})"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Maximum number of contacts to return (default: 25, max: 100)",
+            "default": 25
+          },
+          "properties": {
+            "type": "array",
+            "description": "Specific properties to retrieve for each contact (e.g., ['firstname', 'lastname', 'email', 'company'])"
+          },
+          "sort_by": {
+            "type": "string",
+            "description": "Property to sort results by (e.g., 'createdate', 'lastmodifieddate', 'lastname')"
+          },
+          "sort_direction": {
+            "type": "string",
+            "description": "Sort direction: 'ASCENDING' or 'DESCENDING' (default: 'DESCENDING')",
+            "default": "DESCENDING"
+          }
         }
       },
       "rules": {
@@ -426,21 +435,26 @@
       "description": "Get detailed information about a specific deal",
       "usage_context": "Use to retrieve comprehensive deal information including amount, stage, close date, associated contacts, companies, and deal properties. Useful for deep-diving into specific opportunities.",
       "parameters": {
-        "deal_id": {
-          "type": "string",
-          "description": "The ID of the deal to retrieve",
-          "required": true
-        },
+        "type": "object",
+        "required": ["deal_id"],
         "properties": {
-          "type": "array",
-          "description": "Optional: Specific deal properties to retrieve (e.g., ['dealname', 'amount', 'dealstage', 'closedate', 'pipeline'])",
-          "required": false
-        },
-        "include_associations": {
-          "type": "boolean",
-          "description": "Include associated contacts and companies (default: true)",
-          "required": false,
-          "default": true
+          "deal_id": {
+            "type": "string",
+            "description": "The ID of the deal to retrieve",
+            "x-dynamic-options": {
+              "source": "list_deals",
+              "description": "Fetches available deals dynamically"
+            }
+          },
+          "properties": {
+            "type": "array",
+            "description": "Optional: Specific deal properties to retrieve (e.g., ['dealname', 'amount', 'dealstage', 'closedate', 'pipeline'])"
+          },
+          "include_associations": {
+            "type": "boolean",
+            "description": "Include associated contacts and companies (default: true)",
+            "default": true
+          }
         }
       },
       "rules": {
@@ -501,6 +515,378 @@
           "invalid_property": "One or more requested properties do not exist. Check property names.",
           "api_rate_limit": "HubSpot API rate limit exceeded. Please wait a moment and try again.",
           "insufficient_permissions": "Missing required permissions to access deal data."
+        }
+      }
+    },
+    "create_contact": {
+      "description": "Create a new contact in HubSpot CRM",
+      "usage_context": "Use to add new contacts to HubSpot when they don't already exist. Essential for lead capture and contact management workflows.",
+      "parameters": {
+        "type": "object",
+        "required": ["email"],
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "Contact email address (required, must be unique)"
+          },
+          "firstname": {
+            "type": "string",
+            "description": "Contact first name"
+          },
+          "lastname": {
+            "type": "string",
+            "description": "Contact last name"
+          },
+          "phone": {
+            "type": "string",
+            "description": "Contact phone number"
+          },
+          "company": {
+            "type": "string",
+            "description": "Company name"
+          },
+          "jobtitle": {
+            "type": "string",
+            "description": "Job title"
+          },
+          "website": {
+            "type": "string",
+            "description": "Company website"
+          },
+          "lifecyclestage": {
+            "type": "string",
+            "description": "Lifecycle stage (e.g., 'lead', 'marketingqualifiedlead', 'salesqualifiedlead', 'opportunity', 'customer')"
+          },
+          "hs_lead_status": {
+            "type": "string",
+            "description": "Lead status (e.g., 'NEW', 'OPEN', 'IN_PROGRESS', 'CONNECTED', 'UNQUALIFIED')"
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "Created contact information",
+        "properties": {
+          "success": { "type": "boolean", "description": "Whether the contact was created successfully" },
+          "data": {
+            "type": "object",
+            "properties": {
+              "contact_id": { "type": "string", "description": "HubSpot contact ID" },
+              "email": { "type": "string", "description": "Contact email" },
+              "firstname": { "type": "string", "description": "Contact first name" },
+              "lastname": { "type": "string", "description": "Contact last name" },
+              "company": { "type": "string", "description": "Company name" },
+              "created_at": { "type": "string", "description": "Contact creation timestamp" }
+            }
+          },
+          "message": { "type": "string", "description": "Success message" }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Returns created contact with ID and properties",
+        "sample_output": {
+          "success": true,
+          "data": {
+            "contact_id": "12345",
+            "email": "john.smith@example.com",
+            "firstname": "John",
+            "lastname": "Smith",
+            "company": "Acme Corp",
+            "created_at": "2025-01-15T10:30:00.000Z"
+          },
+          "message": "Contact created successfully"
+        },
+        "common_errors": {
+          "email_already_exists": "Contact with this email already exists in HubSpot.",
+          "invalid_email_format": "Email address format is invalid.",
+          "missing_required_field": "Email is required to create a contact.",
+          "api_rate_limit": "HubSpot API rate limit exceeded. Please wait a moment and try again.",
+          "insufficient_permissions": "Missing required permissions to create contacts."
+        }
+      }
+    },
+    "create_task": {
+      "description": "Create a new task in HubSpot CRM",
+      "usage_context": "Use to create follow-up tasks, reminders, or action items associated with contacts, deals, or companies. Essential for workflow automation and task management.",
+      "parameters": {
+        "type": "object",
+        "required": ["subject"],
+        "properties": {
+          "subject": {
+            "type": "string",
+            "description": "Task title/subject"
+          },
+          "body": {
+            "type": "string",
+            "description": "Task description or notes"
+          },
+          "status": {
+            "type": "string",
+            "description": "Task status: 'NOT_STARTED' or 'COMPLETED' (default: 'NOT_STARTED')",
+            "default": "NOT_STARTED"
+          },
+          "priority": {
+            "type": "string",
+            "description": "Task priority: 'HIGH', 'MEDIUM', or 'LOW' (default: 'MEDIUM')",
+            "default": "MEDIUM"
+          },
+          "due_date": {
+            "type": "string",
+            "description": "Due date in ISO 8601 format (YYYY-MM-DD) or timestamp"
+          },
+          "contact_id": {
+            "type": "string",
+            "description": "Optional: Associate task with a contact ID",
+            "x-dynamic-options": {
+              "source": "list_contacts",
+              "description": "Fetches available contacts dynamically"
+            }
+          },
+          "deal_id": {
+            "type": "string",
+            "description": "Optional: Associate task with a deal ID",
+            "x-dynamic-options": {
+              "source": "list_deals",
+              "description": "Fetches available deals dynamically"
+            }
+          },
+          "company_id": {
+            "type": "string",
+            "description": "Optional: Associate task with a company ID",
+            "x-dynamic-options": {
+              "source": "list_companies",
+              "description": "Fetches available companies dynamically"
+            }
+          },
+          "owner_id": {
+            "type": "string",
+            "description": "Optional: Assign task to a specific HubSpot user ID"
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "Created task information",
+        "properties": {
+          "success": { "type": "boolean", "description": "Whether the task was created successfully" },
+          "data": {
+            "type": "object",
+            "properties": {
+              "task_id": { "type": "string", "description": "HubSpot task ID" },
+              "subject": { "type": "string", "description": "Task subject" },
+              "status": { "type": "string", "description": "Task status" },
+              "priority": { "type": "string", "description": "Task priority" },
+              "due_date": { "type": "string", "description": "Task due date" },
+              "created_at": { "type": "string", "description": "Task creation timestamp" },
+              "associations": { "type": "object", "description": "Associated records" }
+            }
+          },
+          "message": { "type": "string", "description": "Success message" }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Returns created task with ID and associations",
+        "sample_output": {
+          "success": true,
+          "data": {
+            "task_id": "999",
+            "subject": "Follow up with customer",
+            "status": "NOT_STARTED",
+            "priority": "HIGH",
+            "due_date": "2025-01-20",
+            "created_at": "2025-01-15T10:30:00.000Z"
+          },
+          "message": "Task created successfully"
+        },
+        "common_errors": {
+          "invalid_date_format": "Due date must be in ISO 8601 format (YYYY-MM-DD).",
+          "contact_not_found": "Contact ID not found. Verify the contact exists.",
+          "deal_not_found": "Deal ID not found. Verify the deal exists.",
+          "api_rate_limit": "HubSpot API rate limit exceeded. Please wait a moment and try again.",
+          "insufficient_permissions": "Missing required permissions to create tasks."
+        }
+      }
+    },
+    "create_deal": {
+      "description": "Create a new deal in HubSpot CRM",
+      "usage_context": "Use to create sales opportunities, revenue opportunities, or pipeline deals. Can associate with contacts and companies. Essential for sales automation workflows.",
+      "parameters": {
+        "type": "object",
+        "required": ["dealname"],
+        "properties": {
+          "dealname": {
+            "type": "string",
+            "description": "Name of the deal"
+          },
+          "amount": {
+            "type": "number",
+            "description": "Deal amount/value"
+          },
+          "dealstage": {
+            "type": "string",
+            "description": "Deal stage (e.g., 'appointmentscheduled', 'qualifiedtobuy', 'presentationscheduled', 'decisionmakerboughtin', 'contractsent', 'closedwon', 'closedlost')"
+          },
+          "pipeline": {
+            "type": "string",
+            "description": "Pipeline ID (default: 'default')",
+            "default": "default"
+          },
+          "closedate": {
+            "type": "string",
+            "description": "Expected close date in ISO 8601 format (YYYY-MM-DD) or timestamp"
+          },
+          "description": {
+            "type": "string",
+            "description": "Deal description or notes"
+          },
+          "contact_id": {
+            "type": "string",
+            "description": "Optional: Associate deal with a contact ID",
+            "x-dynamic-options": {
+              "source": "list_contacts",
+              "description": "Fetches available contacts dynamically"
+            }
+          },
+          "company_id": {
+            "type": "string",
+            "description": "Optional: Associate deal with a company ID",
+            "x-dynamic-options": {
+              "source": "list_companies",
+              "description": "Fetches available companies dynamically"
+            }
+          },
+          "owner_id": {
+            "type": "string",
+            "description": "Optional: Assign deal to a specific HubSpot user ID"
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "Created deal information",
+        "properties": {
+          "success": { "type": "boolean", "description": "Whether the deal was created successfully" },
+          "data": {
+            "type": "object",
+            "properties": {
+              "deal_id": { "type": "string", "description": "HubSpot deal ID" },
+              "dealname": { "type": "string", "description": "Deal name" },
+              "amount": { "type": "number", "description": "Deal amount" },
+              "dealstage": { "type": "string", "description": "Deal stage" },
+              "pipeline": { "type": "string", "description": "Pipeline ID" },
+              "closedate": { "type": "string", "description": "Expected close date" },
+              "created_at": { "type": "string", "description": "Deal creation timestamp" },
+              "associations": { "type": "object", "description": "Associated records" }
+            }
+          },
+          "message": { "type": "string", "description": "Success message" }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Returns created deal with ID and associations",
+        "sample_output": {
+          "success": true,
+          "data": {
+            "deal_id": "888",
+            "dealname": "Q1 Upsell Opportunity",
+            "amount": 25000,
+            "dealstage": "qualifiedtobuy",
+            "pipeline": "default",
+            "closedate": "2025-03-31",
+            "created_at": "2025-01-15T10:30:00.000Z"
+          },
+          "message": "Deal created successfully"
+        },
+        "common_errors": {
+          "invalid_stage": "Deal stage does not exist in the specified pipeline.",
+          "invalid_pipeline": "Pipeline ID not found. Check available pipelines.",
+          "contact_not_found": "Contact ID not found. Verify the contact exists.",
+          "company_not_found": "Company ID not found. Verify the company exists.",
+          "api_rate_limit": "HubSpot API rate limit exceeded. Please wait a moment and try again.",
+          "insufficient_permissions": "Missing required permissions to create deals."
+        }
+      }
+    },
+    "create_contact_note": {
+      "description": "Add a note to a contact's timeline in HubSpot",
+      "usage_context": "Use to log important information, conversation summaries, or custom notes to a contact's activity timeline. Useful for documenting interactions and keeping team members informed.",
+      "parameters": {
+        "type": "object",
+        "required": ["contact_id", "note_body"],
+        "properties": {
+          "contact_id": {
+            "type": "string",
+            "description": "The ID of the contact to add the note to",
+            "x-dynamic-options": {
+              "source": "list_contacts",
+              "description": "Fetches available contacts dynamically"
+            }
+          },
+          "note_body": {
+            "type": "string",
+            "description": "The content of the note"
+          },
+          "note_title": {
+            "type": "string",
+            "description": "Optional: Note title/subject"
+          },
+          "owner_id": {
+            "type": "string",
+            "description": "Optional: HubSpot user ID who created the note"
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "Created note information",
+        "properties": {
+          "success": { "type": "boolean", "description": "Whether the note was created successfully" },
+          "data": {
+            "type": "object",
+            "properties": {
+              "note_id": { "type": "string", "description": "HubSpot note/engagement ID" },
+              "contact_id": { "type": "string", "description": "Associated contact ID" },
+              "note_body": { "type": "string", "description": "Note content" },
+              "created_at": { "type": "string", "description": "Note creation timestamp" },
+              "owner_id": { "type": "string", "description": "Note owner ID" }
+            }
+          },
+          "message": { "type": "string", "description": "Success message" }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Returns created note with ID and timestamp",
+        "sample_output": {
+          "success": true,
+          "data": {
+            "note_id": "777",
+            "contact_id": "123456",
+            "note_body": "Customer expressed interest in upgrading to premium plan",
+            "created_at": "2025-01-15T10:30:00.000Z"
+          },
+          "message": "Note added successfully"
+        },
+        "common_errors": {
+          "contact_not_found": "Contact ID not found. Verify the contact exists.",
+          "empty_note": "Note body cannot be empty.",
+          "api_rate_limit": "HubSpot API rate limit exceeded. Please wait a moment and try again.",
+          "insufficient_permissions": "Missing required permissions to create notes."
         }
       }
     }

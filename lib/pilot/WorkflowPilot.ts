@@ -76,6 +76,7 @@ export class WorkflowPilot {
     this.stepCache = new StepCache(false); // Will be configured after loading config
     this.stepExecutor = new StepExecutor(supabase, this.stateManager, this.stepCache); // Pass StateManager and StepCache
     this.parallelExecutor = new ParallelExecutor(this.stepExecutor, 3); // Temporary, will be reinitialized
+    this.stepExecutor.setParallelExecutor(this.parallelExecutor); // Inject ParallelExecutor for nested scatter-gather support
     this.conditionalEvaluator = new ConditionalEvaluator();
     this.errorRecovery = new ErrorRecovery();
     this.outputValidator = new OutputValidator();
@@ -106,6 +107,7 @@ export class WorkflowPilot {
 
     // Reinitialize parallel executor with correct maxParallelSteps
     this.parallelExecutor = new ParallelExecutor(this.stepExecutor, this.options.maxParallelSteps);
+    this.stepExecutor.setParallelExecutor(this.parallelExecutor); // Re-inject after reinitialization
 
     // Reinitialize state manager with progress tracking and real-time settings
     this.stateManager = new StateManager(

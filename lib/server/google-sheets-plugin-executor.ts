@@ -422,4 +422,97 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
       message: 'Google Sheets connection active'
     };
   }
+
+  /**
+   * List all available Google Spreadsheets for dynamic dropdown options
+   * This method is called by the fetch-options API route
+   */
+  async list_spreadsheets(connection: any, options: { page?: number; limit?: number } = {}): Promise<Array<{value: string; label: string; description?: string; icon?: string; group?: string}>> {
+    try {
+      const { limit = 100 } = options;
+
+      // Use Google Drive API to list spreadsheets
+      const driveUrl = new URL('https://www.googleapis.com/drive/v3/files');
+      driveUrl.searchParams.set('q', "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false");
+      driveUrl.searchParams.set('fields', 'files(id,name,modifiedTime,owners)');
+      driveUrl.searchParams.set('pageSize', limit.toString());
+      driveUrl.searchParams.set('orderBy', 'modifiedTime desc');
+
+      const response = await fetch(driveUrl.toString(), {
+        headers: {
+          'Authorization': `Bearer ${connection.access_token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Google Drive API error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.files || !Array.isArray(data.files)) {
+        return [];
+      }
+
+      // Transform to option format
+      return data.files.map((file: any) => ({
+        value: file.id,
+        label: file.name,
+        description: file.owners?.[0]?.displayName ? `Owner: ${file.owners[0].displayName}` : undefined,
+        icon: '📊',
+        group: 'My Spreadsheets',
+      }));
+
+    } catch (error: any) {
+      this.logger.error({ err: error }, 'Error listing Google Spreadsheets for options');
+      throw error;
+    }
+  }
+
+  // List sheet names within a specific spreadsheet for cascading dropdown
+  async list_sheet_names(connection: any, options: { spreadsheet_id?: string; page?: number; limit?: number } = {}): Promise<Array<{value: string; label: string; description?: string; icon?: string; group?: string}>> {
+    try {
+      const { spreadsheet_id } = options;
+
+      if (!spreadsheet_id) {
+        this.logger.warn('list_sheet_names called without spreadsheet_id');
+        return [];
+      }
+
+      // Use Google Sheets API to get spreadsheet metadata
+      const sheetsUrl = new URL(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheet_id}`);
+      sheetsUrl.searchParams.set('fields', 'sheets(properties(sheetId,title,index,sheetType,gridProperties))');
+
+      const response = await fetch(sheetsUrl.toString(), {
+        headers: {
+          'Authorization': `Bearer ${connection.access_token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Google Sheets API error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.sheets || !Array.isArray(data.sheets)) {
+        return [];
+      }
+
+      // Transform to option format - return sheet names that can be used in A1 notation
+      return data.sheets.map((sheet: any) => ({
+        value: sheet.properties.title,
+        label: sheet.properties.title,
+        description: sheet.properties.gridProperties
+          ? `${sheet.properties.gridProperties.rowCount || 0} rows × ${sheet.properties.gridProperties.columnCount || 0} columns`
+          : undefined,
+        icon: '📄',
+        group: 'Sheets',
+      }));
+
+    } catch (error: any) {
+      this.logger.error({ err: error }, 'Error listing sheet names for options');
+      throw error;
+    }
+  }
 }

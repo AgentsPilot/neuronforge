@@ -457,4 +457,42 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
       message: 'Google Calendar connection active'
     };
   }
+
+  /**
+   * List all Google Calendars for dynamic dropdown options
+   * This method is called by the fetch-options API route
+   */
+  async list_calendars(connection: any, options: { page?: number; limit?: number } = {}): Promise<Array<{value: string; label: string; description?: string; icon?: string; group?: string}>> {
+    try {
+      const response = await fetch(`${this.googleApisUrl}/calendar/v3/users/me/calendarList`, {
+        headers: {
+          'Authorization': `Bearer ${connection.access_token}`,
+          'Accept': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Google Calendar API error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.items || !Array.isArray(data.items)) {
+        return [];
+      }
+
+      // Transform to option format
+      return data.items.map((calendar: any) => ({
+        value: calendar.id,
+        label: calendar.summary,
+        description: calendar.description || (calendar.primary ? 'Primary calendar' : undefined),
+        icon: calendar.primary ? '⭐' : '📅',
+        group: calendar.primary ? 'Primary' : (calendar.accessRole === 'owner' ? 'My Calendars' : 'Shared Calendars'),
+      }));
+
+    } catch (error: any) {
+      this.logger.error({ err: error }, 'Error listing Google Calendars for options');
+      throw error;
+    }
+  }
 }

@@ -70,13 +70,74 @@ export class WorkflowParser {
   }
 
   /**
+   * Recursively normalize a single step (handles nested steps in conditionals and loops)
+   */
+  private normalizeSingleStep(step: WorkflowStep, index: number): WorkflowStep {
+    const anyStep = step as any;
+
+    // V4 Format Normalization: Convert V4 scatter-gather to PILOT format
+    if (step.type === 'scatter_gather') {
+      // Check if this is V4 format (scatter.items + steps at root level)
+      if (anyStep.scatter && (anyStep.scatter.items || !anyStep.scatter.steps) && anyStep.steps) {
+        console.log(`[WorkflowParser] Normalizing V4 scatter-gather format for step ${step.id || index + 1}`);
+
+        // Create normalized step, explicitly removing root-level 'steps' field
+        const { steps: rootSteps, ...stepWithoutSteps } = step as any;
+
+        const normalizedStep = {
+          ...stepWithoutSteps,
+          scatter: {
+            input: anyStep.scatter.items || anyStep.scatter.input,  // Convert items → input
+            steps: this.normalizeSteps(anyStep.steps),  // Recursively normalize nested steps
+            item_name: anyStep.scatter.item_name || 'item',
+            maxConcurrency: anyStep.scatter.maxConcurrency,
+            itemVariable: anyStep.scatter.item_name || 'item',
+          },
+          gather: anyStep.gather || {
+            operation: 'collect',  // Default gather operation
+          },
+        };
+        return normalizedStep;
+      }
+      // If already in PILOT format, still normalize nested steps
+      else if (anyStep.scatter?.steps) {
+        return {
+          ...step,
+          scatter: {
+            ...anyStep.scatter,
+            steps: this.normalizeSteps(anyStep.scatter.steps),
+          },
+        };
+      }
+    }
+
+    // Normalize nested steps in conditionals
+    if (step.type === 'conditional') {
+      const normalized: any = { ...step };
+      if (anyStep.then_steps) {
+        normalized.then_steps = this.normalizeSteps(anyStep.then_steps);
+      }
+      if (anyStep.else_steps) {
+        normalized.else_steps = this.normalizeSteps(anyStep.else_steps);
+      }
+      return normalized;
+    }
+
+    return step;
+  }
+
+  /**
    * Normalize workflow steps (auto-generate IDs for legacy Smart Agent Builder format)
+   * Also normalizes V4 scatter-gather format to PILOT format
    */
   private normalizeSteps(workflowSteps: WorkflowStep[]): WorkflowStep[] {
     const normalized = workflowSteps.map((step, index) => {
+      // First, normalize the step structure (V4 → PILOT conversion)
+      const normalizedStep = this.normalizeSingleStep(step, index);
+
       // If step already has an ID, use it
-      if (step.id) {
-        return step;
+      if (normalizedStep.id) {
+        return normalizedStep;
       }
 
       // Auto-generate ID for legacy format
@@ -327,9 +388,11 @@ export class WorkflowParser {
             errors.push(`Sub-workflow step ${step.id} has invalid inline workflow: ${subValidation.errors.join(', ')}`);
           }
           // Propagate sub-workflow warnings
-          subValidation.warnings.forEach(warning => {
-            warnings.push(`Sub-workflow ${step.id}: ${warning}`);
-          });
+          if (subValidation.warnings) {
+            subValidation.warnings.forEach(warning => {
+              warnings.push(`Sub-workflow ${step.id}: ${warning}`);
+            });
+          }
         }
       }
 

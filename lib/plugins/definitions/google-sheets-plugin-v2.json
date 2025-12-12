@@ -35,11 +35,20 @@
         "properties": {
           "spreadsheet_id": {
             "type": "string",
-            "description": "The ID of the spreadsheet to read from (from the URL or file ID)"
+            "description": "The ID of the spreadsheet to read from (from the URL or file ID)",
+            "x-dynamic-options": {
+              "source": "list_spreadsheets",
+              "description": "Fetches available spreadsheets dynamically"
+            }
           },
           "range": {
             "type": "string",
-            "description": "The A1 notation range to read (e.g., 'Sheet1!A1:D10', 'Data!A:C', or 'B2:E5')"
+            "description": "The A1 notation range to read (e.g., 'Sheet1!A1:D10', 'Data!A:C', or 'B2:E5')",
+            "x-dynamic-options": {
+              "source": "list_sheet_names",
+              "description": "Fetches available sheet names from the selected spreadsheet",
+              "depends_on": ["spreadsheet_id"]
+            }
           },
           "include_formula_values": {
             "type": "boolean",
@@ -121,11 +130,20 @@
         "properties": {
           "spreadsheet_id": {
             "type": "string",
-            "description": "The ID of the spreadsheet to write to"
+            "description": "The ID of the spreadsheet to write to",
+            "x-dynamic-options": {
+              "source": "list_spreadsheets",
+              "description": "Fetches available spreadsheets dynamically"
+            }
           },
           "range": {
             "type": "string",
-            "description": "The A1 notation range to write (e.g., 'Sheet1!A1:D10' or 'Data!B2')"
+            "description": "The A1 notation range to write (e.g., 'Sheet1!A1:D10' or 'Data!B2')",
+            "x-dynamic-options": {
+              "source": "list_sheet_names",
+              "description": "Fetches available sheet names from the selected spreadsheet",
+              "depends_on": ["spreadsheet_id"]
+            }
           },
           "values": {
             "type": "array",
@@ -212,11 +230,20 @@
         "properties": {
           "spreadsheet_id": {
             "type": "string",
-            "description": "The ID of the spreadsheet to append to"
+            "description": "The ID of the spreadsheet to append to",
+            "x-dynamic-options": {
+              "source": "list_spreadsheets",
+              "description": "Fetches available spreadsheets dynamically"
+            }
           },
           "range": {
             "type": "string",
-            "description": "The sheet name or range where data should be appended (e.g., 'Sheet1' or 'Sheet1!A:D')"
+            "description": "The sheet name or range where data should be appended (e.g., 'Sheet1' or 'Sheet1!A:D')",
+            "x-dynamic-options": {
+              "source": "list_sheet_names",
+              "description": "Fetches available sheet names from the selected spreadsheet",
+              "depends_on": ["spreadsheet_id"]
+            }
           },
           "values": {
             "type": "array",
@@ -410,7 +437,11 @@
         "properties": {
           "spreadsheet_id": {
             "type": "string",
-            "description": "The ID of the spreadsheet to get information about"
+            "description": "The ID of the spreadsheet to get information about",
+            "x-dynamic-options": {
+              "source": "list_spreadsheets",
+              "description": "Fetches available spreadsheets dynamically"
+            }
           },
           "include_sheet_data": {
             "type": "boolean",

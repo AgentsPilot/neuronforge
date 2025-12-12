@@ -24,11 +24,13 @@ import { Stage1WorkflowDesign, Stage1RequiredInput } from './stage1-workflow-des
  * Stage 2 Output: Complete workflow with input schema
  */
 export interface Stage2CompleteWorkflow {
-  // From Stage 1 (passed through)
+  // From Stage 1 (passed through) - aligned with PILOT_DSL_SCHEMA
   agent_name: string;
-  agent_description: string;
+  description: string;
+  system_prompt: string;
   workflow_type: string;
   suggested_plugins: string[];
+  suggested_outputs: any[];
   confidence: number;
   reasoning: string;
 
@@ -97,11 +99,13 @@ export async function fillParameterValues(
 
   return {
     agent_name: stage1Design.agent_name,
-    agent_description: stage1Design.agent_description,
+    description: stage1Design.description,
+    system_prompt: stage1Design.system_prompt,
     workflow_type: stage1Design.workflow_type,
     workflow_steps: finalSteps,
     required_inputs: required_inputs,
     suggested_plugins: stage1Design.suggested_plugins,
+    suggested_outputs: stage1Design.suggested_outputs,
     confidence: stage1Design.confidence,
     reasoning: `${stage1Design.reasoning}\n\nStage 2: Detected ${inputReferences.size} input fields from {{input.X}} references: ${Array.from(inputReferences).join(', ')}${fixesSummary}`,
     tokensUsed: { input: 0, output: 0 }  // No LLM call!
@@ -160,7 +164,7 @@ function buildInputSchema(inputRefs: Set<string>): Stage1RequiredInput[] {
  *   is_enabled → boolean
  *   due_date → text (could be enhanced to 'date')
  */
-function inferInputType(fieldName: string): 'text' | 'number' | 'email' | 'url' | 'select' | 'multi_select' | 'file' | 'json' {
+function inferInputType(fieldName: string): 'text' | 'email' | 'number' | 'file' | 'select' | 'url' | 'date' | 'textarea' {
   const lower = fieldName.toLowerCase();
 
   // Email fields
@@ -198,12 +202,22 @@ function inferInputType(fieldName: string): 'text' | 'number' | 'email' | 'url' 
     return 'file';
   }
 
-  // JSON fields
-  if (lower.includes('json') ||
+  // Date fields
+  if (lower.includes('date') ||
+      lower.includes('deadline') ||
+      lower.includes('timestamp') ||
+      lower.includes('time')) {
+    return 'date';
+  }
+
+  // Textarea fields (for long text, config, JSON, etc.)
+  if (lower.includes('description') ||
+      lower.includes('message') ||
+      lower.includes('content') ||
+      lower.includes('json') ||
       lower.includes('config') ||
-      lower.includes('data') ||
       lower.includes('payload')) {
-    return 'json';
+    return 'textarea';
   }
 
   // Column/field name fields (text type for user-friendly names)

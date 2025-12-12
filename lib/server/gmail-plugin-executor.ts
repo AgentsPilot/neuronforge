@@ -30,6 +30,8 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
         return await this.searchEmails(connection, parameters);
       case 'create_draft':
         return await this.createDraft(connection, parameters);
+      case 'get_email_attachment':
+        return await this.getEmailAttachment(connection, parameters);
       default:
         throw new Error(`Action ${actionName} not supported`);
     }
@@ -169,6 +171,92 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
       recipients: parameters.recipients || {},
       subject: parameters.content?.subject || '(no subject)'
     };
+  }
+
+  // Download email attachment content
+  private async getEmailAttachment(connection: any, parameters: any): Promise<any> {
+    const { message_id, attachment_id, filename } = parameters;
+
+    if (!message_id || !attachment_id) {
+      throw new Error('message_id and attachment_id are required parameters');
+    }
+
+    this.logger.debug({ message_id, attachment_id, filename }, 'Downloading email attachment');
+
+    try {
+      // Download attachment using Gmail API
+      const response = await fetch(
+        `${this.gmailApisUrl}/users/me/messages/${message_id}/attachments/${attachment_id}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${connection.access_token}`,
+            'Accept': 'application/json',
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        this.logger.error({ status: response.status, errorData }, 'Attachment download failed');
+        throw new Error(`Attachment download failed: ${response.status} - ${errorData}`);
+      }
+
+      const attachmentData = await response.json();
+
+      // Detect MIME type from filename extension
+      let mimeType = 'application/octet-stream';
+      if (filename) {
+        const ext = filename.split('.').pop()?.toLowerCase();
+        const mimeMap: Record<string, string> = {
+          'pdf': 'application/pdf',
+          'png': 'image/png',
+          'jpg': 'image/jpeg',
+          'jpeg': 'image/jpeg',
+          'gif': 'image/gif',
+          'txt': 'text/plain',
+          'csv': 'text/csv',
+          'json': 'application/json',
+          'doc': 'application/msword',
+          'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'xls': 'application/vnd.ms-excel',
+          'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        };
+        mimeType = ext ? (mimeMap[ext] || 'application/octet-stream') : mimeType;
+      }
+
+      const result: any = {
+        filename: filename || 'attachment',
+        mimeType,
+        size: attachmentData.size || 0,
+        data: attachmentData.data, // Base64-encoded content from Gmail API
+        is_image: mimeType.startsWith('image/')
+      };
+
+      // Attempt text extraction for text files
+      if (mimeType.startsWith('text/')) {
+        try {
+          result.extracted_text = this.decodeBase64Url(attachmentData.data);
+        } catch (textError) {
+          this.logger.warn({ err: textError }, 'Text extraction failed');
+          result.extracted_text = '(Text extraction unavailable)';
+        }
+      } else if (mimeType === 'application/pdf') {
+        // PDF text extraction would require additional library
+        // For now, indicate it's not extracted
+        result.extracted_text = '(PDF text extraction not yet implemented)';
+      }
+
+      this.logger.debug(
+        { filename, mimeType, size: result.size },
+        'Attachment downloaded successfully'
+      );
+
+      return result;
+
+    } catch (error: any) {
+      this.logger.error({ err: error, message_id, attachment_id }, 'Attachment download error');
+      throw new Error(`Failed to download attachment: ${error.message}`);
+    }
   }
 
   // Private helper methods
@@ -328,14 +416,14 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
       
       if (part.filename && part.body?.attachmentId) {
         try {
-          // For now, just return attachment metadata
-          // In full implementation, you could download and process content
+          // Return attachment metadata with IDs needed for get_email_attachment action
           attachments.push({
             filename: part.filename,
             mimeType: part.mimeType,
             size: part.body.size || 0,
             attachmentId: part.body.attachmentId,
-            // Could add: downloadUrl, processedContent, etc.
+            messageId: messageId, // Include messageId for get_email_attachment action
+            // Use get_email_attachment action to download content
           });
         } catch (error) {
           this.logger.warn({ err: error, filename: part.filename }, 'Failed to process attachment');
@@ -386,11 +474,52 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     });
 
     const profile = await this.handleApiResponse(response, 'Gmail connection test');
-    
+
     return {
       email: profile.emailAddress,
       total_messages: profile.messagesTotal,
       total_threads: profile.threadsTotal
     };
+  }
+
+  /**
+   * List all Gmail labels for dynamic dropdown options
+   * This method is called by the fetch-options API route
+   */
+  async list_labels(connection: any, options: { page?: number; limit?: number } = {}): Promise<Array<{value: string; label: string; description?: string; icon?: string; group?: string}>> {
+    try {
+      const response = await fetch(`${this.gmailApisUrl}/users/me/labels`, {
+        headers: this.buildAuthHeader(connection.access_token)
+      });
+
+      const data = await this.handleApiResponse(response, 'list_labels');
+
+      if (!data.labels || !Array.isArray(data.labels)) {
+        return [];
+      }
+
+      // Transform to option format
+      return data.labels.map((label: any) => {
+        // Determine group based on label type
+        let group = 'Custom Labels';
+        if (label.type === 'system') {
+          group = 'System Labels';
+        } else if (label.type === 'user') {
+          group = 'User Labels';
+        }
+
+        return {
+          value: label.id,
+          label: label.name,
+          description: label.type === 'system' ? 'Built-in label' : undefined,
+          icon: '🏷️',
+          group,
+        };
+      });
+
+    } catch (error: any) {
+      this.logger.error({ err: error }, 'Error listing Gmail labels for options');
+      throw error;
+    }
   }
 }

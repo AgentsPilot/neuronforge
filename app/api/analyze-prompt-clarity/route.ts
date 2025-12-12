@@ -15,7 +15,7 @@ const aiAgentPromptTemplate = "Automation-Design-Diagnostic-Analyst.txt";
 
 // Import AI Analytics System
 import { AIAnalyticsService, AICallData } from '@/lib/analytics/aiAnalytics'
-import { OpenAIProvider } from '@/lib/ai/providers/openaiProvider'
+import { AnthropicProvider, ANTHROPIC_MODELS } from '@/lib/ai/providers/anthropicProvider'
 import { string32 } from 'pdfjs-dist/types/src/shared/util'
 import { log } from 'console'
 
@@ -259,15 +259,15 @@ export async function POST(request: NextRequest) {
     return true;
   }  
 
-  const getOpenAIProvider = (): OpenAIProvider => {
-    if (!process.env.OPENAI_API_KEY) {
-      console.error('❌ Missing OpenAI API key, using fallback')      
-      throw new Error('OpenAI API key not configured', { cause: 400 });        
+  const getAnthropicProvider = (): AnthropicProvider => {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      console.error('❌ Missing Anthropic API key, using fallback')
+      throw new Error('Anthropic API key not configured', { cause: 400 });
     } else if (!aiAnalytics) {
       throw new Error('AI Analytics service not initialized');
     }
-    // Initialize OpenAI provider with analytics
-    return new OpenAIProvider(process.env.OPENAI_API_KEY!, aiAnalytics);
+    // Initialize Anthropic provider with analytics
+    return new AnthropicProvider(process.env.ANTHROPIC_API_KEY!, aiAnalytics);
   }
 
   try {
@@ -364,15 +364,15 @@ export async function POST(request: NextRequest) {
     //   })
     // }
 
-    console.log('✅ All validations passed, calling OpenAI with CONSISTENT AGENT ID...')
+    console.log('✅ All validations passed, calling Claude Sonnet 4 with CONSISTENT AGENT ID...')
 
-    // Step 7: Call OpenAI with AI Analytics tracking INCLUDING CONSISTENT AGENT ID
+    // Step 7: Call Claude Sonnet 4 with AI Analytics tracking INCLUDING CONSISTENT AGENT ID
     let aiResult: ClarityAnalysis
-    let openAIResponse: any
+    let anthropicResponse: any
     
-    try {      
-      // Initialize OpenAI provider with analytics
-      const openaiProvider = getOpenAIProvider()
+    try {
+      // Initialize Anthropic provider with analytics
+      const anthropicProvider = getAnthropicProvider()
       
       console.log('==================================================================================');
       console.log('📊 Making tracked AI call with CONSISTENT AGENT ID:', {
@@ -396,23 +396,22 @@ export async function POST(request: NextRequest) {
         console.log('==================================================================================');
       }
 ;
-      openAIResponse = await openaiProvider.chatCompletion(
+      anthropicResponse = await anthropicProvider.chatCompletion(
         {
-          model: 'gpt-4o',
+          model: ANTHROPIC_MODELS.CLAUDE_4_SONNET,
           messages: [
-            { 
-              role: 'system', 
-              content:  aiSystemPrompt
+            {
+              role: 'system',
+              content:  aiSystemPrompt + "\n\nIMPORTANT: You MUST respond with valid JSON only. No markdown, no explanations, just pure JSON."
             },
-            { 
-              role: 'user', 
-              //content: `Analyze this automation request and respond with JSON only: "${promptAnalyzer.getPrompt()}"` 
+            {
+              role: 'user',
+              //content: `Analyze this automation request and respond with JSON only: "${promptAnalyzer.getPrompt()}"`
               content: aiUserPrompt
             }
           ],
           temperature: 0.1,
-          max_tokens: 1500,
-          response_format: { type: "json_object" }
+          max_tokens: 2000
         },
         {
           userId: userIdToUse,
@@ -429,17 +428,17 @@ export async function POST(request: NextRequest) {
         }
       )
       
-      console.log('✅ OpenAI API call completed with analytics and CONSISTENT AGENT ID tracking')
-      
+      console.log('✅ Claude API call completed with analytics and CONSISTENT AGENT ID tracking')
+
     } catch (fetchError: any) {
-      logError('OPENAI_FETCH', fetchError)
+      logError('CLAUDE_FETCH', fetchError)
 
       // CRITICAL: Include requirements analysis in error fallback
       const fallbackWithAnalysis = createFallbackResponse(promptAnalyzer, connectedPluginsMetaData)
       
       return NextResponse.json(
-        { 
-          error: 'OpenAI API connection failed',
+        {
+          error: 'Claude API connection failed',
           details: fetchError.message,
           ...fallbackWithAnalysis,
           connectedPlugins : connectedPluginsKeys,
@@ -452,9 +451,9 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const rawContent = openAIResponse.choices?.[0]?.message?.content
+    const rawContent = anthropicResponse.choices?.[0]?.message?.content
     if (!rawContent) {
-      console.error('❌ Empty OpenAI response content')
+      console.error('❌ Empty Claude response content')
 
       // CRITICAL: Include requirements analysis in empty response fallback
       const fallbackWithAnalysis = createFallbackResponse(promptAnalyzer, connectedPluginsMetaData)

@@ -35,7 +35,11 @@
         "properties": {
           "folder_id": {
             "type": "string",
-            "description": "ID of the folder to list files from. If not provided, lists from root or recent files"
+            "description": "ID of the folder to list files from. If not provided, lists from root or recent files",
+            "x-dynamic-options": {
+              "source": "list_folders",
+              "description": "Fetches available folders dynamically"
+            }
           },
           "max_results": {
             "type": "number",
@@ -256,7 +260,11 @@
         "properties": {
           "file_id": {
             "type": "string",
-            "description": "The ID of the file or folder"
+            "description": "The ID of the file or folder",
+            "x-dynamic-options": {
+              "source": "list_files",
+              "description": "Fetches available files dynamically"
+            }
           },
           "include_permissions": {
             "type": "boolean",
@@ -324,7 +332,11 @@
         "properties": {
           "file_id": {
             "type": "string",
-            "description": "The ID of the file to read"
+            "description": "The ID of the file to read",
+            "x-dynamic-options": {
+              "source": "list_files",
+              "description": "Fetches available files dynamically"
+            }
           },
           "export_format": {
             "type": "string",
@@ -402,7 +414,11 @@
         "properties": {
           "folder_id": {
             "type": "string",
-            "description": "The ID of the folder to explore. Use 'root' for the root folder"
+            "description": "The ID of the folder to explore. Use 'root' for the root folder",
+            "x-dynamic-options": {
+              "source": "list_folders",
+              "description": "Fetches available folders dynamically"
+            }
           },
           "max_results": {
             "type": "number",

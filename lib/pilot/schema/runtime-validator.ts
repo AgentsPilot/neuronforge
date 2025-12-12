@@ -68,6 +68,10 @@ export function validateWorkflowStructure(steps: any[]): ValidationResult {
   errors.push(...depthResult.errors);
   warnings.push(...depthResult.warnings);
 
+  // Validate AI processing patterns (warnings only)
+  const aiPatternWarnings = validateAIProcessingPatterns(steps);
+  warnings.push(...aiPatternWarnings);
+
   return {
     valid: errors.length === 0,
     errors,
@@ -124,6 +128,12 @@ function validateWorkflowStep(
     case 'action':
       if (!step.plugin) errors.push(`${path}: Action step missing required field "plugin"`);
       if (!step.action) errors.push(`${path}: Action step missing required field "action"`);
+
+      // Validate plugin action exists
+      if (step.plugin && step.action) {
+        const pluginActionErrors = validatePluginAction(step.plugin, step.action);
+        errors.push(...pluginActionErrors.map(err => `${path}: ${err}`));
+      }
       // params is optional - some actions don't require parameters
       // Validation of required params happens elsewhere
       break;
@@ -139,6 +149,10 @@ function validateWorkflowStep(
       } else {
         const condErrors = validateCondition(step.condition, `${path}.condition`);
         errors.push(...condErrors);
+
+        // Validate operator semantics (warnings only)
+        const semanticWarnings = validateOperatorSemantics(step.condition);
+        // Note: warnings are not added to errors, they would need to be returned separately
       }
       // Validate branch references
       if (step.trueBranch && !allStepIds.has(step.trueBranch)) {
@@ -266,6 +280,10 @@ function validateWorkflowStep(
     case 'transform':
       if (!step.operation) {
         errors.push(`${path}: Transform step missing required field "operation"`);
+      } else {
+        // Validate transform operation is supported
+        const transformErrors = validateTransformOperation(step.operation);
+        errors.push(...transformErrors.map(err => `${path}: ${err}`));
       }
       if (!step.config) {
         errors.push(`${path}: Transform step missing required field "config"`);
@@ -504,6 +522,131 @@ function findDuplicateIds(steps: any[]): string[] {
 
   checkIds(steps);
   return duplicates;
+}
+
+/**
+ * Validate plugin and action exist (requires PluginManagerV2 - placeholder for now)
+ *
+ * @param pluginName - Plugin name from step
+ * @param actionName - Action name from step
+ * @returns Array of error messages
+ */
+function validatePluginAction(pluginName: string, actionName: string): string[] {
+  // TODO: This requires PluginManagerV2 instance to be passed through validation chain
+  // For now, return empty array (no validation)
+  // Full implementation in Phase 3 will check against actual plugin registry
+  return [];
+}
+
+/**
+ * Validate transform operation is supported
+ *
+ * @param operation - Transform operation name
+ * @returns Array of error messages
+ */
+function validateTransformOperation(operation: string): string[] {
+  const SUPPORTED_OPERATIONS = [
+    'set', 'map', 'filter', 'reduce', 'sort',
+    'group', 'aggregate', 'deduplicate',
+    'flatten', 'join', 'pivot', 'split', 'expand'
+  ];
+
+  if (!SUPPORTED_OPERATIONS.includes(operation)) {
+    return [
+      `Transform operation '${operation}' not supported. ` +
+      `Supported operations: ${SUPPORTED_OPERATIONS.join(', ')}`
+    ];
+  }
+
+  return [];
+}
+
+/**
+ * Validate operator semantics (heuristic-based warnings)
+ *
+ * @param condition - Condition object from step
+ * @returns Array of warning messages
+ */
+function validateOperatorSemantics(condition: any): string[] {
+  const warnings: string[] = [];
+
+  if (!condition || !condition.operator || condition.value === undefined) {
+    return warnings;
+  }
+
+  const STRING_OPS = ['==', '!=', 'contains', 'starts_with', 'ends_with'];
+  const NUMBER_OPS = ['>', '>=', '<', '<=', '==', '!='];
+
+  // Heuristic: If value looks numeric, suggest number operators
+  const isNumericValue = !isNaN(Number(condition.value)) && condition.value !== '';
+
+  if (isNumericValue && condition.operator === 'contains') {
+    warnings.push(
+      `Using 'contains' operator with numeric value '${condition.value}'. ` +
+      `Consider numeric operators: ${NUMBER_OPS.join(', ')}`
+    );
+  }
+
+  // Heuristic: If value is string and using > or <, warn
+  if (!isNumericValue && ['>', '<', '>=', '<='].includes(condition.operator)) {
+    warnings.push(
+      `Using '${condition.operator}' operator with string value '${condition.value}'. ` +
+      `For strings, consider: ${STRING_OPS.join(', ')}`
+    );
+  }
+
+  return warnings;
+}
+
+/**
+ * Detect inefficient AI processing in loops (warning, not error)
+ *
+ * @param steps - Array of workflow steps
+ * @param path - Path to this step (for error messages)
+ * @returns Array of warning messages
+ */
+function validateAIProcessingPatterns(steps: any[], path: string = 'workflow'): string[] {
+  const warnings: string[] = [];
+
+  steps.forEach((step, idx) => {
+    const stepPath = `${path}[${idx}]`;
+
+    if (step.type === 'loop' && step.loopSteps) {
+      const hasAI = step.loopSteps.some((s: any) => s.type === 'ai_processing');
+      if (hasAI) {
+        warnings.push(
+          `${stepPath}.${step.id}: AI processing inside loop is inefficient (50x token cost). ` +
+          `Consider processing entire array in single AI call with batch prompt.`
+        );
+      }
+
+      // Recurse into loop steps
+      warnings.push(...validateAIProcessingPatterns(step.loopSteps, `${stepPath}.loopSteps`));
+    }
+
+    if (step.type === 'scatter_gather' && step.scatter?.steps) {
+      const hasAI = step.scatter.steps.some((s: any) => s.type === 'ai_processing');
+      if (hasAI) {
+        warnings.push(
+          `${stepPath}.${step.id}: AI processing in scatter-gather. ` +
+          `This is acceptable for parallel processing but verify it's needed (consider batch processing instead).`
+        );
+      }
+
+      // Recurse into scatter steps
+      warnings.push(...validateAIProcessingPatterns(step.scatter.steps, `${stepPath}.scatter.steps`));
+    }
+
+    // Recurse into nested step structures
+    if (step.steps && Array.isArray(step.steps)) {
+      warnings.push(...validateAIProcessingPatterns(step.steps, `${stepPath}.steps`));
+    }
+    if (step.workflowSteps && Array.isArray(step.workflowSteps)) {
+      warnings.push(...validateAIProcessingPatterns(step.workflowSteps, `${stepPath}.workflowSteps`));
+    }
+  });
+
+  return warnings;
 }
 
 /**

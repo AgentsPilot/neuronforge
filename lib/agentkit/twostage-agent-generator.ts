@@ -25,6 +25,7 @@ import {
 } from './stage2-parameter-filler';
 import { validateWorkflowStructure } from '../pilot/schema/runtime-validator';
 import { PluginManagerV2 } from '../server/plugin-manager-v2';
+import { repairWorkflow } from './self-healing-repair';
 
 /**
  * Validation gate result
@@ -45,11 +46,13 @@ export interface TwoStageAgentResult {
   // Agent data (if successful)
   agent?: {
     agent_name: string;
-    agent_description: string;
+    description: string;
+    system_prompt: string;
     workflow_type: string;
     workflow_steps: any[];
     required_inputs: any[];
     suggested_plugins: string[];
+    suggested_outputs: any[];
     confidence: number;
     reasoning: string;
   };
@@ -169,21 +172,92 @@ export async function generateAgentTwoStage(
     // ========================================
     console.log('🚧 [Gate 2] Validating parameters...');
 
-    const gate2 = await validateStage2Parameters(stage2Complete, connectedPlugins);
+    let gate2 = await validateStage2Parameters(stage2Complete, connectedPlugins);
 
     if (!gate2.passed) {
       console.error('❌ [Gate 2] Parameter validation FAILED:', gate2.errors);
-      return {
-        success: false,
-        error: `Stage 2 validation failed: ${gate2.errors.join(', ')}`,
-        stage_failed: 'stage2',
-        validation: {
-          stage1_validation: gate1,
-          stage2_validation: gate2,
-          semantic_validation: { passed: false, errors: [], warnings: [] }
-        },
-        latency_ms: Date.now() - startTime
-      };
+
+      // ========================================
+      // SELF-HEALING: Try to repair invalid steps
+      // ========================================
+      console.log('🔧 [Self-Healing] Attempting automatic repair...');
+
+      // Convert gate2 errors to validation errors format
+      // Extract step ID from error message like "Step step9: ..."
+      // Also check if error mentions another step to fix (e.g., "fix step8")
+      const validationErrors = gate2.errors.map((error) => {
+        const stepIdMatch = error.match(/Step (step\d+):/);
+        const stepId = stepIdMatch ? stepIdMatch[1] : null;
+
+        // Check if error message says to fix a different step
+        // Pattern: "but step8 outputs" or "Add 'columns' config to step8"
+        const fixStepMatch = error.match(/(?:but|to|fix) (step\d+)/);
+        const stepToFix = fixStepMatch ? fixStepMatch[1] : stepId;
+
+        // Find the actual index of the step that needs repair
+        const stepIndex = stepToFix
+          ? stage2Complete.workflow_steps.findIndex(s => s.id === stepToFix)
+          : -1;
+
+        if (stepIndex === -1) {
+          console.warn(`⚠️ [Self-Healing] Could not find step to repair for error: ${error}`);
+        }
+
+        return {
+          stepIndex: stepIndex >= 0 ? stepIndex : 0, // Fallback to 0 if not found
+          error: error
+        };
+      }).filter(e => e.stepIndex >= 0); // Remove errors we couldn't parse
+
+      const repairResult = await repairWorkflow(
+        stage2Complete.workflow_steps,
+        validationErrors,
+        userPrompt
+      );
+
+      if (repairResult.successCount > 0) {
+        console.log(`✅ [Self-Healing] Repaired ${repairResult.successCount} step(s), ${repairResult.failureCount} failed`);
+
+        // Update workflow with repaired steps
+        stage2Complete.workflow_steps = repairResult.repairedSteps;
+
+        // Re-validate after repair
+        gate2 = await validateStage2Parameters(stage2Complete, connectedPlugins);
+
+        if (!gate2.passed) {
+          // Still failed after repair
+          console.error('❌ [Self-Healing] Validation still failing after repair');
+          return {
+            success: false,
+            error: `Stage 2 validation failed even after repair: ${gate2.errors.join(', ')}`,
+            stage_failed: 'stage2',
+            validation: {
+              stage1_validation: gate1,
+              stage2_validation: gate2,
+              semantic_validation: { passed: false, errors: [], warnings: [] }
+            },
+            latency_ms: Date.now() - startTime
+          };
+        }
+
+        // Repair succeeded!
+        console.log('✅ [Self-Healing] Validation now passes after repair');
+        gate2.fixes_applied = repairResult.fixes;
+      } else {
+        // Repair failed completely
+        console.error('❌ [Self-Healing] Could not repair any steps');
+        return {
+          success: false,
+          error: `Stage 2 validation failed: ${gate2.errors.join(', ')}`,
+          stage_failed: 'stage2',
+          validation: {
+            stage1_validation: gate1,
+            stage2_validation: gate2,
+            semantic_validation: { passed: false, errors: [], warnings: [] }
+          },
+          latency_ms: Date.now() - startTime
+        };
+      }
     }
 
     if (gate2.warnings.length > 0) {
@@ -238,11 +312,13 @@ export async function generateAgentTwoStage(
       success: true,
       agent: {
         agent_name: stage2Complete.agent_name,
-        agent_description: stage2Complete.agent_description,
+        description: stage2Complete.description,
+        system_prompt: stage2Complete.system_prompt,
         workflow_type: stage2Complete.workflow_type,
         workflow_steps: stage2Complete.workflow_steps,
         required_inputs: stage2Complete.required_inputs,
         suggested_plugins: stage2Complete.suggested_plugins,
+        suggested_outputs: stage2Complete.suggested_outputs,
         confidence: stage2Complete.confidence,
         reasoning: stage2Complete.reasoning
       },
@@ -414,6 +490,67 @@ async function validateStage2Parameters(
       if (!step.loopSteps) errors.push(`Step ${step.id}: Loop missing 'loopSteps'`);
       if (!step.maxIterations) warnings.push(`Step ${step.id}: Loop missing 'maxIterations' safety limit`);
     }
+
+    if (step.type === 'conditional') {
+      // Conditionals with trueBranch/falseBranch should NOT have 'next' field
+      if ((step.trueBranch || step.falseBranch) && step.next) {
+        errors.push(`Step ${step.id}: Conditional with trueBranch/falseBranch cannot have 'next' field - creates duplicate execution path`);
+      }
+    }
+
+    // Check for next + executeIf conflict
+    if (step.next && step.executeIf) {
+      errors.push(`Step ${step.id}: Cannot use both 'next' and 'executeIf' - creates ambiguous control flow`);
+    }
+  }
+
+  // 1b. Validate workflow control flow anti-patterns
+  const stepMap = new Map(complete.workflow_steps.map(s => [s.id, s]));
+
+  for (let i = 0; i < complete.workflow_steps.length; i++) {
+    const step = complete.workflow_steps[i];
+    const nextStep = i < complete.workflow_steps.length - 1 ? complete.workflow_steps[i + 1] : null;
+
+    // Check if step has 'next' pointing to a step that has executeIf
+    if (step.next && nextStep && stepMap.get(step.next)?.executeIf) {
+      warnings.push(`Step ${step.id}: Points to ${step.next} which has executeIf - may cause unexpected behavior`);
+    }
+
+    // Check for unnecessary conditionals before loops (checking array.length > 0)
+    if (step.type === 'conditional' && nextStep?.type === 'loop') {
+      const conditionStr = JSON.stringify(step.condition);
+      if (conditionStr.includes('.length') && conditionStr.includes('> 0')) {
+        warnings.push(`Step ${step.id}: Unnecessary conditional checking array length before loop - loops handle empty arrays gracefully`);
+      }
+    }
+  }
+
+  // 1c. Validate Google Sheets append_rows format
+  for (const step of complete.workflow_steps || []) {
+    if (step.type === 'action' && step.plugin === 'google-sheets' && step.action === 'append_rows') {
+      const valuesParam = step.params?.values;
+      if (valuesParam && typeof valuesParam === 'string') {
+        // Check if it references a step that outputs objects instead of 2D array
+        const match = valuesParam.match(/\{\{(step\d+)\.data/);
+        if (match) {
+          const referencedStepId = match[1];
+          const referencedStep = stepMap.get(referencedStepId);
+
+          // If it's a transform with template config (outputs objects), it needs columns config
+          if (referencedStep?.type === 'transform' &&
+              referencedStep.operation === 'map' &&
+              referencedStep.config?.template &&
+              !referencedStep.config?.columns) {
+            errors.push(`Step ${step.id}: Google Sheets append_rows expects 2D array, but ${referencedStepId} outputs objects. Add 'columns' config to ${referencedStepId} transform.`);
+          }
+
+          // If it's ai_processing output, warn about format
+          if (referencedStep?.type === 'ai_processing') {
+            warnings.push(`Step ${step.id}: Ensure ${referencedStepId} AI output is 2D array format [[val1, val2], [val3, val4]] for Google Sheets`);
+          }
+        }
+      }
+    }
   }
 
   // 2. Check for ANY remaining $PLACEHOLDER values (should never happen after Stage 2)
@@ -523,23 +660,14 @@ async function validateSemantics(
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  // 1. Check confidence score
-  if (complete.confidence < 50) {
-    warnings.push(`Low confidence score: ${complete.confidence}%`);
+  // 1. Check confidence score (0-1 scale, aligned with PILOT_DSL_SCHEMA)
+  if (complete.confidence < 0.5) {
+    warnings.push(`Low confidence score: ${complete.confidence}`);
   }
 
-  // 2. Check workflow complexity matches type
-  const stepCount = complete.workflow_steps.length;
-  const hasConditional = complete.workflow_steps.some(s => s.type === 'conditional');
-  const hasLoop = complete.workflow_steps.some(s => s.type === 'loop');
-
-  if (complete.workflow_type === 'simple_linear' && (hasConditional || hasLoop)) {
-    warnings.push('Workflow type is simple_linear but contains conditionals/loops');
-  }
-
-  if (complete.workflow_type === 'complex' && stepCount < 5) {
-    warnings.push('Workflow type is complex but only has few steps');
-  }
+  // 2. workflow_type now uses PILOT_DSL values: pure_ai, data_retrieval_ai, ai_external_actions
+  // These describe AI usage patterns rather than workflow complexity
+  // Could add validation that workflow_type matches actual step types in future
 
   // 3. Check that suggested plugins are actually used
   const usedPlugins = new Set(

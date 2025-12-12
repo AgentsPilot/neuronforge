@@ -8,6 +8,7 @@ interface GenerateAgentOptions {
   agentId?: string;
   clarificationAnswers?: Record<string, any>;
   promptType?: string;
+  services_involved?: string[];  // Filtered plugins from Phase 3
 }
 
 export const useAgentGeneration = () => {
@@ -49,11 +50,14 @@ export const useAgentGeneration = () => {
       const requestPayload = {
         prompt: prompt.trim(), // FIXED: Use 'prompt' not 'enhancedPrompt' to match API
         clarificationAnswers: options.clarificationAnswers || {},
-        
+
         // CRITICAL FIX: Pass IDs at top level, not nested in clarificationAnswers
         sessionId: options.sessionId,
         agentId: options.agentId,
-        
+
+        // Pass filtered plugins from Phase 3 (services_involved)
+        services_involved: options.services_involved,
+
         // Additional metadata
         promptType: options.promptType
       };
@@ -67,14 +71,16 @@ export const useAgentGeneration = () => {
       });
 
       // ========================================
-      // 🎯 V3 ONLY - Two-Stage Generation (No Fallbacks)
+      // 🎯 V4 ONLY - OpenAI 3-Stage Architecture
       // ========================================
-      // V3 uses two-stage generation: Stage 1 (Claude Sonnet 4 for structure) + Stage 2 (Claude Haiku for parameters)
-      // NO FALLBACKS - If V3 fails, we surface the error to fix the root cause
+      // V4: OpenAI 3-stage architecture (LLM → Deterministic DSL → Repair)
+      // Stage 1: LLM outputs simple text plan (NOT JSON)
+      // Stage 2: Deterministic DSL builder → PILOT_DSL_SCHEMA
+      // Stage 3: Repair loop for ambiguities (if needed)
 
-      console.log('🎯 Using V3 (Two-Stage) generation - canonical system');
+      console.log('🎯 Using V4 (OpenAI 3-Stage) generation');
 
-      const response = await fetch('/api/generate-agent-v3', {
+      const response = await fetch('/api/generate-agent-v4', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -86,12 +92,12 @@ export const useAgentGeneration = () => {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        console.error('❌ V3 generation failed:', {
+        console.error('❌ V4 (OpenAI 3-Stage) generation failed:', {
           status: response.status,
           statusText: response.statusText,
           error: errorData.error,
           details: errorData.details,
-          stage: errorData.stage, // Which stage failed (1 or 2)
+          stage: errorData.stage, // Which stage failed
           prompt_length: prompt.length,
           timestamp: new Date().toISOString()
         });
@@ -103,9 +109,9 @@ export const useAgentGeneration = () => {
       }
 
       const result = await response.json();
-      const usedVersion = 'v3';
+      const usedVersion = 'v4';
 
-      console.log('✅ V3 (Two-Stage) generation successful!');
+      console.log('✅ V4 (OpenAI 3-Stage) generation successful!');
       console.log('✅ Agent generation result with ID tracking:', {
         hasAgent: !!result.agent,
         agentName: result.agent?.agent_name,

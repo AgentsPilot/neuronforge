@@ -396,6 +396,84 @@
           "insufficient_permissions": "Gmail draft permissions are insufficient. Please reconnect with full email access."
         }
       }
+    },
+    "get_email_attachment": {
+      "description": "Download email attachment content for processing",
+      "usage_context": "Use when you need to extract or analyze content from email attachments (PDFs, images, documents). First search emails with include_attachments:true to get attachment IDs.",
+      "parameters": {
+        "type": "object",
+        "required": ["message_id", "attachment_id"],
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "description": "Gmail message ID containing the attachment"
+          },
+          "attachment_id": {
+            "type": "string",
+            "description": "Gmail attachment ID from search_emails result"
+          },
+          "filename": {
+            "type": "string",
+            "description": "Original filename for reference (optional but recommended)"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_size": {
+            "condition": "attachment_size > 25000000",
+            "action": "block",
+            "message": "Attachment exceeds 25MB Gmail API limit"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "Attachment content with metadata",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "Attachment filename"
+          },
+          "mimeType": {
+            "type": "string",
+            "description": "MIME type (application/pdf, image/png, etc.)"
+          },
+          "size": {
+            "type": "integer",
+            "description": "File size in bytes"
+          },
+          "data": {
+            "type": "string",
+            "description": "Base64-encoded file content for processing"
+          },
+          "extracted_text": {
+            "type": "string",
+            "description": "Extracted text from PDF/document (if applicable)"
+          },
+          "is_image": {
+            "type": "boolean",
+            "description": "True if attachment is an image"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Attachment downloaded with base64 content ready for AI processing",
+        "sample_output": {
+          "filename": "expenses.pdf",
+          "mimeType": "application/pdf",
+          "size": 245821,
+          "data": "JVBERi0xLjQK...",
+          "extracted_text": "Expense Report Q4 2025...",
+          "is_image": false
+        },
+        "common_errors": {
+          "auth_failed": "Gmail connection has expired. Please reconnect in Settings → Connected Apps.",
+          "attachment_not_found": "Attachment not found. Check if email still exists or try searching again.",
+          "size_exceeded": "Attachment exceeds 25MB limit. Gmail API cannot download larger files.",
+          "download_failed": "Failed to download attachment. Try again or contact support if issue persists."
+        }
+      }
     }
   }
 }

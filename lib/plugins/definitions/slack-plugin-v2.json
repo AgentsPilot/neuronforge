@@ -11,7 +11,7 @@
       "auth_type": "oauth2",
       "client_id": "${SLACK_CLIENT_ID}",
       "client_secret": "${SLACK_CLIENT_SECRET}",
-      "redirect_uri": "${SLACK_REDIRECT_URI}/oauth/callback/slack",
+      "redirect_uri": "${NEXT_PUBLIC_APP_URL}/oauth/callback/slack",
       "auth_url": "https://slack.com/oauth/v2/authorize",
       "token_url": "https://slack.com/api/oauth.v2.access",
       "refresh_url": "https://slack.com/api/oauth.v2.access",
@@ -48,7 +48,11 @@
         "properties": {
           "channel_id": {
             "type": "string",
-            "description": "The ID of the channel or DM to send the message to (e.g., C1234567890, D1234567890)"
+            "description": "The ID of the channel or DM to send the message to (e.g., C1234567890, D1234567890)",
+            "x-dynamic-options": {
+              "source": "list_channels",
+              "description": "Fetches available Slack channels dynamically"
+            }
           },
           "message_text": {
             "type": "string",

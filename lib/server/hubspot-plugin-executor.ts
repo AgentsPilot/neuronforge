@@ -653,4 +653,134 @@ export class HubSpotPluginExecutor extends BasePluginExecutor {
       message: 'HubSpot connection active'
     };
   }
+
+  /**
+   * List all available HubSpot contacts for dynamic dropdown options
+   * This method is called by the fetch-options API route
+   */
+  async list_contacts(connection: any, options: { page?: number; limit?: number } = {}): Promise<Array<{value: string; label: string; description?: string; icon?: string; group?: string}>> {
+    try {
+      const { limit = 100 } = options;
+
+      const url = new URL(`${hubspotApiUrl}/objects/contacts`);
+      url.searchParams.set('limit', limit.toString());
+      url.searchParams.set('properties', 'firstname,lastname,email');
+
+      const response = await fetch(url.toString(), {
+        headers: {
+          'Authorization': `Bearer ${connection.access_token}`,
+        },
+      });
+
+      const data = await this.handleHubSpotResponse(response, 'list_contacts');
+
+      if (!data.results || !Array.isArray(data.results)) {
+        return [];
+      }
+
+      // Transform to option format
+      return data.results.map((contact: any) => {
+        const firstName = contact.properties.firstname || '';
+        const lastName = contact.properties.lastname || '';
+        const email = contact.properties.email || '';
+        const name = [firstName, lastName].filter(Boolean).join(' ') || email || 'Unknown';
+
+        return {
+          value: contact.id,
+          label: name,
+          description: email,
+          icon: '👤',
+          group: 'Contacts',
+        };
+      });
+
+    } catch (error: any) {
+      this.logger.error({ err: error }, 'Error listing HubSpot contacts for options');
+      throw error;
+    }
+  }
+
+  /**
+   * List all available HubSpot companies for dynamic dropdown options
+   * This method is called by the fetch-options API route
+   */
+  async list_companies(connection: any, options: { page?: number; limit?: number } = {}): Promise<Array<{value: string; label: string; description?: string; icon?: string; group?: string}>> {
+    try {
+      const { limit = 100 } = options;
+
+      const url = new URL(`${hubspotApiUrl}/objects/companies`);
+      url.searchParams.set('limit', limit.toString());
+      url.searchParams.set('properties', 'name,domain');
+
+      const response = await fetch(url.toString(), {
+        headers: {
+          'Authorization': `Bearer ${connection.access_token}`,
+        },
+      });
+
+      const data = await this.handleHubSpotResponse(response, 'list_companies');
+
+      if (!data.results || !Array.isArray(data.results)) {
+        return [];
+      }
+
+      // Transform to option format
+      return data.results.map((company: any) => ({
+        value: company.id,
+        label: company.properties.name || 'Unknown Company',
+        description: company.properties.domain || undefined,
+        icon: '🏢',
+        group: 'Companies',
+      }));
+
+    } catch (error: any) {
+      this.logger.error({ err: error }, 'Error listing HubSpot companies for options');
+      throw error;
+    }
+  }
+
+  /**
+   * List all available HubSpot deals for dynamic dropdown options
+   * This method is called by the fetch-options API route
+   */
+  async list_deals(connection: any, options: { page?: number; limit?: number } = {}): Promise<Array<{value: string; label: string; description?: string; icon?: string; group?: string}>> {
+    try {
+      const { limit = 100 } = options;
+
+      const url = new URL(`${hubspotApiUrl}/objects/deals`);
+      url.searchParams.set('limit', limit.toString());
+      url.searchParams.set('properties', 'dealname,amount,dealstage');
+
+      const response = await fetch(url.toString(), {
+        headers: {
+          'Authorization': `Bearer ${connection.access_token}`,
+        },
+      });
+
+      const data = await this.handleHubSpotResponse(response, 'list_deals');
+
+      if (!data.results || !Array.isArray(data.results)) {
+        return [];
+      }
+
+      // Transform to option format
+      return data.results.map((deal: any) => {
+        const amount = deal.properties.amount ? `$${deal.properties.amount}` : '';
+        const stage = deal.properties.dealstage || '';
+        const description = [amount, stage].filter(Boolean).join(' - ');
+
+        return {
+          value: deal.id,
+          label: deal.properties.dealname || 'Unknown Deal',
+          description: description || undefined,
+          icon: '💼',
+          group: 'Deals',
+        };
+      });
+
+    } catch (error: any) {
+      this.logger.error({ err: error }, 'Error listing HubSpot deals for options');
+      throw error;
+    }
+  }
 }

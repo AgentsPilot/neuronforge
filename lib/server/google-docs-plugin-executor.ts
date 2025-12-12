@@ -418,4 +418,50 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
       message: 'Google Docs connection active'
     };
   }
+
+  /**
+   * List all available Google Docs for dynamic dropdown options
+   * This method is called by the fetch-options API route
+   */
+  async list_documents(connection: any, options: { page?: number; limit?: number } = {}): Promise<Array<{value: string; label: string; description?: string; icon?: string; group?: string}>> {
+    try {
+      const { limit = 100 } = options;
+
+      // Use Google Drive API to list documents
+      const driveUrl = new URL('https://www.googleapis.com/drive/v3/files');
+      driveUrl.searchParams.set('q', "mimeType='application/vnd.google-apps.document' and trashed=false");
+      driveUrl.searchParams.set('fields', 'files(id,name,modifiedTime,owners)');
+      driveUrl.searchParams.set('pageSize', limit.toString());
+      driveUrl.searchParams.set('orderBy', 'modifiedTime desc');
+
+      const response = await fetch(driveUrl.toString(), {
+        headers: {
+          'Authorization': `Bearer ${connection.access_token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Google Drive API error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.files || !Array.isArray(data.files)) {
+        return [];
+      }
+
+      // Transform to option format
+      return data.files.map((file: any) => ({
+        value: file.id,
+        label: file.name,
+        description: file.owners?.[0]?.displayName ? `Owner: ${file.owners[0].displayName}` : undefined,
+        icon: '📄',
+        group: 'My Documents',
+      }));
+
+    } catch (error: any) {
+      this.logger.error({ err: error }, 'Error listing Google Docs for options');
+      throw error;
+    }
+  }
 }

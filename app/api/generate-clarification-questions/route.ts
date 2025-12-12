@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { v4 as uuidv4 } from 'uuid'
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics'
-import { OpenAIProvider } from '@/lib/ai/providers/openaiProvider'
+import { AnthropicProvider, ANTHROPIC_MODELS } from '@/lib/ai/providers/anthropicProvider'
 import { PromptRequestPayload, PromptResponsePayload, ClarificationQuestionRequestPayload, ClarificationQuestion } from '@/components/agent-creation/types'
 
 // Import PluginManagerV2 for enhanced plugin management
@@ -178,13 +178,13 @@ export async function POST(request: NextRequest) {
         console.log('==================================================================================');
       }
 
-    // Call OpenAI to generate clarification questions
+    // Call Claude Sonnet 4 to generate clarification questions
     // Use AI Analytics for tracking
-    const openaiProvider = new OpenAIProvider(process.env.OPENAI_API_KEY!, aiAnalytics)
-    
-    const openAIResponse = await openaiProvider.chatCompletion(
+    const anthropicProvider = new AnthropicProvider(process.env.ANTHROPIC_API_KEY!, aiAnalytics)
+
+    const anthropicResponse = await anthropicProvider.chatCompletion(
       {
-        model: 'gpt-4o',
+        model: ANTHROPIC_MODELS.CLAUDE_4_SONNET,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
@@ -206,7 +206,7 @@ export async function POST(request: NextRequest) {
       }
     )
 
-    let content = openAIResponse.choices[0]?.message?.content || '[]'
+    let content = anthropicResponse.choices[0]?.message?.content || '[]'
 
     // Remove markdown wrapper
     content = content.trim()
@@ -215,17 +215,17 @@ export async function POST(request: NextRequest) {
     }
 
     if (isDevEnv) {
-      console.log('Raw GPT response:', content)
-    }    
-    
+      console.log('Raw Claude response:', content)
+    }
+
     let llmResponse
     try {
       llmResponse = JSON.parse(content)
       if (isDevEnv) {
-        console.log('Parsed GPT response:', llmResponse)
+        console.log('Parsed Claude response:', llmResponse)
       }
     } catch (e) {
-      console.error('GPT parse failure:', e)
+      console.error('Claude parse failure:', e)
       llmResponse = []
     }    
 

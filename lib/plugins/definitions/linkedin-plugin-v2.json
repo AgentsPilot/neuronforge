@@ -34,8 +34,7 @@
         "properties": {
           "projection": {
             "type": "string",
-            "description": "Optional projection fields (e.g., 'id,firstName,lastName,profilePicture'). If not specified, returns all available fields.",
-            "required": false
+            "description": "Optional projection fields (e.g., 'id,firstName,lastName,profilePicture'). If not specified, returns all available fields."
           }
         }
       },
@@ -126,33 +125,28 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 3000,
-            "description": "The text content of the post. Maximum 3000 characters.",
-            "required": true
+            "description": "The text content of the post. Maximum 3000 characters."
           },
           "visibility": {
             "type": "string",
             "enum": ["PUBLIC", "CONNECTIONS"],
             "default": "PUBLIC",
-            "description": "Post visibility setting. 'PUBLIC' makes it visible to everyone, 'CONNECTIONS' limits it to 1st-degree connections.",
-            "required": false
+            "description": "Post visibility setting. 'PUBLIC' makes it visible to everyone, 'CONNECTIONS' limits it to 1st-degree connections."
           },
           "media_url": {
             "type": "string",
             "format": "url",
-            "description": "Optional URL to share as an article or link preview",
-            "required": false
+            "description": "Optional URL to share as an article or link preview"
           },
           "media_title": {
             "type": "string",
             "maxLength": 200,
-            "description": "Optional title for the shared media/article",
-            "required": false
+            "description": "Optional title for the shared media/article"
           },
           "media_description": {
             "type": "string",
             "maxLength": 500,
-            "description": "Optional description for the shared media/article",
-            "required": false
+            "description": "Optional description for the shared media/article"
           }
         }
       },
@@ -214,15 +208,13 @@
             "minimum": 1,
             "maximum": 50,
             "default": 10,
-            "description": "Number of posts to retrieve (1-50). Default is 10.",
-            "required": false
+            "description": "Number of posts to retrieve (1-50). Default is 10."
           },
           "sort_by": {
             "type": "string",
             "enum": ["LAST_MODIFIED", "CREATED"],
             "default": "LAST_MODIFIED",
-            "description": "Sort order for posts. LAST_MODIFIED shows recently edited posts first.",
-            "required": false
+            "description": "Sort order for posts. LAST_MODIFIED shows recently edited posts first."
           }
         }
       },
@@ -290,8 +282,7 @@
         "properties": {
           "organization_id": {
             "type": "string",
-            "description": "The LinkedIn organization ID (numeric) or vanity name",
-            "required": true
+            "description": "The LinkedIn organization ID (numeric) or vanity name"
           }
         }
       },
@@ -345,27 +336,23 @@
           "keywords": {
             "type": "string",
             "minLength": 1,
-            "description": "Search keywords (company name or related terms)",
-            "required": true
+            "description": "Search keywords (company name or related terms)"
           },
           "industry": {
             "type": "string",
-            "description": "Optional industry filter (LinkedIn industry ID)",
-            "required": false
+            "description": "Optional industry filter (LinkedIn industry ID)"
           },
           "company_size": {
             "type": "string",
             "enum": ["A", "B", "C", "D", "E", "F", "G", "H", "I"],
-            "description": "Optional company size filter: A(1-10), B(11-50), C(51-200), D(201-500), E(501-1000), F(1001-5000), G(5001-10000), H(10001+)",
-            "required": false
+            "description": "Optional company size filter: A(1-10), B(11-50), C(51-200), D(201-500), E(501-1000), F(1001-5000), G(5001-10000), H(10001+)"
           },
           "max_results": {
             "type": "number",
             "minimum": 1,
             "maximum": 50,
             "default": 10,
-            "description": "Maximum number of results to return (1-50)",
-            "required": false
+            "description": "Maximum number of results to return (1-50)"
           }
         }
       },
@@ -436,16 +423,14 @@
         "properties": {
           "organization_id": {
             "type": "string",
-            "description": "The LinkedIn organization ID (numeric)",
-            "required": true
+            "description": "The LinkedIn organization ID (numeric)"
           },
           "count": {
             "type": "number",
             "minimum": 1,
             "maximum": 100,
             "default": 10,
-            "description": "Number of posts to retrieve (1-100). Default is 10.",
-            "required": false
+            "description": "Number of posts to retrieve (1-100). Default is 10."
           }
         }
       },
@@ -519,16 +504,14 @@
             "type": "number",
             "minimum": 0,
             "default": 0,
-            "description": "Pagination start offset. Default is 0.",
-            "required": false
+            "description": "Pagination start offset. Default is 0."
           },
           "count": {
             "type": "number",
             "minimum": 1,
             "maximum": 50,
             "default": 50,
-            "description": "Number of connections to retrieve per page (1-50). Default and recommended maximum is 50.",
-            "required": false
+            "description": "Number of connections to retrieve per page (1-50). Default and recommended maximum is 50."
           }
         }
       },

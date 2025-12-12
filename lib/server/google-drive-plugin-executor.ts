@@ -488,5 +488,107 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
         },
         message: `Google Drive connection active for ${aboutData.user?.emailAddress}`
       };
-  }  
+  }
+
+  /**
+   * List all available folders for dynamic dropdown options
+   * This method is called by the fetch-options API route
+   */
+  async list_folders(connection: any, options: { page?: number; limit?: number } = {}): Promise<Array<{value: string; label: string; description?: string; icon?: string; group?: string}>> {
+    try {
+      const { limit = 100 } = options;
+
+      const url = new URL('https://www.googleapis.com/drive/v3/files');
+      url.searchParams.set('q', "mimeType='application/vnd.google-apps.folder' and trashed=false");
+      url.searchParams.set('fields', 'files(id,name,modifiedTime,owners)');
+      url.searchParams.set('pageSize', limit.toString());
+      url.searchParams.set('orderBy', 'modifiedTime desc');
+
+      const response = await fetch(url.toString(), {
+        headers: {
+          'Authorization': `Bearer ${connection.access_token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Google Drive API error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.files || !Array.isArray(data.files)) {
+        return [];
+      }
+
+      // Transform to option format
+      return data.files.map((file: any) => ({
+        value: file.id,
+        label: file.name,
+        description: file.owners?.[0]?.displayName ? `Owner: ${file.owners[0].displayName}` : undefined,
+        icon: '📁',
+        group: 'My Folders',
+      }));
+
+    } catch (error: any) {
+      this.logger.error({ err: error }, 'Error listing Google Drive folders for options');
+      throw error;
+    }
+  }
+
+  /**
+   * List all available files for dynamic dropdown options
+   * This method is called by the fetch-options API route
+   */
+  async list_files(connection: any, options: { page?: number; limit?: number } = {}): Promise<Array<{value: string; label: string; description?: string; icon?: string; group?: string}>> {
+    try {
+      const { limit = 100 } = options;
+
+      const url = new URL('https://www.googleapis.com/drive/v3/files');
+      url.searchParams.set('q', "trashed=false and mimeType!='application/vnd.google-apps.folder'");
+      url.searchParams.set('fields', 'files(id,name,mimeType,modifiedTime,owners)');
+      url.searchParams.set('pageSize', limit.toString());
+      url.searchParams.set('orderBy', 'modifiedTime desc');
+
+      const response = await fetch(url.toString(), {
+        headers: {
+          'Authorization': `Bearer ${connection.access_token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Google Drive API error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.files || !Array.isArray(data.files)) {
+        return [];
+      }
+
+      // Helper to get icon based on mime type
+      const getFileIcon = (mimeType: string): string => {
+        if (mimeType.includes('spreadsheet')) return '📊';
+        if (mimeType.includes('document')) return '📄';
+        if (mimeType.includes('presentation')) return '📊';
+        if (mimeType.includes('image')) return '🖼️';
+        if (mimeType.includes('video')) return '🎥';
+        if (mimeType.includes('audio')) return '🎵';
+        if (mimeType.includes('pdf')) return '📕';
+        return '📄';
+      };
+
+      // Transform to option format
+      return data.files.map((file: any) => ({
+        value: file.id,
+        label: file.name,
+        description: file.owners?.[0]?.displayName ? `Owner: ${file.owners[0].displayName}` : undefined,
+        icon: getFileIcon(file.mimeType),
+        group: 'My Files',
+      }));
+
+    } catch (error: any) {
+      this.logger.error({ err: error }, 'Error listing Google Drive files for options');
+      throw error;
+    }
+  }
 }

@@ -117,7 +117,39 @@ export default function AgentSandboxPage() {
 
           // Initial load: populate steps from agent config
           const workflowSteps = (data.pilot_steps || data.workflow_steps || []) as any[]
-          const initialSteps: WorkflowStep[] = workflowSteps.map((step: any, index: number) => ({
+
+          // Flatten hierarchical V4 workflow into linear list for timeline
+          const flattenWorkflowSteps = (steps: any[]): any[] => {
+            const flattened: any[] = []
+            const processStep = (step: any) => {
+              flattened.push(step)
+              // Recursively process nested steps
+              if (step.type === 'conditional') {
+                if (step.then_steps && Array.isArray(step.then_steps)) {
+                  step.then_steps.forEach(processStep)
+                }
+                if (step.else_steps && Array.isArray(step.else_steps)) {
+                  step.else_steps.forEach(processStep)
+                }
+              } else if (step.type === 'scatter_gather') {
+                // V4 format: root-level steps
+                if (step.steps && Array.isArray(step.steps)) {
+                  step.steps.forEach(processStep)
+                }
+                // PILOT format: scatter.steps
+                if (step.scatter?.steps && Array.isArray(step.scatter.steps)) {
+                  step.scatter.steps.forEach(processStep)
+                }
+              } else if (step.type === 'loop' && step.loopSteps) {
+                step.loopSteps.forEach(processStep)
+              }
+            }
+            steps.forEach(processStep)
+            return flattened
+          }
+
+          const flattenedSteps = flattenWorkflowSteps(workflowSteps)
+          const initialSteps: WorkflowStep[] = flattenedSteps.map((step: any, index: number) => ({
             id: step.id || `step-${index}`,
             name: step.name || step.step_name || `Step ${index + 1}`,
             type: step.type || 'action',
@@ -163,7 +195,37 @@ export default function AgentSandboxPage() {
 
     // Reset debug state completely for fresh start - reinitialize steps from agent config
     const workflowSteps = (agent.pilot_steps || agent.workflow_steps || []) as any[]
-    const initialSteps: WorkflowStep[] = workflowSteps.map((step: any, index: number) => ({
+
+    // Flatten hierarchical V4 workflow into linear list for timeline
+    const flattenWorkflowSteps = (steps: any[]): any[] => {
+      const flattened: any[] = []
+      const processStep = (step: any) => {
+        flattened.push(step)
+        // Recursively process nested steps
+        if (step.type === 'conditional') {
+          if (step.then_steps && Array.isArray(step.then_steps)) {
+            step.then_steps.forEach(processStep)
+          }
+          if (step.else_steps && Array.isArray(step.else_steps)) {
+            step.else_steps.forEach(processStep)
+          }
+        } else if (step.type === 'scatter_gather') {
+          if (step.steps && Array.isArray(step.steps)) {
+            step.steps.forEach(processStep)
+          }
+          if (step.scatter?.steps && Array.isArray(step.scatter.steps)) {
+            step.scatter.steps.forEach(processStep)
+          }
+        } else if (step.type === 'loop' && step.loopSteps) {
+          step.loopSteps.forEach(processStep)
+        }
+      }
+      steps.forEach(processStep)
+      return flattened
+    }
+
+    const flattenedSteps = flattenWorkflowSteps(workflowSteps)
+    const initialSteps: WorkflowStep[] = flattenedSteps.map((step: any, index: number) => ({
       id: step.id || `step-${index}`,
       name: step.name || step.step_name || `Step ${index + 1}`,
       type: step.type || 'action',

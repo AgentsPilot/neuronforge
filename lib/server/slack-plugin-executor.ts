@@ -66,7 +66,24 @@ export class SlackPluginExecutor extends BasePluginExecutor {
   private async sendMessage(connection: any, parameters: any): Promise<any> {
     this.logger.debug('Sending Slack message');
 
-    const { channel_id, message_text, thread_timestamp, as_user } = parameters;
+    let { channel_id, message_text, thread_timestamp, as_user } = parameters;
+
+    // If channel_id starts with # or is a name, try to resolve it to an ID
+    if (channel_id && (channel_id.startsWith('#') || !channel_id.startsWith('C') && !channel_id.startsWith('D'))) {
+      const channelName = channel_id.replace('#', '');
+      this.logger.debug(`Resolving channel name "${channelName}" to ID...`);
+
+      try {
+        const resolvedId = await this.resolveChannelNameToId(connection, channelName);
+        if (resolvedId) {
+          this.logger.debug(`Resolved "${channelName}" to "${resolvedId}"`);
+          channel_id = resolvedId;
+        }
+      } catch (error) {
+        this.logger.warn({ err: error }, `Could not resolve channel name "${channelName}"`);
+        // Continue with original channel_id and let Slack API handle the error
+      }
+    }
 
     const requestBody: any = {
       channel: channel_id,
@@ -556,6 +573,78 @@ export class SlackPluginExecutor extends BasePluginExecutor {
     };
   }
 
+  /**
+   * List all available Slack channels for dynamic dropdown options
+   * This method is called by the fetch-options API route
+   */
+  async list_channels(connection: any, options: { page?: number; limit?: number } = {}): Promise<Array<{value: string; label: string; description?: string; icon?: string; group?: string}>> {
+    try {
+      const { limit = 100 } = options;
+
+      const url = new URL('https://slack.com/api/conversations.list');
+      url.searchParams.set('types', 'public_channel,private_channel');
+      url.searchParams.set('limit', limit.toString());
+      url.searchParams.set('exclude_archived', 'true');
+
+      const response = await fetch(url.toString(), {
+        headers: {
+          'Authorization': `Bearer ${connection.access_token}`,
+        },
+      });
+
+      const data = await response.json();
+
+      if (!data.ok) {
+        this.logger.error({ error: data.error }, 'Slack API error listing channels');
+        throw new Error(`Slack API error: ${data.error}`);
+      }
+
+      if (!data.channels || !Array.isArray(data.channels)) {
+        return [];
+      }
+
+      // Transform to option format
+      return data.channels.map((ch: any) => ({
+        value: ch.id,
+        label: `#${ch.name}`,
+        description: ch.purpose?.value || ch.topic?.value || undefined,
+        icon: '💬',
+        group: ch.is_private ? 'Private Channels' : 'Public Channels',
+      }));
+
+    } catch (error) {
+      this.logger.error({ err: error }, 'Error listing Slack channels for options');
+      throw error;
+    }
+  }
+
+  // Resolve channel name to channel ID
+  private async resolveChannelNameToId(connection: any, channelName: string): Promise<string | null> {
+    try {
+      const url = new URL('https://slack.com/api/conversations.list');
+      url.searchParams.set('types', 'public_channel,private_channel');
+      url.searchParams.set('limit', '1000');
+
+      const response = await fetch(url.toString(), {
+        headers: {
+          'Authorization': `Bearer ${connection.access_token}`,
+        },
+      });
+
+      const data = await response.json();
+
+      if (data.ok && data.channels) {
+        const channel = data.channels.find((ch: any) => ch.name === channelName);
+        return channel ? channel.id : null;
+      }
+
+      return null;
+    } catch (error) {
+      this.logger.error({ err: error }, 'Error resolving channel name');
+      return null;
+    }
+  }
+
   // Handle Slack API responses (all responses have {ok: true/false})
   private async handleSlackResponse(response: Response, operationName: string): Promise<any> {
     if (!response.ok) {
@@ -613,7 +702,7 @@ export class SlackPluginExecutor extends BasePluginExecutor {
     }
 
     if (errorMsg.includes('not_in_channel')) {
-      return 'The bot is not a member of this channel. If this is a private channel, please manually invite the bot to the channel first.';
+      return 'Unable to access this channel. This usually means the channel is private or the bot lacks permissions. Please use a public channel or provide the actual channel ID (e.g., C1234567890) instead of a channel name.';
     }
 
     if (errorMsg.includes('rate_limited') || errorMsg.includes('ratelimited')) {

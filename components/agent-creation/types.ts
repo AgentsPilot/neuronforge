@@ -141,15 +141,15 @@ export interface ClarificationQuestionRequestPayload extends PromptPayload {
   analysis: ClarityAnalysis;
 }
 
-export interface EnhancedPromptRequestPayload extends PromptPayload {  
+export interface EnhancedPromptRequestPayload extends PromptPayload {
   clarificationAnswers: Record<string, string>;
   connectedPluginsData?: IPluginContext[];
-  missingPlugins?: string[];  
+  missingPlugins?: string[];
   pluginWarning?: any | null;
 }
 
 // Responses from the API
-export interface PromptResponsePayload extends PromptPayload {  
+export interface PromptResponsePayload extends PromptPayload {
   connectedPluginsData?: IPluginContext[];
   analysis: ClarityAnalysis;
 }

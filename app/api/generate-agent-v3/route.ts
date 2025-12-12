@@ -47,6 +47,7 @@ export async function POST(req: Request) {
     const {
       prompt,
       clarificationAnswers,
+      services_involved,
       agentId: providedAgentId,
       sessionId: providedSessionId
     } = await req.json();
@@ -115,7 +116,16 @@ export async function POST(req: Request) {
     const platformPlugins = ['chatgpt-research'];
     const allAvailablePlugins = [...new Set([...connectedPluginKeys, ...platformPlugins])];
 
+    // Use filtered plugins from Phase 3 (services_involved), otherwise use all
+    const pluginsToUse = services_involved && services_involved.length > 0
+      ? services_involved.filter((p: string) => allAvailablePlugins.includes(p))
+      : allAvailablePlugins;
+
     console.log('📦 Available plugins:', allAvailablePlugins);
+    if (services_involved && services_involved.length > 0) {
+      console.log('🎯 Using filtered plugins from Phase 3 services_involved:', pluginsToUse);
+      console.log('💰 Token savings: ~' + (allAvailablePlugins.length - pluginsToUse.length) * 30 + ' tokens');
+    }
 
     // ========================================
     // 🚀 TWO-STAGE GENERATION
@@ -126,7 +136,7 @@ export async function POST(req: Request) {
       result = await generateAgentTwoStage(
         user.id,
         prompt,
-        allAvailablePlugins
+        pluginsToUse
       );
     } catch (generationError: any) {
       console.error('❌ TwoStage generation threw exception:', generationError);
@@ -316,8 +326,8 @@ export async function POST(req: Request) {
         user_id: user.id,
         agent_name: agent.agent_name,
         user_prompt: clarificationAnswers?.originalPrompt || prompt,  // Original user prompt (not enhanced)
-        system_prompt: `You are an AI agent designed to ${agent.agent_description}`,
-        description: agent.agent_description,
+        system_prompt: `You are an AI agent designed to ${agent.description}`,
+        description: agent.description,
         plugins_required: agent.suggested_plugins,
         connected_plugins: allAvailablePlugins,
         input_schema: (agent.required_inputs || []).map(input => ({
@@ -364,7 +374,7 @@ export async function POST(req: Request) {
           },
           timezone: 'UTC',
           agent_name: agent.agent_name,
-          description: agent.agent_description,
+          description: agent.description,
           user_prompt: clarificationAnswers?.originalPrompt || prompt,  // Original user prompt
           input_schema: agent.required_inputs || [],
           output_schema: [],
@@ -372,7 +382,7 @@ export async function POST(req: Request) {
           pilot_steps: agent.workflow_steps || [],
           plugins_required: agent.suggested_plugins || [],
           connected_plugins: allAvailablePlugins,
-          system_prompt: `You are an AI agent designed to ${agent.agent_description}`,
+          system_prompt: `You are an AI agent designed to ${agent.description}`,
           ai_context: {
             reasoning: agent.reasoning,
             confidence: agent.confidence,

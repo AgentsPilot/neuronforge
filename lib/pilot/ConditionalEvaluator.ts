@@ -76,7 +76,16 @@ export class ConditionalEvaluator {
     context: ExecutionContext
   ): boolean {
     // Resolve field value from context
-    const actualValue = context.resolveVariable(`{{${condition.field}}}`);
+    // Handle both wrapped ({{email.subject}}) and unwrapped (email.subject) formats
+    let fieldRef = condition.field;
+
+    // If field is already wrapped in {{}}, use as-is
+    // Otherwise, wrap it
+    if (!fieldRef.startsWith('{{')) {
+      fieldRef = `{{${fieldRef}}}`;
+    }
+
+    const actualValue = context.resolveVariable(fieldRef);
 
     return this.compareValues(
       actualValue,

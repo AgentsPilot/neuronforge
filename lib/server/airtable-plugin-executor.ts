@@ -405,4 +405,65 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
       scopes: data.scopes || []
     };
   }
+
+  /**
+   * List all Airtable bases for dynamic dropdown options
+   * This method is called by the fetch-options API route
+   */
+  async list_bases(connection: any, options: { page?: number; limit?: number } = {}): Promise<Array<{value: string; label: string; description?: string; icon?: string; group?: string}>> {
+    try {
+      const result = await this.listBases(connection, {});
+
+      if (!result.bases || !Array.isArray(result.bases)) {
+        return [];
+      }
+
+      // Transform to option format
+      return result.bases.map((base: any) => ({
+        value: base.id,
+        label: base.name,
+        description: base.permission_level ? `Permission: ${base.permission_level}` : undefined,
+        icon: '📊',
+        group: 'My Bases',
+      }));
+
+    } catch (error: any) {
+      this.logger.error({ err: error }, 'Error listing Airtable bases for options');
+      throw error;
+    }
+  }
+
+  /**
+   * List all tables in an Airtable base for dynamic dropdown options
+   * This method is called by the fetch-options API route
+   * Note: Requires base_id parameter from dependent field
+   */
+  async list_tables_in_base(connection: any, options: { page?: number; limit?: number; base_id?: string } = {}): Promise<Array<{value: string; label: string; description?: string; icon?: string; group?: string}>> {
+    try {
+      const { base_id } = options;
+
+      if (!base_id) {
+        throw new Error('base_id is required to list tables');
+      }
+
+      const result = await this.listTables(connection, { base_id });
+
+      if (!result.tables || !Array.isArray(result.tables)) {
+        return [];
+      }
+
+      // Transform to option format
+      return result.tables.map((table: any) => ({
+        value: table.id,
+        label: table.name,
+        description: table.primary_field_id ? `Primary field: ${table.primary_field_id}` : undefined,
+        icon: '📋',
+        group: 'Tables',
+      }));
+
+    } catch (error: any) {
+      this.logger.error({ err: error }, 'Error listing Airtable tables for options');
+      throw error;
+    }
+  }
 }

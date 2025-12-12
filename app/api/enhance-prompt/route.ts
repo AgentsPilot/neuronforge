@@ -5,7 +5,7 @@ import { EnhancedPromptRequestPayload } from '@/components/agent-creation/types'
 
 // Import AI Analytics System
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics'
-import { OpenAIProvider } from '@/lib/ai/providers/openaiProvider'
+import { AnthropicProvider, ANTHROPIC_MODELS } from '@/lib/ai/providers/anthropicProvider'
 
 // Import PluginManagerV2 for enhanced plugin management
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2'
@@ -234,27 +234,26 @@ export async function POST(req: NextRequest) {
       console.log('🤖 enhanced-prompt: systemPrompt constructed:', systemPrompt);
     }
 
-    // Use AI Analytics OpenAI Provider
-    const openaiProvider = new OpenAIProvider(process.env.OPENAI_API_KEY!, aiAnalytics)
-    
-    console.log('📊 Making tracked enhancement AI call with CONSISTENT agent ID')
-    
-    const openAIResponse = await openaiProvider.chatCompletion(
+    // Use AI Analytics Anthropic Provider
+    const anthropicProvider = new AnthropicProvider(process.env.ANTHROPIC_API_KEY!, aiAnalytics)
+
+    console.log('📊 Making tracked enhancement AI call with CONSISTENT agent ID (Claude Sonnet 4)')
+
+    const anthropicResponse = await anthropicProvider.chatCompletion(
       {
-        model: 'gpt-4o',
+        model: ANTHROPIC_MODELS.CLAUDE_4_SONNET,
         messages: [
           {
             role: 'system',
             content: systemPrompt
           },
           {
-            role: 'user', 
+            role: 'user',
             content: enhancementPrompt
           }
         ],
-        max_tokens: 800,
-        temperature: 0.1,
-        presence_penalty: 0.1
+        max_tokens: 2000,
+        temperature: 0.1
       },
       {
         userId: userIdToUse,
@@ -278,18 +277,18 @@ export async function POST(req: NextRequest) {
     }    
 
     // Parse the response
-    let fullResponse = openAIResponse.choices[0]?.message?.content?.trim()
+    let fullResponse = anthropicResponse.choices[0]?.message?.content?.trim()
     if (!fullResponse) {
-      throw new Error('Empty response from OpenAI')
+      throw new Error('Empty response from Claude')
     }
 
-    //console.log('🤖 Raw OpenAI response:', fullResponse.slice(0, 200) + '...')
-    console.log('🤖 Raw OpenAI response:', fullResponse)
+    //console.log('🤖 Raw Claude response:', fullResponse.slice(0, 200) + '...')
+    console.log('🤖 Raw Claude response:', fullResponse)
     
     // Parse the JSON response with better error handling
     let enhancedPrompt = ''
     let rationale = ''
-    
+
     try {
       // Remove any markdown code blocks if present
       if (fullResponse.startsWith('```')) {
@@ -399,11 +398,11 @@ export async function POST(req: NextRequest) {
           const parsedResponse = JSON.parse(extractedJson);
           enhancedPrompt = parsedResponse.enhanced_prompt || parsedResponse.enhancedPrompt || '';
           rationale = parsedResponse.rationale || '';
-          
+
           if (!enhancedPrompt || enhancedPrompt.length < 10) {
             throw new Error('Enhanced prompt from extracted JSON is too short');
           }
-          
+
           console.log('✅ Successfully parsed extracted JSON');
         } else {
           throw new Error('No JSON pattern found in response');
@@ -452,7 +451,7 @@ export async function POST(req: NextRequest) {
       removedScheduling: true
     })
 
-    return NextResponse.json({ 
+    return NextResponse.json({
       enhancedPrompt,
       rationale,
       originalPrompt: prompt,

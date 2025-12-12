@@ -14,7 +14,6 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import type {
   WorkflowStep,
-  ExecutionContext,
   StepOutput,
   ActionStep,
   LLMDecisionStep,
@@ -27,6 +26,7 @@ import type {
   ComparisonStep,
 } from './types';
 import { ExecutionError } from './types';
+import { ExecutionContext } from './ExecutionContext';
 import { PluginExecuterV2 } from '@/lib/server/plugin-executer-v2';
 import { runAgentKit } from '@/lib/agentkit/runAgentKit';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
@@ -45,6 +45,7 @@ export class StepExecutor {
   private conditionalEvaluator: ConditionalEvaluator;
   private stateManager: any; // StateManager (avoiding circular dependency)
   private stepCache: StepCache;
+  private parallelExecutor?: any; // ParallelExecutor (injected to avoid circular dependency)
   // private complexityAnalyzer: TaskComplexityAnalyzer;
   // private modelRouter: PerStepModelRouter;
 
@@ -56,6 +57,14 @@ export class StepExecutor {
     this.stepCache = stepCache || new StepCache(false);
     // this.complexityAnalyzer = new TaskComplexityAnalyzer();
     // this.modelRouter = new PerStepModelRouter();
+  }
+
+  /**
+   * Inject ParallelExecutor to handle nested scatter-gather steps
+   * Called after construction to avoid circular dependency
+   */
+  setParallelExecutor(parallelExecutor: any): void {
+    this.parallelExecutor = parallelExecutor;
   }
 
   /**
@@ -267,12 +276,17 @@ export class StepExecutor {
           break;
 
         case 'scatter_gather':
-          // Scatter-gather is handled by ParallelExecutor
-          throw new ExecutionError(
-            'Scatter-gather steps should be executed by ParallelExecutor',
-            'INVALID_STEP_TYPE',
-            step.id
-          );
+          // V4 Format: Nested scatter-gather steps are delegated to ParallelExecutor
+          if (!this.parallelExecutor) {
+            throw new ExecutionError(
+              'Scatter-gather steps require ParallelExecutor to be injected via setParallelExecutor()',
+              'MISSING_PARALLEL_EXECUTOR',
+              step.id
+            );
+          }
+          console.log(`[StepExecutor] Delegating scatter-gather step ${step.id} to ParallelExecutor`);
+          result = await this.parallelExecutor.executeScatterGather(step, context);
+          break;
 
         case 'enrichment':
           result = await this.executeEnrichment(step as EnrichmentStep, context);
@@ -434,23 +448,39 @@ export class StepExecutor {
 
     const actionStartTime = Date.now();
 
+    // ✅ SMART PARAMETER TRANSFORMATION
+    // Auto-transform parameters to match plugin schema expectations
+    const transformedParams = await this.transformParametersForPlugin(
+      step.plugin,
+      step.action,
+      params,
+      context
+    );
+
+    console.log(`🔍 [StepExecutor] Transformed params for ${step.plugin}.${step.action}:`, JSON.stringify(transformedParams, null, 2));
+
     // Execute via PluginExecuterV2 (use getInstance for singleton)
     const pluginExecuter = await PluginExecuterV2.getInstance();
     const result = await pluginExecuter.execute(
       context.userId,
       step.plugin,
       step.action,
-      params
+      transformedParams
     );
 
     const actionDuration = Date.now() - actionStartTime;
 
     if (!result.success) {
+      console.error(`❌ [StepExecutor] Plugin execution failed:`, {
+        plugin: step.plugin,
+        action: step.action,
+        error: result.error,
+        message: result.message
+      });
       throw new ExecutionError(
-        result.error || `Plugin execution failed: ${step.plugin}.${step.action}`,
-        'PLUGIN_EXECUTION_FAILED',
+        result.message || result.error || `Plugin execution failed: ${step.plugin}.${step.action}`,
         step.id,
-        { plugin: step.plugin, action: step.action, error: result.error }
+        { plugin: step.plugin, action: step.action, error: result.error, message: result.message }
       );
     }
 
@@ -502,6 +532,206 @@ export class StepExecutor {
       data: result.data,
       pluginTokens: pluginTokens
     };
+  }
+
+  /**
+   * Transform parameters to match plugin schema expectations (GENERIC)
+   *
+   * Intelligently transforms parameters based on plugin schema:
+   * - Detects 2D array parameters (array of arrays) and converts objects to row format
+   * - Provides sensible defaults for missing required parameters
+   * - Works for ALL plugins, not hardcoded to specific ones
+   */
+  private async transformParametersForPlugin(
+    pluginName: string,
+    actionName: string,
+    params: any,
+    context: ExecutionContext
+  ): Promise<any> {
+    console.log(`🔧 [StepExecutor] Transforming parameters for ${pluginName}.${actionName}`);
+
+    try {
+      // Fetch plugin definition from PluginManager
+      const PluginManager = (await import('../server/plugin-manager-v2')).PluginManagerV2;
+      const pluginManager = await PluginManager.getInstance();
+      const pluginDef = pluginManager.getPluginDefinition(pluginName);
+
+      if (!pluginDef || !pluginDef.actions || !pluginDef.actions[actionName]) {
+        console.warn(`🔧 [StepExecutor] No definition found for ${pluginName}.${actionName}, skipping transformation`);
+        return params;
+      }
+
+      const actionDef = pluginDef.actions[actionName];
+      const paramSchema = actionDef.parameters;
+
+      if (!paramSchema || !paramSchema.properties) {
+        console.log(`🔧 [StepExecutor] No parameter schema found, skipping transformation`);
+        return params;
+      }
+
+      const transformed = { ...params };
+
+      // Iterate through each parameter in the schema
+      for (const [paramName, paramDef] of Object.entries(paramSchema.properties)) {
+        const def = paramDef as any;
+
+        // ===================================================================
+        // DETECT 2D ARRAY PARAMETERS
+        // Schema: { type: "array", items: { type: "array", items: {...} } }
+        // ===================================================================
+        const is2DArray = def.type === 'array' &&
+                         def.items &&
+                         def.items.type === 'array';
+
+        if (is2DArray && transformed[paramName]) {
+          const value = transformed[paramName];
+
+          // If value is an object (not already an array), convert to 2D array
+          if (typeof value === 'object' && !Array.isArray(value)) {
+            console.log(`🔧 [StepExecutor] Converting object to 2D array for parameter "${paramName}"`);
+
+            // Extract values from object in consistent order
+            // Convert nested arrays to strings (Google Sheets doesn't accept nested arrays)
+            const row = Object.values(value).map(v => {
+              if (Array.isArray(v)) {
+                return JSON.stringify(v);  // Convert arrays to JSON strings
+              }
+              if (typeof v === 'object' && v !== null) {
+                return JSON.stringify(v);  // Convert objects to JSON strings
+              }
+              return v;  // Primitives stay as-is
+            });
+            transformed[paramName] = [row];  // Wrap in array to make it 2D
+
+            console.log(`🔧 [StepExecutor] Converted "${paramName}": ${row.length} fields → 2D array`);
+          }
+          // If value is a 1D array, wrap it to make it 2D
+          else if (Array.isArray(value) && value.length > 0 && !Array.isArray(value[0])) {
+            console.log(`🔧 [StepExecutor] Wrapping 1D array to 2D for parameter "${paramName}"`);
+            transformed[paramName] = [value];
+          }
+        }
+
+        // ===================================================================
+        // STRING PARAMETER TYPE COERCION
+        // If schema expects a string but got object/array, convert to JSON
+        // ===================================================================
+        if (def.type === 'string' && transformed[paramName] !== undefined) {
+          const value = transformed[paramName];
+
+          // Convert objects to JSON strings
+          if (typeof value === 'object' && value !== null) {
+            console.log(`🔧 [StepExecutor] Converting ${Array.isArray(value) ? 'array' : 'object'} to string for parameter "${paramName}"`);
+
+            // Check if parameter has a format hint in schema
+            const formatHint = def.format || def['x-format'];
+
+            if (formatHint === 'structured-message' || paramName.toLowerCase().includes('message')) {
+              // Format as a structured, readable message
+              transformed[paramName] = this.formatObjectAsMessage(value);
+            } else {
+              // Default: JSON with indentation
+              transformed[paramName] = JSON.stringify(value, null, 2);
+            }
+          }
+          // Convert numbers/booleans to strings
+          else if (typeof value !== 'string') {
+            transformed[paramName] = String(value);
+          }
+        }
+
+        // ===================================================================
+        // PROVIDE DEFAULTS FOR REQUIRED PARAMETERS
+        // ===================================================================
+        if (paramSchema.required &&
+            paramSchema.required.includes(paramName) &&
+            transformed[paramName] === undefined) {
+
+          // Provide sensible defaults based on parameter name and type
+          const defaultValue = this.getDefaultValueForParameter(paramName, def);
+          if (defaultValue !== undefined) {
+            transformed[paramName] = defaultValue;
+            console.log(`🔧 [StepExecutor] Added default for "${paramName}": ${defaultValue}`);
+          }
+        }
+      }
+
+      console.log(`🔧 [StepExecutor] Transformed params:`, JSON.stringify(transformed, null, 2));
+      return transformed;
+    } catch (error) {
+      console.warn(`🔧 [StepExecutor] Parameter transformation failed (non-critical):`, error);
+      return params;  // Return original params if transformation fails
+    }
+  }
+
+  /**
+   * Format an object as a readable message (for messaging platforms)
+   * Converts objects to nicely formatted, human-readable text
+   */
+  private formatObjectAsMessage(obj: any): string {
+    if (Array.isArray(obj)) {
+      return obj.map((item, idx) => `${idx + 1}. ${this.formatObjectAsMessage(item)}`).join('\n');
+    }
+
+    if (typeof obj !== 'object' || obj === null) {
+      return String(obj);
+    }
+
+    // Format object as key-value pairs
+    const lines: string[] = [];
+    for (const [key, value] of Object.entries(obj)) {
+      // Skip empty values
+      if (value === null || value === undefined || value === '') continue;
+
+      // Format key: make it readable
+      const formattedKey = key
+        .replace(/_/g, ' ')
+        .replace(/([A-Z])/g, ' $1')
+        .trim()
+        .split(' ')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+
+      // Format value based on type
+      if (Array.isArray(value)) {
+        if (value.length === 0) continue;
+        if (value.length <= 3) {
+          lines.push(`*${formattedKey}:* ${value.join(', ')}`);
+        } else {
+          lines.push(`*${formattedKey}:* ${value.slice(0, 3).join(', ')} (+${value.length - 3} more)`);
+        }
+      } else if (typeof value === 'object') {
+        lines.push(`*${formattedKey}:*\n${this.formatObjectAsMessage(value).split('\n').map(l => '  ' + l).join('\n')}`);
+      } else {
+        lines.push(`*${formattedKey}:* ${value}`);
+      }
+    }
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Get sensible default value for a parameter based on name and type
+   */
+  private getDefaultValueForParameter(paramName: string, paramDef: any): any {
+    // Range parameters default to sheet name
+    if (paramName.toLowerCase().includes('range')) {
+      return 'Sheet1';
+    }
+
+    // If parameter has a default in schema, use it
+    if (paramDef.default !== undefined) {
+      return paramDef.default;
+    }
+
+    // Type-based defaults
+    if (paramDef.type === 'string') return '';
+    if (paramDef.type === 'number') return 0;
+    if (paramDef.type === 'boolean') return false;
+    if (paramDef.type === 'array') return [];
+    if (paramDef.type === 'object') return {};
+
+    return undefined;
   }
 
   /**
@@ -785,12 +1015,17 @@ Please analyze the above and provide your decision/response.
 
   /**
    * Execute conditional step
+   * Supports two modes:
+   * 1. Legacy: Only evaluates condition (routing handled by orchestrator)
+   * 2. V4: Evaluates condition AND executes nested then_steps/else_steps
    */
   private async executeConditional(
     step: WorkflowStep,
     context: ExecutionContext
   ): Promise<any> {
-    const stepCondition = (step as any).condition;
+    const conditionalStep = step as any;
+    const stepCondition = conditionalStep.condition;
+
     if (!stepCondition) {
       throw new ExecutionError(
         `Conditional step ${step.id} missing condition`,
@@ -801,10 +1036,71 @@ Please analyze the above and provide your decision/response.
 
     console.log(`[StepExecutor] Evaluating condition for step ${step.id}`);
 
-    const result = this.conditionalEvaluator.evaluate(stepCondition, context);
+    const conditionResult = this.conditionalEvaluator.evaluate(stepCondition, context);
 
+    console.log(`[StepExecutor] Condition result for ${step.id}: ${conditionResult}`);
+
+    // V4 Format: Execute nested steps based on condition
+    const hasV4Format = conditionalStep.then_steps || conditionalStep.else_steps;
+
+    if (hasV4Format) {
+      console.log(`[StepExecutor] V4 conditional detected - executing nested steps`);
+
+      const branchToExecute = conditionResult ? conditionalStep.then_steps : conditionalStep.else_steps;
+      const branchName = conditionResult ? 'then_steps' : 'else_steps';
+
+      if (branchToExecute && Array.isArray(branchToExecute) && branchToExecute.length > 0) {
+        console.log(`[StepExecutor] Executing ${branchName} (${branchToExecute.length} steps)`);
+
+        const branchResults: any[] = [];
+
+        // Execute each step in the branch sequentially
+        for (let i = 0; i < branchToExecute.length; i++) {
+          const branchStep = branchToExecute[i];
+          console.log(`[StepExecutor] Executing ${branchName}[${i}]: ${branchStep.id} (${branchStep.type})`);
+
+          try {
+            const branchStepResult = await this.execute(branchStep, context);
+            branchResults.push(branchStepResult);
+
+            // Store the result in context so subsequent steps can reference it
+            context.setStepOutput(branchStep.id, branchStepResult);
+          } catch (error: any) {
+            console.error(`[StepExecutor] Error executing ${branchName}[${i}] (${branchStep.id}):`, error);
+
+            // If continueOnError is set, log and continue
+            if (branchStep.continueOnError) {
+              console.log(`[StepExecutor] continueOnError=true, continuing despite error`);
+              branchResults.push({ error: error.message, stepId: branchStep.id });
+            } else {
+              throw error;
+            }
+          }
+        }
+
+        return {
+          result: conditionResult,
+          condition: stepCondition,
+          branch: branchName,
+          branchResults,
+          executedSteps: branchToExecute.length,
+        };
+      } else {
+        console.log(`[StepExecutor] No steps to execute in ${branchName}`);
+        return {
+          result: conditionResult,
+          condition: stepCondition,
+          branch: branchName,
+          branchResults: [],
+          executedSteps: 0,
+        };
+      }
+    }
+
+    // Legacy Format: Only evaluate condition (orchestrator handles routing)
+    console.log(`[StepExecutor] Legacy conditional - returning evaluation only`);
     return {
-      result,
+      result: conditionResult,
       condition: stepCondition,
     };
   }
@@ -904,14 +1200,14 @@ Please analyze the above and provide your decision/response.
       if (onFail === 'throw') {
         throw new ExecutionError(
           `Validation failed: ${validationResult.errors.join(', ')}`,
-          'VALIDATION_FAILED',
           step.id,
           { errors: validationResult.errors }
         );
       } else if (onFail === 'skip') {
         console.log(`⏭  [StepExecutor] Validation failed, skipping step ${step.id}`);
+        context.markStepSkipped(step.id);
       }
-      // If 'continue', just log and return result
+      // If 'continue', just log and return result (don't mark as failed or skipped)
     }
 
     return {
@@ -1012,6 +1308,21 @@ Please analyze the above and provide your decision/response.
       case 'deduplicate':
         return this.transformDeduplicate(data, config);
 
+      case 'flatten':
+        return this.transformFlatten(data, config);
+
+      case 'join':
+        return this.transformJoin(data, config);
+
+      case 'pivot':
+        return this.transformPivot(data, config);
+
+      case 'split':
+        return this.transformSplit(data, config);
+
+      case 'expand':
+        return this.transformExpand(data, config);
+
       default:
         throw new ExecutionError(
           `Unknown transform operation: ${operation}`,
@@ -1023,12 +1334,39 @@ Please analyze the above and provide your decision/response.
 
   /**
    * Map transformation
+   * Supports converting array of objects to 2D array for Google Sheets
    */
-  private transformMap(data: any[], mapping: Record<string, string>, context: ExecutionContext): any[] {
+  private transformMap(data: any[], config: any, context: ExecutionContext): any[] | any[][] {
     if (!Array.isArray(data)) {
       throw new ExecutionError('Map operation requires array input', 'INVALID_INPUT_TYPE');
     }
 
+    // Check if this is a Google Sheets format conversion (columns + add_headers)
+    if (config && config.columns && Array.isArray(config.columns)) {
+      const columns = config.columns;
+      const result: any[][] = [];
+
+      // Add header row if requested
+      if (config.add_headers) {
+        result.push(columns.map((col: string) =>
+          col.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())
+        ));
+      }
+
+      // Convert each object to array row based on column order
+      data.forEach(item => {
+        const row = columns.map((col: string) => {
+          const value = item[col];
+          return value !== undefined && value !== null ? String(value) : '';
+        });
+        result.push(row);
+      });
+
+      return result;
+    }
+
+    // Standard map operation with mapping configuration
+    const mapping = config || {};
     return data.map(item => {
       const mapped: any = {};
 
@@ -1057,7 +1395,14 @@ Please analyze the above and provide your decision/response.
    */
   private transformFilter(data: any[], config: any, context: ExecutionContext): any {
     if (!Array.isArray(data)) {
-      throw new ExecutionError('Filter operation requires array input', 'INVALID_INPUT_TYPE');
+      const dataType = data === null ? 'null' : data === undefined ? 'undefined' : typeof data;
+      const dataPreview = data && typeof data === 'object'
+        ? `object with keys: ${Object.keys(data).join(', ')}`
+        : String(data).substring(0, 100);
+      throw new ExecutionError(
+        `Filter operation requires array input, but received ${dataType}. Data: ${dataPreview}`,
+        'INVALID_INPUT_TYPE'
+      );
     }
 
     const originalCount = data.length;
@@ -1507,6 +1852,185 @@ Please analyze the above and provide your decision/response.
     });
 
     return result;
+  }
+
+  /**
+   * Flatten transformation - Flatten nested arrays
+   * Config: {depth: number} (default: 1)
+   */
+  private transformFlatten(data: any, config: any): any {
+    const unwrappedData = this.unwrapStructuredOutput(data);
+
+    if (!Array.isArray(unwrappedData)) {
+      throw new ExecutionError('Flatten operation requires array input', 'INVALID_INPUT_TYPE');
+    }
+
+    const depth = config?.depth || 1;
+
+    const flattenArray = (arr: any[], currentDepth: number): any[] => {
+      if (currentDepth === 0) return arr;
+
+      return arr.reduce((acc, val) => {
+        if (Array.isArray(val)) {
+          acc.push(...flattenArray(val, currentDepth - 1));
+        } else {
+          acc.push(val);
+        }
+        return acc;
+      }, []);
+    };
+
+    const flattened = flattenArray(unwrappedData, depth);
+
+    console.log(`[Flatten] Flattened array from ${unwrappedData.length} to ${flattened.length} items (depth: ${depth})`);
+
+    return {
+      items: flattened,
+      count: flattened.length,
+      originalCount: unwrappedData.length
+    };
+  }
+
+  /**
+   * Join transformation - Join two arrays by common key
+   * Config: {leftKey: string, rightKey: string, joinType: 'inner'|'left'|'right'}
+   */
+  private transformJoin(data: any, config: any): any {
+    if (!config?.leftKey || !config?.rightKey) {
+      throw new ExecutionError('Join operation requires leftKey and rightKey config', 'MISSING_CONFIG');
+    }
+
+    // For now, this is a placeholder - full implementation would require two input arrays
+    // This can be enhanced when we have a way to reference multiple step outputs
+    throw new ExecutionError('Join operation not yet fully implemented', 'NOT_IMPLEMENTED');
+  }
+
+  /**
+   * Pivot transformation - Convert rows to columns
+   * Config: {rowKey: string, columnKey: string, valueKey: string}
+   */
+  private transformPivot(data: any, config: any): any {
+    const unwrappedData = this.unwrapStructuredOutput(data);
+
+    if (!Array.isArray(unwrappedData)) {
+      throw new ExecutionError('Pivot operation requires array input', 'INVALID_INPUT_TYPE');
+    }
+
+    const { rowKey, columnKey, valueKey } = config || {};
+
+    if (!rowKey || !columnKey || !valueKey) {
+      throw new ExecutionError('Pivot requires rowKey, columnKey, and valueKey config', 'MISSING_CONFIG');
+    }
+
+    const pivotData: Record<string, Record<string, any>> = {};
+
+    unwrappedData.forEach(item => {
+      const row = this.extractValueByKey(item, rowKey, unwrappedData);
+      const col = this.extractValueByKey(item, columnKey, unwrappedData);
+      const val = this.extractValueByKey(item, valueKey, unwrappedData);
+
+      if (!pivotData[row]) {
+        pivotData[row] = {};
+      }
+      pivotData[row][col] = val;
+    });
+
+    // Convert to array format
+    const items = Object.entries(pivotData).map(([row, cols]) => ({
+      [rowKey]: row,
+      ...cols
+    }));
+
+    console.log(`[Pivot] Created pivot table with ${items.length} rows`);
+
+    return {
+      items,
+      count: items.length,
+      pivotData
+    };
+  }
+
+  /**
+   * Split transformation - Split array into chunks
+   * Config: {size: number} or {count: number}
+   */
+  private transformSplit(data: any, config: any): any {
+    const unwrappedData = this.unwrapStructuredOutput(data);
+
+    if (!Array.isArray(unwrappedData)) {
+      throw new ExecutionError('Split operation requires array input', 'INVALID_INPUT_TYPE');
+    }
+
+    const { size, count } = config || {};
+
+    if (!size && !count) {
+      throw new ExecutionError('Split requires either size or count config', 'MISSING_CONFIG');
+    }
+
+    let chunkSize: number;
+    if (size) {
+      chunkSize = size;
+    } else {
+      chunkSize = Math.ceil(unwrappedData.length / count);
+    }
+
+    const chunks: any[][] = [];
+    for (let i = 0; i < unwrappedData.length; i += chunkSize) {
+      chunks.push(unwrappedData.slice(i, i + chunkSize));
+    }
+
+    console.log(`[Split] Split ${unwrappedData.length} items into ${chunks.length} chunks of size ${chunkSize}`);
+
+    return {
+      items: chunks,
+      chunks,
+      count: chunks.length,
+      chunkSize
+    };
+  }
+
+  /**
+   * Expand transformation - Flatten nested objects to flat structure
+   * Config: {delimiter: string} (default: '.')
+   */
+  private transformExpand(data: any, config: any): any {
+    const unwrappedData = this.unwrapStructuredOutput(data);
+
+    if (!Array.isArray(unwrappedData)) {
+      throw new ExecutionError('Expand operation requires array input', 'INVALID_INPUT_TYPE');
+    }
+
+    const delimiter = config?.delimiter || '.';
+
+    const expandObject = (obj: any, prefix = ''): any => {
+      const result: any = {};
+
+      for (const [key, value] of Object.entries(obj)) {
+        const newKey = prefix ? `${prefix}${delimiter}${key}` : key;
+
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+          Object.assign(result, expandObject(value, newKey));
+        } else {
+          result[newKey] = value;
+        }
+      }
+
+      return result;
+    };
+
+    const expanded = unwrappedData.map(item => {
+      if (typeof item === 'object' && item !== null && !Array.isArray(item)) {
+        return expandObject(item);
+      }
+      return item;
+    });
+
+    console.log(`[Expand] Expanded ${unwrappedData.length} objects to flat structure`);
+
+    return {
+      items: expanded,
+      count: expanded.length
+    };
   }
 
   /**

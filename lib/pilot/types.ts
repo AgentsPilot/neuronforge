@@ -89,12 +89,22 @@ export interface AIProcessingStep extends WorkflowStepBase {
 
 /**
  * Conditional step: Branch based on condition
+ *
+ * Supports two formats:
+ * 1. Legacy: trueBranch/falseBranch with step IDs (orchestrator handles routing)
+ * 2. V4: then_steps/else_steps with nested step arrays (executor handles nesting)
  */
 export interface ConditionalStep extends WorkflowStepBase {
   type: 'conditional';
   condition: Condition;
+
+  // Legacy format (step IDs for routing)
   trueBranch?: string;   // Step ID to execute if true
   falseBranch?: string;  // Step ID to execute if false
+
+  // V4 format (nested steps for direct execution)
+  then_steps?: WorkflowStep[];  // Steps to execute if condition is true
+  else_steps?: WorkflowStep[];  // Steps to execute if condition is false
 }
 
 /**

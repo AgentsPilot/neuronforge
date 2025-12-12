@@ -61,10 +61,24 @@ async function validateAndFixWorkflowSteps(
       return step
     }
 
-    const actionDef = pluginDef.actions[step.plugin_action]
+    let actionDef = pluginDef.actions[step.plugin_action]
+    let correctedAction = step.plugin_action
+
     if (!actionDef) {
-      console.warn(`⚠️ [Validation] Action "${step.plugin_action}" not found in plugin "${step.plugin}"`)
-      return step
+      // Action not found - try fuzzy matching
+      const closestAction = findClosestAction(step.plugin_action, Object.keys(pluginDef.actions))
+
+      if (closestAction) {
+        correctedAction = closestAction
+        actionDef = pluginDef.actions[closestAction]
+        const fixMsg = `Step ${index + 1}: Corrected action "${step.plugin_action}" → "${closestAction}" in plugin "${step.plugin}"`
+        fixes.push(fixMsg)
+        console.log(`🔧 [Action Canonicalizer] ${fixMsg}`)
+        step = { ...step, plugin_action: closestAction }
+      } else {
+        console.warn(`⚠️ [Validation] Action "${step.plugin_action}" not found in plugin "${step.plugin}" and no close match found`)
+        return step
+      }
     }
 
     const requiredParams = actionDef.parameters?.required || []
@@ -102,6 +116,152 @@ async function validateAndFixWorkflowSteps(
 }
 
 /**
+ * Calculate Levenshtein distance between two strings
+ * Used for fuzzy matching of action names
+ */
+function levenshteinDistance(a: string, b: string): number {
+  const matrix: number[][] = []
+
+  for (let i = 0; i <= b.length; i++) {
+    matrix[i] = [i]
+  }
+
+  for (let j = 0; j <= a.length; j++) {
+    matrix[0][j] = j
+  }
+
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1]
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1, // substitution
+          matrix[i][j - 1] + 1,     // insertion
+          matrix[i - 1][j] + 1      // deletion
+        )
+      }
+    }
+  }
+
+  return matrix[b.length][a.length]
+}
+
+/**
+ * Find the closest matching action name using fuzzy matching
+ * Normalizes action names by removing common prefixes/suffixes
+ */
+function findClosestAction(
+  attemptedAction: string,
+  validActions: string[]
+): string | null {
+  let closestAction: string | null = null
+  let closestDistance = Infinity
+
+  // Try exact match first (case-insensitive)
+  const exactMatch = validActions.find(a => a.toLowerCase() === attemptedAction.toLowerCase())
+  if (exactMatch) return exactMatch
+
+  // Try pluralization variants
+  const pluralVariants = tryPluralVariations(attemptedAction)
+  for (const variant of pluralVariants) {
+    const match = validActions.find(a => a.toLowerCase() === variant.toLowerCase())
+    if (match) return match
+  }
+
+  // Try verb tense variations
+  const verbVariants = tryVerbVariations(attemptedAction)
+  for (const variant of verbVariants) {
+    const match = validActions.find(a => a.toLowerCase() === variant.toLowerCase())
+    if (match) return match
+  }
+
+  // Normalize attempted action (remove common prefixes/suffixes)
+  const normalized = attemptedAction
+    .toLowerCase()
+    .replace(/^(get_|fetch_|list_|search_|find_)/, '')
+    .replace(/(_list|_all|_data|s)$/, '')
+
+  for (const validAction of validActions) {
+    const normalizedValid = validAction
+      .toLowerCase()
+      .replace(/^(get_|fetch_|list_|search_|find_)/, '')
+      .replace(/(_list|_all|_data|s)$/, '')
+
+    const distance = levenshteinDistance(normalized, normalizedValid)
+
+    // Consider it a match if distance is <= 2 (allows for 1-2 character typos)
+    if (distance < closestDistance && distance <= 2) {
+      closestDistance = distance
+      closestAction = validAction
+    }
+  }
+
+  // Also check exact substring matches (e.g., "email" matches "send_email")
+  if (!closestAction) {
+    const normalizedLower = normalized.toLowerCase()
+    for (const validAction of validActions) {
+      const validLower = validAction.toLowerCase()
+      if (validLower.includes(normalizedLower) || normalizedLower.includes(validLower)) {
+        if (normalizedLower.length >= 4) { // Avoid matching very short strings
+          closestAction = validAction
+          break
+        }
+      }
+    }
+  }
+
+  return closestAction
+}
+
+/**
+ * Try common pluralization variations
+ */
+function tryPluralVariations(action: string): string[] {
+  const variants: string[] = []
+
+  // Try singular/plural
+  if (action.endsWith('s')) {
+    variants.push(action.slice(0, -1)) // emails → email
+  } else {
+    variants.push(action + 's') // email → emails
+  }
+
+  // Try es suffix
+  if (action.endsWith('es')) {
+    variants.push(action.slice(0, -2)) // searches → search
+  } else if (action.endsWith('ch') || action.endsWith('sh') || action.endsWith('s')) {
+    variants.push(action + 'es') // search → searches
+  }
+
+  return variants
+}
+
+/**
+ * Try common verb tense variations
+ */
+function tryVerbVariations(action: string): string[] {
+  const variants: string[] = []
+
+  // Remove trailing 's'
+  if (action.endsWith('s') && !action.endsWith('ss')) {
+    variants.push(action.slice(0, -1)) // reads → read
+  }
+
+  // Remove 'ed' suffix
+  if (action.endsWith('ed')) {
+    variants.push(action.slice(0, -2)) // searched → search
+  }
+
+  // Add 's' suffix
+  if (!action.endsWith('s')) {
+    variants.push(action + 's') // send → sends
+  }
+
+  return variants
+}
+
+/**
  * Find a similar parameter name that might be a common AI mistake
  */
 function findSimilarParam(
@@ -118,6 +278,12 @@ function findSimilarParam(
     'spreadsheet_id': ['sheet_id', 'spreadsheetId', 'google_sheet_id', 'sheet'],
     'values': ['data', 'rows', 'content', 'row_data'],
     'content': ['text', 'body', 'data', 'input'],
+    // Additional from workflow failures
+    'priority': ['lead_rank', 'rank', 'priority_level', 'importance'],
+    'status': ['state', 'current_status', 'record_status'],
+    'range': ['sheet_range', 'cell_range', 'data_range'],
+    'include_attachments': ['with_attachments', 'attachments', 'has_attachments'],
+    'max_results': ['limit', 'count', 'num_results', 'max_count'],
   }
 
   // Check if any param in the step matches a common mistake for the target

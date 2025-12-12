@@ -203,8 +203,23 @@ export class PluginManagerV2 {
         actions: Object.entries(definition.actions).map(([actionKey, actionDef]) => ({
           name: actionKey,
           description: actionDef.description,
-          // Include ONLY required parameters (not full schema)
-          required_params: actionDef.parameters?.required || [],
+          // Include ONLY required parameters with type hints
+          required_params: (actionDef.parameters?.required || []).map((paramName: string) => {
+            const paramSchema = actionDef.parameters?.properties?.[paramName];
+            if (!paramSchema) return paramName;
+
+            const type = paramSchema.type;
+            // Add type hints for complex types
+            if (type === 'array') {
+              const itemType = paramSchema.items?.type;
+              if (itemType === 'array') return `${paramName}:array<array>`; // 2D array
+              if (itemType === 'object') return `${paramName}:array<object>`;
+              return `${paramName}:array`;
+            }
+            if (type === 'object') return `${paramName}:object`;
+            // For primitives, don't add type (too verbose)
+            return paramName;
+          }),
           // ✅ CRITICAL FIX: Include output field names WITH TYPE HINTS so LLM knows data structures
           // Compressed format: show top 3 fields with types + "+N" for remaining (68% token reduction)
           output_fields: actionDef.output_schema?.properties
@@ -234,9 +249,12 @@ export class PluginManagerV2 {
                     return `${fieldName}:array<array>`;  // 2D array like Google Sheets
                   }
 
-                  // Check if it's an array of objects
+                  // Check if it's an array of objects - show nested fields
                   if (itemSchema.type === 'object' || itemSchema.properties) {
-                    return `${fieldName}:array<object>`;  // Array of objects like Airtable
+                    const nestedFields = itemSchema.properties
+                      ? Object.keys(itemSchema.properties).slice(0, 3).join(',')
+                      : 'object';
+                    return `${fieldName}:array<{${nestedFields}}>`;  // e.g., emails:array<{from,subject,body}>
                   }
 
                   // Array of primitives
@@ -690,6 +708,11 @@ export class PluginManagerV2 {
   getPluginDefinition(pluginName: string): PluginDefinition | undefined {
     logger.debug({ pluginName }, 'Getting plugin definition');
     return this.plugins.get(pluginName);
+  }
+
+  // Get all plugin names
+  getAllPluginNames(): string[] {
+    return Array.from(this.plugins.keys());
   }
 
     // Get action definition

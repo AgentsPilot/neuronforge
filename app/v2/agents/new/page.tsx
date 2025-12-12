@@ -655,12 +655,15 @@ function V2AgentBuilderContent() {
         sessionId: sessionId.current,
         threadId: threadId,
         originalPrompt: initialPrompt,
-        enhancedPrompt: builderState.enhancedPrompt
+        enhancedPrompt: builderState.enhancedPrompt,
+        // Include plan_description for use as agent description
+        plan_description: enhancedPromptData?.plan_description
       }
 
-      // Step 2: Call /api/generate-agent-v3 (Two-Stage Generation)
-      console.log('📞 Calling /api/generate-agent-v3 (Two-Stage)...')
-      const generateRes = await fetch('/api/generate-agent-v3', {
+      // Step 2: Call /api/generate-agent-v4 (OpenAI 3-Stage Generation)
+      console.log('📞 Calling /api/generate-agent-v4 (OpenAI 3-Stage)...')
+      console.log('🎯 Passing services_involved for token optimization:', requiredServices)
+      const generateRes = await fetch('/api/generate-agent-v4', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -669,10 +672,21 @@ function V2AgentBuilderContent() {
           'x-agent-id': agentId.current
         },
         body: JSON.stringify({
-          prompt: useEnhanced ? builderState.enhancedPrompt : initialPrompt,
+          // V4 expects 'enhancedPrompt' if we already have it, or 'prompt' for raw
+          // Use enhancedPromptData (the structured object) if available, otherwise fallback
+          ...(useEnhanced && enhancedPromptData
+            ? {
+                enhancedPrompt: typeof enhancedPromptData === 'string'
+                  ? enhancedPromptData
+                  : JSON.stringify(enhancedPromptData, null, 2)
+              }
+            : { prompt: initialPrompt }
+          ),
           promptType: useEnhanced ? 'enhanced' : 'original',
           clarificationAnswers,
-          userId: user.id
+          userId: user.id,
+          services_involved: requiredServices,  // Pass filtered plugins from Phase 3
+          connectedPlugins: connectedPlugins  // Pass connected plugin keys for v4
         })
       })
 
@@ -721,7 +735,7 @@ function V2AgentBuilderContent() {
 
       // Remove typing indicator and show draft ready message
       removeTypingIndicator()
-      addAIMessage("✨ Agent draft ready!")
+      addAIMessage("Agent draft ready!")
 
       // Add resolved_user_inputs to inputParameterValues if available
       // Keep resolvedInputs in scope so we can filter out already-provided parameters
@@ -835,7 +849,7 @@ function V2AgentBuilderContent() {
 
       // Remove typing indicator and show success message
       removeTypingIndicator()
-      addAIMessage('🎉 Your agent has been created successfully! Taking you to your new agent...')
+      addAIMessage('Your agent has been created successfully! Taking you to your new agent...')
 
       setTimeout(() => {
         router.push(`/agents/${result.agent.id}`)
@@ -915,7 +929,7 @@ function V2AgentBuilderContent() {
         if (!validation.valid) {
           // Show error and ask again
           setInputValidationError(validation.error || 'Invalid input')
-          addSystemMessage(`❌ ${validation.error}`)
+          addSystemMessage(`Error: ${validation.error}`)
           addAIMessage(`Please try again. What value should I use for **${currentParam.label || currentParam.name}**?`)
         } else {
           // Valid input, store it
@@ -971,7 +985,7 @@ function V2AgentBuilderContent() {
     // Add minimized plan summary for context
     if (enhancedPromptData?.plan_description) {
       const planSummary = enhancedPromptData.plan_title
-        ? `📋 ${enhancedPromptData.plan_title}\n\n${enhancedPromptData.plan_description}`
+        ? `${enhancedPromptData.plan_title}\n\n${enhancedPromptData.plan_description}`
         : enhancedPromptData.plan_description
       addPlanSummary(planSummary)
     }
@@ -1318,15 +1332,31 @@ function V2AgentBuilderContent() {
               </div>
 
               {/* Progress Steps */}
-              <div className="flex-1 space-y-3">
-                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
-                  builderState.workflowPhase !== 'initial'
-                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
-                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
-                }`}>
-                  <CheckCircle2 className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
-                    builderState.workflowPhase !== 'initial' ? 'text-green-500' : 'text-gray-300 dark:text-gray-600'
-                  }`} />
+              <div className="flex-1 space-y-2 pb-6">
+                <div
+                  className={`flex items-start gap-2.5 p-2.5 rounded-lg border ${
+                    builderState.workflowPhase !== 'initial' ? '' : 'opacity-60'
+                  }`}
+                  style={
+                    builderState.workflowPhase !== 'initial'
+                      ? {
+                          backgroundColor: 'var(--v2-status-success-bg)',
+                          borderColor: 'var(--v2-status-success-border)'
+                        }
+                      : {
+                          backgroundColor: 'var(--v2-surface)',
+                          borderColor: 'var(--v2-border)'
+                        }
+                  }
+                >
+                  <CheckCircle2
+                    className="w-5 h-5 flex-shrink-0 mt-0.5"
+                    style={{
+                      color: builderState.workflowPhase !== 'initial'
+                        ? 'var(--v2-status-success-text)'
+                        : 'var(--v2-text-muted)'
+                    }}
+                  />
                   <div className="flex-1">
                     <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
                       Initial Request
@@ -1337,19 +1367,42 @@ function V2AgentBuilderContent() {
                   </div>
                 </div>
 
-                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
-                  builderState.workflowPhase === 'analysis'
-                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
-                    : builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted
-                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
-                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
-                }`}>
+                <div
+                  className={`flex items-start gap-2.5 p-2.5 rounded-lg border ${
+                    !(builderState.workflowPhase === 'analysis' || builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted) ? 'opacity-60' : ''
+                  }`}
+                  style={
+                    builderState.workflowPhase === 'analysis'
+                      ? {
+                          backgroundColor: 'var(--v2-status-executing-bg)',
+                          borderColor: 'var(--v2-status-executing-border)'
+                        }
+                      : (builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted)
+                      ? {
+                          backgroundColor: 'var(--v2-status-success-bg)',
+                          borderColor: 'var(--v2-status-success-border)'
+                        }
+                      : {
+                          backgroundColor: 'var(--v2-surface)',
+                          borderColor: 'var(--v2-border)'
+                        }
+                  }
+                >
                   {builderState.workflowPhase === 'analysis' ? (
-                    <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
+                    <Clock
+                      className="w-5 h-5 flex-shrink-0 mt-0.5 animate-pulse"
+                      style={{ color: 'var(--v2-status-executing-text)' }}
+                    />
                   ) : builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted ? (
-                    <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
+                    <CheckCircle2
+                      className="w-5 h-5 flex-shrink-0 mt-0.5"
+                      style={{ color: 'var(--v2-status-success-text)' }}
+                    />
                   ) : (
-                    <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                    <div
+                      className="w-5 h-5 border-2 rounded-full flex-shrink-0 mt-0.5"
+                      style={{ borderColor: 'var(--v2-text-muted)' }}
+                    />
                   )}
                   <div className="flex-1">
                     <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
@@ -1361,19 +1414,42 @@ function V2AgentBuilderContent() {
                   </div>
                 </div>
 
-                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
-                  builderState.workflowPhase === 'questions'
-                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
-                    : builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted
-                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
-                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
-                }`}>
+                <div
+                  className={`flex items-start gap-2.5 p-2.5 rounded-lg border ${
+                    !(builderState.workflowPhase === 'questions' || builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted) ? 'opacity-60' : ''
+                  }`}
+                  style={
+                    builderState.workflowPhase === 'questions'
+                      ? {
+                          backgroundColor: 'var(--v2-status-executing-bg)',
+                          borderColor: 'var(--v2-status-executing-border)'
+                        }
+                      : (builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted)
+                      ? {
+                          backgroundColor: 'var(--v2-status-success-bg)',
+                          borderColor: 'var(--v2-status-success-border)'
+                        }
+                      : {
+                          backgroundColor: 'var(--v2-surface)',
+                          borderColor: 'var(--v2-border)'
+                        }
+                  }
+                >
                   {builderState.workflowPhase === 'questions' ? (
-                    <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
+                    <Clock
+                      className="w-5 h-5 flex-shrink-0 mt-0.5 animate-pulse"
+                      style={{ color: 'var(--v2-status-executing-text)' }}
+                    />
                   ) : builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted ? (
-                    <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
+                    <CheckCircle2
+                      className="w-5 h-5 flex-shrink-0 mt-0.5"
+                      style={{ color: 'var(--v2-status-success-text)' }}
+                    />
                   ) : (
-                    <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                    <div
+                      className="w-5 h-5 border-2 rounded-full flex-shrink-0 mt-0.5"
+                      style={{ borderColor: 'var(--v2-text-muted)' }}
+                    />
                   )}
                   <div className="flex-1">
                     <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
@@ -1388,19 +1464,42 @@ function V2AgentBuilderContent() {
                   </div>
                 </div>
 
-                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
-                  builderState.workflowPhase === 'enhancement'
-                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
-                    : builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted
-                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
-                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
-                }`}>
+                <div
+                  className={`flex items-start gap-2.5 p-2.5 rounded-lg border ${
+                    !(builderState.workflowPhase === 'enhancement' || builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted) ? 'opacity-60' : ''
+                  }`}
+                  style={
+                    builderState.workflowPhase === 'enhancement'
+                      ? {
+                          backgroundColor: 'var(--v2-status-executing-bg)',
+                          borderColor: 'var(--v2-status-executing-border)'
+                        }
+                      : (builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted)
+                      ? {
+                          backgroundColor: 'var(--v2-status-success-bg)',
+                          borderColor: 'var(--v2-status-success-border)'
+                        }
+                      : {
+                          backgroundColor: 'var(--v2-surface)',
+                          borderColor: 'var(--v2-border)'
+                        }
+                  }
+                >
                   {builderState.workflowPhase === 'enhancement' ? (
-                    <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
+                    <Clock
+                      className="w-5 h-5 flex-shrink-0 mt-0.5 animate-pulse"
+                      style={{ color: 'var(--v2-status-executing-text)' }}
+                    />
                   ) : builderState.workflowPhase === 'approval' || builderState.planApproved || isAwaitingInputParameter || inputParametersComplete || isAwaitingSchedule || scheduleCompleted ? (
-                    <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
+                    <CheckCircle2
+                      className="w-5 h-5 flex-shrink-0 mt-0.5"
+                      style={{ color: 'var(--v2-status-success-text)' }}
+                    />
                   ) : (
-                    <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                    <div
+                      className="w-5 h-5 border-2 rounded-full flex-shrink-0 mt-0.5"
+                      style={{ borderColor: 'var(--v2-text-muted)' }}
+                    />
                   )}
                   <div className="flex-1">
                     <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
@@ -1413,19 +1512,42 @@ function V2AgentBuilderContent() {
                 </div>
 
                 {/* Step 5: Input Parameters */}
-                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
-                  isAwaitingInputParameter
-                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
-                    : inputParametersComplete
-                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
-                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
-                }`}>
+                <div
+                  className={`flex items-start gap-2.5 p-2.5 rounded-lg border ${
+                    !(isAwaitingInputParameter || inputParametersComplete) ? 'opacity-60' : ''
+                  }`}
+                  style={
+                    isAwaitingInputParameter
+                      ? {
+                          backgroundColor: 'var(--v2-status-executing-bg)',
+                          borderColor: 'var(--v2-status-executing-border)'
+                        }
+                      : inputParametersComplete
+                      ? {
+                          backgroundColor: 'var(--v2-status-success-bg)',
+                          borderColor: 'var(--v2-status-success-border)'
+                        }
+                      : {
+                          backgroundColor: 'var(--v2-surface)',
+                          borderColor: 'var(--v2-border)'
+                        }
+                  }
+                >
                   {isAwaitingInputParameter ? (
-                    <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
+                    <Clock
+                      className="w-5 h-5 flex-shrink-0 mt-0.5 animate-pulse"
+                      style={{ color: 'var(--v2-status-executing-text)' }}
+                    />
                   ) : inputParametersComplete ? (
-                    <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
+                    <CheckCircle2
+                      className="w-5 h-5 flex-shrink-0 mt-0.5"
+                      style={{ color: 'var(--v2-status-success-text)' }}
+                    />
                   ) : (
-                    <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                    <div
+                      className="w-5 h-5 border-2 rounded-full flex-shrink-0 mt-0.5"
+                      style={{ borderColor: 'var(--v2-text-muted)' }}
+                    />
                   )}
                   <div className="flex-1">
                     <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
@@ -1441,19 +1563,42 @@ function V2AgentBuilderContent() {
                 </div>
 
                 {/* Step 6: Scheduling */}
-                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
-                  isAwaitingSchedule && !scheduleCompleted
-                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
-                    : scheduleCompleted
-                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
-                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
-                }`}>
+                <div
+                  className={`flex items-start gap-2.5 p-2.5 rounded-lg border ${
+                    !(isAwaitingSchedule || scheduleCompleted) ? 'opacity-60' : ''
+                  }`}
+                  style={
+                    isAwaitingSchedule && !scheduleCompleted
+                      ? {
+                          backgroundColor: 'var(--v2-status-executing-bg)',
+                          borderColor: 'var(--v2-status-executing-border)'
+                        }
+                      : scheduleCompleted
+                      ? {
+                          backgroundColor: 'var(--v2-status-success-bg)',
+                          borderColor: 'var(--v2-status-success-border)'
+                        }
+                      : {
+                          backgroundColor: 'var(--v2-surface)',
+                          borderColor: 'var(--v2-border)'
+                        }
+                  }
+                >
                   {isAwaitingSchedule && !scheduleCompleted ? (
-                    <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
+                    <Clock
+                      className="w-5 h-5 flex-shrink-0 mt-0.5 animate-pulse"
+                      style={{ color: 'var(--v2-status-executing-text)' }}
+                    />
                   ) : scheduleCompleted ? (
-                    <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
+                    <CheckCircle2
+                      className="w-5 h-5 flex-shrink-0 mt-0.5"
+                      style={{ color: 'var(--v2-status-success-text)' }}
+                    />
                   ) : (
-                    <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                    <div
+                      className="w-5 h-5 border-2 rounded-full flex-shrink-0 mt-0.5"
+                      style={{ borderColor: 'var(--v2-text-muted)' }}
+                    />
                   )}
                   <div className="flex-1">
                     <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
@@ -1466,19 +1611,42 @@ function V2AgentBuilderContent() {
                 </div>
 
                 {/* Step 7: Agent Ready */}
-                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
-                  isAwaitingFinalApproval
-                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
-                    : agentCreated
-                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
-                    : 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700 opacity-60'
-                }`}>
+                <div
+                  className={`flex items-start gap-2.5 p-2.5 rounded-lg border ${
+                    !(isAwaitingFinalApproval || agentCreated) ? 'opacity-60' : ''
+                  }`}
+                  style={
+                    isAwaitingFinalApproval
+                      ? {
+                          backgroundColor: 'var(--v2-status-executing-bg)',
+                          borderColor: 'var(--v2-status-executing-border)'
+                        }
+                      : agentCreated
+                      ? {
+                          backgroundColor: 'var(--v2-status-success-bg)',
+                          borderColor: 'var(--v2-status-success-border)'
+                        }
+                      : {
+                          backgroundColor: 'var(--v2-surface)',
+                          borderColor: 'var(--v2-border)'
+                        }
+                  }
+                >
                   {isAwaitingFinalApproval ? (
-                    <Clock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 animate-pulse" />
+                    <Clock
+                      className="w-5 h-5 flex-shrink-0 mt-0.5 animate-pulse"
+                      style={{ color: 'var(--v2-status-executing-text)' }}
+                    />
                   ) : agentCreated ? (
-                    <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
+                    <CheckCircle2
+                      className="w-5 h-5 flex-shrink-0 mt-0.5"
+                      style={{ color: 'var(--v2-status-success-text)' }}
+                    />
                   ) : (
-                    <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded-full flex-shrink-0 mt-0.5"></div>
+                    <div
+                      className="w-5 h-5 border-2 rounded-full flex-shrink-0 mt-0.5"
+                      style={{ borderColor: 'var(--v2-text-muted)' }}
+                    />
                   )}
                   <div className="flex-1">
                     <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
@@ -1577,13 +1745,10 @@ function V2AgentBuilderContent() {
                       <div className="flex gap-3 justify-start">
                         {/* Avatar - AI */}
                         <div
-                          className="w-8 h-8 flex items-center justify-center shadow-md flex-shrink-0"
-                          style={{
-                            background: 'linear-gradient(135deg, var(--v2-primary), var(--v2-secondary))',
-                            borderRadius: 'var(--v2-radius-button)'
-                          }}
+                          className="w-8 h-8 bg-[var(--v2-surface)] border border-[var(--v2-border)] flex items-center justify-center shadow-md flex-shrink-0"
+                          style={{ borderRadius: 'var(--v2-radius-button)' }}
                         >
-                          <Bot className="h-4 w-4 text-white" />
+                          <Bot className="h-4 w-4 text-[var(--v2-text-secondary)]" />
                         </div>
 
                         {/* Typing bubble with animated dots */}
@@ -1627,24 +1792,17 @@ function V2AgentBuilderContent() {
                         {/* Avatar - AI (left side) with variant styling */}
                         {message.role === 'assistant' && (
                           <div
-                            className={`w-8 h-8 flex items-center justify-center shadow-md flex-shrink-0 ${
+                            className={`w-8 h-8 bg-[var(--v2-surface)] border border-[var(--v2-border)] flex items-center justify-center shadow-md flex-shrink-0 ${
                               message.variant === 'plan-summary' ? 'opacity-70' : ''
                             }`}
-                            style={{
-                              background: message.variant === 'question'
-                                ? 'linear-gradient(135deg, #06B6D4, #0891B2)' // Cyan for questions
-                                : message.variant === 'plan-summary'
-                                ? 'rgba(139, 92, 246, 0.2)' // Muted purple for plan summary
-                                : 'linear-gradient(135deg, var(--v2-primary), var(--v2-secondary))', // Default purple
-                              borderRadius: 'var(--v2-radius-button)'
-                            }}
+                            style={{ borderRadius: 'var(--v2-radius-button)' }}
                           >
                             {message.variant === 'question' ? (
-                              <HelpCircle className="h-4 w-4 text-white" />
+                              <HelpCircle className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
                             ) : message.variant === 'plan-summary' ? (
-                              <FileText className="h-4 w-4 text-purple-500" />
+                              <FileText className="h-4 w-4 text-purple-600 dark:text-purple-400" />
                             ) : (
-                              <Bot className="h-4 w-4 text-white" />
+                              <Bot className="h-4 w-4 text-[var(--v2-text-secondary)]" />
                             )}
                           </div>
                         )}
@@ -1707,10 +1865,10 @@ function V2AgentBuilderContent() {
                         {/* Avatar - User (right side) */}
                         {message.role === 'user' && (
                           <div
-                            className="w-8 h-8 bg-gradient-to-br from-gray-500 to-gray-700 dark:from-gray-400 dark:to-gray-600 flex items-center justify-center shadow-md flex-shrink-0"
+                            className="w-8 h-8 bg-[var(--v2-surface)] border border-[var(--v2-border)] flex items-center justify-center shadow-md flex-shrink-0"
                             style={{ borderRadius: 'var(--v2-radius-button)' }}
                           >
-                            <User className="h-4 w-4 text-white" />
+                            <User className="h-4 w-4 text-[var(--v2-text-secondary)]" />
                           </div>
                         )}
                       </div>
@@ -1731,10 +1889,10 @@ function V2AgentBuilderContent() {
                           {/* Header - Outside card */}
                           <div className="flex items-center gap-2 mb-4">
                             <div
-                              className="w-6 h-6 bg-purple-500 flex items-center justify-center"
+                              className="w-6 h-6 bg-[var(--v2-surface)] border border-[var(--v2-border)] flex items-center justify-center"
                               style={{ borderRadius: 'var(--v2-radius-button)' }}
                             >
-                              <Sparkles className="h-4 w-4 text-white" />
+                              <Sparkles className="h-4 w-4 text-purple-600 dark:text-purple-400" />
                             </div>
                             <h4 className="font-semibold text-[var(--v2-text-primary)]">Your Agent Plan</h4>
                           </div>
@@ -1747,8 +1905,11 @@ function V2AgentBuilderContent() {
                             {/* Plan Title */}
                             {enhancedPromptData.plan_title && (
                               <div className="pb-3 border-b border-[var(--v2-border)]">
-                                <h3 className="text-lg font-bold text-[var(--v2-text-primary)]">
-                                  📋 {enhancedPromptData.plan_title}
+                                <h3 className="text-lg font-bold text-[var(--v2-text-primary)] flex items-center gap-2">
+                                  <div className="w-5 h-5 bg-[var(--v2-surface)] border border-[var(--v2-border)] flex items-center justify-center flex-shrink-0" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                                    <FileText className="h-3 w-3 text-blue-600 dark:text-blue-400" />
+                                  </div>
+                                  {enhancedPromptData.plan_title}
                                 </h3>
                               </div>
                             )}
@@ -1756,8 +1917,11 @@ function V2AgentBuilderContent() {
                             {/* Description */}
                             {enhancedPromptData.plan_description && (
                               <div>
-                                <h4 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-2">
-                                  📝 Description
+                                <h4 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                                  <div className="w-4 h-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] flex items-center justify-center flex-shrink-0" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                                    <FileText className="h-2.5 w-2.5 text-slate-600 dark:text-slate-400" />
+                                  </div>
+                                  Description
                                 </h4>
                                 <p className="text-sm text-[var(--v2-text-secondary)] leading-relaxed">
                                   {enhancedPromptData.plan_description}
@@ -1788,8 +1952,7 @@ function V2AgentBuilderContent() {
                                     {enhancedPromptData.sections.processing_steps.map((step: string, stepIndex: number) => (
                                       <div key={stepIndex} className="flex gap-3">
                                         <div
-                                          className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold"
-                                          style={{ background: 'linear-gradient(135deg, var(--v2-primary), var(--v2-secondary))' }}
+                                          className="flex-shrink-0 w-6 h-6 rounded-full bg-[var(--v2-surface)] border-2 border-[var(--v2-primary)] flex items-center justify-center text-[var(--v2-primary)] text-xs font-bold"
                                         >
                                           {stepIndex + 1}
                                         </div>
@@ -1866,8 +2029,14 @@ function V2AgentBuilderContent() {
                             {/* Trigger Scope */}
                             {enhancedPromptData.specifics?.trigger_scope && (
                               <div className="pt-3 border-t border-[var(--v2-border)]">
-                                <p className="text-xs text-[var(--v2-text-muted)]">
-                                  <span className="font-semibold">⏰ Trigger:</span> {enhancedPromptData.specifics.trigger_scope}
+                                <p className="text-xs text-[var(--v2-text-muted)] flex items-center gap-1.5">
+                                  <span className="font-semibold flex items-center gap-1">
+                                    <div className="w-3.5 h-3.5 bg-[var(--v2-surface)] border border-[var(--v2-border)] flex items-center justify-center flex-shrink-0" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                                      <Clock className="h-2 w-2 text-orange-600 dark:text-orange-400" />
+                                    </div>
+                                    Trigger:
+                                  </span>
+                                  {enhancedPromptData.specifics.trigger_scope}
                                 </p>
                               </div>
                             )}
@@ -2124,10 +2293,10 @@ function V2AgentBuilderContent() {
                       {/* Header */}
                       <div className="flex items-center gap-2 mb-4">
                         <div
-                          className="w-6 h-6 bg-gradient-to-r from-emerald-500 to-green-600 flex items-center justify-center"
+                          className="w-6 h-6 bg-[var(--v2-surface)] border border-[var(--v2-border)] flex items-center justify-center"
                           style={{ borderRadius: 'var(--v2-radius-button)' }}
                         >
-                          <FileText className="h-4 w-4 text-white" />
+                          <FileText className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
                         </div>
                         <h4 className="font-semibold text-[var(--v2-text-primary)]">Agent Draft</h4>
                       </div>
@@ -2140,8 +2309,11 @@ function V2AgentBuilderContent() {
                         {/* Plan Title */}
                         {enhancedPromptData.plan_title && (
                           <div className="pb-3 border-b border-[var(--v2-border)]">
-                            <h3 className="text-lg font-bold text-[var(--v2-text-primary)]">
-                              📋 {enhancedPromptData.plan_title}
+                            <h3 className="text-lg font-bold text-[var(--v2-text-primary)] flex items-center gap-2">
+                              <div className="w-5 h-5 bg-[var(--v2-surface)] border border-[var(--v2-border)] flex items-center justify-center flex-shrink-0" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                                <FileText className="h-3 w-3 text-blue-600 dark:text-blue-400" />
+                              </div>
+                              {enhancedPromptData.plan_title}
                             </h3>
                           </div>
                         )}
@@ -2149,8 +2321,11 @@ function V2AgentBuilderContent() {
                         {/* Description */}
                         {enhancedPromptData.plan_description && (
                           <div>
-                            <h4 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-2">
-                              📝 Description
+                            <h4 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                              <div className="w-4 h-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] flex items-center justify-center flex-shrink-0" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                                <FileText className="h-2.5 w-2.5 text-slate-600 dark:text-slate-400" />
+                              </div>
+                              Description
                             </h4>
                             <p className="text-sm text-[var(--v2-text-secondary)] leading-relaxed">
                               {enhancedPromptData.plan_description}
@@ -2161,15 +2336,17 @@ function V2AgentBuilderContent() {
                         {/* How it works - Steps */}
                         {enhancedPromptData.sections?.processing_steps && enhancedPromptData.sections.processing_steps.length > 0 && (
                           <div>
-                            <h4 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-3">
-                              ⚙️ How it works ({enhancedPromptData.sections.processing_steps.length} steps)
+                            <h4 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-3 flex items-center gap-1.5">
+                              <div className="w-4 h-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] flex items-center justify-center flex-shrink-0" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                                <Settings className="h-2.5 w-2.5 text-slate-600 dark:text-slate-400" />
+                              </div>
+                              How it works ({enhancedPromptData.sections.processing_steps.length} steps)
                             </h4>
                             <div className="space-y-3">
                               {enhancedPromptData.sections.processing_steps.map((step: string, stepIndex: number) => (
                                 <div key={stepIndex} className="flex gap-3">
                                   <div
-                                    className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold"
-                                    style={{ background: 'linear-gradient(135deg, var(--v2-primary), var(--v2-secondary))' }}
+                                    className="flex-shrink-0 w-6 h-6 rounded-full bg-[var(--v2-surface)] border-2 border-[var(--v2-primary)] flex items-center justify-center text-[var(--v2-primary)] text-xs font-bold"
                                   >
                                     {stepIndex + 1}
                                   </div>

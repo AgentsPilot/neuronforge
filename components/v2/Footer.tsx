@@ -46,6 +46,13 @@ interface ConnectedPlugin {
   username?: string
 }
 
+interface AvailablePlugin {
+  key: string
+  name: string
+  connected: boolean
+  status?: 'active' | 'disconnected' | 'expired'
+}
+
 interface V2FooterProps {
   accountFrozen?: boolean
 }
@@ -55,12 +62,15 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
   const { user, connectedPlugins: connectedPluginsFromContext } = useAuth()
   const [lastRunTime, setLastRunTime] = useState<Date | null>(null)
   const [displayPlugins, setDisplayPlugins] = useState<ConnectedPlugin[]>([])
+  const [availablePlugins, setAvailablePlugins] = useState<AvailablePlugin[]>([])
+  const [pluginsMenuOpen, setPluginsMenuOpen] = useState(false)
   const [hoveredPlugin, setHoveredPlugin] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [refreshModalOpen, setRefreshModalOpen] = useState(false)
   const [selectedPlugin, setSelectedPlugin] = useState<ConnectedPlugin | null>(null)
   const [accountFrozen, setAccountFrozen] = useState(accountFrozenProp || false)
   const [pilotCredits, setPilotCredits] = useState<number>(0)
+  const [hoveredButton, setHoveredButton] = useState<string | null>(null)
 
   // New state for inline refresh
   const [refreshingPlugin, setRefreshingPlugin] = useState<string | null>(null)
@@ -135,7 +145,49 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
 
     fetchLastRun()
     fetchAccountStatus()
+    fetchAllAvailablePlugins()
   }, [user, connectedPluginsFromContext])
+
+  // Fetch all available plugins dynamically from API
+  const fetchAllAvailablePlugins = async () => {
+    if (!user) return
+
+    try {
+      // Fetch all available plugins from the registry
+      const availableResponse = await fetch('/api/plugins/available')
+      if (!availableResponse.ok) {
+        throw new Error('Failed to fetch available plugins')
+      }
+      const availableData = await availableResponse.json()
+
+      // Fetch user's plugin connection status
+      const pluginAPIClient = getPluginAPIClient()
+      const status = await pluginAPIClient.getUserPluginStatus(user.id)
+
+      // Build connection status map
+      const connectedMap = new Map<string, {connected: boolean, status: 'active' | 'disconnected' | 'expired'}>()
+      status.connected.forEach((p: any) => {
+        connectedMap.set(p.key, { connected: true, status: p.is_expired ? 'expired' : 'active' })
+      })
+      status.disconnected.forEach((p: any) => {
+        connectedMap.set(p.key, { connected: false, status: 'disconnected' })
+      })
+
+      // Merge available plugins with connection status
+      const plugins: AvailablePlugin[] = availableData.plugins
+        .filter((p: any) => !p.isSystem) // Filter out system plugins (no OAuth needed)
+        .map((p: any) => ({
+          key: p.key,
+          name: p.name,
+          connected: connectedMap.get(p.key)?.connected || false,
+          status: connectedMap.get(p.key)?.status || 'disconnected'
+        }))
+
+      setAvailablePlugins(plugins)
+    } catch (error) {
+      console.error('Error fetching available plugins:', error)
+    }
+  }
 
   const handleRefreshComplete = async () => {
     // Close the modal after refresh
@@ -162,6 +214,56 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
       setDisplayPlugins(plugins)
     } catch (error) {
       console.error('Error loading plugins:', error)
+    }
+  }
+
+  // Handle plugin connection from available plugins menu
+  const handlePluginConnect = async (pluginKey: string) => {
+    if (!user) return
+
+    setPluginsMenuOpen(false)
+    setReconnecting(pluginKey)
+
+    try {
+      const pluginAPIClient = getPluginAPIClient()
+      const result = await pluginAPIClient.connectPlugin(user.id, pluginKey)
+
+      if (result.success) {
+        setReconnecting(null)
+        setRefreshStatus({
+          plugin: pluginKey,
+          status: 'success'
+        })
+
+        setTimeout(async () => {
+          setRefreshStatus(null)
+          await loadPlugins()
+          await fetchAllAvailablePlugins()
+        }, 2000)
+      } else {
+        setReconnecting(null)
+        setRefreshStatus({
+          plugin: pluginKey,
+          status: 'error',
+          message: result.error || 'Connection failed'
+        })
+
+        setTimeout(() => {
+          setRefreshStatus(null)
+        }, 3000)
+      }
+    } catch (error: any) {
+      console.error('Plugin connection error:', error)
+      setReconnecting(null)
+      setRefreshStatus({
+        plugin: pluginKey,
+        status: 'error',
+        message: error.message || 'Failed to connect'
+      })
+
+      setTimeout(() => {
+        setRefreshStatus(null)
+      }, 3000)
     }
   }
 
@@ -672,30 +774,208 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
 
         {/* Action Buttons */}
         <div className="flex gap-2 sm:gap-2.5">
+          {/* Plugins Menu Button */}
+          <div className="relative">
+            <button
+              onClick={() => setPluginsMenuOpen(!pluginsMenuOpen)}
+              onMouseEnter={() => setHoveredButton('plugins')}
+              onMouseLeave={() => setHoveredButton(null)}
+              className="w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] flex items-center justify-center hover:scale-105 transition-transform duration-200 flex-shrink-0"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+              aria-label="Plugins Menu"
+            >
+              <PlugZap className="w-4.5 h-4.5 sm:w-5 sm:h-5 text-[var(--v2-primary)]" />
+            </button>
+
+            {/* Tooltip */}
+            {hoveredButton === 'plugins' && !pluginsMenuOpen && (
+              <div
+                className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 text-xs whitespace-nowrap pointer-events-none animate-fade-in"
+                style={{
+                  backgroundColor: 'var(--v2-surface)',
+                  border: '1px solid var(--v2-border)',
+                  color: 'var(--v2-text-primary)',
+                  borderRadius: 'var(--v2-radius-button)',
+                  boxShadow: 'var(--v2-shadow-card)',
+                  zIndex: 1000
+                }}
+              >
+                Connect Plugins
+                <div
+                  className="absolute left-1/2 -translate-x-1/2"
+                  style={{
+                    top: '100%',
+                    width: 0,
+                    height: 0,
+                    borderLeft: '4px solid transparent',
+                    borderRight: '4px solid transparent',
+                    borderTop: '4px solid var(--v2-border)'
+                  }}
+                ></div>
+              </div>
+            )}
+
+            {pluginsMenuOpen && (
+              <>
+                {/* Backdrop */}
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setPluginsMenuOpen(false)}
+                />
+
+                {/* Plugins Grid Menu */}
+                <div
+                  className="absolute right-0 bottom-full mb-2 w-80 max-h-96 overflow-y-auto bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] border border-[var(--v2-border)] z-50 p-3"
+                  style={{ borderRadius: 'var(--v2-radius-card)' }}
+                >
+                  <div className="text-sm font-semibold text-[var(--v2-text-primary)] mb-3 px-1">
+                    Available Plugins
+                  </div>
+
+                  {/* Grid of plugins */}
+                  <div className="grid grid-cols-3 gap-2">
+                    {availablePlugins.map((plugin) => (
+                      <button
+                        key={plugin.key}
+                        onClick={() => !plugin.connected && handlePluginConnect(plugin.key)}
+                        className={`relative p-3 flex flex-col items-center gap-2 transition-all duration-200 border ${
+                          plugin.connected
+                            ? 'bg-green-500/10 border-green-500/30 cursor-default'
+                            : 'bg-[var(--v2-background)] border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:shadow-md cursor-pointer'
+                        }`}
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        disabled={plugin.connected}
+                        title={plugin.connected ? 'Connected' : `Connect ${plugin.name}`}
+                      >
+                        {/* Plugin Icon */}
+                        <div className="w-8 h-8 flex items-center justify-center">
+                          {getPluginIcon(plugin.key)}
+                        </div>
+
+                        {/* Plugin Name */}
+                        <div className="text-[10px] font-medium text-center text-[var(--v2-text-primary)] leading-tight truncate w-full">
+                          {plugin.name}
+                        </div>
+
+                        {/* Status Indicator */}
+                        {plugin.connected && (
+                          <div
+                            className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2"
+                            style={{ borderColor: 'var(--v2-surface)' }}
+                          />
+                        )}
+
+                        {/* Expired Indicator */}
+                        {plugin.status === 'expired' && (
+                          <div
+                            className="absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 overflow-hidden"
+                            style={{ borderColor: 'var(--v2-surface)' }}
+                          >
+                            <div className="absolute inset-0 flex">
+                              <div className="w-1/2 bg-green-500"></div>
+                              <div className="w-1/2 bg-orange-500"></div>
+                            </div>
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Footer hint */}
+                  <div className="mt-3 pt-3 border-t border-[var(--v2-border)] text-[10px] text-[var(--v2-text-muted)] text-center">
+                    Click on a plugin to connect via OAuth
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
           {/* Dark Mode Toggle */}
           <DarkModeToggle />
 
-          <button
-            onClick={() => !(accountFrozen || pilotCredits < 2000) && router.push('/agents/new')}
-            className={`w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] flex items-center justify-center transition-transform duration-200 flex-shrink-0 ${accountFrozen || pilotCredits < 2000 ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'}`}
-            style={{ borderRadius: 'var(--v2-radius-button)' }}
-            title={accountFrozen ? "Account frozen - Purchase tokens to continue" : pilotCredits < 2000 ? "Insufficient balance - Need 2000 tokens to create agent" : "Create New Agent"}
-            disabled={accountFrozen || pilotCredits < 2000}
-          >
-            <Plus className="w-4.5 h-4.5 sm:w-5 sm:h-5 text-[#3B82F6]" />
-          </button>
+          {/* Create Agent Button */}
+          <div className="relative">
+            <button
+              onClick={() => !(accountFrozen || pilotCredits < 2000) && router.push('/agents/new')}
+              onMouseEnter={() => setHoveredButton('create')}
+              onMouseLeave={() => setHoveredButton(null)}
+              className={`w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] flex items-center justify-center transition-transform duration-200 flex-shrink-0 ${accountFrozen || pilotCredits < 2000 ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'}`}
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+              disabled={accountFrozen || pilotCredits < 2000}
+              aria-label="Create New Agent"
+            >
+              <Plus className="w-4.5 h-4.5 sm:w-5 sm:h-5 text-[#3B82F6]" />
+            </button>
+
+            {/* Tooltip */}
+            {hoveredButton === 'create' && (
+              <div
+                className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 text-xs whitespace-nowrap pointer-events-none animate-fade-in"
+                style={{
+                  backgroundColor: 'var(--v2-surface)',
+                  border: '1px solid var(--v2-border)',
+                  color: 'var(--v2-text-primary)',
+                  borderRadius: 'var(--v2-radius-button)',
+                  boxShadow: 'var(--v2-shadow-card)',
+                  zIndex: 1000
+                }}
+              >
+                {accountFrozen ? "Account Frozen" : pilotCredits < 2000 ? "Insufficient Balance" : "Create New Agent"}
+                <div
+                  className="absolute left-1/2 -translate-x-1/2"
+                  style={{
+                    top: '100%',
+                    width: 0,
+                    height: 0,
+                    borderLeft: '4px solid transparent',
+                    borderRight: '4px solid transparent',
+                    borderTop: '4px solid var(--v2-border)'
+                  }}
+                ></div>
+              </div>
+            )}
+          </div>
 
           {/* 3-dot menu */}
           <div className="relative">
             <button
               onClick={() => setMenuOpen(!menuOpen)}
+              onMouseEnter={() => setHoveredButton('menu')}
+              onMouseLeave={() => setHoveredButton(null)}
               className="w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] flex items-center justify-center hover:scale-105 transition-transform duration-200 flex-shrink-0"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
-              title="Menu"
               aria-label="Menu"
             >
               <MoreVertical className="w-4.5 h-4.5 sm:w-5 sm:h-5 text-[var(--v2-text-secondary)]" />
             </button>
+
+            {/* Tooltip */}
+            {hoveredButton === 'menu' && !menuOpen && (
+              <div
+                className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 text-xs whitespace-nowrap pointer-events-none animate-fade-in"
+                style={{
+                  backgroundColor: 'var(--v2-surface)',
+                  border: '1px solid var(--v2-border)',
+                  color: 'var(--v2-text-primary)',
+                  borderRadius: 'var(--v2-radius-button)',
+                  boxShadow: 'var(--v2-shadow-card)',
+                  zIndex: 1000
+                }}
+              >
+                Menu
+                <div
+                  className="absolute left-1/2 -translate-x-1/2"
+                  style={{
+                    top: '100%',
+                    width: 0,
+                    height: 0,
+                    borderLeft: '4px solid transparent',
+                    borderRight: '4px solid transparent',
+                    borderTop: '4px solid var(--v2-border)'
+                  }}
+                ></div>
+              </div>
+            )}
 
             {menuOpen && (
               <>
