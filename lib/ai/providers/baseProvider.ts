@@ -19,6 +19,24 @@ export interface CallContext {
 export abstract class BaseAIProvider {
   protected analytics: AIAnalyticsService;
 
+  /**
+   * Default model for this provider.
+   * Used when no specific model is requested.
+   */
+  abstract readonly defaultModel: string;
+
+  /**
+   * Default max_tokens for this provider's chat completions.
+   * Subclasses must implement this based on their API defaults/recommendations.
+   */
+  abstract readonly defaultMaxTokens: number;
+
+  /**
+   * Whether this provider supports OpenAI's response_format parameter.
+   * When true, callers can use { type: 'json_object' } to enforce JSON output.
+   */
+  abstract readonly supportsResponseFormat: boolean;
+
   constructor(analytics?: AIAnalyticsService) {
     this.analytics = analytics || new AIAnalyticsService();
   }

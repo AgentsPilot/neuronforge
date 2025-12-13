@@ -52,6 +52,15 @@ interface ChatCompletionParams {
 export class AnthropicProvider extends BaseAIProvider {
   private client: Anthropic;
 
+  /** Default model for Anthropic */
+  readonly defaultModel = ANTHROPIC_MODELS.CLAUDE_35_SONNET;
+
+  /** Anthropic's default max_tokens (required parameter) */
+  readonly defaultMaxTokens = 4096;
+
+  /** Anthropic does not support OpenAI's response_format parameter */
+  readonly supportsResponseFormat = false;
+
   constructor(apiKey: string, analytics?: any) {
     super(analytics);
     this.client = new Anthropic({

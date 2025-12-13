@@ -47,6 +47,15 @@ export type KimiModelName = typeof KIMI_MODELS[keyof typeof KIMI_MODELS];
 export class KimiProvider extends BaseAIProvider {
   private client: OpenAI;
 
+  /** Default model for Kimi */
+  readonly defaultModel = KIMI_MODELS.K2_PREVIEW;
+
+  /** Kimi's recommended default for chat completions */
+  readonly defaultMaxTokens = 4096;
+
+  /** Kimi does not support OpenAI's response_format parameter */
+  readonly supportsResponseFormat = false;
+
   /**
    * Initialize Kimi provider with API key
    *

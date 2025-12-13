@@ -21,6 +21,15 @@ export type OpenAIModelName = typeof OPENAI_MODELS[keyof typeof OPENAI_MODELS];
 export class OpenAIProvider extends BaseAIProvider {
   private openai: OpenAI;
 
+  /** Default model for OpenAI */
+  readonly defaultModel = OPENAI_MODELS.GPT_4O;
+
+  /** OpenAI recommended default for chat completions */
+  readonly defaultMaxTokens = 2000;
+
+  /** OpenAI supports response_format: { type: 'json_object' } */
+  readonly supportsResponseFormat = true;
+
   constructor(apiKey: string, analytics?: any) {
     super(analytics);
     this.openai = new OpenAI({ apiKey });
