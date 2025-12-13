@@ -9,11 +9,35 @@ import { calculateCostSync } from '@/lib/ai/pricing';
  * Use these instead of raw strings when specifying models
  */
 export const OPENAI_MODELS = {
-  GPT_4O: 'gpt-4o',
-  GPT_4O_MINI: 'gpt-4o-mini',
-  GPT_4_TURBO: 'gpt-4-turbo',
-  GPT_4: 'gpt-4',
-  GPT_35_TURBO: 'gpt-3.5-turbo'
+  // GPT-5.2 Series (Latest - December 2025)
+  GPT_52: 'gpt-5.2', // Most advanced model - best for spreadsheets, presentations, image perception, coding, and long context
+  GPT_52_PRO: 'gpt-5.2-pro', // Highest accuracy for difficult questions and complex analysis
+
+  // GPT-5.1 Series
+  GPT_51: 'gpt-5.1', // Flagship model with improved steerability and faster responses
+
+  // GPT-5 Series
+  GPT_5: 'gpt-5', // Advanced reasoning model for complex multi-step tasks
+  GPT_5_MINI: 'gpt-5-mini', // Balanced performance and cost for production workloads
+  GPT_5_NANO: 'gpt-5-nano', // Fastest and most affordable - ideal for summarization and classification
+
+  // GPT-4.1 Series (April 2025)
+  GPT_41: 'gpt-4.1', // Specialized for coding with improved instruction following and 1M context window
+  GPT_41_MINI: 'gpt-4.1-mini', // Cost-effective coding model with strong instruction following
+  GPT_41_NANO: 'gpt-4.1-nano', // Lightweight coding model for simple tasks
+
+  // o-Series Reasoning Models
+  O3: 'o3', // Powerful reasoning model - best for math, science, coding, and complex technical analysis
+  O4_MINI: 'o4-mini', // Fast reasoning model for visual reasoning and technical writing
+
+  // GPT-4o Series (Still widely used)
+  GPT_4O: 'gpt-4o', // Versatile multimodal model for general-purpose tasks
+  GPT_4O_MINI: 'gpt-4o-mini', // Cost-effective option for simpler tasks and high-volume applications
+
+  // Legacy Models
+  GPT_4_TURBO: 'gpt-4-turbo', // Legacy model - consider migrating to GPT-4.1 or GPT-5 series
+  GPT_4: 'gpt-4', // Legacy model - consider migrating to newer models
+  GPT_35_TURBO: 'gpt-3.5-turbo' // Legacy model - use for basic tasks where cost is critical
 } as const;
 
 export type OpenAIModelName = typeof OPENAI_MODELS[keyof typeof OPENAI_MODELS];

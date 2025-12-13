@@ -13,9 +13,21 @@ import { calculateCostSync } from '@/lib/ai/pricing';
  * Use these instead of raw strings when specifying models
  */
 export const KIMI_MODELS = {
-  K2_PREVIEW: 'kimi-k2-0905-preview',
-  K2_THINKING: 'kimi-k2-thinking',
-  K2_ORIGINAL: 'kimi-k2-0711-preview'
+  // Kimi K2 Series (Latest - 2025)
+  K2_PREVIEW: 'kimi-k2-0905-preview', // Latest K2 with 256K context - best for coding, agentic tasks, and instruction following
+  K2_THINKING: 'kimi-k2-thinking', // Enhanced reasoning with 256K context - best for complex multi-step reasoning and analysis
+  K2_ORIGINAL: 'kimi-k2-0711-preview', // Original K2 with 128K context - stable baseline for general tasks
+
+  // Kimi K1.5 Series (January 2025)
+  K15: 'kimi-k1.5', // Multimodal reasoning model - matches OpenAI o1 in math, coding, and multimodal tasks
+  K15_LONG: 'kimi-k1.5-long', // Long chain-of-thought mode - best for detailed step-by-step reasoning
+
+  // Kimi Linear Series (October 2025)
+  LINEAR: 'kimi-linear-48b', // Ultra-efficient 1M context - 6x faster with 75% less memory, best for extreme long-context tasks
+
+  // Specialized Models
+  DEV: 'kimi-dev-72b', // Coding specialist for issue resolution - 60.4% on SWE-bench Verified
+  VL: 'kimi-vl' // Vision-Language model - best for multimodal reasoning and image understanding
 } as const;
 
 export type KimiModelName = typeof KIMI_MODELS[keyof typeof KIMI_MODELS];
@@ -23,11 +35,19 @@ export type KimiModelName = typeof KIMI_MODELS[keyof typeof KIMI_MODELS];
 /**
  * KimiProvider - Moonshot AI's Kimi LLM Provider
  *
- * Kimi K2 is Moonshot AI's trillion-parameter mixture-of-experts (MoE) model
- * that provides OpenAI-compatible API endpoints. It excels at:
- * - Long context understanding (256K tokens)
- * - Agentic capabilities and tool calling
- * - Reasoning and coding tasks
+ * Kimi is Moonshot AI's family of large language models providing
+ * OpenAI-compatible API endpoints. The lineup includes:
+ *
+ * Model Families:
+ * - K2 Series: Trillion-parameter MoE models (32B active) for agentic tasks
+ * - K1.5 Series: Multimodal reasoning matching OpenAI o1 performance
+ * - Linear Series: Ultra-efficient 1M context with 6x faster inference
+ * - Specialized: Kimi-Dev (coding), Kimi-VL (vision-language)
+ *
+ * Key Capabilities:
+ * - Long context understanding (up to 1M tokens with Linear)
+ * - Agentic capabilities with 200-300 sequential tool calls
+ * - Reasoning, coding, and multimodal tasks
  * - Context caching for 90% token savings
  *
  * API Compatibility:
@@ -36,9 +56,13 @@ export type KimiModelName = typeof KIMI_MODELS[keyof typeof KIMI_MODELS];
  * - Compatible with tool calling (function calling)
  *
  * Available Models (as of 2025):
- * - kimi-k2-0711-preview: Original K2 model (July 2025)
- * - kimi-k2-0905-preview: Upgraded version with improved grounding (Sept 2025)
+ * - kimi-k2-0905-preview: Latest K2 with 256K context (Sept 2025)
  * - kimi-k2-thinking: Enhanced reasoning capabilities (Nov 2025)
+ * - kimi-k2-0711-preview: Original K2 with 128K context (July 2025)
+ * - kimi-k1.5: Multimodal reasoning model (Jan 2025)
+ * - kimi-linear-48b: Ultra-efficient 1M context (Oct 2025)
+ * - kimi-dev-72b: Coding specialist (60.4% SWE-bench)
+ * - kimi-vl: Vision-Language model
  *
  * Pricing (highly competitive):
  * - K2 Base: $0.15/M input tokens, $2.50/M output tokens
@@ -325,24 +349,31 @@ export class KimiProvider extends BaseAIProvider {
    * @param useCase - Use case type
    * @returns Recommended model name
    */
-  static getRecommendedModel(useCase: 'general' | 'reasoning' | 'coding' | 'long-context'): string {
+  static getRecommendedModel(useCase: 'general' | 'reasoning' | 'coding' | 'long-context' | 'ultra-long-context' | 'multimodal' | 'issue-resolution'): string {
     switch (useCase) {
       case 'reasoning':
-        return 'kimi-k2-thinking'; // Best for complex reasoning tasks
+        return KIMI_MODELS.K2_THINKING; // Best for complex multi-step reasoning
       case 'coding':
+        return KIMI_MODELS.K2_PREVIEW; // Latest K2 with improved coding capabilities
+      case 'issue-resolution':
+        return KIMI_MODELS.DEV; // Specialized for code issue resolution (60.4% SWE-bench)
       case 'long-context':
-        return 'kimi-k2-0905-preview'; // Improved grounding, great for code
+        return KIMI_MODELS.K2_PREVIEW; // 256K context with strong grounding
+      case 'ultra-long-context':
+        return KIMI_MODELS.LINEAR; // 1M context with 6x faster inference
+      case 'multimodal':
+        return KIMI_MODELS.VL; // Vision-language tasks
       case 'general':
       default:
-        return 'kimi-k2-0905-preview'; // Latest stable version
+        return KIMI_MODELS.K2_PREVIEW; // Latest stable version for general use
     }
   }
 
   /**
    * Check if a model supports context caching
-   * All Kimi models support automatic context caching
+   * All Kimi K2 and K1.5 models support automatic context caching
    */
   static supportsContextCaching(model: string): boolean {
-    return model.startsWith('kimi-k2');
+    return model.startsWith('kimi-k2') || model.startsWith('kimi-k1') || model.startsWith('kimi-linear');
   }
 }
