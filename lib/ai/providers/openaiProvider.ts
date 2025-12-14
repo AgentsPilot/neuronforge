@@ -48,8 +48,8 @@ export class OpenAIProvider extends BaseAIProvider {
   /** Default model for OpenAI */
   readonly defaultModel = OPENAI_MODELS.GPT_4O;
 
-  /** OpenAI recommended default for chat completions */
-  readonly defaultMaxTokens = 2000;
+  /** OpenAI default for chat completions - higher for complex Phase 4 workflows */
+  readonly defaultMaxTokens = 8192;
 
   /** OpenAI supports response_format: { type: 'json_object' } */
   readonly supportsResponseFormat = true;
@@ -81,12 +81,31 @@ export class OpenAIProvider extends BaseAIProvider {
     return new OpenAIProvider(process.env.OPENAI_API_KEY!, aiAnalytics);
   }
 
+  /**
+   * Check if a model uses max_completion_tokens instead of max_tokens.
+   * Newer models (GPT-5.x, GPT-4.1, o-series) use the new parameter name.
+   */
+  private usesMaxCompletionTokens(model: string): boolean {
+    return (
+      model.startsWith('gpt-5') ||
+      model.startsWith('gpt-4.1') ||
+      model.startsWith('o3') ||
+      model.startsWith('o4')
+    );
+  }
+
   async chatCompletion(
     params: OpenAI.Chat.ChatCompletionCreateParams,
     context: CallContext
   ): Promise<OpenAI.Chat.ChatCompletion> {
     // Ensure streaming is disabled for token tracking
     const nonStreamParams = { ...params, stream: false as const };
+
+    // Handle max_tokens vs max_completion_tokens for newer models
+    if (this.usesMaxCompletionTokens(params.model) && (nonStreamParams as any).max_tokens) {
+      (nonStreamParams as any).max_completion_tokens = (nonStreamParams as any).max_tokens;
+      delete (nonStreamParams as any).max_tokens;
+    }
 
     return this.callWithTracking(
       context,
