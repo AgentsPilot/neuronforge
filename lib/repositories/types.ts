@@ -202,3 +202,14 @@ export interface RewardConfig {
   credits_amount: number;
   is_active: boolean;
 }
+
+export interface SystemSettingsConfig {
+  id: string;
+  key: string;
+  value: any; // JSONB can be any type
+  category: string;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+  updated_by?: string | null;
+}

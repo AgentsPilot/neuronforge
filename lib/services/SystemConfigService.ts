@@ -1,6 +1,25 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 
 /**
+ * @deprecated Use `systemConfigRepository` from `@/lib/repositories` instead.
+ *
+ * This service is deprecated and will be removed in a future version.
+ * The SystemConfigRepository provides the same functionality with:
+ * - Proper Pino logging (instead of console.log)
+ * - Singleton pattern with default Supabase client
+ * - Consistent {data, error} return pattern
+ * - Additional convenience methods
+ *
+ * Migration guide:
+ * - SystemConfigService.get(supabase, key, fallback)
+ *   → systemConfigRepository.getString(key, fallback) / getNumber / getBoolean
+ * - SystemConfigService.getByCategory(supabase, category)
+ *   → systemConfigRepository.getByCategory(category)
+ * - SystemConfigService.set(supabase, key, value)
+ *   → systemConfigRepository.set(key, value)
+ * - SystemConfigService.getRoutingConfig(supabase)
+ *   → systemConfigRepository.getRoutingConfig()
+ *
  * SystemConfigService - Manages system-wide configuration settings with caching
  *
  * Features:
@@ -190,6 +209,8 @@ export class SystemConfigService {
         ? 'helpbot'
         : key.startsWith('memory_')
         ? 'memory'
+        : key.startsWith('agent_creation_')
+        ? 'agent_creation'
         : 'general';
 
       console.log(`[SystemConfig] Inserting new key '${key}' with category '${category}' and value:`, value);

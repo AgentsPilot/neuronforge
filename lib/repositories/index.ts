@@ -8,6 +8,7 @@ export { SharedAgentRepository, sharedAgentRepository } from './SharedAgentRepos
 export { AgentMetricsRepository, agentMetricsRepository } from './AgentMetricsRepository';
 export { ConfigRepository, configRepository } from './ConfigRepository';
 export { MemoryRepository, memoryRepository } from './MemoryRepository';
+export { SystemConfigRepository, systemConfigRepository } from './SystemConfigRepository';
 
 // Types
 export type {
@@ -32,6 +33,7 @@ export type {
   // Config types
   SystemConfig,
   RewardConfig,
+  SystemSettingsConfig,
 } from './types';
 
 export { AgentStatusEnum, STATUS_TRANSITIONS } from './types';
