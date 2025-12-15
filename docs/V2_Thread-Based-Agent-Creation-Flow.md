@@ -314,6 +314,76 @@ This diagram shows the complete user journey through `useConversationalBuilder.t
                  │
                  ▼
 ┌─────────────────────────────────────────────────────────────────────┐
+│  (Optional) Phase 4 - Technical Workflow Generation                 │
+│  ─────────────────────────────────────────────────────────────────  │
+│                                                                     │
+│  When ready_for_generation: true AND user wants technical workflow: │
+│                                                                     │
+│  const phase4 = await processMessageInThread(                       │
+│    4,                                                               │
+│    originalPrompt,                                                  │
+│    { enhanced_prompt: phase3Result.enhanced_prompt }                │
+│  )                                                                  │
+│    │                                                                │
+│    ├─► POST /api/agent-creation/process-message                     │
+│    │   Body: {                                                      │
+│    │     thread_id: "thread_abc123",                                │
+│    │     phase: 4,                                                  │
+│    │     enhanced_prompt: { /* from Phase 3 */ },                   │
+│    │     schema_services: { /* auto-generated from services */ }    │
+│    │   }                                                            │
+│    │                                                                │
+│    │   Backend Processing:                                          │
+│    │   • Generates schema_services from services_involved           │
+│    │   • Builds Phase 4 user message with full plugin definitions   │
+│    │   • Calls GPT-4o to compile functional spec → technical steps  │
+│    │   • ✅ VALIDATES response with Phase 4 Zod schema              │
+│    │   • Stores AI response in thread                               │
+│    │                                                                │
+│    └─► Returns: {                                                   │
+│          technical_workflow: [                                      │
+│            { id: "step1", kind: "operation",                        │
+│              plugin: "google-mail", action: "searchMessages", ... },│
+│            { id: "step2", kind: "transform",                        │
+│              operation: { type: "summarize_with_llm" }, ... },      │
+│            ...                                                      │
+│          ],                                                         │
+│          technical_inputs_required: [                               │
+│            { key: "slack_channel_id", plugin: "slack",              │
+│              description: "Slack channel to post to" }              │
+│          ],                                                         │
+│          feasibility: {                                             │
+│            can_execute: true,                                       │
+│            blocking_issues: [],                                     │
+│            warnings: [{ type: "assumption", description: "..." }]   │
+│          },                                                         │
+│          metadata: {                                                │
+│            ready_for_generation: true,                              │
+│            phase4: {                                                │
+│              can_execute: true,                                     │
+│              needs_technical_inputs: true,                          │
+│              needs_user_feedback: false                             │
+│            }                                                        │
+│          }                                                          │
+│        }                                                            │
+│                                                                     │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │
+                 ┌───────────────┴───────────────┐
+                 │                               │
+                 ▼                               ▼
+    ┌─────────────────────────┐    ┌─────────────────────────┐
+    │  Technical Inputs       │    │  Ready for Execution    │
+    │  Required               │    │  (can_execute: true)    │
+    │                         │    │                         │
+    │  • Collect inputs       │    │  • Pass to agent        │
+    │  • Re-run Phase 4       │    │    execution engine     │
+    │    with collected data  │    │                         │
+    └───────────┬─────────────┘    └───────────┬─────────────┘
+                │                              │
+                └──────────────┬───────────────┘
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
 │                         FLOW COMPLETE ✅                            │
 │                                                                     │
 │  Thread persists in DB for 24 hours                                 │
@@ -326,18 +396,21 @@ This diagram shows the complete user journey through `useConversationalBuilder.t
 
 ## 🔑 Key State Variables Throughout Flow
 
-| State Variable           | Initial   | After Phase 1      | After Phase 2      | After Phase 3      |
-|--------------------------|-----------|--------------------|--------------------|--------------------|
-| `threadId.current`       | `null`    | `"thread_abc123"`  | `"thread_abc123"`  | `"thread_abc123"`  |
-| `conversationStarted`    | `false`   | `true`             | `true`             | `true`             |
-| `workflowPhase`          | `null`    | `'analysis'`       | `'clarification'`  | `'approval'`       |
-| `clarityScore`           | `0`       | `75`               | `75`               | `75`               |
-| `questionsSequence`      | `[]`      | `[]`               | `[q1, q2, ...]`    | `[q1, q2, ...]`    |
-| `currentQuestionIndex`   | `0`       | `0`                | `0 → 1 → 2`        | `n` (done)         |
-| `clarificationAnswers`   | `{}`      | `{}`         | `{q1: "...", q2: "..."}` | `{q1: "...", q2: "..."}` |
-| `enhancedPrompt`         | `""`      | `""`               | `""`               | `"Create automated..."` |
-| `enhancementComplete`    | `false`   | `false`            | `false`            | `true`             |
-| `conversationCompleted`  | `false`   | `false`            | `false`            | `true`             |
+| State Variable           | Initial   | After Phase 1      | After Phase 2      | After Phase 3      | After Phase 4      |
+|--------------------------|-----------|--------------------|--------------------|--------------------|--------------------|
+| `threadId.current`       | `null`    | `"thread_abc123"`  | `"thread_abc123"`  | `"thread_abc123"`  | `"thread_abc123"`  |
+| `conversationStarted`    | `false`   | `true`             | `true`             | `true`             | `true`             |
+| `workflowPhase`          | `null`    | `'analysis'`       | `'clarification'`  | `'approval'`       | `'technical'`      |
+| `clarityScore`           | `0`       | `75`               | `75`               | `75`               | `75`               |
+| `questionsSequence`      | `[]`      | `[]`               | `[q1, q2, ...]`    | `[q1, q2, ...]`    | `[q1, q2, ...]`    |
+| `currentQuestionIndex`   | `0`       | `0`                | `0 → 1 → 2`        | `n` (done)         | `n` (done)         |
+| `clarificationAnswers`   | `{}`      | `{}`         | `{q1: "...", q2: "..."}` | `{q1: "...", q2: "..."}` | `{q1: "...", q2: "..."}` |
+| `enhancedPrompt`         | `""`      | `""`               | `""`               | `"Create automated..."` | `"Create automated..."` |
+| `enhancementComplete`    | `false`   | `false`            | `false`            | `true`             | `true`             |
+| `conversationCompleted`  | `false`   | `false`            | `false`            | `true`             | `true`             |
+| `technicalWorkflow`      | `[]`      | `[]`               | `[]`               | `[]`               | `[step1, step2, ...]` |
+| `technicalInputsRequired`| `[]`      | `[]`               | `[]`               | `[]`               | `[{key, plugin, ...}]` |
+| `feasibility`            | `null`    | `null`             | `null`             | `null`             | `{can_execute, ...}` |
 
 ---
 
@@ -893,6 +966,332 @@ interface ResolvedUserInput {
 
 ---
 
+## 🔧 Phase 4 - Technical Workflow Generation (V11)
+
+### Overview
+Phase 4 is a "compilation step" that converts the functional specification (Phase 3's `enhanced_prompt`) into an executable technical workflow. It maps each step to real plugin actions with validated parameters.
+
+### When Phase 4 Runs
+Phase 4 is triggered only after Phase 3 completes with `ready_for_generation: true`. It is an optional step that can be requested by the user before agent creation.
+
+### Goals
+1. **Atomic Action Mapping**: Convert each functional step to specific plugin actions
+2. **Real Executability Validation**: Validate each step against actual plugin schemas in `schema_services`
+3. **Technical Inputs Extraction**: Identify runtime inputs needed (Sheet IDs, Slack channel IDs, etc.)
+4. **Feasibility Assessment**: Provide `can_execute`, `blocking_issues`, and `warnings`
+
+---
+
+### Phase 4 Request/Response Types
+
+#### Request Body
+
+```typescript
+interface Phase4Request {
+  thread_id: string;
+  phase: 4;
+  enhanced_prompt: EnhancedPrompt;           // From Phase 3
+  schema_services?: SchemaServices;          // Auto-generated if not provided
+  technical_inputs_collected?: Record<string, string>;  // For re-runs with collected inputs
+  user_feedback?: string;                    // For iterative refinement
+}
+```
+
+**Note:** `schema_services` is auto-generated on the backend from `enhanced_prompt.specifics.services_involved` using `generateSchemaServices()`. The frontend does not need to provide this.
+
+#### Response Body
+
+```typescript
+interface Phase4Response {
+  success: boolean;
+  phase: 4;
+
+  // Phase 4 specific fields
+  technical_workflow: TechnicalWorkflowStep[];
+  technical_inputs_required: TechnicalInputRequired[];
+  feasibility: Feasibility;
+
+  // Shared fields
+  enhanced_prompt: EnhancedPrompt;
+  conversationalSummary: string;
+
+  metadata: Phase4Metadata;
+}
+```
+
+---
+
+### Technical Workflow Step Types
+
+Phase 4 produces a `technical_workflow` array with three step types:
+
+#### 1. Operation Step (Plugin Actions)
+```typescript
+interface OperationStep {
+  id: string;                    // e.g., "step1"
+  kind: 'operation';
+  description: string;           // Human-readable description
+  plugin: string;                // e.g., "google-mail"
+  action: string;                // e.g., "searchMessages"
+  inputs: Record<string, StepInput>;
+  outputs: Record<string, string>;
+}
+```
+
+#### 2. Transform Step (Data Transformations)
+```typescript
+interface TransformStep {
+  id: string;
+  kind: 'transform';
+  description: string;
+  operation: { type: string };   // e.g., "summarize_with_llm", "filter"
+  inputs: Record<string, StepInput>;
+  outputs: Record<string, string>;
+}
+```
+
+#### 3. Control Step (Conditional Logic)
+```typescript
+interface ControlStep {
+  id: string;
+  kind: 'control';
+  description?: string;
+  control: {
+    type: string;                // e.g., "if", "loop"
+    condition: string;
+  };
+}
+```
+
+---
+
+### Step Input Sources
+
+Each step input specifies its data source:
+
+```typescript
+type StepInputSource = 'constant' | 'from_step' | 'user_input' | 'env' | 'plugin_config';
+
+interface StepInput {
+  source: StepInputSource;
+  value?: any;           // For 'constant' source
+  ref?: string;          // For 'from_step' source (e.g., "step1.messages")
+  key?: string;          // For 'user_input' source
+  plugin?: string;       // Which plugin needs this input
+  action?: string;       // Which action consumes this
+}
+```
+
+---
+
+### Technical Inputs Required
+
+When the workflow needs runtime inputs from the user:
+
+```typescript
+interface TechnicalInputRequired {
+  key: string;              // Machine-friendly identifier (e.g., "slack_channel_id")
+  plugin: string;           // Which plugin needs this input
+  actions?: string[];       // Which actions use this input
+  type?: string;            // Suggested UI type (string, fileId, folderId)
+  description: string;      // Human-friendly description for UI
+}
+```
+
+---
+
+### Feasibility Assessment
+
+```typescript
+interface Feasibility {
+  can_execute: boolean;                    // Overall executability
+  blocking_issues: BlockingIssue[];        // Critical issues preventing execution
+  warnings: FeasibilityWarning[];          // Non-blocking concerns
+}
+
+interface BlockingIssue {
+  type: string;            // e.g., "missing_plugin", "missing_operation", "unsupported_pattern"
+  description: string;     // Human-readable description
+}
+
+interface FeasibilityWarning {
+  type: string;            // e.g., "assumption", "expensive_operation", "data_shape"
+  description: string;
+}
+```
+
+---
+
+### Phase 4 Metadata
+
+```typescript
+interface Phase4Metadata extends Phase3Metadata {
+  phase4: {
+    can_execute: boolean;
+    needs_technical_inputs: boolean;
+    needs_user_feedback: boolean;
+  };
+}
+```
+
+---
+
+### Schema Services Generation
+
+The backend auto-generates `schema_services` from `services_involved`:
+
+**File:** `lib/utils/schema-services-generator.ts`
+
+```typescript
+// Called automatically by process-message route for Phase 4
+const schemaServices = await generateSchemaServices(
+  enhancedPrompt.specifics.services_involved  // e.g., ['google-mail', 'slack']
+);
+
+// Returns:
+{
+  "google-mail": {
+    name: "google-mail",
+    key: "google-mail",
+    description: "Send, read, and manage Gmail emails",
+    context: "When user wants to...",
+    actions: {
+      "searchMessages": {
+        description: "...",
+        usage_context: "...",
+        parameters: {...},
+        output_schema: {...}
+      }
+    }
+  },
+  "slack": {...}
+}
+```
+
+The generator uses `PluginManagerV2.getPluginsDefinitionContext()` and `toLongLLMContext()` to get full action definitions.
+
+---
+
+### Phase 4 Zod Validation
+
+**File:** `lib/validation/phase4-schema.ts`
+
+Phase 4 responses are strictly validated:
+
+```typescript
+// Validated schemas
+TechnicalWorkflowStepSchema  // Union of operation, transform, control
+TechnicalInputRequiredSchema
+FeasibilitySchema
+Phase4MetadataSchema
+Phase4ResponseSchema
+
+// Helper functions
+validatePhase4Response(response)      // Returns { success, data, error }
+isPhase4ReadyForGeneration(response)  // Checks metadata.ready_for_generation
+```
+
+---
+
+### Phase 4 Iteration Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Phase 3 Complete (ready_for_generation: true)                      │
+│  User requests technical workflow                                   │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  Phase 4 - Initial Generation                                       │
+│  ─────────────────────────────────────────────────────────────────  │
+│  • Backend generates schema_services                                │
+│  • LLM compiles functional spec → technical_workflow                │
+│  • Returns feasibility assessment                                   │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │
+                 ┌───────────────┴───────────────┐
+                 │                               │
+                 ▼                               ▼
+    ┌─────────────────────────┐    ┌─────────────────────────┐
+    │  needs_technical_inputs │    │  can_execute: true      │
+    │  = true                 │    │  No inputs needed       │
+    └───────────┬─────────────┘    └───────────┬─────────────┘
+                │                              │
+                ▼                              │
+┌───────────────────────────────┐              │
+│  User Fills Technical Inputs  │              │
+│  (text fields for each input) │              │
+└───────────┬───────────────────┘              │
+            │                                  │
+            ▼                                  │
+┌───────────────────────────────────────────┐  │
+│  Phase 4 Re-run with collected inputs     │  │
+│  technical_inputs_collected: {            │  │
+│    "slack_channel_id": "C12345",          │  │
+│    "sheet_id": "abc123"                   │  │
+│  }                                        │  │
+└───────────────────────────────────────────┘  │
+            │                                  │
+            └──────────────┬───────────────────┘
+                           ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  Ready for Agent Execution                                          │
+│  • technical_workflow validated                                     │
+│  • All inputs resolved                                              │
+│  • Pass to execution engine                                         │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Phase 4 in Thread Metadata
+
+Phase 4 iterations are stored in `metadata.iterations[]` alongside Phases 1-3:
+
+```typescript
+metadata: {
+  last_phase: 4,
+  iterations: [
+    { phase: 1, timestamp: "...", request: {...}, response: {...} },
+    { phase: 2, timestamp: "...", request: {...}, response: {...} },
+    { phase: 3, timestamp: "...", request: {...}, response: {...} },
+    { phase: 4, timestamp: "...", request: {...}, response: {...} },  // ← Phase 4
+    { phase: 4, timestamp: "...", request: {...}, response: {...} }   // ← Re-run with inputs
+  ]
+}
+```
+
+---
+
+### Implementation Files
+
+| File | Purpose |
+|------|---------|
+| [lib/validation/phase4-schema.ts](../lib/validation/phase4-schema.ts) | Phase 4 Zod validation schemas |
+| [lib/utils/schema-services-generator.ts](../lib/utils/schema-services-generator.ts) | Generate schema_services from services_involved |
+| [app/api/agent-creation/process-message/route.ts](../app/api/agent-creation/process-message/route.ts) | Phase 4 backend handling |
+| [components/agent-creation/types/agent-prompt-threads.ts](../components/agent-creation/types/agent-prompt-threads.ts) | TypeScript types |
+| [app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v11-chatgpt.txt](../app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v11-chatgpt.txt) | LLM prompt with Phase 4 instructions |
+
+---
+
+### Phase 4 Testing Checklist
+
+- [ ] Phase 4 only triggers after Phase 3 `ready_for_generation: true`
+- [ ] schema_services generated from `services_involved`
+- [ ] technical_workflow contains valid step types (operation, transform, control)
+- [ ] Each operation step references valid plugin/action from schema_services
+- [ ] technical_inputs_required identifies missing runtime inputs
+- [ ] feasibility.can_execute reflects actual executability
+- [ ] blocking_issues populated when critical issues found
+- [ ] warnings populated for non-blocking concerns
+- [ ] Phase 4 iteration saved to metadata.iterations[]
+- [ ] Re-run with technical_inputs_collected updates workflow
+- [ ] Phase 4 metadata.phase4 fields populated correctly
+
+---
+
 ## 📝 Iterations Audit Trail (V11)
 
 ### Overview
@@ -1123,7 +1522,7 @@ if (thread_id) {
 
 ---
 
-**Document Version**: 3.0
-**Last Updated**: 2025-12-05 (Added V11: Iterations Audit Trail + Agent-Thread Linking)
+**Document Version**: 4.0
+**Last Updated**: 2025-12-12 (Added Phase 4: Technical Workflow Generation)
 **Author**: Development Team
 

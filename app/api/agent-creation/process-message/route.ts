@@ -16,6 +16,10 @@ import type {
   UserContext
 } from '@/components/agent-creation/types/agent-prompt-threads';
 import { validatePhase3Response } from '@/lib/validation/phase3-schema';
+import { validatePhase4Response } from '@/lib/validation/phase4-schema';
+import { generateSchemaServices, getSchemaServicesSummary } from '@/lib/utils/schema-services-generator';
+import { ProviderFactory } from '@/lib/ai/providerFactory';
+import { validateContextUsage } from '@/lib/ai/context-limits';
 
 
 // Initialize Supabase client (still needed for AIAnalyticsService)
@@ -109,11 +113,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!phase || ![1, 2, 3].includes(phase)) {
+    if (!phase || ![1, 2, 3, 4].includes(phase)) {
       return NextResponse.json(
         {
           success: false,
-          error: 'phase must be 1, 2, or 3',
+          error: 'phase must be 1, 2, 3, or 4',
           phase
         } as ThreadErrorResponse,
         { status: 400 }
@@ -255,8 +259,49 @@ export async function POST(request: NextRequest) {
     requestLogger.debug({
       dbRecordId: threadRecord.id,
       status: threadRecord.status,
-      currentPhase: threadRecord.current_phase
+      currentPhase: threadRecord.current_phase,
+      aiProvider: threadRecord.ai_provider,
+      aiModel: threadRecord.ai_model
     }, 'Thread verified');
+
+    // Step 5.5: Validate AI provider and model consistency
+    // Provider and model are set at thread creation and cannot change mid-thread
+    const aiProvider = threadRecord.ai_provider;
+    const aiModel = threadRecord.ai_model;
+
+    // Validate that request doesn't try to change provider mid-thread
+    if (requestBody.ai_provider && requestBody.ai_provider !== aiProvider) {
+      requestLogger.warn({
+        requestedProvider: requestBody.ai_provider,
+        threadProvider: aiProvider
+      }, 'Attempted to change provider mid-thread');
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Provider mismatch',
+          details: `Thread was created with provider '${aiProvider}'. Cannot switch to '${requestBody.ai_provider}' mid-thread.`
+        } as ThreadErrorResponse,
+        { status: 400 }
+      );
+    }
+
+    // Validate that request doesn't try to change model mid-thread
+    if (requestBody.ai_model && requestBody.ai_model !== aiModel) {
+      requestLogger.warn({
+        requestedModel: requestBody.ai_model,
+        threadModel: aiModel
+      }, 'Attempted to change model mid-thread');
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Model mismatch',
+          details: `Thread was created with model '${aiModel}'. Cannot switch to '${requestBody.ai_model}' mid-thread.`
+        } as ThreadErrorResponse,
+        { status: 400 }
+      );
+    }
+
+    requestLogger.debug({ aiProvider, aiModel }, 'AI provider verified for chat completion');
 
     // Step 6: Build user message based on phase
     let userMessage: any;
@@ -289,6 +334,65 @@ export async function POST(request: NextRequest) {
         declined_services: declined_services || [],   // V10: services user refused to connect
         enhanced_prompt: enhanced_prompt || null      // V10: for refinement cycles
       };
+    } else if (phase === 4) {
+      // Phase 4: Technical Workflow Generation
+      // Get services_involved from the last Phase 3 iteration or from request
+      let servicesInvolved: string[] = [];
+
+      // Try to get services_involved from enhanced_prompt in request
+      if (enhanced_prompt?.specifics?.services_involved) {
+        servicesInvolved = enhanced_prompt.specifics.services_involved;
+      } else {
+        // Fall back to finding the last Phase 3 response in iterations
+        const iterations = threadRecord.metadata?.iterations || [];
+        const lastPhase3 = [...iterations].reverse().find((iter: any) => iter.phase === 3);
+        if (lastPhase3?.response?.enhanced_prompt?.specifics?.services_involved) {
+          servicesInvolved = lastPhase3.response.enhanced_prompt.specifics.services_involved;
+        }
+      }
+
+      // Generate schema_services from services_involved
+      let schemaServices = {};
+      if (servicesInvolved.length > 0) {
+        try {
+          schemaServices = await generateSchemaServices(servicesInvolved);
+          requestLogger.debug({
+            servicesInvolved,
+            schemaServicesSummary: getSchemaServicesSummary(schemaServices)
+          }, 'Schema services generated for Phase 4');
+        } catch (schemaError: any) {
+          requestLogger.error({ err: schemaError }, 'Failed to generate schema_services');
+        }
+      } else {
+        requestLogger.warn('No services_involved found for Phase 4 - schema_services will be empty');
+      }
+
+      // Get enhanced_prompt from request or fall back to last Phase 3 iteration
+      let phase4EnhancedPrompt = enhanced_prompt;
+      if (!phase4EnhancedPrompt) {
+        const iterations = threadRecord.metadata?.iterations || [];
+        const lastPhase3 = [...iterations].reverse().find((iter: any) => iter.phase === 3);
+        if (lastPhase3?.response?.enhanced_prompt) {
+          phase4EnhancedPrompt = lastPhase3.response.enhanced_prompt;
+        }
+      }
+
+      userMessage = {
+        phase: 4,
+        connected_services: connected_services || threadRecord.metadata?.phase1_connected_services || [],
+        declined_services: declined_services || [],
+        schema_services: schemaServices,
+        enhanced_prompt: phase4EnhancedPrompt // Include enhanced_prompt with resolved_user_inputs for re-runs
+      };
+
+      // Log resolved_user_inputs if present (for re-run debugging)
+      const resolvedInputs = phase4EnhancedPrompt?.specifics?.resolved_user_inputs;
+      if (resolvedInputs && resolvedInputs.length > 0) {
+        requestLogger.info({
+          resolvedUserInputsCount: resolvedInputs.length,
+          resolvedUserInputs: resolvedInputs
+        }, 'Phase 4 re-run with resolved_user_inputs');
+      }
     }
 
     requestLogger.debug({ phase, userMessage }, 'User message constructed');
@@ -351,18 +455,63 @@ export async function POST(request: NextRequest) {
       conversationMessages
     }, 'Conversation built from thread');
 
+    // Step 9.5: Validate context usage before making API call
+    const chatProvider = ProviderFactory.getProvider(aiProvider);
+    const contextValidation = validateContextUsage(
+      conversationMessages,
+      aiModel,
+      chatProvider.defaultMaxTokens
+    );
+
+    if (contextValidation.warning) {
+      requestLogger.warn({
+        phase,
+        estimatedTokens: contextValidation.estimatedTokens,
+        contextLimit: contextValidation.contextLimit,
+        usagePercent: (contextValidation.usagePercent * 100).toFixed(1) + '%',
+        model: aiModel
+      }, contextValidation.warning);
+    }
+
+    if (!contextValidation.valid) {
+      requestLogger.error({
+        phase,
+        estimatedTokens: contextValidation.estimatedTokens,
+        contextLimit: contextValidation.contextLimit,
+        usagePercent: (contextValidation.usagePercent * 100).toFixed(1) + '%',
+        model: aiModel
+      }, 'Context limit exceeded');
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Context limit exceeded',
+          phase,
+          details: contextValidation.error
+        } as ThreadErrorResponse,
+        { status: 413 } // Payload Too Large
+      );
+    }
+
     // Step 10: Call Chat Completions API with conversation history and analytics tracking
+    // Use the resolved provider (OpenAI, Anthropic, or Kimi)
     let completion;
     const chatCompletionStartTime = Date.now();
     try {
-      completion = await openaiProvider.chatCompletion(
-        {
-          model: 'gpt-4o',
-          messages: conversationMessages,
-          temperature: 0.1,
-          max_tokens: 2000,
-          response_format: { type: 'json_object' }
-        },
+      // Build completion params using provider's capabilities
+      const completionParams: any = {
+        model: aiModel,
+        messages: conversationMessages,
+        temperature: 0.1,
+        max_tokens: chatProvider.defaultMaxTokens,
+      };
+
+      // Only add response_format if provider supports it (Anthropic/Kimi handle JSON via prompting)
+      if (chatProvider.supportsResponseFormat) {
+        completionParams.response_format = { type: 'json_object' };
+      }
+
+      completion = await chatProvider.chatCompletion(
+        completionParams,
         {
           userId: user.id,
           feature: 'agent_creation',
@@ -377,7 +526,8 @@ export async function POST(request: NextRequest) {
       const chatCompletionDuration = Date.now() - chatCompletionStartTime;
       requestLogger.info({
         phase,
-        model: 'gpt-4o',
+        aiProvider,
+        model: aiModel,
         duration: chatCompletionDuration
       }, 'Chat completion received with analytics tracking');
     } catch (completionError: any) {
@@ -450,6 +600,39 @@ export async function POST(request: NextRequest) {
 
         requestLogger.debug('Phase 3 response validated successfully');
         aiResponse = validation.data as ProcessMessageResponse;
+      } else if (phase === 4) {
+        // Strict validation for Phase 4 responses
+        requestLogger.debug('Validating Phase 4 response structure');
+
+        // Log raw Phase 4 response before validation for debugging
+        requestLogger.debug({
+          rawPhase4Response: parsedJson,
+          hasMetadata: !!parsedJson.metadata,
+          hasPhase4Metadata: !!parsedJson.metadata?.phase4,
+          technicalWorkflowCount: parsedJson.technical_workflow?.length || 0,
+          technicalInputsCount: parsedJson.technical_inputs_required?.length || 0
+        }, 'Phase 4 raw response before validation');
+
+        const validation = validatePhase4Response(parsedJson);
+
+        if (!validation.success) {
+          requestLogger.error({
+            validationErrors: validation.errors,
+            phase
+          }, 'Phase 4 response validation failed');
+          return NextResponse.json(
+            {
+              success: false,
+              error: 'Invalid Phase 4 response structure from AI',
+              phase,
+              details: validation.errors?.join('; ') || 'Unknown validation error'
+            } as ThreadErrorResponse,
+            { status: 500 }
+          );
+        }
+
+        requestLogger.debug('Phase 4 response validated successfully');
+        aiResponse = validation.data as ProcessMessageResponse;
       } else {
         // Phase 1 & 2: No strict validation yet
         aiResponse = parsedJson;
@@ -479,6 +662,21 @@ export async function POST(request: NextRequest) {
           declinedPluginsBlocking: aiResponse.metadata?.declined_plugins_blocking,
           hasError: !!aiResponse.error
         }, 'Phase 3 - OAuth gate check complete');
+      }
+
+      // Step 12.7: Log Phase 4 technical workflow details
+      if (phase === 4) {
+        const phase4Metadata = aiResponse.metadata as any;
+        requestLogger.info({
+          technicalWorkflowSteps: aiResponse.technical_workflow?.length || 0,
+          technicalInputsRequired: aiResponse.technical_inputs_required?.length || 0,
+          canExecute: aiResponse.feasibility?.can_execute,
+          blockingIssues: aiResponse.feasibility?.blocking_issues?.length || 0,
+          warnings: aiResponse.feasibility?.warnings?.length || 0,
+          readyForGeneration: phase4Metadata?.ready_for_generation,
+          needsTechnicalInputs: phase4Metadata?.phase4?.needs_technical_inputs,
+          needsUserFeedback: phase4Metadata?.phase4?.needs_user_feedback
+        }, 'Phase 4 - Technical workflow generation complete');
       }
 
     } catch (parseError: any) {
@@ -519,18 +717,31 @@ export async function POST(request: NextRequest) {
       })
     };
 
+    // Determine thread status based on phase and response
+    let newStatus: 'active' | 'completed' = 'active';
+    if (phase === 4) {
+      // Phase 4: only mark completed if ready_for_generation is true
+      const phase4Metadata = aiResponse.metadata as any;
+      if (phase4Metadata?.ready_for_generation === true) {
+        newStatus = 'completed';
+      }
+    } else if (phase === 3) {
+      // Phase 3: mark completed (legacy behavior, will transition to Phase 4)
+      newStatus = 'completed';
+    }
+
     try {
       await threadRepository.updateThreadPhase(
         threadRecord.id,
         phase,
-        phase === 3 ? 'completed' : 'active',
+        newStatus,
         updatedMetadata
       );
 
       requestLogger.debug({
         dbRecordId: threadRecord.id,
         newPhase: phase,
-        newStatus: phase === 3 ? 'completed' : 'active'
+        newStatus
       }, 'Thread record updated');
     } catch (updateError: any) {
       requestLogger.warn({ err: updateError, dbRecordId: threadRecord.id }, 'Failed to update thread record (non-critical)');

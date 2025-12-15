@@ -107,6 +107,36 @@ export const Phase3ResponseSchema = z.object({
 export type ValidatedPhase3Response = z.infer<typeof Phase3ResponseSchema>;
 
 /**
+ * Normalize LLM response before validation.
+ * Handles common LLM quirks like returning arrays where strings are expected.
+ */
+function normalizePhase3Response(data: unknown): unknown {
+  if (!data || typeof data !== 'object') return data;
+
+  const normalized = JSON.parse(JSON.stringify(data)); // Deep clone
+
+  // Normalize resolved_user_inputs: convert array values to comma-separated strings
+  if (
+    normalized.enhanced_prompt?.specifics?.resolved_user_inputs &&
+    Array.isArray(normalized.enhanced_prompt.specifics.resolved_user_inputs)
+  ) {
+    normalized.enhanced_prompt.specifics.resolved_user_inputs =
+      normalized.enhanced_prompt.specifics.resolved_user_inputs.map((item: any) => {
+        if (item && typeof item === 'object' && Array.isArray(item.value)) {
+          // Convert array to comma-separated string
+          return {
+            ...item,
+            value: item.value.join(', ')
+          };
+        }
+        return item;
+      });
+  }
+
+  return normalized;
+}
+
+/**
  * Validation helper with detailed error formatting
  */
 export function validatePhase3Response(data: unknown): {
@@ -114,7 +144,10 @@ export function validatePhase3Response(data: unknown): {
   data?: ValidatedPhase3Response;
   errors?: string[];
 } {
-  const result = Phase3ResponseSchema.safeParse(data);
+  // Normalize the data to handle LLM quirks before validation
+  const normalizedData = normalizePhase3Response(data);
+
+  const result = Phase3ResponseSchema.safeParse(normalizedData);
 
   if (result.success) {
     return { success: true, data: result.data };

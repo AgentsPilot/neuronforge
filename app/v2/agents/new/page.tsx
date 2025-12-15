@@ -156,6 +156,13 @@ function V2AgentBuilderContent() {
   const [scheduleCron, setScheduleCron] = useState<string | null>(null)
   const [scheduleTimezone, setScheduleTimezone] = useState<string>('UTC')
 
+  // AI Provider/Model configuration (fetched from system settings)
+  const [aiConfig, setAiConfig] = useState<{ provider: string; model: string }>({
+    provider: 'openai',
+    model: 'gpt-4o'
+  })
+  const [aiConfigLoaded, setAiConfigLoaded] = useState(false)
+
   // Auto-scroll to bottom when messages or UI state changes
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -175,13 +182,35 @@ function V2AgentBuilderContent() {
     }
   }, [showScheduleBuilder])
 
-  // Initialize thread when user and prompt are ready
+  // Fetch AI provider/model configuration on mount
   useEffect(() => {
-    if (user && initialPrompt && !threadId && !isInitializing && !initializingRef.current) {
+    const fetchAiConfig = async () => {
+      try {
+        const res = await fetch('/api/system-config?category=agent_creation')
+        if (res.ok) {
+          const config = await res.json()
+          setAiConfig({
+            provider: config.agent_creation_ai_provider || 'openai',
+            model: config.agent_creation_ai_model || 'gpt-4o'
+          })
+          console.log('🤖 AI Config loaded:', config)
+        }
+      } catch (err) {
+        console.warn('Failed to fetch AI config, using defaults:', err)
+      } finally {
+        setAiConfigLoaded(true)
+      }
+    }
+    fetchAiConfig()
+  }, [])
+
+  // Initialize thread when user and prompt are ready (and AI config loaded)
+  useEffect(() => {
+    if (user && initialPrompt && !threadId && !isInitializing && !initializingRef.current && aiConfigLoaded) {
       initializingRef.current = true
       initializeThread()
     }
-  }, [user, initialPrompt, threadId, isInitializing])
+  }, [user, initialPrompt, threadId, isInitializing, aiConfigLoaded])
 
   // Auto-trigger Phase 3 when all questions are answered
   useEffect(() => {
@@ -237,8 +266,8 @@ function V2AgentBuilderContent() {
       // 2. Add typing indicator
       addTypingIndicator('Analyzing your request...')
 
-      // Create thread
-      console.log('🔄 Creating thread with prompt:', initialPrompt)
+      // Create thread with AI provider/model from system config
+      console.log('🔄 Creating thread with prompt:', initialPrompt, 'using:', aiConfig)
       const createRes = await fetch('/api/agent-creation/init-thread', {
         method: 'POST',
         headers: {
@@ -247,7 +276,11 @@ function V2AgentBuilderContent() {
           'x-session-id': sessionId.current,
           'x-agent-id': agentId.current
         },
-        body: JSON.stringify({ initial_prompt: initialPrompt })
+        body: JSON.stringify({
+          initial_prompt: initialPrompt,
+          ai_provider: aiConfig.provider,
+          ai_model: aiConfig.model
+        })
       })
 
       if (!createRes.ok) {

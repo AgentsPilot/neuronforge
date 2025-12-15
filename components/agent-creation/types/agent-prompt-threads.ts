@@ -1,10 +1,16 @@
 /**
  * Types for agent_prompt_threads table
- * Represents OpenAI thread state for agent creation flow (phases 1-3)
+ * Represents thread state for agent creation flow (phases 1-4)
+ * Supports multiple AI providers (OpenAI, Anthropic, Kimi)
  */
 
+import type { ProviderName } from '@/lib/ai/providerFactory';
+
 export type ThreadStatus = 'active' | 'expired' | 'completed' | 'abandoned';
-export type ThreadPhase = 1 | 2 | 3;
+export type ThreadPhase = 1 | 2 | 3 | 4;
+
+// Re-export ProviderName for convenience
+export type { ProviderName };
 
 export interface AgentPromptThread {
   id: string; // UUID
@@ -13,6 +19,8 @@ export interface AgentPromptThread {
   status: ThreadStatus;
   current_phase: ThreadPhase;
   agent_id: string | null; // UUID, nullable until agent is created
+  ai_provider: ProviderName; // AI provider for this thread (cannot change after creation)
+  ai_model: string; // AI model for this thread (cannot change after creation)
   created_at: string; // ISO timestamp
   updated_at: string; // ISO timestamp
   expires_at: string; // ISO timestamp
@@ -68,12 +76,14 @@ export type CreateAgentPromptThread = Omit<
 };
 
 export type UpdateAgentPromptThread = Partial<
-  Omit<AgentPromptThread, 'id' | 'user_id' | 'openai_thread_id' | 'created_at'>
+  Omit<AgentPromptThread, 'id' | 'user_id' | 'openai_thread_id' | 'ai_provider' | 'ai_model' | 'created_at'>
 >;
 
 // API Request/Response types
 export interface InitThreadRequest {
   user_id?: string; // Optional, will be extracted from auth session
+  ai_provider?: ProviderName; // Optional, defaults to 'openai'
+  ai_model?: string; // Optional, defaults to provider's default model
 }
 
 export interface InitThreadResponse {
@@ -81,6 +91,27 @@ export interface InitThreadResponse {
   thread_id: string;
   created_at: string;
   message: string;
+}
+
+/**
+ * Schema service action definition for Phase 4
+ */
+export interface SchemaServiceAction {
+  description: string;
+  usage_context: string;
+  parameters: Record<string, unknown>;
+  output_schema?: Record<string, unknown>;
+}
+
+/**
+ * Schema service definition for Phase 4
+ */
+export interface SchemaService {
+  name: string;
+  key: string;
+  description: string;
+  context: string;
+  actions: Record<string, SchemaServiceAction>;
 }
 
 export interface ProcessMessageRequest {
@@ -92,9 +123,13 @@ export interface ProcessMessageRequest {
   connected_services?: string[]; // Simple array of connected plugin keys
   available_services?: ConnectedService[]; // All plugins available in the system with full context
   clarification_answers?: Record<string, any>;
-  enhanced_prompt?: EnhancedPrompt | null; // Phase 2/3: Previous Phase 3 output for refinement
+  enhanced_prompt?: EnhancedPrompt | null; // Phase 2/3/4: Previous Phase 3 output for refinement
   declined_services?: string[]; // V10: Services user explicitly refused to connect (top-level)
   user_feedback?: string; // V10: Free-form user feedback for refinement (mini-cycle mode)
+  schema_services?: Record<string, SchemaService>; // Phase 4: Full service definitions for technical workflow
+  technical_inputs_collected?: Record<string, string>; // Phase 4: User-provided technical inputs (re-run)
+  ai_provider?: ProviderName; // Optional, override thread's provider for this call
+  ai_model?: string; // Optional, override thread's model for this call
   metadata?: {
     declined_plugins?: string[]; // Deprecated: use declined_services instead
     [key: string]: any; // Allow additional metadata
@@ -137,11 +172,16 @@ export interface ProcessMessageResponse {
   error?: string; // Phase 3: Error message if workflow impossible (e.g., no alternatives for declined plugin)
   // Note: ready_for_generation is ONLY in metadata.ready_for_generation, not at top level
 
+  // Phase 4 specific fields
+  technical_workflow?: TechnicalWorkflowStep[];
+  technical_inputs_required?: TechnicalInputRequired[];
+  feasibility?: Feasibility;
+
   // All Phases
   conversationalSummary?: string; // LLM-generated friendly summary of understanding/progress
 
-  // Strictly typed metadata (no arbitrary keys)
-  metadata?: Phase3Metadata;
+  // Strictly typed metadata (no arbitrary keys) - Phase 4 uses Phase4Metadata
+  metadata?: Phase3Metadata | Phase4Metadata;
 }
 
 export interface ClarificationQuestion {
@@ -210,6 +250,127 @@ export interface Phase3Metadata {
   plugins_adjusted?: string[];
   adjustment_reason?: string;
   reason?: string;
+}
+
+/**
+ * Phase 4 specific metadata extension
+ */
+export interface Phase4MetadataExtension {
+  can_execute: boolean;
+  needs_technical_inputs: boolean;
+  needs_user_feedback: boolean;
+}
+
+/**
+ * Strict metadata for Phase 4 responses
+ * Extends Phase 3 metadata with Phase 4 specific fields
+ */
+export interface Phase4Metadata extends Phase3Metadata {
+  phase4: Phase4MetadataExtension;
+}
+
+/**
+ * Technical workflow step input source
+ */
+export type StepInputSource = 'constant' | 'from_step' | 'user_input' | 'env' | 'plugin_config';
+
+/**
+ * Technical workflow step input parameter
+ */
+export interface StepInput {
+  source: StepInputSource;
+  value?: any;           // For 'constant' source
+  ref?: string;          // For 'from_step' source (e.g., "step1.messages")
+  key?: string;          // For 'user_input' source
+  plugin?: string;       // For 'user_input' source - which plugin needs this
+  action?: string;       // Optional - which action consumes this
+}
+
+/**
+ * Operation step - maps to a real plugin action
+ */
+export interface OperationStep {
+  id: string;
+  kind: 'operation';
+  description: string;
+  plugin: string;
+  action: string;
+  inputs: Record<string, StepInput>;
+  outputs: Record<string, string>;
+}
+
+/**
+ * Transform step - data transformation (e.g., LLM processing, filtering)
+ * The v11 prompt uses the same structure as operation steps for transforms
+ * (with plugin/action fields to identify the transform type)
+ */
+export interface TransformStep {
+  id: string;
+  kind: 'transform';
+  description: string;
+  plugin?: string;    // Optional - used when transform is a plugin call (e.g., chatgpt-research)
+  action?: string;    // Optional - used when transform is a plugin call
+  operation?: { type: string };  // Optional - for generic transforms
+  inputs?: Record<string, StepInput>;
+  outputs?: Record<string, string>;
+}
+
+/**
+ * Control step - conditional logic, loops, etc.
+ */
+export interface ControlStep {
+  id: string;
+  kind: 'control';
+  description?: string;
+  control?: {
+    type: string;
+    condition: string;
+  };
+  plugin?: string;    // Optional - for compatibility
+  action?: string;    // Optional - for compatibility
+  inputs?: Record<string, StepInput>;
+  outputs?: Record<string, string>;
+}
+
+/**
+ * Union of all technical workflow step types
+ */
+export type TechnicalWorkflowStep = OperationStep | TransformStep | ControlStep;
+
+/**
+ * Technical input required from user (Phase 4)
+ */
+export interface TechnicalInputRequired {
+  key: string;              // Machine-friendly identifier (e.g., "slack_channel_id")
+  plugin: string;           // Which plugin needs this input
+  actions?: string[];       // Which actions use this input
+  type?: string;            // Suggested UI type (string, fileId, folderId)
+  description: string;      // Human-friendly description for UI
+}
+
+/**
+ * Blocking issue in feasibility check
+ */
+export interface BlockingIssue {
+  type: string;            // e.g., "missing_plugin", "missing_operation", "unsupported_pattern"
+  description: string;     // Human-readable description
+}
+
+/**
+ * Warning in feasibility check (non-blocking)
+ */
+export interface FeasibilityWarning {
+  type: string;            // e.g., "assumption", "expensive_operation", "data_shape"
+  description: string;
+}
+
+/**
+ * Feasibility assessment for the technical workflow
+ */
+export interface Feasibility {
+  can_execute: boolean;
+  blocking_issues: BlockingIssue[];
+  warnings: FeasibilityWarning[];
 }
 
 // Thread resume response type

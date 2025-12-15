@@ -34,7 +34,18 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { agentId, title, description, preview_image_url, original_prompt } = body;
+    const {
+      agentId,
+      description: overrideDescription,
+      // Quality scores (optional, computed by client)
+      quality_score,
+      reliability_score,
+      efficiency_score,
+      adoption_score,
+      complexity_score,
+      base_executions,
+      base_success_rate,
+    } = body;
 
     if (!agentId) {
       requestLogger.warn('Missing agentId in request body');
@@ -61,7 +72,11 @@ export async function POST(request: NextRequest) {
     const agentData = agent as typeof agent & {
       created_from_prompt?: string;
       system_prompt?: string;
-      agent_config?: Record<string, unknown>;
+      generated_plan?: string;
+      ai_reasoning?: string;
+      ai_confidence?: number;
+      detected_categories?: string[];
+      ai_generated_at?: string;
     };
 
     // Check if already shared using repository
@@ -86,18 +101,31 @@ export async function POST(request: NextRequest) {
     // Create shared agent using repository
     const { data: sharedAgent, error: createError } = await sharedAgentRepository.create({
       original_agent_id: agentId,
-      creator_user_id: userId,
-      title: title || agentData.agent_name,
-      description: description || agentData.description,
-      preview_image_url,
-      original_prompt: original_prompt || agentData.created_from_prompt,
+      user_id: userId,
+      agent_name: agentData.agent_name,
+      description: overrideDescription || agentData.description,
       system_prompt: agentData.system_prompt,
-      user_prompt: agentData.user_prompt,
+      user_prompt: agentData.user_prompt || '',
       input_schema: agentData.input_schema,
       output_schema: agentData.output_schema,
       plugins_required: agentData.plugins_required,
       workflow_steps: agentData.workflow_steps,
-      agent_config: agentData.agent_config,
+      mode: agentData.mode,
+      generated_plan: agentData.generated_plan,
+      ai_reasoning: agentData.ai_reasoning,
+      ai_confidence: agentData.ai_confidence,
+      detected_categories: agentData.detected_categories,
+      created_from_prompt: agentData.created_from_prompt,
+      ai_generated_at: agentData.ai_generated_at,
+      connected_plugins: agentData.connected_plugins,
+      // Quality scores (if provided by client)
+      quality_score,
+      reliability_score,
+      efficiency_score,
+      adoption_score,
+      complexity_score,
+      base_executions,
+      base_success_rate,
     });
 
     if (createError || !sharedAgent) {
@@ -114,7 +142,7 @@ export async function POST(request: NextRequest) {
       entityType: 'shared_agent',
       entityId: sharedAgent.id,
       userId,
-      resourceName: title || agentData.agent_name,
+      resourceName: agentData.agent_name,
       details: { originalAgentId: agentId },
       severity: 'info',
       request,

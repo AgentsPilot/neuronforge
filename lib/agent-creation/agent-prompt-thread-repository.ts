@@ -50,7 +50,13 @@ export class AgentPromptThreadRepository {
       }
 
       repoLogger.info(
-        { threadId: record.id, openaiThreadId: record.openai_thread_id, duration },
+        {
+          threadId: record.id,
+          openaiThreadId: record.openai_thread_id,
+          aiProvider: record.ai_provider,
+          aiModel: record.ai_model,
+          duration
+        },
         'Thread record created'
       );
 
@@ -96,7 +102,14 @@ export class AgentPromptThreadRepository {
       }
 
       repoLogger.debug(
-        { threadId: record.id, status: record.status, currentPhase: record.current_phase, duration },
+        {
+          threadId: record.id,
+          status: record.status,
+          currentPhase: record.current_phase,
+          aiProvider: record.ai_provider,
+          aiModel: record.ai_model,
+          duration
+        },
         'Thread fetched'
       );
 

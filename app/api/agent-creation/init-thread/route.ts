@@ -12,11 +12,14 @@ import {
 import type {
   InitThreadResponse,
   ThreadErrorResponse,
-  CreateAgentPromptThread
+  CreateAgentPromptThread,
+  InitThreadRequest
 } from '@/components/agent-creation/types/agent-prompt-threads';
+import { PROVIDERS } from '@/lib/ai/providerFactory';
+import { resolveThreadProviderConfig } from '@/lib/agent-creation/thread-provider-config';
 
-//const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v9-chatgpt";
-const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v10-chatgpt";
+//const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v10-chatgpt";
+const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v12-chatgpt";
 
 // Initialize Supabase client (still needed for AIAnalyticsService)
 const supabase = createClient(
@@ -41,7 +44,7 @@ const logger = createLogger({ module: 'API', route: '/api/agent-creation/init-th
  * POST /api/agent-creation/init-thread
  *
  * Creates a new OpenAI thread with system prompt injected once for agent creation.
- * This thread will be used for phases 1-3 (analyze, clarify, enhance).
+ * This thread will be used for phases 1-4 (analyze, clarify, enhance, technical workflow).
  */
 export async function POST(request: NextRequest) {
   // Generate or extract correlation ID for request tracing
@@ -52,6 +55,35 @@ export async function POST(request: NextRequest) {
   requestLogger.info('Thread creation request received');
 
   try {
+    // Step 0: Parse request body for optional provider/model
+    let requestBody: InitThreadRequest = {};
+    try {
+      requestBody = await request.json();
+    } catch {
+      // Empty body is fine, use defaults
+    }
+
+    // Resolve provider and model using unified helper
+    const { provider: aiProvider, model: aiModel } = resolveThreadProviderConfig(
+      requestBody.ai_provider,
+      requestBody.ai_model
+    );
+
+    // Validate provider
+    if (!Object.values(PROVIDERS).includes(aiProvider)) {
+      requestLogger.warn({ aiProvider }, 'Invalid AI provider requested');
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Invalid AI provider',
+          details: `Supported providers: ${Object.values(PROVIDERS).join(', ')}`
+        } as ThreadErrorResponse,
+        { status: 400 }
+      );
+    }
+
+    requestLogger.debug({ aiProvider, aiModel }, 'AI provider configuration');
+
     // Step 1: Authenticate user
     const user = await getUser();
     if (!user) {
@@ -139,12 +171,16 @@ export async function POST(request: NextRequest) {
     }
 
     // Step 6: Store thread in database using repository
+    // ai_provider and ai_model are stored as dedicated columns (not in metadata)
+    // These values are immutable for the lifetime of the thread
     const threadData: CreateAgentPromptThread = {
       user_id: user.id,
       openai_thread_id: thread.id,
       status: 'active',
       current_phase: 1,
       agent_id: null,
+      ai_provider: aiProvider,
+      ai_model: aiModel,
       expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24 hours from now
       metadata: {}
     };
@@ -166,6 +202,8 @@ export async function POST(request: NextRequest) {
           threadId: thread.id,
           userId: user.id,
           dbRecordId: dbRecord.id,
+          aiProvider,
+          aiModel,
           duration: totalDuration
         },
         'Thread initialization complete'
