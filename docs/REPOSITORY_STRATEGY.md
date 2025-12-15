@@ -407,33 +407,113 @@ export function AgentDetailPage({ agentId }: Props) {
 }
 ```
 
+## Client API Layer
+
+For client components (`'use client'`), use the **Client API service** instead of making raw `fetch` calls. This provides type-safe access to all agent-related operations.
+
+**Location:** `lib/client/agent-api.ts`
+
+### Available Services
+
+| Service | Description |
+|---------|-------------|
+| `agentApi` | Agent CRUD, status updates, executions, memory count |
+| `sharedAgentApi` | Check if agent is shared, share an agent |
+| `metricsApi` | Get agent performance metrics |
+| `systemConfigApi` | Access system configuration values |
+
+### Usage Example
+
+```typescript
+'use client'
+import { agentApi, sharedAgentApi, metricsApi } from '@/lib/client/agent-api';
+
+export function AgentDetailPage({ agentId, userId }: Props) {
+  const fetchAgent = async () => {
+    // Get agent with automatic plugin token refresh
+    const result = await agentApi.getById(agentId, userId);
+    if (result.success && result.data) {
+      setAgent(result.data.agent);
+    }
+  };
+
+  const fetchExecutions = async () => {
+    // Get executions with server-side token enrichment
+    const result = await agentApi.getExecutions(agentId, userId, { includeTokens: true });
+    if (result.success) {
+      setExecutions(result.data);
+    }
+  };
+
+  const handleShare = async () => {
+    // Share agent with quality scores
+    const result = await sharedAgentApi.share(agentId, userId, {
+      quality_score: 85,
+      reliability_score: 90,
+      base_executions: 100,
+    });
+    if (result.success) {
+      console.log('Shared with ID:', result.data.id);
+    }
+  };
+}
+```
+
+### Client API Methods
+
+**agentApi:**
+| Method | Description |
+|--------|-------------|
+| `getById(agentId, userId)` | Get agent details (also triggers plugin token refresh) |
+| `update(agentId, userId, data)` | Update agent fields |
+| `delete(agentId, userId)` | Soft delete an agent |
+| `updateStatus(agentId, userId, status)` | Pause or activate agent |
+| `duplicate(agentId, userId)` | Create a copy of the agent |
+| `getExecutions(agentId, userId, options?)` | Get executions with optional token enrichment |
+| `getMemoryCount(agentId, userId)` | Get count of agent memories |
+
+**sharedAgentApi:**
+| Method | Description |
+|--------|-------------|
+| `existsByOriginalAgent(agentId, userId)` | Check if agent has been shared |
+| `share(agentId, userId, shareData?)` | Share agent with optional quality scores |
+
+**metricsApi:**
+| Method | Description |
+|--------|-------------|
+| `getBasicMetrics(agentId, userId)` | Get execution counts, success rate, avg duration |
+
 ## API Routes Using Repositories
 
-The following API routes use the repository layer and can be called from client components:
+The following API routes use the repository layer. **Client components should use the Client API service above rather than calling these directly.**
 
 | Route | Method | Repository | Description |
 |-------|--------|------------|-------------|
 | `/api/agents` | GET | `agentRepository.findAllByUser()` | List agents with optional status filter |
-| `/api/agents/[id]` | GET | Direct Supabase | Get single agent |
-| `/api/agents/[id]` | PUT | Direct Supabase | Update agent |
-| `/api/agents/[id]/status` | PATCH | `agentRepository.updateStatus()` | Update agent status |
+| `/api/agents/[id]` | GET | `agentRepository.findById()` | Get single agent + plugin token refresh |
+| `/api/agents/[id]` | PUT | `agentRepository.updateDetails()` | Update agent |
+| `/api/agents/[id]` | DELETE | `agentRepository.softDelete()` | Soft delete agent |
+| `/api/agents/[id]/status` | POST | `agentRepository.updateStatus()` | Update agent status |
+| `/api/agents/[id]/duplicate` | POST | `agentRepository.duplicate()` | Duplicate agent |
+| `/api/agents/[id]/executions` | GET | `executionRepository.findByAgentId()` | Get executions with token enrichment |
+| `/api/agents/[id]/memory/count` | GET | `memoryRepository.countByAgentId()` | Get memory count |
+| `/api/agents/[id]/metrics` | GET | `agentMetricsRepository.findByAgentId()` | Get performance metrics |
+| `/api/shared-agents` | POST | `sharedAgentRepository.create()` | Share an agent |
+| `/api/shared-agents/exists` | GET | `sharedAgentRepository.existsByOriginalAgent()` | Check if agent is shared |
+| `/api/system-config` | GET | `systemConfigRepository.getByCategory()` | Get system config |
 
-**Client Component Pattern:**
+**Direct fetch (use only when Client API doesn't cover your use case):**
 ```typescript
 'use client'
 
-// Fetch agents via API route
-const response = await fetch('/api/agents?status=active', {
-  headers: { 'x-user-id': user.id }
-});
-const { agents } = await response.json();
+// Prefer this (type-safe, handles auth headers automatically):
+const result = await agentApi.getById(agentId, userId);
 
-// Update status via API route
-await fetch(`/api/agents/${agentId}/status`, {
-  method: 'PATCH',
-  headers: { 'Content-Type': 'application/json', 'x-user-id': user.id },
-  body: JSON.stringify({ status: 'inactive' })
+// Instead of this (manual, error-prone):
+const response = await fetch(`/api/agents/${agentId}`, {
+  headers: { 'x-user-id': userId }
 });
+const data = await response.json();
 ```
 
 ## Adding New Repositories

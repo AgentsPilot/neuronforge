@@ -16,6 +16,7 @@ export type AuditSeverity = 'info' | 'warning' | 'critical';
  */
 export type EntityType =
   | 'agent'
+  | 'shared_agent'
   | 'user'
   | 'plugin'
   | 'settings'

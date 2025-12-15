@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { auditLog } from '@/lib/services/AuditTrailService';
 import { generateDiff } from '@/lib/audit/diff';
+import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 
 // Initialize Supabase client with Service Role Key
 const supabase = createClient(
@@ -92,11 +93,60 @@ export async function GET(
       );
     }
 
+    // Auto-refresh plugin tokens for this agent's required plugins
+    let pluginRefreshResults: {
+      ready: string[];
+      failed: string[];
+    } | null = null;
+
+    if (agent.plugins_required && Array.isArray(agent.plugins_required) && agent.plugins_required.length > 0) {
+      console.log(`🔄 Preparing plugin tokens for agent: ${agent.plugins_required.join(', ')}`);
+
+      try {
+        const pluginManager = await PluginManagerV2.getInstance();
+        const userConnections = pluginManager['userConnections'];
+
+        pluginRefreshResults = { ready: [], failed: [] };
+
+        for (const pluginKey of agent.plugins_required) {
+          const pluginDefinition = pluginManager.getPluginDefinition(pluginKey);
+
+          if (!pluginDefinition) {
+            pluginRefreshResults.failed.push(pluginKey);
+            continue;
+          }
+
+          if (pluginDefinition.plugin.isSystem) {
+            pluginRefreshResults.ready.push(pluginKey);
+            continue;
+          }
+
+          // getConnection handles: fetch + check expiry + refresh if needed
+          const connection = await userConnections.getConnection(
+            userId,
+            pluginKey,
+            pluginDefinition.plugin.auth_config
+          );
+
+          if (connection) {
+            pluginRefreshResults.ready.push(pluginKey);
+          } else {
+            pluginRefreshResults.failed.push(pluginKey);
+          }
+        }
+
+        console.log('Plugin preparation results:', pluginRefreshResults);
+      } catch (refreshError) {
+        console.error('⚠️ Plugin token preparation failed (non-blocking):', refreshError);
+      }
+    }
+
     console.log(`Agent fetched successfully: ${agent.agent_name || 'Unnamed Agent'} for user ${userId}`);
 
     return NextResponse.json({
       success: true,
-      agent: agent
+      agent: agent,
+      pluginRefresh: pluginRefreshResults
     });
 
   } catch (error) {

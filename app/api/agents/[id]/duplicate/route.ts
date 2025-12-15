@@ -1,11 +1,11 @@
-// app/api/agents/[id]/status/route.ts
-// Update agent status (pause/activate)
+// app/api/agents/[id]/duplicate/route.ts
+// Duplicate an agent
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { agentRepository } from '@/lib/repositories';
 
-const logger = createLogger({ module: 'API', route: '/api/agents/[id]/status' });
+const logger = createLogger({ module: 'API', route: '/api/agents/[id]/duplicate' });
 
 function getUserIdFromRequest(request: NextRequest): string | null {
   const userIdHeader = request.headers.get('x-user-id');
@@ -13,7 +13,7 @@ function getUserIdFromRequest(request: NextRequest): string | null {
   return null;
 }
 
-// POST /api/agents/[id]/status - Update agent status
+// POST /api/agents/[id]/duplicate - Duplicate an agent
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -25,7 +25,7 @@ export async function POST(
 
   const requestLogger = logger.child({ correlationId, agentId, userId });
 
-  requestLogger.info('Status update request received');
+  requestLogger.info('Duplicate agent request received');
 
   try {
     if (!userId) {
@@ -36,33 +36,18 @@ export async function POST(
       );
     }
 
-    const body = await request.json();
-    const { status } = body;
-
-    if (!status || !['active', 'paused'].includes(status)) {
-      requestLogger.warn({ status }, 'Invalid status value');
-      return NextResponse.json(
-        { success: false, error: 'Invalid status. Must be "active" or "paused"' },
-        { status: 400 }
-      );
-    }
-
-    requestLogger.debug({ newStatus: status }, 'Updating agent status');
-
-    // Use repository methods for status updates
-    const { data: updatedAgent, error } = status === 'paused'
-      ? await agentRepository.pause(agentId, userId)
-      : await agentRepository.activate(agentId, userId);
+    // Use repository method for duplication
+    const { data: duplicatedAgent, error } = await agentRepository.duplicate(agentId, userId);
 
     if (error) {
-      requestLogger.error({ err: error }, 'Failed to update agent status');
+      requestLogger.error({ err: error }, 'Failed to duplicate agent');
       return NextResponse.json(
-        { success: false, error: error.message || 'Failed to update status' },
+        { success: false, error: error.message || 'Failed to duplicate agent' },
         { status: 500 }
       );
     }
 
-    if (!updatedAgent) {
+    if (!duplicatedAgent) {
       requestLogger.warn('Agent not found or access denied');
       return NextResponse.json(
         { success: false, error: 'Agent not found or access denied' },
@@ -71,15 +56,18 @@ export async function POST(
     }
 
     const duration = Date.now() - startTime;
-    requestLogger.info({ duration, newStatus: status }, 'Agent status updated successfully');
+    requestLogger.info(
+      { duration, newAgentId: duplicatedAgent.id, newAgentName: duplicatedAgent.agent_name },
+      'Agent duplicated successfully'
+    );
 
     return NextResponse.json({
       success: true,
-      agent: updatedAgent,
+      agent: duplicatedAgent,
     });
   } catch (error) {
     const duration = Date.now() - startTime;
-    requestLogger.error({ err: error, duration }, 'Status update request failed');
+    requestLogger.error({ err: error, duration }, 'Duplicate agent request failed');
     return NextResponse.json(
       { success: false, error: 'Internal server error' },
       { status: 500 }
