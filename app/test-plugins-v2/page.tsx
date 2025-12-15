@@ -1,10 +1,23 @@
 // app/test-plugins-v2/page.tsx
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { PluginAPIClient } from '@/lib/client/plugin-api-client';
 import { PluginInfo, UserPluginStatus, ExecutionResult } from '@/lib/types/plugin-types';
 import { v4 as uuidv4 } from 'uuid';
+import { useDebugStream, DebugState, StepStatus } from '@/hooks/useDebugStream';
+import { DebugControls } from '@/components/debug/DebugControls';
+import { StepVisualizer } from '@/components/debug/StepVisualizer';
+
+// Workflow step interface for step visualization
+interface WorkflowStep {
+  id: string;
+  name: string;
+  type?: string;
+  description?: string;
+  action?: string;
+  plugin?: string;
+}
 
 interface DebugLog {
   timestamp: string;
@@ -20,24 +33,63 @@ type ProviderOption = typeof PROVIDER_OPTIONS[number];
 
 const MODELS_BY_PROVIDER: Record<ProviderOption, { value: string; label: string }[]> = {
   openai: [
-    { value: 'gpt-4o', label: 'GPT-4o (Latest)' },
-    { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Fast)' },
-    { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
-    { value: 'gpt-4', label: 'GPT-4' },
-    { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' }
+    // GPT-5.2 Series (Latest)
+    { value: 'gpt-5.2', label: 'GPT-5.2 (Latest)' },
+    { value: 'gpt-5.2-pro', label: 'GPT-5.2 Pro (Highest Accuracy)' },
+    // GPT-5.1 Series
+    { value: 'gpt-5.1', label: 'GPT-5.1 (Flagship)' },
+    // GPT-5 Series
+    { value: 'gpt-5', label: 'GPT-5 (Advanced Reasoning)' },
+    { value: 'gpt-5-mini', label: 'GPT-5 Mini (Balanced)' },
+    { value: 'gpt-5-nano', label: 'GPT-5 Nano (Fastest)' },
+    // GPT-4.1 Series
+    { value: 'gpt-4.1', label: 'GPT-4.1 (Coding, 1M Context)' },
+    { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
+    { value: 'gpt-4.1-nano', label: 'GPT-4.1 Nano' },
+    // o-Series Reasoning
+    { value: 'o3', label: 'o3 (Powerful Reasoning)' },
+    { value: 'o4-mini', label: 'o4-mini (Fast Reasoning)' },
+    // GPT-4o Series
+    { value: 'gpt-4o', label: 'GPT-4o (Multimodal)' },
+    { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Cost-Effective)' },
+    // Legacy
+    { value: 'gpt-4-turbo', label: 'GPT-4 Turbo (Legacy)' },
+    { value: 'gpt-4', label: 'GPT-4 (Legacy)' },
+    { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo (Legacy)' }
   ],
   anthropic: [
-    { value: 'claude-sonnet-4-20250514', label: 'Claude 4 Sonnet (Latest)' },
-    { value: 'claude-opus-4-20250514', label: 'Claude 4 Opus' },
-    { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
-    { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku (Fast)' },
-    { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus' },
-    { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku' }
+    // Claude 4.5 Series (Latest)
+    { value: 'claude-opus-4-5-20251101', label: 'Claude 4.5 Opus (Most Intelligent)' },
+    { value: 'claude-sonnet-4-5-20250929', label: 'Claude 4.5 Sonnet (Best Balance)' },
+    { value: 'claude-haiku-4-5-20251001', label: 'Claude 4.5 Haiku (Fastest)' },
+    // Claude 4.1 Series
+    { value: 'claude-opus-4-1-20250805', label: 'Claude 4.1 Opus (Agentic)' },
+    // Claude 4 Series
+    { value: 'claude-opus-4-20250514', label: 'Claude 4 Opus (Coding)' },
+    { value: 'claude-sonnet-4-20250514', label: 'Claude 4 Sonnet (Reasoning)' },
+    // Claude 3.7 Series
+    { value: 'claude-3-7-sonnet-20250219', label: 'Claude 3.7 Sonnet (Hybrid)' },
+    // Claude 3.5 Series (Legacy)
+    { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet (Legacy)' },
+    { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku (Legacy)' },
+    // Claude 3 Series (Legacy)
+    { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus (Legacy)' },
+    { value: 'claude-3-sonnet-20240229', label: 'Claude 3 Sonnet (Retired)' },
+    { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku (Budget)' }
   ],
   kimi: [
-    { value: 'kimi-k2-0905-preview', label: 'Kimi K2 Preview (Latest)' },
+    // K2 Series (Latest)
+    { value: 'kimi-k2-0905-preview', label: 'Kimi K2 Preview (Latest, 256K)' },
     { value: 'kimi-k2-thinking', label: 'Kimi K2 Thinking (Reasoning)' },
-    { value: 'kimi-k2-0711-preview', label: 'Kimi K2 Original' }
+    { value: 'kimi-k2-0711-preview', label: 'Kimi K2 Original (128K)' },
+    // K1.5 Series
+    { value: 'kimi-k1.5', label: 'Kimi K1.5 (Multimodal)' },
+    { value: 'kimi-k1.5-long', label: 'Kimi K1.5 Long (Step-by-Step)' },
+    // Linear Series
+    { value: 'kimi-linear-48b', label: 'Kimi Linear (1M Context, 6x Faster)' },
+    // Specialized
+    { value: 'kimi-dev-72b', label: 'Kimi Dev (Coding, SWE-bench)' },
+    { value: 'kimi-vl', label: 'Kimi VL (Vision-Language)' }
   ]
 };
 
@@ -534,9 +586,9 @@ export default function TestPluginsPage() {
   const [aiServiceRequestBody, setAiServiceRequestBody] = useState<string>('{}');
   const [aiServiceResponse, setAiServiceResponse] = useState<any>(null);
 
-  // Provider/Model selection state (for test/analyze-prompt)
+  // Provider/Model selection state (shared by test/analyze-prompt and thread-conversation)
   const [selectedProvider, setSelectedProvider] = useState<ProviderOption>('openai');
-  const [selectedModel, setSelectedModel] = useState<string>('gpt-4o');
+  const [selectedModel, setSelectedModel] = useState<string>('gpt-5.2');
 
   // Plugin loading state (for test/analyze-prompt)
   const [userConnectedPluginKeys, setUserConnectedPluginKeys] = useState<string[]>([]);
@@ -544,7 +596,7 @@ export default function TestPluginsPage() {
 
   // Thread Conversation state
   const [threadId, setThreadId] = useState<string | null>(null);
-  const [currentPhase, setCurrentPhase] = useState<1 | 2 | 3>(1);
+  const [currentPhase, setCurrentPhase] = useState<1 | 2 | 3 | 4>(1);
   const [initialPrompt, setInitialPrompt] = useState('');
   const [conversationHistory, setConversationHistory] = useState<Array<{
     role: 'user' | 'assistant';
@@ -559,6 +611,16 @@ export default function TestPluginsPage() {
   const [clarityScore, setClarityScore] = useState(0);
   const [analysisData, setAnalysisData] = useState<any>(null);
   const [missingPlugins, setMissingPlugins] = useState<string[]>([]);
+
+  // Phase 4 state (technical workflow generation)
+  const [technicalWorkflow, setTechnicalWorkflow] = useState<any[]>([]);
+  const [technicalInputsRequired, setTechnicalInputsRequired] = useState<any[]>([]);
+  const [feasibility, setFeasibility] = useState<any>(null);
+  const [phase4Response, setPhase4Response] = useState<any>(null);
+  const [technicalInputsCollected, setTechnicalInputsCollected] = useState<Record<string, string>>({});
+
+  // Ref for conversation history auto-scroll
+  const conversationHistoryRef = useRef<HTMLDivElement>(null);
 
   // Mini-cycle state (for user_inputs_required refinement)
   const [isInMiniCycle, setIsInMiniCycle] = useState(false);
@@ -584,7 +646,28 @@ export default function TestPluginsPage() {
   const [agentExecutionResult, setAgentExecutionResult] = useState<any>(null);
   const [isExecutingAgent, setIsExecutingAgent] = useState(false);
   const [useAgentKit, setUseAgentKit] = useState(true);
-  const [agentsList, setAgentsList] = useState<Array<{id: string; agent_name: string; status: string}>>([]);
+  const [agentsList, setAgentsList] = useState<Array<{id: string; agent_name: string; status: string; pilot_steps?: any[]; workflow_steps?: any[]}>>([]);
+
+  // Step-by-step Debug Execution state
+  const [debugModeEnabled, setDebugModeEnabled] = useState(false);
+  const [selectedAgentDetails, setSelectedAgentDetails] = useState<any>(null);
+  const [agentWorkflowSteps, setAgentWorkflowSteps] = useState<WorkflowStep[]>([]);
+
+  // Debug stream hook
+  const debugStream = useDebugStream({
+    onEvent: (event) => {
+      addDebugLog('info', `[Debug] ${event.type}: ${event.stepName || event.stepId || ''}`);
+    },
+    onComplete: (result) => {
+      addDebugLog('success', 'Debug execution completed');
+      setAgentExecutionResult(result);
+      setIsExecutingAgent(false);
+    },
+    onError: (error) => {
+      addDebugLog('error', `Debug execution error: ${error}`);
+      setIsExecutingAgent(false);
+    }
+  });
 
   // Debug logging
   const [debugLogs, setDebugLogs] = useState<DebugLog[]>([]);
@@ -629,6 +712,13 @@ export default function TestPluginsPage() {
       updateParameterTemplate();
     }
   }, [selectedPlugin, selectedAction]);
+
+  // Auto-scroll conversation history to bottom when new messages are added
+  useEffect(() => {
+    if (conversationHistoryRef.current) {
+      conversationHistoryRef.current.scrollTop = conversationHistoryRef.current.scrollHeight;
+    }
+  }, [conversationHistory]);
 
   const loadAvailablePlugins = async () => {
     try {
@@ -1006,8 +1096,9 @@ export default function TestPluginsPage() {
       if (selectedAIService === 'test/analyze-prompt') {
         const template = (AI_SERVICE_TEMPLATES as any)[selectedAIService];
         if (template?.provider && PROVIDER_OPTIONS.includes(template.provider)) {
-          setSelectedProvider(template.provider);
-          setSelectedModel(template.model || MODELS_BY_PROVIDER[template.provider][0].value);
+          const provider = template.provider as ProviderOption;
+          setSelectedProvider(provider);
+          setSelectedModel(template.model || MODELS_BY_PROVIDER[provider][0].value);
         }
       }
     }
@@ -1030,7 +1121,9 @@ export default function TestPluginsPage() {
         userContext: {
           full_name: 'Test User',
           email: userId + '@example.com'
-        }
+        },
+        ai_provider: selectedProvider,
+        ai_model: selectedModel
       };
 
       const response = await fetch('/api/agent-creation/init-thread', {
@@ -1108,6 +1201,46 @@ export default function TestPluginsPage() {
       // Phase 3 requires clarification_answers
       if (phase === 3 && answers) {
         requestBody.clarification_answers = answers;
+      }
+
+      // Phase 4: Technical workflow generation (enhanced_prompt is in thread context)
+      if (phase === 4) {
+        // If we have collected technical inputs, map them to resolved_user_inputs in enhanced_prompt
+        if (enhancedPrompt && Object.keys(technicalInputsCollected).length > 0) {
+          // Map technical inputs to ResolvedUserInput format: { key, value }
+          const newResolvedInputs = Object.entries(technicalInputsCollected).map(([key, value]) => ({
+            key,
+            value
+          }));
+
+          // Merge with existing resolved_user_inputs if any
+          const existingResolved = enhancedPrompt.specifics?.resolved_user_inputs || [];
+          const mergedResolved = [...existingResolved];
+
+          // Add or update resolved inputs (avoid duplicates by key)
+          newResolvedInputs.forEach(newInput => {
+            const existingIndex = mergedResolved.findIndex((r: { key: string }) => r.key === newInput.key);
+            if (existingIndex >= 0) {
+              mergedResolved[existingIndex] = newInput;
+            } else {
+              mergedResolved.push(newInput);
+            }
+          });
+
+          // Create updated enhanced_prompt with resolved inputs
+          requestBody.enhanced_prompt = {
+            ...enhancedPrompt,
+            specifics: {
+              ...enhancedPrompt.specifics,
+              resolved_user_inputs: mergedResolved
+            }
+          };
+
+          addDebugLog('info', `Mapped ${newResolvedInputs.length} technical inputs to resolved_user_inputs`);
+        } else {
+          // Pass enhanced_prompt as-is if no technical inputs collected
+          requestBody.enhanced_prompt = enhancedPrompt || null;
+        }
       }
 
       const response = await fetch('/api/agent-creation/process-message', {
@@ -1205,6 +1338,46 @@ export default function TestPluginsPage() {
             await processMessage(2, undefined, currentThreadId);
           }
         }
+        // Handle Phase 4 response with technical workflow
+        else if (phase === 4 && data.technical_workflow) {
+          setTechnicalWorkflow(data.technical_workflow);
+          setTechnicalInputsRequired(data.technical_inputs_required || []);
+          setFeasibility(data.feasibility);
+          setPhase4Response(data);
+          setCurrentPhase(4);
+
+          // Add AI response to history
+          setConversationHistory(prev => [...prev, {
+            role: 'assistant',
+            content: data.conversationalSummary || 'Technical workflow generated.',
+            data: {
+              technical_workflow: data.technical_workflow,
+              technical_inputs_required: data.technical_inputs_required,
+              feasibility: data.feasibility,
+              metadata: data.metadata
+            }
+          }]);
+
+          const phase4Metadata = data.metadata?.phase4;
+          addDebugLog('success', `Phase 4 complete - ${data.technical_workflow.length} workflow steps generated`);
+
+          // Log feasibility status
+          if (data.feasibility?.can_execute) {
+            addDebugLog('success', 'Feasibility check passed - workflow can be executed');
+          } else {
+            addDebugLog('info', `Feasibility issues: ${data.feasibility?.blocking_issues?.length || 0} blocking, ${data.feasibility?.warnings?.length || 0} warnings`);
+          }
+
+          // Check if technical inputs are needed
+          if (phase4Metadata?.needs_technical_inputs && data.technical_inputs_required?.length > 0) {
+            addDebugLog('info', `Technical inputs required: ${data.technical_inputs_required.map((i: any) => i.key).join(', ')}`);
+          }
+
+          // Check if ready for generation
+          if (data.metadata?.ready_for_generation) {
+            addDebugLog('success', 'Agent is ready for generation!');
+          }
+        }
       } else {
         addDebugLog('error', `Phase ${phase} failed: ${data.error || 'Unknown error'}`);
       }
@@ -1288,6 +1461,12 @@ export default function TestPluginsPage() {
     setApiCommunications([]);
     setIsInMiniCycle(false);
     setMiniCyclePhase3(null);
+    // Reset Phase 4 state
+    setTechnicalWorkflow([]);
+    setTechnicalInputsRequired([]);
+    setFeasibility(null);
+    setPhase4Response(null);
+    setTechnicalInputsCollected({});
     addDebugLog('info', 'Thread conversation reset');
   };
 
@@ -1392,7 +1571,10 @@ export default function TestPluginsPage() {
       addDebugLog('info', 'Loading user agents...');
       const response = await fetch(`/api/agents?user_id=${userId}`, {
         method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': userId
+        },
       });
 
       if (!response.ok) {
@@ -1406,6 +1588,63 @@ export default function TestPluginsPage() {
     } catch (error: any) {
       addDebugLog('error', `Failed to load agents: ${error.message}`);
       setAgentsList([]);
+    }
+  };
+
+  // Load full agent details including pilot_steps
+  const loadAgentDetails = async (agentIdToLoad: string) => {
+    if (!agentIdToLoad.trim()) return;
+
+    try {
+      addDebugLog('info', `Loading agent details for ${agentIdToLoad}...`);
+      const response = await fetch(`/api/agents/${agentIdToLoad}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': userId
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      const agent = result.agent || result.data || result;
+      setSelectedAgentDetails(agent);
+
+      // Extract workflow steps (pilot_steps has priority over workflow_steps)
+      const steps = agent.pilot_steps || agent.workflow_steps || [];
+      const workflowSteps: WorkflowStep[] = steps.map((step: any, index: number) => ({
+        id: step.id || step.step_id || `step-${index}`,
+        name: step.name || step.step_name || `Step ${index + 1}`,
+        type: step.type || step.step_type,
+        description: step.description,
+        action: step.action,
+        plugin: step.plugin
+      }));
+
+      setAgentWorkflowSteps(workflowSteps);
+
+      // Initialize step statuses in debug stream
+      debugStream.initializeSteps(workflowSteps.map(s => ({ id: s.id, name: s.name })));
+
+      addDebugLog('success', `Loaded agent "${agent.agent_name}" with ${workflowSteps.length} workflow steps`);
+    } catch (error: any) {
+      addDebugLog('error', `Failed to load agent details: ${error.message}`);
+      setSelectedAgentDetails(null);
+      setAgentWorkflowSteps([]);
+    }
+  };
+
+  // Handle agent selection change
+  const handleAgentSelection = (newAgentId: string) => {
+    setAgentId(newAgentId);
+    if (newAgentId) {
+      loadAgentDetails(newAgentId);
+    } else {
+      setSelectedAgentDetails(null);
+      setAgentWorkflowSteps([]);
     }
   };
 
@@ -1466,11 +1705,114 @@ export default function TestPluginsPage() {
     }
   };
 
+  // Start debug execution with step-by-step mode
+  const startDebugExecution = async () => {
+    if (!agentId.trim()) {
+      addDebugLog('error', 'Agent ID is required');
+      return;
+    }
+
+    let parsedInputs: Record<string, any> = {};
+    try {
+      parsedInputs = JSON.parse(agentInputVariables);
+    } catch (error) {
+      addDebugLog('error', 'Invalid JSON in input variables');
+      return;
+    }
+
+    // Generate a debug run ID
+    const runId = uuidv4();
+    addDebugLog('info', `Starting debug execution with runId: ${runId}`);
+
+    setIsExecutingAgent(true);
+    setAgentExecutionResult(null);
+
+    // Reset and initialize step statuses
+    debugStream.reset();
+    debugStream.initializeSteps(agentWorkflowSteps.map(s => ({ id: s.id, name: s.name })));
+
+    try {
+      // Connect to debug stream FIRST (before starting execution)
+      debugStream.connect(runId);
+
+      // Small delay to ensure SSE connection is established
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      addDebugLog('info', `Executing agent ${agentId} in debug mode...`);
+
+      // Start execution with debug mode enabled
+      const response = await fetch('/api/run-agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent_id: agentId,
+          input_variables: parsedInputs,
+          override_user_prompt: agentOverridePrompt || undefined,
+          execution_type: 'test',
+          use_agentkit: false, // Use Pilot for debug mode
+          debugMode: true,
+          debugRunId: runId,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!result.success && !result.debugMode) {
+        // If not in debug mode or failed immediately, show result
+        setAgentExecutionResult(result);
+        setIsExecutingAgent(false);
+        debugStream.disconnect();
+
+        if (!result.success) {
+          addDebugLog('error', `Debug execution failed: ${result.error || 'Unknown error'}`);
+        }
+      }
+      // If debug mode is active, the result will come through SSE events
+    } catch (error: any) {
+      addDebugLog('error', `Debug execution error: ${error.message}`);
+      setAgentExecutionResult({ success: false, error: error.message });
+      setIsExecutingAgent(false);
+      debugStream.disconnect();
+    }
+  };
+
+  // Debug control handlers
+  const handleDebugPause = () => {
+    addDebugLog('info', 'Pausing execution...');
+    debugStream.pause();
+  };
+
+  const handleDebugResume = () => {
+    addDebugLog('info', 'Resuming execution...');
+    debugStream.resume();
+  };
+
+  const handleDebugStep = () => {
+    addDebugLog('info', 'Stepping to next...');
+    debugStream.step();
+  };
+
+  const handleDebugStop = () => {
+    addDebugLog('info', 'Stopping execution...');
+    debugStream.stop();
+    setIsExecutingAgent(false);
+  };
+
+  const handleDebugReset = () => {
+    debugStream.reset();
+    setAgentExecutionResult(null);
+    debugStream.initializeSteps(agentWorkflowSteps.map(s => ({ id: s.id, name: s.name })));
+    addDebugLog('info', 'Debug session reset');
+  };
+
   const resetAgentExecutionForm = () => {
     setAgentId('');
     setAgentInputVariables('{}');
     setAgentOverridePrompt('');
     setAgentExecutionResult(null);
+    setSelectedAgentDetails(null);
+    setAgentWorkflowSteps([]);
+    debugStream.reset();
     addDebugLog('info', 'Agent execution form reset');
   };
 
@@ -2073,6 +2415,7 @@ export default function TestPluginsPage() {
             <div style={{ fontSize: '14px', color: '#333' }}>
               <div><strong>Thread ID:</strong> {threadId || 'Not started'}</div>
               <div><strong>Current Phase:</strong> {currentPhase} {isInMiniCycle && <span style={{ color: '#ff6b6b', fontWeight: 'bold' }}>(Mini-Cycle Active)</span>}</div>
+              <div><strong>AI Provider:</strong> {selectedProvider.charAt(0).toUpperCase() + selectedProvider.slice(1)} / {selectedModel}</div>
               <div><strong>Clarity Score:</strong> {clarityScore}%</div>
               <div><strong>API Calls Tracked:</strong> {apiCommunications.length}</div>
               {apiCommunications.length > 0 && (
@@ -2097,6 +2440,64 @@ export default function TestPluginsPage() {
           {!threadId && (
             <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
               <h2>Start New Thread</h2>
+
+              {/* Provider and Model Selection */}
+              <div style={{ marginBottom: '15px', display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+                <div style={{ flex: '1', minWidth: '200px' }}>
+                  <label htmlFor="providerSelect" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                    AI Provider:
+                  </label>
+                  <select
+                    id="providerSelect"
+                    value={selectedProvider}
+                    onChange={(e) => {
+                      const newProvider = e.target.value as ProviderOption;
+                      setSelectedProvider(newProvider);
+                      // Reset model to first option when provider changes
+                      setSelectedModel(MODELS_BY_PROVIDER[newProvider][0].value);
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '8px',
+                      fontSize: '14px',
+                      border: '1px solid #ccc',
+                      borderRadius: '3px',
+                      backgroundColor: 'white'
+                    }}
+                  >
+                    {PROVIDER_OPTIONS.map(provider => (
+                      <option key={provider} value={provider}>
+                        {provider.charAt(0).toUpperCase() + provider.slice(1)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ flex: '2', minWidth: '250px' }}>
+                  <label htmlFor="modelSelect" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                    Model:
+                  </label>
+                  <select
+                    id="modelSelect"
+                    value={selectedModel}
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '8px',
+                      fontSize: '14px',
+                      border: '1px solid #ccc',
+                      borderRadius: '3px',
+                      backgroundColor: 'white'
+                    }}
+                  >
+                    {MODELS_BY_PROVIDER[selectedProvider].map(model => (
+                      <option key={model.value} value={model.value}>
+                        {model.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
               <div style={{ marginBottom: '15px' }}>
                 <label htmlFor="initialPrompt" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
                   Initial Prompt:
@@ -2140,13 +2541,16 @@ export default function TestPluginsPage() {
           {conversationHistory.length > 0 && (
             <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
               <h2>Conversation History</h2>
-              <div style={{
-                maxHeight: '400px',
-                overflowY: 'auto',
-                padding: '10px',
-                backgroundColor: '#f8f9fa',
-                borderRadius: '3px'
-              }}>
+              <div
+                ref={conversationHistoryRef}
+                style={{
+                  maxHeight: '400px',
+                  overflowY: 'auto',
+                  padding: '10px',
+                  backgroundColor: '#f8f9fa',
+                  borderRadius: '3px'
+                }}
+              >
                 {conversationHistory.map((msg, idx) => (
                   <div
                     key={idx}
@@ -2356,6 +2760,22 @@ export default function TestPluginsPage() {
               {/* Action Buttons */}
               <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                 <button
+                  onClick={() => processMessage(4)}
+                  disabled={isLoading}
+                  style={{
+                    padding: '12px 24px',
+                    backgroundColor: '#6f42c1',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                    fontSize: '16px',
+                    fontWeight: 'bold'
+                  }}
+                >
+                  {isLoading ? 'Generating...' : '🔧 Generate Technical Workflow (Phase 4)'}
+                </button>
+                <button
                   onClick={handleAcceptPlan}
                   disabled={isLoading}
                   style={{
@@ -2369,7 +2789,7 @@ export default function TestPluginsPage() {
                     fontWeight: 'bold'
                   }}
                 >
-                  Accept Plan
+                  Accept Plan (Skip Phase 4)
                 </button>
                 <button
                   onClick={handleRefinePlan}
@@ -2385,7 +2805,235 @@ export default function TestPluginsPage() {
                     fontWeight: 'bold'
                   }}
                 >
-                  Refine Further (v8 Feature)
+                  Refine Further (user feedback)
+                </button>
+                <button
+                  onClick={downloadCommunicationHistory}
+                  disabled={apiCommunications.length === 0}
+                  style={{
+                    padding: '12px 24px',
+                    backgroundColor: apiCommunications.length === 0 ? '#ccc' : '#17a2b8',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: apiCommunications.length === 0 ? 'not-allowed' : 'pointer',
+                    fontSize: '16px',
+                    fontWeight: 'bold'
+                  }}
+                  title={`Download all API communications (${apiCommunications.length} calls)`}
+                >
+                  📥 Download JSON ({apiCommunications.length})
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Technical Workflow Preview (Phase 4) */}
+          {currentPhase === 4 && phase4Response && (
+            <div style={{ marginBottom: '30px', padding: '15px', border: '2px solid #6f42c1', borderRadius: '5px', backgroundColor: '#f8f4ff' }}>
+              <h2>🔧 Technical Workflow (Phase 4)</h2>
+
+              {/* Feasibility Status */}
+              {feasibility && (
+                <div style={{
+                  marginBottom: '15px',
+                  padding: '10px',
+                  backgroundColor: feasibility.can_execute ? '#d4edda' : '#f8d7da',
+                  borderRadius: '3px',
+                  border: `1px solid ${feasibility.can_execute ? '#28a745' : '#dc3545'}`
+                }}>
+                  <strong>Feasibility:</strong> {feasibility.can_execute ? '✅ Can Execute' : '❌ Cannot Execute'}
+                  {feasibility.blocking_issues?.length > 0 && (
+                    <div style={{ marginTop: '10px' }}>
+                      <strong style={{ color: '#dc3545' }}>Blocking Issues:</strong>
+                      <ul style={{ margin: '5px 0', paddingLeft: '20px' }}>
+                        {feasibility.blocking_issues.map((issue: any, idx: number) => (
+                          <li key={idx} style={{ color: '#dc3545' }}>[{issue.type}] {issue.description}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {feasibility.warnings?.length > 0 && (
+                    <div style={{ marginTop: '10px' }}>
+                      <strong style={{ color: '#856404' }}>Warnings:</strong>
+                      <ul style={{ margin: '5px 0', paddingLeft: '20px' }}>
+                        {feasibility.warnings.map((warning: any, idx: number) => (
+                          <li key={idx} style={{ color: '#856404' }}>[{warning.type}] {warning.description}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Technical Inputs Required */}
+              {technicalInputsRequired.length > 0 && (
+                <div style={{ marginBottom: '15px', padding: '15px', backgroundColor: '#fff3cd', borderRadius: '3px', border: '1px solid #ffc107' }}>
+                  <h3 style={{ marginTop: 0, color: '#856404' }}>📝 Technical Inputs Required</h3>
+                  <p style={{ fontSize: '14px', color: '#856404', marginBottom: '15px' }}>
+                    Please provide the following technical inputs to complete the workflow:
+                  </p>
+                  {technicalInputsRequired.map((input: any, idx: number) => (
+                    <div key={idx} style={{ marginBottom: '15px' }}>
+                      <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                        {input.description} <span style={{ color: '#666', fontWeight: 'normal' }}>({input.plugin})</span>
+                      </label>
+                      <input
+                        type="text"
+                        placeholder={`Enter ${input.key}...`}
+                        value={technicalInputsCollected[input.key] || ''}
+                        onChange={(e) => setTechnicalInputsCollected(prev => ({
+                          ...prev,
+                          [input.key]: e.target.value
+                        }))}
+                        style={{
+                          width: '100%',
+                          padding: '8px',
+                          fontSize: '14px',
+                          border: '1px solid #ccc',
+                          borderRadius: '3px'
+                        }}
+                      />
+                      <div style={{ fontSize: '12px', color: '#666', marginTop: '3px' }}>
+                        Key: <code>{input.key}</code> | Type: {input.type || 'string'}
+                      </div>
+                    </div>
+                  ))}
+                  <button
+                    onClick={() => processMessage(4)}
+                    disabled={isLoading}
+                    style={{
+                      padding: '10px 20px',
+                      backgroundColor: '#6f42c1',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '3px',
+                      cursor: isLoading ? 'not-allowed' : 'pointer',
+                      fontSize: '14px',
+                      fontWeight: 'bold'
+                    }}
+                  >
+                    {isLoading ? 'Re-running...' : '🔄 Re-run Phase 4 with Inputs'}
+                  </button>
+                </div>
+              )}
+
+              {/* Technical Workflow Steps */}
+              <div style={{ marginBottom: '15px' }}>
+                <h3>Workflow Steps ({technicalWorkflow.length})</h3>
+                <div style={{ backgroundColor: '#f8f9fa', padding: '10px', borderRadius: '3px' }}>
+                  {technicalWorkflow.map((step: any, idx: number) => (
+                    <div key={idx} style={{
+                      marginBottom: '10px',
+                      padding: '10px',
+                      backgroundColor: 'white',
+                      border: '1px solid #ddd',
+                      borderRadius: '3px',
+                      borderLeft: `4px solid ${step.kind === 'operation' ? '#28a745' : step.kind === 'transform' ? '#17a2b8' : '#ffc107'}`
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
+                        <strong>{step.id}</strong>
+                        <span style={{
+                          padding: '2px 8px',
+                          borderRadius: '3px',
+                          fontSize: '12px',
+                          backgroundColor: step.kind === 'operation' ? '#d4edda' : step.kind === 'transform' ? '#d1ecf1' : '#fff3cd'
+                        }}>
+                          {step.kind}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '14px', marginBottom: '5px' }}>{step.description}</div>
+                      {step.kind === 'operation' && (
+                        <div style={{ fontSize: '12px', color: '#666' }}>
+                          Plugin: <code>{step.plugin}</code> | Action: <code>{step.action}</code>
+                        </div>
+                      )}
+                      {step.kind === 'transform' && (
+                        <div style={{ fontSize: '12px', color: '#666' }}>
+                          Type: <code>{step.operation?.type}</code>
+                        </div>
+                      )}
+                      {step.kind === 'control' && step.control && (
+                        <div style={{ fontSize: '12px', color: '#666' }}>
+                          Condition: <code>{step.control.condition}</code>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* JSON Preview */}
+              <details style={{ marginBottom: '15px' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: '#6f42c1' }}>
+                  View Full Phase 4 Response JSON
+                </summary>
+                <pre style={{
+                  backgroundColor: '#f8f9fa',
+                  padding: '15px',
+                  borderRadius: '3px',
+                  overflow: 'auto',
+                  fontSize: '12px',
+                  maxHeight: '400px',
+                  marginTop: '10px'
+                }}>
+                  {JSON.stringify(phase4Response, null, 2)}
+                </pre>
+              </details>
+
+              {/* Metadata Status */}
+              <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#e7f3ff', borderRadius: '3px' }}>
+                <strong>Status:</strong>
+                <div style={{ marginTop: '5px', fontSize: '14px' }}>
+                  • Ready for Generation: {phase4Response.metadata?.ready_for_generation ? '✅ Yes' : '❌ No'}
+                  <br />
+                  • Needs Technical Inputs: {phase4Response.metadata?.phase4?.needs_technical_inputs ? '⚠️ Yes' : '✅ No'}
+                  <br />
+                  • Needs User Feedback: {phase4Response.metadata?.phase4?.needs_user_feedback ? '⚠️ Yes' : '✅ No'}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                {phase4Response.metadata?.ready_for_generation && (
+                  <button
+                    onClick={handleAcceptPlan}
+                    disabled={isLoading}
+                    style={{
+                      padding: '12px 24px',
+                      backgroundColor: '#28a745',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '3px',
+                      cursor: isLoading ? 'not-allowed' : 'pointer',
+                      fontSize: '16px',
+                      fontWeight: 'bold'
+                    }}
+                  >
+                    ✅ Create Agent
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    setCurrentPhase(3);
+                    setPhase4Response(null);
+                    setTechnicalWorkflow([]);
+                    setTechnicalInputsRequired([]);
+                    setFeasibility(null);
+                  }}
+                  disabled={isLoading}
+                  style={{
+                    padding: '12px 24px',
+                    backgroundColor: '#6c757d',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                    fontSize: '16px',
+                    fontWeight: 'bold'
+                  }}
+                >
+                  ← Back to Phase 3
                 </button>
                 <button
                   onClick={downloadCommunicationHistory}
@@ -2650,7 +3298,7 @@ export default function TestPluginsPage() {
                 </label>
                 <select
                   value={agentId}
-                  onChange={(e) => setAgentId(e.target.value)}
+                  onChange={(e) => handleAgentSelection(e.target.value)}
                   style={{ width: '100%', padding: '10px', fontSize: '14px' }}
                 >
                   <option value="">-- Select an agent --</option>
@@ -2660,6 +3308,32 @@ export default function TestPluginsPage() {
                     </option>
                   ))}
                 </select>
+              </div>
+            )}
+
+            {/* Selected Agent Info */}
+            {selectedAgentDetails && (
+              <div style={{
+                marginBottom: '15px',
+                padding: '10px',
+                backgroundColor: '#f8f9fa',
+                borderRadius: '5px',
+                border: '1px solid #dee2e6'
+              }}>
+                <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>
+                  Selected: {selectedAgentDetails.agent_name}
+                </div>
+                <div style={{ fontSize: '12px', color: '#666' }}>
+                  {agentWorkflowSteps.length > 0 ? (
+                    <span style={{ color: '#28a745' }}>
+                      ✓ {agentWorkflowSteps.length} workflow steps found - Debug mode available
+                    </span>
+                  ) : (
+                    <span style={{ color: '#ffc107' }}>
+                      ⚠ No workflow steps - Standard execution only
+                    </span>
+                  )}
+                </div>
               </div>
             )}
 
@@ -2705,53 +3379,175 @@ export default function TestPluginsPage() {
             </div>
 
             {/* Execution Options */}
-            <div style={{ marginBottom: '15px' }}>
+            <div style={{ marginBottom: '15px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                 <input
                   type="checkbox"
                   checked={useAgentKit}
-                  onChange={(e) => setUseAgentKit(e.target.checked)}
+                  onChange={(e) => {
+                    setUseAgentKit(e.target.checked);
+                    if (e.target.checked) setDebugModeEnabled(false); // Debug mode uses Pilot, not AgentKit
+                  }}
+                  disabled={debugModeEnabled}
                 />
-                <span>Use AgentKit execution (recommended)</span>
+                <span>Use AgentKit execution (recommended for standard runs)</span>
+              </label>
+
+              <label style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                cursor: agentWorkflowSteps.length > 0 ? 'pointer' : 'not-allowed',
+                opacity: agentWorkflowSteps.length > 0 ? 1 : 0.5
+              }}>
+                <input
+                  type="checkbox"
+                  checked={debugModeEnabled}
+                  onChange={(e) => {
+                    setDebugModeEnabled(e.target.checked);
+                    if (e.target.checked) setUseAgentKit(false); // Debug mode uses Pilot
+                  }}
+                  disabled={agentWorkflowSteps.length === 0}
+                />
+                <span>
+                  Step-by-Step Debug Mode
+                  {agentWorkflowSteps.length === 0 && ' (requires agent with workflow steps)'}
+                </span>
               </label>
             </div>
 
-            {/* Action Buttons */}
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button
-                onClick={executeAgent}
-                disabled={isExecutingAgent || !agentId.trim()}
-                style={{
-                  padding: '12px 24px',
-                  backgroundColor: isExecutingAgent || !agentId.trim() ? '#6c757d' : '#28a745',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '3px',
-                  cursor: isExecutingAgent || !agentId.trim() ? 'not-allowed' : 'pointer',
-                  fontSize: '16px',
-                  fontWeight: 'bold'
-                }}
-              >
-                {isExecutingAgent ? 'Executing...' : 'Execute Agent'}
-              </button>
-              <button
-                onClick={resetAgentExecutionForm}
-                disabled={isExecutingAgent}
-                style={{
-                  padding: '12px 24px',
-                  backgroundColor: '#6c757d',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '3px',
-                  cursor: isExecutingAgent ? 'not-allowed' : 'pointer',
-                  fontSize: '16px',
-                  fontWeight: 'bold'
-                }}
-              >
-                Reset Form
-              </button>
-            </div>
+            {/* Action Buttons - Standard Mode */}
+            {!debugModeEnabled && (
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  onClick={executeAgent}
+                  disabled={isExecutingAgent || !agentId.trim()}
+                  style={{
+                    padding: '12px 24px',
+                    backgroundColor: isExecutingAgent || !agentId.trim() ? '#6c757d' : '#28a745',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: isExecutingAgent || !agentId.trim() ? 'not-allowed' : 'pointer',
+                    fontSize: '16px',
+                    fontWeight: 'bold'
+                  }}
+                >
+                  {isExecutingAgent ? 'Executing...' : 'Execute Agent'}
+                </button>
+                <button
+                  onClick={resetAgentExecutionForm}
+                  disabled={isExecutingAgent}
+                  style={{
+                    padding: '12px 24px',
+                    backgroundColor: '#6c757d',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: isExecutingAgent ? 'not-allowed' : 'pointer',
+                    fontSize: '16px',
+                    fontWeight: 'bold'
+                  }}
+                >
+                  Reset Form
+                </button>
+              </div>
+            )}
+
+            {/* Debug Mode Controls */}
+            {debugModeEnabled && (
+              <DebugControls
+                debugState={debugStream.debugState}
+                onStart={startDebugExecution}
+                onPause={handleDebugPause}
+                onResume={handleDebugResume}
+                onStep={handleDebugStep}
+                onStop={handleDebugStop}
+                onReset={handleDebugReset}
+                disabled={!agentId.trim()}
+                currentStepName={debugStream.currentStepId ? debugStream.getStepStatus(debugStream.currentStepId)?.stepName : undefined}
+              />
+            )}
           </div>
+
+          {/* Step Visualization - Debug Mode */}
+          {debugModeEnabled && agentWorkflowSteps.length > 0 && (
+            <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #007bff', borderRadius: '5px' }}>
+              <h2 style={{ marginTop: 0, color: '#007bff' }}>Workflow Steps</h2>
+              <StepVisualizer
+                steps={agentWorkflowSteps}
+                stepStatuses={debugStream.stepStatuses}
+                currentStepId={debugStream.currentStepId}
+                onStepClick={(stepId) => addDebugLog('info', `Clicked step: ${stepId}`)}
+              />
+            </div>
+          )}
+
+          {/* Debug Events Log */}
+          {debugModeEnabled && debugStream.events.length > 0 && (
+            <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #17a2b8', borderRadius: '5px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <h2 style={{ margin: 0, color: '#17a2b8' }}>Debug Events ({debugStream.events.length})</h2>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(JSON.stringify(debugStream.events, null, 2));
+                    addDebugLog('success', 'Debug events copied to clipboard');
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    backgroundColor: '#17a2b8',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: 'pointer',
+                    fontSize: '12px'
+                  }}
+                >
+                  Copy Events
+                </button>
+              </div>
+              <div style={{
+                maxHeight: '200px',
+                overflow: 'auto',
+                backgroundColor: '#f8f9fa',
+                padding: '10px',
+                borderRadius: '4px',
+                fontFamily: 'monospace',
+                fontSize: '12px'
+              }}>
+                {debugStream.events.slice(-20).map((event, index) => (
+                  <div
+                    key={event.id || index}
+                    style={{
+                      padding: '4px 8px',
+                      marginBottom: '4px',
+                      backgroundColor: event.type === 'step_failed' ? '#fff0f0'
+                        : event.type === 'step_complete' ? '#f0fff0'
+                        : event.type === 'paused' ? '#fff8e0'
+                        : 'white',
+                      borderLeft: `3px solid ${
+                        event.type === 'step_failed' ? '#dc3545'
+                        : event.type === 'step_complete' ? '#28a745'
+                        : event.type === 'paused' ? '#ffc107'
+                        : event.type === 'step_start' ? '#007bff'
+                        : '#6c757d'
+                      }`,
+                      borderRadius: '2px'
+                    }}
+                  >
+                    <span style={{ color: '#6c757d' }}>
+                      {new Date(event.timestamp).toLocaleTimeString()}
+                    </span>
+                    {' '}
+                    <span style={{ fontWeight: 'bold' }}>[{event.type}]</span>
+                    {' '}
+                    {event.stepName && <span style={{ color: '#007bff' }}>{event.stepName}</span>}
+                    {event.error && <span style={{ color: '#dc3545' }}> - {event.error}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Execution Result Display */}
           {agentExecutionResult && (

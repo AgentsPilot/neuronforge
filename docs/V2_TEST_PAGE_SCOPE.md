@@ -8,7 +8,12 @@
 
 ## Overview
 
-The Test Plugins V2 page is a multi-tabbed testing interface that provides developers and administrators with tools to test and manage various aspects of the NeuronForge system. It includes four main functional areas accessible through tabs.
+The Test Plugins V2 page is a multi-tabbed testing interface that provides developers and administrators with tools to test and manage various aspects of the NeuronForge system. It includes five main functional areas accessible through tabs:
+1. **Plugins** - Plugin connectivity, authentication, and action execution
+2. **AI Services** - Prompt analysis and enhancement testing
+3. **Thread Conversation** - Multi-provider conversational agent creation workflow
+4. **Free Tier Users** - User subscription and quota management
+5. **Agent Execution** - Agent testing with debug mode and step visualization
 
 ---
 
@@ -119,13 +124,14 @@ Available AI services:
 ## Tab 3: Thread Conversation
 
 ### Purpose
-Test the complete conversational agent creation workflow with phase-based processing.
+Test the complete conversational agent creation workflow with phase-based processing using multi-provider AI support.
 
 ### Features
 
 #### 3.1 Session Info Panel
 - **Thread ID**: Shows current thread identifier
-- **Current Phase**: Displays phase 1, 2, or 3
+- **Current Phase**: Displays phase 1, 2, 3, or 4
+- **AI Provider**: Shows selected provider (OpenAI/Anthropic/Kimi) and model
 - **Mini-Cycle Indicator**: Shows when refinement mini-cycle is active
 - **Clarity Score**: Percentage showing prompt clarity
 - **API Calls Tracked**: Count of all API communications
@@ -136,10 +142,39 @@ Test the complete conversational agent creation workflow with phase-based proces
 - Phase 1 calls (Analysis)
 - Phase 2 calls (Clarification Questions)
 - Phase 3 calls (Enhanced Prompt Generation)
+- Phase 4 calls (Technical Workflow Generation)
 
 #### 3.2 Start New Thread
+- **AI Provider Selection**: Dropdown to choose provider (OpenAI, Anthropic, Kimi)
+- **Model Selection**: Dynamic dropdown with models for selected provider
 - **Initial Prompt Input**: Textarea for user's automation request
 - **Start Thread**: Initiates the thread and begins Phase 1
+
+**Supported AI Providers and Models:**
+
+**OpenAI:**
+- GPT-5.2, GPT-5.2 Pro (Latest, Highest Accuracy)
+- GPT-5.1 (Flagship)
+- GPT-5, GPT-5 Mini, GPT-5 Nano (Advanced Reasoning)
+- GPT-4.1, GPT-4.1 Mini, GPT-4.1 Nano (Coding, 1M Context)
+- o3, o4-mini (Powerful/Fast Reasoning)
+- GPT-4o, GPT-4o Mini (Multimodal)
+- GPT-4 Turbo, GPT-4, GPT-3.5 Turbo (Legacy)
+
+**Anthropic:**
+- Claude 4.5 Opus, Sonnet, Haiku (Latest: Most Intelligent/Best Balance/Fastest)
+- Claude 4.1 Opus (Agentic)
+- Claude 4 Opus, Sonnet (Coding/Reasoning)
+- Claude 3.7 Sonnet (Hybrid)
+- Claude 3.5 Sonnet, Haiku (Legacy)
+- Claude 3 Opus, Sonnet, Haiku (Legacy/Retired/Budget)
+
+**Kimi:**
+- Kimi K2 Preview, K2 Thinking, K2 Original (Latest, 256K/128K context)
+- Kimi K1.5, K1.5 Long (Multimodal, Step-by-Step)
+- Kimi Linear (1M Context, 6x Faster)
+- Kimi Dev (Coding, SWE-bench)
+- Kimi VL (Vision-Language)
 
 Example prompts:
 ```
@@ -153,7 +188,7 @@ Example prompts:
 - **User Messages**: Blue background with left border
 - **Assistant Messages**: Yellow background with left border
 - **Data Expansion**: Collapsible details showing structured data
-- **Auto-scroll**: Scrollable container for long conversations
+- **Auto-scroll**: Automatically scrolls to newest messages when conversation updates
 
 #### 3.4 Phase 2 - Clarification Questions
 - **Question Display**: Shows current question with context
@@ -188,9 +223,45 @@ When Phase 3 detects `user_inputs_required` in the enhanced prompt, the system a
 **Action Buttons:**
 - **Accept Plan**: Marks plan as ready for implementation
 - **Refine Further**: Returns to Phase 2 for additional questions (v8 feature)
+- **Generate Technical Workflow**: Triggers Phase 4 to generate executable workflow
 - **Download JSON**: Exports all API communications
 
-#### 3.6 Testing Controls
+#### 3.6 Phase 4 - Technical Workflow
+When Phase 3 completes with `ready_for_generation: true`, a "Generate Technical Workflow" button appears:
+
+- **Feasibility Status**: Shows `can_execute` status with color coding:
+  - Green: Ready to execute
+  - Red: Blocking issues present
+- **Blocking Issues**: Lists any critical issues preventing execution
+- **Warnings**: Lists non-blocking concerns
+
+- **Technical Inputs Form**: When `technical_inputs_required` is non-empty:
+  - Displays a form with text inputs for each required input
+  - Shows input key, plugin, and description
+  - "Submit Collected Inputs" button re-runs Phase 4 with collected values
+
+- **Technical Workflow Steps**: Displays each step in the workflow:
+  - Step ID and kind (operation, transform, control)
+  - Plugin and action for operation steps
+  - Description of what the step does
+  - Inputs and outputs configuration
+
+- **Raw JSON Preview**: Expandable section showing:
+  - Full Phase 4 response
+  - Technical workflow array
+  - Feasibility assessment
+
+- **Metadata Status**: Shows Phase 4 specific flags:
+  - `can_execute`: Overall executability
+  - `needs_technical_inputs`: Whether inputs are required
+  - `needs_user_feedback`: Whether feedback is needed
+  - `ready_for_generation`: Final readiness state
+
+**Action Buttons:**
+- **Re-generate Technical Workflow**: Re-runs Phase 4 for refinement
+- **Reset Thread**: Clears all state and starts fresh
+
+#### 3.7 Testing Controls
 - **Reset Thread**: Clears all state and starts fresh
 
 **API Endpoints Used:**
@@ -205,6 +276,10 @@ User Input → Phase 1 (Analysis) → [If clarity < threshold] → Phase 2 (Ques
 Phase 2 (Questions) → User Answers → Phase 3 (Enhanced Prompt)
 
 Phase 3 → [If user_inputs_required] → Mini-Cycle Phase 2 → Refined Phase 3
+        → [If ready_for_generation] → Phase 4 (Technical Workflow)
+
+Phase 4 → [If technical_inputs_required] → Collect Inputs → Re-run Phase 4
+        → [If can_execute: true] → Ready for Agent Execution
 ```
 
 ---
@@ -308,6 +383,102 @@ If user already has a subscription, free tier allocation is ADDED to existing ba
 
 ---
 
+## Tab 5: Agent Execution
+
+### Purpose
+Execute and debug agents with step-by-step visualization and control.
+
+### Features
+
+#### 5.1 Agent Selection
+- **Agent ID Input**: Enter or paste agent UUID
+- **Agent Dropdown**: Select from list of user's agents
+- **Load Agent Details**: Automatically loads agent configuration and workflow steps
+
+#### 5.2 Execution Configuration
+- **Input Variables Editor**: JSON textarea for agent input parameters
+- **Override User Prompt**: Optional field to override the agent's default prompt
+- **Use AgentKit Toggle**: Switch between AgentKit and Pilot execution engines
+
+#### 5.3 Standard Execution
+- **Execute Agent**: Runs the agent normally with selected parameters
+- **Execution Result**: Displays full JSON response with success/error status
+
+#### 5.4 Debug Mode Execution (New)
+Step-by-step execution with real-time visualization and control.
+
+**Debug Controls Component:**
+- **Start Debug**: Begin execution in debug mode
+- **Pause**: Pause execution at current step
+- **Resume**: Continue execution from paused state
+- **Step**: Execute single step and pause again
+- **Stop**: Terminate execution immediately
+- **Reset**: Clear debug state and prepare for new run
+
+**Debug States:**
+- `idle`: Ready to start
+- `connecting`: Establishing SSE connection
+- `running`: Actively executing steps
+- `stepping`: Single-step mode active
+- `paused`: Execution paused at step boundary
+- `stopped`: Execution terminated by user
+- `completed`: All steps finished successfully
+- `error`: Execution failed with error
+
+**Step Visualizer Component:**
+- **Step List**: Visual timeline of all workflow steps
+- **Status Indicators**: Color-coded icons for each step state
+  - ⏳ Pending (gray)
+  - ▶️ Running (blue, animated)
+  - ✅ Completed (green)
+  - ❌ Failed (red)
+  - ⏸️ Paused (yellow)
+- **Step Details**: Click to expand and view:
+  - Configuration (plugin, action)
+  - Input data (JSON)
+  - Output data (JSON)
+  - Error messages
+  - Timing information (start, end, duration)
+- **Progress Animation**: Running indicator bar on active step
+
+**Debug Stream Hook (`useDebugStream`):**
+Manages SSE connection for real-time debug events:
+- `connect(runId)`: Connect to debug stream
+- `disconnect()`: Close SSE connection
+- `pause()`: Send pause command
+- `resume()`: Send resume command
+- `step()`: Send step command
+- `stop()`: Send stop command
+- `reset()`: Clear all state
+- `initializeSteps(steps)`: Pre-populate step statuses
+
+**Debug Event Types:**
+- `connected`: SSE connection established
+- `step_start`: Step execution beginning
+- `step_complete`: Step finished successfully
+- `step_failed`: Step encountered error
+- `plugin_call`: External plugin API call
+- `llm_call`: AI model request
+- `llm_response`: AI model response
+- `handoff`: Control transfer between components
+- `paused`: Execution paused
+- `resumed`: Execution resumed
+- `execution_complete`: All steps done
+- `execution_error`: Fatal error occurred
+
+#### 5.5 Agent List
+- **Agents Table**: Lists all agents for current user
+- **Columns**: ID, Name, Status, Workflow Steps count
+- **Quick Select**: Click to populate Agent ID field
+
+**API Endpoints Used:**
+- `GET /api/agents/{agentId}` - Load agent details
+- `POST /api/run-agent` - Execute agent (with optional `debugMode`, `debugRunId`)
+- `GET /api/debug/stream?runId={runId}` - SSE stream for debug events
+- `POST /api/debug/control` - Send debug control commands
+
+---
+
 ## Global Features
 
 ### User Configuration Panel
@@ -360,9 +531,10 @@ Present on all tabs:
 **Thread Conversation State:**
 ```typescript
 - threadId: string | null
-- currentPhase: 1 | 2 | 3
+- currentPhase: 1 | 2 | 3 | 4
 - initialPrompt: string
 - conversationHistory: Array<{role, content, data}>
+- conversationHistoryRef: useRef<HTMLDivElement> // for auto-scroll
 - currentQuestions: any[]
 - currentQuestionIndex: number
 - userAnswer: string
@@ -374,6 +546,35 @@ Present on all tabs:
 - isInMiniCycle: boolean
 - miniCyclePhase3: any
 - apiCommunications: Array<{timestamp, phase, endpoint, request, response}>
+// Phase 4 specific state
+- technicalWorkflow: any[]
+- technicalInputsRequired: any[]
+- feasibility: any
+- phase4Response: any
+- technicalInputsCollected: Record<string, string>
+```
+
+**Agent Execution State:**
+```typescript
+- agentId: string
+- agentInputVariables: string (JSON)
+- agentOverridePrompt: string
+- agentExecutionResult: any
+- isExecutingAgent: boolean
+- useAgentKit: boolean
+- agentsList: Array<{id, agent_name, status, pilot_steps?, workflow_steps?}>
+// Debug mode state
+- debugModeEnabled: boolean
+- selectedAgentDetails: any
+- agentWorkflowSteps: WorkflowStep[]
+// Debug stream hook state (from useDebugStream)
+- debugRunId: string | null
+- debugState: DebugState
+- events: DebugEvent[]
+- stepStatuses: Map<string, StepStatus>
+- currentStepId: string | null
+- isConnected: boolean
+- error: string | null
 ```
 
 **Free Tier Users State:**
@@ -382,7 +583,7 @@ Present on all tabs:
 - freeTierResponse: any
 ```
 
-**Debug State:**
+**Debug Logs State:**
 ```typescript
 - debugLogs: DebugLog[]
 ```
@@ -417,6 +618,18 @@ Present on all tabs:
 **Free Tier Users:**
 - `createFreeTierUser()` - Call allocation API
 - `resetFreeTierForm()` - Clear form
+
+**Agent Execution:**
+- `loadAgentDetails(agentId)` - Fetch agent with pilot_steps
+- `handleAgentSelection(agentId)` - Handle dropdown selection
+- `executeAgent()` - Standard agent execution
+- `startDebugExecution()` - Begin debug mode execution
+- `handleDebugPause()` - Pause debug execution
+- `handleDebugResume()` - Resume debug execution
+- `handleDebugStep()` - Execute single step
+- `handleDebugStop()` - Stop debug execution
+- `handleDebugReset()` - Reset debug session
+- `resetAgentExecutionForm()` - Clear all agent execution state
 
 **Utilities:**
 - `addDebugLog(type, message)` - Log to debug panel
@@ -486,6 +699,54 @@ Present on all tabs:
 5. Answer refinement questions
 6. Review refined Phase 3 output
 7. Download full communication history
+
+### UC-8: Test Phase 4 Technical Workflow
+1. Complete thread flow through Phase 3
+2. Verify `ready_for_generation: true` in Phase 3 response
+3. Click "Generate Technical Workflow (Phase 4)" button
+4. Review feasibility assessment (can_execute, blocking_issues, warnings)
+5. If technical_inputs_required is non-empty:
+   - Fill in the text fields for each required input
+   - Click "Submit Collected Inputs"
+   - Verify Phase 4 re-runs with collected values
+6. Review technical_workflow steps:
+   - Verify operation steps reference valid plugins/actions
+   - Check transform steps have correct operation types
+   - Verify inputs reference correct sources (from_step, user_input, etc.)
+7. Download communication history to verify Phase 4 iteration saved
+
+### UC-9: Execute Agent (Standard Mode)
+1. Navigate to Agent Execution tab
+2. Enter Agent ID or select from dropdown
+3. Configure input variables JSON
+4. Optionally set override prompt
+5. Toggle AgentKit/Pilot engine as needed
+6. Click "Execute Agent"
+7. Review execution result JSON
+
+### UC-10: Debug Agent Execution (Step-by-Step)
+1. Navigate to Agent Execution tab
+2. Select an agent with workflow steps (pilot_steps)
+3. Verify step visualization shows all steps as "Pending"
+4. Click "Start Debug" in Debug Controls
+5. Observe SSE connection established
+6. Watch steps transition: Pending → Running → Completed
+7. Click "Pause" to halt at current step
+8. Inspect step details (input/output data)
+9. Click "Step" to advance one step at a time
+10. Click "Resume" to continue automatic execution
+11. Click "Stop" to terminate early if needed
+12. Click "Reset" to clear state and start over
+
+### UC-11: Test Multi-Provider Thread Conversation
+1. Navigate to Thread Conversation tab
+2. Select AI Provider (e.g., Anthropic)
+3. Select Model (e.g., Claude 4.5 Sonnet)
+4. Enter initial prompt
+5. Click "Start Thread"
+6. Verify Session Info shows selected provider/model
+7. Complete conversation flow
+8. Switch provider and test with different model
 
 ---
 
@@ -642,7 +903,34 @@ All errors are:
 
 ## Changelog
 
-### Version 1.1 (Current)
+### Version 1.3 (Current)
+- **Multi-Provider AI Support**: Added provider selection (OpenAI, Anthropic, Kimi) to Thread Conversation
+- **Expanded Model Lists**: Updated to latest models including:
+  - OpenAI: GPT-5.2 series, GPT-5.1, GPT-5, GPT-4.1 (1M context), o3/o4-mini reasoning models
+  - Anthropic: Claude 4.5 (Opus/Sonnet/Haiku), Claude 4.1, Claude 4, Claude 3.7
+  - Kimi: K2 series, K1.5, Linear (1M context), Dev (coding), VL (vision)
+- **Default model changed**: Now defaults to `gpt-5.2` instead of `gpt-4o`
+- **Session Info Enhancement**: Now displays AI Provider and Model
+- **Auto-scroll Conversation**: Conversation history automatically scrolls to latest messages
+- **Tab 5 - Agent Execution**: New tab with full agent execution capabilities
+- **Debug Mode Execution**: Step-by-step agent execution with real-time visualization
+- **New Components**:
+  - `DebugControls` - Control buttons for debug execution (start, pause, resume, step, stop, reset)
+  - `StepVisualizer` - Visual timeline of workflow steps with status indicators
+- **New Hook**: `useDebugStream` - SSE-based hook for real-time debug event streaming
+- **Debug Event Types**: Support for step_start, step_complete, step_failed, plugin_call, llm_call, etc.
+- **Agent Details Loading**: Automatically loads pilot_steps when agent is selected
+- Added UC-9, UC-10, UC-11: New use cases for agent execution and multi-provider testing
+
+### Version 1.2
+- Added Phase 4 - Technical Workflow Generation support
+- New "Generate Technical Workflow" button in Phase 3 section
+- Phase 4 UI section with feasibility status, workflow steps, technical inputs form
+- Added `technicalWorkflow`, `technicalInputsRequired`, `feasibility`, `phase4Response`, `technicalInputsCollected` state variables
+- Updated phase flow to include Phase 4 paths
+- Added UC-8: Test Phase 4 Technical Workflow use case
+
+### Version 1.1
 - Added three-state plugin status: Connected, Token Expired, Not Connected
 - Added "Refresh Token" button for expired plugins
 - Updated status summary to show expired plugin count
@@ -670,5 +958,5 @@ For issues or questions about the Test Page:
 
 ---
 
-**Last Updated:** December 2025
+**Last Updated:** December 15, 2025 (Added Multi-Provider AI, Agent Execution Tab, Debug Mode)
 **Maintained By:** NeuronForge Development Team
