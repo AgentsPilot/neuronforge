@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { createLogger, Logger } from '@/lib/logger';
 
 /**
  * PromptLoader - A utility class for loading and managing AI prompt templates from text files.
@@ -16,7 +17,7 @@ export class PromptLoader {
   private aiPrompt: string = '';
   private fileName: string;
   private fileLocation: string;
-  private isDebugMode: boolean;
+  private logger: Logger;
 
   /**
    * Creates an instance of PromptLoader and automatically loads the prompt file.
@@ -37,20 +38,15 @@ export class PromptLoader {
     fileName: string,
     fileLocation: string = path.join(process.cwd(), 'app', 'api', 'prompt-templates')
   ) {
-    // Initialize debug mode based on environment
-    this.isDebugMode = process.env.NODE_ENV === 'development';
+    this.logger = createLogger({ service: 'PromptLoader' });
 
-    if (this.isDebugMode) {
-      console.log(`[PromptLoader] Initializing loader for file: ${fileName}`);
-    }
+    this.logger.debug({ fileName }, 'Initializing loader');
 
     // Ensure .txt extension is present
     this.fileName = fileName.endsWith('.txt') ? fileName : `${fileName}.txt`;
     this.fileLocation = fileLocation;
 
-    if (this.isDebugMode) {
-      console.log(`[PromptLoader] File location: ${this.fileLocation}`);
-    }
+    this.logger.debug({ fileLocation: this.fileLocation }, 'File location set');
 
     // Load the prompt file immediately upon instantiation
     this.loadPrompt();
@@ -67,17 +63,13 @@ export class PromptLoader {
     try {
       const filePath = path.join(this.fileLocation, this.fileName);
 
-      if (this.isDebugMode) {
-        console.log(`[PromptLoader] Loading prompt from: ${filePath}`);
-      }
+      this.logger.debug({ filePath }, 'Loading prompt');
 
       this.aiPrompt = fs.readFileSync(filePath, 'utf-8').trim();
 
-      if (this.isDebugMode) {
-        console.log(`[PromptLoader] Successfully loaded prompt (${this.aiPrompt.length} characters)`);
-      }
+      this.logger.debug({ charCount: this.aiPrompt.length }, 'Successfully loaded prompt');
     } catch (error) {
-      console.error(`[PromptLoader] Failed to load prompt file: ${error}`);
+      this.logger.error({ err: error }, 'Failed to load prompt file');
       throw new Error(`Failed to load prompt file: ${error}`);
     }
   }
@@ -93,9 +85,7 @@ export class PromptLoader {
    * console.log(rawPrompt);
    */
   public getPrompt(): string {
-    if (this.isDebugMode) {
-      console.log(`[PromptLoader] Retrieving prompt for file: ${this.fileName}`);
-    }
+    this.logger.debug({ fileName: this.fileName }, 'Retrieving prompt');
     return this.aiPrompt;
   }
 
@@ -117,9 +107,7 @@ export class PromptLoader {
    * // Result: "Hello Alice, your role is Admin"
    */
   public replaceKeywords(keywords: Record<string, string>): string {
-    if (this.isDebugMode) {
-      console.log(`[PromptLoader] Replacing keywords in prompt:`, Object.keys(keywords));
-    }
+    this.logger.debug({ keywords: Object.keys(keywords) }, 'Replacing keywords in prompt');
 
     let result = this.aiPrompt;
     let replacementCount = 0;
@@ -132,20 +120,13 @@ export class PromptLoader {
       if (matches) {
         replacementCount += matches.length;
         result = result.replace(regex, value);
-
-        if (this.isDebugMode) {
-          console.log(`[PromptLoader] Replaced ${matches.length} occurrence(s) of {${key}} with "${value}"`);
-        }
+        this.logger.debug({ key, occurrences: matches.length }, 'Replaced keyword');
       } else {
-        if (this.isDebugMode) {
-          console.log(`[PromptLoader] Warning: Keyword {${key}} was not found in the prompt and was not replaced`);
-        }
+        this.logger.warn({ key }, 'Keyword not found in prompt');
       }
     }
 
-    if (this.isDebugMode) {
-      console.log(`[PromptLoader] Total replacements made: ${replacementCount}`);
-    }
+    this.logger.debug({ totalReplacements: replacementCount }, 'Keyword replacement complete');
 
     return result;
   }
