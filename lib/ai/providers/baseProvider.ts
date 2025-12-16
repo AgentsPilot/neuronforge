@@ -37,6 +37,12 @@ export abstract class BaseAIProvider {
    */
   abstract readonly supportsResponseFormat: boolean;
 
+  /**
+   * Get the max output tokens for a specific model.
+   * Returns model-specific limits from centralized config.
+   */
+  abstract getMaxOutputTokens(model: string): number;
+
   constructor(analytics?: AIAnalyticsService) {
     this.analytics = analytics || new AIAnalyticsService();
   }

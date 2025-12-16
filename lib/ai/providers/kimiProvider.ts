@@ -7,6 +7,7 @@ import OpenAI from 'openai';
 import { BaseAIProvider, CallContext } from './baseProvider';
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 import { calculateCostSync } from '@/lib/ai/pricing';
+import { getModelMaxOutputTokens } from '../context-limits';
 
 /**
  * Kimi model name constants
@@ -74,11 +75,19 @@ export class KimiProvider extends BaseAIProvider {
   /** Default model for Kimi */
   readonly defaultModel = KIMI_MODELS.K2_PREVIEW;
 
-  /** Kimi's recommended default for chat completions */
+  /** Fallback max tokens - prefer using getMaxOutputTokens(model) for model-specific limits */
   readonly defaultMaxTokens = 4096;
 
   /** Kimi does not support OpenAI's response_format parameter */
   readonly supportsResponseFormat = false;
+
+  /**
+   * Get the max output tokens for a specific model.
+   * Uses centralized MODEL_MAX_OUTPUT_TOKENS config.
+   */
+  getMaxOutputTokens(model: string): number {
+    return getModelMaxOutputTokens(model);
+  }
 
   /**
    * Initialize Kimi provider with API key

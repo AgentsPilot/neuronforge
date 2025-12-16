@@ -3,6 +3,7 @@ import OpenAI from 'openai';
 import { BaseAIProvider, CallContext } from './baseProvider';
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 import { calculateCostSync } from '@/lib/ai/pricing';
+import { getModelMaxOutputTokens } from '../context-limits';
 
 /**
  * OpenAI model name constants
@@ -48,11 +49,19 @@ export class OpenAIProvider extends BaseAIProvider {
   /** Default model for OpenAI */
   readonly defaultModel = OPENAI_MODELS.GPT_4O;
 
-  /** OpenAI default for chat completions - higher for complex Phase 4 workflows */
-  readonly defaultMaxTokens = 8192;
+  /** Fallback max tokens - prefer using getMaxOutputTokens(model) for model-specific limits */
+  readonly defaultMaxTokens = 16384;
 
   /** OpenAI supports response_format: { type: 'json_object' } */
   readonly supportsResponseFormat = true;
+
+  /**
+   * Get the max output tokens for a specific model.
+   * Uses centralized MODEL_MAX_OUTPUT_TOKENS config.
+   */
+  getMaxOutputTokens(model: string): number {
+    return getModelMaxOutputTokens(model);
+  }
 
   constructor(apiKey: string, analytics?: any) {
     super(analytics);

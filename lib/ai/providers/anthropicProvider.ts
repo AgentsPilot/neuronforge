@@ -6,6 +6,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { BaseAIProvider, CallContext } from './baseProvider';
 import { calculateCostSync } from '../pricing';
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
+import { getModelMaxOutputTokens } from '../context-limits';
 
 /**
  * Anthropic model name constants
@@ -71,11 +72,19 @@ export class AnthropicProvider extends BaseAIProvider {
   /** Default model for Anthropic */
   readonly defaultModel = ANTHROPIC_MODELS.CLAUDE_45_SONNET;
 
-  /** Anthropic's default max_tokens (required parameter) */
+  /** Fallback max tokens - prefer using getMaxOutputTokens(model) for model-specific limits */
   readonly defaultMaxTokens = 4096;
 
   /** Anthropic does not support OpenAI's response_format parameter */
   readonly supportsResponseFormat = false;
+
+  /**
+   * Get the max output tokens for a specific model.
+   * Uses centralized MODEL_MAX_OUTPUT_TOKENS config.
+   */
+  getMaxOutputTokens(model: string): number {
+    return getModelMaxOutputTokens(model);
+  }
 
   constructor(apiKey: string, analytics?: any) {
     super(analytics);

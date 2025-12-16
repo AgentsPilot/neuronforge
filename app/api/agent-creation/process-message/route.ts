@@ -457,10 +457,11 @@ export async function POST(request: NextRequest) {
 
     // Step 9.5: Validate context usage before making API call
     const chatProvider = ProviderFactory.getProvider(aiProvider);
+    const maxOutputTokens = chatProvider.getMaxOutputTokens(aiModel);
     const contextValidation = validateContextUsage(
       conversationMessages,
       aiModel,
-      chatProvider.defaultMaxTokens
+      maxOutputTokens
     );
 
     if (contextValidation.warning) {
@@ -498,11 +499,12 @@ export async function POST(request: NextRequest) {
     const chatCompletionStartTime = Date.now();
     try {
       // Build completion params using provider's capabilities
+      // Use model-specific max output tokens from centralized config
       const completionParams: any = {
         model: aiModel,
         messages: conversationMessages,
         temperature: 0.1,
-        max_tokens: chatProvider.defaultMaxTokens,
+        max_tokens: maxOutputTokens,
       };
 
       // Only add response_format if provider supports it (Anthropic/Kimi handle JSON via prompting)

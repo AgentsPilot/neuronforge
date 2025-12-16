@@ -89,6 +89,95 @@ export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
 export const DEFAULT_CONTEXT_LIMIT = 32000;
 
 /**
+ * Maximum output tokens (max_tokens parameter) for each model.
+ * This is separate from context limit - it's how much the model can generate in one response.
+ */
+export const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
+  // OpenAI GPT-5.2 Series - large output capacity
+  'gpt-5.2': 32768,
+  'gpt-5.2-pro': 32768,
+
+  // OpenAI GPT-5.1 Series
+  'gpt-5.1': 32768,
+
+  // OpenAI GPT-5 Series
+  'gpt-5': 16384,
+  'gpt-5-mini': 16384,
+  'gpt-5-nano': 8192,
+
+  // OpenAI GPT-4.1 Series - massive context, generous output
+  'gpt-4.1': 32768,
+  'gpt-4.1-mini': 32768,
+  'gpt-4.1-nano': 16384,
+
+  // OpenAI o-Series - reasoning models with large output
+  'o3': 100000,
+  'o4-mini': 65536,
+
+  // OpenAI GPT-4o Series
+  'gpt-4o': 16384,
+  'gpt-4o-mini': 16384,
+
+  // OpenAI Legacy
+  'gpt-4-turbo': 4096,
+  'gpt-4': 8192,
+  'gpt-3.5-turbo': 4096,
+
+  // Anthropic Claude 4.5 Series
+  'claude-opus-4-5-20251101': 16384,
+  'claude-sonnet-4-5-20250929': 16384,
+  'claude-haiku-4-5-20251001': 8192,
+
+  // Anthropic Claude 4.1 Series
+  'claude-opus-4-1-20250805': 16384,
+
+  // Anthropic Claude 4 Series
+  'claude-opus-4-20250514': 16384,
+  'claude-sonnet-4-20250514': 16384,
+
+  // Anthropic Claude 3.7 Series
+  'claude-3-7-sonnet-20250219': 16384,
+
+  // Anthropic Claude 3.5 Series
+  'claude-3-5-sonnet-20241022': 8192,
+  'claude-3-5-haiku-20241022': 8192,
+
+  // Anthropic Claude 3 Series (Legacy)
+  'claude-3-opus-20240229': 4096,
+  'claude-3-sonnet-20240229': 4096,
+  'claude-3-haiku-20240307': 4096,
+
+  // Kimi K2 Series
+  'kimi-k2-0905-preview': 16384,
+  'kimi-k2-thinking': 32768,
+  'kimi-k2-0711-preview': 8192,
+
+  // Kimi K1.5 Series
+  'kimi-k1.5': 8192,
+  'kimi-k1.5-long': 8192,
+
+  // Kimi Linear Series
+  'kimi-linear-48b': 16384,
+
+  // Kimi Specialized
+  'kimi-dev-72b': 8192,
+  'kimi-vl': 4096,
+};
+
+/**
+ * Default max output tokens for unknown models (conservative)
+ */
+export const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
+
+/**
+ * Get the max output tokens limit for a specific model.
+ * Returns a default value for unknown models.
+ */
+export function getModelMaxOutputTokens(model: string): number {
+  return MODEL_MAX_OUTPUT_TOKENS[model] ?? DEFAULT_MAX_OUTPUT_TOKENS;
+}
+
+/**
  * Thresholds for context usage validation
  */
 export const CONTEXT_THRESHOLDS = {
