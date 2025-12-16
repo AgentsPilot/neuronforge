@@ -6,6 +6,9 @@
  */
 
 import { IPluginContext } from '@/lib/types/plugin-definition-context';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'AgentKit', service: 'PluginHelpers' });
 
 /**
  * Generate aliases from plugin display name and key
@@ -94,10 +97,12 @@ export function matchPluginFromText(
   // Check each alias
   for (const [alias, pluginKey] of pluginAliasMap.entries()) {
     if (lowerText.includes(alias)) {
+      logger.debug({ alias, pluginKey, textLength: text.length }, 'Plugin matched from text');
       return pluginKey;
     }
   }
 
+  logger.debug({ textLength: text.length, aliasCount: pluginAliasMap.size }, 'No plugin match found');
   return null;
 }
 
@@ -125,6 +130,10 @@ export function matchCapabilitiesFromText(
         matchedCapabilities.push(capability);
       }
     }
+  }
+
+  if (matchedCapabilities.length > 0) {
+    logger.debug({ matchedCapabilities, matchCount: matchedCapabilities.length }, 'Capabilities matched from text');
   }
 
   return matchedCapabilities;
@@ -175,7 +184,15 @@ export function findPluginByCategory(
   category: string,
   plugins: IPluginContext[]
 ): IPluginContext | null {
-  return plugins.find(p => p.category.toLowerCase() === category.toLowerCase()) || null;
+  const found = plugins.find(p => p.category.toLowerCase() === category.toLowerCase()) || null;
+
+  if (found) {
+    logger.debug({ category, pluginKey: found.key }, 'Plugin found by category');
+  } else {
+    logger.debug({ category, pluginCount: plugins.length }, 'No plugin found for category');
+  }
+
+  return found;
 }
 
 /**
@@ -186,11 +203,20 @@ export function findPluginsWithCapability(
   capability: string,
   plugins: IPluginContext[]
 ): IPluginContext[] {
-  return plugins.filter(p =>
+  const found = plugins.filter(p =>
     p.capabilities?.some(cap =>
       cap.toLowerCase().includes(capability.toLowerCase())
     )
   );
+
+  if (found.length > 0) {
+    logger.debug(
+      { capability, matchedPlugins: found.map(p => p.key), matchCount: found.length },
+      'Plugins found with capability'
+    );
+  }
+
+  return found;
 }
 
 /**
@@ -224,6 +250,10 @@ export function scorePluginRelevance(
     if (capParts.every(part => lowerIntent.includes(part))) {
       score += 3;
     }
+  }
+
+  if (score > 0) {
+    logger.debug({ pluginKey: plugin.key, score }, 'Plugin relevance scored');
   }
 
   return score;
