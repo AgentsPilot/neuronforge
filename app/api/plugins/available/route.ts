@@ -2,19 +2,22 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'API', service: 'PluginsAvailable' });
 
 // GET /api/plugins/available
 // Returns all plugins available in the registry (regardless of user connections)
 export async function GET(request: NextRequest) {
   try {
-    console.log('DEBUG: API - Getting available plugins');
-    
+    logger.debug('Getting available plugins');
+
     // Get plugin manager instance (singleton with cold start handling)
     const pluginManager = await PluginManagerV2.getInstance();
-    
+
     // Get all available plugins
     const availablePlugins = pluginManager.getAvailablePlugins();
-    
+
     // Format response for client consumption
     const formatted = Object.entries(availablePlugins).map(([key, definition]) => ({
       key,
@@ -29,7 +32,7 @@ export async function GET(request: NextRequest) {
       isSystem: definition.plugin.isSystem || false // Include system flag
     }));
 
-    console.log(`DEBUG: API - Returning ${formatted.length} available plugins`);
+    logger.debug({ count: formatted.length }, 'Returning available plugins');
 
     return NextResponse.json({
       success: true,
@@ -38,8 +41,8 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error('DEBUG: API - Error getting available plugins:', error);
-    
+    logger.error({ err: error }, 'Error getting available plugins');
+
     return NextResponse.json({
       success: false,
       error: 'Failed to get available plugins',

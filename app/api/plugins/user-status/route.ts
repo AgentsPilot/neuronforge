@@ -3,6 +3,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAuthenticatedServerClient } from '@/lib/supabaseServerAuth';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'API', service: 'PluginUserStatus' });
 
 // Force dynamic rendering for this route
 export const dynamic = 'force-dynamic';
@@ -41,12 +44,12 @@ class ResponseCache {
 
   invalidate(key: string) {
     this.cache.delete(key);
-    console.log(`DEBUG: Cache invalidated for key: ${key}`);
+    logger.debug({ key }, 'Cache invalidated');
   }
 
   clear() {
     this.cache.clear();
-    console.log('DEBUG: All cache entries cleared');
+    logger.debug('All cache entries cleared');
   }
 }
 
@@ -87,7 +90,7 @@ export async function GET(request: NextRequest) {
     const cachedResponse = pluginStatusCache.get(cacheKey);
 
     if (cachedResponse) {
-      console.log(`DEBUG: API - Returning CACHED plugin status for user ${userId}`);
+      logger.debug({ userId }, 'Returning cached plugin status');
       return NextResponse.json(cachedResponse, {
         headers: {
           'X-Cache': 'HIT',
@@ -96,7 +99,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    console.log(`DEBUG: API - Getting plugin status for user ${userId} (auth: ${authMethod})`);
+    logger.debug({ userId, authMethod }, 'Getting plugin status');
 
     // Get plugin manager instance
     const pluginManager = await PluginManagerV2.getInstance();
@@ -118,7 +121,7 @@ export async function GET(request: NextRequest) {
     // Format connected plugins with connection details
     const connected = Object.entries(connectedPlugins).map(([key, connectedPlugin]) => {
       const { definition, connection } = connectedPlugin;
-      console.log(`DEBUG: API - Formatting plugin ${key} with connection details`);
+      logger.debug({ pluginKey: key }, 'Formatting plugin with connection details');
 
       // Check if this is a system plugin
       const isSystemPlugin = definition.plugin.isSystem || false;
@@ -154,7 +157,12 @@ export async function GET(request: NextRequest) {
       action_count: Object.keys(data.plugin.actions).length
     }));
 
-    console.log(`DEBUG: API - User ${userId} has ${connected.length} connected, ${activeExpiredKeys.length} active expired, ${disconnected.length} disconnected plugins`);
+    logger.debug({
+      userId,
+      connectedCount: connected.length,
+      activeExpiredCount: activeExpiredKeys.length,
+      disconnectedCount: disconnected.length
+    }, 'Plugin status summary');
 
     // Build response data
     const responseData = {
@@ -182,8 +190,8 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error('DEBUG: API - Error getting user plugin status:', error);
-    
+    logger.error({ err: error }, 'Error getting user plugin status');
+
     return NextResponse.json({
       success: false,
       error: 'Failed to get user plugin status',
