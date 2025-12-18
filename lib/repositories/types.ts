@@ -12,7 +12,7 @@ export enum AgentStatusEnum {
 }
 
 // Type alias for flexibility (can use enum values or string literals)
-export type AgentStatus = 'draft' | 'active' | 'inactive' | 'deleted';
+export type AgentStatus = 'draft' | 'active' | 'inactive' | 'deleted' | 'archived';
 
 export interface Agent {
   id: string;
@@ -36,6 +36,11 @@ export interface Agent {
   output_schema?: unknown[] | null;
   user_prompt?: string | null;
   workflow_steps?: unknown[] | null;
+  // Additional fields used in agent execution
+  pilot_steps?: unknown[] | null;
+  system_prompt?: string | null;
+  enhanced_prompt?: string | null;
+  trigger_condintion?: Record<string, unknown> | null;
 }
 
 export interface CreateAgentInput {
@@ -75,6 +80,7 @@ export const STATUS_TRANSITIONS: Record<AgentStatus, AgentStatus[]> = {
   active: ['inactive', 'deleted'],   // Active can be paused or deleted
   inactive: ['active', 'deleted'],   // Inactive can be reactivated or deleted
   deleted: [],                        // Terminal state - only restore() bypasses this
+  archived: [],                       // Archived agents cannot transition
 };
 
 // ============ Execution Types ============
@@ -112,7 +118,9 @@ export interface Execution {
   id: string;
   agent_id: string;
   user_id?: string;
+  execution_type?: 'manual' | 'scheduled';
   status: ExecutionStatus;
+  scheduled_at?: string;
   started_at: string;
   completed_at?: string | null;
   execution_duration_ms?: number | null;
@@ -121,7 +129,25 @@ export interface Execution {
   error_message?: string | null;
   input_data?: Record<string, unknown> | null;
   output?: unknown;
+  cron_expression?: string | null;
+  progress?: number;
+  retry_count?: number;
   created_at?: string;
+}
+
+// Lightweight execution record for status polling (GET handler)
+export interface ExecutionStatusRecord {
+  id: string;
+  agent_id: string;
+  execution_type?: 'manual' | 'scheduled';
+  status: ExecutionStatus;
+  progress?: number;
+  scheduled_at?: string;
+  started_at?: string;
+  completed_at?: string | null;
+  error_message?: string | null;
+  execution_duration_ms?: number | null;
+  retry_count?: number;
 }
 
 export interface TokenUsage {

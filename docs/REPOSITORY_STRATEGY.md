@@ -114,14 +114,19 @@ All repositories are located in `lib/repositories/` with the following structure
 
 ```
 lib/repositories/
-├── index.ts                    # Barrel exports (repositories + types)
-├── types.ts                    # Shared TypeScript interfaces and types
-├── AgentRepository.ts          # Agent CRUD and status management
-├── ExecutionRepository.ts      # Agent execution records and token usage
-├── SharedAgentRepository.ts    # Shared/template agents for marketplace
-├── AgentMetricsRepository.ts   # Agent performance metrics
-├── ConfigRepository.ts         # System and reward configuration
-└── MemoryRepository.ts         # Agent run memories
+├── index.ts                       # Barrel exports (repositories + types)
+├── types.ts                       # Shared TypeScript interfaces and types
+├── AgentRepository.ts             # Agent CRUD and status management
+├── AgentConfigurationRepository.ts # Agent input values and run configuration
+├── AgentLogsRepository.ts         # Agent execution output logs
+├── AgentMetricsRepository.ts      # Agent performance metrics
+├── AgentStatsRepository.ts        # Agent run statistics and costs
+├── ConfigRepository.ts            # System and reward configuration
+├── ExecutionRepository.ts         # Agent execution records and token usage
+├── ExecutionLogRepository.ts      # Step-by-step execution logs (legacy path)
+├── MemoryRepository.ts            # Agent run memories
+├── SharedAgentRepository.ts       # Shared/template agents for marketplace
+└── SystemConfigRepository.ts      # System-wide settings configuration
 ```
 
 ## Repository Catalog
@@ -146,10 +151,23 @@ lib/repositories/
 **Purpose:** Handles agent execution records and associated token usage data.
 
 **Key Responsibilities:**
+- Create and manage execution records
 - Query executions by agent or user
 - Pagination support for execution history
 - Token usage aggregation and lookup
-- Batch fetch token data for multiple executions
+- Update execution logs with adjusted tokens
+- Find running executions for concurrency checks
+
+**Key Methods:**
+| Method | Description |
+|--------|-------------|
+| `create(input)` | Create new execution record |
+| `findById(id)` | Get execution by ID |
+| `findByAgentId(agentId, options?)` | Get executions for agent with pagination |
+| `updateLogs(id, logs)` | Update execution logs (for adjusted tokens) |
+| `findRunningByAgentId(agentId)` | Find pending/running executions |
+| `findForStatusQuery(options)` | Lightweight query for status polling |
+| `getTokenUsageByExecutionIds(ids)` | Batch fetch token usage data |
 
 ---
 
@@ -200,6 +218,126 @@ lib/repositories/
 - Retrieve memory records with pagination
 - Support for memory-based agent features
 
+---
+
+### SystemConfigRepository
+**Location:** `lib/repositories/SystemConfigRepository.ts`
+
+**Purpose:** Manages system-wide settings from the `system_settings_config` table. Provides typed access to configuration values with category-based organization.
+
+**Key Responsibilities:**
+- Get config values by key or category
+- Type-safe getters: `getString()`, `getNumber()`, `getBoolean()`
+- Upsert config values with automatic category inference
+- Convenience methods: `getRoutingConfig()`, `getAgentCreationConfig()`
+
+**Key Methods:**
+| Method | Description |
+|--------|-------------|
+| `getByKey(key)` | Get single config value |
+| `getByCategory(category)` | Get all configs in a category |
+| `getByCategoryAsMap(category)` | Get configs as key-value map |
+| `getString(key, fallback)` | Get string value with fallback |
+| `getNumber(key, fallback)` | Get number value with fallback |
+| `getBoolean(key, fallback)` | Get boolean value with fallback |
+| `set(key, value, category?, description?)` | Upsert config value |
+| `getRoutingConfig()` | Get all routing-related settings |
+
+---
+
+### AgentStatsRepository
+**Location:** `lib/repositories/AgentStatsRepository.ts`
+
+**Purpose:** Manages agent run statistics from the `agent_stats` table. Used for cost estimation and execution tracking.
+
+**Key Responsibilities:**
+- Retrieve last run cost for balance estimation
+- Increment execution statistics via RPC
+- Support for agent cost prediction
+
+**Key Methods:**
+| Method | Description |
+|--------|-------------|
+| `getLastRunCost(agentId, userId)` | Get tokens used in last execution |
+| `incrementStats(agentId, userId, success)` | Increment run counts via `increment_agent_stats` RPC |
+
+---
+
+### AgentConfigurationRepository
+**Location:** `lib/repositories/AgentConfigurationRepository.ts`
+
+**Purpose:** Manages agent input configurations from the `agent_configurations` table. Stores saved input values and execution state.
+
+**Key Responsibilities:**
+- Retrieve saved input values for agent execution
+- Update execution status (for legacy path)
+- Support for both test mode and production runs
+
+**Key Methods:**
+| Method | Description |
+|--------|-------------|
+| `getInputValues(agentId, userId)` | Get saved input values and schema |
+| `updateStatus(id, status, completedAt?, durationMs?)` | Update execution status (legacy) |
+
+---
+
+### AgentLogsRepository
+**Location:** `lib/repositories/AgentLogsRepository.ts`
+
+**Purpose:** Manages agent execution output logs in the `agent_logs` table. Stores final execution results and outputs.
+
+**Key Responsibilities:**
+- Create execution log entries
+- Store run output and full output data
+- Track execution status (completed/failed)
+
+**Key Methods:**
+| Method | Description |
+|--------|-------------|
+| `create(input)` | Create new agent log entry |
+
+**Input Interface:**
+```typescript
+interface CreateAgentLogInput {
+  agent_id: string;
+  user_id: string;
+  run_output?: string | null;
+  full_output?: Record<string, unknown> | null;
+  status: 'completed' | 'failed';
+  created_at?: string;
+}
+```
+
+---
+
+### ExecutionLogRepository
+**Location:** `lib/repositories/ExecutionLogRepository.ts`
+
+**Purpose:** Manages step-by-step execution logs in the `agent_execution_logs` table. Used primarily by the legacy execution path for granular logging.
+
+**Key Responsibilities:**
+- Create step-by-step log entries during execution
+- Track execution phases (documents, prompt, validation, etc.)
+- Support for execution debugging and audit trail
+
+**Key Methods:**
+| Method | Description |
+|--------|-------------|
+| `create(input)` | Create new execution log entry |
+
+**Input Interface:**
+```typescript
+interface CreateExecutionLogInput {
+  execution_id: string;
+  agent_id: string;
+  user_id: string;
+  timestamp: string;
+  level: 'info' | 'warning' | 'error';
+  message: string;
+  phase: 'documents' | 'prompt' | 'validation' | string;
+}
+```
+
 ## Type Definitions
 
 All shared types are centralized in `lib/repositories/types.ts`:
@@ -207,12 +345,23 @@ All shared types are centralized in `lib/repositories/types.ts`:
 | Type | Description |
 |------|-------------|
 | `Agent` | Core agent entity with all fields |
-| `AgentStatus` | Status union type: `'draft' \| 'active' \| 'inactive' \| 'deleted'` |
+| `AgentStatus` | Status union type: `'draft' \| 'active' \| 'inactive' \| 'deleted' \| 'archived'` |
 | `Execution` | Agent execution record with logs |
+| `ExecutionStatus` | Execution status: `'pending' \| 'running' \| 'completed' \| 'failed' \| 'success' \| 'error'` |
+| `ExecutionStatusRecord` | Lightweight execution record for status polling |
 | `ExecutionLogs` | Structured execution log data |
+| `ExecutionTokensUsed` | Token consumption with intensity adjustment |
 | `TokenUsage` | Token consumption record |
 | `SharedAgent` | Shared agent template entity |
 | `AgentMetrics` | Performance metrics snapshot |
+| `SystemSettingsConfig` | System configuration entry |
+| `AgentStats` | Agent run statistics |
+| `AgentConfiguration` | Agent input values configuration |
+| `AgentLog` | Agent execution output log |
+| `ExecutionLog` | Step-by-step execution log entry |
+| `CreateExecutionInput` | Input for creating execution records |
+| `CreateAgentLogInput` | Input for creating agent logs |
+| `CreateExecutionLogInput` | Input for creating execution logs |
 | `AgentRepositoryResult<T>` | Standard result wrapper with error handling |
 
 ## Usage Patterns
@@ -370,11 +519,16 @@ try {
 | Repository | Key Logged Operations |
 |------------|----------------------|
 | `AgentRepository` | create, updateStatus, softDelete, hardDelete, restore, duplicate, updateDetails |
-| `ExecutionRepository` | findByAgentId, getTokenUsageByExecutionIds |
+| `ExecutionRepository` | create, findByAgentId, updateLogs, findRunningByAgentId, findForStatusQuery |
 | `SharedAgentRepository` | create |
 | `AgentMetricsRepository` | findByAgentId |
 | `ConfigRepository` | getSystemConfig (on cache miss) |
 | `MemoryRepository` | findByAgentId (on large queries) |
+| `SystemConfigRepository` | getByKey, getByCategory, set, setMultiple, delete |
+| `AgentStatsRepository` | getLastRunCost, incrementStats |
+| `AgentConfigurationRepository` | getInputValues, updateStatus |
+| `AgentLogsRepository` | create |
+| `ExecutionLogRepository` | create |
 
 ### Client-Side Logging
 
@@ -498,9 +652,22 @@ The following API routes use the repository layer. **Client components should us
 | `/api/agents/[id]/executions` | GET | `executionRepository.findByAgentId()` | Get executions with token enrichment |
 | `/api/agents/[id]/memory/count` | GET | `memoryRepository.countByAgentId()` | Get memory count |
 | `/api/agents/[id]/metrics` | GET | `agentMetricsRepository.findByAgentId()` | Get performance metrics |
+| `/api/run-agent` | POST | Multiple repositories | Execute agent (uses 7 repositories) |
+| `/api/run-agent` | GET | `executionRepository.findForStatusQuery()` | Get execution status |
 | `/api/shared-agents` | POST | `sharedAgentRepository.create()` | Share an agent |
 | `/api/shared-agents/exists` | GET | `sharedAgentRepository.existsByOriginalAgent()` | Check if agent is shared |
 | `/api/system-config` | GET | `systemConfigRepository.getByCategory()` | Get system config |
+
+**`/api/run-agent` POST uses:**
+- `agentRepository.findById()` - Fetch agent
+- `agentStatsRepository.getLastRunCost()` - Estimate cost
+- `agentStatsRepository.incrementStats()` - Track execution stats
+- `agentConfigurationRepository.getInputValues()` - Get saved inputs
+- `executionRepository.create()` - Create execution record
+- `executionRepository.updateLogs()` - Store adjusted tokens
+- `agentLogsRepository.create()` - Log execution output
+- `executionLogRepository.create()` - Step-by-step logs (legacy path)
+- `systemConfigRepository.getBoolean()` - Check pilot enabled
 
 **Direct fetch (use only when Client API doesn't cover your use case):**
 ```typescript

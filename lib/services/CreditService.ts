@@ -380,4 +380,147 @@ export class CreditService {
 
     return data || [];
   }
+
+  /**
+   * Check if user is allowed to execute an agent
+   * Combines account frozen check with balance check
+   */
+  async checkExecutionAllowed(
+    userId: string,
+    estimatedCost?: number
+  ): Promise<{
+    allowed: boolean;
+    frozen: boolean;
+    balance: number;
+    reason?: string;
+    freeTierExpiresAt?: string | null;
+  }> {
+    const { data: subscription, error } = await this.supabase
+      .from('user_subscriptions')
+      .select('account_frozen, free_tier_expires_at, balance')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error checking execution allowed:', error);
+      // On error, allow execution (fail open for better UX)
+      return { allowed: true, frozen: false, balance: 0 };
+    }
+
+    if (!subscription) {
+      // No subscription record - allow execution (new user)
+      return { allowed: true, frozen: false, balance: 0 };
+    }
+
+    const balance = subscription.balance || 0;
+    const frozen = subscription.account_frozen || false;
+
+    if (frozen) {
+      return {
+        allowed: false,
+        frozen: true,
+        balance,
+        reason: 'Your free tier has expired. Please purchase tokens to continue using agents.',
+        freeTierExpiresAt: subscription.free_tier_expires_at
+      };
+    }
+
+    if (estimatedCost && balance < estimatedCost) {
+      return {
+        allowed: false,
+        frozen: false,
+        balance,
+        reason: `Insufficient balance. Required: ${estimatedCost} tokens, Available: ${balance} tokens.`
+      };
+    }
+
+    return { allowed: true, frozen: false, balance };
+  }
+
+  /**
+   * Charge tokens with intensity multiplier (stores as tokens, not credits)
+   * Used by run-agent route for tracking actual token consumption
+   */
+  async chargeTokensWithIntensity(
+    userId: string,
+    agentId: string,
+    rawTokens: number,
+    intensityScore: number,
+    metadata: { executionType: string; agentName: string }
+  ): Promise<{ charged: number; newBalance: number; multiplier: number }> {
+    const intensityMultiplier = 1.0 + (intensityScore / 10);
+    const adjustedTokens = Math.ceil(rawTokens * intensityMultiplier);
+
+    console.log('💸 [CreditService] Charging tokens with intensity:', {
+      rawTokens,
+      intensityScore,
+      intensityMultiplier,
+      adjustedTokens
+    });
+
+    // Get current balance and total_spent
+    const { data: currentSub } = await this.supabase
+      .from('user_subscriptions')
+      .select('balance, total_spent')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    const currentBalance = currentSub?.balance || 0;
+    const currentTotalSpent = currentSub?.total_spent || 0;
+    const newBalance = currentBalance - adjustedTokens;
+    const newTotalSpent = currentTotalSpent + adjustedTokens;
+
+    // Update balance and total_spent
+    const { error: updateError } = await this.supabase
+      .from('user_subscriptions')
+      .update({
+        balance: newBalance,
+        total_spent: newTotalSpent,
+        agents_paused: newBalance <= 0
+      })
+      .eq('user_id', userId);
+
+    if (updateError) {
+      console.error('❌ [CreditService] Failed to update balance:', updateError);
+      throw updateError;
+    }
+
+    console.log(`✅ [CreditService] Token spending tracked: ${adjustedTokens} tokens`);
+    console.log(`   Balance: ${currentBalance} → ${newBalance} tokens`);
+    console.log(`   Total Spent: ${currentTotalSpent} → ${newTotalSpent} tokens`);
+
+    // Log transaction for audit trail
+    const { error: txError } = await this.supabase.from('credit_transactions').insert({
+      user_id: userId,
+      agent_id: agentId,
+      credits_delta: -adjustedTokens,
+      balance_before: currentBalance,
+      balance_after: newBalance,
+      transaction_type: 'deduction',
+      activity_type: 'agent_execution',
+      description: `${metadata.executionType} execution: ${rawTokens} tokens × ${intensityMultiplier.toFixed(2)} intensity`,
+      metadata: {
+        execution_type: metadata.executionType,
+        raw_tokens: rawTokens,
+        intensity_score: intensityScore,
+        multiplier: intensityMultiplier,
+        adjusted_tokens: adjustedTokens,
+        agent_name: metadata.agentName
+      }
+    });
+
+    if (txError) {
+      console.error('❌ [CreditService] Failed to log transaction:', txError);
+      // Non-fatal - balance already updated
+    } else {
+      console.log('✅ [CreditService] Transaction logged successfully');
+    }
+
+    // Check if agents should be paused
+    if (newBalance <= 0) {
+      await this.pauseAgents(userId);
+    }
+
+    return { charged: adjustedTokens, newBalance, multiplier: intensityMultiplier };
+  }
 }

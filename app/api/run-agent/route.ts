@@ -2,9 +2,9 @@
 // Enhanced agent runner supporting both immediate execution and queue-based execution
 
 import { NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
-import { createServerClient } from '@supabase/ssr'
 import { v4 as uuidv4 } from 'uuid'
+import { createAuthenticatedServerClient } from '@/lib/supabaseServerAuth'
+import { createLogger } from '@/lib/logger'
 import { runAgentWithContext } from '@/lib/utils/runAgentWithContext'
 import { extractPdfTextFromBase64 } from '@/lib/utils/extractPdfTextFromBase64'
 import { addManualExecution } from '@/lib/queues/qstashQueue'
@@ -12,10 +12,23 @@ import { runAgentKit } from '@/lib/agentkit/runAgentKit' // NEW: AgentKit execut
 import { updateAgentIntensityMetrics } from '@/lib/utils/updateAgentIntensity'
 import type { AgentExecutionData } from '@/lib/types/intensity'
 import { WorkflowPilot } from '@/lib/pilot'
-import { SystemConfigService } from '@/lib/services/SystemConfigService'
+import type { Agent as PilotAgent } from '@/lib/pilot/types'
 import { auditLog } from '@/lib/services/AuditTrailService'
+import { CreditService } from '@/lib/services/CreditService'
+import {
+  AgentRepository,
+  AgentStatsRepository,
+  AgentConfigurationRepository,
+  AgentLogsRepository,
+  ExecutionRepository,
+  ExecutionLogRepository,
+  SystemConfigRepository,
+} from '@/lib/repositories'
 
 export const runtime = 'nodejs'
+
+// Create route-level logger
+const routeLogger = createLogger({ module: 'API', route: '/api/run-agent' })
 
 interface RunAgentRequest {
   agent_id: string;
@@ -50,18 +63,7 @@ export async function POST(req: Request) {
     debugRunId // NEW: Pre-generated debug run ID from frontend
   } = body
 
-  const cookieStore = await cookies()
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get: (name) => cookieStore.get(name)?.value,
-        set: async () => {},
-        remove: async () => {},
-      },
-    }
-  )
+  const supabase = await createAuthenticatedServerClient()
 
   // Get authenticated user
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -69,63 +71,68 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // Create request-scoped logger with correlation context
+  const correlationId = provided_session_id || uuidv4()
+  const logger = routeLogger.child({
+    method: 'POST',
+    correlationId,
+    agentId: agent_id,
+    userId: user.id,
+    executionType: execution_type
+  })
+  const startTime = Date.now()
+
+  logger.info('Agent execution request received')
+
+  // Initialize repositories with authenticated Supabase client
+  const creditService = new CreditService(supabase)
+  const agentRepository = new AgentRepository(supabase)
+  const agentStatsRepository = new AgentStatsRepository(supabase)
+  const agentConfigurationRepository = new AgentConfigurationRepository(supabase)
+  const agentLogsRepository = new AgentLogsRepository(supabase)
+  const executionRepository = new ExecutionRepository(supabase)
+  const executionLogRepository = new ExecutionLogRepository(supabase)
+  const systemConfigRepository = new SystemConfigRepository(supabase)
+
   // Check if account is frozen (free tier expired) or has insufficient balance
   try {
-    const { data: subscription, error: subError } = await supabase
-      .from('user_subscriptions')
-      .select('account_frozen, free_tier_expires_at, balance')
-      .eq('user_id', user.id)
-      .maybeSingle()
+    // Get estimated cost from last run (if available)
+    const { data: lastRunCost } = await agentStatsRepository.getLastRunCost(agent_id, user.id)
 
-    if (!subError && subscription) {
-      if (subscription.account_frozen) {
-        console.log(`🔒 [Run Agent] Account frozen for user ${user.id}`)
+    // Use CreditService to check if execution is allowed
+    const executionCheck = await creditService.checkExecutionAllowed(user.id, lastRunCost || undefined)
+
+    if (!executionCheck.allowed) {
+      if (executionCheck.frozen) {
+        logger.warn({ frozen: true }, 'Account frozen - execution blocked')
         return NextResponse.json({
           error: 'Account Frozen',
-          message: 'Your free tier has expired. Please purchase tokens to continue using agents.',
+          message: executionCheck.reason,
           frozen: true
         }, { status: 403 })
       }
 
-      // Check if user has enough tokens based on last run cost
-      const { data: lastRun, error: lastRunError } = await supabase
-        .from('agent_stats')
-        .select('last_run_cost')
-        .eq('agent_id', agent_id)
-        .eq('user_id', user.id)
-        .order('last_run_at', { ascending: false })
-        .limit(1)
-        .single()
-
-      if (!lastRunError && lastRun?.last_run_cost) {
-        const requiredTokens = lastRun.last_run_cost
-        if ((subscription.balance || 0) < requiredTokens) {
-          console.log(`🔒 [Run Agent] Insufficient balance for user ${user.id} (balance: ${subscription.balance}, required: ${requiredTokens})`)
-          return NextResponse.json({
-            error: 'Insufficient Balance',
-            message: `This agent requires approximately ${requiredTokens} pilot tokens based on previous runs. Please purchase tokens to continue.`,
-            insufficientBalance: true,
-            requiredTokens: requiredTokens,
-            currentBalance: subscription.balance || 0
-          }, { status: 403 })
-        }
-      }
-      // If no last run exists, allow execution (first run)
+      // Insufficient balance
+      logger.warn({ balance: executionCheck.balance, required: lastRunCost }, 'Insufficient balance - execution blocked')
+      return NextResponse.json({
+        error: 'Insufficient Balance',
+        message: executionCheck.reason || `This agent requires approximately ${lastRunCost} pilot tokens based on previous runs. Please purchase tokens to continue.`,
+        insufficientBalance: true,
+        requiredTokens: lastRunCost,
+        currentBalance: executionCheck.balance
+      }, { status: 403 })
     }
+    // If no last run exists, allow execution (first run)
   } catch (freezeCheckError) {
     // Log but don't block execution if freeze check fails
-    console.error('⚠️ [Run Agent] Freeze check failed (proceeding):', freezeCheckError)
+    logger.warn({ err: freezeCheckError }, 'Freeze check failed - proceeding with execution')
   }
 
-  // Fetch agent
-  const { data: agent, error: agentError } = await supabase
-    .from('agents')
-    .select('*')
-    .eq('id', agent_id)
-    .single()
+  // Fetch agent using repository (includes user ownership check)
+  const { data: agent, error: agentError } = await agentRepository.findById(agent_id, user.id)
 
   if (agentError || !agent) {
-    console.error('❌ Agent fetch error:', agentError)
+    logger.error({ err: agentError }, 'Agent not found')
     return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
   }
 
@@ -143,17 +150,16 @@ export async function POST(req: Request) {
   const hasWorkflowSteps = workflowStepsToUse && Array.isArray(workflowStepsToUse) && workflowStepsToUse.length > 0;
 
   if (hasWorkflowSteps) {
-    console.log(`🔍 Agent has ${workflowStepsToUse.length} workflow steps - checking pilot status...`);
+    logger.debug({ stepCount: workflowStepsToUse.length }, 'Agent has workflow steps - checking pilot status');
 
     // Check if pilot is enabled in system config
-    const pilotEnabled = await SystemConfigService.getBoolean(
-      supabase,
+    const pilotEnabled = await systemConfigRepository.getBoolean(
       'pilot_enabled',
       false // Default: disabled for safety
     );
 
     if (pilotEnabled && !use_agentkit) {
-      console.log(`🎯 Using Workflow Pilot for agent "${agent.agent_name}" (${agent_id})`);
+      logger.info({ agentName: agent.agent_name, executor: 'pilot' }, 'Using Workflow Pilot');
 
       try {
         const userInput = override_user_prompt || agent.user_prompt;
@@ -163,37 +169,49 @@ export async function POST(req: Request) {
           // TEST MODE: Use values from UI
           inputValues = input_variables || {};
           inputSchema = agent.input_schema;
-          console.log(`📋 Pilot TEST MODE: Using ${Object.keys(inputValues).length} input values from UI`);
+          logger.debug({ inputCount: Object.keys(inputValues).length, mode: 'test' }, 'Pilot using UI input values');
         } else {
-          // RUN MODE: Fetch saved configuration
-          const { data: agentConfig } = await supabase
-            .from('agent_configurations')
-            .select('input_values, input_schema')
-            .eq('agent_id', agent_id)
-            .eq('user_id', user.id)
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .single();
+          // RUN MODE: Fetch saved configuration using repository
+          const { data: agentConfig } = await agentConfigurationRepository.getInputValues(agent_id, user.id);
 
-          inputValues = agentConfig?.input_values || {};
+          inputValues = (agentConfig?.input_values || {}) as Record<string, any>;
           inputSchema = agent.input_schema || agentConfig?.input_schema;
-          console.log(`📋 Pilot RUN MODE: Using ${Object.keys(inputValues).length} input values from saved configuration`);
+          logger.debug({ inputCount: Object.keys(inputValues).length, mode: 'run' }, 'Pilot using saved configuration');
         }
 
         // Use provided session_id for SSE correlation, or generate new one
         const sessionId = provided_session_id || uuidv4();
-        console.log(`📋 Using session_id: ${sessionId} ${provided_session_id ? '(from request)' : '(generated)'}`);
+        logger.debug({ sessionId, fromRequest: !!provided_session_id }, 'Session ID set');
 
         if (debugMode) {
-          console.log(`🐛 Debug mode enabled for pilot execution with runId: ${debugRunId}`);
+          logger.debug({ debugRunId }, 'Debug mode enabled for pilot execution');
         }
 
         // Execute using WorkflowPilot
         const pilot = new WorkflowPilot(supabase);
+        // Transform agent to convert null to undefined for type compatibility with pilot types
+        const pilotAgent: PilotAgent = {
+          id: agent.id,
+          user_id: agent.user_id,
+          agent_name: agent.agent_name,
+          system_prompt: agent.system_prompt ?? undefined,
+          enhanced_prompt: agent.enhanced_prompt ?? undefined,
+          user_prompt: agent.user_prompt || '',
+          workflow_steps: (agent.workflow_steps ?? undefined) as PilotAgent['workflow_steps'],
+          pilot_steps: (agent.pilot_steps ?? undefined) as PilotAgent['pilot_steps'],
+          plugins_required: agent.plugins_required || [],
+          input_schema: agent.input_schema as PilotAgent['input_schema'],
+          output_schema: agent.output_schema as PilotAgent['output_schema'],
+          schedule_cron: agent.schedule_cron ?? undefined,
+          trigger_condintion: agent.trigger_condintion ?? undefined,
+          status: agent.status,
+          created_at: agent.created_at,
+          updated_at: agent.updated_at ?? undefined,
+        };
         executionResult = await pilot.execute(
-          agent, // Pass full agent object
+          pilotAgent, // Pass transformed agent object
           user.id,
-          userInput,
+          userInput || '',
           inputValues,
           sessionId,
           undefined, // stepEmitter
@@ -205,11 +223,11 @@ export async function POST(req: Request) {
         shouldExecute = false; // Don't execute AgentKit
 
       } catch (error: any) {
-        console.error('❌ WorkflowPilot execution error:', error);
+        logger.error({ err: error }, 'WorkflowPilot execution failed');
 
         // If pilot is disabled, fall through to AgentKit
         if (error.message?.includes('disabled in system configuration')) {
-          console.warn('⚠️  Pilot disabled - falling back to AgentKit');
+          logger.warn('Pilot disabled - falling back to AgentKit');
           // Fall through to AgentKit execution below
         } else {
           return NextResponse.json({
@@ -220,7 +238,7 @@ export async function POST(req: Request) {
         }
       }
     } else if (!pilotEnabled) {
-      console.warn(`⚠️  Agent has workflow_steps but pilot is disabled - falling back to AgentKit`);
+      logger.warn({ hasWorkflowSteps: true }, 'Agent has workflow_steps but pilot is disabled - falling back to AgentKit');
       // Fall through to AgentKit execution
     }
   }
@@ -228,10 +246,10 @@ export async function POST(req: Request) {
   // **AGENTKIT EXECUTION PATH**
   // Execute with AgentKit if pilot didn't execute (shouldExecute is still true)
   if (shouldExecute) {
-    console.log(`🤖 Using AgentKit execution for agent "${agent.agent_name}" (${agent_id})`)
+    logger.info({ agentName: agent.agent_name, executor: 'agentkit' }, 'Using AgentKit execution')
 
     try {
-      const userInput = override_user_prompt || agent.user_prompt
+      const userInput = override_user_prompt || agent.user_prompt || ''
 
       // CRITICAL FIX: Determine input source based on execution type
       //
@@ -243,21 +261,14 @@ export async function POST(req: Request) {
         // TEST MODE (AgentSandbox): Use values entered in UI form (temporary, not saved)
         inputValues = input_variables || {}
         inputSchema = agent.input_schema
-        console.log(`📋 AgentKit TEST MODE: Using ${Object.keys(inputValues).length} input values from UI (not saved)`, inputValues)
+        logger.debug({ inputCount: Object.keys(inputValues).length, mode: 'test' }, 'AgentKit using UI input values')
       } else {
-        // RUN MODE (AgentSandbox Run / AgentList / Scheduled): Fetch saved configuration
-        const { data: agentConfig, error: configError } = await supabase
-          .from('agent_configurations')
-          .select('input_values, input_schema')
-          .eq('agent_id', agent_id)
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .single()
+        // RUN MODE (AgentSandbox Run / AgentList / Scheduled): Fetch saved configuration using repository
+        const { data: agentConfig } = await agentConfigurationRepository.getInputValues(agent_id, user.id)
 
-        inputValues = agentConfig?.input_values || {}
+        inputValues = (agentConfig?.input_values || {}) as Record<string, any>
         inputSchema = agent.input_schema || agentConfig?.input_schema
-        console.log(`📋 AgentKit RUN MODE (${execution_type || 'scheduled'}): Using ${Object.keys(inputValues).length} input values from saved configuration`, inputValues)
+        logger.debug({ inputCount: Object.keys(inputValues).length, mode: execution_type || 'scheduled' }, 'AgentKit using saved configuration')
       }
 
       // Generate session ID for analytics tracking (UUID format)
@@ -269,9 +280,9 @@ export async function POST(req: Request) {
         {
           id: agent.id,
           agent_name: agent.agent_name,
-          system_prompt: agent.system_prompt,
-          enhanced_prompt: agent.enhanced_prompt,
-          user_prompt: agent.user_prompt,
+          system_prompt: agent.system_prompt ?? undefined, // Convert null to undefined for type compatibility
+          enhanced_prompt: agent.enhanced_prompt ?? undefined,
+          user_prompt: agent.user_prompt || '',
           plugins_required: agent.plugins_required || [],
           input_schema: inputSchema || agent.input_schema,
           output_schema: agent.output_schema,
@@ -286,11 +297,11 @@ export async function POST(req: Request) {
       shouldExecute = false; // Execution complete
 
       // Check if agent should send email notification based on trigger_condintion
-      const triggerConfig = agent.trigger_condintion?.error_handling || {};
+      const triggerConfig = (agent.trigger_condintion?.error_handling || {}) as { on_failure?: string };
       const shouldSendEmail = triggerConfig.on_failure === 'email';
 
       if (shouldSendEmail && executionResult.success) {
-        console.log('📧 AgentKit: Sending result via email as per trigger_condintion');
+        logger.debug({ emailConfigured: true }, 'AgentKit sending result via email as per trigger_condintion');
 
         // The result already contains the response - no need to send it again
         // The email should have been sent by the agent itself during execution
@@ -298,7 +309,7 @@ export async function POST(req: Request) {
       }
 
     } catch (error: any) {
-      console.error('❌ AgentKit execution error:', error)
+      logger.error({ err: error }, 'AgentKit execution failed')
       return NextResponse.json({
         success: false,
         error: error.message || 'AgentKit execution failed',
@@ -350,14 +361,13 @@ export async function POST(req: Request) {
       // Pilot inserts via StateManager.completeExecution() with workflowExecution: true
       // Only AgentKit needs logging here since it doesn't use StateManager
       if (executionType !== 'pilot') {
-        console.log(`[RUN-AGENT] 💾 Recording AgentKit execution to agent_executions table:`, {
-          agent_id: agent.id,
-          execution_type: executionType,
+        logger.debug({
+          executor: executionType,
           tokensUsed: normalizedResult.tokensUsed,
           status: normalizedResult.success ? 'completed' : 'failed'
-        });
+        }, 'Recording AgentKit execution to agent_executions table');
 
-        const { error: insertError } = await supabase.from('agent_executions').insert({
+        const { error: insertError } = await executionRepository.create({
           agent_id: agent.id,
           user_id: user.id,
           execution_type: 'manual',
@@ -379,94 +389,87 @@ export async function POST(req: Request) {
         })
 
         if (insertError) {
-          console.error('[RUN-AGENT] ❌ Failed to log AgentKit execution:', insertError)
+          logger.error({ err: insertError }, 'Failed to log AgentKit execution')
         } else {
-          console.log(`[RUN-AGENT] ✅ Successfully logged AgentKit execution with tokens in logs.tokensUsed:`, normalizedResult.tokensUsed);
+          logger.debug({ tokensUsed: normalizedResult.tokensUsed }, 'AgentKit execution logged successfully');
         }
       } else {
-        console.log(`[RUN-AGENT] ⏭️  Skipping agent_executions insert for pilot (StateManager already logged it)`);
+        logger.debug('Skipping agent_executions insert for pilot (StateManager already logged it)');
       }
 
-      // 2. Log to agent_logs table for consistency with legacy system
-      console.log(`🪵 Inserting ${executionType} result to agent_logs...`);
-      const { data: logData, error: logInsertError } = await supabase
-        .from('agent_logs')
-        .insert({
-          agent_id: agent.id,
-          user_id: user.id,
-          run_output: JSON.stringify(
-            executionType === 'pilot' ? {
-              success: normalizedResult.success,
-              pilot: true,
-              stepsCompleted: executionResult.stepsCompleted,
-              stepsFailed: executionResult.stepsFailed,
-              stepsSkipped: executionResult.stepsSkipped,
-              totalSteps: executionResult.stepsCompleted + executionResult.stepsFailed + executionResult.stepsSkipped,
-              tokensUsed: normalizedResult.tokensUsed.total,
-              executionTimeMs: normalizedResult.executionTime,
-              executionId: executionResult.executionId
-            } : {
-              success: normalizedResult.success,
-              agentkit: true,
-              iterations: normalizedResult.iterations,
-              toolCallsCount: normalizedResult.toolCalls.length,
-              tokensUsed: normalizedResult.tokensUsed.total,
-              executionTimeMs: normalizedResult.executionTime,
-              model: normalizedResult.model || 'gpt-4o',
-              provider: normalizedResult.provider || 'openai'
-            }
-          ),
-          full_output: executionType === 'pilot' ? {
-            pilot_metadata: {
-              executionId: executionResult.executionId,
-              stepsCompleted: executionResult.stepsCompleted,
-              stepsFailed: executionResult.stepsFailed,
-              stepsSkipped: executionResult.stepsSkipped,
-              totalSteps: executionResult.stepsCompleted + executionResult.stepsFailed + executionResult.stepsSkipped,
-              tokensUsed: normalizedResult.tokensUsed
-            }
+      // 2. Log to agent_logs table for consistency with legacy system using repository
+      logger.debug({ executor: executionType }, 'Inserting result to agent_logs');
+      const { data: logData, error: logInsertError } = await agentLogsRepository.create({
+        agent_id: agent.id,
+        user_id: user.id,
+        run_output: JSON.stringify(
+          executionType === 'pilot' ? {
+            success: normalizedResult.success,
+            pilot: true,
+            stepsCompleted: executionResult.stepsCompleted,
+            stepsFailed: executionResult.stepsFailed,
+            stepsSkipped: executionResult.stepsSkipped,
+            totalSteps: executionResult.stepsCompleted + executionResult.stepsFailed + executionResult.stepsSkipped,
+            tokensUsed: normalizedResult.tokensUsed.total,
+            executionTimeMs: normalizedResult.executionTime,
+            executionId: executionResult.executionId
           } : {
-            agentkit_metadata: {
-              model: normalizedResult.model || 'gpt-4o',
-              provider: normalizedResult.provider || 'openai',
-              iterations: normalizedResult.iterations,
-              toolCalls: sanitizeToolCalls(normalizedResult.toolCalls),
-              tokensUsed: normalizedResult.tokensUsed
-            }
-          },
-          status: normalizedResult.success ? 'completed' : 'failed',
-          // status_message: REMOVED - Column doesn't exist in agent_logs schema
-          // execution_type: REMOVED - Column doesn't exist in schema yet
-          created_at: now
-        })
-        .select('id')
-        .single();
+            success: normalizedResult.success,
+            agentkit: true,
+            iterations: normalizedResult.iterations,
+            toolCallsCount: normalizedResult.toolCalls.length,
+            tokensUsed: normalizedResult.tokensUsed.total,
+            executionTimeMs: normalizedResult.executionTime,
+            model: normalizedResult.model || 'gpt-4o',
+            provider: normalizedResult.provider || 'openai'
+          }
+        ),
+        full_output: executionType === 'pilot' ? {
+          pilot_metadata: {
+            executionId: executionResult.executionId,
+            stepsCompleted: executionResult.stepsCompleted,
+            stepsFailed: executionResult.stepsFailed,
+            stepsSkipped: executionResult.stepsSkipped,
+            totalSteps: executionResult.stepsCompleted + executionResult.stepsFailed + executionResult.stepsSkipped,
+            tokensUsed: normalizedResult.tokensUsed
+          }
+        } : {
+          agentkit_metadata: {
+            model: normalizedResult.model || 'gpt-4o',
+            provider: normalizedResult.provider || 'openai',
+            iterations: normalizedResult.iterations,
+            toolCalls: sanitizeToolCalls(normalizedResult.toolCalls),
+            tokensUsed: normalizedResult.tokensUsed
+          }
+        },
+        status: normalizedResult.success ? 'completed' : 'failed',
+        created_at: now
+      });
 
       if (logInsertError) {
-        console.error(`❌ Failed to insert ${executionType} log into agent_logs:`, logInsertError);
+        logger.error({ err: logInsertError, executor: executionType }, 'Failed to insert log into agent_logs');
       } else {
-        console.log(`✅ ${executionType} log inserted successfully`);
+        logger.debug({ executor: executionType }, 'Log inserted to agent_logs successfully');
       }
 
-      // 3. Update agent_stats with accurate success tracking
-      console.log('📊 Updating agent_stats...');
-      const { error: statsError } = await supabase.rpc('increment_agent_stats', {
-         agent_id_input: agent.id,
-        user_id_input: user.id,
-        success: normalizedResult.success,
-      })
+      // 3. Update agent_stats with accurate success tracking using repository
+      logger.debug('Updating agent_stats');
+      const { error: statsError } = await agentStatsRepository.incrementStats(
+        agent.id,
+        user.id,
+        normalizedResult.success
+      )
 
       if (statsError) {
-        console.error('❌ Failed to update agent_stats:', statsError);
+        logger.error({ err: statsError }, 'Failed to update agent_stats');
       } else {
-        console.log('✅ agent_stats updated successfully');
+        logger.debug('agent_stats updated successfully');
       }
 
       // 4. Track intensity metrics for dynamic pricing
       let intensityScore = 5.0; // Default medium intensity
       try {
-        console.log('📊 [INTENSITY] Starting update for agent:', agent.id);
-        console.log('📊 [INTENSITY] Tokens used:', normalizedResult.tokensUsed.total);
+        logger.debug({ tokensUsed: normalizedResult.tokensUsed.total }, 'Starting intensity metrics update');
 
         // Parse workflow complexity from agent definition
         const workflowSteps = agent.workflow_steps || [];
@@ -509,87 +512,31 @@ export async function POST(req: Request) {
         const aisResult = await updateAgentIntensityMetrics(supabase, executionData);
         if (aisResult.success) {
           intensityScore = aisResult.combined_score;
-          console.log('✅ [INTENSITY] Update SUCCESS - Combined Score:', intensityScore.toFixed(2));
+          logger.debug({ intensityScore: intensityScore.toFixed(2) }, 'Intensity metrics updated');
         } else {
-          console.log('❌ [INTENSITY] Update FAILED - using default score:', intensityScore);
+          logger.warn({ defaultScore: intensityScore }, 'Intensity update failed - using default score');
         }
       } catch (intensityError) {
-        console.error('❌ Failed to update intensity metrics:', intensityError);
-        console.log('⚠️  Using default intensity score:', intensityScore);
+        logger.error({ err: intensityError, defaultScore: intensityScore }, 'Failed to update intensity metrics');
         // Non-fatal error - continue execution
       }
 
       // 5. Track token spending (stored as tokens in DB, displayed as Pilot Credits in UI)
       try {
-        console.log('💰 [SPENDING] Tracking token consumption for execution');
+        logger.debug('Tracking token consumption for execution');
         const tokensUsed = normalizedResult.tokensUsed.total;
 
-        // Calculate what these tokens represent for display purposes (tokens stored in DB)
-        const intensityMultiplier = 1.0 + (intensityScore / 10);
-        const adjustedTokens = Math.ceil(tokensUsed * intensityMultiplier);
-
-        console.log('💰 [SPENDING] Token calculation:', {
-          rawTokens: tokensUsed,
+        // Use CreditService to charge tokens with intensity (handles balance update + transaction logging)
+        const { charged: adjustedTokens, multiplier: intensityMultiplier } = await creditService.chargeTokensWithIntensity(
+          user.id,
+          agent.id,
+          tokensUsed,
           intensityScore,
-          intensityMultiplier,
-          adjustedTokens
-        });
-
-        // Get current balance and total_spent (stored as tokens)
-        const { data: currentSub } = await supabase
-          .from('user_subscriptions')
-          .select('balance, total_spent')
-          .eq('user_id', user.id)
-          .maybeSingle();
-
-        const currentBalance = currentSub?.balance || 0;
-        const currentTotalSpent = currentSub?.total_spent || 0;
-        const newBalance = currentBalance - adjustedTokens;
-        const newTotalSpent = currentTotalSpent + adjustedTokens;
-
-        // Update BOTH balance and total_spent with tokens (UI will convert to Pilot Credits for display)
-        const { error: updateError } = await supabase
-          .from('user_subscriptions')
-          .update({
-            balance: newBalance,
-            total_spent: newTotalSpent,
-            agents_paused: newBalance <= 0
-          })
-          .eq('user_id', user.id);
-
-        if (updateError) {
-          console.error('❌ [SPENDING] Failed to update balance and total_spent:', updateError);
-        } else {
-          console.log(`✅ [SPENDING] Token spending tracked: ${adjustedTokens} tokens`);
-          console.log(`   Balance: ${currentBalance} → ${newBalance} tokens`);
-          console.log(`   Total Spent: ${currentTotalSpent} → ${newTotalSpent} tokens`);
-        }
-
-        // Log transaction for audit trail (stored as tokens)
-        const { error: txError } = await supabase.from('credit_transactions').insert({
-          user_id: user.id,
-          agent_id: agent.id,
-          credits_delta: -adjustedTokens, // Stored as tokens
-          balance_before: currentBalance,
-          balance_after: newBalance,
-          transaction_type: 'deduction', // DB constraint requires 'deduction' for charges
-          activity_type: 'agent_execution',
-          description: `${executionType === 'pilot' ? 'Pilot' : 'AgentKit'} execution: ${tokensUsed} tokens × ${intensityMultiplier.toFixed(2)} intensity`,
-          metadata: {
-            execution_type: executionType,
-            raw_tokens: tokensUsed,
-            intensity_score: intensityScore,
-            multiplier: intensityMultiplier,
-            adjusted_tokens: adjustedTokens,
-            agent_name: agent.agent_name
+          {
+            executionType: executionType === 'pilot' ? 'Pilot' : 'AgentKit',
+            agentName: agent.agent_name || 'Unnamed Agent'
           }
-        });
-
-        if (txError) {
-          console.error('❌ [SPENDING] Failed to log transaction:', txError);
-        } else {
-          console.log('✅ [SPENDING] Transaction logged successfully');
-        }
+        );
 
         // Update agent_executions with adjusted tokens for UI display
         // This ensures all pages show the actual charged amount
@@ -598,59 +545,54 @@ export async function POST(req: Request) {
           null; // AgentKit execution ID is auto-generated, we need to find it
 
         if (executionIdToUpdate) {
-          const { error: updateError } = await supabase
-            .from('agent_executions')
-            .update({
-              logs: {
-                ...(executionType === 'pilot' ? {
-                  success: true,
-                  executionTime: normalizedResult.executionTime,
-                  tokensUsed: {
-                    total: tokensUsed,
-                    prompt: 0,
-                    completion: 0,
-                    adjusted: adjustedTokens, // Add adjusted tokens with intensity
-                    intensityMultiplier: intensityMultiplier,
-                    intensityScore: intensityScore
-                  },
-                  iterations: 1,
-                  response: 'Workflow completed',
-                  model: 'workflow_orchestrator',
-                  provider: 'pilot',
-                  pilot: true,
-                  workflowExecution: true,
-                  stepsCompleted: executionResult.stepsCompleted,
-                  stepsFailed: executionResult.stepsFailed,
-                  stepsSkipped: executionResult.stepsSkipped,
-                  executionId: executionIdToUpdate
-                } : {
-                  // AgentKit logs
-                  agentkit: true,
-                  iterations: normalizedResult.iterations,
-                  toolCalls: sanitizeToolCalls(normalizedResult.toolCalls),
-                  tokensUsed: {
-                    ...normalizedResult.tokensUsed,
-                    adjusted: adjustedTokens,
-                    intensityMultiplier: intensityMultiplier,
-                    intensityScore: intensityScore
-                  },
-                  model: normalizedResult.model || 'gpt-4o',
-                  provider: normalizedResult.provider || 'openai',
-                  inputValuesUsed: Object.keys(inputValues || {}).length
-                })
-              }
-            })
-            .eq('id', executionIdToUpdate);
+          const logsToUpdate = executionType === 'pilot' ? {
+            success: true,
+            executionTime: normalizedResult.executionTime,
+            tokensUsed: {
+              total: tokensUsed,
+              prompt: 0,
+              completion: 0,
+              adjusted: adjustedTokens, // Add adjusted tokens with intensity
+              intensityMultiplier: intensityMultiplier,
+              intensityScore: intensityScore
+            },
+            iterations: 1,
+            response: 'Workflow completed',
+            model: 'workflow_orchestrator',
+            provider: 'pilot',
+            pilot: true,
+            workflowExecution: true,
+            stepsCompleted: executionResult.stepsCompleted,
+            stepsFailed: executionResult.stepsFailed,
+            stepsSkipped: executionResult.stepsSkipped,
+            executionId: executionIdToUpdate
+          } : {
+            // AgentKit logs
+            agentkit: true,
+            iterations: normalizedResult.iterations,
+            toolCalls: sanitizeToolCalls(normalizedResult.toolCalls),
+            tokensUsed: {
+              ...normalizedResult.tokensUsed,
+              adjusted: adjustedTokens,
+              intensityMultiplier: intensityMultiplier,
+              intensityScore: intensityScore
+            },
+            model: normalizedResult.model || 'gpt-4o',
+            provider: normalizedResult.provider || 'openai',
+            inputValuesUsed: Object.keys(inputValues || {}).length
+          };
+
+          const { error: updateError } = await executionRepository.updateLogs(executionIdToUpdate, logsToUpdate);
 
           if (updateError) {
-            console.error('❌ [SPENDING] Failed to update agent_executions with adjusted tokens:', updateError);
+            logger.error({ err: updateError }, 'Failed to update agent_executions with adjusted tokens');
           } else {
-            console.log(`✅ [SPENDING] Updated agent_executions with adjusted tokens: ${adjustedTokens}`);
+            logger.debug({ adjustedTokens }, 'Updated agent_executions with adjusted tokens');
           }
         }
 
       } catch (spendingError) {
-        console.error('❌ [SPENDING] Failed to track token consumption:', spendingError);
+        logger.error({ err: spendingError }, 'Failed to track token consumption');
         // Non-fatal error - continue execution
       }
 
@@ -681,7 +623,7 @@ export async function POST(req: Request) {
         severity: normalizedResult.success ? 'info' : 'warning'
         // Note: request context not available (using standard Request, not NextRequest)
       }).catch(err => {
-        console.error('⚠️ Audit log failed (non-blocking):', err);
+        logger.warn({ err }, 'Audit log failed (non-blocking)');
       });
 
       // Fetch the execution record to get adjusted tokens (calculated in step 5 above)
@@ -692,19 +634,15 @@ export async function POST(req: Request) {
       let intensityMult = 1.0;
 
       if (executionIdForFetch) {
-        // Fetch from database to get the adjusted tokens that were stored in step 5
-        const { data: executionData } = await supabase
-          .from('agent_executions')
-          .select('logs')
-          .eq('id', executionIdForFetch)
-          .single();
+        // Fetch from database to get the adjusted tokens that were stored in step 5 using repository
+        const { data: executionData } = await executionRepository.findById(executionIdForFetch);
 
         // Use adjusted tokens if available (from step 5 spending calculation)
         if (executionData?.logs?.tokensUsed?.adjusted) {
           tokensToReturn = executionData.logs.tokensUsed.adjusted; // Actual charged amount
           rawTokensValue = executionData.logs.tokensUsed.total; // Raw LLM tokens
-          intensityMult = executionData.logs.tokensUsed.intensityMultiplier; // Multiplier from intensity score
-          console.log(`[RUN-AGENT] 📊 Returning adjusted tokens: ${tokensToReturn} (raw: ${rawTokensValue}, multiplier: ${intensityMult.toFixed(2)}x)`);
+          intensityMult = executionData.logs.tokensUsed.intensityMultiplier ?? 1.0; // Multiplier from intensity score (default 1.0)
+          logger.debug({ adjustedTokens: tokensToReturn, rawTokens: rawTokensValue, multiplier: intensityMult.toFixed(2) }, 'Returning adjusted tokens');
         }
       }
 
@@ -749,7 +687,7 @@ export async function POST(req: Request) {
       });
 
     } catch (error: any) {
-      console.error(`❌ ${executionType} logging error:`, error);
+      logger.error({ err: error, executor: executionType }, 'Logging error');
       // Even if logging fails, return success if execution succeeded
       if (executionResult && normalizedResult.success) {
         return NextResponse.json({
@@ -772,13 +710,12 @@ export async function POST(req: Request) {
                        !process.env.QSTASH_TOKEN
 
     if (isLocalDev) {
-      console.log('⚠️  QStash queue unavailable in local development - falling back to direct execution')
-      console.log(`⚡ Using immediate execution for agent ${agent_id} (local dev fallback)`)
+      logger.warn('QStash queue unavailable in local development - falling back to direct execution')
 
       // Fall through to immediate execution path below
       // Don't return here - let the immediate execution code run
     } else {
-      console.log(`🔄 Using queue-based execution for agent ${agent_id}`)
+      logger.info({ useQueue: true }, 'Using queue-based execution')
 
       try {
       // Validate agent can be executed
@@ -791,16 +728,11 @@ export async function POST(req: Request) {
 
       const executionUserId = provided_user_id || user.id
 
-      // Check if agent is already running
-      const { data: runningExecutions, error: runningError } = await supabase
-        .from('agent_executions')
-        .select('id')
-        .eq('agent_id', agent_id)
-        .in('status', ['pending', 'running'])
-        .limit(1)
+      // Check if agent is already running using repository
+      const { data: runningExecutions, error: runningError } = await executionRepository.findRunningByAgentId(agent_id)
 
       if (runningError) {
-        console.error('Error checking running executions:', runningError)
+        logger.error({ err: runningError }, 'Error checking running executions')
         return NextResponse.json(
           { error: 'Failed to check agent status', details: runningError.message },
           { status: 500 }
@@ -809,7 +741,7 @@ export async function POST(req: Request) {
 
       if (runningExecutions && runningExecutions.length > 0) {
         return NextResponse.json(
-          { 
+          {
             error: 'Agent is already running',
             message: 'Please wait for the current execution to complete before starting a new one',
             currentExecutionId: runningExecutions[0].id
@@ -818,31 +750,27 @@ export async function POST(req: Request) {
         )
       }
 
-      // Create execution record in new table
+      // Create execution record using repository
       const scheduledAt = new Date().toISOString()
-      const { data: execution, error: executionError } = await supabase
-        .from('agent_executions')
-        .insert({
-          agent_id: agent.id,
-          user_id: executionUserId,
-          execution_type: 'manual',
-          scheduled_at: scheduledAt,
-          status: 'pending',
-          cron_expression: agent.schedule_cron,
-          progress: 0,
-          logs: {
-            created_via: 'manual_api_queue',
-            requested_at: scheduledAt,
-            ip_address: req.headers.get('x-forwarded-for') || 'unknown',
-            input_variables: Object.keys(input_variables).length > 0 ? input_variables : null,
-            override_user_prompt: override_user_prompt || null,
-          }
-        })
-        .select('id')
-        .single()
+      const { data: execution, error: executionError } = await executionRepository.create({
+        agent_id: agent.id,
+        user_id: executionUserId,
+        execution_type: 'manual',
+        scheduled_at: scheduledAt,
+        status: 'pending',
+        cron_expression: agent.schedule_cron,
+        progress: 0,
+        logs: {
+          created_via: 'manual_api_queue',
+          requested_at: scheduledAt,
+          ip_address: req.headers.get('x-forwarded-for') || 'unknown',
+          input_variables: Object.keys(input_variables).length > 0 ? input_variables : null,
+          override_user_prompt: override_user_prompt || null,
+        }
+      })
 
       if (executionError || !execution) {
-        console.error('Failed to create execution record:', executionError)
+        logger.error({ err: executionError }, 'Failed to create execution record')
         return NextResponse.json(
           { error: 'Failed to create execution record', details: executionError?.message },
           { status: 500 }
@@ -852,17 +780,13 @@ export async function POST(req: Request) {
       // Add job to queue - FIXED: Use correct function name and parameters
       const { jobId, executionId } = await addManualExecution(
         agent.id,          // agentId
-        executionUserId,   // userId  
+        executionUserId,   // userId
         execution.id,      // executionId
         input_variables,   // inputVariables
         override_user_prompt // overrideUserPrompt
       )
 
-      console.log(`✅ Queued manual execution for agent ${agent.agent_name}`, {
-        agentId: agent.id,
-        executionId: execution.id,
-        jobId,
-      })
+      logger.info({ executionId: execution.id, jobId, agentName: agent.agent_name }, 'Manual execution queued')
 
       return NextResponse.json({
         success: true,
@@ -881,7 +805,7 @@ export async function POST(req: Request) {
       })
 
       } catch (queueError) {
-        console.error('Failed to queue agent job:', queueError)
+        logger.error({ err: queueError }, 'Failed to queue agent job')
         return NextResponse.json(
           {
             error: 'Failed to queue agent execution',
@@ -894,25 +818,19 @@ export async function POST(req: Request) {
   }
 
   // **EXISTING IMMEDIATE EXECUTION PATH** (preserves backward compatibility)
-  console.log(`⚡ Using immediate execution for agent ${agent_id}`)
+  logger.info('Using immediate execution (legacy path)')
 
   // Initialize execution tracking if execution_id provided
   if (execution_id) {
-    console.log(`🚀 Starting execution tracking for: ${execution_id}`)
-    
-    // Update execution record to running status
-    const { error: execError } = await supabase
-      .from('agent_configurations')
-      .update({
-        status: 'running',
-        created_at: new Date().toISOString()
-      })
-      .eq('id', execution_id)
+    logger.debug({ executionId: execution_id }, 'Starting execution tracking')
+
+    // Update execution record to running status using repository
+    const { error: execError } = await agentConfigurationRepository.updateStatus(execution_id, 'running')
 
     if (execError) {
-      console.error('❌ Failed to update execution record:', execError)
+      logger.error({ err: execError, executionId: execution_id }, 'Failed to update execution record to running')
     } else {
-      console.log('✅ Execution record updated to running status')
+      logger.debug({ executionId: execution_id }, 'Execution record updated to running status')
     }
   }
 
@@ -924,10 +842,10 @@ export async function POST(req: Request) {
         typeof value === 'string' &&
         value.startsWith('data:application/pdf;base64,')
       ) {
-        console.log('📄 Detected PDF upload, extracting text...')
+        logger.info({ inputKey: key }, 'PDF upload detected, extracting text')
         
         if (execution_id) {
-          const { error: logError } = await supabase.from('agent_execution_logs').insert({
+          const { error: logError } = await executionLogRepository.create({
             execution_id,
             agent_id: agent_id,
             user_id: user.id,
@@ -936,17 +854,17 @@ export async function POST(req: Request) {
             message: 'PDF upload detected, extracting text content',
             phase: 'documents'
           })
-          
+
           if (logError) {
-            console.error('Failed to insert PDF detection log:', logError)
+            logger.warn({ err: logError }, 'Failed to insert PDF detection log')
           }
         }
-        
+
         const text = await extractPdfTextFromBase64(value)
         input_variables.__uploaded_file_text = text
-        
+
         if (execution_id) {
-          const { error: logError } = await supabase.from('agent_execution_logs').insert({
+          const { error: logError } = await executionLogRepository.create({
             execution_id,
             agent_id: agent_id,
             user_id: user.id,
@@ -955,18 +873,20 @@ export async function POST(req: Request) {
             message: `PDF text extraction completed. Extracted ${text.length} characters`,
             phase: 'documents'
           })
-          
+
           if (logError) {
-            console.error('Failed to insert PDF completion log:', logError)
+            logger.warn({ err: logError }, 'Failed to insert PDF completion log')
           }
         }
+
+        logger.info({ extractedChars: text.length }, 'PDF text extraction completed')
         break // Only process the first PDF for now
       }
     }
   } catch (err: any) {
-    console.error('❌ Failed to extract PDF text:', err)
+    logger.error({ err }, 'Failed to extract PDF text')
     if (execution_id) {
-      const { error: logError } = await supabase.from('agent_execution_logs').insert({
+      const { error: logError } = await executionLogRepository.create({
         execution_id,
         agent_id: agent_id,
         user_id: user.id,
@@ -975,9 +895,9 @@ export async function POST(req: Request) {
         message: `PDF text extraction failed: ${err.message}`,
         phase: 'documents'
       })
-      
+
       if (logError) {
-        console.error('Failed to insert PDF error log:', logError)
+        logger.warn({ err: logError }, 'Failed to insert PDF error log')
       }
     }
   }
@@ -986,7 +906,7 @@ export async function POST(req: Request) {
     const startTime = Date.now()
 
     if (execution_id) {
-      const { error: logError } = await supabase.from('agent_execution_logs').insert({
+      const { error: logError } = await executionLogRepository.create({
         execution_id,
         agent_id: agent_id,
         user_id: user.id,
@@ -995,9 +915,9 @@ export async function POST(req: Request) {
         message: 'Starting agent execution with interpolated prompt',
         phase: 'prompt'
       })
-      
+
       if (logError) {
-        console.error('Failed to insert start execution log:', logError)
+        logger.warn({ err: logError }, 'Failed to insert start execution log')
       }
     }
 
@@ -1013,7 +933,7 @@ export async function POST(req: Request) {
     const executionDuration = endTime - startTime
 
     if (execution_id) {
-      const { error: logError } = await supabase.from('agent_execution_logs').insert({
+      const { error: logError } = await executionLogRepository.create({
         execution_id,
         agent_id: agent_id,
         user_id: user.id,
@@ -1022,67 +942,63 @@ export async function POST(req: Request) {
         message: `Agent execution completed successfully in ${executionDuration}ms`,
         phase: 'validation'
       })
-      
+
       if (logError) {
-        console.error('Failed to insert completion log:', logError)
+        logger.warn({ err: logError }, 'Failed to insert completion log')
       }
 
-      // Update execution record with final metrics
-      const { error: updateError } = await supabase.from('agent_configurations').update({
-        status: 'completed',
-        duration_ms: executionDuration,
-        completed_at: new Date().toISOString()
-      }).eq('id', execution_id)
-      
+      // Update execution record with final metrics using repository
+      const { error: updateError } = await agentConfigurationRepository.updateStatus(
+        execution_id,
+        'completed',
+        { completedAt: new Date().toISOString(), durationMs: executionDuration }
+      )
+
       if (updateError) {
-        console.error('Failed to update execution completion:', updateError)
+        logger.error({ err: updateError, executionId: execution_id }, 'Failed to update execution completion')
       }
     }
 
-    console.log('🪵 Inserting agent log...')
+    logger.debug('Inserting agent log')
     // Determine standardized status from descriptive send_status
     const isSuccess = send_status?.startsWith('✅') || send_status?.startsWith('📧') || send_status?.startsWith('🚨');
     const standardizedStatus = isSuccess ? 'completed' : 'failed';
 
-    const { data: logData, error: logInsertError } = await supabase
-      .from('agent_logs')
-      .insert({
-        agent_id,
-        user_id: user.id,
-        run_output: parsed_output ? JSON.stringify(parsed_output) : null,
-        full_output: message ? { message } : null,
-        status: standardizedStatus, // Standardized: 'completed' or 'failed'
-        status_message: send_status, // Descriptive message for display
-        execution_type: 'agentkit_legacy', // Mark as legacy AgentKit execution
-        created_at: new Date().toISOString(),
-      })
-      .select('id')
-      .single()
+    const { data: logData, error: logInsertError } = await agentLogsRepository.create({
+      agent_id,
+      user_id: user.id,
+      run_output: parsed_output ? JSON.stringify(parsed_output) : null,
+      full_output: message ? { message } : null,
+      status: standardizedStatus as 'completed' | 'failed',
+      status_message: send_status,
+      execution_type: 'agentkit_legacy', // Mark as legacy AgentKit execution
+      created_at: new Date().toISOString(),
+    })
 
     if (logInsertError) {
-      console.error('❌ Failed to insert log into agent_logs:', logInsertError)
+      logger.error({ err: logInsertError }, 'Failed to insert agent log')
     } else {
-      console.log('✅ Agent log inserted successfully')
+      logger.debug({ logId: logData?.id }, 'Agent log inserted successfully')
       // Note: agent_output_context table removed for privacy compliance
       // We no longer store raw execution outputs (message, parsed_output, pluginContext)
     }
 
-    console.log('📊 Updating agent_stats...')
-    const { error: statsError } = await supabase.rpc('increment_agent_stats', {
-      agent_id_input: agent_id,
-      user_id_input: user.id,
-      success: isSuccess,
-    })
+    logger.debug('Updating agent_stats')
+    const { error: statsError } = await agentStatsRepository.incrementStats(
+      agent_id,
+      user.id,
+      isSuccess
+    )
 
     if (statsError) {
-      console.error('❌ Failed to update agent_stats:', statsError)
+      logger.error({ err: statsError }, 'Failed to update agent_stats')
     } else {
-      console.log('✅ agent_stats updated')
+      logger.debug({ success: isSuccess }, 'agent_stats updated')
     }
 
     // NOTE: Legacy execution path does not track intensity metrics
     // All agents should use AgentKit (use_agentkit: true) for proper intensity tracking
-    console.log('⚠️ Legacy execution path - intensity metrics not tracked (use AgentKit instead)');
+    logger.warn('Legacy execution path - intensity metrics not tracked (use AgentKit instead)')
 
     return NextResponse.json({
       result: {
@@ -1096,10 +1012,10 @@ export async function POST(req: Request) {
     })
 
   } catch (err: any) {
-    console.error('❌ runAgentWithContext error:', err)
-    
+    logger.error({ err }, 'runAgentWithContext error')
+
     if (execution_id) {
-      const { error: logError } = await supabase.from('agent_execution_logs').insert({
+      const { error: logError } = await executionLogRepository.create({
         execution_id,
         agent_id: agent_id,
         user_id: user.id,
@@ -1108,19 +1024,20 @@ export async function POST(req: Request) {
         message: `Critical error: ${err.message}`,
         phase: 'validation'
       })
-      
+
       if (logError) {
-        console.error('Failed to insert error log:', logError)
+        logger.warn({ err: logError }, 'Failed to insert error log')
       }
 
-      // Update execution record as failed
-      const { error: updateError } = await supabase.from('agent_configurations').update({
-        status: 'failed',
-        completed_at: new Date().toISOString()
-      }).eq('id', execution_id)
-      
+      // Update execution record as failed using repository
+      const { error: updateError } = await agentConfigurationRepository.updateStatus(
+        execution_id,
+        'failed',
+        { completedAt: new Date().toISOString() }
+      )
+
       if (updateError) {
-        console.error('Failed to update execution as failed:', updateError)
+        logger.error({ err: updateError, executionId: execution_id }, 'Failed to update execution as failed')
       }
     }
     
@@ -1135,14 +1052,19 @@ export async function POST(req: Request) {
  * Get execution status for agents
  */
 export async function GET(request: Request) {
+  const logger = routeLogger.child({ method: 'GET' })
+
   try {
     const { searchParams } = new URL(request.url);
     const agent_id = searchParams.get('agent_id');
     const execution_id = searchParams.get('execution_id');
     const status_only = searchParams.get('status_only');
 
+    logger.debug({ agentId: agent_id, executionId: execution_id, statusOnly: status_only }, 'Execution status request received')
+
     // If status_only is present but no agent_id or execution_id, return a valid JSON error
     if ((status_only === 'true' || status_only === '1') && !agent_id && !execution_id) {
+      logger.warn('Status query missing required parameters')
       return NextResponse.json(
         { error: 'Must provide agent_id or execution_id for status query.' },
         { status: 400 }
@@ -1150,69 +1072,32 @@ export async function GET(request: Request) {
     }
 
     if (!agent_id && !execution_id) {
+      logger.warn('Missing agent_id and execution_id')
       return NextResponse.json(
         { error: 'Must provide either agent_id or execution_id' },
         { status: 400 }
       );
     }
 
-    // Check required env vars
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-      return NextResponse.json(
-        { error: 'Supabase environment variables missing' },
-        { status: 500 }
-      );
-    }
+    const supabase = await createAuthenticatedServerClient();
 
-    let cookieStore;
-    try {
-      cookieStore = await cookies();
-    } catch (cookieError) {
-      return NextResponse.json(
-        { error: 'Failed to get cookies', details: cookieError instanceof Error ? cookieError.message : String(cookieError) },
-        { status: 500 }
-      );
-    }
-
-    let supabase;
-    try {
-      supabase = createServerClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-        {
-          cookies: {
-            get: (name) => cookieStore.get(name)?.value,
-            set: async () => {},
-            remove: async () => {},
-          },
-        }
-      );
-    } catch (supabaseError) {
-      return NextResponse.json(
-        { error: 'Failed to create Supabase client', details: supabaseError instanceof Error ? supabaseError.message : String(supabaseError) },
-        { status: 500 }
-      );
-    }
-
-    let query = supabase
-      .from('agent_executions')
-      .select('id, agent_id, execution_type, status, progress, scheduled_at, started_at, completed_at, error_message, execution_duration_ms, retry_count')
-      .order('created_at', { ascending: false });
-
-    if (execution_id) {
-      query = query.eq('id', execution_id);
-    } else if (agent_id) {
-      query = query.eq('agent_id', agent_id).limit(5); // Last 5 executions
-    }
-
-    const { data: executions, error } = await query;
+    // Use ExecutionRepository for database query
+    const executionRepo = new ExecutionRepository(supabase);
+    const { data: executions, error } = await executionRepo.findForStatusQuery({
+      executionId: execution_id || undefined,
+      agentId: agent_id || undefined,
+      limit: 5
+    });
 
     if (error) {
+      logger.error({ err: error, agentId: agent_id, executionId: execution_id }, 'Failed to fetch execution status')
       return NextResponse.json(
         { error: 'Failed to fetch execution status', details: error.message },
         { status: 500 }
       );
     }
+
+    logger.debug({ count: executions?.length || 0 }, 'Execution status fetched successfully')
 
     return NextResponse.json({
       success: true,
@@ -1221,6 +1106,7 @@ export async function GET(request: Request) {
     });
 
   } catch (error) {
+    logger.error({ err: error }, 'GET handler error')
     // Always return valid JSON, never HTML
     return NextResponse.json(
       { error: 'Internal server error', message: error instanceof Error ? error.message : String(error) },

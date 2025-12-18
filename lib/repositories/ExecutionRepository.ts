@@ -6,9 +6,27 @@ import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 import type {
   Execution,
+  ExecutionLogs,
+  ExecutionStatus,
+  ExecutionStatusRecord,
   TokenUsage,
   AgentRepositoryResult,
 } from './types';
+
+export interface CreateExecutionInput {
+  agent_id: string;
+  user_id: string;
+  execution_type: 'manual' | 'scheduled';
+  status: ExecutionStatus;
+  scheduled_at: string;
+  started_at?: string;
+  completed_at?: string;
+  execution_duration_ms?: number;
+  error_message?: string | null;
+  logs?: ExecutionLogs;
+  cron_expression?: string | null;
+  progress?: number;
+}
 
 export class ExecutionRepository {
   private supabase: SupabaseClient;
@@ -172,6 +190,140 @@ export class ExecutionRepository {
       if (error) throw error;
       return { data: data || [], error: null };
     } catch (error) {
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Create a new execution record
+   */
+  async create(input: CreateExecutionInput): Promise<AgentRepositoryResult<Execution>> {
+    const methodLogger = this.logger.child({
+      method: 'create',
+      agentId: input.agent_id,
+      userId: input.user_id,
+      executionType: input.execution_type
+    });
+    const startTime = Date.now();
+
+    try {
+      methodLogger.debug({}, 'Creating execution record');
+
+      const { data, error } = await this.supabase
+        .from('agent_executions')
+        .insert({
+          agent_id: input.agent_id,
+          user_id: input.user_id,
+          execution_type: input.execution_type,
+          status: input.status,
+          scheduled_at: input.scheduled_at,
+          started_at: input.started_at,
+          completed_at: input.completed_at,
+          execution_duration_ms: input.execution_duration_ms,
+          error_message: input.error_message ?? null,
+          logs: input.logs ?? null,
+          cron_expression: input.cron_expression ?? null,
+          progress: input.progress ?? 0,
+        })
+        .select('*')
+        .single();
+
+      if (error) throw error;
+
+      const duration = Date.now() - startTime;
+      methodLogger.info({ executionId: data.id, duration }, 'Execution record created');
+
+      return { data, error: null };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      methodLogger.error({ err: error, duration }, 'Failed to create execution record');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Update execution logs (for adjusted tokens, etc.)
+   */
+  async updateLogs(id: string, logs: ExecutionLogs): Promise<AgentRepositoryResult<boolean>> {
+    const methodLogger = this.logger.child({ method: 'updateLogs', executionId: id });
+    const startTime = Date.now();
+
+    try {
+      methodLogger.debug({}, 'Updating execution logs');
+
+      const { error } = await this.supabase
+        .from('agent_executions')
+        .update({ logs })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      const duration = Date.now() - startTime;
+      methodLogger.info({ duration }, 'Execution logs updated');
+
+      return { data: true, error: null };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      methodLogger.error({ err: error, duration }, 'Failed to update execution logs');
+      return { data: false, error: error as Error };
+    }
+  }
+
+  /**
+   * Find running executions for an agent (pending or running status)
+   */
+  async findRunningByAgentId(agentId: string): Promise<AgentRepositoryResult<Execution[]>> {
+    const methodLogger = this.logger.child({ method: 'findRunningByAgentId', agentId });
+
+    try {
+      const { data, error } = await this.supabase
+        .from('agent_executions')
+        .select('*')
+        .eq('agent_id', agentId)
+        .in('status', ['pending', 'running'])
+        .limit(5);
+
+      if (error) throw error;
+
+      methodLogger.debug({ count: data?.length || 0 }, 'Found running executions');
+
+      return { data: data || [], error: null };
+    } catch (error) {
+      methodLogger.error({ err: error }, 'Failed to find running executions');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Find executions for status query (GET handler)
+   * Returns limited fields for status polling
+   */
+  async findForStatusQuery(
+    options: { executionId?: string; agentId?: string; limit?: number }
+  ): Promise<AgentRepositoryResult<ExecutionStatusRecord[]>> {
+    const methodLogger = this.logger.child({ method: 'findForStatusQuery', ...options });
+
+    try {
+      let query = this.supabase
+        .from('agent_executions')
+        .select('id, agent_id, execution_type, status, progress, scheduled_at, started_at, completed_at, error_message, execution_duration_ms, retry_count')
+        .order('created_at', { ascending: false });
+
+      if (options.executionId) {
+        query = query.eq('id', options.executionId);
+      } else if (options.agentId) {
+        query = query.eq('agent_id', options.agentId).limit(options.limit || 5);
+      }
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+
+      methodLogger.debug({ count: data?.length || 0 }, 'Fetched execution status');
+
+      return { data: data || [], error: null };
+    } catch (error) {
+      methodLogger.error({ err: error }, 'Failed to fetch execution status');
       return { data: null, error: error as Error };
     }
   }
