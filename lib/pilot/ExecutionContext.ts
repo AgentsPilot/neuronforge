@@ -19,6 +19,10 @@ import type {
   VariableReference,
 } from './types';
 import { VariableResolutionError, getTokenTotal } from './types';
+import { createLogger } from '@/lib/logger';
+
+// Create module-level logger for structured logging
+const logger = createLogger({ module: 'ExecutionContext', service: 'workflow-pilot' });
 
 export class ExecutionContext {
   // Execution metadata
@@ -75,6 +79,14 @@ export class ExecutionContext {
     this.variables = {};
     this.status = 'running';
     this.startedAt = new Date();
+
+    logger.info({
+      executionId,
+      agentId: agent.id,
+      userId,
+      sessionId,
+      inputKeys: Object.keys(inputValues)
+    }, 'ExecutionContext created');
   }
 
   /**
@@ -85,24 +97,27 @@ export class ExecutionContext {
    * This prevents over-charging users for failed attempts
    */
   setStepOutput(stepId: string, output: StepOutput): void {
-    // 🔍 DEBUG: Log what's being stored
-    console.log(`🔍 [ExecutionContext] Storing output for ${stepId}:`, JSON.stringify({
-      data: output.data,
+    logger.debug({
+      stepId,
       plugin: output.plugin,
-      action: output.action
-    }, null, 2));
+      action: output.action,
+      success: output.metadata.success,
+      executionId: this.executionId
+    }, 'Storing step output');
 
     // ✅ P0 FIX: Check if this is a retry (step already executed)
     const previousOutput = this.stepOutputs.get(stepId);
     const isRetry = previousOutput !== undefined;
 
     if (isRetry) {
-      console.log(`🔄 [ExecutionContext] Retry detected for ${stepId} - de-duplicating tokens`);
-
       // ✅ P1: Use standardized getTokenTotal utility for consistent handling
       const previousTokenTotal = getTokenTotal(previousOutput.metadata.tokensUsed);
       this.totalTokensUsed -= previousTokenTotal;
-      console.log(`   Removed ${previousTokenTotal} tokens from previous attempt`);
+      logger.info({
+        stepId,
+        previousTokens: previousTokenTotal,
+        executionId: this.executionId
+      }, 'Retry detected - de-duplicating tokens');
 
       // SUBTRACT previous execution time
       this.totalExecutionTime -= previousOutput.metadata.executionTime;
@@ -137,8 +152,12 @@ export class ExecutionContext {
     this.totalTokensUsed += newTokenTotal;
 
     if (isRetry) {
-      console.log(`   Added ${newTokenTotal} tokens from new attempt`);
-      console.log(`   Total tokens after de-duplication: ${this.totalTokensUsed}`);
+      logger.debug({
+        stepId,
+        newTokens: newTokenTotal,
+        totalTokens: this.totalTokensUsed,
+        executionId: this.executionId
+      }, 'Tokens updated after retry de-duplication');
     }
 
     // Add NEW execution time
@@ -172,6 +191,7 @@ export class ExecutionContext {
   markStepSkipped(stepId: string): void {
     if (!this.skippedSteps.includes(stepId)) {
       this.skippedSteps.push(stepId);
+      logger.info({ stepId, executionId: this.executionId }, 'Step marked as skipped');
     }
   }
 
@@ -180,6 +200,12 @@ export class ExecutionContext {
    */
   setVariable(name: string, value: any): void {
     this.variables[name] = value;
+    logger.debug({
+      variableName: name,
+      valueType: Array.isArray(value) ? 'array' : typeof value,
+      valueLength: Array.isArray(value) ? value.length : undefined,
+      executionId: this.executionId
+    }, 'Variable set');
   }
 
   /**
@@ -217,6 +243,7 @@ export class ExecutionContext {
     }
 
     const path = match[1].trim();
+    logger.debug({ reference, path, executionId: this.executionId }, 'Resolving variable');
 
     // Parse path: "step1.data[0].email"
     const parts = this.parsePath(path);
@@ -236,6 +263,12 @@ export class ExecutionContext {
       const stepOutput = this.stepOutputs.get(stepId);
 
       if (!stepOutput) {
+        logger.warn({
+          reference,
+          stepId,
+          availableSteps: Array.from(this.stepOutputs.keys()),
+          executionId: this.executionId
+        }, 'Step output not found for variable resolution');
         throw new VariableResolutionError(
           `Step ${stepId} has not been executed yet or does not exist`,
           reference,
@@ -244,17 +277,29 @@ export class ExecutionContext {
       }
 
       // Navigate nested path: data.email
-      return this.getNestedValue(stepOutput, parts.slice(1));
+      const resolved = this.getNestedValue(stepOutput, parts.slice(1));
+      logger.debug({
+        reference,
+        stepId,
+        resolvedType: Array.isArray(resolved) ? 'array' : typeof resolved,
+        resolvedLength: Array.isArray(resolved) ? resolved.length : undefined,
+        executionId: this.executionId
+      }, 'Step variable resolved');
+      return resolved;
     }
 
     // Check if it's an input value reference
     if (root === 'input') {
-      return this.getNestedValue(this.inputValues, parts.slice(1));
+      const resolved = this.getNestedValue(this.inputValues, parts.slice(1));
+      logger.debug({ reference, resolvedType: typeof resolved, executionId: this.executionId }, 'Input variable resolved');
+      return resolved;
     }
 
     // Check if it's a variable reference
     if (root === 'var') {
-      return this.getNestedValue(this.variables, parts.slice(1));
+      const resolved = this.getNestedValue(this.variables, parts.slice(1));
+      logger.debug({ reference, resolvedType: typeof resolved, executionId: this.executionId }, 'Var variable resolved');
+      return resolved;
     }
 
     // Check if it's a current item reference (for loops/filters)
@@ -315,7 +360,7 @@ export class ExecutionContext {
           const value = this.resolveVariable(match);
           return String(value);
         } catch (error) {
-          console.warn(`Failed to resolve variable ${match}:`, error);
+          logger.warn({ err: error, variable: match, executionId: this.executionId }, 'Failed to resolve variable');
           return match;
         }
       });
@@ -588,6 +633,14 @@ export class ExecutionContext {
   markCompleted(): void {
     this.status = 'completed';
     this.completedAt = new Date();
+    logger.info({
+      executionId: this.executionId,
+      completedSteps: this.completedSteps.length,
+      failedSteps: this.failedSteps.length,
+      skippedSteps: this.skippedSteps.length,
+      totalTokensUsed: this.totalTokensUsed,
+      totalExecutionTimeMs: this.totalExecutionTime
+    }, 'Execution completed');
   }
 
   /**
@@ -596,6 +649,12 @@ export class ExecutionContext {
   markFailed(): void {
     this.status = 'failed';
     this.completedAt = new Date();
+    logger.error({
+      executionId: this.executionId,
+      completedSteps: this.completedSteps.length,
+      failedSteps: this.failedSteps,
+      totalTokensUsed: this.totalTokensUsed
+    }, 'Execution failed');
   }
 
   /**
@@ -603,6 +662,7 @@ export class ExecutionContext {
    */
   markPaused(): void {
     this.status = 'paused';
+    logger.info({ executionId: this.executionId, currentStep: this.currentStep }, 'Execution paused');
   }
 
   /**
@@ -611,6 +671,7 @@ export class ExecutionContext {
   markCancelled(): void {
     this.status = 'cancelled';
     this.completedAt = new Date();
+    logger.warn({ executionId: this.executionId, currentStep: this.currentStep }, 'Execution cancelled');
   }
 
   /**
@@ -618,5 +679,6 @@ export class ExecutionContext {
    */
   resume(): void {
     this.status = 'running';
+    logger.info({ executionId: this.executionId, currentStep: this.currentStep }, 'Execution resumed');
   }
 }

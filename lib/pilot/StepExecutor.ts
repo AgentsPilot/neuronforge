@@ -35,6 +35,10 @@ import { ConditionalEvaluator } from './ConditionalEvaluator';
 import { DataOperations } from './DataOperations';
 import { StepCache } from './StepCache';
 import { AISConfigService } from '@/lib/services/AISConfigService';
+import { createLogger } from '@/lib/logger';
+
+// Create module-level logger for structured logging to dev.log
+const logger = createLogger({ module: 'StepExecutor', service: 'workflow-pilot' });
 // TODO: Implement these classes for per-step routing
 // import { TaskComplexityAnalyzer } from './TaskComplexityAnalyzer';
 // import { PerStepModelRouter } from './PerStepModelRouter';
@@ -76,7 +80,7 @@ export class StepExecutor {
   ): Promise<StepOutput> {
     const startTime = Date.now();
 
-    console.log(`[StepExecutor] Executing step ${step.id}: ${step.name} (type: ${step.type})`);
+    logger.info({ stepId: step.id, stepName: step.name, stepType: step.type }, 'Executing step');
 
     // === CACHING CHECK ===
     // Check cache before execution (for deterministic steps only)
@@ -85,7 +89,7 @@ export class StepExecutor {
       const stepParams = (step as any).params || {};
       const cachedOutput = this.stepCache.get(step.id, step.type, stepParams);
       if (cachedOutput) {
-        console.log(`💾 [StepExecutor] Cache hit for step ${step.id}, skipping execution`);
+        logger.debug({ stepId: step.id }, 'Cache hit - skipping execution');
         return cachedOutput;
       }
     }
@@ -95,7 +99,7 @@ export class StepExecutor {
     const shouldUseOrchestration = this.shouldUseOrchestration(step);
 
     if (shouldUseOrchestration && context.orchestrator && context.orchestrator.isActive()) {
-      console.log(`🎯 [StepExecutor] Using orchestration for AI task: ${step.id} (type: ${step.type})`);
+      logger.info({ stepId: step.id, stepType: step.type }, 'Using orchestration for AI task');
 
       try {
         // ✅ CRITICAL: Resolve variables BEFORE passing to orchestration
@@ -115,8 +119,8 @@ export class StepExecutor {
 
         const resolvedParams = context.resolveAllVariables(stepParams);
 
-        console.log(`🔍 [StepExecutor] Orchestration step ${step.id} params BEFORE resolution:`, JSON.stringify(stepParams, null, 2));
-        console.log(`🔍 [StepExecutor] Orchestration step ${step.id} params AFTER resolution:`, JSON.stringify(resolvedParams, null, 2));
+        logger.debug({ stepId: step.id, paramsBefore: stepParams }, 'Orchestration step params BEFORE resolution');
+        logger.debug({ stepId: step.id, paramsAfter: resolvedParams }, 'Orchestration step params AFTER resolution');
 
         // Execute via orchestration handlers
         const orchestrationResult = await context.orchestrator.executeStep(
@@ -133,8 +137,11 @@ export class StepExecutor {
 
         if (orchestrationResult) {
           // Return orchestrated result
-          console.log(`✅ [StepExecutor] Orchestration executed step ${step.id} successfully`);
-          console.log(`   Tokens: ${orchestrationResult.tokensUsed.total}, Saved: ${orchestrationResult.tokensSaved}`);
+          logger.info({
+            stepId: step.id,
+            tokensUsed: orchestrationResult.tokensUsed.total,
+            tokensSaved: orchestrationResult.tokensSaved
+          }, 'Orchestration executed step successfully');
 
           return {
             stepId: step.id,
@@ -155,11 +162,11 @@ export class StepExecutor {
           };
         }
       } catch (orchestrationError: any) {
-        console.warn(`⚠️  [StepExecutor] Orchestration failed for step ${step.id}, falling back to normal execution:`, orchestrationError.message);
+        logger.warn({ err: orchestrationError, stepId: step.id }, 'Orchestration failed - falling back to normal execution');
         // Fall through to normal execution
       }
     } else if (!shouldUseOrchestration && context.orchestrator?.isActive()) {
-      console.log(`⚡ [StepExecutor] Skipping orchestration for deterministic step: ${step.id} (type: ${step.type}) - executing plugin directly`);
+      logger.debug({ stepId: step.id, stepType: step.type }, 'Skipping orchestration for deterministic step - executing plugin directly');
     }
 
     // === NORMAL EXECUTION (Fallback or when orchestration is disabled) ===
@@ -218,9 +225,20 @@ export class StepExecutor {
         resolvedParams = context.resolveAllVariables(fieldsToResolve);
       }
 
-      // 🔍 DEBUG: Log variable resolution
-      console.log(`🔍 [StepExecutor] Step ${step.id} params BEFORE resolution:`, JSON.stringify(step.type === 'action' ? step.params : step, null, 2));
-      console.log(`🔍 [StepExecutor] Step ${step.id} params AFTER resolution:`, JSON.stringify(resolvedParams, null, 2));
+      // Log variable resolution for debugging
+      logger.debug({
+        stepId: step.id,
+        stepName: step.name,
+        stepType: step.type,
+        paramsBefore: step.type === 'action' ? (step as ActionStep).params : step,
+      }, 'Step params BEFORE resolution');
+
+      logger.debug({
+        stepId: step.id,
+        stepName: step.name,
+        stepType: step.type,
+        paramsAfter: resolvedParams,
+      }, 'Step params AFTER resolution');
 
       let result: any;
       let tokensUsed: number | { total: number; prompt: number; completion: number } = 0;
@@ -232,7 +250,7 @@ export class StepExecutor {
           const actionResult = await this.executeAction(step as ActionStep, resolvedParams, context);
           result = actionResult.data;
           tokensUsed = actionResult.pluginTokens || 0;
-          console.log(`📊 [StepExecutor] Plugin action returned ${tokensUsed} tokens`);
+          logger.debug({ stepId: step.id, tokensUsed }, 'Plugin action returned tokens');
           break;
 
         case 'ai_processing':  // Smart Agent Builder uses this type
@@ -284,7 +302,7 @@ export class StepExecutor {
               step.id
             );
           }
-          console.log(`[StepExecutor] Delegating scatter-gather step ${step.id} to ParallelExecutor`);
+          logger.info({ stepId: step.id }, 'Delegating scatter-gather step to ParallelExecutor');
           result = await this.parallelExecutor.executeScatterGather(step, context);
           break;
 
@@ -358,21 +376,21 @@ export class StepExecutor {
         severity: 'info',
       });
 
-      console.log(`[StepExecutor] Step ${step.id} completed successfully in ${executionTime}ms`);
+      logger.info({ stepId: step.id, executionTimeMs: executionTime }, 'Step completed successfully');
 
       // === CACHE STORAGE ===
       // Store in cache if step type is cacheable
       if (cacheableTypes.includes(step.type)) {
         const stepParams = (step as any).params || {};
         this.stepCache.set(step.id, step.type, stepParams, output);
-        console.log(`💾 [StepExecutor] Cached result for step ${step.id}`);
+        logger.debug({ stepId: step.id }, 'Cached step result');
       }
 
       return output;
     } catch (error: any) {
       const executionTime = Date.now() - startTime;
 
-      console.error(`[StepExecutor] Step ${step.id} failed:`, error);
+      logger.error({ err: error, stepId: step.id, executionTimeMs: executionTime }, 'Step execution failed');
 
       // Update step execution to failed in workflow_step_executions table
       if (this.stateManager) {
@@ -444,7 +462,7 @@ export class StepExecutor {
       );
     }
 
-    console.log(`[StepExecutor] Executing plugin: ${step.plugin}.${step.action}`);
+    logger.info({ stepId: step.id, plugin: step.plugin, action: step.action }, 'Executing plugin action');
 
     const actionStartTime = Date.now();
 
@@ -457,7 +475,13 @@ export class StepExecutor {
       context
     );
 
-    console.log(`🔍 [StepExecutor] Transformed params for ${step.plugin}.${step.action}:`, JSON.stringify(transformedParams, null, 2));
+    // Log transformed params for debugging plugin execution
+    logger.debug({
+      stepId: step.id,
+      plugin: step.plugin,
+      action: step.action,
+      transformedParams,
+    }, 'Plugin action transformed params');
 
     // Execute via PluginExecuterV2 (use getInstance for singleton)
     const pluginExecuter = await PluginExecuterV2.getInstance();
@@ -471,12 +495,13 @@ export class StepExecutor {
     const actionDuration = Date.now() - actionStartTime;
 
     if (!result.success) {
-      console.error(`❌ [StepExecutor] Plugin execution failed:`, {
+      logger.error({
+        stepId: step.id,
         plugin: step.plugin,
         action: step.action,
         error: result.error,
         message: result.message
-      });
+      }, 'Plugin execution failed');
       throw new ExecutionError(
         result.message || result.error || `Plugin execution failed: ${step.plugin}.${step.action}`,
         step.id,
@@ -520,10 +545,16 @@ export class StepExecutor {
         }
       });
 
-      console.log(`✅ [StepExecutor] Tracked plugin action: ${step.plugin}.${step.action} (${actionDuration}ms, ${pluginTokens} tokens)`);
+      logger.debug({
+        stepId: step.id,
+        plugin: step.plugin,
+        action: step.action,
+        durationMs: actionDuration,
+        pluginTokens
+      }, 'Tracked plugin action execution');
     } catch (trackingError) {
       // Token tracking failures should NOT fail plugin execution
-      console.warn(`⚠️  [StepExecutor] Failed to track plugin action (non-critical):`, trackingError);
+      logger.warn({ err: trackingError, stepId: step.id }, 'Failed to track plugin action (non-critical)');
     }
 
     // ✅ P0 FIX: Return plugin tokens so they flow through StepOutput → ExecutionContext
@@ -548,7 +579,7 @@ export class StepExecutor {
     params: any,
     context: ExecutionContext
   ): Promise<any> {
-    console.log(`🔧 [StepExecutor] Transforming parameters for ${pluginName}.${actionName}`);
+    logger.debug({ pluginName, actionName }, 'Transforming parameters for plugin action');
 
     try {
       // Fetch plugin definition from PluginManager
@@ -557,7 +588,7 @@ export class StepExecutor {
       const pluginDef = pluginManager.getPluginDefinition(pluginName);
 
       if (!pluginDef || !pluginDef.actions || !pluginDef.actions[actionName]) {
-        console.warn(`🔧 [StepExecutor] No definition found for ${pluginName}.${actionName}, skipping transformation`);
+        logger.warn({ pluginName, actionName }, 'No definition found - skipping transformation');
         return params;
       }
 
@@ -565,7 +596,7 @@ export class StepExecutor {
       const paramSchema = actionDef.parameters;
 
       if (!paramSchema || !paramSchema.properties) {
-        console.log(`🔧 [StepExecutor] No parameter schema found, skipping transformation`);
+        logger.debug({ pluginName, actionName }, 'No parameter schema found - skipping transformation');
         return params;
       }
 
@@ -588,7 +619,7 @@ export class StepExecutor {
 
           // If value is an object (not already an array), convert to 2D array
           if (typeof value === 'object' && !Array.isArray(value)) {
-            console.log(`🔧 [StepExecutor] Converting object to 2D array for parameter "${paramName}"`);
+            logger.debug({ paramName, pluginName, actionName }, 'Converting object to 2D array for parameter');
 
             // Extract values from object in consistent order
             // Convert nested arrays to strings (Google Sheets doesn't accept nested arrays)
@@ -603,11 +634,11 @@ export class StepExecutor {
             });
             transformed[paramName] = [row];  // Wrap in array to make it 2D
 
-            console.log(`🔧 [StepExecutor] Converted "${paramName}": ${row.length} fields → 2D array`);
+            logger.debug({ paramName, fieldCount: row.length }, 'Converted object to 2D array');
           }
           // If value is a 1D array, wrap it to make it 2D
           else if (Array.isArray(value) && value.length > 0 && !Array.isArray(value[0])) {
-            console.log(`🔧 [StepExecutor] Wrapping 1D array to 2D for parameter "${paramName}"`);
+            logger.debug({ paramName }, 'Wrapping 1D array to 2D for parameter');
             transformed[paramName] = [value];
           }
         }
@@ -621,7 +652,7 @@ export class StepExecutor {
 
           // Convert objects to JSON strings
           if (typeof value === 'object' && value !== null) {
-            console.log(`🔧 [StepExecutor] Converting ${Array.isArray(value) ? 'array' : 'object'} to string for parameter "${paramName}"`);
+            logger.debug({ paramName, valueType: Array.isArray(value) ? 'array' : 'object' }, 'Converting to string for parameter');
 
             // Check if parameter has a format hint in schema
             const formatHint = def.format || def['x-format'];
@@ -651,15 +682,15 @@ export class StepExecutor {
           const defaultValue = this.getDefaultValueForParameter(paramName, def);
           if (defaultValue !== undefined) {
             transformed[paramName] = defaultValue;
-            console.log(`🔧 [StepExecutor] Added default for "${paramName}": ${defaultValue}`);
+            logger.debug({ paramName, defaultValue }, 'Added default value for parameter');
           }
         }
       }
 
-      console.log(`🔧 [StepExecutor] Transformed params:`, JSON.stringify(transformed, null, 2));
+      logger.debug({ pluginName, actionName, transformed }, 'Parameter transformation complete');
       return transformed;
     } catch (error) {
-      console.warn(`🔧 [StepExecutor] Parameter transformation failed (non-critical):`, error);
+      logger.warn({ err: error, pluginName, actionName }, 'Parameter transformation failed (non-critical)');
       return params;  // Return original params if transformation fails
     }
   }
@@ -780,7 +811,7 @@ export class StepExecutor {
     params: any,
     context: ExecutionContext
   ): Promise<{ data: any; tokensUsed: { total: number; prompt: number; completion: number } }> {
-    console.log(`[StepExecutor] Executing LLM decision: ${step.name}`);
+    logger.info({ stepId: step.id, stepName: step.name }, 'Executing LLM decision');
 
     const stepStartTime = Date.now();
     let selectedModel: string | undefined;
@@ -794,7 +825,7 @@ export class StepExecutor {
       const isRoutingEnabled = context.orchestrator?.config?.aisRoutingEnabled || false;
 
       if (isRoutingEnabled) {
-        console.log(`🎯 [StepExecutor] Per-step routing enabled - analyzing complexity...`);
+        logger.debug({ stepId: step.id }, 'Per-step routing enabled - analyzing complexity');
 
         // // Analyze step complexity
         // const complexityAnalysis = await this.complexityAnalyzer.analyzeStep(step, context);
@@ -830,10 +861,10 @@ export class StepExecutor {
         //   routingDecision
         // );
       } else {
-        console.log(`ℹ️ [StepExecutor] Per-step routing disabled - using agent default model`);
+        logger.debug({ stepId: step.id }, 'Per-step routing disabled - using agent default model');
       }
     } catch (routingError) {
-      console.error('❌ [StepExecutor] Routing failed, falling back to agent default:', routingError);
+      logger.error({ err: routingError, stepId: step.id }, 'Routing failed - falling back to agent default');
       // Continue with agent default model
     }
 
@@ -844,8 +875,7 @@ export class StepExecutor {
     // This handles cases where Smart Agent Builder creates prompts like:
     // "Analyze the following emails: {{step1.data}}"
     // We need to extract step1.data and add it to params
-    console.log('🔍 [StepExecutor] Original params:', JSON.stringify(params, null, 2));
-    console.log('🔍 [StepExecutor] Prompt:', prompt);
+    logger.debug({ stepId: step.id, params, prompt }, 'LLM decision original params and prompt');
 
     const enrichedParams = { ...params };
 
@@ -854,7 +884,7 @@ export class StepExecutor {
     const matches = prompt.match(variablePattern);
 
     if (matches && matches.length > 0) {
-      console.log('🔍 [StepExecutor] Found variable references in prompt:', matches);
+      logger.debug({ stepId: step.id, matches }, 'Found variable references in prompt');
 
       for (const match of matches) {
         try {
@@ -867,17 +897,17 @@ export class StepExecutor {
           // Only add to params if it's not already there
           if (!enrichedParams[varName]) {
             enrichedParams[varName] = resolved;
-            console.log(`🔍 [StepExecutor] Added "${varName}" to params from prompt variable "${match}"`);
+            logger.debug({ stepId: step.id, varName, match }, 'Added variable to params from prompt');
           }
         } catch (error: any) {
-          console.warn(`🔍 [StepExecutor] Could not resolve variable "${match}" from prompt:`, error.message);
+          logger.warn({ err: error, stepId: step.id, match }, 'Could not resolve variable from prompt');
         }
       }
     }
 
     // If params are still empty after enrichment, try to get data from previous step
     if (Object.keys(enrichedParams).length === 0) {
-      console.log('🔍 [StepExecutor] Params still empty, checking for previous step outputs...');
+      logger.debug({ stepId: step.id }, 'Params still empty - checking for previous step outputs');
 
       const allOutputs = context.getAllStepOutputs();
       if (allOutputs.size > 0) {
@@ -885,12 +915,12 @@ export class StepExecutor {
         const outputsArray = Array.from(allOutputs.entries());
         const [lastStepId, lastOutput] = outputsArray[outputsArray.length - 1];
 
-        console.log(`🔍 [StepExecutor] Using output from previous step "${lastStepId}" as default params`);
+        logger.debug({ stepId: step.id, lastStepId }, 'Using output from previous step as default params');
         enrichedParams.data = lastOutput.data;
       }
     }
 
-    console.log('🔍 [StepExecutor] Enriched params:', JSON.stringify(enrichedParams, null, 2));
+    logger.debug({ stepId: step.id, enrichedParams }, 'LLM decision enriched params');
 
     const contextSummary = this.buildContextSummary(context);
 
@@ -1034,30 +1064,30 @@ Please analyze the above and provide your decision/response.
       );
     }
 
-    console.log(`[StepExecutor] Evaluating condition for step ${step.id}`);
+    logger.debug({ stepId: step.id, condition: stepCondition }, 'Evaluating condition');
 
     const conditionResult = this.conditionalEvaluator.evaluate(stepCondition, context);
 
-    console.log(`[StepExecutor] Condition result for ${step.id}: ${conditionResult}`);
+    logger.info({ stepId: step.id, conditionResult }, 'Condition evaluated');
 
     // V4 Format: Execute nested steps based on condition
     const hasV4Format = conditionalStep.then_steps || conditionalStep.else_steps;
 
     if (hasV4Format) {
-      console.log(`[StepExecutor] V4 conditional detected - executing nested steps`);
+      logger.debug({ stepId: step.id }, 'V4 conditional detected - executing nested steps');
 
       const branchToExecute = conditionResult ? conditionalStep.then_steps : conditionalStep.else_steps;
       const branchName = conditionResult ? 'then_steps' : 'else_steps';
 
       if (branchToExecute && Array.isArray(branchToExecute) && branchToExecute.length > 0) {
-        console.log(`[StepExecutor] Executing ${branchName} (${branchToExecute.length} steps)`);
+        logger.info({ stepId: step.id, branchName, stepCount: branchToExecute.length }, 'Executing conditional branch');
 
         const branchResults: any[] = [];
 
         // Execute each step in the branch sequentially
         for (let i = 0; i < branchToExecute.length; i++) {
           const branchStep = branchToExecute[i];
-          console.log(`[StepExecutor] Executing ${branchName}[${i}]: ${branchStep.id} (${branchStep.type})`);
+          logger.debug({ stepId: step.id, branchName, index: i, branchStepId: branchStep.id, branchStepType: branchStep.type }, 'Executing branch step');
 
           try {
             const branchStepResult = await this.execute(branchStep, context);
@@ -1066,11 +1096,11 @@ Please analyze the above and provide your decision/response.
             // Store the result in context so subsequent steps can reference it
             context.setStepOutput(branchStep.id, branchStepResult);
           } catch (error: any) {
-            console.error(`[StepExecutor] Error executing ${branchName}[${i}] (${branchStep.id}):`, error);
+            logger.error({ err: error, stepId: step.id, branchName, branchStepId: branchStep.id }, 'Error executing branch step');
 
             // If continueOnError is set, log and continue
             if (branchStep.continueOnError) {
-              console.log(`[StepExecutor] continueOnError=true, continuing despite error`);
+              logger.warn({ stepId: step.id, branchStepId: branchStep.id }, 'continueOnError=true - continuing despite error');
               branchResults.push({ error: error.message, stepId: branchStep.id });
             } else {
               throw error;
@@ -1086,7 +1116,7 @@ Please analyze the above and provide your decision/response.
           executedSteps: branchToExecute.length,
         };
       } else {
-        console.log(`[StepExecutor] No steps to execute in ${branchName}`);
+        logger.debug({ stepId: step.id, branchName }, 'No steps to execute in branch');
         return {
           result: conditionResult,
           condition: stepCondition,
@@ -1098,7 +1128,7 @@ Please analyze the above and provide your decision/response.
     }
 
     // Legacy Format: Only evaluate condition (orchestrator handles routing)
-    console.log(`[StepExecutor] Legacy conditional - returning evaluation only`);
+    logger.debug({ stepId: step.id }, 'Legacy conditional - returning evaluation only');
     return {
       result: conditionResult,
       condition: stepCondition,
@@ -1113,25 +1143,25 @@ Please analyze the above and provide your decision/response.
     step: SwitchStep,
     context: ExecutionContext
   ): Promise<any> {
-    console.log(`🔀 [StepExecutor] Executing switch step ${step.id}`);
+    logger.info({ stepId: step.id }, 'Executing switch step');
 
     // Evaluate the switch expression
     const evaluatedValue = context.resolveVariable?.(step.evaluate) ?? step.evaluate;
     const valueStr = String(evaluatedValue);
 
-    console.log(`🔀 [StepExecutor] Switch on "${step.evaluate}" = "${valueStr}"`);
+    logger.debug({ stepId: step.id, expression: step.evaluate, evaluatedValue: valueStr }, 'Switch expression evaluated');
 
     // Find matching case
     let matchedSteps: string[] | undefined;
 
     if (step.cases[valueStr]) {
       matchedSteps = step.cases[valueStr];
-      console.log(`✅ [StepExecutor] Matched case "${valueStr}" → steps: ${matchedSteps.join(', ')}`);
+      logger.info({ stepId: step.id, matchedCase: valueStr, matchedSteps }, 'Matched switch case');
     } else if (step.default) {
       matchedSteps = step.default;
-      console.log(`⚠️  [StepExecutor] No match, using default → steps: ${matchedSteps.join(', ')}`);
+      logger.warn({ stepId: step.id, defaultSteps: matchedSteps }, 'No match - using default case');
     } else {
-      console.log(`❌ [StepExecutor] No match and no default case`);
+      logger.warn({ stepId: step.id }, 'No match and no default case');
       matchedSteps = [];
     }
 
@@ -1154,14 +1184,14 @@ Please analyze the above and provide your decision/response.
     step: EnrichmentStep,
     context: ExecutionContext
   ): Promise<any> {
-    console.log(`📊 [StepExecutor] Executing enrichment step ${step.id}`);
+    logger.info({ stepId: step.id }, 'Executing enrichment step');
 
     // Resolve all sources
     const sources: Record<string, any> = {};
     for (const source of step.sources) {
       const value = context.resolveVariable?.(source.from) ?? null;
       sources[source.key] = value;
-      console.log(`📊 [StepExecutor] Source "${source.key}" resolved from ${source.from}`);
+      logger.debug({ stepId: step.id, sourceKey: source.key, sourceFrom: source.from }, 'Source resolved');
     }
 
     // Enrich data using DataOperations
@@ -1170,7 +1200,7 @@ Please analyze the above and provide your decision/response.
       mergeArrays: step.mergeArrays,
     });
 
-    console.log(`✅ [StepExecutor] Enrichment complete for ${step.id}`);
+    logger.info({ stepId: step.id, strategy: step.strategy }, 'Enrichment complete');
 
     return result;
   }
@@ -1183,7 +1213,7 @@ Please analyze the above and provide your decision/response.
     step: ValidationStep,
     context: ExecutionContext
   ): Promise<any> {
-    console.log(`✅ [StepExecutor] Executing validation step ${step.id}`);
+    logger.info({ stepId: step.id }, 'Executing validation step');
 
     // Resolve input data
     const data = context.resolveVariable?.(step.input);
@@ -1191,7 +1221,7 @@ Please analyze the above and provide your decision/response.
     // Validate using DataOperations
     const validationResult = DataOperations.validate(data, step.schema, step.rules);
 
-    console.log(`✅ [StepExecutor] Validation ${validationResult.valid ? 'passed' : 'failed'} for ${step.id}`);
+    logger.info({ stepId: step.id, valid: validationResult.valid, errorCount: validationResult.errors.length }, 'Validation complete');
 
     // Handle validation failure
     if (!validationResult.valid) {
@@ -1204,7 +1234,7 @@ Please analyze the above and provide your decision/response.
           { errors: validationResult.errors }
         );
       } else if (onFail === 'skip') {
-        console.log(`⏭  [StepExecutor] Validation failed, skipping step ${step.id}`);
+        logger.warn({ stepId: step.id, errors: validationResult.errors }, 'Validation failed - skipping step');
         context.markStepSkipped(step.id);
       }
       // If 'continue', just log and return result (don't mark as failed or skipped)
@@ -1225,13 +1255,13 @@ Please analyze the above and provide your decision/response.
     step: ComparisonStep,
     context: ExecutionContext
   ): Promise<any> {
-    console.log(`🔍 [StepExecutor] Executing comparison step ${step.id}`);
+    logger.info({ stepId: step.id }, 'Executing comparison step');
 
     // Resolve left and right values
     const leftValue = context.resolveVariable?.(step.left);
     const rightValue = context.resolveVariable?.(step.right);
 
-    console.log(`🔍 [StepExecutor] Comparing "${step.left}" vs "${step.right}" with operation: ${step.operation}`);
+    logger.debug({ stepId: step.id, left: step.left, right: step.right, operation: step.operation }, 'Comparing values');
 
     // Compare using DataOperations
     const result = DataOperations.compare(
@@ -1241,7 +1271,7 @@ Please analyze the above and provide your decision/response.
       step.outputFormat || 'boolean'
     );
 
-    console.log(`✅ [StepExecutor] Comparison complete for ${step.id}`);
+    logger.info({ stepId: step.id, operation: step.operation }, 'Comparison complete');
 
     return result;
   }
@@ -1264,17 +1294,19 @@ Please analyze the above and provide your decision/response.
       );
     }
 
-    console.log(`[StepExecutor] Executing transform: ${operation}`);
-    console.log(`[StepExecutor] Transform params:`, JSON.stringify(params, null, 2));
+    logger.info({ stepId: step.id, operation }, 'Executing transform');
+    logger.debug({ stepId: step.id, params }, 'Transform params');
 
     // ✅ FIX: Input has already been resolved by resolveAllVariables (line 175-188)
     // Don't try to resolve again, just use it directly
     const data = input !== undefined ? input : params.data;
 
     if (!data) {
-      console.error(`[StepExecutor] Transform step ${step.id} has no input data`);
-      console.error(`[StepExecutor] Available context variables:`, Object.keys(context.variables));
-      console.error(`[StepExecutor] Params received:`, JSON.stringify(params, null, 2));
+      logger.error({
+        stepId: step.id,
+        availableVariables: Object.keys(context.variables),
+        params
+      }, 'Transform step has no input data');
       throw new ExecutionError(
         `Transform step ${step.id} has no input data. Available variables: ${Object.keys(context.variables).join(', ')}`,
         'MISSING_INPUT_DATA',
@@ -1549,7 +1581,7 @@ Please analyze the above and provide your decision/response.
       return acc;
     }, {} as Record<string, any[]>);
 
-    console.log(`[Group] Grouped ${is2DArray ? 'rows' : 'items'} by "${groupKey || 'value'}" into ${Object.keys(grouped).length} groups`);
+    logger.debug({ groupKey: groupKey || 'value', groupCount: Object.keys(grouped).length, is2DArray }, 'Grouped data');
 
     // Return both grouped object and array of groups for iteration
     const groups = Object.entries(grouped).map(([key, items]) => ({
@@ -1799,7 +1831,7 @@ Please analyze the above and provide your decision/response.
         });
 
         deduplicated = [headerRow, ...uniqueRows];
-        console.log(`[Deduplicate] 2D array pattern: preserved header, deduplicated ${dataRows.length - uniqueRows.length} rows by "${deduplicateKey}"`);
+        logger.debug({ deduplicateKey, removedCount: dataRows.length - uniqueRows.length, pattern: '2D array' }, 'Deduplicated rows');
       } else {
         // For objects or other patterns, deduplicate all items
         deduplicated = unwrappedData.filter(item => {
@@ -1810,7 +1842,7 @@ Please analyze the above and provide your decision/response.
           seen.add(value);
           return true;
         });
-        console.log(`[Deduplicate] Object/item pattern: deduplicated ${unwrappedData.length - deduplicated.length} items by "${deduplicateKey}"`);
+        logger.debug({ deduplicateKey, removedCount: unwrappedData.length - deduplicated.length, pattern: 'object/item' }, 'Deduplicated items');
       }
     } else {
       // Deduplicate based on entire object (using JSON stringification)
@@ -1823,7 +1855,7 @@ Please analyze the above and provide your decision/response.
         seen.add(serialized);
         return true;
       });
-      console.log(`[Deduplicate] No key specified: deduplicated ${unwrappedData.length - deduplicated.length} items by entire value`);
+      logger.debug({ removedCount: unwrappedData.length - deduplicated.length, pattern: 'entire value' }, 'Deduplicated items');
     }
 
     // Return in structured format compatible with filter and other transforms
@@ -1882,7 +1914,7 @@ Please analyze the above and provide your decision/response.
 
     const flattened = flattenArray(unwrappedData, depth);
 
-    console.log(`[Flatten] Flattened array from ${unwrappedData.length} to ${flattened.length} items (depth: ${depth})`);
+    logger.debug({ originalCount: unwrappedData.length, flattenedCount: flattened.length, depth }, 'Flattened array');
 
     return {
       items: flattened,
@@ -1941,7 +1973,7 @@ Please analyze the above and provide your decision/response.
       ...cols
     }));
 
-    console.log(`[Pivot] Created pivot table with ${items.length} rows`);
+    logger.debug({ rowCount: items.length, rowKey, columnKey, valueKey }, 'Created pivot table');
 
     return {
       items,
@@ -1979,7 +2011,7 @@ Please analyze the above and provide your decision/response.
       chunks.push(unwrappedData.slice(i, i + chunkSize));
     }
 
-    console.log(`[Split] Split ${unwrappedData.length} items into ${chunks.length} chunks of size ${chunkSize}`);
+    logger.debug({ originalCount: unwrappedData.length, chunkCount: chunks.length, chunkSize }, 'Split array');
 
     return {
       items: chunks,
@@ -2025,7 +2057,7 @@ Please analyze the above and provide your decision/response.
       return item;
     });
 
-    console.log(`[Expand] Expanded ${unwrappedData.length} objects to flat structure`);
+    logger.debug({ count: unwrappedData.length, delimiter }, 'Expanded objects to flat structure');
 
     return {
       items: expanded,
@@ -2047,7 +2079,7 @@ Please analyze the above and provide your decision/response.
       );
     }
 
-    console.log(`[StepExecutor] Delaying for ${duration}ms`);
+    logger.debug({ stepId: step.id, durationMs: duration }, 'Delaying execution');
 
     await new Promise(resolve => setTimeout(resolve, duration));
   }
@@ -2126,11 +2158,11 @@ ${inputValues || 'None'}
 
     // If the cleaning removed too much (less than 50 chars), return original
     if (cleaned.length < 50) {
-      console.warn('[StepExecutor] Clean summary too short, using original output');
+      logger.warn({ cleanedLength: cleaned.length, originalLength: output.length }, 'Cleaned summary too short - using original');
       return output;
     }
 
-    console.log(`[StepExecutor] Cleaned summary: ${cleaned.length} chars (was ${output.length} chars)`);
+    logger.debug({ cleanedLength: cleaned.length, originalLength: output.length }, 'Cleaned summary output');
     return cleaned;
   }
 }
