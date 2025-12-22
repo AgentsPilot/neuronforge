@@ -79,7 +79,7 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      this.logger.error({ err: error }, 'DEBUG: Sheets read failed:', errorData);
+      this.logger.error({ errorData, status: response.status }, 'Sheets read_range failed');
       throw new Error(`Sheets API error: ${response.status} - ${errorData}`);
     }
 
@@ -127,7 +127,7 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      this.logger.error({ err: error }, 'DEBUG: Sheets write failed:', errorData);
+      this.logger.error({ errorData, status: response.status }, 'Sheets write_range failed');
       throw new Error(`Sheets API error: ${response.status} - ${errorData}`);
     }
 
@@ -252,7 +252,7 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      this.logger.error({ err: error }, 'DEBUG: Spreadsheet creation failed:', errorData);
+      this.logger.error({ errorData, status: response.status }, 'Sheets create_spreadsheet failed');
       throw new Error(`Sheets API error: ${response.status} - ${errorData}`);
     }
 
@@ -323,7 +323,7 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      this.logger.error({ err: error }, 'DEBUG: Get spreadsheet info failed:', errorData);
+      this.logger.error({ errorData, status: response.status }, 'Sheets get_spreadsheet_info failed');
       throw new Error(`Sheets API error: ${response.status} - ${errorData}`);
     }
 
