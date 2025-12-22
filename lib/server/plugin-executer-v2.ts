@@ -46,8 +46,8 @@ export class PluginExecuterV2 {
   };
 
   private pluginInstances: Map<string, BasePluginExecutor> = new Map();
-  private pluginManager: PluginManagerV2;
-  private userConnections: UserPluginConnections;
+  public readonly pluginManager: PluginManagerV2;
+  public readonly userConnections: UserPluginConnections;
   public static debug = process.env.NODE_ENV === 'development';
   private debug = process.env.NODE_ENV === 'development';
   private initialized = false;
@@ -129,5 +129,26 @@ export class PluginExecuterV2 {
     this.pluginInstances.set(pluginName, executor);
 
     return executor;
+  }
+
+  /**
+   * Fetch dynamic options for a plugin parameter
+   * Used by fetch-options API for populating dynamic dropdowns
+   */
+  async fetchDynamicOptions(
+    pluginName: string,
+    fetchMethod: string,
+    connection: any,
+    options: { page?: number; limit?: number; [key: string]: any }
+  ): Promise<{ value: string; label: string; description?: string; icon?: string; group?: string }[]> {
+    const executor = this.getOrCreateExecutor(pluginName);
+
+    // Check if the method exists on the executor
+    if (typeof (executor as any)[fetchMethod] !== 'function') {
+      throw new Error(`Method ${fetchMethod} not implemented in ${pluginName} executor`);
+    }
+
+    // Call the dynamic fetch method
+    return await (executor as any)[fetchMethod](connection, options);
   }
 }

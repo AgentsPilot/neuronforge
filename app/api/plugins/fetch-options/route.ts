@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAuthenticatedServerClient } from '@/lib/supabaseServerAuth';
-import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 import { PluginExecuterV2 } from '@/lib/server/plugin-executer-v2';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'API', service: 'PluginFetchOptions' });
+
+// Force dynamic rendering for this route
+export const dynamic = 'force-dynamic';
 
 // Simple in-memory cache with TTL
 const optionsCache = new Map<string, { data: any; timestamp: number }>();
@@ -30,12 +35,12 @@ export async function POST(request: NextRequest) {
     const body: FetchOptionsRequest = await request.json();
     const { plugin, action, parameter, refresh = false, page = 1, limit = 100, dependentValues = {} } = body;
 
-    console.log('[Fetch Options] Request received:', { plugin, action, parameter, refresh, dependentValues });
+    logger.debug({ plugin, action, parameter, refresh, dependentValues }, 'Request received');
 
     // Validate required fields
     if (!plugin || !action || !parameter) {
       return NextResponse.json(
-        { error: 'Missing required fields: plugin, action, parameter' },
+        { success: false, error: 'Missing required fields: plugin, action, parameter' },
         { status: 400 }
       );
     }
@@ -46,7 +51,7 @@ export async function POST(request: NextRequest) {
 
     if (userError || !user) {
       return NextResponse.json(
-        { error: 'Unauthorized' },
+        { success: false, error: 'Unauthorized' },
         { status: 401 }
       );
     }
@@ -63,62 +68,57 @@ export async function POST(request: NextRequest) {
     if (!refresh) {
       const cached = optionsCache.get(cacheKey);
       if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-        console.log(`[Fetch Options] Cache hit for ${cacheKey}`);
+        logger.debug({ cacheKey }, 'Cache hit');
         return NextResponse.json({
+          success: true,
           options: cached.data,
           cached: true,
           timestamp: cached.timestamp,
+        }, {
+          headers: {
+            'X-Cache': 'HIT',
+            'Cache-Control': 'private, max-age=300'
+          }
         });
       }
     }
 
-    // Get user's plugin connection
-    console.log('[Fetch Options] Looking for connection:', { userId, plugin });
+    // Get plugin executor facade (single entry point for all plugin operations)
+    const pluginExecuter = await PluginExecuterV2.getInstance();
 
-    const { data: connections, error: connectionError } = await supabase
-      .from('plugin_connections')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('plugin_key', plugin)
-      .eq('status', 'active')
-      .single();
+    // Get plugin schema via facade
+    const pluginSchema = pluginExecuter.pluginManager.getPluginDefinition(plugin);
+    if (!pluginSchema) {
+      return NextResponse.json(
+        { success: false, error: `Plugin schema not found for ${plugin}` },
+        { status: 404 }
+      );
+    }
 
-    console.log('[Fetch Options] Connection query result:', { connections, connectionError });
+    // Get user's plugin connection via facade (includes smart token refresh)
+    logger.debug({ userId, plugin }, 'Looking for connection');
+    const connection = await pluginExecuter.userConnections.getConnection(
+      userId,
+      plugin,
+      pluginSchema.plugin.auth_config
+    );
 
-    if (!connections) {
-      // Let's also check what connections exist for this user
-      const { data: allConnections } = await supabase
-        .from('plugin_connections')
-        .select('plugin_key, status')
-        .eq('user_id', userId);
-
-      console.log('[Fetch Options] All user connections:', allConnections);
-
+    if (!connection) {
+      logger.warn({ userId, plugin }, 'No active connection found');
       return NextResponse.json(
         {
-          error: `No active connection found for ${plugin}. Please connect this plugin first.`,
-          availableConnections: allConnections?.map(c => c.plugin_key) || []
+          success: false,
+          error: `No active connection found for ${plugin}. Please connect this plugin first.`
         },
         { status: 404 }
       );
     }
 
-    // Get plugin manager and schema
-    const pluginManager = await PluginManagerV2.getInstance();
-    const pluginSchema = pluginManager.getPluginDefinition(plugin);
-
-    if (!pluginSchema) {
-      return NextResponse.json(
-        { error: `Plugin schema not found for ${plugin}` },
-        { status: 404 }
-      );
-    }
-
     // Find the action schema
-    const actionSchema = pluginManager.getActionDefinition(plugin, action);
+    const actionSchema = pluginExecuter.pluginManager.getActionDefinition(plugin, action);
     if (!actionSchema) {
       return NextResponse.json(
-        { error: `Action ${action} not found in ${plugin} plugin` },
+        { success: false, error: `Action ${action} not found in ${plugin} plugin` },
         { status: 404 }
       );
     }
@@ -127,7 +127,7 @@ export async function POST(request: NextRequest) {
     const paramSchema = actionSchema.parameters?.properties?.[parameter];
     if (!paramSchema || !paramSchema['x-dynamic-options']) {
       return NextResponse.json(
-        { error: `Parameter ${parameter} does not support dynamic options` },
+        { success: false, error: `Parameter ${parameter} does not support dynamic options` },
         { status: 400 }
       );
     }
@@ -137,34 +137,21 @@ export async function POST(request: NextRequest) {
 
     if (!fetchMethod) {
       return NextResponse.json(
-        { error: `No fetch method defined in x-dynamic-options for ${parameter}` },
+        { success: false, error: `No fetch method defined in x-dynamic-options for ${parameter}` },
         { status: 400 }
       );
     }
 
-    // Get plugin executor
-    const pluginExecuter = await PluginExecuterV2.getInstance();
-    const executor = (pluginExecuter as any).getOrCreateExecutor(plugin);
-
-    if (!executor) {
-      return NextResponse.json(
-        { error: `Plugin executor not found for ${plugin}` },
-        { status: 404 }
-      );
-    }
-
-    // Call the fetch method dynamically
+    // Fetch dynamic options
     let options: OptionItem[] = [];
 
     try {
-      if (typeof (executor as any)[fetchMethod] !== 'function') {
-        return NextResponse.json(
-          { error: `Method ${fetchMethod} not implemented in ${plugin} executor` },
-          { status: 501 }
-        );
-      }
-
-      options = await (executor as any)[fetchMethod](connections, { page, limit, ...dependentValues });
+      options = await pluginExecuter.fetchDynamicOptions(
+        plugin,
+        fetchMethod,
+        connection,
+        { page, limit, ...dependentValues }
+      );
 
       // Cache the results
       optionsCache.set(cacheKey, {
@@ -183,6 +170,7 @@ export async function POST(request: NextRequest) {
       }
 
       return NextResponse.json({
+        success: true,
         options,
         cached: false,
         timestamp: Date.now(),
@@ -190,23 +178,33 @@ export async function POST(request: NextRequest) {
         page,
         limit,
         hasMore: options.length === limit, // Simple pagination indicator
+      }, {
+        headers: {
+          'X-Cache': 'MISS',
+          'Cache-Control': 'private, max-age=300'
+        }
       });
 
     } catch (fetchError: any) {
-      console.error(`[Fetch Options] Error calling ${fetchMethod}:`, fetchError);
+      logger.error({ err: fetchError, fetchMethod, plugin }, 'Error calling fetch method');
       return NextResponse.json(
         {
-          error: `Failed to fetch options: ${fetchError.message}`,
-          details: fetchError.toString(),
+          success: false,
+          error: 'Failed to fetch options',
+          message: fetchError.message
         },
         { status: 500 }
       );
     }
 
   } catch (error: any) {
-    console.error('[Fetch Options] Unexpected error:', error);
+    logger.error({ err: error }, 'Unexpected error');
     return NextResponse.json(
-      { error: 'Internal server error', details: error.toString() },
+      {
+        success: false,
+        error: 'Internal server error',
+        message: error.message
+      },
       { status: 500 }
     );
   }
