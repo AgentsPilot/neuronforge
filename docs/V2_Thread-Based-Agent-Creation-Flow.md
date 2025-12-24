@@ -1,7 +1,9 @@
 # Thread-Based Agent Creation Flow Diagram
 
 ## Overview
-This diagram shows the complete user journey through `useConversationalBuilder.ts` when `USE_THREAD_BASED_AGENT_CREATION=true`.
+This diagram shows the complete user journey through the V2 agent creation page (`app/v2/agents/new/page.tsx`).
+
+> **Note**: The legacy `useConversationalBuilder.ts` hook is no longer used. The V2 page implements the thread-based flow directly without a feature flag - it is always enabled.
 
 ---
 
@@ -10,231 +12,151 @@ This diagram shows the complete user journey through `useConversationalBuilder.t
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         USER STARTS                                 │
-│                    (Enters prompt in UI)                            │
+│            (Navigates to /v2/agents/new?prompt=...)                 │
 └────────────────────────────────┬────────────────────────────────────┘
                                  │
                                  ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  useEffect Hook (lines 749-786)                                     │
+│  useEffect Hook (page.tsx lines 208-213)                            │
 │  ─────────────────────────────────────                              │
-│  • Checks: prompt && !projectState.conversationStarted              │
-│  • Sets: conversationStarted = true                                 │
-│  • Adds user message to chat                                        │
-│  • Sets: originalPrompt = prompt                                    │
-│  • Sets: isProcessing = true                                        │
+│  • Checks: user && initialPrompt && !threadId && aiConfigLoaded     │
+│  • Calls: initializeThread()                                        │
 └────────────────────────────────┬────────────────────────────────────┘
                                  │
                                  ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Feature Flag Check (line 764)                                      │
-│  ─────────────────────────────────                                  │
-│  if (useThreadFlow) { ← TRUE                                        │
-│    console.log('🆕 Using thread-based flow')                        │
-│    await processWithThreads(prompt) ───────────────┐                │
-│  }                                                 │                │
-└────────────────────────────────────────────────────┼────────────────┘
-                                                     │
-                                                     ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  processWithThreads() - PHASE ORCHESTRATION (lines 579-673)         │
+│  initializeThread() - THREAD CREATION (lines 260-304)               │
 │  ─────────────────────────────────────────────────────────────────  │
 │                                                                     │
 │  STEP 1: Initialize Thread                                          │
 │  ─────────────────────────────                                      │
-│  threadId.current = await initializeThread()                        │
+│  • Adds user's original prompt to chat                              │
+│  • Shows typing indicator                                           │
 │    │                                                                │
 │    ├─► POST /api/agent-creation/init-thread                         │
 │    │   • Creates OpenAI thread                                      │
-│    │   • Injects system prompt (Workflow-Agent-Creation-Prompt-v5)  │
+│    │   • Injects system prompt (Workflow-Agent-Creation-Prompt-v13) │
 │    │   • Stores in agent_prompt_threads table                       │
 │    │   • Returns: { thread_id: "thread_abc123" }                    │
 │    │                                                                │
-│    └─► threadId.current = "thread_abc123"                           │
+│    └─► setThreadId("thread_abc123")                                 │
+│    │                                                                │
+│    └─► Immediately calls processPhase1(thread_id)                   │
 │                                                                     │
 └────────────────────────────────┬────────────────────────────────────┘
                                  │
                                  ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  STEP 2: Phase 1 - Analyze Prompt Clarity                           │
+│  STEP 2: Phase 1 - Analyze Prompt (processPhase1, lines 307-363)    │
 │  ───────────────────────────────────────────                        │
-│  const phase1Result = await processMessageInThread(1, prompt)       │
 │    │                                                                │
 │    ├─► POST /api/agent-creation/process-message                     │
 │    │   Body: {                                                      │
 │    │     thread_id: "thread_abc123",                                │
 │    │     phase: 1,                                                  │
-│    │     user_prompt: "Send my daily emails to Slack",              │
-│    │     user_context: { full_name, email },                        │
-│    │     connected_services: [gmail, slack, ...]                    │
+│    │     user_prompt: "Send my daily emails to Slack"               │
 │    │   }                                                            │
 │    │                                                                │
 │    │   Backend Processing:                                          │
+│    │   • Merges user_context from auth + request                    │
+│    │   • Fetches connected_services from PluginManagerV2            │
 │    │   • Adds user message to thread                                │
 │    │   • Retrieves full thread history (includes system prompt)     │
-│    │   • Builds conversation for Chat Completions                   │
-│    │   • Calls GPT-4o with conversation context                     │
+│    │   • Calls AI provider (OpenAI/Anthropic/Kimi) with context     │
 │    │   • Stores AI response back in thread                          │
 │    │                                                                │
 │    └─► Returns: {                                                   │
 │          clarityScore: 75,                                          │
-│          needsClarification: true,                                  │
-│          missingPlugins: [],                                        │
-│          pluginWarning: null,                                       │
-│          analysis: { detected_plugins: ['gmail', 'slack'], ... }    │
+│          conversationalSummary: "I understand you want...",         │
+│          connectedPlugins: ['google-mail', 'slack', ...],           │
+│          analysis: { ... }                                          │
 │        }                                                            │
+│                                                                     │
+│  • Stores connectedPlugins in state for service status              │
+│  • Displays conversationalSummary to user                           │
+│  • Immediately proceeds to Phase 2 (always runs)                    │
 │                                                                     │
 └────────────────────────────────┬────────────────────────────────────┘
                                  │
                                  ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  STEP 3: Handle Analysis Results                                    │
-│  ──────────────────────────────────                                 │
-│  • Update projectState.detectedPlugins                              │
-│  • Update projectState.analysisData                                 │
-│  • Update projectState.clarityScore                                 │
+│  STEP 3: Phase 2 - Generate Questions (processPhase2, lines 366-439)│
+│  ─────────────────────────────────────────                          │
 │                                                                     │
-│  Plugin Warning Check:                                              │
-│  if (phase1Result.pluginWarning) {                                  │
-│    addMessage(phase1Result.pluginWarning.message, 'ai')             │
-│    // Example: "Gmail not connected. Please connect..."             │
-│  }                                                                  │
+│  NOTE: V2 flow ALWAYS runs Phase 2 (no clarity score skip)          │
 │                                                                     │
-└────────────────────────────────┬────────────────────────────────────┘
-                                 │
-                                 ▼
-                    ┌────────────┴────────────┐
-                    │  Clarity Score Check    │
-                    │  (line 648)             │
-                    └────────────┬────────────┘
-                                 │
-                 ┌───────────────┴───────────────┐
-                 │                               │
-                 ▼                               ▼
-    ┌─────────────────────────┐    ┌─────────────────────────┐
-    │  Score < 90             │    │  Score >= 90            │
-    │  needsClarification     │    │  Clear enough!          │
-    │  = true                 │    │                         │
-    └───────────┬─────────────┘    └───────────┬─────────────┘
-                │                              │
-                ▼                              ▼
-┌───────────────────────────────┐  ┌───────────────────────────────┐
-│  BRANCH A: Need Questions     │  │  BRANCH B: Skip to Enhancement│
-│  (Phase 2)                    │  │  (Phase 3 - No Questions)     │
-└───────────────────────────────┘  └───────────────────────────────┘
-                │                               │
-                │                               │
-                ▼                               │
-┌─────────────────────────────────────────────┐ │
-│  Phase 2 - Generate Questions               │ │
-│  ─────────────────────────────────────────  │ │
-│  const phase2 = await processMessageInThread│ │
-│    (2, prompt)                              │ │
-│    │                                        │ │
-│    ├─► POST /api/agent-creation/            │ │
-│    │        process-message                 │ │
-│    │   Body: {                              │ │
-│    │     thread_id: "thread_abc123",        │ │
-│    │     phase: 2,                          │ │
-│    │     user_prompt: "...",                │ │
-│    │     ...                                │ │
-│    │   }                                    │ │
-│    │                                        │ │
-│    └─► Returns: {                           │ │
-│          questionsSequence: [               │ │
-│            {                                │ │
-│              id: "q1",                      │ │
-│              question: "Which Slack         │ │
-│                        channel?",           │ │
-│              type: "text"                   │ │
-│            },                               │ │
-│            { ... }                          │ │
-│          ]                                  │ │
-│        }                                    │ │
-│                                             │ │
-│  Update State:                              │ │
-│  • questionsSequence = phase2.questions     │ │
-│  • currentQuestionIndex = 0                 │ │
-│  • workflowPhase = 'clarification'          │ │
-│                                             │ │
-│  Add AI message:                            │ │
-│  "I need to clarify a few things..."        │ │
-│                                             │ │
-└──────────────────┬──────────────────────────┘ │
-                   │                            │
-                   ▼                            │
-┌─────────────────────────────────────────────┐ │
-│         UI RENDERS QUESTIONS                │ │
-│         (User answers one by one)           │ │
-│                                             │ │
-│  • Question 1: "Which Slack channel?"       │ │
-│    User types: "#general"                   │ │
-│    [handleAnswer() called]                  │ │
-│                                             │ │
-│  • Question 2: "What time of day?"          │ │
-│    User types: "9am daily"                  │ │
-│    [handleAnswer() called]                  │ │
-│                                             │ │
-│  • ... all questions answered ...           │ │
-│                                             │ │
-└──────────────────┬──────────────────────────┘ │
-                   │                            │
-                   ▼                            │
-┌─────────────────────────────────────────────┐ │
-│  Auto-Enhancement Trigger                   │ │
-│  (lines 828-837)                            │ │
-│  ─────────────────────────────────────────  │ │
-│  useEffect: when all questions answered:    │ │
-│                                             │ │
-│  if (useThreadFlow && threadId.current) {   │ │
-│    startEnhancementWithThread(              │ │
-│      fullPrompt,                            │ │
-│      clarificationAnswers                   │ │
-│    ) ──────────────────────────────┐        │ │
-│  }                                 │        │ │
-└────────────────────────────────────┼────────┘ │
-                                     │          │
-                                     ▼          │
-                                ┌────┴──────────┴─────┐
-                                │  MERGE POINT:       │
-                                │  Both branches meet │
-                                │  at Phase 3         │
-                                └────────┬────────────┘
+│    ├─► POST /api/agent-creation/process-message                     │
+│    │   Body: {                                                      │
+│    │     thread_id: "thread_abc123",                                │
+│    │     phase: 2,                                                  │
+│    │     enhanced_prompt: null,        // V10: for mini-cycle       │
+│    │     user_feedback: null,          // V10: for edit flow        │
+│    │     declined_services: []         // V10: skipped plugins      │
+│    │   }                                                            │
+│    │                                                                │
+│    └─► Returns: {                                                   │
+│          questionsSequence: [                                       │
+│            { id: "q1", question: "Which Slack channel?", type: "text" },
+│            { ... }                                                  │
+│          ],                                                         │
+│          conversationalSummary: "Let me ask a few questions..."     │
+│        }                                                            │
+│                                                                     │
+│  If questions.length > 0:                                           │
+│  • setQuestionsSequence(questions)                                  │
+│  • Questions displayed via useEffect (lines 245-255)                │
+│                                                                     │
+│  If questions.length === 0:                                         │
+│  • Skip to Phase 3 directly                                         │
+│                                                                     │
+└──────────────────┬──────────────────────────────────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│         UI RENDERS QUESTIONS                                        │
+│         (User answers via handleSend, lines 902-1012)               │
+│                                                                     │
+│  • Question 1: "Which Slack channel?"                               │
+│    User types: "#general" → answerQuestion(q.id, answer)            │
+│                                                                     │
+│  • Question 2: "What time of day?"                                  │
+│    User types: "9am daily" → answerQuestion(q.id, answer)           │
+│                                                                     │
+│  • ... all questions answered ...                                   │
+│                                                                     │
+└──────────────────┬──────────────────────────────────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  Auto-Enhancement Trigger (useEffect, lines 216-241)                │
+│  ─────────────────────────────────────────                          │
+│  When all questions answered && workflowPhase === 'enhancement':    │
+│                                                                     │
+│  • Shows typing indicator                                           │
+│  • Calls processPhase3()                                            │
+│  • V10: If isInMiniCycle, passes pendingEnhancedPrompt              │
+│                                                                     │
+└────────────────────────────────────────┬────────────────────────────┘
                                          │
                                          ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Phase 3 - Enhance Prompt                                           │
-│  startEnhancementWithThread() (lines 679-742)                       │
+│  Phase 3 - Enhancement (processPhase3, lines 442-580)               │
 │  ─────────────────────────────────────────────────────────────────  │
 │                                                                     │
-│  Build fullPrompt:                                                  │
-│  "Send my daily emails to Slack                                     │
-│   #general channel at 9am daily"                                    │
-│                                                                     │
-│  const phase3 = await processMessageInThread(                       │
-│    3,                                                               │
-│    originalPrompt,                                                  │
-│    clarificationAnswers  ← { q1: "#general", q2: "9am daily" }      │
-│  )                                                                  │
-│    │                                                                │
 │    ├─► POST /api/agent-creation/process-message                     │
 │    │   Body: {                                                      │
 │    │     thread_id: "thread_abc123",                                │
 │    │     phase: 3,                                                  │
-│    │     user_prompt: "Send my daily emails...",                    │
-│    │     clarification_answers: {                                   │
-│    │       q1: "#general",                                          │
-│    │       q2: "9am daily"                                          │
-│    │     },                                                         │
-│    │     ...                                                        │
+│    │     clarification_answers: { q1: "#general", q2: "9am" },      │
+│    │     connected_services: ['google-mail', 'slack'],              │
+│    │     declined_services: [],                                     │
+│    │     enhanced_prompt: null  // V10: for refinement              │
 │    │   }                                                            │
 │    │                                                                │
 │    │   Backend Processing:                                          │
 │    │   • Adds user message + clarification answers to thread        │
-│    │   • Retrieves FULL thread history:                             │
-│    │     [system prompt, phase1 msg, phase1 response,               │
-│    │      phase2 msg, phase2 response, phase3 msg]                  │
-│    │   • Builds conversation for Chat Completions                   │
-│    │   • GPT-4o generates enhanced prompt with ALL context          │
+│    │   • Retrieves FULL thread history                              │
+│    │   • Calls AI provider with conversation context                │
 │    │   • ✅ VALIDATES response with Zod schema (strict!)            │
 │    │   • Stores AI response in thread                               │
 │    │                                                                │
@@ -242,43 +164,27 @@ This diagram shows the complete user journey through `useConversationalBuilder.t
 │          enhanced_prompt: {                                         │
 │            plan_title: "Gmail to Slack Automation",                 │
 │            plan_description: "Send daily emails to Slack...",       │
-│            sections: {                                              │
-│              data: [                                                │
-│                "- Fetch emails from Gmail inbox",                   │
-│                "- Filter by date (today only)"                      │
-│              ],                                                     │
-│              actions: [                                             │
-│                "- Format email content as Slack message"            │
-│              ],                                                     │
-│              output: [                                              │
-│                "- Formatted Slack message with email subject/body"  │
-│              ],                                                     │
-│              delivery: [                                            │
-│                "- Post to #general channel at 9am daily"            │
-│              ],                                                     │
-│              processing_steps: [ /* optional v7 field */ ]          │
-│            },                                                       │
+│            sections: { data, actions, output, delivery },           │
 │            specifics: {                                             │
-│              services_involved: ['gmail', 'slack'],                 │
-│              user_inputs_required: []                               │
+│              services_involved: ['google-mail', 'slack'],           │
+│              user_inputs_required: [],                              │
+│              resolved_user_inputs: []  // V10                       │
 │            }                                                        │
 │          },                                                         │
-│          metadata: {                                                │
-│            all_clarifications_applied: true,                        │
-│            ready_for_generation: true,                              │
-│            confirmation_needed: false,                              │
-│            /* ...strictly typed Phase3Metadata */                   │
-│          }                                                          │
+│          missingPlugins: [],  // OAuth gate check                   │
+│          metadata: { ready_for_generation: true, ... }              │
 │        }                                                            │
 │                                                                     │
-│  Update State:                                                      │
-│  • enhancedPrompt = phase3.enhanced_prompt.plan_description         │
-│  • enhancementComplete = true                                       │
-│  • conversationCompleted = true                                     │
-│  • workflowPhase = 'approval'                                       │
+│  OAuth Gate Check (lines 499-510):                                  │
+│  if (missingPlugins.length > 0) → Show plugin connect cards         │
 │                                                                     │
-│  Add AI message:                                                    │
-│  "Perfect! I've created a detailed plan..."                         │
+│  V10 Mini-Cycle Check (lines 513-533):                              │
+│  if (user_inputs_required.length > 0) → Trigger Phase 2 again       │
+│                                                                     │
+│  Success Path:                                                      │
+│  • setEnhancedPromptData(enhanced_prompt)                           │
+│  • setEnhancement(enhancedPrompt)                                   │
+│  • Show plan card with Approve/Edit buttons                         │
 │                                                                     │
 └────────────────────────────────┬────────────────────────────────────┘
                                  │
@@ -287,11 +193,11 @@ This diagram shows the complete user journey through `useConversationalBuilder.t
 │                      APPROVAL PHASE                                 │
 │                  (User reviews enhanced prompt)                     │
 │                                                                     │
-│  UI shows:                                                          │
-│  • Enhanced prompt description                                      │
-│  • Workflow steps                                                   │
-│  • Required plugins                                                 │
-│  • [Approve] [Edit] buttons                                         │
+│  UI shows (EnhancedPromptCard component):                           │
+│  • Plan title and description                                       │
+│  • Expandable workflow steps (sections)                             │
+│  • Services involved                                                │
+│  • [Yes, perfect!] [Need changes] buttons                           │
 │                                                                     │
 └────────────────────────────────┬────────────────────────────────────┘
                                  │
@@ -303,27 +209,57 @@ This diagram shows the complete user journey through `useConversationalBuilder.t
                  ┌───────────────┴───────────────┐
                  │                               │
                  ▼                               ▼
-    ┌─────────────────────┐        ┌─────────────────────┐
-    │  [Approve Clicked]  │        │  [Edit/Reject]      │
-    │                     │        │                     │
-    │  • Save agent       │        │  • Loop back to     │
-    │  • Navigate to      │        │    start with       │
-    │    dashboard        │        │    modifications    │
-    │                     │        │                     │
-    └─────────────────────┘        └─────────────────────┘
-                 │
-                 ▼
+    ┌─────────────────────────┐    ┌─────────────────────────────┐
+    │  [Yes, perfect!]        │    │  [Need changes]             │
+    │  handleApprove()        │    │  handleEdit()               │
+    │  (lines 1015-1032)      │    │  (lines 1036-1056)          │
+    │                         │    │                             │
+    │  • Add plan summary msg │    │  • Store pending prompt     │
+    │  • Show typing indicator│    │  • Set isAwaitingFeedback   │
+    │  • Call createAgent()   │    │  • User types feedback      │
+    │                         │    │  • Trigger Phase 2 with     │
+    │                         │    │    user_feedback param      │
+    └───────────┬─────────────┘    └─────────────────────────────┘
+                │
+                ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  (Optional) Phase 4 - Technical Workflow Generation                 │
+│  Agent Generation (createAgent, lines 668-815)                      │
 │  ─────────────────────────────────────────────────────────────────  │
 │                                                                     │
-│  When ready_for_generation: true AND user wants technical workflow: │
+│  1. Call POST /api/generate-agent-v4 (OpenAI 3-Stage Generation)    │
+│     • Passes enhancedPromptData, services_involved                  │
+│     • Returns generated agent config with steps                     │
 │                                                                     │
-│  const phase4 = await processMessageInThread(                       │
-│    4,                                                               │
-│    originalPrompt,                                                  │
-│    { enhanced_prompt: phase3Result.enhanced_prompt }                │
-│  )                                                                  │
+│  2. Check for required input parameters                             │
+│     • If any required, start input parameter flow                   │
+│     • Otherwise, proceed to scheduling                              │
+│                                                                     │
+│  3. Scheduling flow (isAwaitingSchedule)                            │
+│     • User selects: On Demand / Scheduled                           │
+│     • Configure cron expression if scheduled                        │
+│                                                                     │
+│  4. Call executeAgentCreation() (lines 821-897)                     │
+│     • POST /api/create-agent with agent data                        │
+│     • Links thread to agent (thread_id passed)                      │
+│     • Redirect to /agents/{id}                                      │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│  ⚠️ Phase 4 - Technical Workflow Generation (NOT WIRED IN FRONTEND) │
+│  ─────────────────────────────────────────────────────────────────  │
+│                                                                     │
+│  NOTE: Phase 4 backend support exists in process-message route,     │
+│  but the V2 frontend does NOT call it. After Phase 3, the flow     │
+│  goes directly to /api/generate-agent-v4 for agent generation.      │
+│                                                                     │
+│  To enable Phase 4, frontend would need to:                         │
+│  1. Add processPhase4() function                                    │
+│  2. Call it after Phase 3 approval                                  │
+│  3. Display technical_workflow steps                                │
+│  4. Collect technical_inputs_required values                        │
+│                                                                     │
+│  Backend Phase 4 Request (if wired):                                                                  │
 │    │                                                                │
 │    ├─► POST /api/agent-creation/process-message                     │
 │    │   Body: {                                                      │
@@ -396,61 +332,115 @@ This diagram shows the complete user journey through `useConversationalBuilder.t
 
 ## 🔑 Key State Variables Throughout Flow
 
-| State Variable           | Initial   | After Phase 1      | After Phase 2      | After Phase 3      | After Phase 4      |
-|--------------------------|-----------|--------------------|--------------------|--------------------|--------------------|
-| `threadId.current`       | `null`    | `"thread_abc123"`  | `"thread_abc123"`  | `"thread_abc123"`  | `"thread_abc123"`  |
-| `conversationStarted`    | `false`   | `true`             | `true`             | `true`             | `true`             |
-| `workflowPhase`          | `null`    | `'analysis'`       | `'clarification'`  | `'approval'`       | `'technical'`      |
-| `clarityScore`           | `0`       | `75`               | `75`               | `75`               | `75`               |
-| `questionsSequence`      | `[]`      | `[]`               | `[q1, q2, ...]`    | `[q1, q2, ...]`    | `[q1, q2, ...]`    |
-| `currentQuestionIndex`   | `0`       | `0`                | `0 → 1 → 2`        | `n` (done)         | `n` (done)         |
-| `clarificationAnswers`   | `{}`      | `{}`         | `{q1: "...", q2: "..."}` | `{q1: "...", q2: "..."}` | `{q1: "...", q2: "..."}` |
-| `enhancedPrompt`         | `""`      | `""`               | `""`               | `"Create automated..."` | `"Create automated..."` |
-| `enhancementComplete`    | `false`   | `false`            | `false`            | `true`             | `true`             |
-| `conversationCompleted`  | `false`   | `false`            | `false`            | `true`             | `true`             |
-| `technicalWorkflow`      | `[]`      | `[]`               | `[]`               | `[]`               | `[step1, step2, ...]` |
-| `technicalInputsRequired`| `[]`      | `[]`               | `[]`               | `[]`               | `[{key, plugin, ...}]` |
-| `feasibility`            | `null`    | `null`             | `null`             | `null`             | `{can_execute, ...}` |
+### Page-Level State (`app/v2/agents/new/page.tsx`)
+
+| State Variable           | Initial   | After Phase 1      | After Phase 2      | After Phase 3      |
+|--------------------------|-----------|--------------------|--------------------|-------------------- |
+| `threadId`               | `null`    | `"thread_abc123"`  | `"thread_abc123"`  | `"thread_abc123"`  |
+| `connectedPlugins`       | `[]`      | `['google-mail']`  | `['google-mail']`  | `['google-mail']`  |
+| `requiredServices`       | `[]`      | `[]`               | `[]`               | `['google-mail', 'slack']` |
+| `missingPlugins`         | `[]`      | `[]`               | `[]`               | `[]` or `['slack']`|
+| `declinedPlugins`        | `[]`      | `[]`               | `[]`               | `['notion']` (if skipped) |
+| `enhancedPromptData`     | `null`    | `null`             | `null`             | `{plan_title, ...}`|
+| `isInMiniCycle`          | `false`   | `false`            | `false`            | `true` (if user_inputs_required) |
+| `pendingEnhancedPrompt`  | `null`    | `null`             | `null`             | `{...}` (if mini-cycle) |
+| `isAwaitingFeedback`     | `false`   | `false`            | `false`            | `true` (if "Need changes" clicked) |
+| `isAwaitingSchedule`     | `false`   | `false`            | `false`            | `true` (after approve) |
+| `pendingAgentData`       | `null`    | `null`             | `null`             | `{agent_name, ...}`|
+
+### Builder State Hook (`useAgentBuilderState`)
+
+| State Variable           | Initial   | After Phase 1      | After Phase 2      | After Phase 3      |
+|--------------------------|-----------|--------------------|--------------------|-------------------- |
+| `workflowPhase`          | `'init'`  | `'analysis'`       | `'questions'`      | `'approval'`       |
+| `clarityScore`           | `0`       | `75`               | `75`               | `75`               |
+| `questionsSequence`      | `[]`      | `[]`               | `[q1, q2, ...]`    | `[q1, q2, ...]`    |
+| `currentQuestionIndex`   | `-1`      | `-1`               | `0 → 1 → -1`       | `-1`               |
+| `clarificationAnswers`   | `{}`      | `{}`               | `{q1: "..."}` | `{q1: "...", q2: "..."}` |
+| `enhancedPrompt`         | `""`      | `""`               | `""`               | `"Plan description..."` |
+| `enhancementComplete`    | `false`   | `false`            | `false`            | `true`             |
+
+### Phase 4 State (NOT IMPLEMENTED IN FRONTEND)
+
+| State Variable           | Description |
+|--------------------------|-------------|
+| `technicalWorkflow`      | Would hold `[{id, kind, plugin, action, ...}]` |
+| `technicalInputsRequired`| Would hold `[{key, plugin, description, ...}]` |
+| `feasibility`            | Would hold `{can_execute, blocking_issues, warnings}` |
 
 ---
 
-## 🎬 Example User Journey (High Clarity Score)
+## 🎬 Example User Journey (Standard Flow)
 
 ```
-1. User: "Send my Gmail emails from today to #general Slack at 9am"
+1. User navigates to: /v2/agents/new?prompt=Help%20me%20with%20emails
    ↓
-2. Phase 1 Analysis → clarityScore: 92 (high!)
+2. initializeThread() creates thread + calls Phase 1
    ↓
-3. SKIP Phase 2 (no questions needed)
+3. Phase 1 Analysis → clarityScore: 45, conversationalSummary displayed
    ↓
-4. Phase 3 Enhancement → Enhanced prompt generated
-   ↓
-5. Approval UI shown
-   ↓
-6. Done! (Only 2 API calls: init-thread + process-message phase 1 + process-message phase 3)
-```
-
----
-
-## 🎬 Example User Journey (Low Clarity Score)
-
-```
-1. User: "Help me with my emails"
-   ↓
-2. Phase 1 Analysis → clarityScore: 45 (low!)
-   ↓
-3. Phase 2 Questions Generated:
+4. Phase 2 Questions Generated:
    - "Which email service?"
    - "What action on emails?"
    - "Where should results go?"
    ↓
-4. User answers: "Gmail" → "Send to Slack" → "#general"
+5. User answers: "Gmail" → "Send to Slack" → "#general"
    ↓
-5. Phase 3 Enhancement → Enhanced prompt generated
+6. Auto-enhancement useEffect triggers Phase 3
    ↓
-6. Approval UI shown
+7. Phase 3 Enhancement → Enhanced prompt with plan card shown
    ↓
-7. Done! (3 API calls: init-thread + process-message × 3 phases)
+8. User clicks "Yes, perfect!" → createAgent() called
+   ↓
+9. /api/generate-agent-v4 generates agent config
+   ↓
+10. Scheduling UI shown (On Demand / Scheduled)
+   ↓
+11. User selects schedule → executeAgentCreation()
+   ↓
+12. /api/create-agent saves agent, redirects to /agents/{id}
+
+API Calls: init-thread + process-message × 3 + generate-agent-v4 + create-agent
+```
+
+---
+
+## 🎬 Example User Journey (OAuth Gate)
+
+```
+1. User: "Send my Gmail to Notion"
+   ↓
+2. Phase 1-2 complete normally
+   ↓
+3. Phase 3 returns: missingPlugins: ['notion']
+   ↓
+4. UI shows plugin connect cards
+   ↓
+5a. User clicks "Connect Notion" → OAuth flow → Plugin connected
+    → Phase 3 re-runs with updated connected_services
+   ↓
+5b. User clicks "Skip" → Phase 3 re-runs with declined_services: ['notion']
+    → LLM adjusts plan or flags blocking issue
+```
+
+---
+
+## 🎬 Example User Journey (V10 Mini-Cycle)
+
+```
+1. User: "Send daily summary to my accountant"
+   ↓
+2. Phase 3 returns: user_inputs_required: ['accountant_email']
+   ↓
+3. Frontend detects mini-cycle, triggers Phase 2 with enhanced_prompt
+   ↓
+4. Phase 2 generates targeted question: "What is your accountant's email?"
+   ↓
+5. User answers: "bob@company.com"
+   ↓
+6. Phase 3 re-runs → resolved_user_inputs: [{key: 'accountant_email', value: 'bob@company.com'}]
+   ↓
+7. Plan shown with all inputs resolved
 ```
 
 ---
@@ -492,17 +482,39 @@ This diagram shows the complete user journey through `useConversationalBuilder.t
 
 ## 🎯 Critical Code References
 
+### Frontend: `app/v2/agents/new/page.tsx`
+
 | Function | Lines | Purpose |
 |----------|-------|---------|
-| `useConversationalBuilder` | 24 | Main hook export |
-| `useThreadFlow` (flag check) | 43 | Feature flag constant |
-| `threadId` ref | 45 | Thread ID storage |
-| `initializeThread()` | 485-499 | Creates thread (POST /init-thread) |
-| `processMessageInThread()` | 501-545 | Sends message to thread (POST /process-message) |
-| `processWithThreads()` | 579-673 | Main orchestration (Phase 1 → Phase 2/3) |
-| `startEnhancementWithThread()` | 679-742 | Phase 3 enhancement with thread |
-| Main useEffect (feature flag branch) | 749-786 | Entry point: `processWithThreads()` vs `processWithLegacyAPIs()` |
-| Auto-enhancement useEffect | 828-837 | Triggers Phase 3 after questions answered |
+| `V2AgentBuilderContent` | 45 | Main page component |
+| `threadId` state | 77 | Thread ID storage (useState) |
+| `initializeThread()` | 260-304 | Creates thread and starts Phase 1 |
+| `processPhase1()` | 307-363 | Phase 1: Analysis |
+| `processPhase2()` | 366-439 | Phase 2: Questions (supports mini-cycle) |
+| `processPhase3()` | 442-580 | Phase 3: Enhancement (OAuth gate, mini-cycle) |
+| `handleConnectPlugin()` | 588-633 | OAuth plugin connection |
+| `handleSkipPlugin()` | 639-660 | Decline plugin and re-run Phase 3 |
+| `createAgent()` | 668-815 | Generate agent via /api/generate-agent-v4 |
+| `executeAgentCreation()` | 821-897 | Save agent via /api/create-agent |
+| `handleSend()` | 902-1012 | Handle user input (answers, feedback) |
+| `handleApprove()` | 1015-1032 | Approve plan and create agent |
+| `handleEdit()` | 1036-1056 | V10: Start edit flow with feedback |
+| Auto-enhancement useEffect | 216-241 | Triggers Phase 3 after questions answered |
+| Question display useEffect | 245-255 | Shows current question to user |
+
+### Backend: `app/api/agent-creation/`
+
+| Route | Purpose |
+|-------|---------|
+| `init-thread/route.ts` | Creates OpenAI thread with system prompt |
+| `process-message/route.ts` | Handles Phases 1-4 message processing |
+
+### Validation: `lib/validation/`
+
+| File | Purpose |
+|------|---------|
+| `phase3-schema.ts` | Zod validation for Phase 3 responses |
+| `phase4-schema.ts` | Zod validation for Phase 4 responses |
 
 ---
 
@@ -536,20 +548,32 @@ Overall savings: ~36% across entire flow
 
 To simulate the flow yourself:
 
-1. ✅ Set `USE_THREAD_BASED_AGENT_CREATION=true` in `.env.local`
-2. ✅ Restart dev server
-3. ✅ Navigate to agent creation wizard
-4. ✅ Enter vague prompt (e.g., "help with emails") → Should trigger questions
-5. ✅ Check console logs for "🆕 Using thread-based flow"
-6. ✅ Verify Network tab shows:
+1. ✅ Start dev server (`npm run dev`)
+2. ✅ Navigate to `/v2/agents/new?prompt=help%20with%20emails`
+3. ✅ Check console logs for "🆔 V2 Agent Builder initialized with IDs"
+4. ✅ Verify Network tab shows:
    - `POST /api/agent-creation/init-thread`
    - `POST /api/agent-creation/process-message` (phase 1)
    - `POST /api/agent-creation/process-message` (phase 2)
    - `POST /api/agent-creation/process-message` (phase 3)
-7. ✅ Check Supabase `agent_prompt_threads` table for new row
-8. ✅ Answer questions and verify enhancement triggers
-9. ✅ Try clear prompt (e.g., "Send Gmail to Slack #general at 9am") → Should skip questions
-10. ✅ Verify Network tab shows only init-thread + phase 1 + phase 3 (no phase 2)
+5. ✅ Check Supabase `agent_prompt_threads` table for new row
+6. ✅ Answer questions and verify Phase 3 triggers automatically
+7. ✅ Test "Need changes" button → Should trigger Phase 2 with user_feedback
+8. ✅ Test OAuth gate: Use prompt requiring unconnected plugin → Should show connect cards
+9. ✅ Test "Yes, perfect!" → Should call generate-agent-v4, then create-agent
+10. ✅ Verify agent is created and redirects to `/agents/{id}`
+
+### V10 Mini-Cycle Testing:
+- ✅ Create prompt that requires user_inputs_required (e.g., specific email addresses)
+- ✅ Verify Phase 2 re-triggers with targeted questions
+- ✅ Answer mini-cycle questions
+- ✅ Verify Phase 3 re-runs with resolved_user_inputs
+
+### V10 Edit Flow Testing:
+- ✅ Click "Need changes" on plan card
+- ✅ Type feedback (e.g., "Also send to Teams")
+- ✅ Verify Phase 2 called with user_feedback parameter
+- ✅ Verify updated plan reflects feedback
 
 ---
 
@@ -557,15 +581,21 @@ To simulate the flow yourself:
 
 ```
 Try-Catch Boundaries:
-├─ processWithThreads() → Catches all thread-based errors
-│  ├─ initializeThread() fails → Falls back to legacy
-│  ├─ processMessageInThread() fails → Shows error to user
-│  └─ Thread expired → Creates new thread
+├─ initializeThread() → Catches thread creation errors
+│  └─ Shows "Error initializing conversation" message
 │
-└─ If useThreadFlow = true but backend fails:
-   → Frontend shows error message
-   → User can retry
-   → OR admin can disable flag to use legacy flow
+├─ processPhase1/2/3() → Each phase has own error handling
+│  ├─ HTTP error → Logs detailed error, shows user message
+│  └─ Thread expired (410) → User must start new session
+│
+├─ handleConnectPlugin() → OAuth flow errors
+│  └─ Shows "Failed to connect {plugin}" message
+│
+├─ createAgent() → Agent generation errors
+│  └─ Shows "Error creating agent: {message}"
+│
+└─ executeAgentCreation() → Database save errors
+   └─ Shows "Error creating agent: {message}"
 ```
 
 ---
@@ -671,10 +701,13 @@ Phase3ResponseSchema = {
 
 ### Implementation Files
 
-- **Zod Schemas:** [lib/validation/phase3-schema.ts](../lib/validation/phase3-schema.ts)
+- **V2 Page:** [app/v2/agents/new/page.tsx](../app/v2/agents/new/page.tsx)
+- **Init Thread API:** [app/api/agent-creation/init-thread/route.ts](../app/api/agent-creation/init-thread/route.ts)
+- **Process Message API:** [app/api/agent-creation/process-message/route.ts](../app/api/agent-creation/process-message/route.ts)
+- **Phase 3 Schema:** [lib/validation/phase3-schema.ts](../lib/validation/phase3-schema.ts)
+- **Phase 4 Schema:** [lib/validation/phase4-schema.ts](../lib/validation/phase4-schema.ts)
 - **TypeScript Types:** [components/agent-creation/types/agent-prompt-threads.ts](../components/agent-creation/types/agent-prompt-threads.ts)
-- **Validation Logic:** [app/api/agent-creation/process-message/route.ts:396-412](../app/api/agent-creation/process-message/route.ts#L396-L412)
-- **LLM Prompt:** [app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v9-chatgpt.txt](../app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v9-chatgpt.txt)
+- **LLM Prompt:** [app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v13-chatgpt.txt](../app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v13-chatgpt.txt)
 
 ### Testing Validation
 
@@ -1264,19 +1297,21 @@ metadata: {
 
 ---
 
-### Implementation Files
+### Implementation Files (Phase 4)
 
 | File | Purpose |
 |------|---------|
 | [lib/validation/phase4-schema.ts](../lib/validation/phase4-schema.ts) | Phase 4 Zod validation schemas |
 | [lib/utils/schema-services-generator.ts](../lib/utils/schema-services-generator.ts) | Generate schema_services from services_involved |
-| [app/api/agent-creation/process-message/route.ts](../app/api/agent-creation/process-message/route.ts) | Phase 4 backend handling |
+| [app/api/agent-creation/process-message/route.ts](../app/api/agent-creation/process-message/route.ts) | Phase 4 backend handling (lines 337-396) |
 | [components/agent-creation/types/agent-prompt-threads.ts](../components/agent-creation/types/agent-prompt-threads.ts) | TypeScript types |
-| [app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v11-chatgpt.txt](../app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v11-chatgpt.txt) | LLM prompt with Phase 4 instructions |
+| [app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v13-chatgpt.txt](../app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v13-chatgpt.txt) | LLM prompt with Phase 4 instructions |
 
 ---
 
 ### Phase 4 Testing Checklist
+
+> **Note**: Phase 4 is NOT wired in the V2 frontend. These tests require manual API calls or future frontend implementation.
 
 - [ ] Phase 4 only triggers after Phase 3 `ready_for_generation: true`
 - [ ] schema_services generated from `services_involved`
@@ -1522,7 +1557,12 @@ if (thread_id) {
 
 ---
 
-**Document Version**: 4.0
-**Last Updated**: 2025-12-12 (Added Phase 4: Technical Workflow Generation)
+**Document Version**: 5.0
+**Last Updated**: 2025-12-23 (Updated for v2/agents/new flow, removed useConversationalBuilder references)
 **Author**: Development Team
+
+### Changelog
+- **v5.0** (2025-12-23): Rewrote for `app/v2/agents/new/page.tsx` flow, updated all code references, added Phase 4 NOT WIRED note
+- **v4.0** (2025-12-12): Added Phase 4: Technical Workflow Generation
+- **v3.0** (2025-12-05): Added V10/V11 enhancements (mini-cycle, edit flow, iterations audit trail)
 
