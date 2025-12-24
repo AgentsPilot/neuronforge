@@ -50,7 +50,7 @@ export class PluginAPIClient {
           ? `${this.baseUrl}/api/plugins/user-status?userId=${userId}`
           : `${this.baseUrl}/api/plugins/user-status`;
 
-        const response = await fetch(url);
+        const response = await fetch(url, { cache: 'no-store' });
         const result = await response.json();
 
         if (!result.success) {

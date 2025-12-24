@@ -80,7 +80,7 @@ The system includes pre-configured JSON templates for common actions across all 
 ## Tab 2: AI Services
 
 ### Purpose
-Test AI-powered services for prompt analysis, enhancement, and clarification question generation.
+Test AI-powered services for prompt analysis, enhancement, clarification question generation, and V5 workflow generation.
 
 ### Features
 
@@ -89,12 +89,16 @@ Available AI services:
 - **analyze-prompt-clarity**: Analyzes prompt clarity and completeness
 - **enhance-prompt**: Enhances a prompt with additional context
 - **generate-clarification-questions**: Generates questions to clarify vague prompts
+- **test/analyze-prompt**: Test endpoint for prompt analysis with provider/model selection
+- **generate-agent-v4**: V4 Agent generation (OpenAI 3-Stage Architecture)
+- **test/generate-agent-v5-test-wrapper**: V5 Workflow Generator test endpoint
 
 #### 2.2 Request Configuration
 - **Request Body Editor**: JSON textarea for request configuration
 - **Generate New Session ID**: Creates fresh UUID for `sessionId` field
 - **Generate New Agent ID**: Creates fresh UUID for `agentId` field
 - **Reset to Template**: Restores default template with new IDs
+- **Import JSON**: Import JSON data into specific fields (enhancedPrompt, technicalWorkflow)
 
 **AI Service Templates Include:**
 ```json
@@ -108,7 +112,71 @@ Available AI services:
 }
 ```
 
-#### 2.3 Execution & Response
+#### 2.3 Provider/Model Selection
+For services that support it (`test/analyze-prompt`, `test/generate-agent-v5-test-wrapper`):
+- **Provider Dropdown**: Select AI provider (OpenAI, Anthropic, Kimi)
+- **Model Dropdown**: Dynamic list based on selected provider
+- **Injection at Execution**: Provider/model are NOT stored in request body JSON, they are injected automatically when calling the API
+
+#### 2.4 V5 Workflow Generator Test Wrapper
+
+**Purpose:** Test the V5 LLM review flow for technical workflows.
+
+**Input Options:**
+1. **enhancedPrompt (stringified JSON)**: Full enhanced prompt from Phase 3
+2. **technicalWorkflow**: Pre-built technical workflow steps for LLM review
+
+**Request Body Structure:**
+```json
+{
+  "enhancedPrompt": "<stringified JSON>",
+  "technicalWorkflow": {
+    "technical_workflow": []
+  },
+  "userId": "test_user_123"
+}
+```
+
+**enhancedPrompt JSON Structure:**
+```json
+{
+  "sections": {
+    "data": ["..."],
+    "output": ["..."],
+    "actions": ["..."],
+    "delivery": ["..."],
+    "processing_steps": ["..."]
+  },
+  "specifics": {
+    "services_involved": ["google-sheets", "google-mail"],
+    "resolved_user_inputs": [
+      { "key": "user_email", "value": "user@example.com" }
+    ],
+    "user_inputs_required": []
+  },
+  "plan_title": "Workflow Title",
+  "plan_description": "Workflow description..."
+}
+```
+
+**Auto-Extraction Features:**
+- `required_services`: Auto-extracted from `enhancedPrompt.specifics.services_involved`
+- `technicalWorkflow.enhanced_prompt`: Auto-populated from enhancedPrompt (plan_title, plan_description, specifics)
+- `technicalWorkflow.analysis`: Auto-generated from plan_title/description
+- `provider` and `model`: Injected from dropdown selectors (not in request body)
+
+**Supports Both String and Object for technicalWorkflow:**
+- Can be provided as stringified JSON string
+- Can be provided as JavaScript object
+- API automatically parses if string
+
+**Validation Errors:**
+Returns clear error messages with `missingFields` array when required values are missing:
+- `userId`, `provider`, `model` - Top-level required fields
+- `plan_title`, `plan_description`, `specifics.resolved_user_inputs` - Required in enhancedPrompt
+- `specifics.services_involved` - Required for required_services extraction
+
+#### 2.5 Execution & Response
 - **Execute AI Service**: Calls the selected AI endpoint
 - **Response Display**: Shows full AI service response
 - **Copy to Clipboard**: Quick copy functionality
@@ -118,6 +186,9 @@ Available AI services:
 - `POST /api/analyze-prompt-clarity`
 - `POST /api/enhance-prompt`
 - `POST /api/generate-clarification-questions`
+- `POST /api/test/analyze-prompt`
+- `POST /api/generate-agent-v4`
+- `POST /api/test/generate-agent-v5-test-wrapper`
 
 ---
 
@@ -748,6 +819,41 @@ Present on all tabs:
 7. Complete conversation flow
 8. Switch provider and test with different model
 
+### UC-12: Generate Agent from Thread Conversation (V4)
+1. Complete thread flow through Phase 3 (or Phase 4)
+2. Click "Accept Plan" or "Create Agent" button
+3. Observe loading spinner during generation
+4. Review Generated Agent section:
+   - Verify agent name and description
+   - Check Agent ID and Session ID
+   - Review workflow steps count
+   - Inspect required plugins
+   - Check input schema fields
+5. Expand "View Workflow Steps" to inspect each step
+6. Expand "View Full Agent JSON" for complete response
+7. Use "Copy Agent ID" or "Copy Full JSON" buttons
+8. Optionally click "Regenerate" for a new attempt
+9. Download communication history (includes V4 generation call)
+
+### UC-13: Test V5 Workflow Generator (LLM Review Flow)
+1. Navigate to AI Services tab
+2. Select `test/generate-agent-v5-test-wrapper` from dropdown
+3. Select AI Provider (defaults to Anthropic)
+4. Select Model (defaults to Claude Sonnet 4)
+5. Prepare enhancedPrompt JSON with required fields:
+   - `sections` (data, output, actions, delivery, processing_steps)
+   - `specifics.services_involved` (required for auto-extraction)
+   - `specifics.resolved_user_inputs`
+   - `plan_title` and `plan_description`
+6. Use "Import JSON" button to import enhancedPrompt
+7. Optionally add pre-built `technicalWorkflow.technical_workflow` steps for LLM review
+8. Click "Execute AI Service"
+9. Verify response includes:
+   - Generated/reviewed workflow steps
+   - Validation results
+   - DSL output
+10. Check for validation errors with clear `missingFields` if inputs are incomplete
+
 ---
 
 ## System Config Dependencies
@@ -903,7 +1009,56 @@ All errors are:
 
 ## Changelog
 
-### Version 1.3 (Current)
+### Version 1.6 (Current)
+- **Prompt Version Updates**:
+  - Agent Creation Prompt upgraded to v13 (`Workflow-Agent-Creation-Prompt-v13-chatgpt.txt`)
+  - Technical Reviewer upgraded to v2 (`Workflow-Agent-Technical-Reviewer-SystemPrompt-v2.txt`)
+- **Step Routing Schema (v13/v2)**:
+  - Steps now support `outputs.next_step` for explicit routing to next step
+  - `is_last_step: true` field marks final step(s)
+  - Branching steps support per-branch `next_step` in output objects
+  - Updated `phase4-schema.ts` with `BranchOutputSchema`, `StepOutputValueSchema`, `is_last_step`
+- **Technical Reviewer Schema Validation**:
+  - New `lib/validation/technical-reviewer-schema.ts` with Zod schemas
+  - `validateTechnicalReviewerResponse()` helper for runtime validation
+  - V5 generator now validates LLM responses against schema before processing
+  - Detailed error messages when validation fails
+- **Schema Types Updated**:
+  - `BranchOutput` interface for branching output objects
+  - `StepOutputValue` type (string | BranchOutput)
+  - `TechnicalReviewerFeasibility` type for reviewer feasibility assessment
+
+### Version 1.5
+- **V5 Workflow Generator Test Wrapper**: New AI service `test/generate-agent-v5-test-wrapper`
+  - Tests the V5 LLM review flow for technical workflows
+  - Supports both `enhancedPrompt` (stringified JSON) and `technicalWorkflow` inputs
+  - Auto-extracts `required_services` from `enhancedPrompt.specifics.services_involved`
+  - Auto-populates `technicalWorkflow.enhanced_prompt` from enhancedPrompt
+  - Provider/model injected from dropdown selectors (not stored in request body)
+- **Enhanced Provider/Model Handling**:
+  - For `test/analyze-prompt` and `test/generate-agent-v5-test-wrapper`: provider/model removed from request body template
+  - Values are now injected at API call time from dropdown selections
+  - Default provider for V5 wrapper: Anthropic with Claude Sonnet 4
+- **Flexible technicalWorkflow Input**: Accepts both string (JSON) and object formats
+- **Improved Validation Errors**: Clear error messages with `missingFields` array showing exactly what's missing
+- Added UC-13: Test V5 Workflow Generator use case
+
+### Version 1.4
+- **V4 Agent Generation**: Added `/api/generate-agent-v4` integration (OpenAI 3-Stage Architecture)
+- **Accept Plan → Generate Agent**: "Accept Plan" and "Create Agent" buttons now trigger V4 agent generation
+- **Generated Agent Display**: New UI section showing:
+  - Agent summary (name, description)
+  - Agent ID and Session ID
+  - Workflow steps count and latency
+  - Required plugins and input schema
+  - Expandable workflow steps preview
+  - Full JSON view with copy buttons
+- **New State Variables**: `generatedAgent`, `isGeneratingAgent`, `agentGenerationError`
+- **API Communication Tracking**: V4 generation calls tracked in download history
+- **New AI Service Template**: `generate-agent-v4` template added
+- Added UC-12: Generate Agent from Thread Conversation use case
+
+### Version 1.3
 - **Multi-Provider AI Support**: Added provider selection (OpenAI, Anthropic, Kimi) to Thread Conversation
 - **Expanded Model Lists**: Updated to latest models including:
   - OpenAI: GPT-5.2 series, GPT-5.1, GPT-5, GPT-4.1 (1M context), o3/o4-mini reasoning models
@@ -958,5 +1113,5 @@ For issues or questions about the Test Page:
 
 ---
 
-**Last Updated:** December 15, 2025 (Added Multi-Provider AI, Agent Execution Tab, Debug Mode)
+**Last Updated:** December 23, 2025 (Prompt v13/v2 + Technical Reviewer Schema Validation)
 **Maintained By:** NeuronForge Development Team

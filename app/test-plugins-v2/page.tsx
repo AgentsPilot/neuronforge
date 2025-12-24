@@ -558,6 +558,78 @@ const AI_SERVICE_TEMPLATES = {
     sessionId: "550e8400-e29b-41d4-a716-446655440000",
     agentId: "660e8400-e29b-41d4-a716-446655440001",
     clarificationAnswers: {}
+  },
+  "generate-agent-v4": {
+    // REQUIRED: One of: enhancedPrompt, prompt, OR enhancedPromptTechnicalWorkflow
+    // Option 1: Enhanced prompt from Phase 3
+    enhancedPrompt: "Research the top 10 retail technology blogs from Israel and send me a daily summary via email. The user wants comprehensive coverage of Israeli retail tech innovation, delivered as a formatted email digest.",
+    // Option 2: Raw prompt (API will use as-is, may result in less accurate workflow)
+    // prompt: "Research the top 10 retail technology blogs from Israel and send me a daily summary via email",
+    // Option 3: Technical workflow from Phase 4 (bypasses Stage 1 LLM, uses DSL builder directly)
+    // To use this, comment out enhancedPrompt above and uncomment below:
+    // enhancedPromptTechnicalWorkflow: {
+    //   technical_workflow: [
+    //     { step_number: 1, action_type: "plugin_action", plugin: "google-sheets", action: "read_range", description: "Read data from spreadsheet", inputs: { spreadsheet_id: "{{input.spreadsheet_id}}", range: "{{input.range}}" }, outputs: ["rows_data"] },
+    //     { step_number: 2, action_type: "ai_processing", description: "Process and filter the data", inputs: { data: "{{step1.rows_data}}" }, outputs: ["filtered_data"] },
+    //     { step_number: 3, action_type: "plugin_action", plugin: "google-mail", action: "send_email", description: "Send email with results", inputs: { recipients: "{{input.recipients}}", content: "{{step2.filtered_data}}" }, outputs: ["email_sent"] }
+    //   ],
+    //   technical_inputs_required: [
+    //     { name: "spreadsheet_id", type: "text", description: "Google Sheets ID", required: true },
+    //     { name: "range", type: "text", description: "Cell range to read", required: true },
+    //     { name: "recipients", type: "object", description: "Email recipients object", required: true }
+    //   ],
+    //   feasibility: { can_execute: true, confidence: 0.9, issues: [] }
+    // },
+
+    // Session/Agent identifiers (auto-generated if not provided)
+    sessionId: "550e8400-e29b-41d4-a716-446655440000",
+    agentId: "660e8400-e29b-41d4-a716-446655440001",
+
+    // Clarification answers from Phase 2 (includes plan_description, originalPrompt)
+    clarificationAnswers: {
+      // originalPrompt: "Original user prompt",
+      // plan_description: "Short summary from clarity phase"
+    },
+
+    // Optional: Plugin-related parameters
+    // connectedPlugins: Array of plugin keys (e.g., ["google-mail", "slack"])
+    connectedPlugins: [],
+    // connectedPluginData: Array of plugin context objects from enhance-prompt
+    connectedPluginData: [],
+    // services_involved: Filter workflow to only use these plugins (token optimization)
+    services_involved: ["google-mail", "chatgpt-research"]
+  },
+  "test/generate-agent-v5-test-wrapper": {
+    // V5 Workflow Generator Test Wrapper
+    // Tests the LLM review flow for technical workflows
+    //
+    // Input: enhancedPrompt (stringified JSON) containing:
+    //   - sections: { data, output, actions, delivery, processing_steps }
+    //   - specifics: { services_involved, resolved_user_inputs }
+    //   - plan_title, plan_description
+    //
+    // The API auto-extracts from enhancedPrompt:
+    //   - required_services (from specifics.services_involved)
+    //   - technicalWorkflow.enhanced_prompt (plan_title, plan_description, specifics)
+    //
+    // provider and model are injected from the dropdown selectors
+
+    // Enhanced prompt (stringified JSON) - use "Import JSON" button
+    enhancedPrompt: "",
+
+    // Optional: Pre-built technical workflow steps (for LLM review path)
+    // If provided, these steps will be reviewed/repaired by LLM
+    technicalWorkflow: {
+      technical_workflow: []
+    },
+
+    // Skip DSL building and return only reviewed workflow (for testing LLM review in isolation)
+    // When true: returns reviewedWorkflow only, workflow is undefined
+    // When false: runs full flow including DSL building
+    skipDslBuilder: true,
+
+    // User ID to load connected plugins
+    userId: "test_user_123"
   }
 };
 
@@ -585,6 +657,12 @@ export default function TestPluginsPage() {
   const [selectedAIService, setSelectedAIService] = useState<string>('');
   const [aiServiceRequestBody, setAiServiceRequestBody] = useState<string>('{}');
   const [aiServiceResponse, setAiServiceResponse] = useState<any>(null);
+
+  // JSON Prompt Import modal state
+  const [showJsonPromptModal, setShowJsonPromptModal] = useState(false);
+  const [jsonPromptImportValue, setJsonPromptImportValue] = useState('');
+  const [jsonPromptImportError, setJsonPromptImportError] = useState<string | null>(null);
+  const [jsonImportTargetField, setJsonImportTargetField] = useState<'prompt' | 'enhancedPrompt' | 'enhancedPromptTechnicalWorkflow' | 'technicalWorkflow'>('enhancedPrompt');
 
   // Provider/Model selection state (shared by test/analyze-prompt and thread-conversation)
   const [selectedProvider, setSelectedProvider] = useState<ProviderOption>('openai');
@@ -619,6 +697,11 @@ export default function TestPluginsPage() {
   const [phase4Response, setPhase4Response] = useState<any>(null);
   const [technicalInputsCollected, setTechnicalInputsCollected] = useState<Record<string, string>>({});
 
+  // Agent Generation state (V4)
+  const [generatedAgent, setGeneratedAgent] = useState<any>(null);
+  const [isGeneratingAgent, setIsGeneratingAgent] = useState(false);
+  const [agentGenerationError, setAgentGenerationError] = useState<string | null>(null);
+
   // Ref for conversation history auto-scroll
   const conversationHistoryRef = useRef<HTMLDivElement>(null);
 
@@ -652,6 +735,14 @@ export default function TestPluginsPage() {
   const [debugModeEnabled, setDebugModeEnabled] = useState(false);
   const [selectedAgentDetails, setSelectedAgentDetails] = useState<any>(null);
   const [agentWorkflowSteps, setAgentWorkflowSteps] = useState<WorkflowStep[]>([]);
+
+  // Sandbox Mode state (inline workflow execution without DB)
+  const [sandboxMode, setSandboxMode] = useState(false);
+  const [sandboxAgentName, setSandboxAgentName] = useState('Sandbox Test Agent');
+  const [sandboxPilotSteps, setSandboxPilotSteps] = useState('[]');
+  const [sandboxPluginsRequired, setSandboxPluginsRequired] = useState('[]');
+  const [sandboxJsonImport, setSandboxJsonImport] = useState('');
+  const [showJsonImportModal, setShowJsonImportModal] = useState(false);
 
   // Debug stream hook
   const debugStream = useDebugStream({
@@ -963,8 +1054,13 @@ export default function TestPluginsPage() {
     }
   };
 
-  // Update provider/model in request body (for test/analyze-prompt)
+  // Update provider/model in request body (for test/analyze-prompt only - v5 wrapper injects at execution time)
   const updateProviderInRequestBody = (provider: ProviderOption, model: string) => {
+    // Skip updating request body for v5 wrapper - provider/model are injected at execution time
+    if (selectedAIService === 'test/generate-agent-v5-test-wrapper') {
+      addDebugLog('info', `Selected provider: ${provider}, model: ${model} (will be injected at execution)`);
+      return;
+    }
     try {
       const currentBody = JSON.parse(aiServiceRequestBody);
       currentBody.provider = provider;
@@ -998,6 +1094,37 @@ export default function TestPluginsPage() {
       addDebugLog('info', `Updated availablePlugins: ${pluginKeys.join(', ') || '(none)'}`);
     } catch (error: any) {
       addDebugLog('error', `Failed to update plugins: ${error.message}`);
+    }
+  };
+
+  // Import JSON prompt into request body - stringifies entire pasted JSON and puts into target field
+  const importJsonPromptIntoRequestBody = (jsonText: string) => {
+    setJsonPromptImportError(null); // Clear previous error
+
+    try {
+      // Parse the imported JSON to validate it's valid JSON
+      const importedData = JSON.parse(jsonText);
+
+      // Stringify the entire JSON object
+      const stringifiedJson = JSON.stringify(importedData);
+
+      // Parse current request body
+      const currentBody = JSON.parse(aiServiceRequestBody);
+
+      // Set the stringified JSON into the target field
+      currentBody[jsonImportTargetField] = stringifiedJson;
+
+      setAiServiceRequestBody(JSON.stringify(currentBody, null, 2));
+      addDebugLog('success', `Imported JSON (${stringifiedJson.length} chars) into "${jsonImportTargetField}" field`);
+      setShowJsonPromptModal(false);
+      setJsonPromptImportValue('');
+      setJsonPromptImportError(null);
+      return true;
+    } catch (error: any) {
+      const errorMsg = `Invalid JSON: ${error.message}`;
+      setJsonPromptImportError(errorMsg);
+      addDebugLog('error', `Failed to import JSON: ${error.message}`);
+      return false;
     }
   };
 
@@ -1057,6 +1184,12 @@ export default function TestPluginsPage() {
       return;
     }
 
+    // Inject provider and model from dropdown selectors for services that use them
+    if (selectedAIService === 'test/generate-agent-v5-test-wrapper' || selectedAIService === 'test/analyze-prompt') {
+      parsedRequestBody.provider = selectedProvider;
+      parsedRequestBody.model = selectedModel;
+    }
+
     setIsLoading(true);
     try {
       addDebugLog('info', `Calling AI service: /api/${selectedAIService}`);
@@ -1100,6 +1233,11 @@ export default function TestPluginsPage() {
           setSelectedProvider(provider);
           setSelectedModel(template.model || MODELS_BY_PROVIDER[provider][0].value);
         }
+      }
+      // Set default provider/model for v5 wrapper (not stored in template, injected at execution)
+      if (selectedAIService === 'test/generate-agent-v5-test-wrapper') {
+        setSelectedProvider('anthropic');
+        setSelectedModel('claude-sonnet-4-20250514');
       }
     }
   }, [selectedAIService]);
@@ -1442,7 +1580,132 @@ export default function TestPluginsPage() {
 
   const handleAcceptPlan = () => {
     addDebugLog('success', 'Plan accepted! Ready for implementation.');
-    // In the real flow, this would trigger agent creation
+    // Automatically trigger agent generation
+    generateAgentV4();
+  };
+
+  // Generate Agent using V4 API (OpenAI 3-Stage Architecture)
+  const generateAgentV4 = async () => {
+    // Check for any valid input: Phase 4 technical workflow, enhanced prompt, or raw prompt
+    const hasTechnicalWorkflow = technicalWorkflow && technicalWorkflow.length > 0;
+    if (!hasTechnicalWorkflow && !enhancedPrompt && !initialPrompt) {
+      addDebugLog('error', 'No prompt available for agent generation');
+      setAgentGenerationError('No prompt available. Complete Phase 3 or Phase 4 first.');
+      return;
+    }
+
+    setIsGeneratingAgent(true);
+    setAgentGenerationError(null);
+    setGeneratedAgent(null);
+
+    try {
+      // Log which path we're taking
+      if (hasTechnicalWorkflow) {
+        addDebugLog('info', `Starting V4 agent generation with Phase 4 technical workflow (${technicalWorkflow.length} steps)...`);
+      } else {
+        addDebugLog('info', 'Starting V4 agent generation (OpenAI 3-Stage)...');
+      }
+
+      // Build clarification answers with plan description
+      const fullClarificationAnswers = {
+        ...clarificationAnswers,
+        originalPrompt: initialPrompt,
+        plan_description: enhancedPrompt?.description || analysisData?.plan_description || '',
+        sessionId: threadId,
+        agentId: uuidv4(),
+      };
+
+      // Extract services involved from enhanced prompt or Phase 4 response
+      const servicesInvolved = phase4Response?.metadata?.services_involved ||
+                               enhancedPrompt?.specifics?.services_involved ||
+                               analysisData?.services_involved ||
+                               [];
+
+      // Build request body - Priority: Phase 4 technical workflow > enhanced prompt > raw prompt
+      let promptPayload: Record<string, any>;
+      if (hasTechnicalWorkflow) {
+        // Use Phase 4 technical workflow (bypasses Stage 1 LLM, uses DSL builder directly)
+        promptPayload = {
+          enhancedPromptTechnicalWorkflow: {
+            technical_workflow: technicalWorkflow,
+            technical_inputs_required: technicalInputsRequired,
+            feasibility: feasibility,
+          }
+        };
+      } else if (enhancedPrompt) {
+        // Use enhanced prompt from Phase 3
+        promptPayload = { enhancedPrompt: JSON.stringify(enhancedPrompt) };
+      } else {
+        // Fallback to raw prompt
+        promptPayload = { prompt: initialPrompt };
+      }
+
+      const requestBody = {
+        ...promptPayload,
+        clarificationAnswers: fullClarificationAnswers,
+        services_involved: servicesInvolved,
+        sessionId: threadId,
+        agentId: fullClarificationAnswers.agentId,
+      };
+
+      addDebugLog('info', `Calling /api/generate-agent-v4 with ${servicesInvolved.length} services${hasTechnicalWorkflow ? ' (technical workflow path)' : ''}...`);
+
+      // Track API call
+      const apiCallRecord = {
+        timestamp: new Date().toISOString(),
+        phase: 'agent-generation-v4',
+        endpoint: '/api/generate-agent-v4',
+        request: requestBody,
+        response: null as any,
+      };
+
+      const response = await fetch('/api/generate-agent-v4', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+      });
+
+      const data = await response.json();
+      apiCallRecord.response = data;
+      setApiCommunications(prev => [...prev, apiCallRecord]);
+
+      if (data.success) {
+        setGeneratedAgent(data);
+        addDebugLog('success', `Agent generated successfully: ${data.agent?.agent_name || 'Unnamed'}`);
+        addDebugLog('info', `Agent ID: ${data.agentId}`);
+        addDebugLog('info', `Workflow steps: ${data.agent?.workflow_steps?.length || 0}`);
+        addDebugLog('info', `Latency: ${data.extraction_details?.latency_ms || 0}ms`);
+
+        // Add to conversation history
+        setConversationHistory(prev => [...prev, {
+          role: 'assistant',
+          content: `Agent "${data.agent?.agent_name}" generated successfully with ${data.agent?.workflow_steps?.length || 0} workflow steps.`,
+          data: {
+            agentId: data.agentId,
+            agent_name: data.agent?.agent_name,
+            workflow_steps_count: data.agent?.workflow_steps?.length,
+            plugins_required: data.agent?.plugins_required,
+            metadata: data.metadata,
+          }
+        }]);
+      } else {
+        const errorMsg = data.error || 'Unknown error during agent generation';
+        setAgentGenerationError(errorMsg);
+        addDebugLog('error', `Agent generation failed: ${errorMsg}`);
+        if (data.stage_failed) {
+          addDebugLog('error', `Stage failed: ${data.stage_failed}`);
+        }
+        if (data.warnings?.length > 0) {
+          data.warnings.forEach((w: string) => addDebugLog('info', `Warning: ${w}`));
+        }
+      }
+    } catch (error: any) {
+      const errorMsg = error.message || 'Network error during agent generation';
+      setAgentGenerationError(errorMsg);
+      addDebugLog('error', `Agent generation exception: ${errorMsg}`);
+    } finally {
+      setIsGeneratingAgent(false);
+    }
   };
 
   const resetThreadConversation = () => {
@@ -1467,6 +1730,9 @@ export default function TestPluginsPage() {
     setFeasibility(null);
     setPhase4Response(null);
     setTechnicalInputsCollected({});
+    // Reset Agent Generation state
+    setGeneratedAgent(null);
+    setAgentGenerationError(null);
     addDebugLog('info', 'Thread conversation reset');
   };
 
@@ -1702,6 +1968,180 @@ export default function TestPluginsPage() {
       setAgentExecutionResult({ success: false, error: error.message });
     } finally {
       setIsExecutingAgent(false);
+    }
+  };
+
+  // Execute workflow in sandbox mode (inline, no DB)
+  const executeSandbox = async () => {
+    if (!sandboxAgentName.trim()) {
+      addDebugLog('error', 'Agent name is required for sandbox execution');
+      return;
+    }
+
+    let parsedSteps: any[] = [];
+    let parsedPlugins: string[] = [];
+    let parsedInputs: Record<string, any> = {};
+
+    try {
+      parsedSteps = JSON.parse(sandboxPilotSteps);
+      if (!Array.isArray(parsedSteps) || parsedSteps.length === 0) {
+        addDebugLog('error', 'Pilot steps must be a non-empty array');
+        return;
+      }
+    } catch (error) {
+      addDebugLog('error', 'Invalid JSON in pilot steps');
+      return;
+    }
+
+    try {
+      parsedPlugins = JSON.parse(sandboxPluginsRequired);
+      if (!Array.isArray(parsedPlugins)) {
+        addDebugLog('error', 'Plugins required must be an array');
+        return;
+      }
+    } catch (error) {
+      addDebugLog('error', 'Invalid JSON in plugins required');
+      return;
+    }
+
+    try {
+      parsedInputs = JSON.parse(agentInputVariables);
+    } catch (error) {
+      addDebugLog('error', 'Invalid JSON in input variables');
+      return;
+    }
+
+    setIsExecutingAgent(true);
+    setAgentExecutionResult(null);
+
+    // Update workflow steps for visualization
+    setAgentWorkflowSteps(parsedSteps);
+
+    // Generate debug run ID if debug mode is enabled
+    const runId = debugModeEnabled ? uuidv4() : undefined;
+
+    // If debug mode, connect to SSE stream before starting execution
+    if (debugModeEnabled && runId) {
+      addDebugLog('info', `[Sandbox] Starting debug execution with runId: ${runId}`);
+
+      // Reset and initialize step statuses for visualization
+      debugStream.reset();
+      debugStream.initializeSteps(parsedSteps.map((s: any) => ({ id: s.id, name: s.name })));
+
+      // Connect to debug stream FIRST (before starting execution)
+      debugStream.connect(runId);
+
+      // Small delay to ensure SSE connection is established
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    try {
+      addDebugLog('info', `[Sandbox] Executing "${sandboxAgentName}" with ${parsedSteps.length} steps...`);
+      const startTime = Date.now();
+
+      const response = await fetch('/api/run-agent-sandbox', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent_name: sandboxAgentName,
+          pilot_steps: parsedSteps,
+          plugins_required: parsedPlugins,
+          input_variables: parsedInputs,
+          user_prompt: agentOverridePrompt || undefined,
+          debugMode: debugModeEnabled,
+          debugRunId: runId,
+        }),
+      });
+
+      const result = await response.json();
+      const executionTime = Date.now() - startTime;
+
+      // If debug mode is active, the detailed results come through SSE events
+      // But we still show the final result
+      if (debugModeEnabled && !result.success) {
+        // If failed immediately (not in debug mode), disconnect
+        debugStream.disconnect();
+      }
+
+      setAgentExecutionResult({
+        ...result,
+        _meta: {
+          executionTimeMs: executionTime,
+          timestamp: new Date().toISOString(),
+          sandbox: true,
+        }
+      });
+
+      if (result.success) {
+        addDebugLog('success', `[Sandbox] Executed successfully in ${executionTime}ms | Tokens: ${result.data?.tokens_used || 'N/A'}`);
+      } else {
+        addDebugLog('error', `[Sandbox] Execution failed: ${result.error || 'Unknown error'}`);
+      }
+    } catch (error: any) {
+      addDebugLog('error', `[Sandbox] Execution error: ${error.message}`);
+      setAgentExecutionResult({ success: false, error: error.message, sandbox: true });
+      if (debugModeEnabled) {
+        debugStream.disconnect();
+      }
+    } finally {
+      setIsExecutingAgent(false);
+    }
+  };
+
+  // Import agent JSON into sandbox fields
+  const importSandboxJson = () => {
+    try {
+      const parsed = JSON.parse(sandboxJsonImport);
+
+      // Extract agent data - support both root-level agent and direct agent object
+      const agent = parsed.agent || parsed;
+
+      if (!agent) {
+        addDebugLog('error', 'No agent data found in JSON');
+        return;
+      }
+
+      // Extract agent name
+      if (agent.agent_name) {
+        setSandboxAgentName(agent.agent_name);
+      }
+
+      // Extract pilot_steps (prefer pilot_steps over workflow_steps)
+      const steps = agent.pilot_steps || agent.workflow_steps;
+      if (steps && Array.isArray(steps)) {
+        setSandboxPilotSteps(JSON.stringify(steps, null, 2));
+        // Also update workflow steps for visualization
+        setAgentWorkflowSteps(steps);
+      }
+
+      // Extract plugins_required
+      if (agent.plugins_required && Array.isArray(agent.plugins_required)) {
+        setSandboxPluginsRequired(JSON.stringify(agent.plugins_required));
+      }
+
+      // Extract input_schema and generate default input_variables
+      if (agent.input_schema && Array.isArray(agent.input_schema)) {
+        const defaultInputs: Record<string, string> = {};
+        agent.input_schema.forEach((field: any) => {
+          if (field.name) {
+            defaultInputs[field.name] = field.placeholder || field.description || '';
+          }
+        });
+        if (Object.keys(defaultInputs).length > 0) {
+          setAgentInputVariables(JSON.stringify(defaultInputs, null, 2));
+        }
+      }
+
+      // Close modal and log success
+      setShowJsonImportModal(false);
+      setSandboxJsonImport('');
+
+      const stepCount = steps?.length || 0;
+      const pluginCount = agent.plugins_required?.length || 0;
+      addDebugLog('success', `[Sandbox] Imported "${agent.agent_name}" with ${stepCount} steps and ${pluginCount} plugins`);
+
+    } catch (error: any) {
+      addDebugLog('error', `[Sandbox] JSON import failed: ${error.message}`);
     }
   };
 
@@ -2152,8 +2592,8 @@ export default function TestPluginsPage() {
               <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
                 <h2>Request Body Configuration</h2>
 
-                {/* Provider/Model Selector - only for test/analyze-prompt */}
-                {selectedAIService === 'test/analyze-prompt' && (
+                {/* Provider/Model Selector - for test/analyze-prompt and test/generate-agent-v5-test-wrapper */}
+                {(selectedAIService === 'test/analyze-prompt' || selectedAIService === 'test/generate-agent-v5-test-wrapper') && (
                   <div style={{
                     marginBottom: '20px',
                     padding: '15px',
@@ -2306,7 +2746,27 @@ export default function TestPluginsPage() {
 
                 {/* Request Body Editor */}
                 <div style={{ marginBottom: '15px' }}>
-                  <label htmlFor="aiServiceRequestBody" style={{ display: 'block', marginBottom: '5px' }}>Request Body (JSON):</label>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
+                    <label htmlFor="aiServiceRequestBody">Request Body (JSON):</label>
+                    <button
+                      onClick={() => {
+                        setJsonPromptImportError(null);
+                        setShowJsonPromptModal(true);
+                      }}
+                      style={{
+                        padding: '4px 10px',
+                        backgroundColor: '#6f42c1',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '3px',
+                        cursor: 'pointer',
+                        fontSize: '12px'
+                      }}
+                      title="Import JSON with prompt field to merge into request body"
+                    >
+                      Import JSON Prompt
+                    </button>
+                  </div>
                   <textarea
                     id="aiServiceRequestBody"
                     value={aiServiceRequestBody}
@@ -3056,6 +3516,265 @@ export default function TestPluginsPage() {
             </div>
           )}
 
+          {/* Generated Agent Display */}
+          {(generatedAgent || isGeneratingAgent || agentGenerationError) && (
+            <div style={{
+              marginBottom: '30px',
+              padding: '15px',
+              border: `2px solid ${generatedAgent ? '#28a745' : agentGenerationError ? '#dc3545' : '#007bff'}`,
+              borderRadius: '5px',
+              backgroundColor: generatedAgent ? '#f0fff0' : agentGenerationError ? '#fff0f0' : '#f0f8ff'
+            }}>
+              <h2>🤖 Generated Agent (V4)</h2>
+
+              {/* Loading State */}
+              {isGeneratingAgent && (
+                <div style={{ textAlign: 'center', padding: '30px' }}>
+                  <div style={{
+                    display: 'inline-block',
+                    width: '40px',
+                    height: '40px',
+                    border: '4px solid #f3f3f3',
+                    borderTop: '4px solid #007bff',
+                    borderRadius: '50%',
+                    animation: 'spin 1s linear infinite'
+                  }} />
+                  <p style={{ marginTop: '15px', color: '#666' }}>
+                    Generating agent using V4 OpenAI 3-Stage Architecture...
+                  </p>
+                  <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
+                </div>
+              )}
+
+              {/* Error State */}
+              {agentGenerationError && !isGeneratingAgent && (
+                <div style={{ padding: '15px', backgroundColor: '#f8d7da', borderRadius: '3px', color: '#721c24' }}>
+                  <strong>❌ Generation Failed:</strong>
+                  <p style={{ margin: '10px 0 0 0' }}>{agentGenerationError}</p>
+                  <button
+                    onClick={generateAgentV4}
+                    style={{
+                      marginTop: '15px',
+                      padding: '10px 20px',
+                      backgroundColor: '#dc3545',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '3px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    🔄 Retry Generation
+                  </button>
+                </div>
+              )}
+
+              {/* Success State */}
+              {generatedAgent && !isGeneratingAgent && (
+                <>
+                  {/* Agent Summary */}
+                  <div style={{
+                    padding: '15px',
+                    backgroundColor: '#d4edda',
+                    borderRadius: '3px',
+                    marginBottom: '15px'
+                  }}>
+                    <h3 style={{ margin: '0 0 10px 0', color: '#155724' }}>
+                      ✅ {generatedAgent.agent?.agent_name || 'Agent Generated'}
+                    </h3>
+                    <p style={{ margin: '0', color: '#155724' }}>
+                      {generatedAgent.agent?.description || 'No description'}
+                    </p>
+                  </div>
+
+                  {/* Agent Details Grid */}
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                    gap: '15px',
+                    marginBottom: '15px'
+                  }}>
+                    <div style={{ padding: '10px', backgroundColor: '#e9ecef', borderRadius: '3px' }}>
+                      <strong>Agent ID:</strong>
+                      <div style={{ fontFamily: 'monospace', fontSize: '12px', wordBreak: 'break-all' }}>
+                        {generatedAgent.agentId}
+                      </div>
+                    </div>
+                    <div style={{ padding: '10px', backgroundColor: '#e9ecef', borderRadius: '3px' }}>
+                      <strong>Session ID:</strong>
+                      <div style={{ fontFamily: 'monospace', fontSize: '12px', wordBreak: 'break-all' }}>
+                        {generatedAgent.sessionId}
+                      </div>
+                    </div>
+                    <div style={{ padding: '10px', backgroundColor: '#e9ecef', borderRadius: '3px' }}>
+                      <strong>Workflow Steps:</strong>
+                      <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#28a745' }}>
+                        {generatedAgent.agent?.workflow_steps?.length || 0}
+                      </div>
+                    </div>
+                    <div style={{ padding: '10px', backgroundColor: '#e9ecef', borderRadius: '3px' }}>
+                      <strong>Latency:</strong>
+                      <div style={{ fontSize: '18px', fontWeight: 'bold' }}>
+                        {generatedAgent.extraction_details?.latency_ms || 0}ms
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Plugins Required */}
+                  {generatedAgent.agent?.plugins_required?.length > 0 && (
+                    <div style={{ marginBottom: '15px' }}>
+                      <strong>Plugins Required:</strong>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px' }}>
+                        {generatedAgent.agent.plugins_required.map((plugin: string) => (
+                          <span key={plugin} style={{
+                            padding: '4px 12px',
+                            backgroundColor: '#007bff',
+                            color: 'white',
+                            borderRadius: '15px',
+                            fontSize: '12px'
+                          }}>
+                            {plugin}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Input Schema */}
+                  {generatedAgent.agent?.input_schema?.length > 0 && (
+                    <div style={{ marginBottom: '15px' }}>
+                      <strong>Required Inputs:</strong>
+                      <div style={{
+                        marginTop: '8px',
+                        padding: '10px',
+                        backgroundColor: '#fff3cd',
+                        borderRadius: '3px'
+                      }}>
+                        {generatedAgent.agent.input_schema.map((input: any, idx: number) => (
+                          <div key={idx} style={{ marginBottom: idx < generatedAgent.agent.input_schema.length - 1 ? '8px' : 0 }}>
+                            <code>{input.name}</code> ({input.type}) {input.required && <span style={{ color: '#dc3545' }}>*</span>}
+                            {input.description && <span style={{ color: '#666', marginLeft: '8px' }}>- {input.description}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Workflow Steps Preview */}
+                  <details style={{ marginBottom: '15px' }}>
+                    <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: '#28a745' }}>
+                      View Workflow Steps ({generatedAgent.agent?.workflow_steps?.length || 0})
+                    </summary>
+                    <div style={{ marginTop: '10px' }}>
+                      {generatedAgent.agent?.workflow_steps?.map((step: any, idx: number) => (
+                        <div key={step.id || idx} style={{
+                          padding: '10px',
+                          backgroundColor: '#f8f9fa',
+                          borderLeft: '4px solid #28a745',
+                          marginBottom: '8px',
+                          borderRadius: '0 3px 3px 0'
+                        }}>
+                          <strong>Step {idx + 1}:</strong> {step.name}
+                          <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                            Type: {step.type} | Plugin: {step.plugin || 'N/A'} | Action: {step.action || 'N/A'}
+                          </div>
+                          {step.description && (
+                            <div style={{ fontSize: '12px', color: '#333', marginTop: '4px' }}>
+                              {step.description}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+
+                  {/* Full JSON */}
+                  <details style={{ marginBottom: '15px' }}>
+                    <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: '#6c757d' }}>
+                      View Full Agent JSON
+                    </summary>
+                    <pre style={{
+                      backgroundColor: '#f8f9fa',
+                      padding: '15px',
+                      borderRadius: '3px',
+                      overflow: 'auto',
+                      fontSize: '12px',
+                      maxHeight: '400px',
+                      marginTop: '10px'
+                    }}>
+                      {JSON.stringify(generatedAgent, null, 2)}
+                    </pre>
+                  </details>
+
+                  {/* Warnings */}
+                  {generatedAgent.warnings?.length > 0 && (
+                    <div style={{
+                      padding: '10px',
+                      backgroundColor: '#fff3cd',
+                      borderRadius: '3px',
+                      marginBottom: '15px'
+                    }}>
+                      <strong>⚠️ Warnings:</strong>
+                      <ul style={{ margin: '5px 0 0 0', paddingLeft: '20px' }}>
+                        {generatedAgent.warnings.map((w: string, idx: number) => (
+                          <li key={idx}>{w}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Action Buttons */}
+                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(generatedAgent.agentId);
+                        addDebugLog('info', 'Agent ID copied to clipboard');
+                      }}
+                      style={{
+                        padding: '10px 20px',
+                        backgroundColor: '#6c757d',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '3px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      📋 Copy Agent ID
+                    </button>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(JSON.stringify(generatedAgent.agent, null, 2));
+                        addDebugLog('info', 'Agent JSON copied to clipboard');
+                      }}
+                      style={{
+                        padding: '10px 20px',
+                        backgroundColor: '#17a2b8',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '3px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      📋 Copy Full JSON
+                    </button>
+                    <button
+                      onClick={generateAgentV4}
+                      style={{
+                        padding: '10px 20px',
+                        backgroundColor: '#ffc107',
+                        color: '#333',
+                        border: 'none',
+                        borderRadius: '3px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      🔄 Regenerate
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           {/* Reset Button */}
           {threadId && (
             <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
@@ -3253,45 +3972,234 @@ export default function TestPluginsPage() {
             <h2>Execute Agent</h2>
             <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#e7f3ff', borderRadius: '3px' }}>
               <p style={{ margin: 0, fontSize: '14px', color: '#0066cc' }}>
-                <strong>Info:</strong> Test agent execution using the <code>/api/run-agent</code> endpoint.
-                Make sure a valid User ID is set in the User Configuration section above.
+                <strong>Info:</strong> {sandboxMode
+                  ? 'Sandbox mode - execute workflows in-memory without saving to DB. Uses /api/run-agent-sandbox endpoint.'
+                  : 'Test agent execution using the /api/run-agent endpoint. Make sure a valid User ID is set above.'}
               </p>
             </div>
 
-            {/* Agent ID Input */}
-            <div style={{ marginBottom: '15px' }}>
-              <label htmlFor="agentIdInput" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-                Agent ID (UUID):
-              </label>
-              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                <input
-                  id="agentIdInput"
-                  type="text"
-                  value={agentId}
-                  onChange={(e) => setAgentId(e.target.value)}
-                  placeholder="Enter agent UUID or select from list"
-                  style={{ flex: 1, padding: '10px', fontSize: '14px', fontFamily: 'monospace' }}
-                />
-                <button
-                  onClick={loadUserAgents}
-                  disabled={!userId.trim()}
-                  style={{
-                    padding: '10px 16px',
-                    backgroundColor: userId.trim() ? '#17a2b8' : '#6c757d',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '3px',
-                    cursor: userId.trim() ? 'pointer' : 'not-allowed',
-                    fontSize: '14px'
-                  }}
-                >
-                  Load My Agents
-                </button>
+            {/* Mode Toggle: Load from DB vs Sandbox */}
+            <div style={{ marginBottom: '20px', padding: '10px', backgroundColor: '#f8f9fa', borderRadius: '5px' }}>
+              <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="executionMode"
+                    checked={!sandboxMode}
+                    onChange={() => setSandboxMode(false)}
+                  />
+                  <span style={{ fontWeight: !sandboxMode ? 'bold' : 'normal' }}>Load from DB</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="executionMode"
+                    checked={sandboxMode}
+                    onChange={() => setSandboxMode(true)}
+                  />
+                  <span style={{ fontWeight: sandboxMode ? 'bold' : 'normal', color: sandboxMode ? '#28a745' : 'inherit' }}>
+                    Sandbox Mode (inline)
+                  </span>
+                </label>
               </div>
             </div>
 
-            {/* Agents List (if loaded) */}
-            {agentsList.length > 0 && (
+            {/* === SANDBOX MODE INPUTS === */}
+            {sandboxMode && (
+              <>
+                {/* Load from JSON Button */}
+                <div style={{ marginBottom: '15px' }}>
+                  <button
+                    onClick={() => setShowJsonImportModal(true)}
+                    style={{
+                      padding: '10px 16px',
+                      backgroundColor: '#6f42c1',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '3px',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}
+                  >
+                    <span>📋</span> Load from JSON
+                  </button>
+                  <p style={{ margin: '5px 0 0 0', fontSize: '12px', color: '#666' }}>
+                    Paste a full agent generation response to auto-populate all fields
+                  </p>
+                </div>
+
+                {/* Agent Name */}
+                <div style={{ marginBottom: '15px' }}>
+                  <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                    Agent Name:
+                  </label>
+                  <input
+                    type="text"
+                    value={sandboxAgentName}
+                    onChange={(e) => setSandboxAgentName(e.target.value)}
+                    placeholder="Enter agent name"
+                    style={{ width: '100%', padding: '10px', fontSize: '14px' }}
+                  />
+                </div>
+
+                {/* Pilot Steps */}
+                <div style={{ marginBottom: '15px' }}>
+                  <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                    Pilot Steps (JSON array):
+                  </label>
+                  <textarea
+                    value={sandboxPilotSteps}
+                    onChange={(e) => setSandboxPilotSteps(e.target.value)}
+                    placeholder='[{"id": "step1", "name": "Step 1", "type": "action", "plugin": "gmail", "action": "listEmails", "params": {}}]'
+                    style={{
+                      width: '100%',
+                      height: '200px',
+                      padding: '10px',
+                      fontSize: '13px',
+                      fontFamily: 'monospace',
+                      resize: 'vertical'
+                    }}
+                  />
+                </div>
+
+                {/* Plugins Required */}
+                <div style={{ marginBottom: '15px' }}>
+                  <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                    Plugins Required (JSON array):
+                  </label>
+                  <input
+                    type="text"
+                    value={sandboxPluginsRequired}
+                    onChange={(e) => setSandboxPluginsRequired(e.target.value)}
+                    placeholder='["gmail", "calendar"]'
+                    style={{ width: '100%', padding: '10px', fontSize: '14px', fontFamily: 'monospace' }}
+                  />
+                </div>
+
+                {/* JSON Import Modal */}
+                {showJsonImportModal && (
+                  <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0,0,0,0.5)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 1000
+                  }}>
+                    <div style={{
+                      backgroundColor: 'white',
+                      padding: '20px',
+                      borderRadius: '8px',
+                      width: '80%',
+                      maxWidth: '800px',
+                      maxHeight: '80vh',
+                      display: 'flex',
+                      flexDirection: 'column'
+                    }}>
+                      <h3 style={{ marginTop: 0 }}>Import Agent JSON</h3>
+                      <p style={{ fontSize: '14px', color: '#666', marginBottom: '15px' }}>
+                        Paste the full agent generation response JSON. The following fields will be extracted:
+                        <br />
+                        <code>agent.agent_name</code>, <code>agent.pilot_steps</code>, <code>agent.plugins_required</code>, <code>agent.input_schema</code>
+                      </p>
+                      <textarea
+                        value={sandboxJsonImport}
+                        onChange={(e) => setSandboxJsonImport(e.target.value)}
+                        placeholder='{"success": true, "agent": { "agent_name": "...", "pilot_steps": [...], ... }}'
+                        style={{
+                          flex: 1,
+                          minHeight: '300px',
+                          padding: '10px',
+                          fontSize: '12px',
+                          fontFamily: 'monospace',
+                          resize: 'vertical',
+                          marginBottom: '15px'
+                        }}
+                      />
+                      <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                        <button
+                          onClick={() => {
+                            setShowJsonImportModal(false);
+                            setSandboxJsonImport('');
+                          }}
+                          style={{
+                            padding: '10px 20px',
+                            backgroundColor: '#6c757d',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '3px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={importSandboxJson}
+                          disabled={!sandboxJsonImport.trim()}
+                          style={{
+                            padding: '10px 20px',
+                            backgroundColor: sandboxJsonImport.trim() ? '#28a745' : '#6c757d',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '3px',
+                            cursor: sandboxJsonImport.trim() ? 'pointer' : 'not-allowed'
+                          }}
+                        >
+                          Import
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* === DB MODE INPUTS === */}
+            {!sandboxMode && (
+              <>
+                {/* Agent ID Input */}
+                <div style={{ marginBottom: '15px' }}>
+                  <label htmlFor="agentIdInput" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                    Agent ID (UUID):
+                  </label>
+                  <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                    <input
+                      id="agentIdInput"
+                      type="text"
+                      value={agentId}
+                      onChange={(e) => setAgentId(e.target.value)}
+                      placeholder="Enter agent UUID or select from list"
+                      style={{ flex: 1, padding: '10px', fontSize: '14px', fontFamily: 'monospace' }}
+                    />
+                    <button
+                      onClick={loadUserAgents}
+                      disabled={!userId.trim()}
+                      style={{
+                        padding: '10px 16px',
+                        backgroundColor: userId.trim() ? '#17a2b8' : '#6c757d',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '3px',
+                        cursor: userId.trim() ? 'pointer' : 'not-allowed',
+                        fontSize: '14px'
+                      }}
+                    >
+                      Load My Agents
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Agents List (if loaded) - DB mode only */}
+            {!sandboxMode && agentsList.length > 0 && (
               <div style={{ marginBottom: '15px' }}>
                 <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
                   Select from your agents:
@@ -3311,8 +4219,8 @@ export default function TestPluginsPage() {
               </div>
             )}
 
-            {/* Selected Agent Info */}
-            {selectedAgentDetails && (
+            {/* Selected Agent Info - DB mode only */}
+            {!sandboxMode && selectedAgentDetails && (
               <div style={{
                 marginBottom: '15px',
                 padding: '10px',
@@ -3380,25 +4288,29 @@ export default function TestPluginsPage() {
 
             {/* Execution Options */}
             <div style={{ marginBottom: '15px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={useAgentKit}
-                  onChange={(e) => {
-                    setUseAgentKit(e.target.checked);
-                    if (e.target.checked) setDebugModeEnabled(false); // Debug mode uses Pilot, not AgentKit
-                  }}
-                  disabled={debugModeEnabled}
-                />
-                <span>Use AgentKit execution (recommended for standard runs)</span>
-              </label>
+              {/* Use AgentKit - only show in DB mode */}
+              {!sandboxMode && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={useAgentKit}
+                    onChange={(e) => {
+                      setUseAgentKit(e.target.checked);
+                      if (e.target.checked) setDebugModeEnabled(false); // Debug mode uses Pilot, not AgentKit
+                    }}
+                    disabled={debugModeEnabled}
+                  />
+                  <span>Use AgentKit execution (recommended for standard runs)</span>
+                </label>
+              )}
 
+              {/* Debug Mode - available in both modes */}
               <label style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: '8px',
-                cursor: agentWorkflowSteps.length > 0 ? 'pointer' : 'not-allowed',
-                opacity: agentWorkflowSteps.length > 0 ? 1 : 0.5
+                cursor: (sandboxMode || agentWorkflowSteps.length > 0) ? 'pointer' : 'not-allowed',
+                opacity: (sandboxMode || agentWorkflowSteps.length > 0) ? 1 : 0.5
               }}>
                 <input
                   type="checkbox"
@@ -3407,11 +4319,12 @@ export default function TestPluginsPage() {
                     setDebugModeEnabled(e.target.checked);
                     if (e.target.checked) setUseAgentKit(false); // Debug mode uses Pilot
                   }}
-                  disabled={agentWorkflowSteps.length === 0}
+                  disabled={!sandboxMode && agentWorkflowSteps.length === 0}
                 />
                 <span>
                   Step-by-Step Debug Mode
-                  {agentWorkflowSteps.length === 0 && ' (requires agent with workflow steps)'}
+                  {!sandboxMode && agentWorkflowSteps.length === 0 && ' (requires agent with workflow steps)'}
+                  {sandboxMode && ' (uses pilot_steps from above)'}
                 </span>
               </label>
             </div>
@@ -3420,20 +4333,20 @@ export default function TestPluginsPage() {
             {!debugModeEnabled && (
               <div style={{ display: 'flex', gap: '10px' }}>
                 <button
-                  onClick={executeAgent}
-                  disabled={isExecutingAgent || !agentId.trim()}
+                  onClick={sandboxMode ? executeSandbox : executeAgent}
+                  disabled={isExecutingAgent || (sandboxMode ? !sandboxAgentName.trim() : !agentId.trim())}
                   style={{
                     padding: '12px 24px',
-                    backgroundColor: isExecutingAgent || !agentId.trim() ? '#6c757d' : '#28a745',
+                    backgroundColor: isExecutingAgent || (sandboxMode ? !sandboxAgentName.trim() : !agentId.trim()) ? '#6c757d' : (sandboxMode ? '#17a2b8' : '#28a745'),
                     color: 'white',
                     border: 'none',
                     borderRadius: '3px',
-                    cursor: isExecutingAgent || !agentId.trim() ? 'not-allowed' : 'pointer',
+                    cursor: isExecutingAgent || (sandboxMode ? !sandboxAgentName.trim() : !agentId.trim()) ? 'not-allowed' : 'pointer',
                     fontSize: '16px',
                     fontWeight: 'bold'
                   }}
                 >
-                  {isExecutingAgent ? 'Executing...' : 'Execute Agent'}
+                  {isExecutingAgent ? 'Executing...' : (sandboxMode ? 'Execute Sandbox' : 'Execute Agent')}
                 </button>
                 <button
                   onClick={resetAgentExecutionForm}
@@ -3458,13 +4371,13 @@ export default function TestPluginsPage() {
             {debugModeEnabled && (
               <DebugControls
                 debugState={debugStream.debugState}
-                onStart={startDebugExecution}
+                onStart={sandboxMode ? executeSandbox : startDebugExecution}
                 onPause={handleDebugPause}
                 onResume={handleDebugResume}
                 onStep={handleDebugStep}
                 onStop={handleDebugStop}
                 onReset={handleDebugReset}
-                disabled={!agentId.trim()}
+                disabled={sandboxMode ? !sandboxAgentName.trim() : !agentId.trim()}
                 currentStepName={debugStream.currentStepId ? debugStream.getStepStatus(debugStream.currentStepId)?.stepName : undefined}
               />
             )}
@@ -3715,6 +4628,187 @@ export default function TestPluginsPage() {
           )}
         </div>
       </div>
+
+      {/* JSON Prompt Import Modal */}
+      {showJsonPromptModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: 'white',
+            padding: '25px',
+            borderRadius: '8px',
+            width: '90%',
+            maxWidth: '700px',
+            maxHeight: '80vh',
+            overflow: 'auto',
+            boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3)'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+              <h2 style={{ margin: 0 }}>Import JSON Prompt</h2>
+              <button
+                onClick={() => {
+                  setShowJsonPromptModal(false);
+                  setJsonPromptImportValue('');
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '24px',
+                  cursor: 'pointer',
+                  color: '#666'
+                }}
+              >
+                &times;
+              </button>
+            </div>
+
+            <p style={{ color: '#666', marginBottom: '15px', fontSize: '14px' }}>
+              Paste any valid JSON object. It will be <code>JSON.stringify()</code>'d and placed into the selected target field.
+            </p>
+
+            {/* Target Field Toggle */}
+            <div style={{ marginBottom: '15px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>
+                Target Field:
+              </label>
+              <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="targetField"
+                    value="enhancedPrompt"
+                    checked={jsonImportTargetField === 'enhancedPrompt'}
+                    onChange={() => setJsonImportTargetField('enhancedPrompt')}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <code style={{ backgroundColor: '#e9ecef', padding: '2px 6px', borderRadius: '3px' }}>enhancedPrompt</code>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="targetField"
+                    value="prompt"
+                    checked={jsonImportTargetField === 'prompt'}
+                    onChange={() => setJsonImportTargetField('prompt')}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <code style={{ backgroundColor: '#e9ecef', padding: '2px 6px', borderRadius: '3px' }}>prompt</code>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="targetField"
+                    value="enhancedPromptTechnicalWorkflow"
+                    checked={jsonImportTargetField === 'enhancedPromptTechnicalWorkflow'}
+                    onChange={() => setJsonImportTargetField('enhancedPromptTechnicalWorkflow')}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <code style={{ backgroundColor: '#d4edda', padding: '2px 6px', borderRadius: '3px' }}>enhancedPromptTechnicalWorkflow</code>
+                  <span style={{ fontSize: '11px', color: '#666' }}>(Phase 4)</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="targetField"
+                    value="technicalWorkflow"
+                    checked={jsonImportTargetField === 'technicalWorkflow'}
+                    onChange={() => setJsonImportTargetField('technicalWorkflow')}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <code style={{ backgroundColor: '#fff3cd', padding: '2px 6px', borderRadius: '3px' }}>technicalWorkflow</code>
+                  <span style={{ fontSize: '11px', color: '#666' }}>(V5 Test Wrapper)</span>
+                </label>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '15px' }}>
+              <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                JSON Content:
+              </label>
+              <textarea
+                value={jsonPromptImportValue}
+                onChange={(e) => {
+                  setJsonPromptImportValue(e.target.value);
+                  setJsonPromptImportError(null); // Clear error when typing
+                }}
+                placeholder={`{\n  "task": "Research and summarize...",\n  "context": {\n    "domain": "technology",\n    "sources": ["web", "database"]\n  },\n  "parameters": {\n    "maxResults": 10,\n    "format": "markdown"\n  }\n}`}
+                rows={15}
+                style={{
+                  width: '100%',
+                  padding: '10px',
+                  fontSize: '12px',
+                  fontFamily: 'monospace',
+                  border: jsonPromptImportError ? '2px solid #dc3545' : '1px solid #ccc',
+                  borderRadius: '4px',
+                  resize: 'vertical'
+                }}
+              />
+            </div>
+
+            {/* Error display */}
+            {jsonPromptImportError && (
+              <div style={{
+                marginBottom: '15px',
+                padding: '10px',
+                backgroundColor: '#f8d7da',
+                border: '1px solid #f5c6cb',
+                borderRadius: '4px',
+                color: '#721c24',
+                fontSize: '13px'
+              }}>
+                {jsonPromptImportError}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => {
+                  setShowJsonPromptModal(false);
+                  setJsonPromptImportValue('');
+                  setJsonPromptImportError(null);
+                }}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#6c757d',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '14px'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => importJsonPromptIntoRequestBody(jsonPromptImportValue)}
+                disabled={!jsonPromptImportValue.trim()}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: jsonPromptImportValue.trim() ? '#6f42c1' : '#ccc',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: jsonPromptImportValue.trim() ? 'pointer' : 'not-allowed',
+                  fontSize: '14px',
+                  fontWeight: 'bold'
+                }}
+              >
+                Stringify & Import
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
