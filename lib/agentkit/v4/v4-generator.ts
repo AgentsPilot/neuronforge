@@ -6,13 +6,39 @@
  * Stage 3: LLM Repair Loop → Fix ambiguities (if needed)
  *
  * This follows OpenAI's recommended architecture for 95%+ success rate.
+ *
+ * Supports two input paths:
+ * - Enhanced Prompt: Stage 1 (LLM) + Stage 2 (DSL)
+ * - Technical Workflow: Stage 2 only (skips LLM extraction)
  */
 
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 import { IPluginContext } from '@/lib/types/plugin-definition-context';
+import { createLogger } from '@/lib/logger';
 
-import { StepPlanExtractor } from './core/step-plan-extractor';
-import { DSLBuilder } from './core/dsl-builder';
+import { StepPlan, StepPlanExtractor } from './core/step-plan-extractor';
+import { DSLBuilder, TechnicalWorkflowBuildInput } from './core/dsl-builder';
+import type { TechnicalWorkflowStep } from '@/lib/validation/phase4-schema';
+
+/**
+ * Input structure for technical workflow
+ */
+export interface TechnicalWorkflowInput {
+  technical_workflow: TechnicalWorkflowStep[];
+  enhanced_prompt?: {
+    plan_title?: string;
+    plan_description?: string;
+    specifics?: {
+      resolved_user_inputs?: Array<{ key: string; value: string }>;
+    };
+  };
+  analysis?: {
+    agent_name?: string;
+    description?: string;
+  };
+}
+
+const logger = createLogger({ module: 'AgentKit', service: 'V4WorkflowGenerator' });
 
 export interface V4GeneratorOptions {
   connectedPlugins?: IPluginContext[];
@@ -21,12 +47,27 @@ export interface V4GeneratorOptions {
   aiAnalytics?: any;
 }
 
+/**
+ * Unified input for workflow generation
+ * Supports two paths:
+ * - enhancedPrompt: Traditional Stage 1 (LLM) + Stage 2 (DSL)
+ * - technicalWorkflow: Stage 2 only (skips LLM, uses pre-built workflow)
+ */
+export interface WorkflowGenerationInput {
+  /** Enhanced prompt string - triggers Stage 1 LLM extraction */
+  enhancedPrompt?: string;
+  /** Pre-built technical workflow - skips Stage 1, goes directly to DSL building */
+  technicalWorkflow?: TechnicalWorkflowInput;
+}
+
 export interface V4GenerationResult {
   success: boolean;
   workflow?: any;
   intent?: any;
   errors?: string[];
   warnings?: string[];
+  /** Indicates if technical workflow path was used (Stage 1 skipped) */
+  technicalWorkflowUsed?: boolean;
   metadata?: {
     actionsResolved: number;
     parametersMapping: number;
@@ -76,34 +117,101 @@ export class V4WorkflowGenerator {
   }
 
   /**
-   * Generate workflow from enhanced prompt
-   * Implements OpenAI's 3-stage architecture
+   * Generate workflow from enhanced prompt or technical workflow
+   * Implements OpenAI's 3-stage architecture with two input paths
    *
-   * @param enhancedPrompt - Structured prompt from enhance-prompt API
+   * @param input - Either enhancedPrompt (string) or technicalWorkflow
    * @param options - Generation options
    * @returns Complete PILOT_DSL_SCHEMA workflow
    */
   async generateWorkflow(
-    enhancedPrompt: string,
+    input: WorkflowGenerationInput,
     options?: V4GeneratorOptions
   ): Promise<V4GenerationResult> {
     try {
-      console.log('[V4 Generator] ===== STAGE 1: LLM STEP PLAN =====');
+      let stepPlan: StepPlan;
+      let tokensUsed = {
+        stage1: { input: 0, output: 0, total: 0 },
+        total: { input: 0, output: 0, total: 0 },
+      };
+      let cost = { stage1: 0, total: 0 };
+      let technicalWorkflowUsed = false;
 
-      // STAGE 1: LLM outputs simple text-based step plan (NOT JSON, NOT DSL)
-      const stepPlan = await this.stepPlanExtractor.extractStepPlan(enhancedPrompt);
+      // Determine which path to use
+      const hasTechnicalWorkflow = (input.technicalWorkflow?.technical_workflow?.length ?? 0) > 0;
 
-      console.log('[V4 Generator] Step plan extracted:', {
-        goal: stepPlan.goal,
-        stepsCount: stepPlan.steps.length,
-        steps: stepPlan.steps.map(s => `${s.stepNumber}. ${s.description}`),
-        tokensUsed: stepPlan.tokensUsed,
-        cost: stepPlan.cost,
-      });
+      if (hasTechnicalWorkflow) {
+        // TECHNICAL WORKFLOW PATH: Skip Stage 1, build DSL directly
+        logger.info(
+          { stepsCount: input.technicalWorkflow!.technical_workflow.length },
+          'Using technical workflow path (skipping Stage 1 LLM)'
+        );
 
-      console.log('[V4 Generator] ===== STAGE 2: DETERMINISTIC DSL BUILDER =====');
+        // DIRECT PATH: Build DSL directly from technical workflow (no adapter needed)
+        logger.info('Building DSL directly from technical workflow (bypassing adapter)');
 
-      // STAGE 2: Deterministic engine builds PILOT_DSL_SCHEMA
+        const technicalInput: TechnicalWorkflowBuildInput = {
+          technical_workflow: input.technicalWorkflow!.technical_workflow,
+          enhanced_prompt: input.technicalWorkflow!.enhanced_prompt,
+          analysis: input.technicalWorkflow!.analysis,
+        };
+
+        const dslResult = await this.dslBuilder.buildFromTechnicalWorkflow(technicalInput);
+
+        if (!dslResult.success) {
+          return {
+            success: false,
+            errors: dslResult.errors,
+            warnings: dslResult.warnings,
+          };
+        }
+
+        logger.info({
+          workflowStepsCount: dslResult.workflow?.workflow_steps?.length,
+          pluginsUsed: dslResult.workflow?.suggested_plugins,
+        }, 'DSL built directly from technical workflow');
+
+        // Return directly - no need for Stage 2 buildDSL
+        return {
+          success: true,
+          workflow: dslResult.workflow,
+          warnings: dslResult.warnings,
+          technicalWorkflowUsed: true,
+          tokensUsed,
+          cost,
+        };
+
+      } else if (input.enhancedPrompt) {
+        // TRADITIONAL PATH: Stage 1 LLM extraction
+        logger.info('Stage 1: LLM Step Plan extraction starting');
+
+        stepPlan = await this.stepPlanExtractor.extractStepPlan(input.enhancedPrompt);
+
+        // Capture token metrics from Stage 1
+        tokensUsed.stage1 = stepPlan.tokensUsed || { input: 0, output: 0, total: 0 };
+        tokensUsed.total = tokensUsed.stage1;
+        cost.stage1 = stepPlan.cost || 0;
+        cost.total = cost.stage1;
+
+        logger.info({
+          goal: stepPlan.goal,
+          stepsCount: stepPlan.steps.length,
+          steps: stepPlan.steps.map(s => `${s.stepNumber}. ${s.description}`),
+          tokensUsed: stepPlan.tokensUsed,
+          cost: stepPlan.cost,
+        }, 'Stage 1 complete: Step plan extracted');
+
+      } else {
+        // No valid input provided
+        return {
+          success: false,
+          errors: ['Either enhancedPrompt or technicalWorkflow is required'],
+        };
+      }
+
+      // STAGE 2: Deterministic DSL Builder (same for both paths)
+      logger.info('Stage 2: Deterministic DSL Builder starting');
+
       const dslResult = await this.dslBuilder.buildDSL(stepPlan);
 
       if (!dslResult.success && !dslResult.ambiguities) {
@@ -114,22 +222,12 @@ export class V4WorkflowGenerator {
         };
       }
 
-      // Build token metrics
-      const tokensUsed = {
-        stage1: stepPlan.tokensUsed || { input: 0, output: 0, total: 0 },
-        total: stepPlan.tokensUsed || { input: 0, output: 0, total: 0 },
-      };
-
-      const cost = {
-        stage1: stepPlan.cost || 0,
-        total: stepPlan.cost || 0,
-      };
-
       // STAGE 3: If there are ambiguities, we'd ask LLM to clarify
       // For now, we'll return the workflow with warnings
       if (dslResult.ambiguities && dslResult.ambiguities.length > 0) {
-        console.log('[V4 Generator] ===== STAGE 3: AMBIGUITIES DETECTED =====');
-        console.log('Ambiguities:', dslResult.ambiguities.map(a => a.question));
+        logger.warn({
+          ambiguities: dslResult.ambiguities.map(a => a.question),
+        }, 'Stage 3: Ambiguities detected');
 
         // TODO: Implement LLM repair loop
         // For now, return with warnings
@@ -142,6 +240,7 @@ export class V4WorkflowGenerator {
           success: true,
           workflow: dslResult.workflow,
           warnings,
+          technicalWorkflowUsed,
           metadata: {
             actionsResolved: dslResult.workflow?.steps?.length || 0,
             parametersMapping: 0,
@@ -153,12 +252,16 @@ export class V4WorkflowGenerator {
         };
       }
 
-      console.log('[V4 Generator] ===== SUCCESS: PILOT_DSL_SCHEMA GENERATED =====');
+      logger.info({
+        technicalWorkflowUsed,
+        stepsCount: dslResult.workflow?.workflow_steps?.length || 0,
+      }, 'PILOT_DSL_SCHEMA generated successfully');
 
       return {
         success: true,
         workflow: dslResult.workflow,
         warnings: dslResult.warnings,
+        technicalWorkflowUsed,
         metadata: {
           actionsResolved: dslResult.workflow?.workflow_steps?.length || 0,
           parametersMapping: 0,
@@ -169,7 +272,7 @@ export class V4WorkflowGenerator {
         cost,
       };
     } catch (error: any) {
-      console.error('[V4 Generator] Error:', error);
+      logger.error({ err: error }, 'Workflow generation failed');
       return {
         success: false,
         errors: [error.message || 'Unknown error during workflow generation'],

@@ -345,6 +345,22 @@ export class SystemConfigRepository {
   }
 
   /**
+   * Get agent generation configuration (V5 generator)
+   * Fetches AI provider and model settings for technical workflow LLM review
+   */
+  async getAgentGenerationConfig(): Promise<{
+    provider: string;
+    model: string;
+  }> {
+    const [provider, model] = await Promise.all([
+      this.getString('agent_generation_ai_provider', 'openai'),
+      this.getString('agent_generation_ai_model', 'gpt-5.2')
+    ]);
+
+    return { provider, model };
+  }
+
+  /**
    * Infer category from key prefix
    */
   private inferCategory(key: string): string {

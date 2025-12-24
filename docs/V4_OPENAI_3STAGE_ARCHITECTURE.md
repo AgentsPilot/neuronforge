@@ -1,8 +1,10 @@
-# V4 OpenAI 3-Stage Architecture - FINAL IMPLEMENTATION ✅
+# V4/V5 OpenAI 3-Stage Architecture - FINAL IMPLEMENTATION ✅
 
-**Date**: December 9, 2025
+**Date**: December 9, 2025 (V4) | December 24, 2025 (V5 Enhancement)
 **Status**: Complete - Following OpenAI's Recommendation
 **Expected Success Rate**: 95%+
+
+> **V5 Enhancement**: The `/api/generate-agent-v4` endpoint now supports an optional V5 mode via feature flag. When enabled, the technical workflow path includes LLM-based review and repair before DSL building. See [V5 Enhancement Section](#v5-enhancement-llm-technical-workflow-review) below.
 
 ---
 
@@ -316,10 +318,24 @@ lib/agentkit/v4/
 ├── utils/
 │   ├── plugin-helpers.ts          # Plugin utilities
 │   └── reference-helpers.ts       # Reference utilities
-└── v4-generator.ts                # Main orchestrator (3-stage flow)
+├── v4-generator.ts                # V4 orchestrator (3-stage flow)
+└── v5-generator.ts                # V5 orchestrator (adds LLM technical review)
+
+lib/utils/
+└── featureFlags.ts                # Feature flag: useEnhancedTechnicalWorkflowReview()
+
+lib/repositories/
+└── SystemConfigRepository.ts      # getAgentGenerationConfig() for V5 provider/model
 
 app/api/generate-agent-v4/
-└── route.ts                       # REST API endpoint
+└── route.ts                       # REST API endpoint (supports V4/V5 via feature flag)
+
+lib/validation/
+└── technical-reviewer-schema.ts   # Zod schemas for V5 LLM review response validation
+
+app/api/prompt-templates/
+├── Workflow-Agent-Technical-Reviewer-SystemPrompt-v2.txt   # V5 LLM review system prompt (v2)
+└── Workflow-Agent-Technical-Reviewer-UserPrompt-v1.txt     # V5 LLM review user prompt
 ```
 
 ---
@@ -405,3 +421,167 @@ All components implemented and following OpenAI's 3-stage architecture!
 **Built by**: AI Agent (Claude) & Human Developer
 **Completion Date**: December 9, 2025
 **Status**: ✅ **Implementation Complete - Ready for Testing**
+
+---
+
+## 🆕 V5 Enhancement: LLM Technical Workflow Review
+
+**Added**: December 19, 2025 | **Updated**: December 24, 2025
+**Status**: Feature Flag Controlled
+
+### Overview
+
+V5 extends the V4 architecture by adding an **LLM-based Technical Workflow Review** step when processing pre-built technical workflows from Phase 4 of the enhanced prompt flow.
+
+> **See also**: [V5_GENERATOR_ARCHITECTURE.md](./V5_GENERATOR_ARCHITECTURE.md) for comprehensive technical details including step ID formats, error handling, and data flow examples.
+
+### V4 vs V5 Technical Workflow Path
+
+| Stage | V4 (Original) | V5 (Enhanced) |
+|-------|---------------|---------------|
+| Input | Technical Workflow | Technical Workflow |
+| Step 1 | Skip (no LLM) | **LLM Review & Repair** |
+| Step 2 | DSLBuilder.buildFromTechnicalWorkflow() | DSLBuilder.buildFromTechnicalWorkflow() |
+| Output | PILOT_DSL_SCHEMA | PILOT_DSL_SCHEMA |
+
+### What V5 LLM Review Does
+
+1. **Validates** technical workflow against plugin schemas
+2. **Repairs** issues:
+   - Missing steps
+   - Invalid plugin/action references
+   - Incorrect input/output mappings
+   - Control flow structure issues
+3. **Returns** reviewed workflow with:
+   - `reviewer_summary`: status (approved/repaired/blocked), changes made
+   - `feasibility`: can_execute, blocking_issues, warnings
+
+### Feature Flag
+
+**Environment Variable** (server-side only):
+```env
+USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW=true
+```
+
+**Default**: `false` (V4 behavior)
+
+### System Config (Database)
+
+V5 LLM review uses configurable provider/model from `system_settings_config`:
+
+| Key | Default | Category | Description |
+|-----|---------|----------|-------------|
+| `agent_generation_ai_provider` | `"openai"` | `agent_creation` | AI provider for LLM review |
+| `agent_generation_ai_model` | `"gpt-5.2"` | `agent_creation` | Model for LLM review |
+
+### Architecture Flow (V5)
+
+```
+Technical Workflow (from Phase 4)
+  ↓
+===== V5 STAGE 1: LLM TECHNICAL REVIEW =====
+V5WorkflowGenerator.reviewTechnicalWorkflow()
+  - Load plugin schemas (schema_services)
+  - Send to LLM for review/repair
+  - Return reviewed workflow + feasibility
+  ↓
+Reviewed Technical Workflow
+  ↓
+===== STAGE 2: DETERMINISTIC DSL BUILDER =====
+DSLBuilder.buildFromTechnicalWorkflow()
+  - Direct conversion (no adapter)
+  - Full type safety
+  - Explicit nested steps
+  ↓
+PILOT_DSL_SCHEMA ✅
+```
+
+### Files Added/Modified for V5
+
+| File | Purpose |
+|------|---------|
+| `lib/agentkit/v4/v5-generator.ts` | V5 orchestrator with LLM review + JSON repair |
+| `lib/validation/technical-reviewer-schema.ts` | Zod schemas for response validation |
+| `lib/validation/phase4-schema.ts` | Updated step ID regex for deep nesting |
+| `lib/utils/featureFlags.ts` | `useEnhancedTechnicalWorkflowReview()` function |
+| `lib/repositories/SystemConfigRepository.ts` | `getAgentGenerationConfig()` method |
+| `app/api/generate-agent-v4/route.ts` | V4/V5 branching based on feature flag |
+| `app/api/prompt-templates/Workflow-Agent-Technical-Reviewer-SystemPrompt-v2.txt` | Updated with JSON completion emphasis |
+
+### Prompt Templates (V5 LLM Review)
+
+- `Workflow-Agent-Technical-Reviewer-SystemPrompt-v2.txt` (includes JSON completion emphasis)
+- `Workflow-Agent-Technical-Reviewer-UserPrompt-v1.txt`
+
+### Schema Validation
+
+V5 responses are validated using Zod schemas in `lib/validation/technical-reviewer-schema.ts`:
+
+```typescript
+import { validateTechnicalReviewerResponse } from '@/lib/validation/technical-reviewer-schema';
+
+const result = validateTechnicalReviewerResponse(llmResponse);
+if (!result.success) {
+  // Handle validation errors
+}
+```
+
+### Error Handling & JSON Repair
+
+LLM responses may sometimes be malformed or truncated. V5 includes robust error handling:
+
+1. **Response Diagnostics**: Logs `finishReason`, token usage, and content length for every response
+2. **JSON Repair**: Uses `jsonrepair` library to automatically fix truncated/malformed JSON
+3. **Prompt Reinforcement**: System prompt v2 includes explicit instruction: *"CRITICAL: You MUST output complete, valid JSON. Do not stop mid-response."*
+
+```typescript
+// Automatic JSON repair when parsing fails
+try {
+  rawParsed = JSON.parse(content);
+} catch {
+  const repairedJson = jsonrepair(content);
+  rawParsed = JSON.parse(repairedJson);
+}
+```
+
+### When to Use V5
+
+- **Use V5** when you want LLM validation/repair of Phase 4 technical workflows
+- **Stay with V4** for faster processing without LLM overhead (technical workflow path)
+
+### Response Metadata (V5)
+
+When V5 is enabled, responses include additional fields:
+
+```json
+{
+  "metadata": {
+    "version": "v5",
+    "generator_version": "v5",
+    "review_provider": "openai",
+    "review_model": "gpt-5.2",
+    "architecture": "technical-workflow-llm-review-dsl"
+  }
+}
+```
+
+### Rollback
+
+To disable V5 and revert to V4 behavior:
+```env
+USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW=false
+```
+
+No code changes required - the V4 path remains intact.
+
+---
+
+**V5 Enhancement Built by**: AI Agent (Claude) & Human Developer
+**V5 Completion Date**: December 24, 2025
+**V5 Status**: ✅ **Feature Flag Implementation Complete**
+
+### V5 Changelog
+
+- **Dec 24, 2025**: Added JSON repair with `jsonrepair` library, response diagnostics logging, prompt v2 with JSON completion emphasis
+- **Dec 23, 2025**: Updated step ID regex to support deeply nested steps (`step2_1_1`), added schema validation
+- **Dec 19, 2025**: Initial V5 implementation with LLM technical workflow review

@@ -1,0 +1,23 @@
+Convert this execution plan into a workflow with name, description, and steps.
+The text below is a Phase 3 enhanced_prompt. Do NOT change intent, scope, or add new goals.
+Your job is to translate it into deterministic executable steps.
+
+OUTPUT FORMAT:
+Name: [Clear, short agent name - e.g., "LinkedIn HubSpot Sync Agent"]
+Description: [1-2 sentences in simple language explaining what this agent does for the user]
+
+Then the numbered steps:
+
+${enhancedPrompt}
+
+Remember:
+- First line: "Name: [agent name]"
+- Second line: "Description: [1-2 sentence summary]"
+- Then numbered steps using "Do X using service.action" format
+- Use 2-space indentation for nested steps
+- If any step requires information that is not explicitly available from earlier steps (IDs, folder/sheet names, channel IDs, date ranges, templates, recipients, etc.), you MUST explicitly name it as a required runtime input (e.g., "using the selected Google Sheet ID").
+- Do NOT assume defaults or invent identifiers/IDs.
+- Each step that produces data MUST state what it outputs using a short stable name (e.g., "Outputs: filtered_leads", "Outputs: per_recipient_payloads").
+- Later steps MUST reference these outputs (do not re-describe or recompute).
+- For "for each ..." behavior: first create a step that outputs an array of per-item payloads; then add a step whose description explicitly says "(runtime loops over each item in <output_name>)".- Only use service.action values that exist in the provided services context. If a required capability cannot be mapped, include the step anyway and mark it clearly as "UNSUPPORTED: no available service.action", with a short reason.
+- For each numbered step, start with: "Do ..." and end with "Outputs: ...".

@@ -1,0 +1,15 @@
+Convert this execution plan into a workflow with name, description, and steps.
+
+OUTPUT FORMAT:
+Name: [Clear, short agent name - e.g., "LinkedIn HubSpot Sync Agent"]
+Description: [1-2 sentences in simple language explaining what this agent does for the user]
+
+Then the numbered steps:
+
+${enhancedPrompt}
+
+Remember:
+- First line: "Name: [agent name]"
+- Second line: "Description: [1-2 sentence summary]"
+- Then numbered steps using "Do X using service.action" format
+- Use 2-space indentation for nested steps

@@ -20,6 +20,34 @@ import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 import { StepPlan, StepPlanLine } from './step-plan-extractor';
 import { IPluginContext } from '@/lib/types/plugin-definition-context';
 import { WorkflowStep, ActionStep, AIProcessingStep } from '@/lib/pilot/types';
+import {
+  TechnicalWorkflowStep,
+  ControlStep,
+  StepInput,
+  isOperationStep,
+  isTransformStep,
+  isControlStep,
+  isForEachControl,
+  isIfControl,
+} from '@/lib/validation/phase4-schema';
+
+/**
+ * Input for building DSL from technical workflow
+ */
+export interface TechnicalWorkflowBuildInput {
+  technical_workflow: TechnicalWorkflowStep[];
+  enhanced_prompt?: {
+    plan_title?: string;
+    plan_description?: string;
+    specifics?: {
+      resolved_user_inputs?: Array<{ key: string; value: string }>;
+    };
+  };
+  analysis?: {
+    agent_name?: string;
+    description?: string;
+  };
+}
 
 export interface DSLBuildResult {
   success: boolean;
@@ -156,6 +184,473 @@ export class DSLBuilder {
       warnings,
       ambiguities: ambiguities.length > 0 ? ambiguities : undefined,
     };
+  }
+
+  /**
+   * Build PILOT_DSL_SCHEMA directly from technical workflow
+   * This bypasses text-based step parsing and works directly with structured data.
+   *
+   * @param input - Technical workflow input with structured steps
+   * @returns DSLBuildResult with the converted workflow
+   */
+  async buildFromTechnicalWorkflow(input: TechnicalWorkflowBuildInput): Promise<DSLBuildResult> {
+    // Validate input
+    if (!input.technical_workflow || input.technical_workflow.length === 0) {
+      return {
+        success: false,
+        errors: ['Technical workflow is empty or invalid'],
+      };
+    }
+
+    // Clear tracked inputs from previous builds
+    this.trackedInputs.clear();
+
+    // Store resolved inputs for use in parameter building
+    if (input.enhanced_prompt?.specifics?.resolved_user_inputs) {
+      this.resolvedInputs = {};
+      for (const resolved of input.enhanced_prompt.specifics.resolved_user_inputs) {
+        this.resolvedInputs[resolved.key] = resolved.value;
+      }
+    }
+
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    const usedPlugins = new Set<string>();
+
+    console.log('[DSL Builder] Building DSL from technical workflow with', input.technical_workflow.length, 'steps');
+
+    // Convert technical workflow steps to PILOT DSL steps
+    let dslSteps: any[];
+    try {
+      dslSteps = this.convertTechnicalSteps(input.technical_workflow, usedPlugins, warnings);
+    } catch (error: any) {
+      console.error('[DSL Builder] Error converting technical workflow:', error);
+      return {
+        success: false,
+        errors: [`Technical workflow conversion failed: ${error.message}`],
+      };
+    }
+
+    // Extract agent name and description
+    const agentName = input.enhanced_prompt?.plan_title ||
+      input.analysis?.agent_name ||
+      'Technical Workflow Agent';
+    const description = input.enhanced_prompt?.plan_description ||
+      input.analysis?.description ||
+      'Agent generated from technical workflow';
+
+    // Build complete PILOT_DSL_SCHEMA structure
+    const workflow = {
+      agent_name: agentName,
+      description: description,
+      system_prompt: `You are an automation agent. ${description}`,
+      workflow_type: this.determineWorkflowType(dslSteps),
+      suggested_plugins: Array.from(usedPlugins),
+      required_inputs: this.extractRequiredInputs(dslSteps),
+      workflow_steps: dslSteps,
+      suggested_outputs: this.generateSuggestedOutputs(agentName),
+      reasoning: `Generated workflow from technical workflow with ${dslSteps.length} steps.`,
+      confidence: 0.95,  // High confidence since input is already structured
+    };
+
+    return {
+      success: true,
+      workflow,
+      warnings: warnings.length > 0 ? warnings : undefined,
+    };
+  }
+
+  /**
+   * Convert array of TechnicalWorkflowStep to PILOT DSL steps
+   */
+  private convertTechnicalSteps(
+    steps: TechnicalWorkflowStep[],
+    usedPlugins: Set<string>,
+    warnings: string[],
+    loopVar?: string
+  ): any[] {
+    const dslSteps: any[] = [];
+
+    for (const step of steps) {
+      const converted = this.convertSingleTechnicalStep(step, usedPlugins, warnings, loopVar);
+      if (converted) {
+        dslSteps.push(converted);
+      }
+    }
+
+    return dslSteps;
+  }
+
+  /**
+   * Convert a single TechnicalWorkflowStep to PILOT DSL step
+   */
+  private convertSingleTechnicalStep(
+    step: TechnicalWorkflowStep,
+    usedPlugins: Set<string>,
+    warnings: string[],
+    loopVar?: string
+  ): any {
+    if (isOperationStep(step)) {
+      // Operation → ActionStep
+      usedPlugins.add(step.plugin);
+      return this.buildActionStepFromTechnical(step, loopVar);
+    }
+
+    if (isTransformStep(step)) {
+      // Transform → AIProcessingStep
+      return this.buildAIStepFromTechnical(step, loopVar);
+    }
+
+    if (isControlStep(step)) {
+      // Control → ScatterGatherStep or ConditionalStep
+      return this.buildControlStepFromTechnical(step, usedPlugins, warnings, loopVar);
+    }
+
+    warnings.push(`Unknown step kind for step ${(step as any).id}`);
+    return null;
+  }
+
+  /**
+   * Build ActionStep from operation TechnicalWorkflowStep
+   */
+  private buildActionStepFromTechnical(
+    step: TechnicalWorkflowStep & { kind: 'operation' },
+    loopVar?: string
+  ): any {
+    const params = this.convertInputsToParams(step.inputs || {}, loopVar);
+
+    return {
+      id: step.id,
+      name: step.description.substring(0, 100),
+      type: 'action',
+      plugin: step.plugin,
+      action: step.action,
+      description: step.description,
+      params,
+    };
+  }
+
+  /**
+   * Build AIProcessingStep from transform TechnicalWorkflowStep
+   */
+  private buildAIStepFromTechnical(
+    step: TechnicalWorkflowStep & { kind: 'transform' },
+    loopVar?: string
+  ): any {
+    const params = this.convertInputsToParams(step.inputs || {}, loopVar);
+
+    // Use description as the prompt for AI processing
+    return {
+      id: step.id,
+      name: step.description.substring(0, 100),
+      type: 'ai_processing',
+      description: step.description,
+      prompt: step.description,
+      params: {
+        ...params,
+        data: params.data || this.inferDataParam(step, loopVar),
+      },
+    };
+  }
+
+  /**
+   * Build control step (scatter_gather or conditional) from control TechnicalWorkflowStep
+   */
+  private buildControlStepFromTechnical(
+    step: ControlStep,
+    usedPlugins: Set<string>,
+    warnings: string[],
+    parentLoopVar?: string
+  ): any {
+    if (isForEachControl(step)) {
+      // for_each → scatter_gather
+      return this.buildScatterGatherFromTechnical(step, usedPlugins, warnings, parentLoopVar);
+    }
+
+    if (isIfControl(step)) {
+      // if → conditional
+      return this.buildConditionalFromTechnical(step, usedPlugins, warnings, parentLoopVar);
+    }
+
+    // Unknown control type - treat as placeholder
+    warnings.push(`Unknown control type '${step.control?.type}' for step ${step.id}`);
+    return {
+      id: step.id,
+      name: step.description || 'Unknown control',
+      type: 'ai_processing',
+      description: step.description || 'Unknown control step',
+      prompt: step.description || 'Process this step',
+      params: {},
+    };
+  }
+
+  /**
+   * Build ScatterGatherStep from for_each control step
+   */
+  private buildScatterGatherFromTechnical(
+    step: ControlStep,
+    usedPlugins: Set<string>,
+    warnings: string[],
+    parentLoopVar?: string
+  ): any {
+    const control = step.control!;
+    const itemName = control.item_name || 'item';
+    const collectionRef = control.collection_ref || '';
+
+    // Convert nested steps with the loop variable in scope
+    const nestedSteps = step.steps
+      ? this.convertTechnicalSteps(step.steps, usedPlugins, warnings, itemName)
+      : [];
+
+    // Build scatter input reference
+    const scatterInput = collectionRef.startsWith('{{')
+      ? collectionRef
+      : `{{${collectionRef}}}`;
+
+    return {
+      id: step.id,
+      name: step.description || `Loop over ${collectionRef}`,
+      type: 'scatter_gather',
+      description: step.description,
+      scatter: {
+        input: scatterInput,
+        steps: nestedSteps,
+        itemVariable: itemName,
+      },
+      gather: {
+        operation: 'collect',
+        outputKey: step.id,
+      },
+    };
+  }
+
+  /**
+   * Build ConditionalStep from if control step
+   */
+  private buildConditionalFromTechnical(
+    step: ControlStep,
+    usedPlugins: Set<string>,
+    warnings: string[],
+    loopVar?: string
+  ): any {
+    const control = step.control!;
+    const conditionStr = control.condition || '';
+
+    // Parse condition string into structured condition
+    const condition = this.parseConditionString(conditionStr);
+
+    // Convert then steps (steps array)
+    const thenSteps = step.steps
+      ? this.convertTechnicalSteps(step.steps, usedPlugins, warnings, loopVar)
+      : [];
+
+    // Convert else steps
+    const elseSteps = step.else_steps
+      ? this.convertTechnicalSteps(step.else_steps, usedPlugins, warnings, loopVar)
+      : [];
+
+    return {
+      id: step.id,
+      name: step.description || `If ${conditionStr}`,
+      type: 'conditional',
+      description: step.description,
+      condition,
+      then_steps: thenSteps,
+      else_steps: elseSteps.length > 0 ? elseSteps : undefined,
+    };
+  }
+
+  /**
+   * Parse a condition string into structured condition object
+   * Examples:
+   *   "step5.missing_owner.length > 0" → { field: "{{step5.missing_owner}}", operator: "is_not_empty" }
+   *   "step3.status == 'success'" → { field: "{{step3.status}}", operator: "equals", value: "success" }
+   */
+  private parseConditionString(conditionStr: string): any {
+    const str = conditionStr.trim();
+
+    // Pattern: "ref.length > 0" or "ref.length == 0"
+    const lengthMatch = str.match(/^([a-zA-Z0-9_.]+)\.length\s*(>|>=|==|<|<=|!=)\s*(\d+)$/);
+    if (lengthMatch) {
+      const [, ref, op, num] = lengthMatch;
+      const value = parseInt(num, 10);
+
+      if (op === '>' && value === 0) {
+        return { conditionType: 'simple', field: `{{${ref}}}`, operator: 'is_not_empty', value: '' };
+      }
+      if (op === '==' && value === 0) {
+        return { conditionType: 'simple', field: `{{${ref}}}`, operator: 'is_empty', value: '' };
+      }
+      // General case
+      return { conditionType: 'simple', field: `{{${ref}.length}}`, operator: this.mapOperator(op), value };
+    }
+
+    // Pattern: "ref == 'value'" or "ref != 'value'"
+    const equalsMatch = str.match(/^([a-zA-Z0-9_.]+)\s*(==|!=|===|!==)\s*['"](.+)['"]$/);
+    if (equalsMatch) {
+      const [, ref, op, val] = equalsMatch;
+      return {
+        conditionType: 'simple',
+        field: `{{${ref}}}`,
+        operator: op.includes('!') ? 'not_equals' : 'equals',
+        value: val,
+      };
+    }
+
+    // Pattern: "ref > value" or "ref < value" (numeric)
+    const numericMatch = str.match(/^([a-zA-Z0-9_.]+)\s*(>|>=|<|<=)\s*(\d+(?:\.\d+)?)$/);
+    if (numericMatch) {
+      const [, ref, op, val] = numericMatch;
+      return {
+        conditionType: 'simple',
+        field: `{{${ref}}}`,
+        operator: this.mapOperator(op),
+        value: parseFloat(val),
+      };
+    }
+
+    // Default: treat as string condition for runtime evaluation
+    return conditionStr;
+  }
+
+  /**
+   * Map comparison operators to PILOT DSL operators
+   */
+  private mapOperator(op: string): string {
+    const opMap: Record<string, string> = {
+      '==': 'equals',
+      '===': 'equals',
+      '!=': 'not_equals',
+      '!==': 'not_equals',
+      '>': 'greater_than',
+      '>=': 'greater_than_or_equal',
+      '<': 'less_than',
+      '<=': 'less_than_or_equal',
+    };
+    return opMap[op] || 'equals';
+  }
+
+  /**
+   * Convert StepInput record to params object
+   */
+  private convertInputsToParams(
+    inputs: Record<string, StepInput>,
+    loopVar?: string
+  ): Record<string, any> {
+    const params: Record<string, any> = {};
+
+    for (const [paramName, input] of Object.entries(inputs)) {
+      params[paramName] = this.resolveStepInput(input, paramName, loopVar);
+    }
+
+    return params;
+  }
+
+  /**
+   * Resolve a single StepInput to a parameter value
+   */
+  private resolveStepInput(input: StepInput, paramName: string, loopVar?: string): any {
+    switch (input.source) {
+      case 'constant': {
+        let value = input.value;
+
+        // Check if constant value contains loop variable reference like {{item.field}}
+        if (typeof value === 'string' && loopVar) {
+          const loopVarPattern = new RegExp(`\\{\\{${loopVar}(\\.\\w+)?\\}\\}`, 'g');
+          if (loopVarPattern.test(value)) {
+            // Keep the template syntax - it references the loop variable
+            return value;
+          }
+        }
+
+        // Check if constant contains any {{...}} reference (might be loop var or step ref)
+        if (typeof value === 'string' && /\{\{[^}]+\}\}/.test(value)) {
+          return value;  // Preserve template references
+        }
+
+        return value;
+      }
+
+      case 'from_step': {
+        const ref = input.ref || '';
+        // Ensure proper {{...}} syntax
+        if (ref.startsWith('{{')) {
+          return ref;
+        }
+        return `{{${ref}}}`;
+      }
+
+      case 'user_input': {
+        const key = input.key || paramName;
+
+        // Check if already resolved
+        if (this.resolvedInputs[key]) {
+          return this.resolvedInputs[key];
+        }
+
+        // Track this input for required_inputs
+        this.trackInputParameter(key, paramName, input.plugin, input.action);
+
+        return `{{input.${key}}}`;
+      }
+
+      case 'env': {
+        const key = input.key || paramName;
+        return `{{env.${key}}}`;
+      }
+
+      case 'plugin_config': {
+        const plugin = input.plugin || '';
+        const key = input.key || paramName;
+        return `{{config.${plugin}.${key}}}`;
+      }
+
+      default:
+        return input.value ?? null;
+    }
+  }
+
+  /**
+   * Track an input parameter for required_inputs extraction
+   */
+  private trackInputParameter(key: string, paramName: string, plugin?: string, action?: string): void {
+    if (this.trackedInputs.has(key)) {
+      return;  // Already tracked
+    }
+
+    this.trackedInputs.set(key, {
+      name: key,
+      type: this.inferInputType(key),
+      label: this.generateInputLabel(key),
+      required: true,
+      description: `${this.generateInputLabel(paramName)} for ${plugin || 'workflow'}`,
+      placeholder: `Enter ${this.generateInputLabel(key).toLowerCase()}`,
+      plugin,
+      action,
+    });
+  }
+
+  /**
+   * Infer data parameter for AI processing step
+   */
+  private inferDataParam(step: TechnicalWorkflowStep, loopVar?: string): string {
+    // If there are inputs, try to find a data source
+    if (step.inputs) {
+      const inputEntries = Object.entries(step.inputs);
+      for (const [key, input] of inputEntries) {
+        if (input.source === 'from_step' && input.ref) {
+          return input.ref.startsWith('{{') ? input.ref : `{{${input.ref}}}`;
+        }
+      }
+    }
+
+    // If inside a loop, reference the loop variable
+    if (loopVar) {
+      return `{{${loopVar}}}`;
+    }
+
+    // Default to previous step output
+    return '{{previousStep.data}}';
   }
 
   /**
@@ -673,7 +1168,7 @@ export class DSLBuilder {
 
             // Track this parameter for input schema generation
             const schema = paramSchema[paramName];
-            this.trackInputParameter(paramName, schema);
+            this.trackInputParameterFromSchema(paramName, schema);
           }
         }
       } else {
@@ -702,7 +1197,7 @@ export class DSLBuilder {
 
           if (!shouldSkipTracking) {
             const schema = paramSchema[paramName];
-            this.trackInputParameter(paramName, schema);
+            this.trackInputParameterFromSchema(paramName, schema);
           }
         }
       }
@@ -731,9 +1226,9 @@ export class DSLBuilder {
   }
 
   /**
-   * Track a parameter that becomes {{input.xxx}} for input schema generation
+   * Track a parameter that becomes {{input.xxx}} for input schema generation (from schema)
    */
-  private trackInputParameter(name: string, schema: any): void {
+  private trackInputParameterFromSchema(name: string, schema: any): void {
     // Avoid duplicates
     if (this.trackedInputs.has(name)) {
       return;

@@ -1,0 +1,16 @@
+You are given:
+1) enhanced_prompt (source-of-truth intent)
+2) technical_workflow (draft to review + repair)
+3) schema_services (allowed plugins/actions + required params)
+
+Task:
+- Return a fully corrected technical_workflow (full structure).
+- Inline-annotate any changed/added step with reviewer_note.
+- Add reviewer_status {can_execute, summary_reason}.
+
+INPUTS (JSON):
+{{ENHANCED_PROMPT}}
+
+{{TECHNICAL_WORKFLOW}}
+
+{{SERVICES_SCHEMA}}

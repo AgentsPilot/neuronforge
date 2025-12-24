@@ -4,15 +4,30 @@ import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { v4 as uuidv4 } from 'uuid';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
-import { V4WorkflowGenerator } from '@/lib/agentkit/v4/v4-generator';
+import { V4WorkflowGenerator, WorkflowGenerationInput } from '@/lib/agentkit/v4/v4-generator';
+import { V5WorkflowGenerator, WorkflowGenerationInput as V5WorkflowGenerationInput } from '@/lib/agentkit/v4/v5-generator';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
+import { createLogger } from '@/lib/logger';
+import { useEnhancedTechnicalWorkflowReview } from '@/lib/utils/featureFlags';
+import { systemConfigRepository } from '@/lib/repositories';
+import type { ProviderName } from '@/lib/ai/providerFactory';
 
 export const runtime = 'nodejs';
 
-// Debug mode
-const DEBUG = process.env.NODE_ENV === 'development';
+// Type for loaded plugin context used in workflow generation
+interface LoadedPluginContext {
+  key: string;
+  displayName: string;
+  context: string;
+  category: string;
+  capabilities: string[];
+  actions: Record<string, any>;
+  plugin: any;
+}
+
+const logger = createLogger({ module: 'API', route: '/api/generate-agent-v4' });
 
 // Initialize Supabase service client for analytics
 const supabaseServiceRole = createClient(
@@ -35,6 +50,7 @@ export async function POST(req: NextRequest) {
     const {
       prompt,  // Raw user prompt (will call enhance-prompt API)
       enhancedPrompt,  // Or pre-enhanced prompt
+      enhancedPromptTechnicalWorkflow,  // Phase 4 technical_workflow output (bypasses Stage 1)
       clarificationAnswers,
       connectedPlugins,
       connectedPluginData,
@@ -81,23 +97,48 @@ export async function POST(req: NextRequest) {
 
     const userId = user.id;
 
-    console.log('🎯 V4 AGENT GENERATION (3-Stage Architecture):', {
+    // Parse enhancedPromptTechnicalWorkflow if it's a string (from JSON import or manual input)
+    let parsedTechnicalWorkflow = enhancedPromptTechnicalWorkflow;
+    if (typeof enhancedPromptTechnicalWorkflow === 'string') {
+      try {
+        parsedTechnicalWorkflow = JSON.parse(enhancedPromptTechnicalWorkflow);
+        logger.debug('Parsed enhancedPromptTechnicalWorkflow from string');
+      } catch (e) {
+        logger.warn({ error: e }, 'Failed to parse enhancedPromptTechnicalWorkflow string');
+        parsedTechnicalWorkflow = null;
+      }
+    }
+
+    // Check if technical workflow is provided (from enhanced prompt flow)
+    const hasTechnicalWorkflow = parsedTechnicalWorkflow?.technical_workflow?.length > 0;
+
+    // Check feature flag for V5 generator (enhanced technical workflow review)
+    const useV5Generator = useEnhancedTechnicalWorkflowReview();
+    const generatorVersion = useV5Generator ? 'v5' : 'v4';
+
+    logger.info({
       agentId,
       sessionId,
       userId,
       promptLength: prompt?.length || 0,
       hasEnhancedPrompt: !!enhancedPrompt,
-    });
+      hasTechnicalWorkflow,
+      technicalWorkflowStepsCount: hasTechnicalWorkflow ? parsedTechnicalWorkflow.technical_workflow.length : 0,
+      generatorVersion,
+      useV5Generator,
+    }, `Agent generation started (${generatorVersion.toUpperCase()} - 3-Stage Architecture)`);
 
     // Validate required fields
-    if (!prompt && !enhancedPrompt) {
+    // Either prompt, enhancedPrompt, or technical workflow must be provided
+    if (!prompt && !enhancedPrompt && !hasTechnicalWorkflow) {
       return NextResponse.json(
         {
           success: false,
-          error: 'prompt or enhancedPrompt is required',
+          error: 'prompt, enhancedPrompt, or enhancedPromptTechnicalWorkflow is required',
           details: {
             hasPrompt: !!prompt,
             hasEnhancedPrompt: !!enhancedPrompt,
+            hasTechnicalWorkflow,
           }
         },
         { status: 400 }
@@ -110,41 +151,36 @@ export async function POST(req: NextRequest) {
       entityType: 'agent',
       entityId: agentId,
       userId: user.id,
-      resourceName: 'V4 Agent Generator (OpenAI 3-Stage)',
+      resourceName: `${generatorVersion.toUpperCase()} Agent Generator (OpenAI 3-Stage)`,
       details: {
         sessionId,
-        generation_method: 'v4_openai_3stage',
+        generation_method: useV5Generator ? 'v5_enhanced_review' : 'v4_openai_3stage',
+        generator_version: generatorVersion,
         prompt_length: prompt?.length || 0,
         has_enhanced_prompt: !!enhancedPrompt,
+        has_technical_workflow: hasTechnicalWorkflow,
         has_clarifications: !!(clarificationAnswers && Object.keys(clarificationAnswers).length > 0),
       },
       severity: 'info',
     });
 
-    // Get user's connected plugins
-    const { data: pluginRows } = await supabase
-      .from('plugin_connections')
-      .select('plugin_key')
-      .eq('user_id', user.id);
+    // Get plugin manager instance (moved early for plugin resolution)
+    const pluginManager = await PluginManagerV2.getInstance();
 
-    const connectedPluginKeys = pluginRows?.map(p => p.plugin_key) || [];
+    // Determine plugins to use - prioritize services_involved from prior steps
+    let pluginsToUse: string[];
 
-    // Add platform plugins (like chatgpt-research) that don't need connection
-    const platformPlugins = ['chatgpt-research'];
-    const allAvailablePlugins = [...new Set([...connectedPluginKeys, ...platformPlugins])];
-
-    // Use filtered plugins from services_involved, otherwise use all
-    const pluginsToUse = services_involved && services_involved.length > 0
-      ? services_involved.filter((p: string) => allAvailablePlugins.includes(p))
-      : allAvailablePlugins;
-
-    console.log('📦 Available plugins:', allAvailablePlugins);
     if (services_involved && services_involved.length > 0) {
-      console.log('🎯 Using filtered plugins from services_involved:', pluginsToUse);
-      console.log('💰 Token savings: ~' + (allAvailablePlugins.length - pluginsToUse.length) * 30 + ' tokens');
+      // Trust services_involved from enhance-prompt/clarity phase
+      pluginsToUse = services_involved;
+      logger.debug({ plugins: pluginsToUse }, 'Using services_involved from prior step');
+    } else {
+      // Fallback: get user's connected plugins via PluginManager (includes system plugins)
+      pluginsToUse = await pluginManager.getAllActivePluginKeys(userId);
+      logger.debug({ plugins: pluginsToUse }, 'Loaded all connected plugins via PluginManager');
     }
 
-    console.log('[V4 Generator] Starting workflow generation', {
+    logger.info({
       userId: user.id,
       sessionId,
       agentId,
@@ -153,80 +189,26 @@ export async function POST(req: NextRequest) {
       promptPreview: (prompt || enhancedPrompt || '').substring(0, 200),
       connectedPluginsCount: connectedPlugins?.length || connectedPluginData?.length || 0,
       servicesInvolvedCount: services_involved?.length || 0,
-      pluginsToUse: pluginsToUse.length,
-    });
+      pluginsToUseCount: pluginsToUse.length,
+    }, 'Starting workflow generation');
 
-    // Step 1: Get enhanced prompt (if not already provided)
+    // Step 1: Resolve final prompt
     let finalEnhancedPrompt = enhancedPrompt;
-    let finalConnectedPluginData = connectedPluginData;
 
     if (prompt && !enhancedPrompt) {
-      console.log('[V4 Generator] Calling enhance-prompt API...');
-
-      try {
-        const enhanceResponse = await fetch(
-          `${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/enhance-prompt`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              prompt,
-              userId,
-              clarificationAnswers: clarificationAnswers || {},
-              connectedPlugins: services_involved || connectedPlugins,
-              connectedPluginsData: connectedPluginData,
-              sessionId,
-              agentId,
-            }),
-          }
-        );
-
-        if (!enhanceResponse.ok) {
-          const error = await enhanceResponse.json();
-          console.error('[V4 Generator] Enhance-prompt API failed:', error);
-          return NextResponse.json(
-            {
-              success: false,
-              error: error.error || 'Failed to enhance prompt',
-              stage_failed: 'prompt_enhancement',
-            },
-            { status: enhanceResponse.status }
-          );
-        }
-
-        const enhanceResult = await enhanceResponse.json();
-        finalEnhancedPrompt = enhanceResult.enhancedPrompt;
-        finalConnectedPluginData = enhanceResult.connectedPluginData;
-
-        console.log('[V4 Generator] Enhanced prompt received:', {
-          length: finalEnhancedPrompt.length,
-          pluginsCount: finalConnectedPluginData?.length || 0,
-        });
-      } catch (error: any) {
-        console.error('[V4 Generator] Enhance-prompt API call exception:', error);
-        return NextResponse.json(
-          {
-            success: false,
-            error: `Failed to call enhance-prompt API: ${error.message}`,
-            stage_failed: 'prompt_enhancement',
-          },
-          { status: 500 }
-        );
-      }
+      logger.warn('No enhanced prompt provided - using raw user prompt (may result in incorrect workflow steps)');
+      finalEnhancedPrompt = prompt;
     }
 
-    // Step 2: Get plugin manager instance
-    const pluginManager = await PluginManagerV2.getInstance();
-
-    // Step 3: Load connected plugin contexts
+    // Step 2: Load connected plugin contexts
     // Use the filtered plugins (pluginsToUse) from earlier
-    console.log('[V4 Generator] Loading plugin contexts for:', pluginsToUse);
+    logger.debug({ plugins: pluginsToUse }, 'Loading plugin contexts');
 
     // Load full plugin contexts from plugin manager
     const pluginDefContexts = pluginManager.getPluginsDefinitionContext(pluginsToUse);
 
     // Convert PluginDefinitionContext to IPluginContext format
-    const loadedPluginContexts = pluginDefContexts.map(ctx => ({
+    const loadedPluginContexts: LoadedPluginContext[] = pluginDefContexts.map(ctx => ({
       key: ctx.key,
       displayName: ctx.displayName,
       context: ctx.getContext(),
@@ -237,39 +219,92 @@ export async function POST(req: NextRequest) {
       plugin: ctx.plugin,
     }));
 
-    console.log('[V4 Generator] Total plugins loaded:', loadedPluginContexts.length);
-    for (const ctx of loadedPluginContexts) {
-      console.log(`[V4 Generator] Loaded plugin: ${ctx.key}`, {
+    logger.debug({
+      count: loadedPluginContexts.length,
+      plugins: loadedPluginContexts.map((ctx: LoadedPluginContext) => ({
+        key: ctx.key,
         displayName: ctx.displayName,
         actionsCount: Object.keys(ctx.actions || {}).length,
+      })),
+    }, 'Plugin contexts loaded');
+
+    // Step 4 & 5: Generate workflow using V4 or V5 generator based on feature flag
+    // Both generators handle two paths:
+    // - Technical Workflow: V4 skips LLM, V5 adds LLM review before DSL
+    // - Enhanced Prompt: Stage 1 (LLM) + Stage 2 (DSL)
+    let result;
+    let v5ReviewConfig: { provider: string; model: string } | null = null;
+
+    if (useV5Generator) {
+      // V5 Generator: Enhanced technical workflow review via LLM
+      v5ReviewConfig = await systemConfigRepository.getAgentGenerationConfig();
+
+      logger.info({
+        generatorVersion: 'v5',
+        reviewProvider: v5ReviewConfig.provider,
+        reviewModel: v5ReviewConfig.model,
+        hasTechnicalWorkflow,
+      }, 'Using V5 generator with LLM technical review');
+
+      const v5Generator = new V5WorkflowGenerator(pluginManager, {
+        connectedPlugins: loadedPluginContexts,
+        userId,
+        aiAnalytics,
+      });
+
+      const v5Input: V5WorkflowGenerationInput = {
+        enhancedPrompt: finalEnhancedPrompt,
+        technicalWorkflow: parsedTechnicalWorkflow,
+        provider: v5ReviewConfig.provider as ProviderName,
+        model: v5ReviewConfig.model,
+        required_services: pluginsToUse,
+      };
+
+      logger.debug({
+        hasEnhancedPrompt: !!finalEnhancedPrompt,
+        hasTechnicalWorkflow,
+        provider: v5ReviewConfig.provider,
+        model: v5ReviewConfig.model,
+      }, 'Starting V5 workflow generation');
+
+      result = await v5Generator.generateWorkflow(v5Input);
+    } else {
+      // V4 Generator: Original behavior
+      logger.debug({
+        generatorVersion: 'v4',
+        hasTechnicalWorkflow,
+      }, 'Using V4 generator (standard flow)');
+
+      const v4Generator = new V4WorkflowGenerator(pluginManager, {
+        connectedPlugins: loadedPluginContexts,
+        userId,
+        anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+        aiAnalytics,
+      });
+
+      const v4Input: WorkflowGenerationInput = {
+        enhancedPrompt: finalEnhancedPrompt,
+        technicalWorkflow: parsedTechnicalWorkflow,
+      };
+
+      logger.debug({
+        hasEnhancedPrompt: !!finalEnhancedPrompt,
+        hasTechnicalWorkflow,
+      }, 'Starting V4 workflow generation');
+
+      result = await v4Generator.generateWorkflow(v4Input, {
+        connectedPlugins: loadedPluginContexts,
+        userId,
       });
     }
 
-    // Step 4: Initialize V4 generator with Anthropic API key and analytics
-    const generator = new V4WorkflowGenerator(pluginManager, {
-      connectedPlugins: loadedPluginContexts,
-      userId,
-      anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-      aiAnalytics,
-    });
-
-    // Step 5: Generate workflow using V4 (OpenAI 3-stage architecture)
-    console.log('[V4 Generator] ===== ENHANCED PROMPT =====');
-    console.log(finalEnhancedPrompt);
-    console.log('[V4 Generator] ===== END ENHANCED PROMPT =====');
-
-    const result = await generator.generateWorkflow(finalEnhancedPrompt, {
-      connectedPlugins: loadedPluginContexts,
-      userId,
-    });
-
     if (!result.success) {
       const endTime = Date.now();
-      console.error('[V4 Generator] Generation failed', {
+      logger.error({
         errors: result.errors,
         warnings: result.warnings,
-        latency_ms: endTime - startTime,
-      });
+        latencyMs: endTime - startTime,
+      }, 'Generation failed');
 
       // Log failure to audit trail
       await auditTrail.log({
@@ -277,13 +312,18 @@ export async function POST(req: NextRequest) {
         entityType: 'agent',
         entityId: agentId,
         userId: user.id,
-        resourceName: 'V4 Agent Generator',
+        resourceName: `${generatorVersion.toUpperCase()} Agent Generator`,
         details: {
           sessionId,
+          generator_version: generatorVersion,
           errors: result.errors,
           warnings: result.warnings,
           stage_failed: 'workflow_generation',
           latency_ms: endTime - startTime,
+          ...(useV5Generator && v5ReviewConfig ? {
+            review_provider: v5ReviewConfig.provider,
+            review_model: v5ReviewConfig.model,
+          } : {}),
         },
         severity: 'critical',
       });
@@ -303,23 +343,23 @@ export async function POST(req: NextRequest) {
 
     const endTime = Date.now();
     const latency_ms = endTime - startTime;
+    const technicalWorkflowUsed = result.technicalWorkflowUsed ?? false;
 
-    console.log('[V4 Generator] Generation succeeded', {
+    logger.info({
       metadata: result.metadata,
       warningsCount: result.warnings?.length || 0,
-      latency_ms,
-    });
+      latencyMs: latency_ms,
+      technicalWorkflowUsed,
+    }, 'Generation succeeded');
 
-    console.log('[V4 Generator] ===== FINAL PILOT WORKFLOW_STEPS =====');
-    console.log(JSON.stringify(result.workflow?.workflow_steps, null, 2));
-    console.log('[V4 Generator] ===== END WORKFLOW_STEPS =====');
+    logger.debug({ workflowSteps: result.workflow?.workflow_steps }, 'Final PILOT workflow steps');
 
     // Convert PILOT_DSL_SCHEMA to agent format (v3-compatible)
     const workflow = result.workflow;
 
     // Defensive check: ensure all required fields exist
     if (!workflow.workflow_steps || workflow.workflow_steps.length === 0) {
-      console.error('[V4 Generator] Workflow generated without workflow_steps');
+      logger.error('Workflow generated without workflow_steps');
       return NextResponse.json(
         {
           success: false,
@@ -331,7 +371,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!workflow.required_inputs) {
-      console.warn('[V4 Generator] Workflow generated without required_inputs, using empty array');
+      logger.warn('Workflow generated without required_inputs, using empty array');
       workflow.required_inputs = [];
     }
 
@@ -344,42 +384,52 @@ export async function POST(req: NextRequest) {
       resourceName: workflow.agent_name,
       details: {
         sessionId,
+        generator_version: generatorVersion,
         workflow_type: workflow.workflow_type,
         steps_count: workflow.workflow_steps.length,
         inputs_count: workflow.required_inputs.length,
         plugins: workflow.suggested_plugins,
         confidence: workflow.confidence,
         latency_ms,
+        technical_workflow_used: technicalWorkflowUsed,
+        ...(useV5Generator && v5ReviewConfig ? {
+          review_provider: v5ReviewConfig.provider,
+          review_model: v5ReviewConfig.model,
+        } : {}),
       },
       severity: 'info',
     });
 
-    // Track AI analytics (V4 uses Claude Sonnet 4 for step planning)
-    await aiAnalytics.trackAICall({
-      call_id: `v4_step_plan_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
-      user_id: user.id,
-      session_id: sessionId,
-      provider: 'anthropic',
-      model_name: 'claude-sonnet-4-20250514',
-      endpoint: 'messages',
-      feature: 'agent_generation',
-      component: 'generate-agent-v4',
-      workflow_step: 'stage1_step_plan',
-      category: 'agent_creation',
-      input_tokens: result.tokensUsed?.stage1.input || 0,
-      output_tokens: result.tokensUsed?.stage1.output || 0,
-      cost_usd: result.cost?.stage1 || 0,
-      latency_ms: latency_ms,
-      success: true,
-      metadata: {
-        architecture: 'openai-3-stage',
-        steps_generated: workflow.workflow_steps.length,
-        has_conditionals: workflow.workflow_steps.some((s: any) => s.type === 'conditional'),
-        has_loops: workflow.workflow_steps.some((s: any) => s.type === 'scatter_gather'),
-        total_tokens: result.tokensUsed?.total.total || 0,
-        total_cost: result.cost?.total || 0,
-      },
-    });
+    // Track AI analytics (only if Stage 1 LLM was used - skip for technical workflow path)
+    if (!technicalWorkflowUsed) {
+      await aiAnalytics.trackAICall({
+        call_id: `v4_step_plan_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
+        user_id: user.id,
+        session_id: sessionId,
+        provider: 'anthropic',
+        model_name: 'claude-sonnet-4-20250514',
+        endpoint: 'messages',
+        feature: 'agent_generation',
+        component: 'generate-agent-v4',
+        workflow_step: 'stage1_step_plan',
+        category: 'agent_creation',
+        input_tokens: result.tokensUsed?.stage1.input || 0,
+        output_tokens: result.tokensUsed?.stage1.output || 0,
+        cost_usd: result.cost?.stage1 || 0,
+        latency_ms: latency_ms,
+        success: true,
+        metadata: {
+          architecture: 'openai-3-stage',
+          steps_generated: workflow.workflow_steps.length,
+          has_conditionals: workflow.workflow_steps.some((s: any) => s.type === 'conditional'),
+          has_loops: workflow.workflow_steps.some((s: any) => s.type === 'scatter_gather'),
+          total_tokens: result.tokensUsed?.total.total || 0,
+          total_cost: result.cost?.total || 0,
+        },
+      });
+    } else {
+      logger.debug('Skipping AI analytics tracking (technical workflow path - no Stage 1 LLM call)');
+    }
 
     // Use plan_description from clarificationAnswers as the agent description
     // This is the short summary generated after the clarity phase
@@ -397,7 +447,7 @@ export async function POST(req: NextRequest) {
         system_prompt: workflow.system_prompt,
         description: agentDescription,
         plugins_required: workflow.suggested_plugins,
-        connected_plugins: allAvailablePlugins,
+        connected_plugins: pluginsToUse,
         input_schema: (workflow.required_inputs || []).map((input: any) => ({
           name: input.name,
           type: input.type,
@@ -430,35 +480,57 @@ export async function POST(req: NextRequest) {
         agent_config: {
           mode: 'on_demand',
           metadata: {
-            version: '4.0',
-            generation_method: 'v4_openai_3stage',
+            version: useV5Generator ? '5.0' : '4.0',
+            generator_version: generatorVersion,
+            generation_method: useV5Generator
+              ? (technicalWorkflowUsed ? 'v5_enhanced_review_dsl' : 'v5_openai_3stage')
+              : (technicalWorkflowUsed ? 'v4_technical_workflow_dsl' : 'v4_openai_3stage'),
             agent_id: agentId,
             session_id: sessionId,
             prompt_type: enhancedPrompt ? 'enhanced' : 'raw',
-            architecture: 'openai-3-stage',
+            architecture: technicalWorkflowUsed
+              ? (useV5Generator ? 'technical-workflow-llm-review-dsl' : 'technical-workflow-dsl')
+              : 'openai-3-stage',
+            technical_workflow_used: technicalWorkflowUsed,
             latency_ms,
+            ...(useV5Generator && v5ReviewConfig ? {
+              review_provider: v5ReviewConfig.provider,
+              review_model: v5ReviewConfig.model,
+            } : {}),
           },
         },
       },
       extraction_details: {
-        version: 'v4',
-        architecture: 'openai-3-stage',
+        version: generatorVersion,
+        architecture: technicalWorkflowUsed
+          ? (useV5Generator ? 'technical-workflow-llm-review-dsl' : 'technical-workflow-dsl')
+          : 'openai-3-stage',
+        technical_workflow_used: technicalWorkflowUsed,
         workflow_step_count: workflow.workflow_steps?.length || 0,
         activity_tracked: true,
         latency_ms,
+        ...(useV5Generator && v5ReviewConfig ? {
+          review_provider: v5ReviewConfig.provider,
+          review_model: v5ReviewConfig.model,
+        } : {}),
       },
       warnings: result.warnings,
       metadata: {
         ...result.metadata,
-        version: 'v4',
+        version: generatorVersion,
+        generator_version: generatorVersion,
+        technical_workflow_used: technicalWorkflowUsed,
         generatedAt: new Date().toISOString(),
         latency_ms,
+        ...(useV5Generator && v5ReviewConfig ? {
+          review_provider: v5ReviewConfig.provider,
+          review_model: v5ReviewConfig.model,
+        } : {}),
       },
     });
   } catch (error: any) {
     const endTime = Date.now();
-    console.error('[V4 Generator] Unexpected error:', error);
-    console.error('[V4 Generator] Error stack:', error.stack);
+    logger.error({ err: error, latencyMs: endTime - startTime }, 'Unexpected error');
 
     return NextResponse.json(
       {
