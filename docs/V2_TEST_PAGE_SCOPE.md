@@ -98,7 +98,10 @@ Available AI services:
 - **Generate New Session ID**: Creates fresh UUID for `sessionId` field
 - **Generate New Agent ID**: Creates fresh UUID for `agentId` field
 - **Reset to Template**: Restores default template with new IDs
-- **Import JSON**: Import JSON data into specific fields (enhancedPrompt, technicalWorkflow)
+- **Import JSON**: Import JSON data into specific fields with smart extraction:
+  - Automatically extracts relevant nested field based on target selection
+  - Supports: `prompt`, `enhancedPrompt`, `enhancedPromptTechnicalWorkflow`, `technicalWorkflow`
+  - Example: Pasting a full Phase 4 response while targeting `technicalWorkflow` extracts just the `.technical_workflow` array
 
 **AI Service Templates Include:**
 ```json
@@ -570,7 +573,8 @@ Present on all tabs:
   - 🟢 Green: Success messages
   - 🔴 Red: Error messages
   - ⚪ Gray: Info messages
-- **Scrollable**: Auto-scrolls to show latest logs
+- **Auto-scroll**: Automatically scrolls to bottom when new logs are added
+- **Scrollable Container**: 300px height with overflow scroll
 - **Limit**: Keeps last 50 log entries
 
 ---
@@ -657,6 +661,7 @@ Present on all tabs:
 **Debug Logs State:**
 ```typescript
 - debugLogs: DebugLog[]
+- debugLogsRef: useRef<HTMLDivElement> // for auto-scroll
 ```
 
 ### Key Functions
@@ -707,6 +712,7 @@ Present on all tabs:
 - `copyToClipboard()` - Copy response to clipboard
 - `refreshAll()` - Reload all data
 - `clearLogs()` - Clear debug logs
+- `importJsonPromptIntoRequestBody(jsonText)` - Smart JSON import with field extraction based on target selection
 
 ---
 
@@ -1009,7 +1015,56 @@ All errors are:
 
 ## Changelog
 
-### Version 1.6 (Current)
+### Version 1.9 (Current)
+- **Thread Dropdown Enhanced Display**: Improved thread list presentation
+  - **New Format**: `{date} | P{phase} | {status} | {id:8} | {prompt:60}`
+  - Example: `Dec 26, 10:30 AM | P3 | completed | a1b2c3d4 | Send daily emails to Slack...`
+  - **Color Coding**:
+    - ✅ Green (`#28a745`) for valid/active threads
+    - ⏰ Red (`#dc3545`) for expired threads (based on `expires_at`)
+  - **Thread ID**: First 8 characters of UUID shown for quick identification
+  - **Prompt Preview**: Uses new `user_prompt` column (60 chars), falls back to metadata
+- **Database Schema**: Added `user_prompt` column to `agent_prompt_threads` table
+  - Populated at Phase 1 for quick context without parsing metadata
+  - Migration: `20251226_add_user_prompt_to_agent_prompt_threads.sql`
+
+### Version 1.8
+- **Thread Mode Toggle UI**: New streamlined interface for starting or resuming threads
+  - Toggle between "Start New Thread" and "Load Existing Thread" modes
+  - **New Thread Mode**: Provider/model selection + prompt input (blue theme)
+  - **Existing Thread Mode**: Dropdown selector + Load button (teal theme)
+    - Selected thread preview panel with full details
+    - Auto-loads threads when switching to existing mode
+    - Refresh button to reload thread list
+    - Dropdown stays visible after loading for easy switching
+- **New Thread Button**: Added "New Thread" button in Session Info when thread is active
+  - Resets all thread state for starting fresh
+- **New API Endpoint**: `GET /api/agent-creation/threads`
+  - Query params: `limit` (default 10, max 50), `status` (comma-separated: active,completed,expired,abandoned)
+  - Returns list of user's threads ordered by created_at DESC
+- **Repository Enhancement**: Added `getRecentThreadsByUser()` method to `AgentPromptThreadRepository`
+- **New State Variables**: `threadMode` ('new' | 'existing'), `selectedThreadId`
+
+### Version 1.7
+- **Debug Logs Auto-Scroll**: Debug logs panel now automatically scrolls to bottom when new entries are added
+  - Uses `debugLogsRef` with `useEffect` to track `debugLogs` changes
+- **Smart JSON Import**: `Import JSON` button now intelligently extracts relevant fields based on target selection:
+  - `prompt`: Extracts `.prompt` or `.user_prompt` if present
+  - `enhancedPrompt`: Extracts `.enhanced_prompt` or `.enhancedPrompt` if present
+  - `enhancedPromptTechnicalWorkflow`: Extracts `.technical_workflow` + `.enhanced_prompt`
+  - `technicalWorkflow`: Extracts `.technical_workflow` array or detects workflow arrays
+  - Logs extraction source (e.g., "extracted from .technical_workflow")
+- **Prompt Version Updates**:
+  - Agent Creation Prompt upgraded to v14 (`Workflow-Agent-Creation-Prompt-v14-chatgpt.txt`)
+  - Technical Reviewer upgraded to v3 (`Workflow-Agent-Technical-Reviewer-SystemPrompt-v3.txt`)
+- **Phase4DSLBuilder Integration**: V5 generator now uses `Phase4DSLBuilder` for direct conversion of technical workflows to PILOT DSL
+- **Schema Updates**:
+  - `reviewer_summary.warnings` changed from objects to strings
+  - `feasibility.warnings/blocking_issues` use strings (converted to objects for Phase4DSLBuilder)
+  - Added standard transform input naming convention documentation
+  - Relaxed step ID validation: `id` and `next_step` fields now accept any non-empty string (previously required strict `stepN_M` format)
+
+### Version 1.6
 - **Prompt Version Updates**:
   - Agent Creation Prompt upgraded to v13 (`Workflow-Agent-Creation-Prompt-v13-chatgpt.txt`)
   - Technical Reviewer upgraded to v2 (`Workflow-Agent-Technical-Reviewer-SystemPrompt-v2.txt`)
@@ -1113,5 +1168,5 @@ For issues or questions about the Test Page:
 
 ---
 
-**Last Updated:** December 23, 2025 (Prompt v13/v2 + Technical Reviewer Schema Validation)
+**Last Updated:** December 26, 2025 (v1.9 - Enhanced Thread Dropdown with user_prompt column + Expiry Indicators)
 **Maintained By:** NeuronForge Development Team

@@ -27,6 +27,21 @@ interface DebugLog {
 
 type TabType = 'plugins' | 'ai-services' | 'thread-conversation' | 'free-tier-users' | 'agent-execution';
 
+// Helper function to format relative time
+function getTimeAgo(date: Date): string {
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins} min${diffMins > 1 ? 's' : ''} ago`;
+  if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+  if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+  return date.toLocaleDateString();
+}
+
 // Provider and model options for AI provider selection
 const PROVIDER_OPTIONS = ['openai', 'anthropic', 'kimi'] as const;
 type ProviderOption = typeof PROVIDER_OPTIONS[number];
@@ -690,6 +705,25 @@ export default function TestPluginsPage() {
   const [analysisData, setAnalysisData] = useState<any>(null);
   const [missingPlugins, setMissingPlugins] = useState<string[]>([]);
 
+  // Recent Threads state (for resuming conversations)
+  const [threadMode, setThreadMode] = useState<'new' | 'existing'>('new');
+  const [selectedThreadId, setSelectedThreadId] = useState<string>('');
+  const [recentThreads, setRecentThreads] = useState<Array<{
+    id: string;
+    openai_thread_id: string;
+    status: string;
+    current_phase: number;
+    user_prompt: string | null;
+    ai_provider: string;
+    ai_model: string;
+    created_at: string;
+    updated_at: string;
+    expires_at: string;
+    metadata: any;
+  }>>([]);
+  const [isLoadingRecentThreads, setIsLoadingRecentThreads] = useState(false);
+  const [isLoadingThread, setIsLoadingThread] = useState(false);
+
   // Phase 4 state (technical workflow generation)
   const [technicalWorkflow, setTechnicalWorkflow] = useState<any[]>([]);
   const [technicalInputsRequired, setTechnicalInputsRequired] = useState<any[]>([]);
@@ -704,6 +738,9 @@ export default function TestPluginsPage() {
 
   // Ref for conversation history auto-scroll
   const conversationHistoryRef = useRef<HTMLDivElement>(null);
+
+  // Ref for debug logs auto-scroll
+  const debugLogsRef = useRef<HTMLDivElement>(null);
 
   // Mini-cycle state (for user_inputs_required refinement)
   const [isInMiniCycle, setIsInMiniCycle] = useState(false);
@@ -810,6 +847,13 @@ export default function TestPluginsPage() {
       conversationHistoryRef.current.scrollTop = conversationHistoryRef.current.scrollHeight;
     }
   }, [conversationHistory]);
+
+  // Auto-scroll debug logs to bottom when new logs are added
+  useEffect(() => {
+    if (debugLogsRef.current) {
+      debugLogsRef.current.scrollTop = debugLogsRef.current.scrollHeight;
+    }
+  }, [debugLogs]);
 
   const loadAvailablePlugins = async () => {
     try {
@@ -1097,7 +1141,7 @@ export default function TestPluginsPage() {
     }
   };
 
-  // Import JSON prompt into request body - stringifies entire pasted JSON and puts into target field
+  // Import JSON prompt into request body - intelligently extracts relevant field based on target selection
   const importJsonPromptIntoRequestBody = (jsonText: string) => {
     setJsonPromptImportError(null); // Clear previous error
 
@@ -1105,8 +1149,70 @@ export default function TestPluginsPage() {
       // Parse the imported JSON to validate it's valid JSON
       const importedData = JSON.parse(jsonText);
 
-      // Stringify the entire JSON object
-      const stringifiedJson = JSON.stringify(importedData);
+      // Intelligently extract the relevant field based on the target selection
+      let extractedData = importedData;
+      let extractionNote = '';
+
+      // Try to extract the specific field if the imported data is a larger object
+      if (typeof importedData === 'object' && importedData !== null) {
+        switch (jsonImportTargetField) {
+          case 'prompt':
+            // Look for prompt field in the imported data
+            if (importedData.prompt !== undefined) {
+              extractedData = importedData.prompt;
+              extractionNote = ' (extracted from .prompt)';
+            } else if (importedData.user_prompt !== undefined) {
+              extractedData = importedData.user_prompt;
+              extractionNote = ' (extracted from .user_prompt)';
+            }
+            break;
+
+          case 'enhancedPrompt':
+            // Look for enhanced_prompt or enhancedPrompt field
+            if (importedData.enhanced_prompt !== undefined) {
+              extractedData = importedData.enhanced_prompt;
+              extractionNote = ' (extracted from .enhanced_prompt)';
+            } else if (importedData.enhancedPrompt !== undefined) {
+              extractedData = importedData.enhancedPrompt;
+              extractionNote = ' (extracted from .enhancedPrompt)';
+            }
+            break;
+
+          case 'enhancedPromptTechnicalWorkflow':
+            // Look for technical_workflow in various places
+            if (importedData.technical_workflow !== undefined) {
+              extractedData = { technical_workflow: importedData.technical_workflow };
+              if (importedData.enhanced_prompt) {
+                extractedData.enhanced_prompt = importedData.enhanced_prompt;
+              }
+              extractionNote = ' (extracted .technical_workflow)';
+            } else if (importedData.enhanced_prompt?.technical_workflow !== undefined) {
+              extractedData = {
+                technical_workflow: importedData.enhanced_prompt.technical_workflow,
+                enhanced_prompt: importedData.enhanced_prompt
+              };
+              extractionNote = ' (extracted from .enhanced_prompt.technical_workflow)';
+            }
+            break;
+
+          case 'technicalWorkflow':
+            // Look for technical_workflow array and wrap in expected object structure
+            if (importedData.technical_workflow !== undefined) {
+              // Wrap the array in the expected object structure
+              extractedData = { technical_workflow: importedData.technical_workflow };
+              extractionNote = ' (extracted .technical_workflow into wrapper object)';
+            } else if (Array.isArray(importedData) && importedData[0]?.kind) {
+              // Already a technical workflow array, wrap it
+              extractedData = { technical_workflow: importedData };
+              extractionNote = ' (detected workflow array, wrapped in object)';
+            }
+            // If importedData already has the correct structure {technical_workflow: [...]}, use as-is
+            break;
+        }
+      }
+
+      // Stringify the extracted data
+      const stringifiedJson = JSON.stringify(extractedData);
 
       // Parse current request body
       const currentBody = JSON.parse(aiServiceRequestBody);
@@ -1115,7 +1221,7 @@ export default function TestPluginsPage() {
       currentBody[jsonImportTargetField] = stringifiedJson;
 
       setAiServiceRequestBody(JSON.stringify(currentBody, null, 2));
-      addDebugLog('success', `Imported JSON (${stringifiedJson.length} chars) into "${jsonImportTargetField}" field`);
+      addDebugLog('success', `Imported JSON (${stringifiedJson.length} chars) into "${jsonImportTargetField}"${extractionNote}`);
       setShowJsonPromptModal(false);
       setJsonPromptImportValue('');
       setJsonPromptImportError(null);
@@ -1306,6 +1412,136 @@ export default function TestPluginsPage() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Load recent threads for the current user
+  const loadRecentThreads = async () => {
+    if (!userId) {
+      addDebugLog('error', 'User ID is required to load recent threads');
+      return;
+    }
+
+    try {
+      setIsLoadingRecentThreads(true);
+      addDebugLog('info', 'Loading recent threads...');
+
+      const response = await fetch(`/api/agent-creation/threads?limit=10&status=active,completed`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        setRecentThreads(data.threads || []);
+        addDebugLog('success', `Loaded ${data.count} recent threads`);
+      } else {
+        const errorMsg = data.error || 'Unknown error';
+        addDebugLog('error', `Failed to load recent threads: ${errorMsg}`);
+      }
+    } catch (error: any) {
+      addDebugLog('error', `Error loading recent threads: ${error.message}`);
+    } finally {
+      setIsLoadingRecentThreads(false);
+    }
+  };
+
+  // Load a specific thread and its messages
+  const loadThread = async (openaiThreadId: string) => {
+    try {
+      setIsLoadingThread(true);
+      addDebugLog('info', `Loading thread: ${openaiThreadId}...`);
+
+      const response = await fetch(`/api/agent-creation/thread/${openaiThreadId}`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        const thread = data.thread;
+        const messages = data.messages || [];
+
+        // Set thread state
+        setThreadId(thread.openai_thread_id);
+        setCurrentPhase(thread.current_phase as 1 | 2 | 3 | 4);
+        setSelectedProvider(thread.ai_provider || 'openai');
+        setSelectedModel(thread.ai_model || 'gpt-4o');
+
+        // Restore metadata if available
+        if (thread.metadata) {
+          if (thread.metadata.user_prompt) {
+            setInitialPrompt(thread.metadata.user_prompt);
+          }
+          if (thread.metadata.analysis) {
+            setAnalysisData(thread.metadata.analysis);
+          }
+          if (thread.metadata.clarification_answers) {
+            setClarificationAnswers(thread.metadata.clarification_answers);
+          }
+          if (thread.metadata.last_phase3_response?.enhanced_prompt) {
+            setEnhancedPrompt(thread.metadata.last_phase3_response.enhanced_prompt);
+          }
+          if (thread.metadata.last_phase3_response?.clarityScore) {
+            setClarityScore(thread.metadata.last_phase3_response.clarityScore);
+          }
+          if (thread.metadata.last_phase3_response?.missingPlugins) {
+            setMissingPlugins(thread.metadata.last_phase3_response.missingPlugins);
+          }
+        }
+
+        // Convert messages to conversation history format
+        const history = messages.map((msg: any) => ({
+          role: msg.role as 'user' | 'assistant',
+          content: msg.content,
+          data: null
+        }));
+        setConversationHistory(history);
+
+        addDebugLog('success', `Thread loaded: Phase ${thread.current_phase}, ${messages.length} messages`);
+
+        // Keep recentThreads loaded for dropdown - don't clear
+      } else {
+        const errorMsg = data.error || 'Unknown error';
+        const details = data.details ? ` - ${data.details}` : '';
+        addDebugLog('error', `Failed to load thread: ${errorMsg}${details}`);
+      }
+    } catch (error: any) {
+      addDebugLog('error', `Error loading thread: ${error.message}`);
+    } finally {
+      setIsLoadingThread(false);
+    }
+  };
+
+  // Reset thread state (for starting fresh)
+  const resetThreadState = () => {
+    setThreadId(null);
+    setCurrentPhase(1);
+    setInitialPrompt('');
+    setConversationHistory([]);
+    setCurrentQuestions([]);
+    setCurrentQuestionIndex(0);
+    setUserAnswer('');
+    setClarificationAnswers({});
+    setEnhancedPrompt(null);
+    setClarityScore(0);
+    setAnalysisData(null);
+    setMissingPlugins([]);
+    setTechnicalWorkflow([]);
+    setTechnicalInputsRequired([]);
+    setFeasibility(null);
+    setPhase4Response(null);
+    setTechnicalInputsCollected({});
+    setGeneratedAgent(null);
+    setAgentGenerationError(null);
+    setIsInMiniCycle(false);
+    setMiniCyclePhase3(null);
+    setApiCommunications([]);
+    // Keep recentThreads loaded, just reset selection
+    setSelectedThreadId('');
+    setThreadMode('new');
+    addDebugLog('info', 'Thread state reset');
   };
 
   const processMessage = async (phase: number, answers?: Record<string, string>, explicitThreadId?: string) => {
@@ -2853,24 +3089,43 @@ export default function TestPluginsPage() {
           <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #28a745', borderRadius: '5px', backgroundColor: '#f0f9f0' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
               <h2 style={{ margin: 0 }}>Thread Session Info</h2>
-              {threadId && (
-                <button
-                  onClick={downloadCommunicationHistory}
-                  disabled={apiCommunications.length === 0}
-                  style={{
-                    padding: '8px 16px',
-                    backgroundColor: apiCommunications.length === 0 ? '#ccc' : '#17a2b8',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '3px',
-                    cursor: apiCommunications.length === 0 ? 'not-allowed' : 'pointer',
-                    fontSize: '14px'
-                  }}
-                  title={`Download all API communications (${apiCommunications.length} calls)`}
-                >
-                  📥 Download JSON ({apiCommunications.length})
-                </button>
-              )}
+              <div style={{ display: 'flex', gap: '10px' }}>
+                {threadId && (
+                  <>
+                    <button
+                      onClick={resetThreadState}
+                      style={{
+                        padding: '8px 16px',
+                        backgroundColor: '#6c757d',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '3px',
+                        cursor: 'pointer',
+                        fontSize: '14px'
+                      }}
+                      title="Reset and start a new thread"
+                    >
+                      🔄 New Thread
+                    </button>
+                    <button
+                      onClick={downloadCommunicationHistory}
+                      disabled={apiCommunications.length === 0}
+                      style={{
+                        padding: '8px 16px',
+                        backgroundColor: apiCommunications.length === 0 ? '#ccc' : '#17a2b8',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '3px',
+                        cursor: apiCommunications.length === 0 ? 'not-allowed' : 'pointer',
+                        fontSize: '14px'
+                      }}
+                      title={`Download all API communications (${apiCommunications.length} calls)`}
+                    >
+                      📥 Download JSON ({apiCommunications.length})
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
             <div style={{ fontSize: '14px', color: '#333' }}>
               <div><strong>Thread ID:</strong> {threadId || 'Not started'}</div>
@@ -2896,10 +3151,191 @@ export default function TestPluginsPage() {
             </div>
           </div>
 
-          {/* Initial Prompt Input */}
+          {/* Thread Mode Selection - Toggle between New and Existing */}
           {!threadId && (
-            <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
-              <h2>Start New Thread</h2>
+            <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #6c757d', borderRadius: '5px', backgroundColor: '#f8f9fa' }}>
+              {/* Mode Toggle */}
+              <div style={{ display: 'flex', gap: '0', marginBottom: '20px' }}>
+                <button
+                  onClick={() => setThreadMode('new')}
+                  style={{
+                    flex: 1,
+                    padding: '12px 20px',
+                    backgroundColor: threadMode === 'new' ? '#007bff' : '#e9ecef',
+                    color: threadMode === 'new' ? 'white' : '#495057',
+                    border: '1px solid #6c757d',
+                    borderRadius: '5px 0 0 5px',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    fontWeight: threadMode === 'new' ? 'bold' : 'normal',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  ➕ Start New Thread
+                </button>
+                <button
+                  onClick={() => {
+                    setThreadMode('existing');
+                    // Auto-load threads when switching to existing mode
+                    if (userId && recentThreads.length === 0) {
+                      loadRecentThreads();
+                    }
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '12px 20px',
+                    backgroundColor: threadMode === 'existing' ? '#17a2b8' : '#e9ecef',
+                    color: threadMode === 'existing' ? 'white' : '#495057',
+                    border: '1px solid #6c757d',
+                    borderRadius: '0 5px 5px 0',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    fontWeight: threadMode === 'existing' ? 'bold' : 'normal',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  📂 Load Existing Thread
+                </button>
+              </div>
+
+              {/* Existing Thread Mode - Dropdown */}
+              {threadMode === 'existing' && (
+                <div style={{ padding: '15px', backgroundColor: '#e7f5ff', borderRadius: '5px', border: '1px solid #17a2b8' }}>
+                  {!userId ? (
+                    <div style={{ padding: '10px', backgroundColor: '#fff3cd', borderRadius: '3px' }}>
+                      ⚠️ Enter a User ID above to load recent threads
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', marginBottom: '15px' }}>
+                        <div style={{ flex: 1 }}>
+                          <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                            Select Thread:
+                          </label>
+                          <select
+                            value={selectedThreadId}
+                            onChange={(e) => setSelectedThreadId(e.target.value)}
+                            style={{
+                              width: '100%',
+                              padding: '10px',
+                              fontSize: '14px',
+                              border: '1px solid #ccc',
+                              borderRadius: '3px',
+                              backgroundColor: 'white'
+                            }}
+                          >
+                            <option value="">-- Select a thread --</option>
+                            {recentThreads.map((thread) => {
+                              const createdAt = new Date(thread.created_at);
+                              const dateStr = createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                              // Use top-level user_prompt column, fallback to metadata for older rows
+                              const userPrompt = thread.user_prompt || thread.metadata?.user_prompt || '';
+                              const promptPreview = userPrompt
+                                ? userPrompt.substring(0, 60) + (userPrompt.length > 60 ? '...' : '')
+                                : 'No prompt';
+                              const shortId = thread.id.substring(0, 8);
+                              const isExpired = new Date(thread.expires_at) < new Date();
+                              return (
+                                <option
+                                  key={thread.id}
+                                  value={thread.openai_thread_id}
+                                  style={{ color: isExpired ? '#dc3545' : '#28a745' }}
+                                >
+                                  {isExpired ? '⏰ ' : '✅ '}{dateStr} | P{thread.current_phase} | {thread.status} | {shortId} | {promptPreview}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </div>
+                        <button
+                          onClick={loadRecentThreads}
+                          disabled={isLoadingRecentThreads}
+                          style={{
+                            padding: '10px 16px',
+                            backgroundColor: '#17a2b8',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '3px',
+                            cursor: isLoadingRecentThreads ? 'not-allowed' : 'pointer',
+                            fontSize: '14px',
+                            whiteSpace: 'nowrap'
+                          }}
+                          title="Refresh thread list"
+                        >
+                          {isLoadingRecentThreads ? '...' : '🔄'}
+                        </button>
+                        <button
+                          onClick={() => selectedThreadId && loadThread(selectedThreadId)}
+                          disabled={!selectedThreadId || isLoadingThread}
+                          style={{
+                            padding: '10px 20px',
+                            backgroundColor: !selectedThreadId ? '#ccc' : '#28a745',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '3px',
+                            cursor: !selectedThreadId ? 'not-allowed' : 'pointer',
+                            fontSize: '14px',
+                            fontWeight: 'bold',
+                            whiteSpace: 'nowrap'
+                          }}
+                        >
+                          {isLoadingThread ? 'Loading...' : 'Load Thread'}
+                        </button>
+                      </div>
+
+                      {/* Selected Thread Details Preview */}
+                      {selectedThreadId && (() => {
+                        const thread = recentThreads.find(t => t.openai_thread_id === selectedThreadId);
+                        if (!thread) return null;
+                        return (
+                          <div style={{ padding: '10px', backgroundColor: 'white', borderRadius: '3px', border: '1px solid #ddd' }}>
+                            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '8px' }}>
+                              <span style={{
+                                padding: '2px 8px',
+                                borderRadius: '3px',
+                                fontSize: '12px',
+                                fontWeight: 'bold',
+                                backgroundColor: thread.current_phase === 4 ? '#28a745' : thread.current_phase === 3 ? '#ffc107' : '#007bff',
+                                color: thread.current_phase === 3 ? '#000' : 'white'
+                              }}>
+                                Phase {thread.current_phase}
+                              </span>
+                              <span style={{
+                                padding: '2px 8px',
+                                borderRadius: '3px',
+                                fontSize: '12px',
+                                backgroundColor: thread.status === 'completed' ? '#d4edda' : thread.status === 'active' ? '#cce5ff' : '#f8d7da',
+                                color: thread.status === 'completed' ? '#155724' : thread.status === 'active' ? '#004085' : '#721c24'
+                              }}>
+                                {thread.status}
+                              </span>
+                              <span style={{ fontSize: '12px', color: '#666' }}>
+                                {thread.ai_provider} / {thread.ai_model}
+                              </span>
+                              <span style={{ fontSize: '12px', color: '#888' }}>
+                                {getTimeAgo(new Date(thread.created_at))}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: '14px', color: '#333' }}>
+                              <strong>Prompt:</strong> {thread.metadata?.user_prompt || 'No prompt saved'}
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {recentThreads.length === 0 && !isLoadingRecentThreads && (
+                        <div style={{ padding: '15px', textAlign: 'center', color: '#666', backgroundColor: 'white', borderRadius: '3px' }}>
+                          No recent threads found. Click 🔄 to refresh or start a new thread.
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* New Thread Mode - Provider/Model/Prompt */}
+              {threadMode === 'new' && (
+                <div style={{ padding: '15px', backgroundColor: '#e7f3ff', borderRadius: '5px', border: '1px solid #007bff' }}>
 
               {/* Provider and Model Selection */}
               <div style={{ marginBottom: '15px', display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
@@ -2994,6 +3430,8 @@ export default function TestPluginsPage() {
               >
                 {isLoading ? 'Starting...' : 'Start Thread'}
               </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -4601,15 +5039,18 @@ export default function TestPluginsPage() {
       {/* Debug Logs */}
       <div style={{ padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
         <h2>Debug Logs</h2>
-        <div style={{ 
-          backgroundColor: '#f8f9fa', 
-          padding: '15px', 
-          borderRadius: '3px', 
-          height: '300px',
-          overflow: 'auto',
-          fontSize: '12px',
-          fontFamily: 'monospace'
-        }}>
+        <div
+          ref={debugLogsRef}
+          style={{
+            backgroundColor: '#f8f9fa',
+            padding: '15px',
+            borderRadius: '3px',
+            height: '300px',
+            overflow: 'auto',
+            fontSize: '12px',
+            fontFamily: 'monospace'
+          }}
+        >
           {debugLogs.length === 0 ? (
             <div style={{ color: '#666' }}>No debug logs yet...</div>
           ) : (
