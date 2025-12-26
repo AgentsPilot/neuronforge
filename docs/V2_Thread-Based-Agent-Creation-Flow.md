@@ -35,7 +35,7 @@ This diagram shows the complete user journey through the V2 agent creation page 
 │    │                                                                │
 │    ├─► POST /api/agent-creation/init-thread                         │
 │    │   • Creates OpenAI thread                                      │
-│    │   • Injects system prompt (Workflow-Agent-Creation-Prompt-v13) │
+│    │   • Injects system prompt (Workflow-Agent-Creation-Prompt-v14) │
 │    │   • Stores in agent_prompt_threads table                       │
 │    │   • Returns: { thread_id: "thread_abc123" }                    │
 │    │                                                                │
@@ -466,7 +466,8 @@ API Calls: init-thread + process-message × 3 + generate-agent-v4 + create-agent
 │    last_updated: "...",                     │
 │    iterations: [...],  ← Full audit trail   │
 │    phase1_connected_services: [...],        │
-│    phase1_available_services: [...]         │
+│    phase1_available_services: [...],        │
+│    last_phase3_response: {...}  ← v14 cache │
 │  }                                          │
 │                                             │
 └─────────────────────────────────────────────┘
@@ -707,7 +708,7 @@ Phase3ResponseSchema = {
 - **Phase 3 Schema:** [lib/validation/phase3-schema.ts](../lib/validation/phase3-schema.ts)
 - **Phase 4 Schema:** [lib/validation/phase4-schema.ts](../lib/validation/phase4-schema.ts)
 - **TypeScript Types:** [components/agent-creation/types/agent-prompt-threads.ts](../components/agent-creation/types/agent-prompt-threads.ts)
-- **LLM Prompt:** [app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v13-chatgpt.txt](../app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v13-chatgpt.txt)
+- **LLM Prompt:** [app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v14-chatgpt.txt](../app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v14-chatgpt.txt)
 
 ### Testing Validation
 
@@ -1209,20 +1210,75 @@ The generator uses `PluginManagerV2.getPluginsDefinitionContext()` and `toLongLL
 
 **File:** `lib/validation/phase4-schema.ts`
 
-Phase 4 responses are strictly validated:
+Phase 4 responses are strictly validated using a **two-step process** (v14):
 
 ```typescript
+// v14: Two-schema approach
+Phase4LLMResponseSchema     // What LLM returns (slim, Phase 4 fields only)
+Phase4ResponseSchema        // Complete response (merged with Phase 3 cache)
+
 // Validated schemas
 TechnicalWorkflowStepSchema  // Union of operation, transform, control
 TechnicalInputRequiredSchema
 FeasibilitySchema
 Phase4MetadataSchema
-Phase4ResponseSchema
+Phase3CachedDataSchema       // v14: Cached Phase 3 fields
 
 // Helper functions
-validatePhase4Response(response)      // Returns { success, data, error }
+validatePhase4LLMResponse(response)   // v14: Validates slim LLM response
+validatePhase4Response(response)      // Validates complete merged response
+mergePhase4WithPhase3(llm, cache)     // v14: Merges LLM + cached Phase 3 data
 isPhase4ReadyForGeneration(response)  // Checks metadata.ready_for_generation
 ```
+
+### Phase 4 v14: Reduced Output & Merge Logic
+
+Starting with v14, the LLM returns a **slim Phase 4 response** that excludes Phase 3 fields (analysis, enhanced_prompt, requiredServices, etc.). These are instead cached after Phase 3 and merged on the backend.
+
+**Why?** Token optimization - Phase 3 fields are already computed and don't need to be regenerated.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Phase 3 Completes → Cache Data in Thread Metadata                  │
+│  ─────────────────────────────────────────────────────────────────  │
+│  thread.metadata.last_phase3_response = {                           │
+│    analysis: {...},                                                 │
+│    requiredServices: ["google-mail", "slack"],                      │
+│    missingPlugins: [],                                              │
+│    pluginWarning: {},                                               │
+│    clarityScore: 95,                                                │
+│    enhanced_prompt: {...}                                           │
+│  }                                                                  │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  Phase 4 LLM Response (Slim - v14)                                  │
+│  ─────────────────────────────────────────────────────────────────  │
+│  {                                                                  │
+│    // Phase 4 specific fields only                                  │
+│    technical_workflow: [...],                                       │
+│    technical_inputs_required: [...],                                │
+│    feasibility: {...},                                              │
+│    metadata: { ready_for_generation: true, phase4: {...} },         │
+│    conversationalSummary: "..."                                     │
+│    // NO analysis, enhanced_prompt, requiredServices, etc.          │
+│  }                                                                  │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  Backend Merge (process-message route)                              │
+│  ─────────────────────────────────────────────────────────────────  │
+│  1. Validate LLM response with Phase4LLMResponseSchema              │
+│  2. Retrieve cached Phase 3 data from thread.metadata               │
+│  3. Merge: mergePhase4WithPhase3(llmResponse, phase3Cache)          │
+│  4. Validate merged result with Phase4ResponseSchema                │
+│  5. Return complete response to frontend                            │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Implementation:** `app/api/agent-creation/process-message/route.ts` (lines 610-691)
 
 ---
 
@@ -1305,7 +1361,7 @@ metadata: {
 | [lib/utils/schema-services-generator.ts](../lib/utils/schema-services-generator.ts) | Generate schema_services from services_involved |
 | [app/api/agent-creation/process-message/route.ts](../app/api/agent-creation/process-message/route.ts) | Phase 4 backend handling (lines 337-396) |
 | [components/agent-creation/types/agent-prompt-threads.ts](../components/agent-creation/types/agent-prompt-threads.ts) | TypeScript types |
-| [app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v13-chatgpt.txt](../app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v13-chatgpt.txt) | LLM prompt with Phase 4 instructions |
+| [app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v14-chatgpt.txt](../app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v14-chatgpt.txt) | LLM prompt with Phase 4 instructions |
 
 ---
 
@@ -1557,11 +1613,12 @@ if (thread_id) {
 
 ---
 
-**Document Version**: 5.0
-**Last Updated**: 2025-12-23 (Updated for v2/agents/new flow, removed useConversationalBuilder references)
+**Document Version**: 6.0
+**Last Updated**: 2025-12-25 (Updated for v14 prompt, Phase 4 reduced output & merge logic)
 **Author**: Development Team
 
 ### Changelog
+- **v6.0** (2025-12-25): Updated for v14 prompt, added Phase 4 reduced output & merge logic documentation, added `last_phase3_response` to thread metadata
 - **v5.0** (2025-12-23): Rewrote for `app/v2/agents/new/page.tsx` flow, updated all code references, added Phase 4 NOT WIRED note
 - **v4.0** (2025-12-12): Added Phase 4: Technical Workflow Generation
 - **v3.0** (2025-12-05): Added V10/V11 enhancements (mini-cycle, edit flow, iterations audit trail)

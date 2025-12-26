@@ -30,6 +30,11 @@ import {
 
 import { StepPlan, StepPlanExtractor } from './core/step-plan-extractor';
 import { DSLBuilder, TechnicalWorkflowBuildInput } from './core/dsl-builder';
+import {
+  Phase4DSLBuilder,
+  Phase4Response,
+  Phase4DSLBuilderResult,
+} from './core/phase4-dsl-builder';
 
 /**
  * Input structure for technical workflow (moved from adapter)
@@ -52,7 +57,8 @@ export interface TechnicalWorkflowInput {
 const logger = createLogger({ module: 'AgentKit', service: 'V5WorkflowGenerator' });
 
 // Prompt template file names for technical workflow reviewer
-const TECHNICAL_REVIEWER_SYSTEM_PROMPT = 'Workflow-Agent-Technical-Reviewer-SystemPrompt-v2';
+//const TECHNICAL_REVIEWER_SYSTEM_PROMPT = 'Workflow-Agent-Technical-Reviewer-SystemPrompt-v2';
+const TECHNICAL_REVIEWER_SYSTEM_PROMPT = 'Workflow-Agent-Technical-Reviewer-SystemPrompt-v3';
 const TECHNICAL_REVIEWER_USER_PROMPT = 'Workflow-Agent-Technical-Reviewer-UserPrompt-v1';
 
 // Re-export types from schema for backwards compatibility
@@ -134,6 +140,7 @@ export class V5WorkflowGenerator {
   private pluginManager: PluginManagerV2;
   private stepPlanExtractor: StepPlanExtractor;
   private dslBuilder: DSLBuilder;
+  private phase4DslBuilder: Phase4DSLBuilder;
 
   constructor(pluginManager: PluginManagerV2, options?: V5GeneratorOptions) {
     this.pluginManager = pluginManager;
@@ -146,11 +153,14 @@ export class V5WorkflowGenerator {
       aiAnalytics: options?.aiAnalytics,
     });
 
-    // Stage 2: DSL Builder (Deterministic)
+    // Stage 2: DSL Builder (Deterministic) - legacy path
     this.dslBuilder = new DSLBuilder(
       pluginManager,
       options?.connectedPlugins || []
     );
+
+    // Phase4 DSL Builder - new deterministic converter for technical workflow
+    this.phase4DslBuilder = new Phase4DSLBuilder();
   }
 
   /**
@@ -216,35 +226,77 @@ export class V5WorkflowGenerator {
           };
         }
 
-        // DIRECT PATH: Build DSL directly from technical workflow (no adapter needed)
-        logger.info('Building DSL directly from technical workflow (bypassing adapter)');
+        // DIRECT PATH: Build DSL directly from technical workflow using Phase4DSLBuilder
+        logger.info('Building DSL directly from technical workflow (using Phase4DSLBuilder)');
 
-        const technicalInput: TechnicalWorkflowBuildInput = {
+        // Convert reviewer feasibility (strings) to Phase4Response format (objects)
+        const convertedFeasibility = reviewedWorkflow.feasibility ? {
+          can_execute: reviewedWorkflow.feasibility.can_execute,
+          blocking_issues: reviewedWorkflow.feasibility.blocking_issues?.map(s => ({
+            type: 'reviewer',
+            description: s,
+          })),
+          warnings: reviewedWorkflow.feasibility.warnings?.map(s => ({
+            type: 'reviewer',
+            description: s,
+          })),
+        } : undefined;
+
+        const phase4Input: Phase4Response = {
           technical_workflow: reviewedWorkflow.technical_workflow,
           enhanced_prompt: reviewedWorkflow.enhanced_prompt,
-          analysis: reviewedWorkflow.analysis,
+          feasibility: convertedFeasibility,
+          technical_inputs_required: [],
         };
 
-        const dslResult = await this.dslBuilder.buildFromTechnicalWorkflow(technicalInput);
+        const dslResult: Phase4DSLBuilderResult = this.phase4DslBuilder.build(phase4Input);
 
-        if (!dslResult.success) {
+        // Log conversion stats and warnings
+        logger.info({
+          success: dslResult.success,
+          stats: dslResult.stats,
+          warningsCount: dslResult.warnings.length,
+          errorsCount: dslResult.errors.length,
+        }, 'Phase4DSLBuilder conversion complete');
+
+        if (dslResult.warnings.length > 0) {
+          logger.warn({
+            warnings: dslResult.warnings.map(w => ({
+              stepId: w.stepId,
+              type: w.type,
+              message: w.message,
+            })),
+          }, 'Phase4DSLBuilder conversion warnings');
+        }
+
+        if (!dslResult.success || !dslResult.workflow) {
+          logger.error({
+            errors: dslResult.errors,
+          }, 'Phase4DSLBuilder conversion failed');
+
           return {
             success: false,
-            errors: dslResult.errors,
-            warnings: dslResult.warnings,
+            errors: dslResult.errors.map(e => `[${e.stepId}] ${e.message}`),
+            warnings: dslResult.warnings.map(w => `[${w.stepId}] ${w.message}`),
           };
         }
 
         logger.info({
-          workflowStepsCount: dslResult.workflow?.workflow_steps?.length,
-          pluginsUsed: dslResult.workflow?.suggested_plugins,
-        }, 'DSL built directly from technical workflow');
+          agentName: dslResult.workflow.agent_name,
+          workflowType: dslResult.workflow.workflow_type,
+          workflowStepsCount: dslResult.workflow.workflow_steps?.length,
+          stepTypes: dslResult.workflow.workflow_steps?.map(s => s.type),
+          pluginsUsed: dslResult.workflow.suggested_plugins,
+          requiredInputsCount: dslResult.workflow.required_inputs?.length,
+          confidence: dslResult.workflow.confidence,
+          conversionStats: dslResult.stats,
+        }, 'Phase4DSLBuilder: PILOT_DSL_SCHEMA generated');
 
         // Return directly - no need for Stage 2 buildDSL
         return {
           success: true,
           workflow: dslResult.workflow,
-          warnings: dslResult.warnings,
+          warnings: dslResult.warnings.map(w => `[${w.stepId}] ${w.message}`),
           technicalWorkflowUsed: true,
           tokensUsed,
           cost,

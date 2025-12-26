@@ -10,7 +10,8 @@ import { createLogger } from '@/lib/logger';
 import type {
   AgentPromptThread,
   CreateAgentPromptThread,
-  UpdateAgentPromptThread
+  UpdateAgentPromptThread,
+  ThreadStatus
 } from '@/components/agent-creation/types/agent-prompt-threads';
 
 const logger = createLogger({ module: 'Repository', component: 'AgentPromptThreadRepository' });
@@ -160,6 +161,66 @@ export class AgentPromptThreadRepository {
       if (error instanceof RepositoryError) throw error;
       repoLogger.error({ err: error, duration }, 'Unexpected error fetching thread by ID');
       throw new RepositoryError('Unexpected error fetching thread by ID', error);
+    }
+  }
+
+  /**
+   * Get recent threads for a user
+   * @param userId - User ID to fetch threads for
+   * @param limit - Maximum number of threads to return (default 10)
+   * @param statusFilter - Optional array of statuses to filter by (default: all statuses)
+   */
+  async getRecentThreadsByUser(
+    userId: string,
+    limit: number = 10,
+    statusFilter?: ThreadStatus[]
+  ): Promise<AgentPromptThread[]> {
+    const startTime = Date.now();
+    const repoLogger = logger.child({
+      operation: 'getRecentThreadsByUser',
+      userId,
+      limit,
+      statusFilter
+    });
+
+    repoLogger.debug('Fetching recent threads for user');
+
+    try {
+      let query = this.supabase
+        .from(this.tableName)
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      // Apply status filter if provided
+      if (statusFilter && statusFilter.length > 0) {
+        query = query.in('status', statusFilter);
+      }
+
+      const { data: records, error } = await query;
+
+      const duration = Date.now() - startTime;
+
+      if (error) {
+        repoLogger.error({ err: error, duration }, 'Failed to fetch recent threads');
+        throw new RepositoryError('Failed to fetch recent threads', error);
+      }
+
+      repoLogger.info(
+        {
+          count: records?.length || 0,
+          duration
+        },
+        'Recent threads fetched'
+      );
+
+      return (records || []) as AgentPromptThread[];
+    } catch (error: any) {
+      const duration = Date.now() - startTime;
+      if (error instanceof RepositoryError) throw error;
+      repoLogger.error({ err: error, duration }, 'Unexpected error fetching recent threads');
+      throw new RepositoryError('Unexpected error fetching recent threads', error);
     }
   }
 

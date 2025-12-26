@@ -16,7 +16,12 @@ import type {
   UserContext
 } from '@/components/agent-creation/types/agent-prompt-threads';
 import { validatePhase3Response } from '@/lib/validation/phase3-schema';
-import { validatePhase4Response } from '@/lib/validation/phase4-schema';
+import {
+  validatePhase4Response,
+  validatePhase4LLMResponse,
+  mergePhase4WithPhase3,
+  type Phase3CachedData
+} from '@/lib/validation/phase4-schema';
 import { generateSchemaServices, getSchemaServicesSummary } from '@/lib/utils/schema-services-generator';
 import { ProviderFactory } from '@/lib/ai/providerFactory';
 import { validateContextUsage } from '@/lib/ai/context-limits';
@@ -603,8 +608,9 @@ export async function POST(request: NextRequest) {
         requestLogger.debug('Phase 3 response validated successfully');
         aiResponse = validation.data as ProcessMessageResponse;
       } else if (phase === 4) {
-        // Strict validation for Phase 4 responses
-        requestLogger.debug('Validating Phase 4 response structure');
+        // v14: Two-step validation for Phase 4 responses
+        // Step 1: Validate the slim LLM response (Phase 4 only fields)
+        requestLogger.debug('Validating Phase 4 LLM response structure (v14 slim format)');
 
         // Log raw Phase 4 response before validation for debugging
         requestLogger.debug({
@@ -613,28 +619,76 @@ export async function POST(request: NextRequest) {
           hasPhase4Metadata: !!parsedJson.metadata?.phase4,
           technicalWorkflowCount: parsedJson.technical_workflow?.length || 0,
           technicalInputsCount: parsedJson.technical_inputs_required?.length || 0
-        }, 'Phase 4 raw response before validation');
+        }, 'Phase 4 raw LLM response before validation');
 
-        const validation = validatePhase4Response(parsedJson);
+        const llmValidation = validatePhase4LLMResponse(parsedJson);
 
-        if (!validation.success) {
+        if (!llmValidation.success) {
           requestLogger.error({
-            validationErrors: validation.errors,
+            validationErrors: llmValidation.errors,
             phase
-          }, 'Phase 4 response validation failed');
+          }, 'Phase 4 LLM response validation failed');
           return NextResponse.json(
             {
               success: false,
-              error: 'Invalid Phase 4 response structure from AI',
+              error: 'Invalid Phase 4 LLM response structure from AI',
               phase,
-              details: validation.errors?.join('; ') || 'Unknown validation error'
+              details: llmValidation.errors?.join('; ') || 'Unknown validation error'
             } as ThreadErrorResponse,
             { status: 500 }
           );
         }
 
-        requestLogger.debug('Phase 4 response validated successfully');
-        aiResponse = validation.data as ProcessMessageResponse;
+        requestLogger.debug('Phase 4 LLM response validated successfully');
+
+        // Step 2: Retrieve cached Phase 3 data from thread metadata
+        const phase3CachedData = threadRecord.metadata?.last_phase3_response as Phase3CachedData | undefined;
+
+        if (!phase3CachedData) {
+          requestLogger.error({ threadId: thread_id }, 'Phase 3 cached data not found in thread metadata');
+          return NextResponse.json(
+            {
+              success: false,
+              error: 'Phase 3 data not found',
+              phase,
+              details: 'Phase 4 requires Phase 3 to complete first. Please run Phase 3 before Phase 4.'
+            } as ThreadErrorResponse,
+            { status: 400 }
+          );
+        }
+
+        requestLogger.debug({
+          hasAnalysis: !!phase3CachedData.analysis,
+          requiredServicesCount: phase3CachedData.requiredServices?.length || 0,
+          missingPluginsCount: phase3CachedData.missingPlugins?.length || 0,
+          clarityScore: phase3CachedData.clarityScore,
+          hasEnhancedPrompt: !!phase3CachedData.enhanced_prompt
+        }, 'Phase 3 cached data retrieved for merge');
+
+        // Step 3: Merge Phase 4 LLM response with Phase 3 cached data
+        const mergedResponse = mergePhase4WithPhase3(llmValidation.data!, phase3CachedData);
+
+        // Step 4: Validate the merged response
+        const mergedValidation = validatePhase4Response(mergedResponse);
+
+        if (!mergedValidation.success) {
+          requestLogger.error({
+            validationErrors: mergedValidation.errors,
+            phase
+          }, 'Phase 4 merged response validation failed');
+          return NextResponse.json(
+            {
+              success: false,
+              error: 'Invalid Phase 4 merged response structure',
+              phase,
+              details: mergedValidation.errors?.join('; ') || 'Unknown validation error'
+            } as ThreadErrorResponse,
+            { status: 500 }
+          );
+        }
+
+        requestLogger.debug('Phase 4 merged response validated successfully');
+        aiResponse = mergedValidation.data as ProcessMessageResponse;
       } else {
         // Phase 1 & 2: No strict validation yet
         aiResponse = parsedJson;
@@ -655,7 +709,7 @@ export async function POST(request: NextRequest) {
         }, 'Phase 1 - Connected plugins added to response');
       }
 
-      // Step 12.6: Log Phase 3 OAuth gate details
+      // Step 12.6: Log Phase 3 OAuth gate details and cache for Phase 4
       if (phase === 3) {
         requestLogger.info({
           requiredServices: aiResponse.requiredServices,
@@ -664,6 +718,18 @@ export async function POST(request: NextRequest) {
           declinedPluginsBlocking: aiResponse.metadata?.declined_plugins_blocking,
           hasError: !!aiResponse.error
         }, 'Phase 3 - OAuth gate check complete');
+
+        // Cache Phase 3 data for Phase 4 merge (v14 requirement)
+        // This will be stored in thread metadata for use when Phase 4 completes
+        (aiResponse as any)._phase3CacheData = {
+          analysis: aiResponse.analysis,
+          requiredServices: aiResponse.requiredServices,
+          missingPlugins: aiResponse.missingPlugins,
+          pluginWarning: aiResponse.pluginWarning || {},
+          clarityScore: aiResponse.clarityScore,
+          enhanced_prompt: aiResponse.enhanced_prompt,
+        };
+        requestLogger.debug('Phase 3 - Cached response data for Phase 4 merge');
       }
 
       // Step 12.7: Log Phase 4 technical workflow details
@@ -716,6 +782,10 @@ export async function POST(request: NextRequest) {
       ...(phase === 1 && {
         phase1_connected_services: user_connected_services,
         phase1_available_services: user_available_services
+      }),
+      // Store Phase 3 cached data for Phase 4 merge (v14 requirement)
+      ...(phase === 3 && (aiResponse as any)._phase3CacheData && {
+        last_phase3_response: (aiResponse as any)._phase3CacheData
       })
     };
 

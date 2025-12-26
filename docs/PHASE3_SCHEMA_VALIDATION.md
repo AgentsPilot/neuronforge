@@ -533,6 +533,66 @@ Check backend logs for:
 
 ---
 
+## Phase 3 Caching for Phase 4 (v14)
+
+Starting with v14, Phase 3 data is **cached** in thread metadata after validation for use by Phase 4. This enables token optimization - Phase 4 returns only Phase 4-specific fields, and the cached Phase 3 data is merged on the backend.
+
+### Cached Fields
+
+The following Phase 3 fields are cached in `thread.metadata.last_phase3_response`:
+
+```typescript
+interface LastPhase3Response {
+  analysis: AnalysisObject;
+  requiredServices: string[];
+  missingPlugins: string[];
+  pluginWarning: Record<string, string>;
+  clarityScore: number;
+  enhanced_prompt: EnhancedPrompt;
+}
+```
+
+### Implementation
+
+**File:** [app/api/agent-creation/process-message/route.ts](../app/api/agent-creation/process-message/route.ts)
+
+After Phase 3 validation succeeds, the data is cached:
+
+```typescript
+// Cache Phase 3 data for Phase 4 merge (v14 requirement)
+if (phase === 3) {
+  (aiResponse as any)._phase3CacheData = {
+    analysis: aiResponse.analysis,
+    requiredServices: aiResponse.requiredServices,
+    missingPlugins: aiResponse.missingPlugins,
+    pluginWarning: aiResponse.pluginWarning || {},
+    clarityScore: aiResponse.clarityScore,
+    enhanced_prompt: aiResponse.enhanced_prompt,
+  };
+}
+
+// Stored in thread metadata
+const updatedMetadata = {
+  ...threadRecord.metadata,
+  ...(phase === 3 && {
+    last_phase3_response: (aiResponse as any)._phase3CacheData
+  })
+};
+```
+
+### Usage in Phase 4
+
+When Phase 4 runs, it retrieves the cached data and merges it with the LLM response:
+
+1. Validate slim LLM response with `Phase4LLMResponseSchema`
+2. Retrieve cached Phase 3 data from `thread.metadata.last_phase3_response`
+3. Merge using `mergePhase4WithPhase3()`
+4. Validate merged result with `Phase4ResponseSchema`
+
+See [Phase 4 Schema Documentation](../lib/validation/phase4-schema.ts) for details.
+
+---
+
 ## Related Documentation
 
 - **Main Flow:** [thread-based-agent-creation-flow.md](thread-based-agent-creation-flow.md)
@@ -542,11 +602,15 @@ Check backend logs for:
 
 ---
 
-**Document Version**: 1.1
+**Document Version**: 1.2
 **Created**: 2025-01-19
-**Last Updated**: 2025-01-19 (v9.1 schema adjustments)
+**Last Updated**: 2025-12-25 (v14 Phase 3 caching for Phase 4)
 **Author**: Development Team
 **Status**: Complete - Ready for Reference
+
+**v14 Changes:**
+- Added Phase 3 caching section for Phase 4 merge logic
+- Phase 3 data now cached in `thread.metadata.last_phase3_response`
 
 **v9.1 Changes:**
 - Made `analysis.trigger` and `analysis.error_handling` optional (not required by v9 prompt)

@@ -27,12 +27,26 @@ export interface AgentPromptThread {
   metadata: ThreadMetadata;
 }
 
+/**
+ * Cached Phase 3 response data for merging with Phase 4
+ * These fields are saved after Phase 3 completes and used to construct the complete Phase 4 response
+ */
+export interface LastPhase3Response {
+  analysis: AnalysisObject;
+  requiredServices: string[];
+  missingPlugins: string[];
+  pluginWarning: Record<string, string>;
+  clarityScore: number;
+  enhanced_prompt: EnhancedPrompt;
+}
+
 export interface ThreadMetadata {
   user_prompt?: string;
   analysis?: AnalysisObject;
   connected_services?: string[]; // Simple array of plugin keys
   clarification_answers?: Record<string, any>;
   user_context?: UserContext;
+  last_phase3_response?: LastPhase3Response; // Cached Phase 3 data for Phase 4 merge
   [key: string]: any; // Allow additional metadata
 }
 
@@ -300,17 +314,39 @@ export interface OperationStep {
 }
 
 /**
+ * Deterministic transform types (no LLM required)
+ */
+export const DeterministicTransformTypes = [
+  'filter', 'map', 'sort', 'group_by', 'aggregate', 'reduce',
+  'deduplicate', 'flatten', 'pick_fields', 'format', 'merge', 'split', 'convert',
+] as const;
+
+/**
+ * LLM-assisted transform types (requires AI processing)
+ */
+export const LLMAssistedTransformTypes = [
+  'summarize_with_llm', 'classify_with_llm', 'extract_with_llm',
+  'analyze_with_llm', 'generate_with_llm', 'translate_with_llm', 'enrich_with_llm',
+] as const;
+
+/**
+ * All allowed transform types
+ */
+export type DeterministicTransformType = typeof DeterministicTransformTypes[number];
+export type LLMAssistedTransformType = typeof LLMAssistedTransformTypes[number];
+export type TransformType = DeterministicTransformType | LLMAssistedTransformType;
+
+/**
  * Transform step - data transformation (e.g., LLM processing, filtering)
- * The v11 prompt uses the same structure as operation steps for transforms
- * (with plugin/action fields to identify the transform type)
+ * v14: Transform steps MUST include a top-level `type` field from the allowed transform types
  */
 export interface TransformStep {
   id: string;
   kind: 'transform';
+  type: TransformType;  // v14: Required - must be one of the allowed transform types
   description: string;
   plugin?: string;    // Optional - used when transform is a plugin call (e.g., chatgpt-research)
   action?: string;    // Optional - used when transform is a plugin call
-  operation?: { type: string };  // Optional - for generic transforms
   inputs?: Record<string, StepInput>;
   outputs?: Record<string, string>;
 }

@@ -14,14 +14,6 @@ export const BlockingGapSchema = z.object({
 });
 
 /**
- * Warning identified by the reviewer (non-blocking)
- */
-export const ReviewerWarningSchema = z.object({
-  type: z.string().min(1),
-  details: z.string().min(1),
-});
-
-/**
  * Step change made by the reviewer during repair
  */
 export const StepChangeSchema = z.object({
@@ -37,14 +29,13 @@ export const StepChangeSchema = z.object({
 export const ReviewerSummarySchema = z.object({
   status: z.enum(['approved', 'repaired', 'blocked']),
   blocking_gaps: z.array(BlockingGapSchema).optional(),
-  warnings: z.array(ReviewerWarningSchema).optional(),
+  warnings: z.array(z.string()).optional(),
   step_changes: z.array(StepChangeSchema).optional(),
 });
 
 /**
  * Feasibility assessment from the technical reviewer
- * Note: This is different from Phase4's FeasibilitySchema which uses objects for issues/warnings
- * The reviewer uses simpler string arrays
+ * Uses simple string arrays for blocking_issues and warnings
  */
 export const TechnicalReviewerFeasibilitySchema = z.object({
   can_execute: z.boolean(),
@@ -64,7 +55,6 @@ export const TechnicalReviewerResponseSchema = z.object({
 // ===== TYPE EXPORTS =====
 
 export type BlockingGap = z.infer<typeof BlockingGapSchema>;
-export type ReviewerWarning = z.infer<typeof ReviewerWarningSchema>;
 export type StepChange = z.infer<typeof StepChangeSchema>;
 export type ReviewerSummary = z.infer<typeof ReviewerSummarySchema>;
 export type TechnicalReviewerFeasibility = z.infer<typeof TechnicalReviewerFeasibilitySchema>;

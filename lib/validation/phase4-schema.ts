@@ -8,6 +8,97 @@ import {
 // ===== PHASE 4 SPECIFIC SCHEMAS =====
 
 /**
+ * Deterministic transform types (no LLM required)
+ * These transforms can be executed without calling an AI model
+ */
+export const DeterministicTransformTypes = [
+  'filter',       // keep/remove items based on a boolean condition
+  'map',          // reshape items and/or compute derived fields per item
+  'sort',         // order items by one or more keys
+  'group_by',     // bucket items into groups by a key
+  'aggregate',    // compute metrics (count/sum/min/max/avg) over items or per group
+  'reduce',       // fold a list into a single value using a deterministic rule
+  'deduplicate',  // remove duplicates by one or more keys
+  'flatten',      // convert nested structures into a flatter structure
+  'pick_fields',  // select a subset of fields from objects
+  'format',       // render data into a string or HTML/markdown structure
+  'merge',        // combine two objects/arrays using a deterministic precedence rule
+  'split',        // break a string/list into parts or partition items into named buckets
+  'convert',      // coerce types (string→number/date/bool), normalize nulls, standardize formats
+] as const;
+
+/**
+ * LLM-assisted transform types (requires AI processing)
+ * These transforms require an LLM-capable service in requiredServices
+ */
+export const LLMAssistedTransformTypes = [
+  'summarize_with_llm',   // produce a concise summary from text
+  'classify_with_llm',    // assign labels/categories to text items
+  'extract_with_llm',     // extract structured fields from unstructured text
+  'analyze_with_llm',     // produce analysis/insights from text or mixed inputs
+  'generate_with_llm',    // generate new text content from inputs/instructions
+  'translate_with_llm',   // translate text between languages
+  'enrich_with_llm',      // add inferred attributes/metadata to items using text understanding
+] as const;
+
+/**
+ * All allowed transform types
+ */
+export const AllTransformTypes = [...DeterministicTransformTypes, ...LLMAssistedTransformTypes] as const;
+
+/**
+ * Zod schema for transform type validation
+ */
+export const TransformTypeSchema = z.enum(AllTransformTypes as unknown as [string, ...string[]]);
+
+/**
+ * Type for deterministic transforms
+ */
+export type DeterministicTransformType = typeof DeterministicTransformTypes[number];
+
+/**
+ * Type for LLM-assisted transforms
+ */
+export type LLMAssistedTransformType = typeof LLMAssistedTransformTypes[number];
+
+/**
+ * Type for all transform types
+ */
+export type TransformType = typeof AllTransformTypes[number];
+
+/**
+ * Check if a transform type requires LLM
+ */
+export function isLLMAssistedTransform(type: string): boolean {
+  return type.endsWith('_with_llm');
+}
+
+/**
+ * Validate LLM-assisted transform has required service
+ * Returns warning message if validation fails, undefined if valid
+ */
+export function validateLLMTransformService(
+  transformType: string,
+  requiredServices: string[]
+): string | undefined {
+  if (!isLLMAssistedTransform(transformType)) {
+    return undefined; // Not an LLM transform, no validation needed
+  }
+
+  // Check if any LLM-capable service is in requiredServices
+  const llmCapableServices = ['chatgpt-research', 'openai', 'anthropic', 'claude'];
+  const hasLLMService = requiredServices.some(service =>
+    llmCapableServices.some(llm => service.toLowerCase().includes(llm))
+  );
+
+  if (!hasLLMService) {
+    return `Transform type "${transformType}" requires an LLM-capable service in requiredServices, but none found. Available: ${requiredServices.join(', ') || 'none'}`;
+  }
+
+  return undefined;
+}
+
+/**
  * Input source types for technical workflow steps
  */
 export const InputSourceSchema = z.enum([
@@ -37,7 +128,7 @@ export const StepInputSchema = z.object({
  */
 export const BranchOutputSchema = z.object({
   type: z.string(),
-  next_step: z.string().regex(/^step\d+(_\d+)*$/, 'next_step must reference a valid step ID')
+  next_step: z.string().min(1, 'next_step must be a non-empty string')
 });
 
 /**
@@ -62,7 +153,7 @@ export const StepOutputSchema = z.record(z.string(), StepOutputValueSchema);
  * The v13 prompt defines a unified structure for all steps with mandatory routing
  */
 const BaseStepFields = {
-  id: z.string().regex(/^step\d+(_\d+)*$/, 'Step ID must be in format "stepN", "stepN_M", or "stepN_M_P" for deeply nested steps'),
+  id: z.string().min(1, 'Step ID must be a non-empty string'),
   description: z.string().min(1),
   plugin: z.string().optional(),  // Present for operation and some transform steps
   action: z.string().optional(),  // Present for operation and some transform steps
@@ -86,19 +177,16 @@ export const OperationStepSchema = z.object({
 
 /**
  * Transform step - data transformation (e.g., LLM processing, filtering)
- * The v11 prompt uses the same structure as operation steps for transforms
- * (with plugin/action fields to identify the transform type)
+ * v14: Transform steps MUST include a top-level `type` field from the allowed transform types
  */
 export const TransformStepSchema = z.object({
   ...BaseStepFields,
   kind: z.literal('transform'),
-  // Transform steps may use plugin/action (e.g., chatgpt-research.research)
-  // or operation: { type } for generic transforms
+  // v14: Required top-level type field - must be one of the allowed transform types
+  type: TransformTypeSchema,
+  // Optional plugin/action for LLM-assisted transforms that use a specific plugin
   plugin: z.string().optional(),
   action: z.string().optional(),
-  operation: z.object({
-    type: z.string().min(1),
-  }).optional(),
   inputs: z.record(z.string(), StepInputSchema).optional(),
   outputs: StepOutputSchema.optional(),
 });
@@ -143,7 +231,7 @@ export const ControlConfigSchema = z.union([
  * Base control step fields (without nested steps - used for lazy reference)
  */
 const ControlStepBaseFields = {
-  id: z.string().regex(/^step\d+(_\d+)*$/, 'Step ID must be in format "stepN", "stepN_M", or "stepN_M_P" for deeply nested steps'),
+  id: z.string().min(1, 'Step ID must be a non-empty string'),
   kind: z.literal('control'),
   description: z.string().optional(),
   control: ControlConfigSchema.optional(),
@@ -235,22 +323,54 @@ export const Phase4MetadataSchema = Phase3MetadataSchema.extend({
 });
 
 /**
- * Complete Phase 4 response schema
- * Extends Phase 3 with technical workflow fields
+ * Phase 4 LLM Response schema (v14)
+ * This is what the LLM actually returns - slim version without Phase 3 fields
+ * Phase 3 fields (analysis, requiredServices, etc.) are merged in from thread context
  */
-export const Phase4ResponseSchema = z.object({
-  // Inherited from Phase 3 structure
+export const Phase4LLMResponseSchema = z.object({
+  // Phase 4 specific fields only
+  needsClarification: z.boolean().optional(),
+  metadata: Phase4MetadataSchema,
+  technical_workflow: z.array(TechnicalWorkflowStepSchema),
+  technical_inputs_required: z.array(TechnicalInputRequiredSchema).optional().default([]),
+  feasibility: FeasibilitySchema,
+  conversationalSummary: z.string().min(1),
+  suggestions: z.array(z.string()).optional(),
+
+  // Optional error field
+  error: z.string().optional(),
+});
+
+/**
+ * Phase 3 cached data schema
+ * These fields are cached from Phase 3 and merged into Phase 4 response
+ */
+export const Phase3CachedDataSchema = z.object({
   analysis: AnalysisObjectSchema,
   requiredServices: z.array(z.string()),
   missingPlugins: z.array(z.string()),
   pluginWarning: z.record(z.string(), z.string()),
   clarityScore: z.number().min(0).max(100),
-  needsClarification: z.boolean().optional(),
   enhanced_prompt: EnhancedPromptSchema,
-  conversationalSummary: z.string().min(1),
-  suggestions: z.array(z.string()).optional(),
+});
+
+/**
+ * Complete Phase 4 response schema (merged)
+ * Includes Phase 3 cached data + Phase 4 LLM response
+ */
+export const Phase4ResponseSchema = z.object({
+  // Phase 3 cached fields (merged in from thread context)
+  analysis: AnalysisObjectSchema,
+  requiredServices: z.array(z.string()),
+  missingPlugins: z.array(z.string()),
+  pluginWarning: z.record(z.string(), z.string()),
+  clarityScore: z.number().min(0).max(100),
+  enhanced_prompt: EnhancedPromptSchema,
 
   // Phase 4 specific fields
+  needsClarification: z.boolean().optional(),
+  conversationalSummary: z.string().min(1),
+  suggestions: z.array(z.string()).optional(),
   technical_workflow: z.array(TechnicalWorkflowStepSchema),
   technical_inputs_required: z.array(TechnicalInputRequiredSchema),
   feasibility: FeasibilitySchema,
@@ -264,6 +384,8 @@ export const Phase4ResponseSchema = z.object({
  * Infer TypeScript type from Zod schema
  */
 export type ValidatedPhase4Response = z.infer<typeof Phase4ResponseSchema>;
+export type Phase4LLMResponse = z.infer<typeof Phase4LLMResponseSchema>;
+export type Phase3CachedData = z.infer<typeof Phase3CachedDataSchema>;
 export type OperationStep = z.infer<typeof OperationStepSchema>;
 export type TransformStep = z.infer<typeof TransformStepSchema>;
 export type StepInput = z.infer<typeof StepInputSchema>;
@@ -389,6 +511,80 @@ export function validatePhase4Response(data: unknown): {
   }
 
   // Format Zod errors for better debugging
+  const errors = result.error.errors.map(err => {
+    const path = err.path.join('.');
+    return `${path}: ${err.message}`;
+  });
+
+  return { success: false, errors };
+}
+
+/**
+ * Validate Phase 4 LLM response (what the LLM actually returns in v14)
+ * Does not include Phase 3 fields - those are merged separately
+ */
+export function validatePhase4LLMResponse(data: unknown): {
+  success: boolean;
+  data?: Phase4LLMResponse;
+  errors?: string[];
+} {
+  const result = Phase4LLMResponseSchema.safeParse(data);
+
+  if (result.success) {
+    return { success: true, data: result.data };
+  }
+
+  const errors = result.error.errors.map(err => {
+    const path = err.path.join('.');
+    return `${path}: ${err.message}`;
+  });
+
+  return { success: false, errors };
+}
+
+/**
+ * Merge Phase 4 LLM response with cached Phase 3 data
+ * Creates a complete Phase 4 response for validation and storage
+ */
+export function mergePhase4WithPhase3(
+  phase4LLMResponse: Phase4LLMResponse,
+  phase3CachedData: Phase3CachedData
+): unknown {
+  return {
+    // Phase 3 cached fields
+    analysis: phase3CachedData.analysis,
+    requiredServices: phase3CachedData.requiredServices,
+    missingPlugins: phase3CachedData.missingPlugins,
+    pluginWarning: phase3CachedData.pluginWarning,
+    clarityScore: phase3CachedData.clarityScore,
+    enhanced_prompt: phase3CachedData.enhanced_prompt,
+
+    // Phase 4 specific fields
+    needsClarification: phase4LLMResponse.needsClarification,
+    metadata: phase4LLMResponse.metadata,
+    technical_workflow: phase4LLMResponse.technical_workflow,
+    technical_inputs_required: phase4LLMResponse.technical_inputs_required || [],
+    feasibility: phase4LLMResponse.feasibility,
+    conversationalSummary: phase4LLMResponse.conversationalSummary,
+    suggestions: phase4LLMResponse.suggestions,
+    error: phase4LLMResponse.error,
+  };
+}
+
+/**
+ * Validate Phase 3 cached data
+ */
+export function validatePhase3CachedData(data: unknown): {
+  success: boolean;
+  data?: Phase3CachedData;
+  errors?: string[];
+} {
+  const result = Phase3CachedDataSchema.safeParse(data);
+
+  if (result.success) {
+    return { success: true, data: result.data };
+  }
+
   const errors = result.error.errors.map(err => {
     const path = err.path.join('.');
     return `${path}: ${err.message}`;

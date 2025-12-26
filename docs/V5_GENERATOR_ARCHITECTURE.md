@@ -23,7 +23,8 @@ Based on OpenAI's production patterns for agentic systems, we adopted a hybrid a
 |-------|-----------|------|---------|
 | 1A | StepPlanExtractor | LLM | Convert enhanced prompt → simple text steps |
 | 1B | LLM Technical Reviewer | LLM | Validate & repair technical workflow |
-| 2 | DSLBuilder | 100% Deterministic | Convert steps → valid PILOT DSL |
+| 2A | DSLBuilder | 100% Deterministic | Convert StepPlan → PILOT DSL (Path A) |
+| 2B | Phase4DSLBuilder | 100% Deterministic | Convert TechnicalWorkflow → PILOT DSL (Path B) |
 | 3 | LLM Repair Loop | LLM (if needed) | Fix ambiguities |
 
 **Key insight**: By keeping Stage 2 purely deterministic, we guarantee schema compliance regardless of LLM variability.
@@ -54,10 +55,10 @@ Based on OpenAI's production patterns for agentic systems, we adopted a hybrid a
 │             ▼                            ▼                           │
 │  ┌──────────────────────┐     ┌──────────────────────┐              │
 │  │      StepPlan        │     │  STAGE 2B:           │              │
-│  │  (Intermediate IR)   │     │  DSLBuilder          │              │
-│  └──────────┬───────────┘     │  .buildFromTechnical │              │
-│             │                 │  Workflow()          │              │
-│             ▼                 │  (DIRECT CONVERSION) │              │
+│  │  (Intermediate IR)   │     │  Phase4DSLBuilder    │              │
+│  └──────────┬───────────┘     │  .build()            │              │
+│             │                 │  (DIRECT CONVERSION) │              │
+│             ▼                 │                      │              │
 │  ┌──────────────────────┐     └──────────┬───────────┘              │
 │  │  STAGE 2A:           │                │                          │
 │  │  DSLBuilder          │                │                          │
@@ -75,9 +76,9 @@ Based on OpenAI's production patterns for agentic systems, we adopted a hybrid a
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Key Architecture Change (v5.1)
+### Key Architecture Change (v5.2)
 
-**Path B now uses direct conversion** - DSLBuilder's new `buildFromTechnicalWorkflow()` method directly converts the structured `TechnicalWorkflowStep[]` to PILOT DSL without intermediate text serialization. This eliminates the previous serialize-to-parse pattern and provides:
+**Path B now uses Phase4DSLBuilder** - The new `Phase4DSLBuilder.build()` method directly converts the structured `TechnicalWorkflowStep[]` to PILOT DSL. This replaces the previous `DSLBuilder.buildFromTechnicalWorkflow()` approach and provides:
 
 - **Full type safety** - No text parsing ambiguity
 - **Cleaner code** - ~800 lines of adapter code removed
@@ -110,7 +111,7 @@ This is the traditional input path where the LLM (StepPlanExtractor) parses the 
 
 ### Technical Workflow (Path B Input)
 
-The `technical_workflow` is a structured array of steps produced by Phase 4 of the enhanced prompt flow. It is directly converted to PILOT DSL by `DSLBuilder.buildFromTechnicalWorkflow()`.
+The `technical_workflow` is a structured array of steps produced by Phase 4 of the enhanced prompt flow. It is directly converted to PILOT DSL by `Phase4DSLBuilder.build()`.
 
 #### TechnicalWorkflowInput Structure
 
@@ -408,18 +409,15 @@ interface WorkflowGenerationInput {
 **Why Two Paths?**
 
 - **Path A (Enhanced Prompt)**: Used when starting from natural language. The LLM extracts a simple step plan, then DSLBuilder converts it to DSL.
-- **Path B (Technical Workflow)**: Used when the enhanced prompt phase already produced a structured `technical_workflow`. Adds LLM review for validation, then DSLBuilder directly converts to DSL.
+- **Path B (Technical Workflow)**: Used when the enhanced prompt phase already produced a structured `technical_workflow`. Adds LLM review for validation, then Phase4DSLBuilder converts to DSL.
 
 ### 2. DSLBuilder (`dsl-builder.ts`)
 
-The **100% deterministic** engine that converts inputs into valid PILOT DSL.
-
-**Two Entry Points:**
+The **100% deterministic** engine that converts Path A inputs into valid PILOT DSL.
 
 | Method | Input | Used By |
 |--------|-------|---------|
 | `buildDSL(stepPlan)` | Text-based StepPlan | Path A (enhanced prompt) |
-| `buildFromTechnicalWorkflow(input)` | Structured TechnicalWorkflowInput | Path B (technical workflow) |
 
 **Why Deterministic?**
 
@@ -428,7 +426,17 @@ The **100% deterministic** engine that converts inputs into valid PILOT DSL.
 - **Debuggability**: Issues can be traced to specific rules, not LLM randomness
 - **Speed**: No API calls, runs in milliseconds
 
-#### buildFromTechnicalWorkflow() - Direct Conversion
+### 3. Phase4DSLBuilder (`phase4-dsl-builder.ts`)
+
+The **100% deterministic** converter for Path B (technical workflow).
+
+| Method | Input | Used By |
+|--------|-------|---------|
+| `build(phase4Response)` | Phase4Response with technical_workflow | Path B (technical workflow) |
+
+**Note:** The reviewer's feasibility format (strings) is converted to Phase4Response format (objects) before calling `build()`.
+
+#### Phase4DSLBuilder.build() - Direct Conversion
 
 This method directly maps TechnicalWorkflowStep to PILOT DSL without text serialization:
 
@@ -514,7 +522,7 @@ Conditions like `"step5.missing_owner.length > 0"` are parsed into structured fo
 }
 ```
 
-### After DSLBuilder.buildFromTechnicalWorkflow() → PILOT_DSL_SCHEMA
+### After Phase4DSLBuilder.build() → PILOT_DSL_SCHEMA
 
 ```json
 {
@@ -635,7 +643,7 @@ interface ReviewerSummary {
     details: string;
     how_to_fix_in_phase2?: string;
   }>;
-  warnings?: Array<{ type: string; details: string }>;
+  warnings?: string[];
   step_changes?: Array<{
     change_type: 'edit' | 'insert' | 'delete' | 'move';
     step_id: string;
@@ -762,7 +770,7 @@ See [V4_OPENAI_3STAGE_ARCHITECTURE.md](./V4_OPENAI_3STAGE_ARCHITECTURE.md#v5-enh
 The V5 Generator architecture achieves reliability through **separation of concerns**:
 
 1. **LLM handles intent** (what the user wants)
-2. **DSLBuilder guarantees correctness** (deterministic schema compliance)
+2. **Deterministic builders guarantee correctness** (schema compliance)
 
 ### Path A (Enhanced Prompt)
 ```
@@ -771,7 +779,7 @@ Enhanced Prompt → StepPlanExtractor (LLM) → StepPlan → DSLBuilder.buildDSL
 
 ### Path B (Technical Workflow)
 ```
-Technical Workflow → LLM Reviewer → DSLBuilder.buildFromTechnicalWorkflow() → PILOT_DSL
+Technical Workflow → LLM Reviewer → Phase4DSLBuilder.build() → PILOT_DSL
 ```
 
 This hybrid approach gives us the flexibility of LLMs with the reliability of deterministic systems.
