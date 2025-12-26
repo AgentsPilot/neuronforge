@@ -19,6 +19,7 @@ export interface AgentPromptThread {
   status: ThreadStatus;
   current_phase: ThreadPhase;
   agent_id: string | null; // UUID, nullable until agent is created
+  user_prompt: string | null; // User's original prompt, populated at Phase 1 for quick context
   ai_provider: ProviderName; // AI provider for this thread (cannot change after creation)
   ai_model: string; // AI model for this thread (cannot change after creation)
   created_at: string; // ISO timestamp

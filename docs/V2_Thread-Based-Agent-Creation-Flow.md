@@ -448,29 +448,32 @@ API Calls: init-thread + process-message × 3 + generate-agent-v4 + create-agent
 ## 🔄 Thread Persistence
 
 ```
-┌─────────────────────────────────────────────┐
-│  agent_prompt_threads Table                 │
-│  ─────────────────────────────────────────  │
-│                                             │
-│  id: uuid                                   │
-│  user_id: uuid                              │
-│  openai_thread_id: "thread_abc123"          │
-│  status: "active" → "completed"             │
-│  current_phase: 3                           │
-│  agent_id: null → uuid (after create-agent) │
-│  created_at: 2025-10-26T10:00:00Z           │
-│  updated_at: 2025-10-26T10:05:23Z           │
-│  expires_at: 2025-10-27T10:00:00Z (24h)     │
-│  metadata: {                                │
-│    last_phase: 3,                           │
-│    last_updated: "...",                     │
-│    iterations: [...],  ← Full audit trail   │
-│    phase1_connected_services: [...],        │
-│    phase1_available_services: [...],        │
-│    last_phase3_response: {...}  ← v14 cache │
-│  }                                          │
-│                                             │
-└─────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│  agent_prompt_threads Table                               │
+│  ───────────────────────────────────────────────────────  │
+│                                                           │
+│  id: uuid                                                 │
+│  user_id: uuid                                            │
+│  openai_thread_id: "thread_abc123"                        │
+│  status: "active" → "completed"                           │
+│  current_phase: 3                                         │
+│  agent_id: null → uuid (after create-agent)               │
+│  user_prompt: "Send daily emails to Slack"  ← Phase 1     │
+│  ai_provider: "openai" | "anthropic" | "kimi"             │
+│  ai_model: "gpt-4o" | "claude-sonnet-4-5-..." | ...       │
+│  created_at: 2025-10-26T10:00:00Z                         │
+│  updated_at: 2025-10-26T10:05:23Z                         │
+│  expires_at: 2025-10-27T10:00:00Z (24h)                   │
+│  metadata: {                                              │
+│    last_phase: 3,                                         │
+│    last_updated: "...",                                   │
+│    iterations: [...],  ← Full audit trail                 │
+│    phase1_connected_services: [...],                      │
+│    phase1_available_services: [...],                      │
+│    last_phase3_response: {...}  ← v14 cache               │
+│  }                                                        │
+│                                                           │
+└───────────────────────────────────────────────────────────┘
 ```
 
 **Resume Capability**: If user refreshes page mid-flow, frontend can:
@@ -1613,11 +1616,12 @@ if (thread_id) {
 
 ---
 
-**Document Version**: 6.0
-**Last Updated**: 2025-12-25 (Updated for v14 prompt, Phase 4 reduced output & merge logic)
+**Document Version**: 6.1
+**Last Updated**: 2025-12-26 (Added user_prompt column to table schema)
 **Author**: Development Team
 
 ### Changelog
+- **v6.1** (2025-12-26): Added `user_prompt` column to table schema diagram, updated to show `ai_provider` and `ai_model` columns
 - **v6.0** (2025-12-25): Updated for v14 prompt, added Phase 4 reduced output & merge logic documentation, added `last_phase3_response` to thread metadata
 - **v5.0** (2025-12-23): Rewrote for `app/v2/agents/new/page.tsx` flow, updated all code references, added Phase 4 NOT WIRED note
 - **v4.0** (2025-12-12): Added Phase 4: Technical Workflow Generation
