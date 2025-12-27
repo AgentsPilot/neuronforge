@@ -86,12 +86,13 @@ Test AI-powered services for prompt analysis, enhancement, clarification questio
 
 #### 2.1 AI Service Selection
 Available AI services:
-- **analyze-prompt-clarity**: Analyzes prompt clarity and completeness
-- **enhance-prompt**: Enhances a prompt with additional context
-- **generate-clarification-questions**: Generates questions to clarify vague prompts
-- **test/analyze-prompt**: Test endpoint for prompt analysis with provider/model selection
+- **generate/input-schema**: Generates input schema for agent plugins
 - **generate-agent-v4**: V4 Agent generation (OpenAI 3-Stage Architecture)
 - **test/generate-agent-v5-test-wrapper**: V5 Workflow Generator test endpoint
+
+*Hidden legacy services (commented in code for future removal):*
+- ~~analyze-prompt-clarity, enhance-prompt, generate-clarification-questions~~
+- ~~test/analyze-prompt, generate-agent-v2, generate-agent-v3~~
 
 #### 2.2 Request Configuration
 - **Request Body Editor**: JSON textarea for request configuration
@@ -1015,7 +1016,17 @@ All errors are:
 
 ## Changelog
 
-### Version 1.9 (Current)
+### Version 1.10 (Current)
+- **AI Services Housekeeping**: Cleaned up legacy services dropdown
+  - **Hidden (commented for future removal)**:
+    - `analyze-prompt-clarity`, `enhance-prompt`, `generate-clarification-questions` (1-3)
+    - `test/analyze-prompt`, `generate-agent-v2`, `generate-agent-v3` (5-7)
+  - **Active Services** (3 remaining):
+    - `generate/input-schema` - Input schema generation
+    - `generate-agent-v4` - V4 Agent generation
+    - `test/generate-agent-v5-test-wrapper` - V5 Workflow Generator
+
+### Version 1.9
 - **Thread Dropdown Enhanced Display**: Improved thread list presentation
   - **New Format**: `{date} | P{phase} | {status} | {id:8} | {prompt:60}`
   - Example: `Dec 26, 10:30 AM | P3 | completed | a1b2c3d4 | Send daily emails to Slack...`
@@ -1168,5 +1179,5 @@ For issues or questions about the Test Page:
 
 ---
 
-**Last Updated:** December 26, 2025 (v1.9 - Enhanced Thread Dropdown with user_prompt column + Expiry Indicators)
+**Last Updated:** December 27, 2025 (v1.10 - AI Services Housekeeping - Hidden legacy services)
 **Maintained By:** NeuronForge Development Team

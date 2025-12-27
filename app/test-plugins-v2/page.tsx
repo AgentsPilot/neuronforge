@@ -502,47 +502,50 @@ const PARAMETER_TEMPLATES = {
 };
 
 const AI_SERVICE_TEMPLATES = {
-  "analyze-prompt-clarity": {
-    prompt: "Create an automation that sends me daily email summaries of my calendar events",
-    userId: "test_user_123",
-    sessionId: "550e8400-e29b-41d4-a716-446655440000",
-    agentId: "660e8400-e29b-41d4-a716-446655440001",
-    connected_plugins: {},
-    bypassPluginValidation: false
-  },
-  "enhance-prompt": {
-    prompt: "Send emails automatically",
-    userId: "test_user_123",
-    sessionId: "550e8400-e29b-41d4-a716-446655440000",
-    agentId: "660e8400-e29b-41d4-a716-446655440001",
-    clarificationAnswers: {
-      "timing": "daily_9am",
-      "recipients": "manager@example.com"
-    },
-    connected_plugins: {},
-    missingPlugins: [],
-    pluginWarning: null
-  },
-  "generate-clarification-questions": {
-    prompt: "I need to track project tasks and send updates",
-    agentName: "Task Tracker Agent",
-    description: "An agent that helps track project tasks and send updates",
-    userId: "test_user_123",
-    sessionId: "550e8400-e29b-41d4-a716-446655440000",
-    agentId: "660e8400-e29b-41d4-a716-446655440001",
-    connectedPlugins: {},
-    analysis: {
-      clarityScore: 45,
-      questionsCount: 0,
-      needsClarification: true,
-      aiValidationFailed: false,
-      bypassedPluginValidation: false,
-      hadPluginWarning: false,
-      missingPlugins: [],
-      requiredServices: [],
-      suggestions: []
-    }
-  },
+  // HIDDEN LEGACY SERVICES - May be removed in future cleanup
+  // "analyze-prompt-clarity": {
+  //   prompt: "Create an automation that sends me daily email summaries of my calendar events",
+  //   userId: "test_user_123",
+  //   sessionId: "550e8400-e29b-41d4-a716-446655440000",
+  //   agentId: "660e8400-e29b-41d4-a716-446655440001",
+  //   connected_plugins: {},
+  //   bypassPluginValidation: false
+  // },
+  // "enhance-prompt": {
+  //   prompt: "Send emails automatically",
+  //   userId: "test_user_123",
+  //   sessionId: "550e8400-e29b-41d4-a716-446655440000",
+  //   agentId: "660e8400-e29b-41d4-a716-446655440001",
+  //   clarificationAnswers: {
+  //     "timing": "daily_9am",
+  //     "recipients": "manager@example.com"
+  //   },
+  //   connected_plugins: {},
+  //   missingPlugins: [],
+  //   pluginWarning: null
+  // },
+  // "generate-clarification-questions": {
+  //   prompt: "I need to track project tasks and send updates",
+  //   agentName: "Task Tracker Agent",
+  //   description: "An agent that helps track project tasks and send updates",
+  //   userId: "test_user_123",
+  //   sessionId: "550e8400-e29b-41d4-a716-446655440000",
+  //   agentId: "660e8400-e29b-41d4-a716-446655440001",
+  //   connectedPlugins: {},
+  //   analysis: {
+  //     clarityScore: 45,
+  //     questionsCount: 0,
+  //     needsClarification: true,
+  //     aiValidationFailed: false,
+  //     bypassedPluginValidation: false,
+  //     hadPluginWarning: false,
+  //     missingPlugins: [],
+  //     requiredServices: [],
+  //     suggestions: []
+  //   }
+  // },
+  // END HIDDEN LEGACY SERVICES (1-3)
+
   "generate/input-schema": {
     prompt: "Create an agent that schedules meetings and sends confirmation emails",
     plugins: ["google-calendar", "google-mail"],
@@ -550,30 +553,33 @@ const AI_SERVICE_TEMPLATES = {
     sessionId: "550e8400-e29b-41d4-a716-446655440000",
     agentId: "660e8400-e29b-41d4-a716-446655440001"
   },
-  "test/analyze-prompt": {
-    userId: "test_user_123",
-    prompt: "Research the top 10 retail technology blogs from Israel and send me a daily summary via email",
-    availablePlugins: ["google-mail", "chatgpt-research"],
-    sessionId: "550e8400-e29b-41d4-a716-446655440000",
-    // Provider configuration (optional - defaults to OpenAI GPT-4o)
-    // Options: "openai", "anthropic", "kimi"
-    provider: "openai",
-    // Model options per provider:
-    // OpenAI: "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"
-    // Anthropic: "claude-opus-4-20250514", "claude-sonnet-4-20250514", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"
-    // Kimi: "kimi-k2-0905-preview", "kimi-k2-thinking", "kimi-k2-0711-preview"
-    model: "gpt-4o"
-  },
-  "generate-agent-v2": {
-    prompt: "Research the top 10 retail technology blogs from Israel and send me a daily summary via email",
-    sessionId: "550e8400-e29b-41d4-a716-446655440000"
-  },
-  "generate-agent-v3": {
-    prompt: "Research the top 10 retail technology blogs from Israel and send me a daily summary via email",
-    sessionId: "550e8400-e29b-41d4-a716-446655440000",
-    agentId: "660e8400-e29b-41d4-a716-446655440001",
-    clarificationAnswers: {}
-  },
+  // HIDDEN LEGACY SERVICES (5-7) - May be removed in future cleanup
+  // "test/analyze-prompt": {
+  //   userId: "test_user_123",
+  //   prompt: "Research the top 10 retail technology blogs from Israel and send me a daily summary via email",
+  //   availablePlugins: ["google-mail", "chatgpt-research"],
+  //   sessionId: "550e8400-e29b-41d4-a716-446655440000",
+  //   // Provider configuration (optional - defaults to OpenAI GPT-4o)
+  //   // Options: "openai", "anthropic", "kimi"
+  //   provider: "openai",
+  //   // Model options per provider:
+  //   // OpenAI: "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"
+  //   // Anthropic: "claude-opus-4-20250514", "claude-sonnet-4-20250514", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"
+  //   // Kimi: "kimi-k2-0905-preview", "kimi-k2-thinking", "kimi-k2-0711-preview"
+  //   model: "gpt-4o"
+  // },
+  // "generate-agent-v2": {
+  //   prompt: "Research the top 10 retail technology blogs from Israel and send me a daily summary via email",
+  //   sessionId: "550e8400-e29b-41d4-a716-446655440000"
+  // },
+  // "generate-agent-v3": {
+  //   prompt: "Research the top 10 retail technology blogs from Israel and send me a daily summary via email",
+  //   sessionId: "550e8400-e29b-41d4-a716-446655440000",
+  //   agentId: "660e8400-e29b-41d4-a716-446655440001",
+  //   clarificationAnswers: {}
+  // },
+  // END HIDDEN LEGACY SERVICES (5-7)
+
   "generate-agent-v4": {
     // REQUIRED: One of: enhancedPrompt, prompt, OR enhancedPromptTechnicalWorkflow
     // Option 1: Enhanced prompt from Phase 3
