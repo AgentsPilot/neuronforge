@@ -273,7 +273,7 @@ export class WorkflowPilot {
 
         // Race between memory loading and configurable timeout
         // Default: 10s (allows for cold starts and database queries on Vercel)
-        const memoryTimeout = this.options.memoryLoadTimeoutMs || 10000;
+        const memoryTimeout = this.options?.memoryLoadTimeoutMs || 10000;
         const memoryContext = await Promise.race([
           memoryInjector.buildMemoryContext(agent.id, userId, { userInput, inputValues }),
           new Promise<null>((_, reject) =>
@@ -282,7 +282,8 @@ export class WorkflowPilot {
         ]);
 
         if (memoryContext) {
-          context.memoryContext = memoryContext;
+          // Cast to MemoryContext from pilot/types (compatible structure)
+          context.memoryContext = memoryContext as any;
           if (memoryConfig.debug_mode) {
             console.log(`🧠 [WorkflowPilot] Loaded memory context: ${memoryContext.token_count} tokens`);
           }
@@ -388,8 +389,10 @@ export class WorkflowPilot {
         userMemoryService.extractMemoriesFromExecution(
           userId,
           agent.id,
+          executionId,
+          agent.agent_name,
           JSON.stringify({ userInput, inputValues }),
-          JSON.stringify(context.finalOutput),
+          JSON.stringify(finalOutput),
           agent.user_prompt || agent.system_prompt || ''
         ).then(() => {
           console.log(`✅ User memory extraction complete for execution ${executionId}`);
@@ -868,9 +871,8 @@ export class WorkflowPilot {
         }
         throw new ExecutionError(
           `Approval rejected for step ${stepDef.id}`,
-          'APPROVAL_REJECTED',
           stepDef.id,
-          { approvalId: result.approvalId, responses: result.responses }
+          { code: 'APPROVAL_REJECTED', approvalId: result.approvalId, responses: result.responses }
         );
       } else {
         // Emit step completed event
@@ -1534,7 +1536,8 @@ export class WorkflowPilot {
     }
 
     // 4. Update status to running
-    await this.stateManager.updateWorkflowStatus(executionId, 'running');
+    context.status = 'running';
+    await this.stateManager.checkpoint(context);
 
     // 5. Audit: Execution resumed
     await this.auditTrail.log({
@@ -1684,7 +1687,7 @@ export class WorkflowPilot {
       console.error(`❌ [WorkflowPilot] Resume execution failed:`, error);
 
       // Mark as failed
-      await this.stateManager.failExecution(executionId, error.message);
+      await this.stateManager.failExecution(executionId, error, context);
 
       // Audit: Execution failed
       await this.auditTrail.log({
@@ -1699,7 +1702,7 @@ export class WorkflowPilot {
           steps_failed: context.failedSteps.length,
           resumed: true,
         },
-        severity: 'error',
+        severity: 'critical',
       });
 
       throw error;
