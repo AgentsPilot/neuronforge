@@ -717,11 +717,120 @@ The Technical Reviewer system prompt (v2) includes explicit JSON completion inst
 
 ---
 
+## Session Tracking (Workflow Generation Diary)
+
+The V5 generator includes optional session tracking that records a "diary" of the workflow generation process. This creates an audit trail of all LLM calls, validations, and repairs for debugging and analytics.
+
+### WorkflowSessionTracker
+
+Session tracking is encapsulated in the `WorkflowSessionTracker` helper class, which manages the session lifecycle independently from the generator's business logic.
+
+**File:** `lib/agentkit/v4/utils/workflow-session-tracker.ts`
+
+```typescript
+import { WorkflowSessionTracker, SessionTrackerConfig } from '@/lib/agentkit/v4/utils/workflow-session-tracker';
+
+// Create tracker with config
+const tracker = new WorkflowSessionTracker({
+  enabled: true,
+  userId: 'user-123',
+  openaiThreadId: 'thread_abc123', // Optional - links to System 1
+});
+
+// Session lifecycle
+await tracker.start(input, 'technical_workflow');
+await tracker.addStage({ stage_name: 'technical_reviewer', ... });
+await tracker.completeStage({ output_data: { ... } });
+await tracker.complete(outputDsl);
+// Or on failure:
+await tracker.fail('Error message');
+```
+
+### SessionTrackerConfig
+
+```typescript
+interface SessionTrackerConfig {
+  /** Enable session tracking (creates diary entries in DB) */
+  enabled: boolean;
+  /** User ID for the session */
+  userId: string;
+  /** OpenAI thread ID from System 1 for log correlation */
+  openaiThreadId?: string;
+}
+```
+
+### Session Stages
+
+Each stage of the generation pipeline is recorded:
+
+| Stage Name | Description |
+|------------|-------------|
+| `technical_reviewer` | LLM review and repair of technical workflow |
+| `phase4_dsl_builder` | Deterministic conversion to PILOT DSL |
+| `validation` | Schema validation of generated DSL |
+| `repair` | LLM repair attempts (if validation fails) |
+
+### Database Storage
+
+Sessions are stored in the `agent_prompt_workflow_generation_sessions` table with stages in `agent_prompt_workflow_generation_stages`. Each stage records:
+
+- Input/output data (JSONB)
+- AI provider and model used
+- Token usage (prompt/completion)
+- Latency in milliseconds
+- Validation results
+- Repair attempts
+
+### System 1 ↔ System 2 Correlation
+
+The `openaiThreadId` field enables log correlation between:
+
+- **System 1**: Thread-based agent creation (Phases 1-4) stored in `agent_prompt_threads`
+- **System 2**: V5 workflow generation stored in `agent_prompt_workflow_generation_sessions`
+
+This allows tracing the complete journey from user prompt to executable DSL.
+
+### Enabling Session Tracking
+
+Session tracking is enabled via `V5GeneratorOptions`:
+
+```typescript
+const generator = new V5WorkflowGenerator(pluginManager, {
+  connectedPlugins: [...],
+  userId: 'user-123',
+  sessionTracking: {
+    enabled: true,
+    userId: 'user-123',
+    openaiThreadId: 'thread_abc123', // From System 1
+  },
+});
+
+// After generation, retrieve session ID
+const result = await generator.generateWorkflow(input);
+console.log('Session ID:', result.sessionId);
+```
+
+### API Response
+
+When session tracking is enabled, the `sessionId` is included in the generation result and API response:
+
+```json
+{
+  "success": true,
+  "dsl": { ... },
+  "sessionId": "uuid-session-id",
+  "workflowGenerationSessionId": "uuid-session-id"
+}
+```
+
+---
+
 ## Files Reference
 
 | File | Purpose |
 |------|---------|
 | `lib/agentkit/v4/v5-generator.ts` | Main orchestrator, handles both input paths |
+| `lib/agentkit/v4/utils/workflow-session-tracker.ts` | Session tracking helper for workflow generation diary |
 | `lib/agentkit/v4/core/step-plan-extractor.ts` | LLM-based step extraction (Path A) |
 | `lib/agentkit/v4/core/dsl-builder.ts` | Deterministic DSL construction (both paths) |
 | `lib/validation/phase4-schema.ts` | Zod schemas and TypeScript types for TechnicalWorkflow (v13 prompt) |
@@ -733,6 +842,8 @@ The Technical Reviewer system prompt (v2) includes explicit JSON completion inst
 | `app/api/generate-agent-v4/route.ts` | Production API (V4/V5 via feature flag) |
 | `lib/utils/featureFlags.ts` | `useEnhancedTechnicalWorkflowReview()` function |
 | `lib/repositories/SystemConfigRepository.ts` | `getAgentGenerationConfig()` for provider/model |
+| `lib/agent-creation/agent-prompt-workflow-generation-session-repository.ts` | Repository for session/stage CRUD operations |
+| `components/agent-creation/types/workflow-generation-session.ts` | TypeScript types for session tracking |
 
 ---
 

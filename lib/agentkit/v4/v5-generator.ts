@@ -36,6 +36,12 @@ import {
   Phase4DSLBuilderResult,
 } from './core/phase4-dsl-builder';
 
+// Session tracking
+import {
+  WorkflowSessionTracker,
+  type SessionTrackerConfig,
+} from './utils/workflow-session-tracker';
+
 /**
  * Input structure for technical workflow (moved from adapter)
  */
@@ -72,10 +78,15 @@ export interface ReviewedTechnicalWorkflowInput extends TechnicalWorkflowInput {
   feasibility?: TechnicalReviewerFeasibility;
 }
 
+// Re-export SessionTrackerConfig for backwards compatibility
+export type { SessionTrackerConfig };
+
 export interface V5GeneratorOptions {
   connectedPlugins?: IPluginContext[];
   userId?: string;
   aiAnalytics?: any;
+  /** Session tracking configuration (optional) */
+  sessionTracking?: SessionTrackerConfig;
 }
 
 /**
@@ -111,6 +122,8 @@ export interface V5GenerationResult {
   technicalWorkflowUsed?: boolean;
   /** Indicates if DSL building was skipped (only LLM review performed) */
   dslBuilderSkipped?: boolean;
+  /** Session ID from workflow generation diary (if session tracking enabled) */
+  sessionId?: string;
   metadata?: {
     actionsResolved: number;
     parametersMapping: number;
@@ -142,6 +155,9 @@ export class V5WorkflowGenerator {
   private dslBuilder: DSLBuilder;
   private phase4DslBuilder: Phase4DSLBuilder;
 
+  // Session tracking (optional) - uses helper class for diary functionality
+  private sessionTracker?: WorkflowSessionTracker;
+
   constructor(pluginManager: PluginManagerV2, options?: V5GeneratorOptions) {
     this.pluginManager = pluginManager;
 
@@ -161,7 +177,16 @@ export class V5WorkflowGenerator {
 
     // Phase4 DSL Builder - new deterministic converter for technical workflow
     this.phase4DslBuilder = new Phase4DSLBuilder();
+
+    // Session tracking - use helper class for diary functionality
+    if (options?.sessionTracking) {
+      this.sessionTracker = new WorkflowSessionTracker(options.sessionTracking);
+    }
   }
+
+  // ============================================================================
+  // Main Generation Methods
+  // ============================================================================
 
   /**
    * Generate workflow from enhanced prompt or technical workflow
@@ -187,6 +212,15 @@ export class V5WorkflowGenerator {
 
       // Determine which path to use
       const hasTechnicalWorkflow = (input.technicalWorkflow?.technical_workflow?.length ?? 0) > 0;
+      const inputPath = hasTechnicalWorkflow ? 'technical_workflow' : 'enhanced_prompt';
+
+      // Start session for tracking (if enabled)
+      const sessionId = await this.sessionTracker?.start({
+        technicalWorkflow: input.technicalWorkflow,
+        enhancedPrompt: input.enhancedPrompt,
+        provider: input.provider,
+        model: input.model,
+      }, inputPath);
 
       if (!hasTechnicalWorkflow) {
         logger.warn(
@@ -202,8 +236,29 @@ export class V5WorkflowGenerator {
           'Using technical workflow path (skipping Stage 1 LLM)'
         );
 
+        // Track technical_reviewer stage
+        await this.sessionTracker?.addStage({
+          stage_name: 'technical_reviewer',
+          input_data: input.technicalWorkflow,
+          input_summary: `TechnicalWorkflow with ${input.technicalWorkflow!.technical_workflow.length} steps`,
+        });
+
         // Review technical workflow via LLM before converting to DSL
         const reviewedWorkflow = await this.reviewTechnicalWorkflow(input);
+
+        // Complete technical_reviewer stage
+        await this.sessionTracker?.completeStage({
+          output_data: reviewedWorkflow,
+          output_summary: `Reviewed workflow: ${reviewedWorkflow.reviewer_summary?.status || 'unknown'}, can_execute: ${reviewedWorkflow.feasibility?.can_execute}`,
+          llm_call: {
+            prompt_template: TECHNICAL_REVIEWER_SYSTEM_PROMPT,
+            input_tokens: 0, // TODO: Capture from reviewTechnicalWorkflow
+            output_tokens: 0,
+            finish_reason: 'stop',
+            model: input.model || 'unknown',
+            provider: input.provider || 'anthropic',
+          },
+        });
 
         logger.info({
           reviewerStatus: reviewedWorkflow.reviewer_summary?.status,
@@ -215,12 +270,16 @@ export class V5WorkflowGenerator {
         if (input.skipDslBuilder) {
           logger.info('Skipping DSL builder (skipDslBuilder=true) - returning reviewed workflow only');
 
+          // Complete session without DSL output
+          await this.sessionTracker?.complete({});
+
           return {
             success: true,
             workflow: undefined,
             reviewedWorkflow,
             technicalWorkflowUsed: true,
             dslBuilderSkipped: true,
+            sessionId,
             tokensUsed,
             cost,
           };
@@ -228,6 +287,13 @@ export class V5WorkflowGenerator {
 
         // DIRECT PATH: Build DSL directly from technical workflow using Phase4DSLBuilder
         logger.info('Building DSL directly from technical workflow (using Phase4DSLBuilder)');
+
+        // Track phase4_dsl_builder stage
+        await this.sessionTracker?.addStage({
+          stage_name: 'phase4_dsl_builder',
+          input_data: reviewedWorkflow,
+          input_summary: `Reviewed workflow with ${reviewedWorkflow.technical_workflow.length} steps`,
+        });
 
         // Convert reviewer feasibility (strings) to Phase4Response format (objects)
         const convertedFeasibility = reviewedWorkflow.feasibility ? {
@@ -250,6 +316,19 @@ export class V5WorkflowGenerator {
         };
 
         const dslResult: Phase4DSLBuilderResult = this.phase4DslBuilder.build(phase4Input);
+
+        // Complete phase4_dsl_builder stage
+        await this.sessionTracker?.completeStage({
+          output_data: dslResult.workflow,
+          output_summary: dslResult.success
+            ? `PILOT_DSL with ${dslResult.workflow?.workflow_steps?.length || 0} steps`
+            : `Failed: ${dslResult.errors.length} errors`,
+          validation: {
+            valid: dslResult.success,
+            schema_name: 'PILOT_DSL_SCHEMA',
+            errors: dslResult.errors.map(e => `[${e.stepId}] ${e.message}`),
+          },
+        });
 
         // Log conversion stats and warnings
         logger.info({
@@ -274,10 +353,14 @@ export class V5WorkflowGenerator {
             errors: dslResult.errors,
           }, 'Phase4DSLBuilder conversion failed');
 
+          // Fail the session
+          await this.sessionTracker?.fail(dslResult.errors.map(e => `[${e.stepId}] ${e.message}`).join('; '));
+
           return {
             success: false,
             errors: dslResult.errors.map(e => `[${e.stepId}] ${e.message}`),
             warnings: dslResult.warnings.map(w => `[${w.stepId}] ${w.message}`),
+            sessionId,
           };
         }
 
@@ -292,12 +375,16 @@ export class V5WorkflowGenerator {
           conversionStats: dslResult.stats,
         }, 'Phase4DSLBuilder: PILOT_DSL_SCHEMA generated');
 
+        // Complete the session with the generated DSL
+        await this.sessionTracker?.complete(dslResult.workflow);
+
         // Return directly - no need for Stage 2 buildDSL
         return {
           success: true,
           workflow: dslResult.workflow,
           warnings: dslResult.warnings.map(w => `[${w.stepId}] ${w.message}`),
           technicalWorkflowUsed: true,
+          sessionId,
           tokensUsed,
           cost,
         };
@@ -324,9 +411,11 @@ export class V5WorkflowGenerator {
 
       } else {
         // No valid input provided
+        await this.sessionTracker?.fail('Either enhancedPrompt or technicalWorkflow is required');
         return {
           success: false,
           errors: ['Either enhancedPrompt or technicalWorkflow is required'],
+          sessionId,
         };
       }
 
@@ -336,10 +425,12 @@ export class V5WorkflowGenerator {
       const dslResult = await this.dslBuilder.buildDSL(stepPlan);
 
       if (!dslResult.success && !dslResult.ambiguities) {
+        await this.sessionTracker?.fail(dslResult.errors?.join('; ') || 'DSL building failed');
         return {
           success: false,
           errors: dslResult.errors,
           warnings: dslResult.warnings,
+          sessionId,
         };
       }
 
@@ -357,11 +448,17 @@ export class V5WorkflowGenerator {
           ...dslResult.ambiguities.map(a => `Step ${a.stepNumber}: ${a.question}`),
         ];
 
+        // Complete session even with ambiguities (workflow was generated)
+        if (dslResult.workflow) {
+          await this.sessionTracker?.complete(dslResult.workflow);
+        }
+
         return {
           success: true,
           workflow: dslResult.workflow,
           warnings,
           technicalWorkflowUsed,
+          sessionId,
           metadata: {
             actionsResolved: dslResult.workflow?.steps?.length || 0,
             parametersMapping: 0,
@@ -378,11 +475,17 @@ export class V5WorkflowGenerator {
         stepsCount: dslResult.workflow?.workflow_steps?.length || 0,
       }, 'PILOT_DSL_SCHEMA generated successfully');
 
+      // Complete the session with the generated DSL
+      if (dslResult.workflow) {
+        await this.sessionTracker?.complete(dslResult.workflow);
+      }
+
       return {
         success: true,
         workflow: dslResult.workflow,
         warnings: dslResult.warnings,
         technicalWorkflowUsed,
+        sessionId,
         metadata: {
           actionsResolved: dslResult.workflow?.workflow_steps?.length || 0,
           parametersMapping: 0,
@@ -394,9 +497,14 @@ export class V5WorkflowGenerator {
       };
     } catch (error: any) {
       logger.error({ err: error }, 'Workflow generation failed');
+
+      // Fail the session on error
+      await this.sessionTracker?.fail(error.message || 'Unknown error during workflow generation');
+
       return {
         success: false,
         errors: [error.message || 'Unknown error during workflow generation'],
+        sessionId: this.sessionTracker?.sessionId,
       };
     }
   }

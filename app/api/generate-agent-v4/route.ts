@@ -57,6 +57,7 @@ export async function POST(req: NextRequest) {
       services_involved,
       sessionId: providedSessionId,
       agentId: providedAgentId,
+      openaiThreadId,  // OpenAI thread ID from System 1 (for session tracking correlation)
     } = await req.json();
 
     // Authentication
@@ -250,6 +251,11 @@ export async function POST(req: NextRequest) {
         connectedPlugins: loadedPluginContexts,
         userId,
         aiAnalytics,
+        sessionTracking: {
+          enabled: true,
+          userId,
+          openaiThreadId: openaiThreadId || undefined,
+        },
       });
 
       const v5Input: V5WorkflowGenerationInput = {
@@ -435,10 +441,14 @@ export async function POST(req: NextRequest) {
     // This is the short summary generated after the clarity phase
     const agentDescription = clarificationAnswers?.plan_description || workflow.description;
 
+    // Get workflow generation session ID (if session tracking was enabled in V5 generator)
+    const workflowGenerationSessionId = useV5Generator ? (result as any).sessionId : undefined;
+
     return NextResponse.json({
       success: true,
       agentId,
       sessionId,
+      workflowGenerationSessionId,  // Session ID for V5 workflow generation diary
       agent: {
         id: agentId,
         user_id: userId,
@@ -487,6 +497,7 @@ export async function POST(req: NextRequest) {
               : (technicalWorkflowUsed ? 'v4_technical_workflow_dsl' : 'v4_openai_3stage'),
             agent_id: agentId,
             session_id: sessionId,
+            workflow_generation_session_id: workflowGenerationSessionId,
             prompt_type: enhancedPrompt ? 'enhanced' : 'raw',
             architecture: technicalWorkflowUsed
               ? (useV5Generator ? 'technical-workflow-llm-review-dsl' : 'technical-workflow-dsl')
@@ -520,6 +531,7 @@ export async function POST(req: NextRequest) {
         version: generatorVersion,
         generator_version: generatorVersion,
         technical_workflow_used: technicalWorkflowUsed,
+        workflow_generation_session_id: workflowGenerationSessionId,
         generatedAt: new Date().toISOString(),
         latency_ms,
         ...(useV5Generator && v5ReviewConfig ? {

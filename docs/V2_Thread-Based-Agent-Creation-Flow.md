@@ -1607,6 +1607,83 @@ if (thread_id) {
 
 ---
 
+## 🔗 System 1 ↔ System 2 Correlation (V5 Session Tracking)
+
+### Overview
+
+The agent creation flow spans two systems:
+
+- **System 1**: Thread-based agent creation (Phases 1-4) stored in `agent_prompt_threads`
+- **System 2**: V5 Workflow Generator (DSL generation) stored in `agent_prompt_workflow_generation_sessions`
+
+These systems are correlated via the `openai_thread_id` field.
+
+### Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  System 1: Thread-Based Agent Creation                              │
+│  ─────────────────────────────────────────────────────────────────  │
+│  Table: agent_prompt_threads                                        │
+│  ID: openai_thread_id = "thread_abc123"                             │
+│  Phases 1-4 → enhanced_prompt + technical_workflow                  │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │
+                                 │ openai_thread_id passed to generate-agent-v4
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  System 2: V5 Workflow Generator                                    │
+│  ─────────────────────────────────────────────────────────────────  │
+│  Table: agent_prompt_workflow_generation_sessions                   │
+│  Links to System 1 via: openai_thread_id = "thread_abc123"          │
+│  Records: LLM calls, validations, repairs, DSL output               │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### API Response
+
+The `/api/generate-agent-v4` endpoint returns a `workflowGenerationSessionId` when session tracking is enabled:
+
+```json
+{
+  "success": true,
+  "agent": { ... },
+  "agentId": "uuid",
+  "workflowGenerationSessionId": "uuid-session-id"
+}
+```
+
+### Frontend Integration
+
+The V2 test page (`app/test-plugins-v2/page.tsx`) passes the thread ID for correlation:
+
+```typescript
+const requestBody = {
+  ...promptPayload,
+  openaiThreadId: threadId,  // System 1 → System 2 correlation
+};
+
+// Response includes session ID
+if (data.workflowGenerationSessionId) {
+  console.log('Workflow Generation Session:', data.workflowGenerationSessionId);
+}
+```
+
+### Tracing a Complete Journey
+
+With both systems linked, you can trace:
+
+1. **User prompt** → `agent_prompt_threads.user_prompt`
+2. **Conversation phases** → `agent_prompt_threads.metadata.iterations[]`
+3. **Workflow generation** → `agent_prompt_workflow_generation_sessions`
+4. **DSL generation stages** → `agent_prompt_workflow_generation_stages`
+5. **Created agent** → `agents` table (via `agent_prompt_threads.agent_id`)
+
+See [V5_GENERATOR_ARCHITECTURE.md](./V5_GENERATOR_ARCHITECTURE.md#session-tracking-workflow-generation-diary) for detailed session tracking documentation.
+
+---
+
 ## 📚 Related Documentation
 
 - **Main Flow:** You are here
@@ -1616,11 +1693,12 @@ if (thread_id) {
 
 ---
 
-**Document Version**: 6.1
-**Last Updated**: 2025-12-26 (Added user_prompt column to table schema)
+**Document Version**: 6.2
+**Last Updated**: 2025-12-27 (Added System 1 ↔ System 2 correlation section)
 **Author**: Development Team
 
 ### Changelog
+- **v6.2** (2025-12-27): Added System 1 ↔ System 2 Correlation (V5 Session Tracking) section documenting workflow generation diary and openaiThreadId correlation
 - **v6.1** (2025-12-26): Added `user_prompt` column to table schema diagram, updated to show `ai_provider` and `ai_model` columns
 - **v6.0** (2025-12-25): Updated for v14 prompt, added Phase 4 reduced output & merge logic documentation, added `last_phase3_response` to thread metadata
 - **v5.0** (2025-12-23): Rewrote for `app/v2/agents/new/page.tsx` flow, updated all code references, added Phase 4 NOT WIRED note

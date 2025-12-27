@@ -1888,6 +1888,7 @@ export default function TestPluginsPage() {
         services_involved: servicesInvolved,
         sessionId: threadId,
         agentId: fullClarificationAnswers.agentId,
+        openaiThreadId: threadId,  // For V5 session tracking correlation with System 1
       };
 
       addDebugLog('info', `Calling /api/generate-agent-v4 with ${servicesInvolved.length} services${hasTechnicalWorkflow ? ' (technical workflow path)' : ''}...`);
@@ -1917,6 +1918,9 @@ export default function TestPluginsPage() {
         addDebugLog('info', `Agent ID: ${data.agentId}`);
         addDebugLog('info', `Workflow steps: ${data.agent?.workflow_steps?.length || 0}`);
         addDebugLog('info', `Latency: ${data.extraction_details?.latency_ms || 0}ms`);
+        if (data.workflowGenerationSessionId) {
+          addDebugLog('info', `Workflow Generation Session: ${data.workflowGenerationSessionId}`);
+        }
 
         // Add to conversation history
         setConversationHistory(prev => [...prev, {
@@ -1927,6 +1931,7 @@ export default function TestPluginsPage() {
             agent_name: data.agent?.agent_name,
             workflow_steps_count: data.agent?.workflow_steps?.length,
             plugins_required: data.agent?.plugins_required,
+            workflowGenerationSessionId: data.workflowGenerationSessionId,
             metadata: data.metadata,
           }
         }]);

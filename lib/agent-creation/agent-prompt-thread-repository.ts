@@ -5,7 +5,8 @@
  * Centralizes all database operations with logging and duration tracking.
  */
 
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseClient } from '@supabase/supabase-js';
+import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
 import type {
   AgentPromptThread,
@@ -21,10 +22,9 @@ export class AgentPromptThreadRepository {
   private readonly tableName = 'agent_prompt_threads';
 
   constructor(supabaseClient?: SupabaseClient) {
-    this.supabase = supabaseClient || createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    // Use supabaseServer singleton (service role, bypasses RLS)
+    // See docs/SUPABASE_CLIENTS.md for usage guidelines
+    this.supabase = supabaseClient || supabaseServer;
   }
 
   /**

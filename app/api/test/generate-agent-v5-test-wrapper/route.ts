@@ -39,6 +39,8 @@ interface V5TestWrapperRequest {
   model: string;
   /** Skip DSL building and return only reviewed workflow (for testing LLM review in isolation) */
   skipDslBuilder?: boolean;
+  /** OpenAI thread ID from System 1 (optional, for session tracking correlation) */
+  openaiThreadId?: string;
 }
 
 /**
@@ -74,6 +76,7 @@ export async function POST(req: NextRequest) {
       provider,
       model,
       skipDslBuilder,
+      openaiThreadId,
     } = body;
 
     // Collect missing required fields
@@ -211,6 +214,7 @@ export async function POST(req: NextRequest) {
       technicalWorkflowStepsCount: fullTechnicalWorkflow?.technical_workflow?.length || 0,
       requiredServicesCount: required_services.length,
       requiredServices: required_services,
+      openaiThreadId: openaiThreadId || null,
     }, 'V5 test wrapper called');
 
     // Get plugin manager instance
@@ -236,10 +240,15 @@ export async function POST(req: NextRequest) {
       plugins: connectedPluginContexts.map(p => p.key),
     }, 'Plugin contexts loaded');
 
-    // Create V5 generator with user's connected plugins
+    // Create V5 generator with user's connected plugins and session tracking
     const generator = new V5WorkflowGenerator(pluginManager, {
       connectedPlugins: connectedPluginContexts,
       userId,
+      sessionTracking: {
+        enabled: true,
+        userId,
+        openaiThreadId,
+      },
     });
 
     // Build generation input
@@ -287,12 +296,14 @@ export async function POST(req: NextRequest) {
       metadata: result.metadata,
       warningsCount: result.warnings?.length || 0,
       latencyMs,
+      workflowGenerationSessionId: result.sessionId,
     }, 'V5 generation succeeded');
 
-    // Return raw V5GenerationResult with latency
+    // Return raw V5GenerationResult with latency and session tracking info
     return NextResponse.json({
       ...result,
       latency_ms: latencyMs,
+      workflowGenerationSessionId: result.sessionId,
     });
 
   } catch (error: any) {
