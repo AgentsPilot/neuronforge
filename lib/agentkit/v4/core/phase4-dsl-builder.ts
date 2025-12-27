@@ -77,6 +77,8 @@ export interface Phase4Response {
     warnings?: Array<{ type: string; description: string }>;
   };
   technical_inputs_required?: TechnicalInputRequired[];
+  /** Fallback for suggested_plugins if enhanced_prompt.specifics.services_involved is not available */
+  requiredServices?: string[];
 }
 
 // ============================================================================
@@ -168,6 +170,18 @@ const TRANSFORM_TYPE_TO_OPERATION: Record<string, string> = {
   'convert': 'map'
 };
 
+// Transform output contracts: expected output shapes per operation type
+const TRANSFORM_OUTPUT_CONTRACTS: Record<string, { shape: string; description: string }> = {
+  'filter': { shape: 'T[]', description: 'Filtered array of items matching condition' },
+  'map': { shape: 'U[]', description: 'Transformed array of items' },
+  'sort': { shape: 'T[]', description: 'Sorted array of items' },
+  'group': { shape: '{key: string, items: T[]}[]', description: 'Array of groups with key and items' },
+  'aggregate': { shape: 'AggregateResult', description: 'Aggregated values (sum, count, avg, etc.)' },
+  'reduce': { shape: 'U', description: 'Single reduced value' },
+  'split': { shape: '{with_field: T[], without_field: T[]}', description: 'Partitioned arrays based on field presence' },
+  'format': { shape: 'string', description: 'Formatted string output (HTML, text, etc.)' },
+};
+
 // ============================================================================
 // MAIN CLASS
 // ============================================================================
@@ -202,7 +216,7 @@ export class Phase4DSLBuilder {
     // Reset state for new build
     this.resetState();
 
-    const { technical_workflow, enhanced_prompt, feasibility, technical_inputs_required } = phase4Response;
+    const { technical_workflow, enhanced_prompt, feasibility, technical_inputs_required, requiredServices } = phase4Response;
 
     // Track total steps (including nested)
     this.stats.totalSteps = this.countTotalSteps(technical_workflow);
@@ -211,8 +225,8 @@ export class Phase4DSLBuilder {
       // Convert workflow steps
       const workflowSteps = this.convertWorkflowSteps(technical_workflow);
 
-      // Convert required inputs
-      const requiredInputs = this.convertRequiredInputs(technical_inputs_required || []);
+      // Convert required inputs (also auto-extracts {{input.*}} references)
+      const requiredInputs = this.convertRequiredInputs(technical_inputs_required || [], workflowSteps);
 
       // Determine workflow type
       const workflowType = this.determineWorkflowType(workflowSteps);
@@ -223,7 +237,7 @@ export class Phase4DSLBuilder {
         description: enhanced_prompt?.plan_description || '',
         system_prompt: `You are an automation agent. ${enhanced_prompt?.plan_description || ''}`,
         workflow_type: workflowType,
-        suggested_plugins: enhanced_prompt?.specifics?.services_involved || [],
+        suggested_plugins: enhanced_prompt?.specifics?.services_involved || requiredServices || [],
         required_inputs: requiredInputs,
         workflow_steps: workflowSteps,
         suggested_outputs: this.generateDefaultOutputs(),
@@ -299,8 +313,8 @@ export class Phase4DSLBuilder {
     // Reduce confidence based on errors
     confidence -= this.errors.length * 0.1;
 
-    // Reduce confidence based on fallbacks
-    confidence -= this.stats.fallbacksUsed * 0.01;
+    // Reduce confidence based on fallbacks (minor penalty - fallbacks are expected behavior)
+    confidence -= this.stats.fallbacksUsed * 0.005;
 
     return Math.max(0.3, Math.min(1, confidence));
   }
@@ -363,8 +377,9 @@ export class Phase4DSLBuilder {
           this.stats.controlSteps++;
           break;
         default:
-          this.addError(step.id, 'invalid_step', `Unknown step kind: ${(step as any).kind}`, { kind: (step as any).kind });
-          throw new Error(`Unknown step kind: ${(step as any).kind}`);
+          const unknownStep = step as TechnicalWorkflowStep;
+          this.addError(unknownStep.id, 'invalid_step', `Unknown step kind: ${(unknownStep as any).kind}`, { kind: (unknownStep as any).kind });
+          throw new Error(`Unknown step kind: ${(unknownStep as any).kind}`);
       }
 
       this.stats.convertedSteps++;
@@ -378,7 +393,9 @@ export class Phase4DSLBuilder {
   /**
    * Convert operation step → ActionStep
    */
-  private convertOperationStep(step: OperationStep): ActionStep {
+  private convertOperationStep(step: OperationStep): ActionStep & { outputs?: Record<string, any> } {
+    const outputs = this.buildStepOutputs(step.outputs, step.id, 'action');
+
     return {
       id: step.id,
       type: 'action',
@@ -386,7 +403,8 @@ export class Phase4DSLBuilder {
       description: step.description,
       plugin: step.plugin,
       action: step.action,
-      params: this.resolveInputs(step.inputs || {})
+      params: this.resolveInputs(step.inputs || {}),
+      ...(outputs && { outputs })
     };
   }
 
@@ -457,10 +475,11 @@ export class Phase4DSLBuilder {
   /**
    * Build PILOT DSL TransformStep (deterministic, no LLM)
    */
-  private buildTransformStep(step: TransformStep, transformType: string): PilotTransformStep {
+  private buildTransformStep(step: TransformStep, transformType: string): PilotTransformStep & { outputs?: Record<string, any> } {
     const operation = TRANSFORM_TYPE_TO_OPERATION[transformType] || 'map';
     const inputRef = this.findPrimaryInput(step.inputs || {}, step.id);
     const config = this.buildTransformConfig(transformType, step.inputs || {}, step.id);
+    const outputs = this.buildStepOutputs(step.outputs, step.id, 'transform', operation);
 
     return {
       id: step.id,
@@ -469,15 +488,17 @@ export class Phase4DSLBuilder {
       description: step.description,
       operation: operation as PilotTransformStep['operation'],
       input: inputRef,
-      config
+      config,
+      ...(outputs && { outputs })
     };
   }
 
   /**
    * Build PILOT DSL AIProcessingStep (requires LLM)
    */
-  private buildAIProcessingStep(step: TransformStep, transformType: string): AIProcessingStep {
+  private buildAIProcessingStep(step: TransformStep, transformType: string): AIProcessingStep & { outputs?: Record<string, any> } {
     const dataInput = this.findPrimaryInput(step.inputs || {}, step.id);
+    const outputs = this.buildStepOutputs(step.outputs, step.id, 'ai_processing');
 
     return {
       id: step.id,
@@ -487,7 +508,8 @@ export class Phase4DSLBuilder {
       prompt: step.description,
       params: {
         data: dataInput
-      }
+      },
+      ...(outputs && { outputs })
     };
   }
 
@@ -923,9 +945,11 @@ export class Phase4DSLBuilder {
 
   /**
    * Convert Phase 4 technical_inputs_required to PILOT DSL InputFields
+   * Also auto-extracts any {{input.*}} references not already declared
    */
-  private convertRequiredInputs(inputs: TechnicalInputRequired[]): InputField[] {
-    return inputs.map(input => ({
+  private convertRequiredInputs(inputs: TechnicalInputRequired[], workflowSteps: WorkflowStep[]): InputField[] {
+    // Start with declared inputs
+    const declaredInputs = inputs.map(input => ({
       name: input.key,
       type: this.inferInputType(input.key),
       label: this.generateLabel(input.key),
@@ -934,6 +958,94 @@ export class Phase4DSLBuilder {
       placeholder: `Enter ${input.key.replace(/_/g, ' ')}`,
       reasoning: input.plugin ? `Required by ${input.plugin} plugin` : 'Required input'
     }));
+
+    // Extract {{input.*}} references from workflow steps
+    const extractedKeys = this.extractInputReferences(workflowSteps);
+    const declaredKeys = new Set(declaredInputs.map(i => i.name));
+
+    // Add any undeclared inputs found in workflow
+    const autoExtractedInputs: InputField[] = [];
+    for (const key of Array.from(extractedKeys)) {
+      if (!declaredKeys.has(key)) {
+        autoExtractedInputs.push({
+          name: key,
+          type: this.inferInputType(key),
+          label: this.generateLabel(key),
+          required: true,
+          description: `Auto-extracted from workflow references`,
+          placeholder: `Enter ${key.replace(/_/g, ' ')}`,
+          reasoning: 'Auto-detected from {{input.*}} reference in workflow'
+        });
+        this.addWarning(
+          'global',
+          'missing_input',
+          `Input '${key}' referenced in workflow but not declared in technical_inputs_required`,
+          { key, source: 'auto-extracted' }
+        );
+      }
+    }
+
+    return [...declaredInputs, ...autoExtractedInputs];
+  }
+
+  /**
+   * Recursively extract all {{input.*}} references from workflow steps
+   */
+  private extractInputReferences(steps: WorkflowStep[]): Set<string> {
+    const inputRefs = new Set<string>();
+    const inputPattern = /\{\{input\.([a-zA-Z_][a-zA-Z0-9_]*)\}\}/g;
+
+    const scanValue = (value: any): void => {
+      if (typeof value === 'string') {
+        let match;
+        while ((match = inputPattern.exec(value)) !== null) {
+          inputRefs.add(match[1]);
+        }
+        // Reset regex state
+        inputPattern.lastIndex = 0;
+      } else if (Array.isArray(value)) {
+        value.forEach(scanValue);
+      } else if (value && typeof value === 'object') {
+        Object.values(value).forEach(scanValue);
+      }
+    };
+
+    const scanStep = (step: WorkflowStep): void => {
+      // Scan params for action steps
+      if (step.type === 'action') {
+        scanValue((step as ActionStep).params);
+      }
+      // Scan config for transform steps
+      if (step.type === 'transform') {
+        scanValue((step as PilotTransformStep).config);
+        scanValue((step as PilotTransformStep).input);
+      }
+      // Scan params for ai_processing steps
+      if (step.type === 'ai_processing') {
+        scanValue((step as AIProcessingStep).params);
+      }
+      // Scan nested steps in scatter_gather
+      if (step.type === 'scatter_gather') {
+        const sg = step as ScatterGatherStep;
+        scanValue(sg.scatter.input);
+        if (sg.scatter.steps) {
+          sg.scatter.steps.forEach(scanStep);
+        }
+      }
+      // Scan nested steps in conditional
+      if (step.type === 'conditional') {
+        const cond = step as ConditionalStep;
+        if (cond.then_steps) {
+          cond.then_steps.forEach(scanStep);
+        }
+        if (cond.else_steps) {
+          cond.else_steps.forEach(scanStep);
+        }
+      }
+    };
+
+    steps.forEach(scanStep);
+    return inputRefs;
   }
 
   private inferInputType(key: string): InputField['type'] {
@@ -951,6 +1063,66 @@ export class Phase4DSLBuilder {
       .split(/[_-]/)
       .map(word => word.charAt(0).toUpperCase() + word.slice(1))
       .join(' ');
+  }
+
+  // --------------------------------------------------------------------------
+  // Step Output Contracts
+  // --------------------------------------------------------------------------
+
+  /**
+   * Build output definitions for a step based on Phase4 outputs and operation type
+   * Provides explicit output contracts to eliminate heuristic inference
+   */
+  private buildStepOutputs(
+    phase4Outputs: Record<string, any> | undefined,
+    stepId: string,
+    stepType: 'action' | 'transform' | 'ai_processing',
+    operation?: string
+  ): Record<string, { type: string; description?: string }> | undefined {
+    if (!phase4Outputs) return undefined;
+
+    const outputs: Record<string, { type: string; description?: string }> = {};
+
+    // Get the contract for this operation type
+    const contract = operation ? TRANSFORM_OUTPUT_CONTRACTS[operation] : undefined;
+
+    for (const [key, typeOrValue] of Object.entries(phase4Outputs)) {
+      // Skip routing fields (next_step, iteration_next_step, etc.)
+      if (key === 'next_step' || key.includes('next_step')) continue;
+
+      // Determine the type
+      let outputType = 'any';
+      let description: string | undefined;
+
+      if (typeof typeOrValue === 'string') {
+        // Phase4 outputs use type strings like "string[][]", "object[]", "string"
+        outputType = typeOrValue;
+      }
+
+      // Apply contract-based type if available
+      if (contract) {
+        // For group operation, items output gets the contract shape
+        if (operation === 'group' && key.includes('grouped')) {
+          outputType = contract.shape;
+          description = contract.description;
+        }
+        // For filter, the output array uses the contract
+        else if (operation === 'filter') {
+          outputType = contract.shape;
+          description = contract.description;
+        }
+        // For split/partition, apply the partition contract
+        else if (operation === 'map' && (key.includes('with_') || key.includes('missing_'))) {
+          outputType = 'T[]';
+          description = 'Partitioned array subset';
+        }
+      }
+
+      outputs[key] = { type: outputType, ...(description && { description }) };
+    }
+
+    // Only return if we have meaningful outputs
+    return Object.keys(outputs).length > 0 ? outputs : undefined;
   }
 
   // --------------------------------------------------------------------------

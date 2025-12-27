@@ -27,7 +27,7 @@ feasibility ──────────────────────�
 | `enhanced_prompt.specifics.services_involved` | `suggested_plugins` | Direct copy |
 | `technical_inputs_required[]` | `required_inputs[]` | Transform each input (see below) |
 | `technical_workflow[]` | `workflow_steps[]` | Transform each step (see below) |
-| `feasibility.can_execute` | `confidence` | `true` → 0.95, `false` → 0.7 |
+| `feasibility.can_execute` | `confidence` | Calculated (see Confidence Calculation) |
 | — | `workflow_type` | Inferred from step types |
 | — | `suggested_outputs` | Generated default output |
 | — | `reasoning` | Generated summary |
@@ -451,6 +451,164 @@ Phase 4 (TechnicalInputRequired)     PILOT_DSL_SCHEMA (InputField)
 | Contains `message`, `description` | `textarea` |
 | Default | `text` |
 
+### Auto-Extraction of `{{input.*}}` References
+
+The DSL Builder automatically scans all workflow steps for `{{input.*}}` patterns and ensures they are declared in `required_inputs`. This prevents missing input declarations.
+
+**How it works:**
+1. After converting workflow steps, the builder scans all params/config for `{{input.xxx}}` patterns
+2. Extracts unique input key names
+3. Compares against declared `technical_inputs_required`
+4. Auto-generates `InputField` entries for any undeclared inputs
+5. Adds a warning for each auto-extracted input
+
+**Example:**
+```typescript
+// If step1 has: params: { spreadsheet_id: "{{input.my_sheet_id}}" }
+// But technical_inputs_required is empty or missing "my_sheet_id"
+
+// DSL Builder will auto-add:
+{
+  name: "my_sheet_id",
+  type: "text",  // inferred from key
+  label: "My Sheet Id",
+  required: true,
+  description: "Auto-extracted from workflow references",
+  reasoning: "Auto-detected from {{input.*}} reference in workflow"
+}
+
+// And emit warning:
+// "[global] Input 'my_sheet_id' referenced in workflow but not declared in technical_inputs_required"
+```
+
+**Scanned locations:**
+- `ActionStep.params`
+- `TransformStep.config` and `TransformStep.input`
+- `AIProcessingStep.params`
+- `ScatterGatherStep.scatter.input` and nested steps
+- `ConditionalStep.then_steps` and `else_steps`
+
+---
+
+## Transform Output Contracts
+
+The DSL Builder includes predefined output contracts for transform operations, making step outputs explicit and eliminating heuristic inference.
+
+### Output Shape Definitions
+
+| Transform Operation | Output Shape | Description |
+|---------------------|--------------|-------------|
+| `filter` | `T[]` | Filtered array of items matching condition |
+| `map` | `U[]` | Transformed array of items |
+| `group` | `{key: string, items: T[]}[]` | Array of groups with key and items |
+| `split` | `{with_field: T[], without_field: T[]}` | Partitioned arrays based on field presence |
+| `format` | `string` | Formatted string output (HTML, text, etc.) |
+| `sort` | `T[]` | Sorted array of items |
+| `aggregate` | `{[alias]: value}` | Object with aggregated values |
+| `reduce` | `U` | Single reduced value |
+| `deduplicate` | `T[]` | Deduplicated array |
+| `flatten` | `T[]` | Flattened array |
+| `pick_fields` | `Partial<T>[]` | Array with selected fields only |
+| `merge` | `T` | Merged object or array |
+| `convert` | `U` | Type-converted value |
+
+### Step Output Generation
+
+The builder automatically generates `outputs` for each step based on:
+1. Phase 4 `outputs` field (if provided)
+2. Operation type contract (for transforms)
+3. Step type defaults
+
+**Example - Filter step with outputs:**
+```json
+{
+  "id": "step2",
+  "type": "transform",
+  "operation": "filter",
+  "input": "{{step1.leads}}",
+  "config": { ... },
+  "outputs": {
+    "filtered": {
+      "type": "T[]",
+      "description": "Filtered array of items matching condition"
+    }
+  }
+}
+```
+
+**Example - Group step with outputs:**
+```json
+{
+  "id": "step4",
+  "type": "transform",
+  "operation": "group",
+  "input": "{{step3.leads}}",
+  "config": { "field": "sales_person" },
+  "outputs": {
+    "grouped": {
+      "type": "{key: string, items: T[]}[]",
+      "description": "Array of groups with key and items"
+    }
+  }
+}
+```
+
+This explicit output definition eliminates downstream inference warnings and ensures consistent data contracts between steps.
+
+---
+
+## Suggested Plugins Resolution
+
+The `suggested_plugins` field is populated using a fallback chain:
+
+1. **Primary source**: `enhanced_prompt.specifics.services_involved`
+2. **Fallback**: `requiredServices` from Phase 4 input
+
+```typescript
+// Resolution logic in build()
+suggested_plugins: enhanced_prompt?.specifics?.services_involved || requiredServices || []
+```
+
+This ensures plugins are always populated even when `enhanced_prompt` is incomplete or missing service information.
+
+---
+
+## Confidence Calculation
+
+The `confidence` score (0.0-1.0) reflects how reliably the DSL was generated. It starts from the feasibility score and is adjusted based on builder statistics.
+
+### Base Score
+- `feasibility.can_execute: true` → Base: 0.95
+- `feasibility.can_execute: false` → Base: 0.7
+
+### Adjustments
+
+| Factor | Penalty | Description |
+|--------|---------|-------------|
+| Warnings | -0.01 each | Non-blocking issues detected during conversion |
+| Errors | -0.02 each | Blocking issues that may affect execution |
+| Fallbacks used | -0.005 each | Inference or fallback logic used (reduced from 0.01) |
+
+### Calculation Formula
+
+```typescript
+let confidence = feasibility.can_execute ? 0.95 : 0.7;
+confidence -= this.stats.warnings * 0.01;
+confidence -= this.stats.errors * 0.02;
+confidence -= this.stats.fallbacksUsed * 0.005;
+confidence = Math.max(0.5, Math.min(1.0, confidence)); // Clamp to [0.5, 1.0]
+```
+
+### Example
+
+For a workflow with:
+- `feasibility.can_execute: true` (base 0.95)
+- 2 warnings (-0.02)
+- 0 errors (0)
+- 3 fallbacks used (-0.015)
+
+Final confidence: `0.95 - 0.02 - 0 - 0.015 = 0.915`
+
 ---
 
 ## Condition Parsing
@@ -866,6 +1024,8 @@ Special output field:
 
 ---
 
-**Document Version**: 2.0
-**Updated**: 2024-12-25
-**Changes**: Added transform type routing, deterministic vs LLM type distinction, config mapping from inputs
+**Document Version**: 2.1
+**Updated**: 2024-12-27
+**Changes**:
+- v2.1: Added auto-extraction of `{{input.*}}` references, transform output contracts, suggested plugins fallback chain, confidence calculation details
+- v2.0: Added transform type routing, deterministic vs LLM type distinction, config mapping from inputs

@@ -123,12 +123,16 @@ interface TechnicalWorkflowInput {
     plan_description?: string;
     specifics?: {
       resolved_user_inputs?: Array<{ key: string; value: string }>;
+      services_involved?: string[];  // Primary source for suggested_plugins
     };
   };
   analysis?: {
     agent_name?: string;
     description?: string;
   };
+  // v2.1: Added for improved DSL generation
+  requiredServices?: string[];              // Fallback for suggested_plugins
+  technical_inputs_required?: TechnicalInputRequired[];  // Declared inputs from Phase 4
 }
 ```
 
@@ -435,6 +439,24 @@ The **100% deterministic** converter for Path B (technical workflow).
 | `build(phase4Response)` | Phase4Response with technical_workflow | Path B (technical workflow) |
 
 **Note:** The reviewer's feasibility format (strings) is converted to Phase4Response format (objects) before calling `build()`.
+
+#### v2.1 Enhancements
+
+**Auto-Extraction of `{{input.*}}` References:**
+The builder scans all workflow steps for `{{input.*}}` patterns and auto-generates `required_inputs` entries for any undeclared inputs. This prevents missing input declarations.
+
+**Transform Output Contracts:**
+Each transform operation type has a predefined output shape contract (e.g., `filter` → `T[]`, `group` → `{key, items}[]`). Steps now include explicit `outputs` definitions.
+
+**Suggested Plugins Fallback:**
+`suggested_plugins` uses a fallback chain: `enhanced_prompt.specifics.services_involved` → `requiredServices` → `[]`.
+
+**Confidence Calculation:**
+- Base: 0.95 (can_execute: true) or 0.7 (false)
+- Penalties: -0.01/warning, -0.02/error, -0.005/fallback
+- Clamped to [0.5, 1.0]
+
+See [Phase4-to-PILOT_DSL-Mapping.md](./Phase4-to-PILOT_DSL-Mapping.md) for full mapping details.
 
 #### Phase4DSLBuilder.build() - Direct Conversion
 
@@ -832,7 +854,8 @@ When session tracking is enabled, the `sessionId` is included in the generation 
 | `lib/agentkit/v4/v5-generator.ts` | Main orchestrator, handles both input paths |
 | `lib/agentkit/v4/utils/workflow-session-tracker.ts` | Session tracking helper for workflow generation diary |
 | `lib/agentkit/v4/core/step-plan-extractor.ts` | LLM-based step extraction (Path A) |
-| `lib/agentkit/v4/core/dsl-builder.ts` | Deterministic DSL construction (both paths) |
+| `lib/agentkit/v4/core/dsl-builder.ts` | Deterministic DSL construction (Path A) |
+| `lib/agentkit/v4/core/phase4-dsl-builder.ts` | Deterministic DSL conversion from technical workflow (Path B) |
 | `lib/validation/phase4-schema.ts` | Zod schemas and TypeScript types for TechnicalWorkflow (v13 prompt) |
 | `lib/validation/technical-reviewer-schema.ts` | Zod schemas for Technical Reviewer response validation |
 | `app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v13-chatgpt.txt` | Agent creation prompt (Phase 1-4) |

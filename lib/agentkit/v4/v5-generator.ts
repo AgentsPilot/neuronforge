@@ -20,7 +20,7 @@ import { IPluginContext } from '@/lib/types/plugin-definition-context';
 import { createLogger } from '@/lib/logger';
 import { PromptLoader } from '@/app/api/types/PromptLoader';
 import { ProviderFactory, ProviderName } from '@/lib/ai/providerFactory';
-import type { TechnicalWorkflowStep } from '@/lib/validation/phase4-schema';
+import type { TechnicalWorkflowStep, TechnicalInputRequired } from '@/lib/validation/phase4-schema';
 import { jsonrepair } from 'jsonrepair';
 import {
   validateTechnicalReviewerResponse,
@@ -51,6 +51,7 @@ export interface TechnicalWorkflowInput {
     plan_title?: string;
     plan_description?: string;
     specifics?: {
+      services_involved?: string[];
       resolved_user_inputs?: Array<{ key: string; value: string }>;
     };
   };
@@ -58,6 +59,10 @@ export interface TechnicalWorkflowInput {
     agent_name?: string;
     description?: string;
   };
+  /** Required services/plugins for the workflow */
+  requiredServices?: string[];
+  /** Technical inputs required from user at runtime */
+  technical_inputs_required?: TechnicalInputRequired[];
 }
 
 const logger = createLogger({ module: 'AgentKit', service: 'V5WorkflowGenerator' });
@@ -312,7 +317,8 @@ export class V5WorkflowGenerator {
           technical_workflow: reviewedWorkflow.technical_workflow,
           enhanced_prompt: reviewedWorkflow.enhanced_prompt,
           feasibility: convertedFeasibility,
-          technical_inputs_required: [],
+          technical_inputs_required: input.technicalWorkflow?.technical_inputs_required || [],
+          requiredServices: input.technicalWorkflow?.requiredServices,
         };
 
         const dslResult: Phase4DSLBuilderResult = this.phase4DslBuilder.build(phase4Input);
