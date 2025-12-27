@@ -886,6 +886,30 @@ export default function TestPluginsPage() {
     }
   };
 
+  // Refresh all user-specific data (called when user clicks refresh button)
+  const refreshAllUserData = async () => {
+    if (!userId.trim()) {
+      addDebugLog('error', 'User ID is required to refresh data');
+      return;
+    }
+
+    addDebugLog('info', `Refreshing all data for user: ${userId}`);
+
+    // Clear existing data for clean refresh
+    setRecentThreads([]);
+    setAgentsList([]);
+    setUserStatus(null);
+
+    // Reload all user-specific data in parallel
+    await Promise.all([
+      loadUserStatus(),
+      loadRecentThreads(),
+      loadUserAgents()
+    ]);
+
+    addDebugLog('success', `All data refreshed for user: ${userId}`);
+  };
+
   const connectPlugin = async (pluginKey: string) => {
     if (!userId.trim()) {
       addDebugLog('error', 'User ID is required to connect plugins');
@@ -2595,14 +2619,31 @@ export default function TestPluginsPage() {
         <h2>User Configuration</h2>
         <div style={{ marginBottom: '10px' }}>
           <label htmlFor="userId" style={{ display: 'block', marginBottom: '5px' }}>User ID:</label>
-          <input
-            id="userId"
-            type="text"
-            value={userId}
-            onChange={(e) => setUserId(e.target.value)}
-            placeholder="Enter user ID"
-            style={{ width: '300px', padding: '8px', fontSize: '14px' }}
-          />
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <input
+              id="userId"
+              type="text"
+              value={userId}
+              onChange={(e) => setUserId(e.target.value)}
+              placeholder="Enter user ID"
+              style={{ width: '300px', padding: '8px', fontSize: '14px' }}
+            />
+            <button
+              onClick={refreshAllUserData}
+              disabled={isLoading || !userId.trim()}
+              style={{
+                padding: '8px 16px',
+                fontSize: '14px',
+                backgroundColor: userId.trim() ? '#007bff' : '#6c757d',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: userId.trim() ? 'pointer' : 'not-allowed'
+              }}
+            >
+              Load User Data
+            </button>
+          </div>
         </div>
         {userStatus && (
           <div style={{ fontSize: '14px', color: '#666' }}>
