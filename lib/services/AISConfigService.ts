@@ -2,6 +2,10 @@
 // Centralized AIS Configuration Service - SINGLE SOURCE OF TRUTH for all AIS ranges
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { createLogger } from '@/lib/logger';
+
+// Module-level logger for static class
+const logger = createLogger({ service: 'AISConfigService' });
 
 export interface AISRange {
   min: number;
@@ -92,8 +96,7 @@ export class AISConfigService {
       const { data, error } = await supabase.rpc('get_active_ais_ranges');
 
       if (error || !data) {
-        console.warn('⚠️ [AIS Config] Failed to fetch ranges from database, using fallback defaults');
-        console.warn('⚠️ [AIS Config] Error:', error?.message);
+        logger.warn({ err: error }, 'Failed to fetch ranges from database, using fallback defaults');
         return this.getFallbackRanges();
       }
 
@@ -104,11 +107,11 @@ export class AISConfigService {
       this.cache = ranges;
       this.cacheTimestamp = now;
 
-      console.log('✅ [AIS Config] Loaded ranges from database (cached for 5 minutes)');
+      logger.info('Loaded ranges from database (cached for 5 minutes)');
       return ranges;
 
     } catch (error) {
-      console.error('❌ [AIS Config] Exception fetching ranges:', error);
+      logger.error({ err: error }, 'Exception fetching ranges');
       return this.getFallbackRanges();
     }
   }
@@ -183,7 +186,7 @@ export class AISConfigService {
    * These are industry best-practice values
    */
   private static getFallbackRanges(): AISRanges {
-    console.log('⚠️ [AIS Config] Using fallback ranges (database unavailable)');
+    logger.info('Using fallback ranges (database unavailable)');
 
     return {
       // Execution ranges
@@ -273,13 +276,13 @@ export class AISConfigService {
         .single();
 
       if (error || !data) {
-        console.warn(`⚠️  [AIS Config] Config key '${configKey}' not found, using fallback: ${fallbackValue}`);
+        logger.warn({ configKey, fallbackValue }, 'Config key not found, using fallback');
         return fallbackValue;
       }
 
       return Number(data.config_value);
     } catch (error) {
-      console.error(`❌ [AIS Config] Error fetching config '${configKey}':`, error);
+      logger.error({ err: error, configKey }, 'Error fetching config');
       return fallbackValue;
     }
   }
@@ -298,7 +301,7 @@ export class AISConfigService {
         .select('config_key, config_value');
 
       if (error || !data) {
-        console.error('❌ [AIS Config] Error fetching all system config:', error);
+        logger.error({ err: error }, 'Error fetching all system config');
         return {};
       }
 
@@ -306,8 +309,37 @@ export class AISConfigService {
         data.map(item => [item.config_key, Number(item.config_value)])
       );
     } catch (error) {
-      console.error('❌ [AIS Config] Error fetching all system config:', error);
+      logger.error({ err: error }, 'Error fetching all system config');
       return {};
+    }
+  }
+
+  /**
+   * Get multiple config values by keys (returns raw values for JSON parsing)
+   *
+   * @param supabase - Supabase client
+   * @param keys - Array of config keys to fetch
+   * @returns Object with data array and error
+   */
+  static async getConfigByKeys(
+    supabase: SupabaseClient,
+    keys: string[]
+  ): Promise<{ data: Array<{ config_key: string; config_value: string }> | null; error: Error | null }> {
+    try {
+      const { data, error } = await supabase
+        .from('ais_system_config')
+        .select('config_key, config_value')
+        .in('config_key', keys);
+
+      if (error) {
+        logger.warn({ err: error }, 'Failed to fetch config by keys');
+        return { data: null, error };
+      }
+
+      return { data: data || [], error: null };
+    } catch (error) {
+      logger.error({ err: error }, 'Exception fetching config by keys');
+      return { data: null, error: error as Error };
     }
   }
 
@@ -329,7 +361,7 @@ export class AISConfigService {
         .eq('component_key', componentKey);
 
       if (error || !data) {
-        console.warn(`⚠️  [AIS Config] No weights found for component '${componentKey}'`);
+        logger.warn({ componentKey }, 'No weights found for component');
         return {};
       }
 
@@ -337,7 +369,7 @@ export class AISConfigService {
         data.map(item => [item.sub_component || 'default', Number(item.weight)])
       );
     } catch (error) {
-      console.error(`❌ [AIS Config] Error fetching weights for '${componentKey}':`, error);
+      logger.error({ err: error, componentKey }, 'Error fetching weights for component');
       return {};
     }
   }
@@ -355,7 +387,7 @@ export class AISConfigService {
         .select('component_key, sub_component, weight');
 
       if (error || !data) {
-        console.error('❌ [AIS Config] Error fetching all scoring weights:', error);
+        logger.error({ err: error }, 'Error fetching all scoring weights');
         return {};
       }
 
@@ -370,7 +402,7 @@ export class AISConfigService {
 
       return weights;
     } catch (error) {
-      console.error('❌ [AIS Config] Error fetching all scoring weights:', error);
+      logger.error({ err: error }, 'Error fetching all scoring weights');
       return {};
     }
   }
@@ -381,7 +413,7 @@ export class AISConfigService {
   static clearCache(): void {
     this.cache = null;
     this.cacheTimestamp = 0;
-    console.log('🔄 [AIS Config] Cache cleared');
+    logger.info('Cache cleared');
   }
 
   /**
@@ -433,8 +465,7 @@ export class AISConfigService {
         ]);
 
       if (error || !data || data.length === 0) {
-        console.warn('⚠️ [AIS Config] Failed to fetch execution weights, using fallback defaults');
-        console.warn('⚠️ [AIS Config] Error:', error?.message);
+        logger.warn({ err: error }, 'Failed to fetch execution weights, using fallback defaults');
         return {
           tokens: 0.30,
           execution: 0.25,
@@ -458,11 +489,11 @@ export class AISConfigService {
         memory: weightMap['ais_weight_memory'] ?? 0.10
       };
 
-      console.log('✅ [AIS Config] Loaded execution weights from database:', weights);
+      logger.info({ weights }, 'Loaded execution weights from database');
       return weights;
 
     } catch (error) {
-      console.error('❌ [AIS Config] Exception fetching execution weights:', error);
+      logger.error({ err: error }, 'Exception fetching execution weights');
       return {
         tokens: 0.30,
         execution: 0.25,
@@ -499,8 +530,7 @@ export class AISConfigService {
         ]);
 
       if (error || !data || data.length === 0) {
-        console.warn('⚠️ [AIS Config] Failed to fetch combined weights, using fallback defaults');
-        console.warn('⚠️ [AIS Config] Error:', error?.message);
+        logger.warn({ err: error }, 'Failed to fetch combined weights, using fallback defaults');
         return {
           creation: 0.3,
           execution: 0.7
@@ -518,11 +548,11 @@ export class AISConfigService {
         execution: weightMap['ais_weight_execution_blend'] ?? 0.7
       };
 
-      console.log('✅ [AIS Config] Loaded combined weights from database:', weights);
+      logger.info({ weights }, 'Loaded combined weights from database');
       return weights;
 
     } catch (error) {
-      console.error('❌ [AIS Config] Exception fetching combined weights:', error);
+      logger.error({ err: error }, 'Exception fetching combined weights');
       return {
         creation: 0.3,
         execution: 0.7
@@ -560,7 +590,7 @@ export class AISConfigService {
         ]);
 
       if (error || !data || data.length === 0) {
-        console.warn('⚠️ [AIS Config] Failed to fetch execution sub-weights, using fallback defaults');
+        logger.warn({ err: error }, 'Failed to fetch execution sub-weights, using fallback defaults');
         return { iterations: 0.35, duration: 0.30, failure: 0.20, retry: 0.15 };
       }
 
@@ -576,7 +606,7 @@ export class AISConfigService {
         retry: weightMap['ais_execution_retry_weight'] ?? 0.15
       };
     } catch (error) {
-      console.error('❌ [AIS Config] Exception fetching execution sub-weights:', error);
+      logger.error({ err: error }, 'Exception fetching execution sub-weights');
       return { iterations: 0.35, duration: 0.30, failure: 0.20, retry: 0.15 };
     }
   }
@@ -608,7 +638,7 @@ export class AISConfigService {
         ]);
 
       if (error || !data || data.length === 0) {
-        console.warn('⚠️ [AIS Config] Failed to fetch plugin sub-weights, using fallback defaults');
+        logger.warn({ err: error }, 'Failed to fetch plugin sub-weights, using fallback defaults');
         return { count: 0.4, usage: 0.35, overhead: 0.25 };
       }
 
@@ -623,7 +653,7 @@ export class AISConfigService {
         overhead: weightMap['ais_plugin_overhead_weight'] ?? 0.25
       };
     } catch (error) {
-      console.error('❌ [AIS Config] Exception fetching plugin sub-weights:', error);
+      logger.error({ err: error }, 'Exception fetching plugin sub-weights');
       return { count: 0.4, usage: 0.35, overhead: 0.25 };
     }
   }
@@ -658,7 +688,7 @@ export class AISConfigService {
         ]);
 
       if (error || !data || data.length === 0) {
-        console.warn('⚠️ [AIS Config] Failed to fetch workflow sub-weights, using fallback defaults');
+        logger.warn({ err: error }, 'Failed to fetch workflow sub-weights, using fallback defaults');
         return { steps: 0.4, branches: 0.25, loops: 0.20, parallel: 0.15 };
       }
 
@@ -674,7 +704,7 @@ export class AISConfigService {
         parallel: weightMap['ais_workflow_parallel_weight'] ?? 0.15
       };
     } catch (error) {
-      console.error('❌ [AIS Config] Exception fetching workflow sub-weights:', error);
+      logger.error({ err: error }, 'Exception fetching workflow sub-weights');
       return { steps: 0.4, branches: 0.25, loops: 0.20, parallel: 0.15 };
     }
   }
@@ -706,7 +736,7 @@ export class AISConfigService {
         ]);
 
       if (error || !data || data.length === 0) {
-        console.warn('⚠️ [AIS Config] Failed to fetch memory sub-weights, using fallback defaults');
+        logger.warn({ err: error }, 'Failed to fetch memory sub-weights, using fallback defaults');
         return { ratio: 0.5, diversity: 0.3, volume: 0.2 };
       }
 
@@ -721,7 +751,7 @@ export class AISConfigService {
         volume: weightMap['ais_memory_volume_weight'] ?? 0.2
       };
     } catch (error) {
-      console.error('❌ [AIS Config] Exception fetching memory sub-weights:', error);
+      logger.error({ err: error }, 'Exception fetching memory sub-weights');
       return { ratio: 0.5, diversity: 0.3, volume: 0.2 };
     }
   }
@@ -757,7 +787,7 @@ export class AISConfigService {
         .select('complexity_tier, model_name, provider');
 
       if (error || !data || data.length === 0) {
-        console.warn('⚠️ [AIS Config] Failed to fetch model routing config, using fallback defaults');
+        logger.warn({ err: error }, 'Failed to fetch model routing config, using fallback defaults');
         return fallbackConfig;
       }
 
@@ -777,10 +807,10 @@ export class AISConfigService {
         }
       });
 
-      console.log('✅ [AIS Config] Loaded model routing config from database:', config);
+      logger.info({ config }, 'Loaded model routing config from database');
       return config;
     } catch (error) {
-      console.error('❌ [AIS Config] Exception fetching model routing config:', error);
+      logger.error({ err: error }, 'Exception fetching model routing config');
       return fallbackConfig;
     }
   }
@@ -815,10 +845,10 @@ export class AISConfigService {
         io_schema: ioWeight
       };
 
-      console.log('✅ [AIS Config] Loaded creation weights from database:', weights);
+      logger.info({ weights }, 'Loaded creation weights from database');
       return weights;
     } catch (error) {
-      console.warn('⚠️ [AIS Config] Failed to load creation weights, using fallback:', fallbackWeights);
+      logger.warn({ err: error, fallbackWeights }, 'Failed to load creation weights, using fallback');
       return fallbackWeights;
     }
   }

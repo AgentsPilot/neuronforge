@@ -17,6 +17,12 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseAdmin } from '../supabaseAdmin';
+import { PROVIDERS } from '@/lib/ai/providerFactory';
+import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider';
+import { getModelMaxOutputTokens } from '@/lib/ai/context-limits';
+import { SystemConfigRepository } from '@/lib/repositories/SystemConfigRepository';
+import { AISConfigService } from '@/lib/services/AISConfigService';
+import { createLogger, type Logger } from '@/lib/logger';
 import type {
   RoutingContext,
   RoutingDecision,
@@ -77,12 +83,16 @@ interface ComplexityConfig {
 
 export class RoutingService implements IRoutingService {
   private supabase: SupabaseClient;
+  private configRepo: SystemConfigRepository;
+  private logger: Logger;
   private tierThresholds: { fast: number; balanced: number } | null = null;
   private modelConfigs: Map<string, ModelConfig> = new Map();
   private complexityConfig: ComplexityConfig | null = null;
 
   constructor(supabaseClient: SupabaseClient) {
     this.supabase = supabaseClient;
+    this.configRepo = new SystemConfigRepository(supabaseClient);
+    this.logger = createLogger({ service: 'RoutingService' });
   }
 
   /**
@@ -92,25 +102,22 @@ export class RoutingService implements IRoutingService {
     if (this.complexityConfig) return; // Already loaded
 
     try {
-      // Fetch complexity config from ais_system_config
-      const { data, error } = await this.supabase
-        .from('ais_system_config')
-        .select('config_key, config_value')
-        .in('config_key', [
-          'pilot_complexity_weights_generate',
-          'pilot_complexity_weights_llm_decision',
-          'pilot_complexity_weights_transform',
-          'pilot_complexity_weights_conditional',
-          'pilot_complexity_weights_action',
-          'pilot_complexity_weights_default',
-          'pilot_complexity_thresholds_prompt_length',
-          'pilot_complexity_thresholds_data_size',
-          'pilot_complexity_thresholds_condition_count',
-          'pilot_complexity_thresholds_context_depth',
-        ]);
+      // Fetch complexity config from ais_system_config via AISConfigService
+      const { data, error } = await AISConfigService.getConfigByKeys(this.supabase, [
+        'pilot_complexity_weights_generate',
+        'pilot_complexity_weights_llm_decision',
+        'pilot_complexity_weights_transform',
+        'pilot_complexity_weights_conditional',
+        'pilot_complexity_weights_action',
+        'pilot_complexity_weights_default',
+        'pilot_complexity_thresholds_prompt_length',
+        'pilot_complexity_thresholds_data_size',
+        'pilot_complexity_thresholds_condition_count',
+        'pilot_complexity_thresholds_context_depth',
+      ]);
 
       if (error) {
-        console.warn('[RoutingService] Failed to load complexity config:', error);
+        this.logger.warn({ err: error }, 'Failed to load complexity config');
         this.setDefaultComplexityConfig();
         return;
       }
@@ -153,32 +160,31 @@ export class RoutingService implements IRoutingService {
             else if (factor === 'context_depth') config.thresholds.contextDepth = value;
           }
         } catch (parseError) {
-          console.warn(`[RoutingService] Failed to parse ${item.config_key}:`, parseError);
+          this.logger.warn({ err: parseError, configKey: item.config_key }, 'Failed to parse config key');
         }
       });
 
       // Load routing strategy weights from system_settings_config
-      const { data: strategyData } = await this.supabase
-        .from('system_settings_config')
-        .select('key, value')
-        .eq('key', 'orchestration_routing_strategy_balanced');
+      const { data: strategyData } = await this.configRepo.getByKey('orchestration_routing_strategy_balanced');
 
-      if (strategyData && strategyData.length > 0) {
+      if (strategyData?.value) {
         try {
-          const strategyWeights = JSON.parse(strategyData[0].value);
+          const strategyWeights = typeof strategyData.value === 'string'
+            ? JSON.parse(strategyData.value)
+            : strategyData.value;
           config.routingStrategy = {
             aisWeight: strategyWeights.aisWeight || 0.6,
             stepWeight: strategyWeights.stepWeight || 0.4,
           };
         } catch (parseError) {
-          console.warn('[RoutingService] Failed to parse routing strategy:', parseError);
+          this.logger.warn({ err: parseError }, 'Failed to parse routing strategy');
         }
       }
 
       this.complexityConfig = config;
-      console.log('[RoutingService] Complexity configuration loaded from database');
+      this.logger.info('Complexity configuration loaded from database');
     } catch (err) {
-      console.error('[RoutingService] Exception loading complexity config:', err);
+      this.logger.error({ err }, 'Exception loading complexity config');
       this.setDefaultComplexityConfig();
     }
   }
@@ -207,7 +213,7 @@ export class RoutingService implements IRoutingService {
         stepWeight: 0.4,
       },
     };
-    console.log('[RoutingService] Using default complexity configuration');
+    this.logger.info('Using default complexity configuration');
   }
 
   /**
@@ -499,15 +505,17 @@ export class RoutingService implements IRoutingService {
         const weights = this.complexityConfig.routingStrategy;
         effectiveComplexity = (agentAIS * weights.aisWeight) + (stepComplexityScore * weights.stepWeight);
 
-        console.log(
-          `[Routing] Effective complexity: ${effectiveComplexity.toFixed(2)} ` +
-          `(Agent AIS: ${agentAIS.toFixed(2)} [${(weights.aisWeight * 100).toFixed(0)}%], ` +
-          `Step: ${stepComplexityScore.toFixed(2)} [${(weights.stepWeight * 100).toFixed(0)}%])`
-        );
+        this.logger.debug({
+          effectiveComplexity: effectiveComplexity.toFixed(2),
+          agentAIS: agentAIS.toFixed(2),
+          aisWeight: (weights.aisWeight * 100).toFixed(0),
+          stepComplexity: stepComplexityScore.toFixed(2),
+          stepWeight: (weights.stepWeight * 100).toFixed(0),
+        }, 'Effective complexity calculated');
       } else {
         // Fallback to agent AIS only
         effectiveComplexity = context.agentAIS?.combined_score || 5.0;
-        console.log(`[Routing] Using agent AIS only: ${effectiveComplexity.toFixed(2)}`);
+        this.logger.debug({ effectiveComplexity: effectiveComplexity.toFixed(2) }, 'Using agent AIS only');
       }
 
       // Determine tier based on effective complexity
@@ -531,20 +539,20 @@ export class RoutingService implements IRoutingService {
         agentAIS: context.agentAIS,
       };
 
-      console.log(
-        `✅ [Routing] SELECTED MODEL FOR ${context.intent.toUpperCase()} INTENT:`,
-        `\n   📊 Tier: ${decision.tier}`,
-        `\n   🤖 Model: ${decision.model}`,
-        `\n   🏢 Provider: ${decision.provider}`,
-        `\n   💡 Reason: ${decision.reason}`,
-        `\n   📈 Effective Complexity: ${effectiveComplexity.toFixed(2)}/10`,
-        `\n   💰 Estimated Cost: $${estimatedCost.toFixed(6)}`,
-        `\n   ⏱️  Estimated Latency: ${estimatedLatency}ms`
-      );
+      this.logger.info({
+        intent: context.intent,
+        tier: decision.tier,
+        model: decision.model,
+        provider: decision.provider,
+        reason: decision.reason,
+        effectiveComplexity: effectiveComplexity.toFixed(2),
+        estimatedCost: estimatedCost.toFixed(6),
+        estimatedLatency,
+      }, 'Model selected for intent');
 
       return decision;
     } catch (error) {
-      console.error('[Routing] Error during routing:', error);
+      this.logger.error({ err: error }, 'Error during routing');
       // Fallback to balanced tier on error
       return this.getDefaultDecision(context);
     }
@@ -564,19 +572,16 @@ export class RoutingService implements IRoutingService {
 
     try {
       // Load model configuration from database
-      const { data, error } = await this.supabase
-        .from('system_settings_config')
-        .select('key, value')
-        .in('key', [
-          `orchestration_routing_model_${tier}`,
-          `orchestration_routing_provider_${tier}`,
-          `orchestration_routing_max_tokens_${tier}`,
-          `orchestration_routing_temperature_${tier}`,
-          `orchestration_routing_cost_per_token_${tier}`,
-        ]);
+      const { data, error } = await this.configRepo.getByKeys([
+        `orchestration_routing_model_${tier}`,
+        `orchestration_routing_provider_${tier}`,
+        `orchestration_routing_max_tokens_${tier}`,
+        `orchestration_routing_temperature_${tier}`,
+        `orchestration_routing_cost_per_token_${tier}`,
+      ]);
 
       if (error || !data) {
-        console.warn('[Routing] Failed to load model config, using defaults');
+        this.logger.warn({ tier, intent }, 'Failed to load model config, using defaults');
         return this.getDefaultModelConfig(tier, intent);
       }
 
@@ -602,7 +607,7 @@ export class RoutingService implements IRoutingService {
 
       return modelConfig;
     } catch (error) {
-      console.error('[Routing] Error loading model config:', error);
+      this.logger.error({ err: error, tier, intent }, 'Error loading model config');
       return this.getDefaultModelConfig(tier, intent);
     }
   }
@@ -633,16 +638,13 @@ export class RoutingService implements IRoutingService {
    */
   private async loadTierThresholds(): Promise<void> {
     try {
-      const { data, error } = await this.supabase
-        .from('system_settings_config')
-        .select('key, value')
-        .in('key', [
-          'orchestration_routing_fast_tier_max_score',
-          'orchestration_routing_balanced_tier_max_score',
-        ]);
+      const { data, error } = await this.configRepo.getByKeys([
+        'orchestration_routing_fast_tier_max_score',
+        'orchestration_routing_balanced_tier_max_score',
+      ]);
 
       if (error || !data) {
-        console.warn('[Routing] Failed to load tier thresholds, using defaults');
+        this.logger.warn('Failed to load tier thresholds, using defaults');
         this.tierThresholds = { fast: 3.0, balanced: 6.5 };
         return;
       }
@@ -657,9 +659,9 @@ export class RoutingService implements IRoutingService {
         balanced: parseFloat(config['orchestration_routing_balanced_tier_max_score'] || '6.5'),
       };
 
-      console.log('[Routing] Tier thresholds loaded:', this.tierThresholds);
+      this.logger.info({ tierThresholds: this.tierThresholds }, 'Tier thresholds loaded');
     } catch (error) {
-      console.error('[Routing] Error loading tier thresholds:', error);
+      this.logger.error({ err: error }, 'Error loading tier thresholds');
       this.tierThresholds = { fast: 3.0, balanced: 6.5 };
     }
   }
@@ -741,8 +743,8 @@ export class RoutingService implements IRoutingService {
   private getDefaultDecision(context: RoutingContext): RoutingDecision {
     return {
       tier: 'balanced',
-      model: 'gpt-4o-mini',  // ✅ Changed from suspended Kimi to OpenAI
-      provider: 'openai',  // ✅ Changed from Kimi to OpenAI
+      model: OPENAI_MODELS.GPT_5_MINI,
+      provider: PROVIDERS.OPENAI,
       reason: 'Default routing (error fallback)',
       estimatedCost: 0,
       estimatedLatency: 2000,
@@ -756,39 +758,39 @@ export class RoutingService implements IRoutingService {
   private getDefaultModelConfig(tier: ModelTier, intent: IntentType): ModelConfig {
     const defaults: Record<ModelTier, Partial<ModelConfig>> = {
       fast: {
-        provider: 'anthropic',
-        model: 'claude-3-haiku-20240307',
-        maxTokens: 2048,
+        provider: PROVIDERS.OPENAI,
+        model: OPENAI_MODELS.GPT_5_NANO,
+        maxTokens: getModelMaxOutputTokens(OPENAI_MODELS.GPT_5_NANO),
         temperature: 0.7,
-        costPerToken: 0.00000025, // $0.25 per 1M tokens
-        avgLatencyMs: 800,
+        costPerToken: 0.00000015,
+        avgLatencyMs: 500,
       },
       balanced: {
-        provider: 'anthropic',  // ✅ Using Anthropic for Claude Haiku
-        model: 'claude-3-haiku-20240307',  // ✅ Claude Haiku for balanced tier
-        maxTokens: 4096,
+        provider: PROVIDERS.OPENAI,
+        model: OPENAI_MODELS.GPT_5_MINI,
+        maxTokens: getModelMaxOutputTokens(OPENAI_MODELS.GPT_5_MINI),
         temperature: 0.7,
-        costPerToken: 0.00000025, // $0.25 per 1M tokens (Claude Haiku pricing)
-        avgLatencyMs: 800,  // Haiku is faster than gpt-4o-mini
+        costPerToken: 0.0000006,
+        avgLatencyMs: 800,
       },
       powerful: {
-        provider: 'anthropic',
-        model: 'claude-3-5-sonnet-20241022',
-        maxTokens: 8192,
+        provider: PROVIDERS.OPENAI,
+        model: OPENAI_MODELS.GPT_52,
+        maxTokens: getModelMaxOutputTokens(OPENAI_MODELS.GPT_52),
         temperature: 0.7,
-        costPerToken: 0.000003, // $3 per 1M tokens
-        avgLatencyMs: 5000,
+        costPerToken: 0.0000025,
+        avgLatencyMs: 2000,
       },
     };
 
     return {
       tier,
-      provider: defaults[tier].provider || 'openai',
-      model: defaults[tier].model || 'gpt-4o-mini',
-      maxTokens: defaults[tier].maxTokens || 4096,
+      provider: defaults[tier].provider || PROVIDERS.OPENAI,
+      model: defaults[tier].model || OPENAI_MODELS.GPT_5_MINI,
+      maxTokens: defaults[tier].maxTokens || getModelMaxOutputTokens(OPENAI_MODELS.GPT_5_MINI),
       temperature: defaults[tier].temperature || 0.7,
-      costPerToken: defaults[tier].costPerToken || 0.0000015,
-      avgLatencyMs: defaults[tier].avgLatencyMs || 2000,
+      costPerToken: defaults[tier].costPerToken || 0.0000006,
+      avgLatencyMs: defaults[tier].avgLatencyMs || 800,
       supportedIntents: this.getSupportedIntents(tier),
     };
   }
@@ -798,9 +800,9 @@ export class RoutingService implements IRoutingService {
    */
   private getDefaultProvider(tier: ModelTier): string {
     const providers: Record<ModelTier, string> = {
-      fast: 'anthropic',
-      balanced: 'anthropic',  // ✅ Using Anthropic for Claude Haiku
-      powerful: 'anthropic',
+      fast: PROVIDERS.OPENAI,
+      balanced: PROVIDERS.OPENAI,
+      powerful: PROVIDERS.OPENAI,
     };
     return providers[tier];
   }
@@ -810,9 +812,9 @@ export class RoutingService implements IRoutingService {
    */
   private getDefaultModel(tier: ModelTier): string {
     const models: Record<ModelTier, string> = {
-      fast: 'claude-3-haiku-20240307',
-      balanced: 'claude-3-haiku-20240307',  // ✅ Claude Haiku for balanced tier
-      powerful: 'claude-3-5-sonnet-20241022',
+      fast: OPENAI_MODELS.GPT_5_NANO,
+      balanced: OPENAI_MODELS.GPT_5_MINI,
+      powerful: OPENAI_MODELS.GPT_52,
     };
     return models[tier];
   }
@@ -821,12 +823,8 @@ export class RoutingService implements IRoutingService {
    * Get default max tokens for tier
    */
   private getDefaultMaxTokens(tier: ModelTier): string {
-    const tokens: Record<ModelTier, string> = {
-      fast: '2048',
-      balanced: '4096',
-      powerful: '8192',
-    };
-    return tokens[tier];
+    const model = this.getDefaultModel(tier);
+    return String(getModelMaxOutputTokens(model));
   }
 
   /**
@@ -834,9 +832,9 @@ export class RoutingService implements IRoutingService {
    */
   private getDefaultCostPerToken(tier: ModelTier): string {
     const costs: Record<ModelTier, string> = {
-      fast: '0.00000025',
-      balanced: '0.00000025',  // Claude Haiku pricing
-      powerful: '0.000003',
+      fast: '0.00000015',
+      balanced: '0.0000006',
+      powerful: '0.0000025',
     };
     return costs[tier];
   }
@@ -846,9 +844,9 @@ export class RoutingService implements IRoutingService {
    */
   private getDefaultLatency(tier: ModelTier): number {
     const latencies: Record<ModelTier, number> = {
-      fast: 800,
-      balanced: 800,  // Haiku latency
-      powerful: 5000,
+      fast: 500,
+      balanced: 800,
+      powerful: 2000,
     };
     return latencies[tier];
   }
@@ -941,15 +939,9 @@ export class RoutingService implements IRoutingService {
   ): Promise<void> {
     try {
       // Check if tracking is enabled
-      const { data: configData } = await this.supabase
-        .from('system_settings_config')
-        .select('value')
-        .eq('key', 'orchestration_per_step_tracking_enabled')
-        .single();
-
-      const trackingEnabled = configData?.value ?? true;
+      const trackingEnabled = await this.configRepo.getBoolean('orchestration_per_step_tracking_enabled', true);
       if (!trackingEnabled) {
-        console.log('[RoutingService] Per-step tracking disabled, skipping log');
+        this.logger.debug('Per-step tracking disabled, skipping log');
         return;
       }
 
@@ -999,17 +991,18 @@ export class RoutingService implements IRoutingService {
         .eq('step_id', stepId);
 
       if (error) {
-        console.error('[RoutingService] Failed to log step routing:', error);
+        this.logger.error({ err: error, stepId }, 'Failed to log step routing');
         // Don't throw - routing logging failures should not stop execution
       } else {
-        console.log(
-          `✅ [RoutingService] Logged routing for step ${stepId}: ` +
-          `complexity=${stepAnalysis.complexityScore.toFixed(1)}, ` +
-          `tier=${decision.tier}, model=${decision.model}`
-        );
+        this.logger.info({
+          stepId,
+          complexity: stepAnalysis.complexityScore.toFixed(1),
+          tier: decision.tier,
+          model: decision.model,
+        }, 'Logged routing for step');
       }
     } catch (err) {
-      console.error('[RoutingService] Step routing logging error:', err);
+      this.logger.error({ err, stepId }, 'Step routing logging error');
       // Don't throw - non-critical failure
     }
   }
@@ -1033,16 +1026,18 @@ export class RoutingService implements IRoutingService {
       // This method is here for future enhancements if needed
 
       // For now, we'll just log confirmation
-      console.log(
-        `✅ [RoutingService] Step ${stepId} execution metrics: ` +
-        `tokens=${actualTokensUsed}, time=${actualExecutionTime}ms, ` +
-        `cost=$${actualCost.toFixed(6)}, success=${success}`
-      );
+      this.logger.info({
+        stepId,
+        tokensUsed: actualTokensUsed,
+        executionTime: actualExecutionTime,
+        cost: actualCost.toFixed(6),
+        success,
+      }, 'Step execution metrics');
 
       // Future: Could add comparison logic here (predicted vs actual)
       // Future: Could update routing memory / ML model with outcome
     } catch (err) {
-      console.error('[RoutingService] Step metrics update error:', err);
+      this.logger.error({ err, stepId }, 'Step metrics update error');
       // Don't throw - non-critical
     }
   }
