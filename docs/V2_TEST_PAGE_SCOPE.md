@@ -8,12 +8,13 @@
 
 ## Overview
 
-The Test Plugins V2 page is a multi-tabbed testing interface that provides developers and administrators with tools to test and manage various aspects of the NeuronForge system. It includes five main functional areas accessible through tabs:
+The Test Plugins V2 page is a multi-tabbed testing interface that provides developers and administrators with tools to test and manage various aspects of the NeuronForge system. It includes six main functional areas accessible through tabs:
 1. **Plugins** - Plugin connectivity, authentication, and action execution
 2. **AI Services** - Prompt analysis and enhancement testing
 3. **Thread Conversation** - Multi-provider conversational agent creation workflow
 4. **Free Tier Users** - User subscription and quota management
 5. **Agent Execution** - Agent testing with debug mode and step visualization
+6. **System Settings** - View and edit system configuration values
 
 ---
 
@@ -554,6 +555,69 @@ Manages SSE connection for real-time debug events:
 
 ---
 
+## Tab 6: System Settings
+
+### Purpose
+View and manage system configuration values from the `system_settings_config` table.
+
+### Features
+
+#### 6.1 View All Settings
+- **Settings Table**: Displays all configuration keys with their values, categories, and descriptions
+- **Scrollable Container**: Fixed header with 500px max height for easy navigation
+- **Empty State**: Shows "Load System Settings" button when no data is loaded
+
+#### 6.2 Filter by Text
+- **Search Input**: Filter settings by key, value, or description (case-insensitive)
+- **Real-time Filtering**: Results update as you type
+- **Match Highlighting**: Shows filter criteria in results count
+
+#### 6.3 Filter by Category
+- **Category Dropdown**: Filter by category (pilot, routing, helpbot, memory, etc.)
+- **Dynamic Categories**: Dropdown populated from loaded settings
+- **"All Categories"**: Default option to show all settings
+
+#### 6.4 Inline Editing
+- **Edit Button**: Click to edit any setting value directly in the table
+- **Textarea Editor**: Multi-line editor for JSON objects and arrays
+- **Save/Cancel**: Confirm or cancel edits with dedicated buttons
+- **Auto-parsing**: Values are automatically parsed as JSON (numbers, booleans, objects) when saved
+
+#### 6.5 Category Badges
+- **Color-coded**: Each category has a distinct background color:
+  - `pilot`: Light blue (#e3f2fd)
+  - `routing`: Light orange (#fff3e0)
+  - `helpbot`: Light purple (#f3e5f5)
+  - `memory`: Light green (#e8f5e9)
+  - `agent_creation`: Light pink (#fce4ec)
+  - `onboarding`: Light cyan (#e0f7fa)
+  - `stripe`: Light yellow (#fff8e1)
+  - `agent_generation`: Light indigo (#e8eaf6)
+  - `ui`: Light red (#fbe9e7)
+  - `general`: Light gray (#f5f5f5)
+
+#### 6.6 Results Summary
+- **Count Display**: Shows "Showing X of Y settings"
+- **Filter Context**: Displays active filter criteria
+- **Category Context**: Shows selected category when filtered
+
+**API Endpoints Used:**
+- `GET /api/admin/system-config` - Fetch all system settings
+- `PUT /api/admin/system-config` - Update setting value
+
+**State Variables:**
+```typescript
+- systemSettings: SystemSettingsConfigItem[]  // All loaded settings
+- filteredSettings: SystemSettingsConfigItem[] // Filtered view
+- settingsFilter: string                       // Text filter value
+- categoryFilter: string                       // Category filter ('all' or category name)
+- editingKey: string | null                    // Currently editing key
+- editValue: string                            // Edit buffer
+- settingsLoading: boolean                     // Loading state
+```
+
+---
+
 ## Global Features
 
 ### User Configuration Panel
@@ -861,6 +925,44 @@ Present on all tabs:
    - DSL output
 10. Check for validation errors with clear `missingFields` if inputs are incomplete
 
+### UC-14: Test Agent Execution with v5Generator JSON (Sandbox Mode)
+1. Navigate to Agent Execution tab
+2. Select "Sandbox Mode (inline)"
+3. Click "Load from JSON" button
+4. Paste v5Generator output JSON (any of these formats work):
+   ```json
+   // Format 1: Direct workflow wrapper
+   { "workflow": { "workflow_steps": [...], "suggested_plugins": [...] } }
+
+   // Format 2: Wrapped v5Generator output
+   { "Generate-agent-v5-wrapper": { "workflow": {...} } }
+
+   // Format 3: Success response format
+   { "success": true, "workflow": { "workflow_steps": [...] } }
+   ```
+5. Verify import success:
+   - Agent name populated in "Agent Name" field
+   - Workflow steps loaded and visible
+   - Plugins extracted to "Plugins Required" field
+   - Input variables pre-populated from `required_inputs`
+6. Fill in any required input variables (e.g., `spreadsheet_id_for_MyTestingExcel`)
+7. Click "Execute Agent"
+8. Review execution results:
+   - Plugin token status (ready/failed)
+   - Step-by-step execution output
+   - Final workflow result
+
+### UC-15: View and Edit System Settings
+1. Navigate to System Settings tab
+2. Click "Load System Settings" or "Refresh" button
+3. Review loaded settings in the table
+4. Use the search filter to find specific settings by key, value, or description
+5. Use the category dropdown to filter by category (e.g., "pilot", "routing")
+6. Click "Edit" on any setting to modify its value
+7. Edit the value in the textarea (supports JSON objects/arrays)
+8. Click ✓ to save or ✗ to cancel
+9. Verify success message in Debug Logs
+
 ---
 
 ## System Config Dependencies
@@ -1016,7 +1118,31 @@ All errors are:
 
 ## Changelog
 
-### Version 1.10 (Current)
+### Version 1.12 (Current)
+- **New System Settings Tab**: Added Tab 6 for viewing and editing `system_settings_config` table values
+  - **View All Settings**: Displays all configuration keys with values, categories, and descriptions
+  - **Text Filter**: Search by key, value, or description (case-insensitive, real-time)
+  - **Category Filter**: Dropdown to filter by category (pilot, routing, helpbot, memory, etc.)
+  - **Inline Editing**: Click to edit values directly in the table with textarea support for JSON
+  - **Auto-parsing**: Values are automatically parsed as JSON (numbers, booleans, objects) when saved
+  - **Category Badges**: Color-coded badges for each category
+  - **Debug Logging**: All operations logged to Debug Logs panel
+- Added UC-15: View and Edit System Settings use case
+
+### Version 1.11
+- **Enhanced Sandbox JSON Import**: Agent Execution tab now supports multiple v5Generator output formats
+  - **Supported Wrapper Formats**:
+    - `{ "agent": {...} }` - Standard agent format
+    - `{ "workflow": {...} }` - v5Generator direct output format
+    - `{ "Generate-agent-v5-wrapper": { "workflow": {...} } }` - Wrapped v5Generator format
+    - Direct object (no wrapper) - Unwrapped workflow
+  - **Field Name Compatibility**:
+    - Plugins: `plugins_required` OR `suggested_plugins`
+    - Input Schema: `input_schema` OR `required_inputs`
+    - Steps: `pilot_steps` OR `workflow_steps`
+  - **Usage**: Paste v5Generator JSON output directly into "Load from JSON" modal in Sandbox Mode
+
+### Version 1.10
 - **AI Services Housekeeping**: Cleaned up legacy services dropdown
   - **Hidden (commented for future removal)**:
     - `analyze-prompt-clarity`, `enhance-prompt`, `generate-clarification-questions` (1-3)
@@ -1179,5 +1305,5 @@ For issues or questions about the Test Page:
 
 ---
 
-**Last Updated:** December 27, 2025 (v1.10 - AI Services Housekeeping - Hidden legacy services)
+**Last Updated:** December 30, 2025 (v1.12 - New System Settings Tab for viewing and editing system_settings_config)
 **Maintained By:** NeuronForge Development Team

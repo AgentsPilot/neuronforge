@@ -254,8 +254,27 @@ export function StepVisualizer({
                 {/* Input Data */}
                 {status.input && (
                   <div style={{ marginBottom: '10px' }}>
-                    <div style={{ fontWeight: 600, color: '#333', marginBottom: '4px' }}>
-                      Input:
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                      <div style={{ fontWeight: 600, color: '#333' }}>
+                        Input:
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigator.clipboard.writeText(formatJson(status.input) || '');
+                        }}
+                        style={{
+                          padding: '2px 8px',
+                          backgroundColor: '#6c757d',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '3px',
+                          cursor: 'pointer',
+                          fontSize: '11px'
+                        }}
+                      >
+                        Copy
+                      </button>
                     </div>
                     <pre style={{
                       margin: 0,
@@ -275,8 +294,27 @@ export function StepVisualizer({
                 {/* Output Data */}
                 {status.output && (
                   <div style={{ marginBottom: '10px' }}>
-                    <div style={{ fontWeight: 600, color: '#28a745', marginBottom: '4px' }}>
-                      Output:
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                      <div style={{ fontWeight: 600, color: '#28a745' }}>
+                        Output:
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigator.clipboard.writeText(formatJson(status.output) || '');
+                        }}
+                        style={{
+                          padding: '2px 8px',
+                          backgroundColor: '#28a745',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '3px',
+                          cursor: 'pointer',
+                          fontSize: '11px'
+                        }}
+                      >
+                        Copy
+                      </button>
                     </div>
                     <pre style={{
                       margin: 0,
@@ -296,8 +334,27 @@ export function StepVisualizer({
                 {/* Error */}
                 {status.error && (
                   <div>
-                    <div style={{ fontWeight: 600, color: '#dc3545', marginBottom: '4px' }}>
-                      Error:
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                      <div style={{ fontWeight: 600, color: '#dc3545' }}>
+                        Error:
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigator.clipboard.writeText(status.error || '');
+                        }}
+                        style={{
+                          padding: '2px 8px',
+                          backgroundColor: '#dc3545',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '3px',
+                          cursor: 'pointer',
+                          fontSize: '11px'
+                        }}
+                      >
+                        Copy
+                      </button>
                     </div>
                     <pre style={{
                       margin: 0,

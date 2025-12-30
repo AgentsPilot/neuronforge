@@ -25,7 +25,19 @@ interface DebugLog {
   message: string;
 }
 
-type TabType = 'plugins' | 'ai-services' | 'thread-conversation' | 'free-tier-users' | 'agent-execution';
+type TabType = 'plugins' | 'ai-services' | 'thread-conversation' | 'free-tier-users' | 'agent-execution' | 'system-settings';
+
+// System Settings Config interface
+interface SystemSettingsConfigItem {
+  id: string;
+  key: string;
+  value: any;
+  category: string;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+  updated_by?: string | null;
+}
 
 // Helper function to format relative time
 function getTimeAgo(date: Date): string {
@@ -640,8 +652,10 @@ const AI_SERVICE_TEMPLATES = {
 
     // Optional: Pre-built technical workflow steps (for LLM review path)
     // If provided, these steps will be reviewed/repaired by LLM
+    // technical_inputs_required: Array of required user inputs from Phase 4 (for DSL required_inputs)
     technicalWorkflow: {
-      technical_workflow: []
+      technical_workflow: [],
+      technical_inputs_required: []
     },
 
     // Skip DSL building and return only reviewed workflow (for testing LLM review in isolation)
@@ -683,7 +697,7 @@ export default function TestPluginsPage() {
   const [showJsonPromptModal, setShowJsonPromptModal] = useState(false);
   const [jsonPromptImportValue, setJsonPromptImportValue] = useState('');
   const [jsonPromptImportError, setJsonPromptImportError] = useState<string | null>(null);
-  const [jsonImportTargetField, setJsonImportTargetField] = useState<'prompt' | 'enhancedPrompt' | 'enhancedPromptTechnicalWorkflow' | 'technicalWorkflow'>('enhancedPrompt');
+  const [jsonImportTargetField, setJsonImportTargetField] = useState<'prompt' | 'enhancedPrompt' | 'enhancedPromptTechnicalWorkflow' | 'technicalWorkflow' | 'technical_inputs_required'>('enhancedPrompt');
 
   // Provider/Model selection state (shared by test/analyze-prompt and thread-conversation)
   const [selectedProvider, setSelectedProvider] = useState<ProviderOption>('openai');
@@ -787,6 +801,15 @@ export default function TestPluginsPage() {
   const [sandboxJsonImport, setSandboxJsonImport] = useState('');
   const [showJsonImportModal, setShowJsonImportModal] = useState(false);
 
+  // System Settings state
+  const [systemSettings, setSystemSettings] = useState<SystemSettingsConfigItem[]>([]);
+  const [filteredSettings, setFilteredSettings] = useState<SystemSettingsConfigItem[]>([]);
+  const [settingsFilter, setSettingsFilter] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState<string>('');
+  const [settingsLoading, setSettingsLoading] = useState(false);
+
   // Debug stream hook
   const debugStream = useDebugStream({
     onEvent: (event) => {
@@ -826,6 +849,79 @@ export default function TestPluginsPage() {
     }
   };
 
+  // Helper function for category colors
+  const getCategoryColor = (category: string): string => {
+    const colors: Record<string, string> = {
+      'pilot': '#e3f2fd',
+      'routing': '#fff3e0',
+      'helpbot': '#f3e5f5',
+      'memory': '#e8f5e9',
+      'agent_creation': '#fce4ec',
+      'general': '#f5f5f5',
+      'onboarding': '#e0f7fa',
+      'stripe': '#fff8e1',
+      'agent_generation': '#e8eaf6',
+      'ui': '#fbe9e7'
+    };
+    return colors[category] || '#f5f5f5';
+  };
+
+  // Extract unique categories for dropdown
+  const settingsCategories = ['all', ...Array.from(new Set(systemSettings.map(s => s.category))).sort()];
+
+  // System settings data fetching functions
+  const loadSystemSettings = async () => {
+    setSettingsLoading(true);
+    try {
+      addDebugLog('info', 'Loading system settings...');
+      const response = await fetch('/api/admin/system-config');
+      const result = await response.json();
+      if (result.success) {
+        setSystemSettings(result.data);
+        addDebugLog('success', `Loaded ${result.data.length} system settings`);
+      } else {
+        addDebugLog('error', `Failed to load settings: ${result.error}`);
+      }
+    } catch (error: any) {
+      addDebugLog('error', `Failed to load settings: ${error.message}`);
+    } finally {
+      setSettingsLoading(false);
+    }
+  };
+
+  const updateSettingValue = async (key: string, newValue: string) => {
+    try {
+      addDebugLog('info', `Updating setting: ${key}...`);
+
+      // Try to parse as JSON if it looks like JSON
+      let parsedValue: any = newValue;
+      try {
+        if (newValue.startsWith('{') || newValue.startsWith('[') || newValue === 'true' || newValue === 'false' || !isNaN(Number(newValue))) {
+          parsedValue = JSON.parse(newValue);
+        }
+      } catch {
+        // Keep as string if not valid JSON
+        parsedValue = newValue;
+      }
+
+      const response = await fetch('/api/admin/system-config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates: { [key]: parsedValue } })
+      });
+      const result = await response.json();
+      if (result.success) {
+        addDebugLog('success', `Updated setting: ${key}`);
+        setEditingKey(null);
+        await loadSystemSettings(); // Refresh
+      } else {
+        addDebugLog('error', `Failed to update: ${result.error}`);
+      }
+    } catch (error: any) {
+      addDebugLog('error', `Failed to update: ${error.message}`);
+    }
+  };
+
   // Load available plugins on mount
   useEffect(() => {
     loadAvailablePlugins();
@@ -860,6 +956,28 @@ export default function TestPluginsPage() {
       debugLogsRef.current.scrollTop = debugLogsRef.current.scrollHeight;
     }
   }, [debugLogs]);
+
+  // Filter system settings based on search and category
+  useEffect(() => {
+    let filtered = systemSettings;
+
+    // Filter by category
+    if (categoryFilter !== 'all') {
+      filtered = filtered.filter(s => s.category === categoryFilter);
+    }
+
+    // Filter by key, value, or description (case-insensitive)
+    if (settingsFilter.trim()) {
+      const search = settingsFilter.toLowerCase();
+      filtered = filtered.filter(s =>
+        s.key.toLowerCase().includes(search) ||
+        String(s.value).toLowerCase().includes(search) ||
+        (s.description || '').toLowerCase().includes(search)
+      );
+    }
+
+    setFilteredSettings(filtered);
+  }, [systemSettings, settingsFilter, categoryFilter]);
 
   const loadAvailablePlugins = async () => {
     try {
@@ -1227,10 +1345,32 @@ export default function TestPluginsPage() {
 
           case 'technicalWorkflow':
             // Look for technical_workflow array and wrap in expected object structure
+            // IMPORTANT: Also extract technical_inputs_required, requiredServices, enhanced_prompt
             if (importedData.technical_workflow !== undefined) {
-              // Wrap the array in the expected object structure
-              extractedData = { technical_workflow: importedData.technical_workflow };
-              extractionNote = ' (extracted .technical_workflow into wrapper object)';
+              // Extract all relevant fields from Phase 4 response
+              extractedData = {
+                technical_workflow: importedData.technical_workflow,
+                // Include technical_inputs_required if present (for required_inputs in DSL)
+                ...(importedData.technical_inputs_required && {
+                  technical_inputs_required: importedData.technical_inputs_required
+                }),
+                // Include requiredServices if present (for suggested_plugins in DSL)
+                ...(importedData.requiredServices && {
+                  requiredServices: importedData.requiredServices
+                }),
+                // Include enhanced_prompt if present (for agent_name, description, services_involved)
+                ...(importedData.enhanced_prompt && {
+                  enhanced_prompt: importedData.enhanced_prompt
+                }),
+              };
+              const extraFields = [
+                importedData.technical_inputs_required ? 'technical_inputs_required' : null,
+                importedData.requiredServices ? 'requiredServices' : null,
+                importedData.enhanced_prompt ? 'enhanced_prompt' : null,
+              ].filter(Boolean);
+              extractionNote = extraFields.length > 0
+                ? ` (extracted .technical_workflow + ${extraFields.join(', ')})`
+                : ' (extracted .technical_workflow into wrapper object)';
             } else if (Array.isArray(importedData) && importedData[0]?.kind) {
               // Already a technical workflow array, wrap it
               extractedData = { technical_workflow: importedData };
@@ -1238,14 +1378,52 @@ export default function TestPluginsPage() {
             }
             // If importedData already has the correct structure {technical_workflow: [...]}, use as-is
             break;
+
+          case 'technical_inputs_required':
+            // Extract technical_inputs_required and merge into existing technicalWorkflow
+            // Supports: array directly, or object with technical_inputs_required field
+            if (Array.isArray(importedData)) {
+              extractedData = importedData;
+              extractionNote = ' (array of inputs)';
+            } else if (importedData.technical_inputs_required) {
+              extractedData = importedData.technical_inputs_required;
+              extractionNote = ' (extracted .technical_inputs_required)';
+            } else {
+              // Try to use as-is if it looks like an input object
+              extractedData = [importedData];
+              extractionNote = ' (wrapped single input in array)';
+            }
+            break;
         }
       }
 
-      // Stringify the extracted data
-      const stringifiedJson = JSON.stringify(extractedData);
-
       // Parse current request body
       const currentBody = JSON.parse(aiServiceRequestBody);
+
+      // Special handling for technical_inputs_required - merge into technicalWorkflow
+      if (jsonImportTargetField === 'technical_inputs_required') {
+        // Parse existing technicalWorkflow or create new one
+        let techWorkflow = currentBody.technicalWorkflow;
+        if (typeof techWorkflow === 'string') {
+          techWorkflow = JSON.parse(techWorkflow);
+        }
+        if (!techWorkflow) {
+          techWorkflow = { technical_workflow: [], technical_inputs_required: [] };
+        }
+        // Merge the imported technical_inputs_required
+        techWorkflow.technical_inputs_required = extractedData;
+        currentBody.technicalWorkflow = JSON.stringify(techWorkflow);
+
+        setAiServiceRequestBody(JSON.stringify(currentBody, null, 2));
+        addDebugLog('success', `Merged ${(extractedData as any[]).length} inputs into technicalWorkflow.technical_inputs_required${extractionNote}`);
+        setShowJsonPromptModal(false);
+        setJsonPromptImportValue('');
+        setJsonPromptImportError(null);
+        return true;
+      }
+
+      // Stringify the extracted data for other fields
+      const stringifiedJson = JSON.stringify(extractedData);
 
       // Set the stringified JSON into the target field
       currentBody[jsonImportTargetField] = stringifiedJson;
@@ -2364,8 +2542,12 @@ export default function TestPluginsPage() {
     try {
       const parsed = JSON.parse(sandboxJsonImport);
 
-      // Extract agent data - support both root-level agent and direct agent object
-      const agent = parsed.agent || parsed;
+      // Extract agent data - support multiple wrapper formats:
+      // - { agent: {...} }           - Standard agent format
+      // - { workflow: {...} }        - v5Generator output format
+      // - { Generate-agent-v5-wrapper: { workflow: {...} } }  - Wrapped v5Generator format
+      // - Direct object              - No wrapper
+      const agent = parsed.agent || parsed.workflow || parsed['Generate-agent-v5-wrapper']?.workflow || parsed;
 
       if (!agent) {
         addDebugLog('error', 'No agent data found in JSON');
@@ -2385,15 +2567,18 @@ export default function TestPluginsPage() {
         setAgentWorkflowSteps(steps);
       }
 
-      // Extract plugins_required
-      if (agent.plugins_required && Array.isArray(agent.plugins_required)) {
-        setSandboxPluginsRequired(JSON.stringify(agent.plugins_required));
+      // Extract plugins_required (also check suggested_plugins from v5Generator)
+      const plugins = agent.plugins_required || agent.suggested_plugins;
+      if (plugins && Array.isArray(plugins)) {
+        setSandboxPluginsRequired(JSON.stringify(plugins));
       }
 
       // Extract input_schema and generate default input_variables
-      if (agent.input_schema && Array.isArray(agent.input_schema)) {
+      // Also check required_inputs from v5Generator format
+      const inputSchema = agent.input_schema || agent.required_inputs;
+      if (inputSchema && Array.isArray(inputSchema)) {
         const defaultInputs: Record<string, string> = {};
-        agent.input_schema.forEach((field: any) => {
+        inputSchema.forEach((field: any) => {
           if (field.name) {
             defaultInputs[field.name] = field.placeholder || field.description || '';
           }
@@ -2408,7 +2593,7 @@ export default function TestPluginsPage() {
       setSandboxJsonImport('');
 
       const stepCount = steps?.length || 0;
-      const pluginCount = agent.plugins_required?.length || 0;
+      const pluginCount = plugins?.length || 0;
       addDebugLog('success', `[Sandbox] Imported "${agent.agent_name}" with ${stepCount} steps and ${pluginCount} plugins`);
 
     } catch (error: any) {
@@ -2601,6 +2786,7 @@ export default function TestPluginsPage() {
           onClick={() => setActiveTab('agent-execution')}
           style={{
             padding: '10px 20px',
+            marginRight: '5px',
             backgroundColor: activeTab === 'agent-execution' ? '#007bff' : '#f8f9fa',
             color: activeTab === 'agent-execution' ? 'white' : '#333',
             border: 'none',
@@ -2611,6 +2797,21 @@ export default function TestPluginsPage() {
           }}
         >
           Agent Execution
+        </button>
+        <button
+          onClick={() => setActiveTab('system-settings')}
+          style={{
+            padding: '10px 20px',
+            backgroundColor: activeTab === 'system-settings' ? '#007bff' : '#f8f9fa',
+            color: activeTab === 'system-settings' ? 'white' : '#333',
+            border: 'none',
+            borderBottom: activeTab === 'system-settings' ? '3px solid #0056b3' : 'none',
+            cursor: 'pointer',
+            fontSize: '16px',
+            fontWeight: activeTab === 'system-settings' ? 'bold' : 'normal'
+          }}
+        >
+          System Settings
         </button>
       </div>
 
@@ -5016,7 +5217,30 @@ export default function TestPluginsPage() {
               {/* Message/Response */}
               {agentExecutionResult.message && (
                 <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: 'white', borderRadius: '3px', border: '1px solid #ccc' }}>
-                  <h3 style={{ marginTop: 0 }}>Response Message:</h3>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <h3 style={{ margin: 0 }}>Response Message:</h3>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(agentExecutionResult.message);
+                          addDebugLog('success', 'Response message copied to clipboard');
+                        } catch (error: any) {
+                          addDebugLog('error', `Failed to copy: ${error.message}`);
+                        }
+                      }}
+                      style={{
+                        padding: '4px 10px',
+                        backgroundColor: '#6c757d',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '3px',
+                        cursor: 'pointer',
+                        fontSize: '12px'
+                      }}
+                    >
+                      Copy Message
+                    </button>
+                  </div>
                   <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: '13px' }}>
                     {agentExecutionResult.message}
                   </pre>
@@ -5026,7 +5250,30 @@ export default function TestPluginsPage() {
               {/* Error Message */}
               {!agentExecutionResult.success && (
                 <div style={{ padding: '10px', backgroundColor: 'white', borderRadius: '3px', border: '1px solid #dc3545' }}>
-                  <strong>Error:</strong>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <strong>Error:</strong>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(agentExecutionResult.error || 'Unknown error occurred');
+                          addDebugLog('success', 'Error message copied to clipboard');
+                        } catch (error: any) {
+                          addDebugLog('error', `Failed to copy: ${error.message}`);
+                        }
+                      }}
+                      style={{
+                        padding: '4px 10px',
+                        backgroundColor: '#dc3545',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '3px',
+                        cursor: 'pointer',
+                        fontSize: '12px'
+                      }}
+                    >
+                      Copy Error
+                    </button>
+                  </div>
                   <div style={{ marginTop: '5px', color: '#dc3545' }}>
                     {agentExecutionResult.error || 'Unknown error occurred'}
                   </div>
@@ -5038,21 +5285,288 @@ export default function TestPluginsPage() {
                 <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: '#007bff' }}>
                   View Full API Response
                 </summary>
-                <pre style={{
-                  backgroundColor: '#f8f9fa',
-                  padding: '15px',
-                  borderRadius: '3px',
-                  overflow: 'auto',
-                  fontSize: '12px',
-                  maxHeight: '400px',
-                  marginTop: '10px'
-                }}>
-                  {JSON.stringify(agentExecutionResult, null, 2)}
-                </pre>
+                <div style={{ marginTop: '10px' }}>
+                  <button
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(JSON.stringify(agentExecutionResult, null, 2));
+                        addDebugLog('success', 'Full API response copied to clipboard');
+                      } catch (error: any) {
+                        addDebugLog('error', `Failed to copy: ${error.message}`);
+                      }
+                    }}
+                    style={{
+                      padding: '4px 10px',
+                      backgroundColor: '#007bff',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '3px',
+                      cursor: 'pointer',
+                      fontSize: '12px',
+                      marginBottom: '8px'
+                    }}
+                  >
+                    Copy Full Response
+                  </button>
+                  <pre style={{
+                    backgroundColor: '#f8f9fa',
+                    padding: '15px',
+                    borderRadius: '3px',
+                    overflow: 'auto',
+                    fontSize: '12px',
+                    maxHeight: '400px',
+                    margin: 0
+                  }}>
+                    {JSON.stringify(agentExecutionResult, null, 2)}
+                  </pre>
+                </div>
               </details>
             </div>
           )}
         </>
+      )}
+
+      {/* Tab 6: System Settings */}
+      {activeTab === 'system-settings' && (
+        <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
+          <h2>System Settings Configuration</h2>
+          <p style={{ color: '#666', marginBottom: '20px' }}>
+            View and edit values in the <code style={{ backgroundColor: '#f5f5f5', padding: '2px 6px', borderRadius: '3px' }}>system_settings_config</code> table.
+          </p>
+
+          {/* Controls Row */}
+          <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', flexWrap: 'wrap', alignItems: 'center' }}>
+            {/* Search Filter */}
+            <input
+              type="text"
+              placeholder="Filter by key, value, or description..."
+              value={settingsFilter}
+              onChange={(e) => setSettingsFilter(e.target.value)}
+              style={{
+                flex: 1,
+                minWidth: '250px',
+                padding: '8px 12px',
+                border: '1px solid #ccc',
+                borderRadius: '4px',
+                fontSize: '14px'
+              }}
+            />
+
+            {/* Category Dropdown */}
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              style={{
+                padding: '8px 12px',
+                border: '1px solid #ccc',
+                borderRadius: '4px',
+                fontSize: '14px',
+                backgroundColor: 'white'
+              }}
+            >
+              {settingsCategories.map(cat => (
+                <option key={cat} value={cat}>
+                  {cat === 'all' ? 'All Categories' : cat}
+                </option>
+              ))}
+            </select>
+
+            {/* Refresh Button */}
+            <button
+              onClick={loadSystemSettings}
+              disabled={settingsLoading}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: settingsLoading ? '#6c757d' : '#28a745',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: settingsLoading ? 'not-allowed' : 'pointer',
+                fontSize: '14px'
+              }}
+            >
+              {settingsLoading ? 'Loading...' : '🔄 Refresh'}
+            </button>
+          </div>
+
+          {/* Results Count */}
+          <div style={{ marginBottom: '10px', color: '#666', fontSize: '14px' }}>
+            Showing {filteredSettings.length} of {systemSettings.length} settings
+            {settingsFilter && ` (filtered by "${settingsFilter}")`}
+            {categoryFilter !== 'all' && ` in category "${categoryFilter}"`}
+          </div>
+
+          {/* Settings Table */}
+          {systemSettings.length === 0 ? (
+            <div style={{
+              padding: '40px',
+              textAlign: 'center',
+              backgroundColor: '#f8f9fa',
+              borderRadius: '4px',
+              color: '#666'
+            }}>
+              <p style={{ marginBottom: '15px' }}>No settings loaded yet.</p>
+              <button
+                onClick={loadSystemSettings}
+                disabled={settingsLoading}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#007bff',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '14px'
+                }}
+              >
+                Load System Settings
+              </button>
+            </div>
+          ) : (
+            <div style={{ maxHeight: '500px', overflow: 'auto', border: '1px solid #ddd', borderRadius: '4px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                <thead style={{ position: 'sticky', top: 0, backgroundColor: '#f8f9fa', zIndex: 1 }}>
+                  <tr>
+                    <th style={{ padding: '12px 10px', borderBottom: '2px solid #ddd', textAlign: 'left', fontWeight: 'bold' }}>Key</th>
+                    <th style={{ padding: '12px 10px', borderBottom: '2px solid #ddd', textAlign: 'left', fontWeight: 'bold', minWidth: '200px' }}>Value</th>
+                    <th style={{ padding: '12px 10px', borderBottom: '2px solid #ddd', textAlign: 'left', fontWeight: 'bold' }}>Category</th>
+                    <th style={{ padding: '12px 10px', borderBottom: '2px solid #ddd', textAlign: 'left', fontWeight: 'bold' }}>Description</th>
+                    <th style={{ padding: '12px 10px', borderBottom: '2px solid #ddd', textAlign: 'center', fontWeight: 'bold', width: '100px' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredSettings.map((setting) => (
+                    <tr key={setting.key} style={{ borderBottom: '1px solid #eee' }}>
+                      <td style={{ padding: '10px', fontFamily: 'monospace', fontSize: '12px', verticalAlign: 'top' }}>
+                        {setting.key}
+                      </td>
+                      <td style={{ padding: '10px', verticalAlign: 'top' }}>
+                        {editingKey === setting.key ? (
+                          <textarea
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            style={{
+                              width: '100%',
+                              minHeight: '60px',
+                              padding: '6px',
+                              fontFamily: 'monospace',
+                              fontSize: '12px',
+                              border: '2px solid #007bff',
+                              borderRadius: '4px',
+                              resize: 'vertical'
+                            }}
+                            autoFocus
+                          />
+                        ) : (
+                          <code style={{
+                            display: 'block',
+                            backgroundColor: '#f5f5f5',
+                            padding: '4px 8px',
+                            borderRadius: '3px',
+                            fontSize: '12px',
+                            wordBreak: 'break-all',
+                            whiteSpace: 'pre-wrap',
+                            maxWidth: '300px'
+                          }}>
+                            {typeof setting.value === 'object'
+                              ? JSON.stringify(setting.value, null, 2)
+                              : String(setting.value)}
+                          </code>
+                        )}
+                      </td>
+                      <td style={{ padding: '10px', verticalAlign: 'top' }}>
+                        <span style={{
+                          display: 'inline-block',
+                          backgroundColor: getCategoryColor(setting.category),
+                          padding: '3px 10px',
+                          borderRadius: '12px',
+                          fontSize: '11px',
+                          fontWeight: '500'
+                        }}>
+                          {setting.category}
+                        </span>
+                      </td>
+                      <td style={{ padding: '10px', color: '#666', fontSize: '12px', verticalAlign: 'top', maxWidth: '250px' }}>
+                        {setting.description || <span style={{ color: '#999', fontStyle: 'italic' }}>No description</span>}
+                      </td>
+                      <td style={{ padding: '10px', textAlign: 'center', verticalAlign: 'top' }}>
+                        {editingKey === setting.key ? (
+                          <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                            <button
+                              onClick={() => updateSettingValue(setting.key, editValue)}
+                              style={{
+                                padding: '4px 10px',
+                                backgroundColor: '#28a745',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '3px',
+                                cursor: 'pointer',
+                                fontSize: '12px'
+                              }}
+                              title="Save"
+                            >
+                              ✓
+                            </button>
+                            <button
+                              onClick={() => setEditingKey(null)}
+                              style={{
+                                padding: '4px 10px',
+                                backgroundColor: '#dc3545',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '3px',
+                                cursor: 'pointer',
+                                fontSize: '12px'
+                              }}
+                              title="Cancel"
+                            >
+                              ✗
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              setEditingKey(setting.key);
+                              setEditValue(
+                                typeof setting.value === 'object'
+                                  ? JSON.stringify(setting.value, null, 2)
+                                  : String(setting.value)
+                              );
+                            }}
+                            style={{
+                              padding: '4px 12px',
+                              backgroundColor: '#007bff',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '3px',
+                              cursor: 'pointer',
+                              fontSize: '12px'
+                            }}
+                          >
+                            ✏️ Edit
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {filteredSettings.length === 0 && systemSettings.length > 0 && (
+                <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
+                  No settings match your filter criteria.
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Last Updated Info */}
+          {systemSettings.length > 0 && (
+            <div style={{ marginTop: '15px', fontSize: '12px', color: '#999' }}>
+              💡 Tip: Values are auto-parsed as JSON (numbers, booleans, objects) when saved. Edit the value and click ✓ to save.
+            </div>
+          )}
+        </div>
       )}
 
       {/* Control Panel */}
@@ -5220,6 +5734,18 @@ export default function TestPluginsPage() {
                   />
                   <code style={{ backgroundColor: '#fff3cd', padding: '2px 6px', borderRadius: '3px' }}>technicalWorkflow</code>
                   <span style={{ fontSize: '11px', color: '#666' }}>(V5 Test Wrapper)</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="targetField"
+                    value="technical_inputs_required"
+                    checked={jsonImportTargetField === 'technical_inputs_required'}
+                    onChange={() => setJsonImportTargetField('technical_inputs_required')}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <code style={{ backgroundColor: '#e2d6f5', padding: '2px 6px', borderRadius: '3px' }}>technical_inputs_required</code>
+                  <span style={{ fontSize: '11px', color: '#666' }}>(V5 - merge into technicalWorkflow)</span>
                 </label>
               </div>
             </div>

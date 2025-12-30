@@ -146,10 +146,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Auto-extract required_services from enhancedPrompt.specifics.services_involved
+    // Auto-extract required_services from multiple sources (in priority order)
+    // 1. enhancedPrompt.specifics.services_involved
+    // 2. parsedTechnicalWorkflow.requiredServices (from Phase 4 response)
+    // 3. parsedTechnicalWorkflow.enhanced_prompt.specifics.services_involved
     let required_services: string[] = [];
     if (parsedEnhancedPrompt?.specifics?.services_involved) {
       required_services = parsedEnhancedPrompt.specifics.services_involved;
+    } else if ((parsedTechnicalWorkflow as any)?.requiredServices?.length > 0) {
+      required_services = (parsedTechnicalWorkflow as any).requiredServices;
+    } else if ((parsedTechnicalWorkflow as any)?.enhanced_prompt?.specifics?.services_involved?.length > 0) {
+      required_services = (parsedTechnicalWorkflow as any).enhanced_prompt.specifics.services_involved;
     }
 
     // Validate we have required_services
@@ -157,8 +164,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: 'Request body is missing required values: required_services (extracted from enhancedPrompt.specifics.services_involved)',
-          missingFields: ['specifics.services_involved'],
+          error: 'Request body is missing required values: required_services. Provide via enhancedPrompt.specifics.services_involved or technicalWorkflow.requiredServices',
+          missingFields: ['services_involved or requiredServices'],
         },
         { status: 400 }
       );
@@ -186,6 +193,7 @@ export async function POST(req: NextRequest) {
       }
 
       // Build technicalWorkflow from parsed enhancedPrompt
+      // IMPORTANT: Include requiredServices and technical_inputs_required for DSL Builder
       fullTechnicalWorkflow = {
         technical_workflow: parsedTechnicalWorkflow?.technical_workflow || [],
         enhanced_prompt: {
@@ -193,16 +201,25 @@ export async function POST(req: NextRequest) {
           plan_description: parsedEnhancedPrompt.plan_description!,
           specifics: {
             resolved_user_inputs: parsedEnhancedPrompt.specifics!.resolved_user_inputs!,
+            services_involved: required_services, // Pass services_involved for suggested_plugins
           },
         },
         analysis: {
           agent_name: parsedEnhancedPrompt.plan_title || 'Generated Workflow',
           description: parsedEnhancedPrompt.plan_description || '',
         },
+        // Pass requiredServices for fallback suggested_plugins
+        requiredServices: required_services,
+        // Pass technical_inputs_required from parsed technicalWorkflow (Phase 4 output)
+        technical_inputs_required: (parsedTechnicalWorkflow as any)?.technical_inputs_required || [],
       };
     } else if (hasTechnicalWorkflowSteps) {
       // Use provided technicalWorkflow (must have all required fields)
-      fullTechnicalWorkflow = parsedTechnicalWorkflow as TechnicalWorkflowInput;
+      // Ensure requiredServices is set from required_services if not already present
+      fullTechnicalWorkflow = {
+        ...parsedTechnicalWorkflow as TechnicalWorkflowInput,
+        requiredServices: (parsedTechnicalWorkflow as any)?.requiredServices || required_services,
+      };
     }
 
     logger.info({
@@ -214,8 +231,22 @@ export async function POST(req: NextRequest) {
       technicalWorkflowStepsCount: fullTechnicalWorkflow?.technical_workflow?.length || 0,
       requiredServicesCount: required_services.length,
       requiredServices: required_services,
+      technicalInputsRequiredCount: fullTechnicalWorkflow?.technical_inputs_required?.length || 0,
+      hasEnhancedPromptInWorkflow: !!fullTechnicalWorkflow?.enhanced_prompt,
       openaiThreadId: openaiThreadId || null,
     }, 'V5 test wrapper called');
+
+    // Debug log the full structure being passed
+    logger.debug({
+      fullTechnicalWorkflow: {
+        hasEnhancedPrompt: !!fullTechnicalWorkflow?.enhanced_prompt,
+        planTitle: fullTechnicalWorkflow?.enhanced_prompt?.plan_title,
+        servicesInvolved: fullTechnicalWorkflow?.enhanced_prompt?.specifics?.services_involved,
+        requiredServices: fullTechnicalWorkflow?.requiredServices,
+        technicalInputsRequired: fullTechnicalWorkflow?.technical_inputs_required?.map(i => (i as any).key || i),
+        stepsCount: fullTechnicalWorkflow?.technical_workflow?.length,
+      },
+    }, 'Full technicalWorkflow structure being passed to V5 generator');
 
     // Get plugin manager instance
     const pluginManager = await PluginManagerV2.getInstance();
