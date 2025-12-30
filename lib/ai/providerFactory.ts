@@ -8,18 +8,11 @@ import { KimiProvider } from './providers/kimiProvider';
 import { BaseAIProvider } from './providers/baseProvider';
 import { AIAnalyticsService } from '../analytics/aiAnalytics';
 import { createClient } from '@supabase/supabase-js';
+import { PROVIDERS, type Provider } from './model-constants';
 
-/**
- * Provider name constants
- * Use these instead of raw strings when calling getProvider()
- */
-export const PROVIDERS = {
-  OPENAI: 'openai',
-  ANTHROPIC: 'anthropic',
-  KIMI: 'kimi'
-} as const;
-
-export type ProviderName = typeof PROVIDERS[keyof typeof PROVIDERS];
+// Re-export for backward compatibility
+export { PROVIDERS };
+export type ProviderName = Provider;
 
 /**
  * Provider Factory - Creates and manages AI provider instances
@@ -58,17 +51,17 @@ export class ProviderFactory {
    */
   static getProvider(provider: ProviderName): BaseAIProvider {
     switch (provider) {
-      case 'openai':
+      case PROVIDERS.OPENAI:
         return this.getOpenAIProvider();
 
-      case 'anthropic':
+      case PROVIDERS.ANTHROPIC:
         return this.getAnthropicProvider();
 
-      case 'kimi':
+      case PROVIDERS.KIMI:
         return this.getKimiProvider();
 
       default:
-        throw new Error(`Unknown provider: ${provider}. Supported providers: openai, anthropic, kimi`);
+        throw new Error(`Unknown provider: ${provider}. Supported providers: ${Object.values(PROVIDERS).join(', ')}`);
     }
   }
 
@@ -173,11 +166,11 @@ export class ProviderFactory {
    */
   static isProviderAvailable(provider: ProviderName): boolean {
     switch (provider) {
-      case 'openai':
+      case PROVIDERS.OPENAI:
         return !!process.env.OPENAI_API_KEY;
-      case 'anthropic':
+      case PROVIDERS.ANTHROPIC:
         return !!process.env.ANTHROPIC_API_KEY;
-      case 'kimi':
+      case PROVIDERS.KIMI:
         return !!process.env.KIMI_API_KEY;
       default:
         return false;
@@ -192,16 +185,16 @@ export class ProviderFactory {
   static getAvailableProviders(): ProviderName[] {
     const providers: ProviderName[] = [];
 
-    if (this.isProviderAvailable('openai')) {
-      providers.push('openai');
+    if (this.isProviderAvailable(PROVIDERS.OPENAI)) {
+      providers.push(PROVIDERS.OPENAI);
     }
 
-    if (this.isProviderAvailable('anthropic')) {
-      providers.push('anthropic');
+    if (this.isProviderAvailable(PROVIDERS.ANTHROPIC)) {
+      providers.push(PROVIDERS.ANTHROPIC);
     }
 
-    if (this.isProviderAvailable('kimi')) {
-      providers.push('kimi');
+    if (this.isProviderAvailable(PROVIDERS.KIMI)) {
+      providers.push(PROVIDERS.KIMI);
     }
 
     return providers;
@@ -214,16 +207,16 @@ export class ProviderFactory {
    */
   static getStatus() {
     return {
-      openai: {
-        available: this.isProviderAvailable('openai'),
+      [PROVIDERS.OPENAI]: {
+        available: this.isProviderAvailable(PROVIDERS.OPENAI),
         initialized: !!this.openaiInstance
       },
-      anthropic: {
-        available: this.isProviderAvailable('anthropic'),
+      [PROVIDERS.ANTHROPIC]: {
+        available: this.isProviderAvailable(PROVIDERS.ANTHROPIC),
         initialized: !!this.anthropicInstance
       },
-      kimi: {
-        available: this.isProviderAvailable('kimi'),
+      [PROVIDERS.KIMI]: {
+        available: this.isProviderAvailable(PROVIDERS.KIMI),
         initialized: !!this.kimiInstance
       }
     };

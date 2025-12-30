@@ -8,30 +8,11 @@ import { BaseAIProvider, CallContext } from './baseProvider';
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 import { calculateCostSync } from '@/lib/ai/pricing';
 import { getModelMaxOutputTokens } from '../context-limits';
+import { KIMI_MODELS, type KimiModelId } from '../model-constants';
 
-/**
- * Kimi model name constants
- * Use these instead of raw strings when specifying models
- */
-export const KIMI_MODELS = {
-  // Kimi K2 Series (Latest - 2025)
-  K2_PREVIEW: 'kimi-k2-0905-preview', // Latest K2 with 256K context - best for coding, agentic tasks, and instruction following
-  K2_THINKING: 'kimi-k2-thinking', // Enhanced reasoning with 256K context - best for complex multi-step reasoning and analysis
-  K2_ORIGINAL: 'kimi-k2-0711-preview', // Original K2 with 128K context - stable baseline for general tasks
-
-  // Kimi K1.5 Series (January 2025)
-  K15: 'kimi-k1.5', // Multimodal reasoning model - matches OpenAI o1 in math, coding, and multimodal tasks
-  K15_LONG: 'kimi-k1.5-long', // Long chain-of-thought mode - best for detailed step-by-step reasoning
-
-  // Kimi Linear Series (October 2025)
-  LINEAR: 'kimi-linear-48b', // Ultra-efficient 1M context - 6x faster with 75% less memory, best for extreme long-context tasks
-
-  // Specialized Models
-  DEV: 'kimi-dev-72b', // Coding specialist for issue resolution - 60.4% on SWE-bench Verified
-  VL: 'kimi-vl' // Vision-Language model - best for multimodal reasoning and image understanding
-} as const;
-
-export type KimiModelName = typeof KIMI_MODELS[keyof typeof KIMI_MODELS];
+// Re-export for backward compatibility
+export { KIMI_MODELS };
+export type KimiModelName = KimiModelId;
 
 /**
  * KimiProvider - Moonshot AI's Kimi LLM Provider

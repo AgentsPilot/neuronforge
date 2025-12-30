@@ -20,6 +20,15 @@ import {
   Target,
   BarChart3
 } from 'lucide-react';
+import {
+  AVAILABLE_MODELS,
+  ALL_MODELS,
+  DEFAULT_TIER_MODELS,
+  DEFAULT_AGENTKIT_MODEL,
+  DEFAULT_ROUTING_THRESHOLDS,
+  DEFAULT_AGENTKIT_CONFIG,
+  MODEL_TIERS,
+} from '@/lib/ai/model-constants';
 
 interface OrchestrationConfig {
   // Master controls
@@ -119,41 +128,7 @@ interface ComplexityThresholds {
   high: number;
 }
 
-// Available model options
-const AVAILABLE_MODELS = {
-  claude: [
-    { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet (Most Capable)', tier: 'powerful' },
-    { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku (Fast & Smart)', tier: 'balanced' },
-    { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku (Fastest)', tier: 'fast' },
-    { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus (Premium)', tier: 'powerful' },
-    { value: 'claude-3-sonnet-20240229', label: 'Claude 3 Sonnet', tier: 'balanced' },
-  ],
-  openai: [
-    { value: 'gpt-4o', label: 'GPT-4o (Flagship)', tier: 'powerful' },
-    { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Efficient)', tier: 'balanced' },
-    { value: 'gpt-4-turbo', label: 'GPT-4 Turbo', tier: 'powerful' },
-    { value: 'gpt-4', label: 'GPT-4', tier: 'powerful' },
-    { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo (Fast)', tier: 'fast' },
-  ],
-  google: [
-    { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro', tier: 'powerful' },
-    { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash', tier: 'balanced' },
-    { value: 'gemini-pro', label: 'Gemini Pro', tier: 'balanced' },
-  ],
-  kimi: [
-    { value: 'kimi-k2-0905-preview', label: 'Kimi K2 0905 (Best Value) 💎', tier: 'balanced' },
-    { value: 'kimi-k2-thinking', label: 'Kimi K2 Thinking (Reasoning)', tier: 'balanced' },
-    { value: 'kimi-k2-0711-preview', label: 'Kimi K2 0711 (Legacy)', tier: 'balanced' },
-  ]
-};
-
-// Flatten all models for easy access
-const ALL_MODELS = [
-  ...AVAILABLE_MODELS.claude,
-  ...AVAILABLE_MODELS.openai,
-  ...AVAILABLE_MODELS.google,
-  ...AVAILABLE_MODELS.kimi,
-];
+// Models imported from @/lib/ai/model-constants
 
 export default function OrchestrationConfigPage() {
   const [loading, setLoading] = useState(true);
@@ -177,20 +152,20 @@ export default function OrchestrationConfigPage() {
     enabled: false,
     compressionEnabled: false,
     aisRoutingEnabled: false,
-    modelFast: 'claude-3-haiku-20240307',
-    modelBalanced: 'gpt-4o-mini',
-    modelPowerful: 'claude-3-5-sonnet-20241022',
-    fastTierMaxScore: 3.0,
-    balancedTierMaxScore: 6.5,
+    modelFast: DEFAULT_TIER_MODELS[MODEL_TIERS.FAST],
+    modelBalanced: DEFAULT_TIER_MODELS[MODEL_TIERS.BALANCED],
+    modelPowerful: DEFAULT_TIER_MODELS[MODEL_TIERS.POWERFUL],
+    fastTierMaxScore: DEFAULT_ROUTING_THRESHOLDS.FAST_MAX_SCORE,
+    balancedTierMaxScore: DEFAULT_ROUTING_THRESHOLDS.BALANCED_MAX_SCORE,
     routingStrategy: {
       aisWeight: 0.6,
       stepWeight: 0.4,
     },
     agentkit: {
-      defaultModel: 'gpt-4o-mini',
-      temperature: 0.1,
-      maxIterations: 10,
-      timeoutMs: 120000,
+      defaultModel: DEFAULT_AGENTKIT_MODEL,
+      temperature: DEFAULT_AGENTKIT_CONFIG.temperature,
+      maxIterations: DEFAULT_AGENTKIT_CONFIG.maxIterations,
+      timeoutMs: DEFAULT_AGENTKIT_CONFIG.timeoutMs,
     },
     pilot: {
       enabled: false,
@@ -592,7 +567,7 @@ export default function OrchestrationConfigPage() {
                     <strong>How routing works:</strong> Each task gets a complexity score (0-10). The system compares this score to your AIS Routing Thresholds to select the appropriate tier, then uses the model you've configured for that tier.
                   </p>
                   <p className="text-xs text-purple-200">
-                    💡 <strong>Cost Optimization:</strong> Using claude-3-haiku for Fast tier, claude-3-5-haiku for Balanced, and claude-3-5-sonnet for Powerful provides excellent quality at 60-80% cost savings vs. using premium models for everything.
+                    💡 <strong>Cost Optimization:</strong> Using gpt-5-nano for Fast tier, gpt-5-mini for Balanced, and gpt-5.2 for Powerful provides excellent quality at 60-80% cost savings vs. using premium models for everything.
                   </p>
                 </div>
 
@@ -628,7 +603,7 @@ export default function OrchestrationConfigPage() {
                       ))}
                     </optgroup>
                   </select>
-                  <p className="text-xs text-slate-400 mt-2">Used for simple, straightforward tasks with complexity scores below the Fast Tier Max threshold. Examples: Basic data retrieval, simple API calls, data validation, format conversion, status checks. These tasks don't require advanced reasoning or extensive context understanding. Recommended models: claude-3-haiku (fastest, cheapest), gpt-4o-mini (good balance), claude-3-5-haiku (newest fast model). Fast tier handles 60-70% of typical workflow tasks at fraction of the cost.</p>
+                  <p className="text-xs text-slate-400 mt-2">Used for simple, straightforward tasks with complexity scores below the Fast Tier Max threshold. Examples: Basic data retrieval, simple API calls, data validation, format conversion, status checks. These tasks don't require advanced reasoning or extensive context understanding. Recommended models: gpt-5-nano (fastest, cheapest), claude-4.5-haiku (fast & smart). Fast tier handles 60-70% of typical workflow tasks at fraction of the cost.</p>
                 </div>
 
                 {/* Balanced Tier */}
@@ -663,7 +638,7 @@ export default function OrchestrationConfigPage() {
                       ))}
                     </optgroup>
                   </select>
-                  <p className="text-xs text-slate-400 mt-2">Used for moderate complexity tasks with scores between Fast Max and Balanced Max thresholds. Examples: Multi-step workflows, data transformation, moderate reasoning, summarization, business logic execution, error handling. These tasks require some reasoning capability but don't need flagship model power. Recommended models: claude-3-5-haiku (excellent capability-to-cost ratio), gpt-4o-mini, claude-3-sonnet. Balanced tier handles 25-30% of tasks and provides sweet spot for cost-performance.</p>
+                  <p className="text-xs text-slate-400 mt-2">Used for moderate complexity tasks with scores between Fast Max and Balanced Max thresholds. Examples: Multi-step workflows, data transformation, moderate reasoning, summarization, business logic execution, error handling. These tasks require some reasoning capability but don't need flagship model power. Recommended models: gpt-5-mini (excellent capability-to-cost ratio), claude-4.5-sonnet. Balanced tier handles 25-30% of tasks and provides sweet spot for cost-performance.</p>
                 </div>
 
                 {/* Powerful Tier */}
@@ -698,7 +673,7 @@ export default function OrchestrationConfigPage() {
                       ))}
                     </optgroup>
                   </select>
-                  <p className="text-xs text-slate-400 mt-2">Used for high complexity tasks scoring above Balanced Max threshold. Examples: Complex reasoning, code generation, advanced data analysis, creative problem-solving, multi-step decision trees, strategic planning. These tasks require flagship model capabilities for quality results. Recommended models: claude-3-5-sonnet (best overall), gpt-4o (strong reasoning), claude-3-opus (maximum capability). Powerful tier handles 5-15% of tasks but ensures critical/complex operations get the best available AI. Most expensive but essential for quality.</p>
+                  <p className="text-xs text-slate-400 mt-2">Used for high complexity tasks scoring above Balanced Max threshold. Examples: Complex reasoning, code generation, advanced data analysis, creative problem-solving, multi-step decision trees, strategic planning. These tasks require flagship model capabilities for quality results. Recommended models: gpt-5.2 (best overall), gpt-5.2-pro (highest accuracy), claude-4.5-opus (maximum capability). Powerful tier handles 5-15% of tasks but ensures critical/complex operations get the best available AI. Most expensive but essential for quality.</p>
                 </div>
               </div>
             )}
@@ -951,7 +926,7 @@ export default function OrchestrationConfigPage() {
                       ))}
                     </optgroup>
                   </select>
-                  <p className="text-xs text-slate-400 mt-2">The default AI model used for AgentKit agentic execution when orchestration doesn't override with a specific tier selection. This is the fallback model for function calling, tool use, and autonomous reasoning. Recommended: claude-3-5-haiku for best balance of speed, capability, and cost. Use gpt-4o-mini for maximum cost efficiency (80% cheaper than gpt-4o). Use claude-3-5-sonnet for most capable reasoning. Note: This can be overridden by Model Tier Configuration based on task complexity.</p>
+                  <p className="text-xs text-slate-400 mt-2">The default AI model used for AgentKit agentic execution when orchestration doesn't override with a specific tier selection. This is the fallback model for function calling, tool use, and autonomous reasoning. Recommended: gpt-5-mini for best balance of speed, capability, and cost. Use gpt-5-nano for maximum cost efficiency. Use gpt-5.2 or claude-4.5-sonnet for most capable reasoning. Note: This can be overridden by Model Tier Configuration based on task complexity.</p>
                 </div>
 
                 {/* Temperature */}

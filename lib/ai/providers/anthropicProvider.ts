@@ -7,38 +7,11 @@ import { BaseAIProvider, CallContext } from './baseProvider';
 import { calculateCostSync } from '../pricing';
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 import { getModelMaxOutputTokens } from '../context-limits';
+import { ANTHROPIC_MODELS, type AnthropicModelId } from '../model-constants';
 
-/**
- * Anthropic model name constants
- * Use these instead of raw strings when specifying models
- */
-export const ANTHROPIC_MODELS = {
-  // Claude 4.5 Series (Latest - Fall 2025)
-  CLAUDE_45_OPUS: 'claude-opus-4-5-20251101', // Most intelligent model - best for production code, sophisticated agents, and complex office tasks
-  CLAUDE_45_SONNET: 'claude-sonnet-4-5-20250929', // Best balance of intelligence, speed, and cost - ideal for complex agents and coding
-  CLAUDE_45_HAIKU: 'claude-haiku-4-5-20251001', // Fastest model with near-frontier intelligence - best for low-latency, high-volume tasks
-
-  // Claude 4.1 Series
-  CLAUDE_41_OPUS: 'claude-opus-4-1-20250805', // Enhanced agentic tasks, real-world coding, and reasoning
-
-  // Claude 4 Series
-  CLAUDE_4_OPUS: 'claude-opus-4-20250514', // World-class coding with sustained performance on long-running agent workflows
-  CLAUDE_4_SONNET: 'claude-sonnet-4-20250514', // Superior coding and reasoning - great balance of capability and speed
-
-  // Claude 3.7 Series
-  CLAUDE_37_SONNET: 'claude-3-7-sonnet-20250219', // Hybrid reasoning model - choose between rapid responses or step-by-step thinking
-
-  // Claude 3.5 Series (Legacy but still available)
-  CLAUDE_35_SONNET: 'claude-3-5-sonnet-20241022', // Legacy model - consider migrating to Claude 4.5 Sonnet
-  CLAUDE_35_HAIKU: 'claude-3-5-haiku-20241022', // Cost-effective for simple tasks where speed matters
-
-  // Claude 3 Series (Legacy)
-  CLAUDE_3_OPUS: 'claude-3-opus-20240229', // Deprecated - migrate to Claude 4.1 Opus or Claude 4.5 Opus
-  CLAUDE_3_SONNET: 'claude-3-sonnet-20240229', // Retired - migrate to Claude 4.5 Sonnet
-  CLAUDE_3_HAIKU: 'claude-3-haiku-20240307' // Budget option for basic tasks - consider Claude 4.5 Haiku for better quality
-} as const;
-
-export type AnthropicModelName = typeof ANTHROPIC_MODELS[keyof typeof ANTHROPIC_MODELS];
+// Re-export for backward compatibility
+export { ANTHROPIC_MODELS };
+export type AnthropicModelName = AnthropicModelId;
 
 interface ChatCompletionParams {
   model: string;
