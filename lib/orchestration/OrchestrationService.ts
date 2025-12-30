@@ -12,23 +12,27 @@
 
 import { supabase as defaultSupabase } from '@/lib/supabaseClient';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { createLogger, Logger } from '@/lib/logger';
+import { SystemConfigRepository } from '@/lib/repositories/SystemConfigRepository';
+import { PROVIDERS } from '@/lib/ai/providerFactory';
+import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider';
 import { IntentClassifier } from './IntentClassifier';
 import { TokenBudgetManager } from './TokenBudgetManager';
 import { CompressionService } from './CompressionService';
 import { RoutingService } from './RoutingService';
 import type {
-  IntentClassification,
   TokenBudget,
   OrchestrationMetadata,
   StepMetadata,
   OrchestrationMetrics,
-  RoutingContext,
   CompressionPolicy,
 } from './types';
 import { AgentIntensityService } from '@/lib/services/AgentIntensityService';
 
 export class OrchestrationService {
   private supabase: SupabaseClient;
+  private logger: Logger;
+  private configRepo: SystemConfigRepository;
   private intentClassifier: IntentClassifier;
   private budgetManager: TokenBudgetManager;
   private compressionService: CompressionService;
@@ -39,6 +43,8 @@ export class OrchestrationService {
 
   constructor(supabaseClient?: SupabaseClient) {
     this.supabase = supabaseClient || defaultSupabase;
+    this.logger = createLogger({ service: 'OrchestrationService' });
+    this.configRepo = new SystemConfigRepository(this.supabase);
     this.intentClassifier = new IntentClassifier(this.supabase);
     this.budgetManager = new TokenBudgetManager(this.supabase);
     this.compressionService = new CompressionService(this.supabase);
@@ -54,27 +60,9 @@ export class OrchestrationService {
       return this.enabled;
     }
 
-    try {
-      const { data, error } = await this.supabase
-        .from('system_settings_config')
-        .select('value')
-        .eq('key', 'orchestration_enabled')
-        .single();
-
-      if (error || !data) {
-        console.warn('[Orchestration] Feature flag not found, defaulting to disabled');
-        this.enabled = false;
-        return false;
-      }
-
-      this.enabled = data.value === true;
-      console.log(`[Orchestration] Feature flag: ${this.enabled ? 'ENABLED' : 'DISABLED'}`);
-      return this.enabled;
-    } catch (error) {
-      console.error('[Orchestration] Error checking feature flag:', error);
-      this.enabled = false;
-      return false;
-    }
+    this.enabled = await this.configRepo.getBoolean('orchestration_enabled', false);
+    this.logger.info({ enabled: this.enabled }, 'Orchestration feature flag status');
+    return this.enabled;
   }
 
   /**
@@ -85,20 +73,8 @@ export class OrchestrationService {
       return this.compressionEnabled;
     }
 
-    try {
-      const { data, error } = await this.supabase
-        .from('system_settings_config')
-        .select('value')
-        .eq('key', 'orchestration_compression_enabled')
-        .single();
-
-      this.compressionEnabled = data?.value === true || false;
-      return this.compressionEnabled;
-    } catch (error) {
-      console.error('[Orchestration] Error checking compression flag:', error);
-      this.compressionEnabled = false;
-      return false;
-    }
+    this.compressionEnabled = await this.configRepo.getBoolean('orchestration_compression_enabled', false);
+    return this.compressionEnabled;
   }
 
   /**
@@ -109,20 +85,8 @@ export class OrchestrationService {
       return this.routingEnabled;
     }
 
-    try {
-      const { data, error } = await this.supabase
-        .from('system_settings_config')
-        .select('value')
-        .eq('key', 'orchestration_ais_routing_enabled')
-        .single();
-
-      this.routingEnabled = data?.value === true || false;
-      return this.routingEnabled;
-    } catch (error) {
-      console.error('[Orchestration] Error checking routing flag:', error);
-      this.routingEnabled = false;
-      return false;
-    }
+    this.routingEnabled = await this.configRepo.getBoolean('orchestration_ais_routing_enabled', false);
+    return this.routingEnabled;
   }
 
   /**
@@ -140,19 +104,20 @@ export class OrchestrationService {
     // Check if orchestration is enabled
     const enabled = await this.isEnabled();
     if (!enabled) {
-      console.log('[Orchestration] Skipping initialization - feature disabled');
+      this.logger.debug('Skipping initialization - feature disabled');
       return null;
     }
 
-    console.log(`[Orchestration] Initializing for execution ${executionId} with ${steps.length} steps`);
+    const methodLogger = this.logger.child({ method: 'initialize', executionId });
+    methodLogger.info({ stepCount: steps.length }, 'Initializing orchestration');
 
     try {
       // Get agent AIS scores for routing and budget scaling
       const agentAIS = await this.getAgentAIS(agentId);
 
-      // ✅ OPTIMIZATION: Skip classification for deterministic action steps (type=action with plugin_key)
+      // OPTIMIZATION: Skip classification for deterministic action steps (type=action with plugin_key)
       // These steps will bypass orchestration handlers anyway, so classification is wasted
-      console.log('[Orchestration] Classifying step intents...');
+      methodLogger.debug('Classifying step intents');
       // Reset token counter for this workflow
       this.intentClassifier.resetTokenCounter();
 
@@ -170,7 +135,7 @@ export class OrchestrationService {
         }
       });
 
-      console.log(`[Orchestration] Skipping classification for ${steps.length - stepsNeedingClassification.length} deterministic action step(s)`);
+      methodLogger.debug({ skippedCount: steps.length - stepsNeedingClassification.length }, 'Skipping classification for deterministic action steps');
 
       // Classify only the steps that need it
       const classifiedIntents = stepsNeedingClassification.length > 0
@@ -195,32 +160,29 @@ export class OrchestrationService {
 
       const intentClassificationTime = Date.now() - intentClassificationStart;
 
-      // ✅ Get tokens used for classification (orchestration overhead)
+      // Get tokens used for classification (orchestration overhead)
       const classificationTokens = this.intentClassifier.getClassificationTokensUsed();
-      console.log(`[Orchestration] Intent classification complete in ${intentClassificationTime}ms (${classificationTokens} tokens)`);
-      console.log('[Orchestration] Intent distribution:', this.intentClassifier.getIntentDistribution(intents));
+      const intentDistribution = this.intentClassifier.getIntentDistribution(intents);
+      methodLogger.info({ duration: intentClassificationTime, tokens: classificationTokens, intentDistribution }, 'Intent classification complete');
 
       // Allocate token budgets
-      console.log('[Orchestration] Allocating token budgets...');
+      methodLogger.debug('Allocating token budgets');
       const budgetAllocationStart = Date.now();
       const workflow = { workflow_steps: steps };
       const budgets = await this.budgetManager.allocateBudget(workflow, intents, agentAIS);
       const budgetAllocationTime = Date.now() - budgetAllocationStart;
 
-      console.log(`[Orchestration] Budget allocation complete in ${budgetAllocationTime}ms`);
+      methodLogger.debug({ duration: budgetAllocationTime }, 'Budget allocation complete');
 
       // Log budget summary
       const summary = this.budgetManager.getTotalBudgetSummary();
-      console.log('[Orchestration] Budget summary:', {
-        totalAllocated: summary.totalAllocated,
-        avgPerStep: Math.round(summary.totalAllocated / steps.length)
-      });
+      methodLogger.info({ totalAllocated: summary.totalAllocated, avgPerStep: Math.round(summary.totalAllocated / steps.length) }, 'Budget summary');
 
       // Check Phase 2 feature flags
       const compressionEnabled = await this.isCompressionEnabled();
       const routingEnabled = await this.isRoutingEnabled();
 
-      console.log(`[Orchestration] Phase 2 features - Compression: ${compressionEnabled ? 'ENABLED' : 'DISABLED'}, Routing: ${routingEnabled ? 'ENABLED' : 'DISABLED'}`);
+      methodLogger.debug({ compressionEnabled, routingEnabled }, 'Phase 2 feature flags status');
 
       // Create step metadata with Phase 2 integration
       const stepMetadata: StepMetadata[] = await Promise.all(
@@ -251,8 +213,8 @@ export class OrchestrationService {
               })
             : {
                 tier: 'balanced' as const,
-                model: 'gpt-4o-mini',
-                provider: 'openai',
+                model: OPENAI_MODELS.GPT_5_MINI,
+                provider: PROVIDERS.OPENAI,
                 reason: 'Default routing (AIS routing disabled)',
                 estimatedCost: 0,
                 estimatedLatency: 0,
@@ -325,11 +287,11 @@ export class OrchestrationService {
       };
 
       const totalOverhead = Date.now() - startTime;
-      console.log(`[Orchestration] Initialization complete in ${totalOverhead}ms (overhead < 50ms target: ${totalOverhead < 50 ? '✅' : '⚠️'})`);
+      methodLogger.info({ duration: totalOverhead, meetsTarget: totalOverhead < 50 }, 'Initialization complete');
 
       return metadata;
     } catch (error) {
-      console.error('[Orchestration] Initialization error:', error);
+      this.logger.error({ err: error, executionId }, 'Initialization error');
       // Return null to fall back to non-orchestrated execution
       return null;
     }
@@ -362,7 +324,7 @@ export class OrchestrationService {
         metadata.globalMetrics.performance.stepsFailed++;
       }
     } catch (error) {
-      console.error('[Orchestration] Error tracking step execution:', error);
+      this.logger.error({ err: error, stepId }, 'Error tracking step execution');
       // Don't throw - execution should continue even if tracking fails
     }
   }
@@ -392,14 +354,14 @@ export class OrchestrationService {
     metadata.globalMetrics.quality.successRate =
       stepCount > 0 ? completedSteps / stepCount : 0;
 
-    console.log('[Orchestration] Execution complete:', {
-      totalTime: `${totalTime}ms`,
+    this.logger.info({
+      totalTime,
       stepsCompleted: completedSteps,
       stepsFailed: metadata.globalMetrics.performance.stepsFailed,
       tokensUsed: metadata.globalMetrics.cost.totalTokensUsed,
       tokensSaved: metadata.globalMetrics.cost.totalTokensSaved,
-      budgetUtilization: `${(summary.utilizationRate * 100).toFixed(1)}%`
-    });
+      budgetUtilization: summary.utilizationRate
+    }, 'Execution complete');
 
     return metadata.globalMetrics;
   }
@@ -416,7 +378,7 @@ export class OrchestrationService {
       const metrics = await AgentIntensityService.getMetrics(this.supabase, agentId);
 
       if (!metrics) {
-        console.warn('[Orchestration] No AIS metrics found for agent, using defaults');
+        this.logger.warn({ agentId }, 'No AIS metrics found for agent, using defaults');
         return undefined;
       }
 
@@ -426,7 +388,7 @@ export class OrchestrationService {
         combined_score: metrics.combined_score || 5.0
       };
     } catch (error) {
-      console.error('[Orchestration] Error fetching AIS metrics:', error);
+      this.logger.error({ err: error, agentId }, 'Error fetching AIS metrics');
       return undefined;
     }
   }
