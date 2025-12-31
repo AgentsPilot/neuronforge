@@ -14,6 +14,7 @@ import type { AgentExecutionData } from '@/lib/types/intensity'
 import { WorkflowPilot } from '@/lib/pilot'
 import type { Agent as PilotAgent } from '@/lib/pilot/types'
 import { auditLog } from '@/lib/services/AuditTrailService'
+import { preparePluginTokens } from '@/lib/services/PluginTokenService'
 import { CreditService } from '@/lib/services/CreditService'
 import {
   AgentRepository,
@@ -185,6 +186,26 @@ export async function POST(req: Request) {
 
         if (debugMode) {
           logger.debug({ debugRunId }, 'Debug mode enabled for pilot execution');
+        }
+
+        // Prepare plugin tokens before execution (refresh OAuth tokens if needed)
+        const pluginsRequired = agent.plugins_required || [];
+        if (pluginsRequired.length > 0) {
+          logger.info({ plugins: pluginsRequired }, 'Preparing plugin tokens');
+          try {
+            const pluginTokenResult = await preparePluginTokens(user.id, pluginsRequired);
+            if (pluginTokenResult.failed.length > 0) {
+              logger.warn({
+                ready: pluginTokenResult.ready,
+                failed: pluginTokenResult.failed
+              }, 'Some plugins failed token preparation');
+            } else {
+              logger.debug({ ready: pluginTokenResult.ready }, 'All plugin tokens ready');
+            }
+          } catch (tokenError) {
+            logger.error({ err: tokenError }, 'Plugin token preparation failed (non-blocking)');
+            // Continue execution - plugins may still work with cached tokens
+          }
         }
 
         // Execute using WorkflowPilot
