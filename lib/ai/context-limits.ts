@@ -178,6 +178,32 @@ export function getModelMaxOutputTokens(model: string): number {
 }
 
 /**
+ * Models that do NOT support custom temperature values.
+ * These models only accept their default temperature (usually 1).
+ * Models not listed here are assumed to support custom temperature.
+ */
+export const MODELS_WITHOUT_TEMPERATURE_SUPPORT: Set<string> = new Set([
+  // OpenAI reasoning models (o-series) don't support temperature
+  'o3',
+  'o4-mini',
+  'o1',
+  'o1-mini',
+  'o1-preview',
+
+  // OpenAI GPT-5 nano/mini series may have restrictions
+  'gpt-5-nano',
+  'gpt-5-mini',
+]);
+
+/**
+ * Check if a model supports custom temperature values.
+ * Returns true if the model supports temperature, false otherwise.
+ */
+export function modelSupportsTemperature(model: string): boolean {
+  return !MODELS_WITHOUT_TEMPERATURE_SUPPORT.has(model);
+}
+
+/**
  * Thresholds for context usage validation
  */
 export const CONTEXT_THRESHOLDS = {

@@ -221,6 +221,8 @@ export class StepExecutor {
         if ('right' in stepAny) fieldsToResolve.right = stepAny.right;
         if ('scatter' in stepAny) fieldsToResolve.scatter = stepAny.scatter;
         if ('gather' in stepAny) fieldsToResolve.gather = stepAny.gather;
+        // ✅ FIX: Include params for ai_processing steps so {{email}} and other scatter variables resolve
+        if ('params' in stepAny) fieldsToResolve.params = stepAny.params;
 
         resolvedParams = context.resolveAllVariables(fieldsToResolve);
       }
@@ -1022,9 +1024,30 @@ Please analyze the above and provide your decision/response.
 
     const cleanedResponse = shouldClean ? this.cleanSummaryOutput(aiResponse) : aiResponse;
 
+    // ✅ FIX: Parse JSON response to enable {{stepX.data.items}} access
+    // LLM often returns JSON strings like '{"items":[...]}' which need to be parsed
+    // so that downstream steps can access {{stepX.data.items}} directly
+    let parsedData: any = null;
+    if (typeof cleanedResponse === 'string') {
+      try {
+        const trimmed = cleanedResponse.trim();
+        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+          parsedData = JSON.parse(trimmed);
+          logger.debug({ stepId: step.id, parsedKeys: Object.keys(parsedData) }, 'Parsed JSON response for direct property access');
+        }
+      } catch (e) {
+        // Not valid JSON, keep as string - this is fine for non-JSON responses
+        logger.debug({ stepId: step.id }, 'Response is not JSON, keeping as string');
+      }
+    }
+
     return {
       data: {
-        // Generic aliases (always available)
+        // If we parsed JSON successfully, spread its properties for direct access
+        // e.g., {{stepX.data.items}} will now work
+        ...(parsedData && typeof parsedData === 'object' ? parsedData : {}),
+
+        // Generic aliases (always available) - keep for backward compatibility
         result: cleanedResponse,
         response: cleanedResponse,
         output: cleanedResponse,
@@ -1337,6 +1360,9 @@ Please analyze the above and provide your decision/response.
       case 'aggregate':
         return this.transformAggregate(data, config);
 
+      case 'format':
+        return this.transformFormat(data, config, context);
+
       case 'deduplicate':
         return this.transformDeduplicate(data, config);
 
@@ -1443,6 +1469,7 @@ Please analyze the above and provide your decision/response.
       const tempContext = context.clone();
       tempContext.setVariable('item', item);
 
+      // DSL builder ensures condition.field has 'item.' prefix (e.g., 'item.is_client_sender')
       return this.conditionalEvaluator.evaluate(config.condition, tempContext);
     });
 
@@ -1657,6 +1684,108 @@ Please analyze the above and provide your decision/response.
     });
 
     return result;
+  }
+
+  /**
+   * Format transformation - convert object to formatted string using template
+   *
+   * Input: Single object (e.g., { to_log_count: 5 }) or array of objects
+   * Config: { mapping: { template: "Logged {{to_log_count}} items" } }
+   * Output: Formatted string (e.g., "Logged 5 items")
+   *
+   * Template variables are resolved from the input data fields directly,
+   * not from global context. This allows templates like {{to_log_count}}
+   * to reference fields in the input object.
+   */
+  private transformFormat(data: any, config: any, context: ExecutionContext): string {
+    const mapping = config?.mapping || config || {};
+    const template = mapping.template;
+
+    if (!template || typeof template !== 'string') {
+      throw new ExecutionError(
+        'Format operation requires a template string in config.mapping.template',
+        'MISSING_TEMPLATE'
+      );
+    }
+
+    // If data is an array, format each item and join (or take first)
+    if (Array.isArray(data)) {
+      if (data.length === 0) {
+        // No items - resolve template with empty/zero values
+        return this.expandTemplate(template, {}, context);
+      }
+      // For single-item array, use that item
+      if (data.length === 1) {
+        return this.expandTemplate(template, data[0], context);
+      }
+      // For multiple items, format each and join with newlines
+      return data.map(item => this.expandTemplate(template, item, context)).join('\n');
+    }
+
+    // Single object input
+    if (data && typeof data === 'object') {
+      return this.expandTemplate(template, data, context);
+    }
+
+    // Primitive input - use as-is in template context
+    return this.expandTemplate(template, { value: data }, context);
+  }
+
+  /**
+   * Expand template variables using input data fields
+   *
+   * Template: "Logged {{to_log_count}} items"
+   * Data: { to_log_count: 5 }
+   * Result: "Logged 5 items"
+   *
+   * Resolution priority:
+   * 1. Input data object fields (e.g., {{to_log_count}} from data.to_log_count)
+   * 2. Nested paths in data (e.g., {{user.name}} from data.user.name)
+   * 3. Context variables for step references (e.g., {{step1.data.field}})
+   */
+  private expandTemplate(template: string, data: Record<string, any>, context: ExecutionContext): string {
+    return template.replace(/\{\{([^}]+)\}\}/g, (match, key) => {
+      const trimmedKey = key.trim();
+
+      // First, try to resolve from the input data object directly
+      if (data && trimmedKey in data) {
+        const value = data[trimmedKey];
+        return value !== undefined && value !== null ? String(value) : '';
+      }
+
+      // Check for nested paths like "user.name" in the data object
+      if (trimmedKey.includes('.') && !trimmedKey.startsWith('step') && !trimmedKey.startsWith('input.') && !trimmedKey.startsWith('var.')) {
+        const parts = trimmedKey.split('.');
+        let value: any = data;
+        for (const part of parts) {
+          if (value && typeof value === 'object' && part in value) {
+            value = value[part];
+          } else {
+            value = undefined;
+            break;
+          }
+        }
+        if (value !== undefined) {
+          return value !== null ? String(value) : '';
+        }
+      }
+
+      // Fall back to context resolution for step references like {{step1.data.field}}
+      if (trimmedKey.startsWith('step') || trimmedKey.startsWith('input.') || trimmedKey.startsWith('var.')) {
+        try {
+          const resolved = context.resolveVariable(match);
+          return resolved !== undefined && resolved !== null ? String(resolved) : '';
+        } catch {
+          // Variable not found - return empty string
+          logger.warn({ template: match, key: trimmedKey }, 'Template variable not found in context');
+          return '';
+        }
+      }
+
+      // Unknown variable - log warning and return empty string
+      logger.warn({ template: match, key: trimmedKey, availableKeys: Object.keys(data || {}) }, 'Template variable not found in data');
+      return '';
+    });
   }
 
   /**

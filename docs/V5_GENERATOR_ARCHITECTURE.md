@@ -456,7 +456,28 @@ Each transform operation type has a predefined output shape contract (e.g., `fil
 - Penalties: -0.01/warning, -0.02/error, -0.005/fallback
 - Clamped to [0.5, 1.0]
 
-See [Phase4-to-PILOT_DSL-Mapping.md](./Phase4-to-PILOT_DSL-Mapping.md) for full mapping details.
+**LLM-Based Plugin Fallback (v2.3):**
+Certain plugins like `chatgpt-research` are LLM-based and don't have real external actions. The builder automatically converts these from `action` to `ai_processing`:
+- Detects LLM-based plugins during operation step conversion
+- Builds appropriate prompt from action name and parameters
+- Special handling for `summarize_content` action (length, style, focus_on)
+- Emits warning: `Plugin 'chatgpt-research' is LLM-based - converting to ai_processing`
+
+**Cross-Step Dependency Detection (v2.3):**
+Filter conditions that reference other steps' outputs (e.g., `dedupe_key_not_in_logged_identifiers`) cannot be evaluated deterministically. The builder:
+- Detects cross-step dependency patterns in filter field names
+- Falls back to `ai_processing` with descriptive prompt
+- Emits warning: `Filter field '...' is a cross-step dependency - falling back to ai_processing`
+
+#### Additional Enhancements (v2.5-v2.9)
+
+For complete details on recent enhancements, see [Phase4-to-PILOT_DSL-Mapping.md](./Phase4-to-PILOT_DSL-Mapping.md). Key additions include:
+
+- **v2.5**: Smart step reference resolution based on source step type (map→`.data`, filter→`.data.items`, action→`.data.fieldName`)
+- **v2.6**: Enhanced mapping config detection - only configs with `{{item.*}}` references are valid for deterministic execution
+- **v2.7**: Output format instructions added to ai_processing prompts for consistent JSON output
+- **v2.8**: Explicit intent classification (`intent: "extract"`) ensures correct handler routing; dedicated `format` operation for object-to-string formatting
+- **v2.9**: Execution layer fixes for JSON response parsing, scatter variable resolution, and Google Sheets values normalization
 
 #### Phase4DSLBuilder.build() - Direct Conversion
 
@@ -698,6 +719,26 @@ The reviewer can:
 - Ensure proper step routing (`next_step`, `is_last_step`)
 - Block generation if issues are unfixable
 
+### Input Preservation (v5.3 Fix)
+
+The LLM reviewer only returns `technical_workflow`, `reviewer_summary`, and `feasibility`. Important fields from the original Phase 4 input must be preserved when merging:
+
+```typescript
+// Fields preserved from original input (not returned by reviewer)
+const phase4Input: Phase4Response = {
+  // From reviewer output (validated/repaired workflow)
+  technical_workflow: reviewedWorkflow.technical_workflow,
+  feasibility: convertedFeasibility,
+
+  // From original Phase 4 input (preserved)
+  enhanced_prompt: originalInput.enhanced_prompt,
+  technical_inputs_required: originalInput.technical_inputs_required || [],
+  requiredServices: originalInput.requiredServices,
+};
+```
+
+This ensures `suggested_plugins` (from `enhanced_prompt.specifics.services_involved`) and `required_inputs` (from `technical_inputs_required`) are correctly populated in the final DSL.
+
 ### Error Handling & JSON Repair
 
 LLM responses can sometimes be malformed or truncated, even when the model reports `stop_reason: end_turn`. The V5 generator includes robust error handling:
@@ -856,9 +897,9 @@ When session tracking is enabled, the `sessionId` is included in the generation 
 | `lib/agentkit/v4/core/step-plan-extractor.ts` | LLM-based step extraction (Path A) |
 | `lib/agentkit/v4/core/dsl-builder.ts` | Deterministic DSL construction (Path A) |
 | `lib/agentkit/v4/core/phase4-dsl-builder.ts` | Deterministic DSL conversion from technical workflow (Path B) |
-| `lib/validation/phase4-schema.ts` | Zod schemas and TypeScript types for TechnicalWorkflow (v13 prompt) |
+| `lib/validation/phase4-schema.ts` | Zod schemas and TypeScript types for TechnicalWorkflow (v14 prompt) |
 | `lib/validation/technical-reviewer-schema.ts` | Zod schemas for Technical Reviewer response validation |
-| `app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v13-chatgpt.txt` | Agent creation prompt (Phase 1-4) |
+| `app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v14-chatgpt.txt` | Agent creation prompt (Phase 1-4) |
 | `app/api/prompt-templates/Workflow-Agent-Technical-Reviewer-SystemPrompt-v2.txt` | Technical Reviewer system prompt |
 | `app/api/prompt-templates/Workflow-Agent-Technical-Reviewer-UserPrompt-v2.txt` | Technical Reviewer user prompt |
 | `app/api/test/generate-agent-v5-test-wrapper/route.ts` | Test API for V5 generator |

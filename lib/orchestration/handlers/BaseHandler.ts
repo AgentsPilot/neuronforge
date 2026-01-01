@@ -277,8 +277,8 @@ export abstract class BaseHandler implements IntentHandler {
 
         if (executionContext.getAllStepOutputs) {
           // Get all step outputs from the Map
-          const allStepOutputs = executionContext.getAllStepOutputs();
-          availableSteps = Array.from(allStepOutputs.keys()).filter(k => k.startsWith('step'));
+          const allStepOutputs = executionContext.getAllStepOutputs() as Map<string, unknown>;
+          availableSteps = Array.from(allStepOutputs.keys()).filter((k: string) => k.startsWith('step'));
           console.log(`🔍 [${this.intent}Handler] Found ${availableSteps.length} steps in stepOutputs Map:`, availableSteps);
         } else if (executionContext.getStepOutput) {
           // Fallback: try to find step outputs in variables object (legacy)
@@ -515,7 +515,7 @@ export abstract class BaseHandler implements IntentHandler {
     context: HandlerContext,
     systemPrompt: string,
     userPrompt: string,
-    temperature: number,
+    temperature?: number,  // Optional - some models don't support custom temperature
     maxTokens?: number
   ): Promise<{
     text: string;
@@ -541,20 +541,27 @@ export abstract class BaseHandler implements IntentHandler {
         `\n   🏢 Provider: ${context.routingDecision.provider}`,
         `\n   📊 Tier: ${context.routingDecision.tier}`,
         `\n   🎫 Token Budget: ${context.budget.remaining} remaining`,
-        `\n   🔥 Temperature: ${temperature}`
+        `\n   🔥 Temperature: ${temperature ?? 'default'}`
       );
+
+      // Build request options - only include temperature if provided
+      const requestOptions: any = {
+        model: sanitizedModel,  // ✅ Use sanitized model name
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        max_tokens: maxTokens || Math.min(context.budget.remaining, 4096),
+      };
+
+      // Only add temperature if the model supports it (undefined means use model default)
+      if (temperature !== undefined) {
+        requestOptions.temperature = temperature;
+      }
 
       // Call provider's unified interface
       const response = await provider.chatCompletion(
-        {
-          model: sanitizedModel,  // ✅ Use sanitized model name
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          temperature,
-          max_tokens: maxTokens || Math.min(context.budget.remaining, 4096),
-        },
+        requestOptions,
         {
           userId: context.userId,  // ✅ Use userId from context (passed from WorkflowOrchestrator)
           feature: 'orchestration',

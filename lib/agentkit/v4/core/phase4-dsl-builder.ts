@@ -164,7 +164,7 @@ const TRANSFORM_TYPE_TO_OPERATION: Record<string, string> = {
   'deduplicate': 'filter',
   'flatten': 'map',
   'pick_fields': 'map',
-  'format': 'map',
+  'format': 'format',  // Dedicated format operation for object-to-string formatting
   'merge': 'map',
   'split': 'map',
   'convert': 'map'
@@ -203,6 +203,13 @@ export class Phase4DSLBuilder {
     controlSteps: 0,
     fallbacksUsed: 0
   };
+
+  // Store workflow steps for look-ahead (finding downstream dependencies)
+  private workflowSteps: TechnicalWorkflowStep[] = [];
+
+  // Step registry: tracks step metadata for smart reference resolution
+  // Maps stepId → { kind, type, operation } so resolveInput can determine correct data paths
+  private stepRegistry: Map<string, { kind: string; type?: string; operation?: string }> = new Map();
 
   // --------------------------------------------------------------------------
   // Public API
@@ -270,6 +277,8 @@ export class Phase4DSLBuilder {
   private resetState(): void {
     this.warnings = [];
     this.errors = [];
+    this.workflowSteps = [];
+    this.stepRegistry = new Map();
     this.stats = {
       totalSteps: 0,
       convertedSteps: 0,
@@ -349,7 +358,89 @@ export class Phase4DSLBuilder {
    * Convert array of Phase 4 steps to PILOT DSL steps
    */
   private convertWorkflowSteps(steps: TechnicalWorkflowStep[]): WorkflowStep[] {
+    // Store for look-ahead (finding downstream filter dependencies)
+    this.workflowSteps = steps;
+
+    // Pre-populate step registry so resolveInput knows step types during conversion
+    this.populateStepRegistry(steps);
+
     return steps.map(step => this.convertStep(step));
+  }
+
+  /**
+   * Pre-populate step registry with step metadata
+   * This allows resolveInput to know step types before conversion completes
+   *
+   * IMPORTANT: This must predict whether a step will fall back to ai_processing
+   * so that resolveInput generates the correct reference pattern.
+   */
+  private populateStepRegistry(steps: TechnicalWorkflowStep[]): void {
+    for (const step of steps) {
+      if (step.kind === 'operation') {
+        const opStep = step as OperationStep;
+        // Check if this is an LLM-based plugin (will become ai_processing)
+        if (opStep.plugin && this.LLM_BASED_PLUGINS.includes(opStep.plugin)) {
+          this.stepRegistry.set(step.id, { kind: 'operation', type: 'ai_processing' });
+        } else {
+          this.stepRegistry.set(step.id, { kind: 'operation', type: 'action' });
+        }
+      } else if (step.kind === 'transform') {
+        const transformStep = step as TransformStep;
+        const transformType = transformStep.type;
+
+        // Check if this transform will fall back to ai_processing
+        const willFallbackToAI = this.willTransformFallbackToAI(transformStep);
+
+        if (willFallbackToAI) {
+          // Register as ai_processing since it will fall back
+          this.stepRegistry.set(step.id, { kind: 'transform', type: 'ai_processing' });
+        } else {
+          this.stepRegistry.set(step.id, {
+            kind: 'transform',
+            type: transformType,
+            operation: TRANSFORM_TYPE_TO_OPERATION[transformType || ''] || transformType
+          });
+        }
+      } else if (step.kind === 'control') {
+        const controlStep = step as ControlStep;
+        this.stepRegistry.set(step.id, { kind: 'control', type: controlStep.control?.type });
+        // Recursively register nested steps
+        if (controlStep.steps) {
+          this.populateStepRegistry(controlStep.steps);
+        }
+        if (controlStep.else_steps) {
+          this.populateStepRegistry(controlStep.else_steps);
+        }
+      }
+    }
+  }
+
+  /**
+   * Predict whether a transform step will fall back to ai_processing
+   * This mirrors the logic in convertTransformStep but without side effects
+   */
+  private willTransformFallbackToAI(step: TransformStep): boolean {
+    const transformType = step.type;
+
+    // LLM transform types always become ai_processing
+    if (this.isLLMTransformType(transformType || '')) {
+      return true;
+    }
+
+    // Filter with cross-step dependency field falls back
+    if (transformType === 'filter') {
+      const filterField = this.extractFilterField(step.inputs || {});
+      if (filterField && this.isCrossStepDependencyField(filterField)) {
+        return true;
+      }
+    }
+
+    // Mapping-based transforms without valid mapping config fall back
+    if (this.isMappingBasedTransform(transformType || '') && !this.hasMappingConfig(step.inputs || {})) {
+      return true;
+    }
+
+    return false;
   }
 
   /**
@@ -362,7 +453,12 @@ export class Phase4DSLBuilder {
       switch (step.kind) {
         case 'operation':
           result = this.convertOperationStep(step as OperationStep);
-          this.stats.actionSteps++;
+          // Track stats based on actual result type (may be ai_processing for LLM plugins)
+          if (result.type === 'ai_processing') {
+            this.stats.aiProcessingSteps++;
+          } else {
+            this.stats.actionSteps++;
+          }
           break;
         case 'transform':
           result = this.convertTransformStep(step as TransformStep);
@@ -391,9 +487,31 @@ export class Phase4DSLBuilder {
   }
 
   /**
-   * Convert operation step → ActionStep
+   * Plugins that should be converted to ai_processing instead of action
+   * These are LLM-based plugins that don't have real external actions
    */
-  private convertOperationStep(step: OperationStep): ActionStep & { outputs?: Record<string, any> } {
+  private readonly LLM_BASED_PLUGINS = [
+    'chatgpt-research'
+  ];
+
+  /**
+   * Convert operation step → ActionStep or AIProcessingStep (for LLM plugins)
+   */
+  private convertOperationStep(step: OperationStep): (ActionStep | AIProcessingStep) & { outputs?: Record<string, any> } {
+    // Check if this is an LLM-based plugin that should be ai_processing
+    if (step.plugin && this.LLM_BASED_PLUGINS.includes(step.plugin)) {
+      this.addWarning(
+        step.id,
+        'fallback_used',
+        `Plugin '${step.plugin}' is LLM-based - converting to ai_processing`,
+        { plugin: step.plugin, action: step.action, reason: 'llm_based_plugin' }
+      );
+      this.stats.fallbacksUsed++;
+
+      // Convert to ai_processing step
+      return this.buildAIProcessingFromOperation(step);
+    }
+
     const outputs = this.buildStepOutputs(step.outputs, step.id, 'action');
 
     return {
@@ -404,6 +522,55 @@ export class Phase4DSLBuilder {
       plugin: step.plugin,
       action: step.action,
       params: this.resolveInputs(step.inputs || {}),
+      ...(outputs && { outputs })
+    };
+  }
+
+  /**
+   * Convert an operation step with LLM plugin to AIProcessingStep
+   */
+  private buildAIProcessingFromOperation(step: OperationStep): AIProcessingStep & { outputs?: Record<string, any> } {
+    const outputs = this.buildStepOutputs(step.outputs, step.id, 'ai_processing');
+
+    // Build prompt from action and params
+    // E.g., action: "summarize_content" with params like content, length, style, focus_on
+    const inputs = step.inputs || {};
+    const action = step.action || 'process';
+
+    // Find the main content input
+    const contentInput = inputs['content'] || inputs['text'] || inputs['data'] || inputs['input'];
+    const dataRef = contentInput ? this.resolveInput(contentInput) : '';
+
+    // Build contextual prompt from action and other params
+    let prompt = step.description;
+
+    // Add action-specific instructions if available
+    if (action === 'summarize_content') {
+      const length = inputs['length'] ? this.resolveInput(inputs['length']) : 'brief';
+      const style = inputs['style'] ? this.resolveInput(inputs['style']) : 'professional';
+      const focusOn = inputs['focus_on'] ? this.resolveInput(inputs['focus_on']) : [];
+
+      prompt = `${step.description}\n\nSummarization settings:\n- Length: ${length}\n- Style: ${style}`;
+      if (Array.isArray(focusOn) && focusOn.length > 0) {
+        prompt += `\n- Focus on: ${focusOn.join(', ')}`;
+      }
+    }
+
+    // Add output format instructions
+    const outputFormatInstructions = this.buildOutputFormatInstructions(step.outputs, action);
+    if (outputFormatInstructions) {
+      prompt = `${prompt}${outputFormatInstructions}`;
+    }
+
+    return {
+      id: step.id,
+      type: 'ai_processing',
+      name: this.truncate(step.description, 100),
+      description: step.description,
+      prompt,
+      params: {
+        data: dataRef
+      },
       ...(outputs && { outputs })
     };
   }
@@ -439,9 +606,250 @@ export class Phase4DSLBuilder {
 
     if (this.isLLMTransformType(transformType)) {
       return this.buildAIProcessingStep(step, transformType);
-    } else {
-      return this.buildTransformStep(step, transformType);
     }
+
+    // For filter transforms, check if the field is a cross-step dependency
+    // Cross-step filters (e.g., "not_in_logged_identifiers") require comparing against another step's output
+    // These can't be executed deterministically and need ai_processing
+    if (transformType === 'filter') {
+      const filterField = this.extractFilterField(step.inputs || {});
+      if (filterField && this.isCrossStepDependencyField(filterField)) {
+        this.addWarning(
+          step.id,
+          'fallback_used',
+          `Filter field '${filterField}' is a cross-step dependency - falling back to ai_processing`,
+          { transformType, field: filterField, reason: 'cross_step_dependency' }
+        );
+        this.stats.fallbacksUsed++;
+        return this.buildAIProcessingStep(step, transformType);
+      }
+    }
+
+    // For mapping-based transforms (map, format, etc.), check if config would be empty
+    // If so, fallback to ai_processing since we can't deterministically execute without config
+    if (this.isMappingBasedTransform(transformType) && !this.hasMappingConfig(step.inputs || {})) {
+      this.addWarning(
+        step.id,
+        'fallback_used',
+        `Transform type '${transformType}' has no mapping configuration - falling back to ai_processing`,
+        { transformType, reason: 'empty_mapping_config' }
+      );
+      this.stats.fallbacksUsed++;
+
+      // Look ahead for downstream filter steps that expect computed fields from this step
+      const downstreamFields = this.findDownstreamFieldRequirements(step.id);
+      return this.buildAIProcessingStep(step, transformType, downstreamFields);
+    }
+
+    return this.buildTransformStep(step, transformType);
+  }
+
+  /**
+   * Extract the filter field name from a filter step's inputs
+   */
+  private extractFilterField(inputs: Record<string, StepInput>): string | null {
+    const fieldInput = inputs['field'];
+    if (!fieldInput || fieldInput.source !== 'constant') return null;
+
+    let fieldName = String(fieldInput.value || '');
+
+    // Normalize - strip {{item.}} prefix if present
+    if (fieldName.startsWith('{{item.')) {
+      fieldName = fieldName.replace(/^\{\{item\./, '').replace(/\}\}$/, '');
+    } else if (fieldName.startsWith('{{') && fieldName.endsWith('}}')) {
+      fieldName = fieldName.slice(2, -2);
+      if (fieldName.startsWith('item.')) {
+        fieldName = fieldName.slice(5);
+      }
+    }
+
+    return fieldName || null;
+  }
+
+  /**
+   * Check if a transform type uses mapping-based configuration
+   */
+  private isMappingBasedTransform(type: string): boolean {
+    return ['map', 'format', 'pick_fields', 'merge', 'split', 'convert', 'flatten', 'deduplicate'].includes(type);
+  }
+
+  /**
+   * Check if inputs contain valid mapping configuration that can be executed deterministically
+   *
+   * A valid deterministic mapping must contain actual field mappings with {{item.*}} references.
+   * Configuration parameters (like `user_domain: "gmail.com"`) are NOT sufficient because
+   * the deterministic map transform can only:
+   * 1. Copy literal values
+   * 2. Expand templates like {{item.field}}
+   *
+   * It cannot compute business logic like "parse sender domain and compare to user_domain".
+   * Such cases need ai_processing to derive computed fields.
+   */
+  private hasMappingConfig(inputs: Record<string, StepInput>): boolean {
+    // Collection/data inputs are not config - they're just the input source
+    const nonConfigKeys = ['collection', 'data', 'input', 'items', 'array', 'source'];
+
+    let hasItemReference = false;
+
+    for (const [key, input] of Object.entries(inputs)) {
+      // Skip input source keys
+      if (nonConfigKeys.includes(key.toLowerCase())) continue;
+
+      // Check if the value contains {{item.*}} references
+      if (input?.source === 'constant' && input?.value !== undefined) {
+        const valueStr = typeof input.value === 'string' ? input.value : JSON.stringify(input.value);
+
+        // If it contains {{item.*}} references, it's an actual field mapping
+        if (valueStr.includes('{{item.') || valueStr.includes('{{item}}')) {
+          hasItemReference = true;
+        }
+      }
+
+      // Template input with item references is valid
+      if (key === 'template' && input?.source === 'constant') {
+        const templateStr = typeof input.value === 'string' ? input.value : '';
+        if (templateStr.includes('{{item.') || templateStr.includes('{{')) {
+          hasItemReference = true;
+        }
+      }
+    }
+
+    // Only return true if we found actual item references
+    // Constant-only configs (like user_domain: "gmail.com") should fall back to ai_processing
+    return hasItemReference;
+  }
+
+  /**
+   * Find downstream filter steps that depend on this step's output
+   * and extract the computed field requirements from their conditions
+   */
+  private findDownstreamFieldRequirements(stepId: string): Array<{ field: string; description: string; fromStepId: string }> {
+    const fields: Array<{ field: string; description: string; fromStepId: string }> = [];
+    const seenFields = new Set<string>();
+
+    // Find the output key of this step
+    const currentStep = this.workflowSteps.find(s => s.id === stepId);
+    if (!currentStep) return fields;
+
+    const outputKeys = Object.keys(currentStep.outputs || {}).filter(k => k !== 'next_step');
+    if (outputKeys.length === 0) return fields;
+
+    // Look for downstream filter steps that reference this step's output
+    for (const step of this.workflowSteps) {
+      if (step.kind !== 'transform' || (step as TransformStep).type !== 'filter') continue;
+
+      const filterStep = step as TransformStep;
+      const inputs = filterStep.inputs || {};
+
+      // Check if this filter step's collection input references our step's output
+      const collectionInput = inputs['collection'] || inputs['data'] || inputs['input'];
+      if (!collectionInput) continue;
+
+      const inputRef = collectionInput.source === 'from_step' ? collectionInput.ref : null;
+      if (!inputRef) continue;
+
+      // Check if it references our step or a downstream step that chains from us
+      const referencesOurOutput = outputKeys.some(key =>
+        inputRef === `${stepId}.${key}` || inputRef.startsWith(`${stepId}.`)
+      );
+
+      // Also check if it references a step that directly follows our output
+      const referencesDownstreamOfUs = this.isStepDownstreamOf(inputRef.split('.')[0], stepId);
+
+      if (!referencesOurOutput && !referencesDownstreamOfUs) continue;
+
+      // Extract the field being filtered on
+      const fieldInput = inputs['field'];
+      if (!fieldInput || fieldInput.source !== 'constant') continue;
+
+      let fieldName = String(fieldInput.value || '');
+
+      // Strip {{item.}} prefix if present
+      if (fieldName.startsWith('{{item.')) {
+        fieldName = fieldName.replace(/^\{\{item\./, '').replace(/\}\}$/, '');
+      }
+      if (fieldName.startsWith('{{') || fieldName.includes('.')) continue; // Skip complex references
+
+      // Skip if we've already seen this field
+      if (seenFields.has(fieldName)) continue;
+      seenFields.add(fieldName);
+
+      // Skip cross-step dependency fields - these can't be computed by upstream step
+      // They require data from another step that may not have run yet
+      if (this.isCrossStepDependencyField(fieldName)) {
+        continue;
+      }
+
+      // Extract description from the step's description
+      // The description often contains the business logic (e.g., "sender domain != gmail.com")
+      const description = filterStep.description || `Boolean field for filtering in ${filterStep.id}`;
+
+      fields.push({
+        field: fieldName,
+        description: this.extractFieldLogicFromDescription(fieldName, description),
+        fromStepId: filterStep.id
+      });
+    }
+
+    return fields;
+  }
+
+  /**
+   * Check if a field name suggests a cross-step dependency
+   * (i.e., requires comparing against another step's output)
+   */
+  private isCrossStepDependencyField(fieldName: string): boolean {
+    // Patterns that suggest cross-step comparison
+    const crossStepPatterns = [
+      /_in_/i,           // e.g., "key_in_list", "not_in_logged"
+      /_not_in_/i,       // e.g., "dedupe_key_not_in_logged_identifiers"
+      /_matches_/i,      // e.g., "id_matches_existing"
+      /_exists_in_/i,    // e.g., "email_exists_in_sheet"
+      /^in_/i,           // e.g., "in_logged_list"
+      /^not_in_/i,       // e.g., "not_in_database"
+    ];
+
+    return crossStepPatterns.some(pattern => pattern.test(fieldName));
+  }
+
+  /**
+   * Check if targetStepId is downstream of sourceStepId in the workflow
+   */
+  private isStepDownstreamOf(targetStepId: string, sourceStepId: string): boolean {
+    const sourceIndex = this.workflowSteps.findIndex(s => s.id === sourceStepId);
+    const targetIndex = this.workflowSteps.findIndex(s => s.id === targetStepId);
+    return sourceIndex >= 0 && targetIndex > sourceIndex;
+  }
+
+  /**
+   * Extract field computation logic from step description
+   * E.g., "Keep only emails from client senders (sender domain != gmail.com)"
+   *   → "true if sender domain != gmail.com"
+   */
+  private extractFieldLogicFromDescription(fieldName: string, description: string): string {
+    // Look for parenthetical explanation
+    const parenMatch = description.match(/\(([^)]+)\)/);
+    if (parenMatch) {
+      return `true if ${parenMatch[1]}`;
+    }
+
+    // Look for common patterns
+    const patterns = [
+      /based on (.+)/i,
+      /where (.+)/i,
+      /if (.+)/i,
+      /when (.+)/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = description.match(pattern);
+      if (match) {
+        return `true if ${match[1]}`;
+      }
+    }
+
+    // Default: use field name as hint
+    return `true/false - compute based on: ${description}`;
   }
 
   /**
@@ -495,22 +903,90 @@ export class Phase4DSLBuilder {
 
   /**
    * Build PILOT DSL AIProcessingStep (requires LLM)
+   * @param downstreamFields - Optional array of field requirements from downstream filter steps
    */
-  private buildAIProcessingStep(step: TransformStep, transformType: string): AIProcessingStep & { outputs?: Record<string, any> } {
+  private buildAIProcessingStep(
+    step: TransformStep,
+    transformType: string,
+    downstreamFields?: Array<{ field: string; description: string; fromStepId: string }>
+  ): AIProcessingStep & { outputs?: Record<string, any> } {
     const dataInput = this.findPrimaryInput(step.inputs || {}, step.id);
     const outputs = this.buildStepOutputs(step.outputs, step.id, 'ai_processing');
+
+    // Build enhanced prompt with downstream field requirements
+    let prompt = step.description;
+    if (downstreamFields && downstreamFields.length > 0) {
+      const fieldsList = downstreamFields
+        .map(f => `- ${f.field}: ${f.description}`)
+        .join('\n');
+      prompt = `${step.description}\n\nFor each item, compute these fields needed by downstream steps:\n${fieldsList}`;
+    }
+
+    // Add output format instructions based on expected output type
+    const outputFormatInstructions = this.buildOutputFormatInstructions(step.outputs, transformType);
+    if (outputFormatInstructions) {
+      prompt = `${prompt}${outputFormatInstructions}`;
+    }
 
     return {
       id: step.id,
       type: 'ai_processing',
       name: this.truncate(step.description, 100),
       description: step.description,
-      prompt: step.description,
+      intent: 'extract',  // Explicit intent to ensure ExtractHandler is used (parses JSON output properly)
+      prompt,
       params: {
         data: dataInput
       },
       ...(outputs && { outputs })
     };
+  }
+
+  /**
+   * Build output format instructions for ai_processing prompts
+   *
+   * This tells the LLM exactly what format to return, ensuring:
+   * 1. Consistent JSON output that can be parsed
+   * 2. Downstream steps can reliably reference the output
+   * 3. The output matches the step's defined output type
+   */
+  private buildOutputFormatInstructions(
+    outputs: Record<string, any> | undefined,
+    originalTransformType?: string
+  ): string {
+    if (!outputs || Object.keys(outputs).length === 0) {
+      // Default: return as JSON object
+      return `\n\nOUTPUT FORMAT:
+Return ONLY valid JSON. No explanations, no markdown code blocks, just the raw JSON.`;
+    }
+
+    const outputKeys = Object.keys(outputs);
+    const firstOutputKey = outputKeys[0];
+    const firstOutput = outputs[firstOutputKey];
+    const outputType = firstOutput?.type || 'object';
+
+    // Determine if output should be an array based on type annotation
+    const isArrayOutput = outputType.includes('[]') ||
+                          outputType === 'array' ||
+                          originalTransformType === 'map' ||
+                          originalTransformType === 'filter';
+
+    if (isArrayOutput) {
+      // For array outputs (object[], T[], string[], etc.)
+      // The result should be wrapped in { items: [...] } for consistent downstream access
+      return `\n\nOUTPUT FORMAT:
+Return ONLY a valid JSON object with an "items" array containing the processed data.
+Do not include any explanations or markdown code blocks, just the raw JSON.
+Example format:
+{"items": [{"field1": "value1", ...}, {"field2": "value2", ...}]}`;
+    }
+
+    // For single object outputs
+    return `\n\nOUTPUT FORMAT:
+Return ONLY a valid JSON object with the result.
+Do not include any explanations or markdown code blocks, just the raw JSON.
+Example format:
+{"result": <your_output_here>}`;
   }
 
   /**
@@ -544,9 +1020,33 @@ export class Phase4DSLBuilder {
     const fieldInput = this.findFieldInput(inputs, stepId);
     const valueInput = this.findValueInput(inputs, stepId);
 
-    const field = this.resolveInput(fieldInput);
+    let field = this.resolveInput(fieldInput);
     const operator = this.resolveInput(inputs['operator']) || 'equals';
     const value = this.resolveInput(valueInput);
+
+    // Normalize field name to use item. prefix for filter context
+    // The executor sets each array item as 'item' variable during filtering
+    if (typeof field === 'string') {
+      // Extract plain field name first
+      let plainField = field;
+
+      if (field.startsWith('{{item.')) {
+        // Already has item. prefix with template syntax - normalize to item.fieldName
+        plainField = field.replace(/^\{\{item\./, '').replace(/\}\}$/, '');
+      } else if (field.startsWith('{{') && field.endsWith('}}')) {
+        // Has template syntax - extract inner value
+        plainField = field.slice(2, -2);
+        if (plainField.startsWith('item.')) {
+          plainField = plainField.slice(5);
+        }
+      } else if (field.startsWith('item.')) {
+        // Has item. prefix without template syntax
+        plainField = field.slice(5);
+      }
+
+      // Add item. prefix for filter context (executor resolves item.fieldName)
+      field = `item.${plainField}`;
+    }
 
     // Warn if critical inputs are missing
     if (!fieldInput) {
@@ -559,7 +1059,7 @@ export class Phase4DSLBuilder {
     return {
       condition: {
         conditionType: 'simple',
-        field: field ? `{{item.${field}}}` : '',
+        field: field || '',  // Explicit item.fieldName for filter context
         operator: this.normalizeOperator(operator),
         value
       }
@@ -634,13 +1134,17 @@ export class Phase4DSLBuilder {
       throw new Error(`Control step ${step.id} is missing control configuration`);
     }
 
+    // Resolve the scatter input using the same logic as other step inputs
+    // collection_ref is like "step7.to_log" - need to resolve to actual data path
+    const scatterInput = this.resolveScatterInput(control.collection_ref);
+
     return {
       id: step.id,
       type: 'scatter_gather',
       name: this.truncate(step.description, 100),
       description: step.description,
       scatter: {
-        input: `{{${control.collection_ref}}}`,
+        input: scatterInput,
         itemVariable: control.item_name,
         steps: nestedSteps
       },
@@ -649,6 +1153,34 @@ export class Phase4DSLBuilder {
         outputKey: step.id
       }
     };
+  }
+
+  /**
+   * Resolve scatter input reference to actual data path
+   *
+   * collection_ref format: "stepId.outputKey" (e.g., "step7.to_log")
+   *
+   * For ai_processing steps: returns {{stepId.data.items}}
+   * For filter transforms: returns {{stepId.data.items}}
+   * For map transforms: returns {{stepId.data}}
+   * For action steps: returns {{stepId.data.outputKey}}
+   */
+  private resolveScatterInput(collectionRef: string): string {
+    // Parse the collection reference (e.g., "step7.to_log")
+    const parts = collectionRef.split('.');
+    if (parts.length < 2) {
+      // Simple reference without field - wrap as-is
+      return `{{${collectionRef}}}`;
+    }
+
+    const stepId = parts[0];
+    const fieldName = parts.slice(1).join('.');
+
+    // Use resolveInput with from_step source type
+    return this.resolveInput({
+      source: 'from_step',
+      ref: collectionRef
+    });
   }
 
   /**
@@ -787,6 +1319,13 @@ export class Phase4DSLBuilder {
 
   /**
    * Resolve a single StepInput based on its source
+   *
+   * Uses step registry for smart reference resolution:
+   * - action steps: {{stepX.data.fieldName}} (executor stores result.fieldName in data)
+   * - map transforms: {{stepX.data}} (executor stores raw array in data)
+   * - filter transforms: {{stepX.data.items}} (executor stores {items: [...]} in data)
+   * - ai_processing (fallback): {{stepX.data.items}} (LLM returns array in items key)
+   * - ai_processing (native): {{stepX.data.fieldName}} (LLM returns structured data with keys)
    */
   private resolveInput(input: StepInput | undefined): any {
     if (!input) return undefined;
@@ -795,7 +1334,69 @@ export class Phase4DSLBuilder {
       case 'constant':
         return input.value;
       case 'from_step':
-        return `{{${input.ref}}}`;
+        // Smart reference resolution based on source step type
+        const ref = input.ref || '';
+
+        // Check if it's a step reference (e.g., "step2.normalized_emails")
+        const stepMatch = ref.match(/^(step\d+(_\d+)?)\.(.*)/);
+        if (stepMatch) {
+          const [, stepId, , fieldName] = stepMatch;
+          const stepInfo = this.stepRegistry.get(stepId);
+
+          if (stepInfo) {
+            // Determine the correct data path based on step type
+            if (stepInfo.kind === 'transform') {
+              const operation = stepInfo.operation || stepInfo.type;
+
+              if (operation === 'map') {
+                // Map transforms store raw array directly in .data
+                // Drop the field name: "step2.normalized_emails" → "step2.data"
+                return `{{${stepId}.data}}`;
+              }
+
+              if (operation === 'filter') {
+                // Filter transforms store {items: [...], filtered: [...]} in .data
+                // Use .data.items for the filtered array
+                return `{{${stepId}.data.items}}`;
+              }
+
+              if (operation === 'aggregate') {
+                // Aggregate transforms return results directly at .data level
+                // E.g., { to_log_count: 0 } is stored at step9.data, not step9.data.run_summary
+                return `{{${stepId}.data}}`;
+              }
+
+              if (operation === 'ai_processing' || stepInfo.type === 'ai_processing') {
+                // Transform that fell back to ai_processing
+                // The LLM orchestrator returns arrays in .data.items
+                return `{{${stepId}.data.items}}`;
+              }
+
+              // Other transforms (sort, etc.) - keep field name
+              return `{{${stepId}.data.${fieldName}}}`;
+            }
+
+            // Native ai_processing steps (not fallback) - keep field name
+            if (stepInfo.type === 'ai_processing') {
+              return `{{${stepId}.data.items}}`;
+            }
+
+            // action steps - keep field name
+            return `{{${stepId}.data.${fieldName}}}`;
+          }
+
+          // Step not in registry (shouldn't happen) - use safe default with field name
+          return `{{${stepId}.data.${fieldName}}}`;
+        }
+
+        // Check for simple step reference without field (e.g., "step2")
+        if (ref.match(/^step\d+(_\d+)?$/)) {
+          return `{{${ref}.data}}`;
+        }
+
+        // Loop variables like "email.body" - preserve as-is
+        return `{{${ref}}}`;
+
       case 'user_input':
         return `{{input.${input.key}}}`;
       case 'env':

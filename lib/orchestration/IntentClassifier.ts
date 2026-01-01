@@ -50,6 +50,24 @@ export class IntentClassifier implements IIntentClassifier {
     const startTime = Date.now();
 
     try {
+      // Check for explicit intent first - DSL can override classification
+      // This allows Phase4DSLBuilder to specify intent: 'extract' for ai_processing steps
+      if (step.intent && typeof step.intent === 'string') {
+        const validIntents: IntentType[] = [
+          'extract', 'summarize', 'generate', 'validate', 'send',
+          'transform', 'conditional', 'aggregate', 'filter', 'enrich', 'scatter_gather'
+        ];
+        if (validIntents.includes(step.intent as IntentType)) {
+          const explicitResult: IntentClassification = {
+            intent: step.intent as IntentType,
+            confidence: 1.0,
+            reasoning: `Explicit intent specified in step configuration: ${step.intent}`
+          };
+          console.log(`[IntentClassifier] Using explicit intent from step: "${step.intent}"`);
+          return explicitResult;
+        }
+      }
+
       // Generate cache key from step content
       const cacheKey = this.generateCacheKey(step);
 

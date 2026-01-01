@@ -313,13 +313,28 @@ export class V5WorkflowGenerator {
           })),
         } : undefined;
 
+        // Merge data from reviewer output AND original Phase 4 input
+        // The reviewer only returns technical_workflow, reviewer_summary, and feasibility
+        // We need to preserve enhanced_prompt, technical_inputs_required, and requiredServices from original input
+        const originalInput = input.technicalWorkflow!;
+
         const phase4Input: Phase4Response = {
+          // From reviewer output (the validated/repaired workflow)
           technical_workflow: reviewedWorkflow.technical_workflow,
-          enhanced_prompt: reviewedWorkflow.enhanced_prompt,
           feasibility: convertedFeasibility,
-          technical_inputs_required: input.technicalWorkflow?.technical_inputs_required || [],
-          requiredServices: input.technicalWorkflow?.requiredServices,
+
+          // From original Phase 4 input (preserved, not returned by reviewer)
+          enhanced_prompt: originalInput.enhanced_prompt,
+          technical_inputs_required: originalInput.technical_inputs_required || [],
+          requiredServices: originalInput.requiredServices,
         };
+
+        logger.debug({
+          hasEnhancedPrompt: !!phase4Input.enhanced_prompt,
+          technicalInputsCount: phase4Input.technical_inputs_required?.length || 0,
+          requiredServicesCount: phase4Input.requiredServices?.length || 0,
+          servicesInvolved: phase4Input.enhanced_prompt?.specifics?.services_involved,
+        }, 'Phase4Input merged from reviewer output and original input');
 
         const dslResult: Phase4DSLBuilderResult = this.phase4DslBuilder.build(phase4Input);
 
@@ -736,8 +751,20 @@ export class V5WorkflowGenerator {
     }, 'Technical workflow review complete');
 
     // Return reviewed workflow with reviewer fields added
+    // NOTE: The reviewer only returns technical_workflow, reviewer_summary, and feasibility
+    // We preserve the original input fields (enhanced_prompt, requiredServices, technical_inputs_required)
+    // by spreading input.technicalWorkflow. The caller (generateWorkflow) also explicitly
+    // pulls these from the original input to ensure they're not lost.
+    const originalInput = input.technicalWorkflow!;
+
     return {
-      ...input.technicalWorkflow!,
+      // Preserve original fields that reviewer doesn't return
+      enhanced_prompt: originalInput.enhanced_prompt,
+      analysis: originalInput.analysis,
+      requiredServices: originalInput.requiredServices,
+      technical_inputs_required: originalInput.technical_inputs_required,
+
+      // From reviewer output (validated/repaired)
       technical_workflow: parsed.technical_workflow,
       reviewer_summary: parsed.reviewer_summary,
       feasibility: parsed.feasibility,

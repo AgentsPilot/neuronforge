@@ -2,6 +2,12 @@
 // Shared model constants for client and server components
 // This file is client-safe and can be imported in 'use client' components
 
+import {
+  modelSupportsTemperature,
+  getModelMaxOutputTokens,
+  getModelContextLimit,
+} from './context-limits';
+
 /**
  * Supported AI providers
  */
@@ -270,3 +276,33 @@ export const DEFAULT_AGENTKIT_CONFIG = {
   maxIterations: 10,
   timeoutMs: 120000,
 } as const;
+
+/**
+ * Extended model information including capabilities and limits
+ */
+export interface ModelInfo extends ModelOption {
+  supportsTemperature: boolean;
+  maxOutputTokens: number;
+  contextLimit: number;
+}
+
+/**
+ * Get extended model information including capabilities and limits
+ * Combines ModelOption with data from context-limits
+ */
+export function getModelInfo(modelValue: string): ModelInfo | undefined {
+  const option = findModelOption(modelValue);
+  if (!option) return undefined;
+
+  return {
+    ...option,
+    supportsTemperature: modelSupportsTemperature(modelValue),
+    maxOutputTokens: getModelMaxOutputTokens(modelValue),
+    contextLimit: getModelContextLimit(modelValue),
+  };
+}
+
+/**
+ * Re-export context-limits functions for convenience
+ */
+export { modelSupportsTemperature, getModelMaxOutputTokens, getModelContextLimit };

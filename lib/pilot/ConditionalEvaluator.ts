@@ -80,7 +80,7 @@ export class ConditionalEvaluator {
     let fieldRef = condition.field;
 
     // If field is already wrapped in {{}}, use as-is
-    // Otherwise, wrap it
+    // Otherwise, wrap it for variable resolution
     if (!fieldRef.startsWith('{{')) {
       fieldRef = `{{${fieldRef}}}`;
     }

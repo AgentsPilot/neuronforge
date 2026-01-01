@@ -780,6 +780,23 @@ export class WorkflowPilot {
 
       console.log(`  ✓ Scatter-gather completed in ${Date.now() - startTime}ms`);
       await this.stateManager.checkpoint(context);
+
+      // Emit debug step_complete event for scatter-gather
+      if (debugRunId) {
+        DebugSessionManager.emitEvent(debugRunId, {
+          type: 'step_complete',
+          stepId: stepDef.id,
+          stepName: stepDef.name,
+          data: {
+            output: results,
+            duration: Date.now() - startTime,
+            plugin: 'system',
+            action: 'scatter_gather',
+            itemCount: Array.isArray(results) ? results.length : undefined,
+          }
+        });
+      }
+
       // Emit step completed event
       if (stepEmitter?.onStepCompleted) {
         stepEmitter.onStepCompleted(stepDef.id, stepDef.name);

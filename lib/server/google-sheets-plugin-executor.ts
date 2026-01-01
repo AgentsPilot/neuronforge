@@ -149,6 +149,16 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
 
     const { spreadsheet_id, range, values, input_option, insert_data_option } = parameters;
 
+    // ✅ FIX: Normalize values - convert objects to flat arrays
+    // Google Sheets API expects: [["val1", "val2"], ["val3", "val4"]]
+    // But workflows may pass: [[{field1: "val1", field2: "val2"}]] or [{...}]
+    const normalizedValues = this.normalizeValuesForSheets(values);
+    this.logger.debug({
+      originalFormat: this.describeValueFormat(values),
+      normalizedRowCount: normalizedValues.length,
+      normalizedColCount: normalizedValues[0]?.length || 0
+    }, 'Values normalized for Sheets API');
+
     // Build request URL
     const valueInputOption = input_option || 'USER_ENTERED';
     const insertDataOption = insert_data_option || 'INSERT_ROWS';
@@ -159,7 +169,7 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
     const requestBody = {
       range: range,
       majorDimension: 'ROWS',
-      values: values
+      values: normalizedValues
     };
 
     const response = await fetch(url.toString(), {
@@ -514,5 +524,87 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
       this.logger.error({ err: error }, 'Error listing sheet names for options');
       throw error;
     }
+  }
+
+  /**
+   * Normalize values array for Google Sheets API
+   * Converts objects to flat value arrays
+   *
+   * Input formats handled:
+   * 1. [[{obj}], [{obj}]] -> [["v1","v2"], ["v1","v2"]]  (array of arrays containing objects)
+   * 2. [{obj}, {obj}] -> [["v1","v2"], ["v1","v2"]]      (array of objects)
+   * 3. [["v1","v2"]] -> [["v1","v2"]]                    (already correct format)
+   * 4. [] or null -> []                                   (empty/null)
+   */
+  private normalizeValuesForSheets(values: any): any[][] {
+    if (!values || !Array.isArray(values) || values.length === 0) {
+      return [];
+    }
+
+    const firstRow = values[0];
+
+    // Case 1: Already in correct format - array of arrays of primitives [[primitive, primitive, ...]]
+    if (Array.isArray(firstRow) && (firstRow.length === 0 || typeof firstRow[0] !== 'object' || firstRow[0] === null)) {
+      return values;
+    }
+
+    // Case 2: Array of objects [{...}, {...}] - each object is a row
+    if (!Array.isArray(firstRow) && typeof firstRow === 'object' && firstRow !== null) {
+      this.logger.debug('Converting array of objects to value arrays');
+      return values.map((obj: any) => this.objectToValueArray(obj));
+    }
+
+    // Case 3: Array of arrays containing objects [[{...}], [{...}]] - unwrap and convert
+    if (Array.isArray(firstRow) && firstRow.length > 0 && typeof firstRow[0] === 'object' && firstRow[0] !== null) {
+      this.logger.debug('Converting nested array of objects to value arrays');
+      return values.map((row: any[]) => {
+        // Each row is an array with one object, extract the object and convert
+        const obj = row[0];
+        return this.objectToValueArray(obj);
+      });
+    }
+
+    // Fallback: return as-is and let the API handle any errors
+    this.logger.warn({ valueType: typeof firstRow }, 'Unknown values format, passing through as-is');
+    return values;
+  }
+
+  /**
+   * Convert an object to an array of values (preserving key order)
+   * Handles nested objects by stringifying them
+   */
+  private objectToValueArray(obj: any): any[] {
+    if (obj === null || obj === undefined) {
+      return [''];
+    }
+
+    if (typeof obj !== 'object') {
+      return [String(obj)];
+    }
+
+    // Extract values in key order
+    return Object.values(obj).map(val => {
+      if (val === null || val === undefined) return '';
+      if (typeof val === 'object') return JSON.stringify(val);
+      return String(val);
+    });
+  }
+
+  /**
+   * Describe the format of values for logging
+   */
+  private describeValueFormat(values: any): string {
+    if (!values) return 'null/undefined';
+    if (!Array.isArray(values)) return `non-array (${typeof values})`;
+    if (values.length === 0) return 'empty array';
+
+    const first = values[0];
+    if (!Array.isArray(first)) {
+      return typeof first === 'object' ? 'array of objects' : `array of ${typeof first}`;
+    }
+
+    if (first.length === 0) return 'array of empty arrays';
+    const innerFirst = first[0];
+    return typeof innerFirst === 'object' ? 'array of arrays of objects' : `array of arrays of ${typeof innerFirst}`;
   }
 }

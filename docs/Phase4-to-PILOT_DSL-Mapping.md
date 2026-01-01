@@ -142,6 +142,7 @@ Phase 4 (TransformStep - LLM)            PILOT_DSL_SCHEMA (AIProcessingStep)
 - `kind: "transform"` + `*_with_llm` type → `type: "ai_processing"`
 - `description` → `prompt`
 - `inputs` → `params.data`
+- **`intent: "extract"` added** (v2.8) - Explicit intent ensures ExtractHandler is used for JSON parsing
 
 ---
 
@@ -158,7 +159,7 @@ Phase 4 (TransformStep - LLM)            PILOT_DSL_SCHEMA (AIProcessingStep)
 | `deduplicate` | `filter` | `{ condition: ... }` (specialized) |
 | `flatten` | `map` | `{ mapping: ... }` (specialized) |
 | `pick_fields` | `map` | `{ mapping: { field: "{{item.field}}" } }` |
-| `format` | `map` | `{ mapping: { output: "template" } }` |
+| `format` | `format` | `{ mapping: { template: "..." } }` (dedicated operation) |
 | `merge` | `map` | `{ mapping: ... }` (combine objects) |
 | `split` | `map` | `{ mapping: ... }` (partition) |
 | `convert` | `map` | `{ mapping: ... }` (type coercion) |
@@ -292,24 +293,37 @@ The DSLBuilder maps Phase 4 `inputs` to PILOT DSL `config` based on the operatio
 ```
 
 **Format Operation:**
+
+The `format` operation is a dedicated transform for converting objects or arrays to formatted strings using templates. Template variables like `{{field_name}}` are resolved from the input data, not from global context.
+
 ```typescript
-// Phase 4 inputs
+// Phase 4 inputs (object-to-string)
 {
-  data: { source: "from_step", ref: "step1.leads" },
-  template: { source: "constant", value: "<table>...</table>" },
-  columns: { source: "constant", value: ["Name", "Email", "Status"] }
+  data: { source: "from_step", ref: "step9.run_summary" },
+  template: { source: "constant", value: "Logged {{to_log_count}} items successfully." }
 }
 
 // PILOT DSL config
 {
-  input: "{{step1.leads}}",
+  input: "{{step9.data}}",  // Aggregate output at .data level
   config: {
     mapping: {
-      html_output: "<table>{{#each items}}...{{/each}}</table>"
+      template: "Logged {{to_log_count}} items successfully."
     }
   }
 }
+// Output: "Logged 5 items successfully." (if to_log_count = 5)
 ```
+
+**Template Variable Resolution Priority:**
+1. Input data object fields (e.g., `{{to_log_count}}` → `data.to_log_count`)
+2. Nested paths in data (e.g., `{{user.name}}` → `data.user.name`)
+3. Context variables for step references (e.g., `{{step1.data.field}}`)
+
+**Array Input Handling:**
+- Empty array: Template expanded with empty/zero values
+- Single-item array: Template expanded with that item
+- Multiple items: Template expanded for each, joined with newlines
 
 ---
 
@@ -400,27 +414,85 @@ Each `StepInput` in Phase 4 has a `source` field that determines how to resolve 
 |--------|-----------------|-------------------------|
 | `constant` | `{ source: "constant", value: "hello" }` | `"hello"` (literal value) |
 | `constant` (template) | `{ source: "constant", value: "{{item.id}}" }` | `"{{item.id}}"` (preserved) |
-| `from_step` | `{ source: "from_step", ref: "step1.emails" }` | `"{{step1.emails}}"` |
+| `from_step` | `{ source: "from_step", ref: "step1.emails" }` | Smart resolution (see below) |
 | `user_input` | `{ source: "user_input", key: "recipient_email" }` | `"{{input.recipient_email}}"` |
 | `env` | `{ source: "env", key: "API_KEY" }` | `"{{env.API_KEY}}"` |
 | `plugin_config` | `{ source: "plugin_config", plugin: "slack", key: "channel" }` | `"{{config.slack.channel}}"` |
 
-**Resolution Logic:**
+### Smart Step Reference Resolution (v2.5, updated v2.6)
+
+The `from_step` source requires special handling because different step types store their outputs differently in the Pilot executor:
+
+| Source Step Type | Phase 4 Reference | PILOT_DSL Output | Reason |
+|------------------|-------------------|------------------|--------|
+| **action** | `step1.emails` | `{{step1.data.emails}}` | Action steps store fields in `.data` |
+| **transform (map)** | `step2.normalized_emails` | `{{step2.data}}` | Map transforms store raw array directly |
+| **transform (filter)** | `step3.client_emails` | `{{step3.data.items}}` | Filter transforms return `{items: [...]}` |
+| **transform (aggregate)** | `step9.run_summary` | `{{step9.data}}` | Aggregate returns object at `.data` level directly |
+| **transform (format)** | `step10.summary_text` | `{{step10.data}}` | Format returns string at `.data` level |
+| **transform → ai_processing fallback** | `step2.normalized_emails` | `{{step2.data.items}}` | Fallback ai_processing stores array in `.items` |
+| **ai_processing (native)** | `step4.summary` | `{{step4.data.items}}` | AI steps return arrays in `.items` key |
+| **other transforms** | `step5.sorted` | `{{step5.data.sorted}}` | Other transforms (sort, etc.) keep field names |
+
+**v2.6 Enhancement: Fallback Prediction**
+
+The step registry now predicts whether a transform will fall back to ai_processing BEFORE conversion. This ensures downstream reference resolution uses the correct pattern:
+
 ```typescript
-function resolveStepInput(input: StepInput): any {
-  switch (input.source) {
-    case 'constant':
-      return input.value;  // May contain {{...}} templates
-    case 'from_step':
-      return `{{${input.ref}}}`;
-    case 'user_input':
-      return `{{input.${input.key}}}`;
-    case 'env':
-      return `{{env.${input.key}}}`;
-    case 'plugin_config':
-      return `{{config.${input.plugin}.${input.key}}}`;
-  }
+// In populateStepRegistry:
+if (willTransformFallbackToAI(step)) {
+  stepRegistry.set(step.id, { kind: 'transform', type: 'ai_processing' });
+} else {
+  stepRegistry.set(step.id, { kind: 'transform', operation: 'map' });
 }
+
+// willTransformFallbackToAI checks:
+// 1. Is it an LLM transform type (*_with_llm)?
+// 2. Is it a filter with cross-step dependency field?
+// 3. Is it a mapping-based transform without {{item.*}} references?
+```
+
+**How It Works:**
+
+The DSL Builder maintains a step registry that tracks each step's type and operation. When resolving `from_step` references, it looks up the source step to determine the correct data path:
+
+```typescript
+// Step registry populated before conversion
+stepRegistry: Map<stepId, { kind, type?, operation? }>
+
+// Resolution logic
+case 'from_step':
+  const [stepId, fieldName] = ref.split('.');
+  const stepInfo = stepRegistry.get(stepId);
+
+  if (stepInfo.kind === 'transform') {
+    if (stepInfo.operation === 'map') {
+      return `{{${stepId}.data}}`;        // Raw array
+    }
+    if (stepInfo.operation === 'filter') {
+      return `{{${stepId}.data.items}}`;  // Structured {items: [...]}
+    }
+    if (stepInfo.operation === 'aggregate') {
+      return `{{${stepId}.data}}`;        // Object with aggregated values
+    }
+  }
+  return `{{${stepId}.data.${fieldName}}}`;  // Keep field name
+```
+
+**Example Transformation:**
+
+```
+Phase 4 Workflow:
+  step1 (action)     → outputs: { emails: "object[]" }
+  step2 (map)        → inputs: { data: { ref: "step1.emails" } }, outputs: { normalized: "object[]" }
+  step3 (filter)     → inputs: { collection: { ref: "step2.normalized" } }, outputs: { filtered: "T[]" }
+  step4 (ai_process) → inputs: { data: { ref: "step3.filtered" } }
+
+PILOT DSL Output:
+  step1.params       → uses action params
+  step2.input        → "{{step1.data.emails}}"     (action → keep field)
+  step3.input        → "{{step2.data}}"            (map → drop field, raw array)
+  step4.params.data  → "{{step3.data.items}}"      (filter → use .items)
 ```
 
 ---
@@ -554,6 +626,159 @@ The builder automatically generates `outputs` for each step based on:
 ```
 
 This explicit output definition eliminates downstream inference warnings and ensures consistent data contracts between steps.
+
+---
+
+## LLM-Based Plugin Fallback to AI Processing
+
+Certain plugins are LLM-based and don't have real external actions - they rely on AI processing. When the DSL Builder encounters these plugins, it automatically converts them from `action` type to `ai_processing` type.
+
+### LLM-Based Plugins
+
+| Plugin | Converted From | Converted To |
+|--------|----------------|--------------|
+| `chatgpt-research` | `type: "action"` | `type: "ai_processing"` |
+
+### Conversion Behavior
+
+**Before (would require non-existent plugin execution):**
+```json
+{
+  "id": "step8_1",
+  "type": "action",
+  "plugin": "chatgpt-research",
+  "action": "summarize_content",
+  "params": {
+    "content": "{{email.body}}",
+    "length": "brief",
+    "style": "professional"
+  }
+}
+```
+
+**After fallback (executable by LLM):**
+```json
+{
+  "id": "step8_1",
+  "type": "ai_processing",
+  "prompt": "summarize_content: Summarize the following content briefly in a professional style.",
+  "params": {
+    "data": "{{email.body}}",
+    "focus_on": ["newest message only", "urgent request"]
+  }
+}
+```
+
+### Warning Generated
+
+```
+[step8_1] Plugin 'chatgpt-research' is LLM-based - converting to ai_processing
+```
+
+### Special Handling for `summarize_content` Action
+
+The `chatgpt-research` plugin's `summarize_content` action receives special prompt construction:
+- Length preference (brief, detailed, etc.) is included in prompt
+- Style preference (professional, casual, etc.) is included in prompt
+- `focus_on` array items are preserved in params
+- `content` input becomes `params.data`
+
+---
+
+## Cross-Step Dependency Detection in Filters
+
+When a filter condition references data from another step (cross-step dependency), the DSL Builder automatically falls back to `ai_processing` since deterministic filters cannot evaluate cross-step lookups.
+
+### Detection Logic
+
+A filter condition is considered a cross-step dependency when:
+1. The `field` name contains a reference to another step's output (e.g., `not_in_step6`)
+2. The condition requires comparing against a dynamically computed set from another step
+
+### Example
+
+**Phase 4 Input (cross-step dependency):**
+```json
+{
+  "id": "step7",
+  "kind": "transform",
+  "type": "filter",
+  "inputs": {
+    "collection": { "source": "from_step", "ref": "step4.urgent_client_emails" },
+    "field": { "source": "constant", "value": "dedupe_key_not_in_logged_identifiers" },
+    "operator": { "source": "constant", "value": "equals" },
+    "value": { "source": "constant", "value": true }
+  }
+}
+```
+
+**After fallback (executable by LLM):**
+```json
+{
+  "id": "step7",
+  "type": "ai_processing",
+  "prompt": "Remove urgent emails that appear to have already been logged (based on the chosen identifier).\n\nFilter the collection where dedupe_key_not_in_logged_identifiers equals true",
+  "params": {
+    "data": "{{step4.urgent_client_emails}}"
+  }
+}
+```
+
+### Warning Generated
+
+```
+[step7] Filter field 'dedupe_key_not_in_logged_identifiers' is a cross-step dependency - falling back to ai_processing
+```
+
+---
+
+## Empty Mapping Fallback to AI Processing
+
+When a mapping-based transform (`map`, `format`, `pick_fields`, etc.) has no valid configuration, the DSL Builder automatically falls back to `ai_processing` instead of creating a broken deterministic step.
+
+### Detection Logic
+
+A mapping-based transform is considered to have "no config" when:
+1. It only has input source keys (`collection`, `data`, `input`, `items`, `array`, `source`)
+2. No `template`, `mapping`, or `fields` keys are present
+3. No other constant values are defined
+
+### Fallback Behavior
+
+| Original Step | Fallback Step |
+|---------------|---------------|
+| `type: "transform"` | `type: "ai_processing"` |
+| `operation: "map"` | Uses step description as prompt |
+| Empty `config.mapping` | `params.data` = input reference |
+
+**Example - Before (would fail at runtime):**
+```json
+{
+  "id": "step2",
+  "type": "transform",
+  "operation": "map",
+  "input": "{{step1.emails}}",
+  "config": { "mapping": {} }
+}
+```
+
+**After fallback (executable by LLM):**
+```json
+{
+  "id": "step2",
+  "type": "ai_processing",
+  "prompt": "Normalize Gmail results and derive sender domain and urgency signals needed for filtering.",
+  "params": { "data": "{{step1.emails}}" }
+}
+```
+
+### Warning Generated
+
+```
+[step2] Transform type 'map' has no mapping configuration - falling back to ai_processing
+```
+
+This ensures the workflow remains executable even when Phase 4 doesn't provide complete mapping logic.
 
 ---
 
@@ -1011,6 +1236,54 @@ Special output field:
 
 ---
 
+## Explicit Intent Classification (v2.8)
+
+The DSL Builder now sets an explicit `intent` field on `ai_processing` steps to ensure correct handler routing during execution.
+
+### Problem Solved
+
+The IntentClassifier was incorrectly routing steps with both `input` and `prompt` fields to `GenerateHandler` instead of `ExtractHandler`. This caused:
+- Raw string output instead of parsed JSON
+- Downstream steps failing with "no input data" errors
+- `{{stepX.data.items}}` references resolving to undefined
+
+### Solution
+
+**Phase4DSLBuilder** now adds `intent: "extract"` to all `ai_processing` steps:
+
+```typescript
+// In buildAIProcessingStep:
+return {
+  id: step.id,
+  type: 'ai_processing',
+  intent: 'extract',  // Explicit intent ensures ExtractHandler is used
+  prompt: "...",
+  params: { data: "{{...}}" }
+}
+```
+
+**IntentClassifier** checks for explicit intent first:
+
+```typescript
+// At start of classify():
+if (step.intent && validIntents.includes(step.intent)) {
+  return {
+    intent: step.intent,
+    confidence: 1.0,
+    reasoning: `Explicit intent specified: ${step.intent}`
+  };
+}
+```
+
+### Handler Behavior Difference
+
+| Handler | Output Structure | Use Case |
+|---------|------------------|----------|
+| `ExtractHandler` | `{ items: [...] }` or `{ result: ... }` | JSON parsing, structured data |
+| `GenerateHandler` | `{ result: "raw string" }` | Free-form text generation |
+
+---
+
 ## Files Reference
 
 | File | Purpose |
@@ -1019,13 +1292,31 @@ Special output field:
 | `lib/pilot/types.ts` | PILOT_DSL_SCHEMA output types |
 | `lib/pilot/schema/pilot-dsl-schema.ts` | Full JSON schema for OpenAI strict mode |
 | `lib/agentkit/v4/core/phase4-dsl-builder.ts` | Phase4DSLBuilder implementation |
+| `lib/pilot/StepExecutor.ts` | Transform execution including `transformFormat` |
+| `lib/orchestration/IntentClassifier.ts` | Intent classification with explicit intent support |
 | `app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v14-chatgpt.txt` | Phase 4 prompt with transform types |
 | `app/api/prompt-templates/Workflow-Agent-Technical-Reviewer-SystemPrompt-v3.txt` | Reviewer prompt with transform type validation |
 
 ---
 
-**Document Version**: 2.1
-**Updated**: 2024-12-27
+**Document Version**: 2.9
+**Updated**: 2026-01-01
 **Changes**:
+- v2.9: Execution layer fixes (see Phase4-DSL-Debugging-Session-Dec31-2025.md):
+  - **JSON Response Parsing**: `executeLLMDecision` now parses JSON strings and spreads properties for direct `{{stepX.data.items}}` access
+  - **Scatter Variable Resolution**: Non-action steps now resolve `params` field, enabling `{{email}}` scatter variables in ai_processing steps
+  - **Google Sheets Values Normalization**: Auto-converts objects to flat value arrays for Sheets API compatibility
+- v2.8: Multiple fixes for transform execution:
+  - **Explicit Intent Classification**: Added `intent: "extract"` to ai_processing steps to ensure ExtractHandler is used (prevents GenerateHandler from returning raw strings instead of parsed JSON)
+  - **Dedicated Format Operation**: Changed `format` transform from mapping to `map` to dedicated `format` operation with `transformFormat` method in StepExecutor
+  - **Format Template Variables**: Template variables like `{{to_log_count}}` now resolve from input data fields directly, not from global context
+  - **Aggregate Output Path**: Fixed `resolveInput` to return `{{stepId.data}}` for aggregate transforms (not `{{stepId.data.fieldName}}`) since aggregates store results directly at `.data` level
+  - **IntentClassifier Enhancement**: Added check for explicit `step.intent` field at start of `classify()` method
+- v2.7: Added OUTPUT FORMAT instructions to ai_processing prompts. LLM now returns structured JSON with `{items: [...]}` for arrays or `{result: ...}` for objects. Updated ExtractHandler to parse multiple JSON formats. This ensures consistent `{{stepX.data.items}}` references work reliably.
+- v2.6: Enhanced mapping config detection - only configs with `{{item.*}}` references are valid for deterministic execution; constant-only configs (like `user_domain: "gmail.com"`) now correctly fall back to ai_processing. Updated step registry to predict fallbacks before conversion.
+- v2.5: Smart step reference resolution based on source step type (map→`.data`, filter→`.data.items`, action/ai→`.data.fieldName`)
+- v2.4: Fixed step output variable references to use `.data` path (e.g., `{{step1.data.emails}}` instead of `{{step1.emails}}`) for Pilot compatibility
+- v2.3: Added LLM-based plugin fallback (chatgpt-research → ai_processing), cross-step dependency detection in filters
+- v2.2: Added empty mapping fallback to ai_processing for mapping-based transforms without config
 - v2.1: Added auto-extraction of `{{input.*}}` references, transform output contracts, suggested plugins fallback chain, confidence calculation details
 - v2.0: Added transform type routing, deterministic vs LLM type distinction, config mapping from inputs

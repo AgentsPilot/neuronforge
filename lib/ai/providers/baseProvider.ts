@@ -14,6 +14,8 @@ export interface CallContext {
   activity_name?: string;
   agent_id?: string;
   activity_step?: string;
+  execution_id?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export abstract class BaseAIProvider {
