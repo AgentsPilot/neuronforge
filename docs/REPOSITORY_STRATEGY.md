@@ -126,7 +126,8 @@ lib/repositories/
 ├── ExecutionLogRepository.ts      # Step-by-step execution logs (legacy path)
 ├── MemoryRepository.ts            # Agent run memories
 ├── SharedAgentRepository.ts       # Shared/template agents for marketplace
-└── SystemConfigRepository.ts      # System-wide settings configuration
+├── SystemConfigRepository.ts      # System-wide settings configuration
+└── UserProfileRepository.ts       # User profile CRUD and management
 ```
 
 ## Repository Catalog
@@ -338,6 +339,65 @@ interface CreateExecutionLogInput {
 }
 ```
 
+---
+
+### UserProfileRepository
+**Location:** `lib/repositories/UserProfileRepository.ts`
+
+**Purpose:** Manages user profile data from the `profiles` table. Handles profile CRUD operations, role management, and locale preferences.
+
+**Key Responsibilities:**
+- Create, read, update, delete user profiles
+- Profile lookup with optional email from auth
+- Role-based queries (admin, user, viewer)
+- Profile search by name or company
+- Avatar, role, and locale-specific updates
+- GDPR data deletion support
+
+**Key Methods:**
+| Method | Description |
+|--------|-------------|
+| `findById(userId)` | Get profile by user ID |
+| `findByIdWithEmail(userId)` | Get profile with email from auth.users |
+| `exists(userId)` | Check if profile exists |
+| `findByRole(role)` | Find all profiles with specific role (admin) |
+| `search(query, limit?)` | Search profiles by name/company |
+| `create(input)` | Create new user profile |
+| `update(userId, input)` | Update profile, returns previous state for audit |
+| `upsert(input)` | Create or update profile |
+| `delete(userId)` | Hard delete profile (GDPR) |
+| `updateAvatar(userId, url)` | Update avatar URL only |
+| `updateRole(userId, role)` | Update user role (admin only) |
+| `updateLocale(userId, timezone?, language?)` | Update locale preferences |
+| `findAll(options?)` | Get all profiles with pagination (admin) |
+| `count()` | Count total profiles |
+
+**Input Interfaces:**
+```typescript
+interface CreateUserProfileInput {
+  id: string; // Must match auth.users id
+  full_name?: string | null;
+  avatar_url?: string | null;
+  company?: string | null;
+  job_title?: string | null;
+  role?: 'admin' | 'user' | 'viewer';
+  timezone?: string | null;
+  language?: string | null;
+  bio?: string | null;
+}
+
+interface UpdateUserProfileInput {
+  full_name?: string | null;
+  avatar_url?: string | null;
+  company?: string | null;
+  job_title?: string | null;
+  role?: 'admin' | 'user' | 'viewer';
+  timezone?: string | null;
+  language?: string | null;
+  bio?: string | null;
+}
+```
+
 ## Type Definitions
 
 All shared types are centralized in `lib/repositories/types.ts`:
@@ -363,6 +423,10 @@ All shared types are centralized in `lib/repositories/types.ts`:
 | `CreateAgentLogInput` | Input for creating agent logs |
 | `CreateExecutionLogInput` | Input for creating execution logs |
 | `AgentRepositoryResult<T>` | Standard result wrapper with error handling |
+| `UserProfile` | User profile entity from `profiles` table |
+| `CreateUserProfileInput` | Input for creating user profiles |
+| `UpdateUserProfileInput` | Input for updating user profiles |
+| `UserProfileWithEmail` | Profile with email from auth.users |
 
 ## Usage Patterns
 
@@ -529,6 +593,7 @@ try {
 | `AgentConfigurationRepository` | getInputValues, updateStatus |
 | `AgentLogsRepository` | create |
 | `ExecutionLogRepository` | create |
+| `UserProfileRepository` | create, update, delete, updateAvatar, updateRole, updateLocale |
 
 ### Client-Side Logging
 
@@ -657,6 +722,8 @@ The following API routes use the repository layer. **Client components should us
 | `/api/shared-agents` | POST | `sharedAgentRepository.create()` | Share an agent |
 | `/api/shared-agents/exists` | GET | `sharedAgentRepository.existsByOriginalAgent()` | Check if agent is shared |
 | `/api/system-config` | GET | `systemConfigRepository.getByCategory()` | Get system config |
+| `/api/user/profile` | GET | `userProfileRepository.findById()` | Get user profile |
+| `/api/user/profile` | PUT | `userProfileRepository.update()` | Update user profile |
 
 **`/api/run-agent` POST uses:**
 - `agentRepository.findById()` - Fetch agent

@@ -13,6 +13,7 @@ export { AgentStatsRepository, agentStatsRepository } from './AgentStatsReposito
 export { AgentConfigurationRepository, agentConfigurationRepository } from './AgentConfigurationRepository';
 export { AgentLogsRepository, agentLogsRepository } from './AgentLogsRepository';
 export { ExecutionLogRepository, executionLogRepository } from './ExecutionLogRepository';
+export { UserProfileRepository, userProfileRepository } from './UserProfileRepository';
 
 // Types
 export type {
@@ -39,6 +40,11 @@ export type {
   SystemConfig,
   RewardConfig,
   SystemSettingsConfig,
+  // User profile types
+  UserProfile,
+  CreateUserProfileInput,
+  UpdateUserProfileInput,
+  UserProfileWithEmail,
 } from './types';
 
 export { AgentStatusEnum, STATUS_TRANSITIONS } from './types';

@@ -2,9 +2,9 @@
 // User profile management with audit logging
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
+import { UserProfileRepository } from '@/lib/repositories';
 import { auditLog } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { generateDiff } from '@/lib/audit/diff';
@@ -37,12 +37,9 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Fetch profile
-    const { data: profile, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single();
+    // Use repository with authenticated client
+    const profileRepo = new UserProfileRepository(supabase);
+    const { data: profile, error } = await profileRepo.findById(user.id);
 
     if (error) {
       console.error('Failed to fetch profile:', error);
@@ -99,55 +96,37 @@ export async function PUT(req: NextRequest) {
 
     console.log(`👤 [PROFILE UPDATE] User ${user.id} updating profile`);
 
-    // Fetch current profile for audit trail
-    const { data: currentProfile, error: fetchError } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single();
+    // Use repository with authenticated client
+    const profileRepo = new UserProfileRepository(supabase);
 
-    if (fetchError) {
-      console.error('Failed to fetch current profile:', fetchError);
-      return NextResponse.json(
-        { error: 'Failed to fetch current profile', details: fetchError.message },
-        { status: 500 }
-      );
-    }
+    // Build update input (only include provided fields)
+    const updateInput: Record<string, unknown> = {};
+    if (full_name !== undefined) updateInput.full_name = full_name;
+    if (company !== undefined) updateInput.company = company;
+    if (role !== undefined) updateInput.role = role;
+    if (avatar_url !== undefined) updateInput.avatar_url = avatar_url;
+    if (bio !== undefined) updateInput.bio = bio;
+    if (timezone !== undefined) updateInput.timezone = timezone;
+    if (language !== undefined) updateInput.language = language;
 
-    // Prepare update data (only include provided fields)
-    const updateData: any = {
-      updated_at: new Date().toISOString(),
-    };
+    // Update profile - repository returns both current and previous state
+    const { data, error: updateError } = await profileRepo.update(user.id, updateInput);
 
-    if (full_name !== undefined) updateData.full_name = full_name;
-    if (company !== undefined) updateData.company = company;
-    if (role !== undefined) updateData.role = role;
-    if (avatar_url !== undefined) updateData.avatar_url = avatar_url;
-    if (bio !== undefined) updateData.bio = bio;
-    if (timezone !== undefined) updateData.timezone = timezone;
-    if (language !== undefined) updateData.language = language;
-
-    // Update profile
-    const { data: updatedProfile, error: updateError } = await supabase
-      .from('profiles')
-      .update(updateData)
-      .eq('id', user.id)
-      .select()
-      .single();
-
-    if (updateError) {
+    if (updateError || !data) {
       console.error('Failed to update profile:', updateError);
       return NextResponse.json(
-        { error: 'Failed to update profile', details: updateError.message },
+        { error: 'Failed to update profile', details: updateError?.message },
         { status: 500 }
       );
     }
+
+    const { profile: updatedProfile, previousProfile } = data;
 
     console.log(`✅ [PROFILE UPDATE] Profile updated for user ${user.id}`);
 
     // AUDIT TRAIL: Log profile update with change tracking
     try {
-      const changes = generateDiff(currentProfile, updatedProfile);
+      const changes = generateDiff(previousProfile, updatedProfile);
       const hasChanges = Object.keys(changes).length > 0;
 
       if (hasChanges) {

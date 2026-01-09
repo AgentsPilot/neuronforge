@@ -259,3 +259,46 @@ export interface SystemSettingsConfig {
   updated_at: string;
   updated_by?: string | null;
 }
+
+// ============ User Profile Types ============
+
+export interface UserProfile {
+  id: string;
+  full_name?: string | null;
+  avatar_url?: string | null;
+  company?: string | null;
+  job_title?: string | null;
+  role?: 'admin' | 'user' | 'viewer' | null;
+  timezone?: string | null;
+  language?: string | null;
+  bio?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateUserProfileInput {
+  id: string; // Must match auth.users id
+  full_name?: string | null;
+  avatar_url?: string | null;
+  company?: string | null;
+  job_title?: string | null;
+  role?: 'admin' | 'user' | 'viewer';
+  timezone?: string | null;
+  language?: string | null;
+  bio?: string | null;
+}
+
+export interface UpdateUserProfileInput {
+  full_name?: string | null;
+  avatar_url?: string | null;
+  company?: string | null;
+  job_title?: string | null;
+  role?: 'admin' | 'user' | 'viewer';
+  timezone?: string | null;
+  language?: string | null;
+  bio?: string | null;
+}
+
+export interface UserProfileWithEmail extends UserProfile {
+  email?: string;
+}
