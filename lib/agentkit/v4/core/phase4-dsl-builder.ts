@@ -1134,6 +1134,10 @@ Example format:
       throw new Error(`Control step ${step.id} is missing control configuration`);
     }
 
+    if (!control.collection_ref) {
+      throw new Error(`Control step ${step.id} (for_each) is missing collection_ref`);
+    }
+
     // Resolve the scatter input using the same logic as other step inputs
     // collection_ref is like "step7.to_log" - need to resolve to actual data path
     const scatterInput = this.resolveScatterInput(control.collection_ref);

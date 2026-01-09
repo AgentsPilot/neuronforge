@@ -83,6 +83,7 @@ export interface LLMDecisionStep extends WorkflowStepBase {
  */
 export interface AIProcessingStep extends WorkflowStepBase {
   type: 'ai_processing';
+  intent?: 'extract' | 'summarize' | 'generate' | 'validate' | 'transform' | 'enrich';  // Explicit intent for handler routing
   prompt?: string;  // Optional custom prompt
   params?: Record<string, any>;
 }
