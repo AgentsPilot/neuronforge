@@ -5,12 +5,16 @@
  */
 
 import type { ProviderName } from '@/lib/ai/providerFactory';
+import type { UserContext } from '@/lib/user-context';
 
 export type ThreadStatus = 'active' | 'expired' | 'completed' | 'abandoned';
 export type ThreadPhase = 1 | 2 | 3 | 4;
 
 // Re-export ProviderName for convenience
 export type { ProviderName };
+
+// Re-export UserContext from common location for backward compatibility
+export type { UserContext };
 
 export interface AgentPromptThread {
   id: string; // UUID
@@ -49,14 +53,6 @@ export interface ThreadMetadata {
   user_context?: UserContext;
   last_phase3_response?: LastPhase3Response; // Cached Phase 3 data for Phase 4 merge
   [key: string]: any; // Allow additional metadata
-}
-
-export interface UserContext {
-  full_name?: string;
-  email?: string;
-  role?: string;
-  company?: string;
-  domain?: string;
 }
 
 export interface ConnectedService {
