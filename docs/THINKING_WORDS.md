@@ -1,6 +1,39 @@
 # Thinking Words
 
-Display rotating status words while agents are processing, providing visual feedback that work is in progress. Words are organized by category and can be personalized based on user role.
+Display rotating status words while agents are processing, providing visual feedback that work is in progress. Words are loaded from a JSON dictionary and can be personalized based on user role.
+
+## Architecture
+
+```
+lib/ui/
+├── thinking-words-dictionary.json  ← Edit this to add/modify words (no code changes)
+├── thinking-words-loader.ts        ← Singleton loader
+└── thinking-words.ts               ← Public API
+```
+
+## Adding/Modifying Words
+
+Edit `thinking-words-dictionary.json` directly:
+
+```json
+{
+  "categories": {
+    "business": {
+      "description": "Business/SMB domain",
+      "words": [
+        "Forecasting",
+        "Crunching numbers",
+        "Your new word here"
+      ]
+    }
+  },
+  "roleMapping": {
+    "sales": ["business", "communication", "friendly"]
+  }
+}
+```
+
+After editing, rebuild the app to pick up changes.
 
 ## Usage
 
@@ -38,50 +71,54 @@ const status = getRandomThinkingWord(); // "Analyzing"
 const getNextWord = createThinkingWordCycler();
 ```
 
-### Direct Access
+### Direct Loader Access
 
 ```typescript
-import {
-  THINKING_WORDS,           // Flat array (all 90 words)
-  THINKING_WORDS_BY_CATEGORY, // Words organized by category
-  getWordsForRole,          // Get word array for a role
-  getWordsForCategories     // Get words for specific categories
-} from '@/lib/ui/thinking-words';
+import { getThinkingWordsLoader } from '@/lib/ui/thinking-words';
 
-// Get words for a role (general + role-specific)
-const salesWords = getWordsForRole('sales'); // ~40 words
+const loader = getThinkingWordsLoader();
 
-// Get words for specific categories
-const techWords = getWordsForCategories(['data_analysis', 'problem_solving']);
+// Get dictionary version
+loader.getVersion(); // "1.0"
+
+// Get all category names
+loader.getCategoryNames(); // ["general", "business", ...]
+
+// Get category description
+loader.getCategoryDescription('business'); // "Business/SMB domain"
+
+// Get word count
+loader.getTotalWordCount(); // 90
+loader.getCategoryWordCount('general'); // 16
 ```
 
 ## Word Categories
 
-| Category | Count | Examples |
-|----------|-------|----------|
-| `general` | 16 | Thinking, Processing, Analyzing, Evaluating |
-| `business` | 16 | Forecasting, Crunching numbers, Calculating ROI |
-| `data_analysis` | 15 | Parsing data, Cross-referencing, Pattern matching |
-| `planning` | 13 | Charting course, Prioritizing, Scoping |
-| `problem_solving` | 8 | Troubleshooting, Debugging, Finding solutions |
-| `communication` | 6 | Drafting response, Composing, Fine-tuning |
-| `progress` | 8 | Almost there, Final checks, Wrapping up |
-| `friendly` | 8 | On it, Brewing ideas, Digging in |
+| Category | Description | Count |
+|----------|-------------|-------|
+| `general` | Universal words - always included for all roles | 16 |
+| `business` | Business/SMB domain | 16 |
+| `data_analysis` | Data & analysis operations | 15 |
+| `planning` | Planning & strategy | 13 |
+| `problem_solving` | Problem solving & debugging | 8 |
+| `communication` | Communication & collaboration | 6 |
+| `progress` | Progress indicators | 8 |
+| `friendly` | Friendly/casual tone | 8 |
 
 ## Role → Category Mapping
 
-Each role gets `general` + role-specific categories:
+Each role gets `general` (always) + role-specific categories:
 
-| Role | Categories |
-|------|------------|
-| `business_owner` | general + business, planning, progress |
-| `manager` | general + planning, communication, progress |
-| `consultant` | general + planning, problem_solving, data_analysis |
-| `operations` | general + data_analysis, problem_solving, business |
-| `sales` | general + business, communication, friendly |
-| `marketing` | general + data_analysis, planning, friendly |
-| `finance` | general + business, data_analysis |
-| `other` | general + friendly, progress |
+| Role | Additional Categories |
+|------|----------------------|
+| `business_owner` | business, planning, progress |
+| `manager` | planning, communication, progress |
+| `consultant` | planning, problem_solving, data_analysis |
+| `operations` | data_analysis, problem_solving, business |
+| `sales` | business, communication, friendly |
+| `marketing` | data_analysis, planning, friendly |
+| `finance` | business, data_analysis |
+| `other` | friendly, progress |
 
 ## React Example
 
@@ -140,11 +177,27 @@ type UserRole =
 | `getShuffledThinkingWordsForRole(role)` | Shuffled array for a role |
 | `getWordsForRole(role)` | Get word array for a role |
 | `getWordsForCategories(categories)` | Get words for specific categories |
+| `getThinkingWordsLoader()` | Get the singleton loader instance |
+| `resetThinkingWordsLoader()` | Reset the loader (for testing) |
 
-### Constants
+### Loader Methods
+
+| Method | Description |
+|--------|-------------|
+| `getVersion()` | Dictionary version string |
+| `getCategoryNames()` | List of all category names |
+| `getCategoryDescription(cat)` | Description for a category |
+| `getWordsForCategory(cat)` | Words for a single category |
+| `getAllWords()` | Flat array of all words |
+| `getCategoriesForRole(role)` | Categories mapped to a role |
+| `getWordsForRole(role)` | Words for a role (general + role-specific) |
+| `getTotalWordCount()` | Total number of words |
+| `getCategoryWordCount(cat)` | Word count for a category |
+
+### Constants (Backward Compatibility)
 
 | Constant | Description |
 |----------|-------------|
-| `THINKING_WORDS` | Flat readonly array (all 90 words) |
+| `THINKING_WORDS` | Flat readonly array (all words) |
 | `THINKING_WORDS_BY_CATEGORY` | Words organized by category |
 | `ROLE_CATEGORY_MAP` | Role → categories mapping |

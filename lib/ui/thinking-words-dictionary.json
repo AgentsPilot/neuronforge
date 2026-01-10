@@ -1,0 +1,145 @@
+{
+  "version": "1.0",
+  "categories": {
+    "general": {
+      "description": "Universal words - always included for all roles",
+      "words": [
+        "Thinking",
+        "Processing",
+        "Analyzing",
+        "Evaluating",
+        "Computing",
+        "Reasoning",
+        "Pondering",
+        "Considering",
+        "Reviewing",
+        "Examining",
+        "Exploring",
+        "Investigating",
+        "Assessing",
+        "Weighing options",
+        "Connecting dots",
+        "Piecing together"
+      ]
+    },
+    "business": {
+      "description": "Business/SMB domain",
+      "words": [
+        "Forecasting",
+        "Budgeting",
+        "Scheduling",
+        "Optimizing",
+        "Strategizing",
+        "Planning ahead",
+        "Crunching numbers",
+        "Running scenarios",
+        "Checking inventory",
+        "Reviewing metrics",
+        "Calculating ROI",
+        "Balancing priorities",
+        "Streamlining",
+        "Coordinating",
+        "Delegating tasks",
+        "Mapping workflow"
+      ]
+    },
+    "data_analysis": {
+      "description": "Data & analysis operations",
+      "words": [
+        "Parsing data",
+        "Aggregating",
+        "Cross-referencing",
+        "Validating",
+        "Synthesizing",
+        "Correlating",
+        "Filtering",
+        "Sorting",
+        "Indexing",
+        "Querying",
+        "Compiling results",
+        "Building insights",
+        "Pattern matching",
+        "Extracting details",
+        "Summarizing"
+      ]
+    },
+    "planning": {
+      "description": "Planning & strategy",
+      "words": [
+        "Drafting",
+        "Formulating",
+        "Outlining",
+        "Mapping out",
+        "Charting course",
+        "Setting priorities",
+        "Aligning goals",
+        "Preparing",
+        "Organizing",
+        "Structuring",
+        "Sequencing",
+        "Prioritizing",
+        "Scoping"
+      ]
+    },
+    "problem_solving": {
+      "description": "Problem solving & debugging",
+      "words": [
+        "Troubleshooting",
+        "Diagnosing",
+        "Debugging",
+        "Resolving",
+        "Untangling",
+        "Working through",
+        "Finding solutions",
+        "Brainstorming"
+      ]
+    },
+    "communication": {
+      "description": "Communication & collaboration",
+      "words": [
+        "Drafting response",
+        "Composing",
+        "Formatting",
+        "Refining",
+        "Polishing",
+        "Fine-tuning"
+      ]
+    },
+    "progress": {
+      "description": "Progress indicators",
+      "words": [
+        "Almost there",
+        "Making progress",
+        "Getting closer",
+        "Wrapping up",
+        "Final checks",
+        "Double-checking",
+        "Verifying",
+        "Confirming"
+      ]
+    },
+    "friendly": {
+      "description": "Friendly/casual tone",
+      "words": [
+        "Mulling it over",
+        "On it",
+        "Working on it",
+        "Figuring out",
+        "Putting it together",
+        "Brewing ideas",
+        "Cooking up",
+        "Digging in"
+      ]
+    }
+  },
+  "roleMapping": {
+    "business_owner": ["business", "planning", "progress"],
+    "manager": ["planning", "communication", "progress"],
+    "consultant": ["planning", "problem_solving", "data_analysis"],
+    "operations": ["data_analysis", "problem_solving", "business"],
+    "sales": ["business", "communication", "friendly"],
+    "marketing": ["data_analysis", "planning", "friendly"],
+    "finance": ["business", "data_analysis"],
+    "other": ["friendly", "progress"]
+  }
+}
