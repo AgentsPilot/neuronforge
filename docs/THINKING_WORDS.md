@@ -1,82 +1,150 @@
 # Thinking Words
 
-Display rotating status words while agents are processing, providing visual feedback that work is in progress.
+Display rotating status words while agents are processing, providing visual feedback that work is in progress. Words are organized by category and can be personalized based on user role.
 
 ## Usage
 
-### Random Word (Simple)
+### Role-Based Words (Recommended)
 
 ```typescript
-import { getRandomThinkingWord } from '@/lib/ui/thinking-words';
+import { createThinkingWordCyclerForRole } from '@/lib/ui/thinking-words';
 
-// Display a random word each time
-const status = getRandomThinkingWord(); // "Analyzing"
-```
+// Create a cycler for a specific user role
+const getNextWord = createThinkingWordCyclerForRole('sales');
 
-### Sequential Cycling (Recommended for UI)
-
-```typescript
-import { createThinkingWordCycler } from '@/lib/ui/thinking-words';
-
-const getNextWord = createThinkingWordCycler();
-
-// Each call returns the next word in sequence
+// Each call returns the next word from general + sales-relevant categories
 setInterval(() => {
-  setStatus(getNextWord()); // "Thinking" → "Processing" → "Analyzing" → ...
+  setStatus(getNextWord()); // "Thinking" → "Crunching numbers" → "On it" → ...
 }, 2000);
 ```
 
-### Shuffled List (Non-repetitive)
+### Random Word for Role
 
 ```typescript
-import { getShuffledThinkingWords } from '@/lib/ui/thinking-words';
+import { getRandomThinkingWordForRole } from '@/lib/ui/thinking-words';
 
-const words = getShuffledThinkingWords();
-// Iterate through without repetition until exhausted
+const status = getRandomThinkingWordForRole('finance'); // "Calculating ROI"
 ```
 
-### Direct Array Access
+### Generic (All Words)
 
 ```typescript
-import { THINKING_WORDS } from '@/lib/ui/thinking-words';
+import { getRandomThinkingWord, createThinkingWordCycler } from '@/lib/ui/thinking-words';
 
-// Access the full readonly array (95 words)
-console.log(THINKING_WORDS.length); // 95
+// Random word from all categories
+const status = getRandomThinkingWord(); // "Analyzing"
+
+// Sequential cycling through all words
+const getNextWord = createThinkingWordCycler();
+```
+
+### Direct Access
+
+```typescript
+import {
+  THINKING_WORDS,           // Flat array (all 90 words)
+  THINKING_WORDS_BY_CATEGORY, // Words organized by category
+  getWordsForRole,          // Get word array for a role
+  getWordsForCategories     // Get words for specific categories
+} from '@/lib/ui/thinking-words';
+
+// Get words for a role (general + role-specific)
+const salesWords = getWordsForRole('sales'); // ~40 words
+
+// Get words for specific categories
+const techWords = getWordsForCategories(['data_analysis', 'problem_solving']);
 ```
 
 ## Word Categories
 
-| Category | Purpose | Examples |
-|----------|---------|----------|
-| General | Universal processing states | Thinking, Processing, Evaluating |
-| Business/SMB | Domain-relevant terms | Forecasting, Crunching numbers, Calculating ROI |
-| Data & Analysis | Technical operations | Parsing data, Cross-referencing, Pattern matching |
-| Planning | Strategy-focused | Charting course, Prioritizing, Scoping |
-| Problem Solving | Debugging/resolution | Troubleshooting, Finding solutions |
-| Progress | Near-completion states | Almost there, Final checks, Wrapping up |
-| Friendly | Casual tone | On it, Brewing ideas, Digging in |
+| Category | Count | Examples |
+|----------|-------|----------|
+| `general` | 16 | Thinking, Processing, Analyzing, Evaluating |
+| `business` | 16 | Forecasting, Crunching numbers, Calculating ROI |
+| `data_analysis` | 15 | Parsing data, Cross-referencing, Pattern matching |
+| `planning` | 13 | Charting course, Prioritizing, Scoping |
+| `problem_solving` | 8 | Troubleshooting, Debugging, Finding solutions |
+| `communication` | 6 | Drafting response, Composing, Fine-tuning |
+| `progress` | 8 | Almost there, Final checks, Wrapping up |
+| `friendly` | 8 | On it, Brewing ideas, Digging in |
+
+## Role → Category Mapping
+
+Each role gets `general` + role-specific categories:
+
+| Role | Categories |
+|------|------------|
+| `business_owner` | general + business, planning, progress |
+| `manager` | general + planning, communication, progress |
+| `consultant` | general + planning, problem_solving, data_analysis |
+| `operations` | general + data_analysis, problem_solving, business |
+| `sales` | general + business, communication, friendly |
+| `marketing` | general + data_analysis, planning, friendly |
+| `finance` | general + business, data_analysis |
+| `other` | general + friendly, progress |
 
 ## React Example
 
 ```tsx
 import { useState, useEffect } from 'react';
-import { createThinkingWordCycler } from '@/lib/ui/thinking-words';
+import { createThinkingWordCyclerForRole } from '@/lib/ui/thinking-words';
+import type { UserRole } from '@/components/onboarding/hooks/useOnboarding';
 
-function ThinkingIndicator({ isProcessing }: { isProcessing: boolean }) {
+interface Props {
+  isProcessing: boolean;
+  userRole?: UserRole;
+}
+
+function ThinkingIndicator({ isProcessing, userRole = 'other' }: Props) {
   const [word, setWord] = useState('Processing');
 
   useEffect(() => {
     if (!isProcessing) return;
 
-    const getNext = createThinkingWordCycler();
+    const getNext = createThinkingWordCyclerForRole(userRole);
     setWord(getNext());
 
     const interval = setInterval(() => setWord(getNext()), 2000);
     return () => clearInterval(interval);
-  }, [isProcessing]);
+  }, [isProcessing, userRole]);
 
   if (!isProcessing) return null;
 
   return <span className="animate-pulse">{word}...</span>;
 }
 ```
+
+## API Reference
+
+### Types
+
+```typescript
+type ThinkingCategory =
+  | 'general' | 'business' | 'data_analysis' | 'planning'
+  | 'problem_solving' | 'communication' | 'progress' | 'friendly';
+
+type UserRole =
+  | 'business_owner' | 'manager' | 'consultant' | 'operations'
+  | 'sales' | 'marketing' | 'finance' | 'other';
+```
+
+### Functions
+
+| Function | Description |
+|----------|-------------|
+| `getRandomThinkingWord()` | Random word from all categories |
+| `getRandomThinkingWordForRole(role)` | Random word for a specific role |
+| `createThinkingWordCycler()` | Sequential cycler (all words) |
+| `createThinkingWordCyclerForRole(role)` | Sequential cycler for a role |
+| `getShuffledThinkingWords()` | Shuffled array (all words) |
+| `getShuffledThinkingWordsForRole(role)` | Shuffled array for a role |
+| `getWordsForRole(role)` | Get word array for a role |
+| `getWordsForCategories(categories)` | Get words for specific categories |
+
+### Constants
+
+| Constant | Description |
+|----------|-------------|
+| `THINKING_WORDS` | Flat readonly array (all 90 words) |
+| `THINKING_WORDS_BY_CATEGORY` | Words organized by category |
+| `ROLE_CATEGORY_MAP` | Role → categories mapping |
