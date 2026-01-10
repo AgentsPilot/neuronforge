@@ -780,6 +780,318 @@ The Technical Reviewer system prompt (v2) includes explicit JSON completion inst
 
 ---
 
+## Cross-Step Reference Validation (Defense-in-Depth)
+
+Variable references in workflows must use explicit step prefixes to be resolvable at runtime. The system uses a 3-layer defense to ensure all references are valid.
+
+### The Problem
+
+Phase 4 LLM might generate templates with shorthand references:
+```json
+{
+  "step7": { "outputs": { "counts": "object" } },
+  "step8": { "template": "Total: {{counts.total}}" }  // WRONG: no step prefix
+}
+```
+
+The runtime only supports qualified references:
+- `{{stepX.data.*}}` - Step outputs
+- `{{input.*}}` - User inputs
+- `{{env.*}}` - Environment variables
+- `{{config.*}}` - Plugin config
+- `{{item.*}}` - Loop iteration variable
+
+### Defense Layers
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Layer 1: Phase 4 Prompt (Generation)                       │
+│  LLM instructed to use {{step7.counts.*}} explicitly        │
+│  File: Workflow-Agent-Creation-Prompt-v14-chatgpt.txt       │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│  Layer 2: Technical Reviewer (Validation & Repair)          │
+│  Catches {{counts.*}} → rewrites to {{step7.counts.*}}      │
+│  Adds reviewer_note explaining the fix                      │
+│  File: Workflow-Agent-Technical-Reviewer-SystemPrompt-v3    │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│  Layer 3: Runtime outputAliasRegistry (Fallback)            │
+│  ExecutionContext resolves any remaining shorthand refs     │
+│  Logs warning to help identify issues                       │
+│  File: lib/pilot/ExecutionContext.ts                        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Layer 1: Phase 4 Prompt
+
+The Phase 4 prompt includes explicit rules for cross-step references:
+- All `{{...}}` references in templates MUST use explicit step prefixes
+- Format: `{{stepId.outputKey.field}}`
+- CORRECT: `{{step7.counts.total_threads}}`
+- WRONG: `{{counts.total_threads}}`
+
+### Layer 2: Technical Reviewer
+
+The Technical Reviewer validates and repairs shorthand references:
+1. Identifies which step outputs the referenced key
+2. Rewrites to explicit form: `{{counts.total}}` → `{{step7.counts.total}}`
+3. Adds `reviewer_note` explaining the fix
+
+### Layer 3: Runtime Registry
+
+The `ExecutionContext.outputAliasRegistry` provides a last-resort fallback:
+
+```typescript
+// When step7 completes with output { counts: {...}, items: [...] }
+// Registry is populated: { "counts" → "step7", "items" → "step7" }
+
+// If {{counts.total}} reaches runtime:
+// 1. Check outputAliasRegistry.get("counts") → "step7"
+// 2. Resolve to stepOutputs.get("step7").data.counts.total
+// 3. Log warning to help identify the shorthand usage
+```
+
+This ensures robust execution even if shorthand references slip through earlier layers.
+
+---
+
+## Conditional Step Output Wiring (v5.4)
+
+When a conditional step executes, the runtime needs to provide downstream steps with access to whichever branch was taken. This is handled via `lastBranchOutput`.
+
+### The Problem
+
+After a conditional step completes, downstream steps need to reference the output:
+```json
+{
+  "id": "step5",
+  "type": "conditional",
+  "then_steps": [{ "id": "step5_4", "outputs": { "content": "object" } }],
+  "else_steps": [{ "id": "step5_5", "outputs": { "content": "object" } }]
+}
+// step8 needs to use whichever branch's "content" was produced
+```
+
+Referencing a specific branch step (e.g., `{{step5_4.data.content}}`) fails if the else branch ran instead.
+
+### Solution: lastBranchOutput
+
+The `StepExecutor.executeConditional()` method now includes `lastBranchOutput` in its return value:
+
+```typescript
+// StepExecutor.ts - executeConditional()
+const lastBranchResult = branchResults[branchResults.length - 1];
+const lastBranchOutput = lastBranchResult?.data ?? null;
+
+return {
+  result: conditionResult,
+  condition: stepCondition,
+  branch: branchName,
+  branchResults,
+  executedSteps: branchToExecute.length,
+  lastBranchOutput,  // Direct access to last executed step's output data
+};
+```
+
+### Usage in DSL
+
+Downstream steps should reference the conditional step's `lastBranchOutput`:
+
+```json
+{
+  "id": "step8",
+  "type": "action",
+  "plugin": "google-mail",
+  "action": "send_email",
+  "params": {
+    "content": "{{step5.data.lastBranchOutput.content}}"
+  }
+}
+```
+
+### Technical Reviewer Rules
+
+The Technical Reviewer prompt (v3) includes POST-CONDITIONAL OUTPUT WIRING rules:
+- Steps after conditionals MUST use `lastBranchOutput` pattern
+- Both branches SHOULD output the same key for uniform downstream access
+- WRONG: `{{step5_4.data.content}}` (specific branch reference)
+- CORRECT: `{{step5.data.lastBranchOutput.content}}`
+
+---
+
+## ai_processing Declared Output Key Mapping (v5.5)
+
+When a DSL step declares specific output keys, the `ai_processing` handler now maps parsed LLM results to those keys.
+
+### The Problem
+
+DSL steps declare expected outputs:
+```json
+{
+  "id": "step5_5",
+  "type": "ai_processing",
+  "outputs": { "content": { "type": "object" } }
+}
+```
+
+But the handler stored output in generic keys (`result`, `response`, etc.), so `{{step5.data.content}}` was undefined.
+
+### Solution: Declared Output Mapping
+
+`StepExecutor.executeLLMDecision()` now maps parsed results to declared output keys:
+
+```typescript
+// If step declares outputs like { content: "object" }, map the parsed result
+const declaredOutputs = (step as any).outputs;
+if (declaredOutputs && parsedData) {
+  for (const outputKey of Object.keys(declaredOutputs)) {
+    if (outputKey !== 'next_step' && !outputData.hasOwnProperty(outputKey)) {
+      // If parsedData has a 'result' wrapper, unwrap it
+      if (parsedData.result && typeof parsedData.result === 'object') {
+        outputData[outputKey] = parsedData.result;
+      } else {
+        outputData[outputKey] = parsedData;
+      }
+    }
+  }
+}
+```
+
+### Behavior
+
+| LLM Returns | Declared Output | Result |
+|-------------|-----------------|--------|
+| `{"result": {"subject": "...", "body": "..."}}` | `outputs: { content: "object" }` | `data.content = { subject, body }` |
+| `{"items": [...]}` | `outputs: { results: "array" }` | `data.results = [...]` |
+
+---
+
+## Filter Case Normalization (v5.5)
+
+LLMs may output field names with different casing than expected by the DSL filter conditions.
+
+### The Problem
+
+```
+DSL Filter: item.action_required (snake_case)
+LLM Output: item.actionRequired (camelCase)
+Result: Filter condition fails, all items filtered out
+```
+
+### Solution: Key Normalization
+
+`StepExecutor.transformFilter()` now normalizes item keys before filtering:
+
+```typescript
+private normalizeItemKeys(item: any): any {
+  const normalized = { ...item };
+
+  for (const key of Object.keys(item)) {
+    const value = item[key];
+
+    // Convert camelCase to snake_case
+    const snakeCase = key.replace(/([A-Z])/g, '_$1').toLowerCase();
+    if (snakeCase !== key && !normalized.hasOwnProperty(snakeCase)) {
+      normalized[snakeCase] = value;
+    }
+
+    // Convert snake_case to camelCase
+    const camelCase = key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+    if (camelCase !== key && !normalized.hasOwnProperty(camelCase)) {
+      normalized[camelCase] = value;
+    }
+  }
+
+  return normalized;
+}
+```
+
+### Behavior
+
+| Input | After Normalization |
+|-------|---------------------|
+| `{ actionRequired: true }` | `{ actionRequired: true, action_required: true }` |
+| `{ action_required: false }` | `{ action_required: false, actionRequired: false }` |
+
+This ensures filters work regardless of LLM output casing.
+
+---
+
+## Runtime Execution Enhancements (v5.6)
+
+The following `StepExecutor` enhancements ensure DSL-generated workflows execute correctly at runtime.
+
+### Transform Output Key Mapping
+
+`StepExecutor.execute()` maps transform results to declared DSL output keys (lines 281-327):
+
+| Transform | Runtime Output | Mapped Output |
+|-----------|---------------|---------------|
+| `filter` | `{ items: [...] }` | `{ items: [...], [declaredKey]: [...] }` |
+| `format` | `"string"` | `{ [declaredKey]: "string" }` |
+
+```typescript
+// Filter transform mapping
+if (operation === 'filter' && result.items) {
+  for (const outputKey of Object.keys(transformOutputs)) {
+    if (!result.hasOwnProperty(outputKey)) {
+      result[outputKey] = result.items;
+    }
+  }
+}
+
+// Format transform wrapping
+if (typeof result === 'string' && operation === 'format') {
+  result = { [outputKey]: result };
+}
+```
+
+This enables downstream steps to reference `{{step4.data.filtered_items}}` when the step declares `outputs: { filtered_items: "object[]" }`.
+
+### Template Expansion
+
+Format templates (`transformFormat`) use prioritized resolution (lines 1850-1974):
+
+1. **Input data fields** - `{{to_log_count}}` → `data.to_log_count`
+2. **Nested paths** - `{{user.name}}` → `data.user.name`
+3. **Context step refs** - `{{step1.data.field}}` → resolved from ExecutionContext
+
+**Handlebars Detection:**
+Templates containing block syntax (`{{#each}}`, `{{#if}}`, `{{/each}}`, `{{@index}}`, `{{this}}`) are auto-detected and routed to the Handlebars engine:
+
+```typescript
+const hasHandlebarsBlocks = /\{\{[#/]|else\}\}|\{\{@|\{\{this\}\}/.test(template);
+if (hasHandlebarsBlocks) {
+  return this.expandHandlebarsTemplate(template, data, context);
+}
+return this.expandSimpleTemplate(template, data, context);
+```
+
+**JSON Template Escaping:**
+When templates produce JSON output (detected by `{...}` structure), string values are automatically escaped to prevent JSON syntax errors.
+
+### Structured Output Unwrapping
+
+Transform operations that chain together may receive structured output objects instead of raw arrays. The `unwrapStructuredOutput()` helper extracts the data array:
+
+```typescript
+// Handles: { items: [...] }, { filtered: [...] }, { groups: [...] }
+private unwrapStructuredOutput(data: any): any {
+  if (Array.isArray(data)) return data;
+  if (data?.items) return data.items;
+  if (data?.filtered) return data.filtered;
+  if (data?.groups) return data.groups;
+  // ... etc
+}
+```
+
+This enables chaining like `filter → group → aggregate` without manual unwrapping in the DSL.
+
+---
+
 ## Session Tracking (Workflow Generation Diary)
 
 The V5 generator includes optional session tracking that records a "diary" of the workflow generation process. This creates an audit trail of all LLM calls, validations, and repairs for debugging and analytics.
@@ -904,6 +1216,7 @@ When session tracking is enabled, the `sessionId` is included in the generation 
 | `app/api/prompt-templates/Workflow-Agent-Technical-Reviewer-UserPrompt-v2.txt` | Technical Reviewer user prompt |
 | `app/api/test/generate-agent-v5-test-wrapper/route.ts` | Test API for V5 generator |
 | `app/api/generate-agent-v4/route.ts` | Production API (V4/V5 via feature flag) |
+| `lib/pilot/StepExecutor.ts` | Runtime step execution with transform output mapping, case normalization |
 | `lib/utils/featureFlags.ts` | `useEnhancedTechnicalWorkflowReview()` function |
 | `lib/repositories/SystemConfigRepository.ts` | `getAgentGenerationConfig()` for provider/model |
 | `lib/agent-creation/agent-prompt-workflow-generation-session-repository.ts` | Repository for session/stage CRUD operations |

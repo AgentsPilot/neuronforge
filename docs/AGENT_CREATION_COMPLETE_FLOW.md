@@ -412,6 +412,48 @@ This document provides a comprehensive end-to-end view of the agent creation flo
 
 ---
 
+## Cross-Step Reference Validation (v2.10)
+
+The system uses a 3-layer defense-in-depth approach to ensure all variable references are valid:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Layer 1: Phase 4 Prompt (Generation)                       │
+│  ─────────────────────────────────────                      │
+│  File: Workflow-Agent-Creation-Prompt-v14-chatgpt.txt       │
+│  LLM instructed to use {{step7.counts.*}} explicitly        │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│  Layer 2: Technical Reviewer (Validation & Repair)          │
+│  ──────────────────────────────────────────────────         │
+│  File: Workflow-Agent-Technical-Reviewer-SystemPrompt-v3    │
+│  Catches {{counts.*}} → rewrites to {{step7.counts.*}}      │
+│  Adds reviewer_note explaining the fix                      │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│  Layer 3: Runtime outputAliasRegistry (Fallback)            │
+│  ─────────────────────────────────────────────────          │
+│  File: lib/pilot/ExecutionContext.ts                        │
+│  Resolves any remaining shorthand references at runtime     │
+│  Logs warning to help identify issues                       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**The Problem**: Phase 4 LLM might generate templates with shorthand references like `{{counts.total}}` instead of `{{step7.counts.total}}`. The runtime only supports qualified references.
+
+**Supported Reference Patterns**:
+- `{{stepX.data.*}}` - Step outputs
+- `{{input.*}}` - User inputs
+- `{{env.*}}` - Environment variables
+- `{{config.*}}` - Plugin config
+- `{{item.*}}` - Loop iteration variable
+
+See [V5_GENERATOR_ARCHITECTURE.md](V5_GENERATOR_ARCHITECTURE.md#cross-step-reference-validation-defense-in-depth) for implementation details.
+
+---
+
 ## V4 vs V5 Path Comparison
 
 ```
@@ -512,6 +554,13 @@ static build(phase4Response: Phase4Response): Phase4DSLBuilderResult {
 
 ---
 
-**Document Version**: 1.0
+**Document Version**: 1.2
 **Created**: December 27, 2025
+**Updated**: January 9, 2026
+**Changes**:
+- v1.2: Runtime LLM output handling:
+  - **Conditional lastBranchOutput**: Runtime returns `lastBranchOutput` for downstream access after conditional steps
+  - **ai_processing Declared Output Mapping**: Maps LLM results to declared output keys
+  - **Filter Case Normalization**: Handles both camelCase and snake_case field names
+- v1.1: Added Cross-Step Reference Validation section documenting defense-in-depth approach (Phase 4 prompt, Technical Reviewer, Runtime alias registry)
 **Maintainer**: AI Agent (Claude) & Human Developer

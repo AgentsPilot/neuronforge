@@ -8,6 +8,7 @@
 import { BaseHandler } from './BaseHandler';
 import type { HandlerContext, HandlerResult, IntentType } from '../types';
 import { getModelMaxOutputTokens, modelSupportsTemperature } from '@/lib/ai/context-limits';
+import { jsonrepair } from 'jsonrepair';
 
 export class ExtractHandler extends BaseHandler {
   intent: IntentType = 'extract';
@@ -200,23 +201,59 @@ Return extracted data as valid JSON with clear field names.`;
           const parsed = JSON.parse(trimmed);
           return this.normalizeExtractedObject(parsed);
         } catch (directParseError) {
-          // Direct parse failed, try extraction methods below
+          // Direct parse failed, try to repair malformed JSON
+          try {
+            console.log('[ExtractHandler] JSON parse failed, attempting repair with jsonrepair');
+            const repairedJson = jsonrepair(trimmed);
+            const parsed = JSON.parse(repairedJson);
+            console.log('[ExtractHandler] JSON repaired successfully');
+            return this.normalizeExtractedObject(parsed);
+          } catch (repairError) {
+            // Repair failed, continue with extraction methods below
+            console.warn('[ExtractHandler] JSON repair failed:', repairError);
+          }
         }
       }
 
       // Try to extract JSON object from text (handles markdown code blocks, etc.)
       const jsonObjectMatch = output.match(/\{[\s\S]*\}/);
       if (jsonObjectMatch) {
-        const parsed = JSON.parse(jsonObjectMatch[0]);
-        return this.normalizeExtractedObject(parsed);
+        try {
+          const parsed = JSON.parse(jsonObjectMatch[0]);
+          return this.normalizeExtractedObject(parsed);
+        } catch (extractParseError) {
+          // Try to repair extracted JSON
+          try {
+            console.log('[ExtractHandler] Extracted JSON parse failed, attempting repair');
+            const repairedJson = jsonrepair(jsonObjectMatch[0]);
+            const parsed = JSON.parse(repairedJson);
+            console.log('[ExtractHandler] Extracted JSON repaired successfully');
+            return this.normalizeExtractedObject(parsed);
+          } catch (repairError) {
+            console.warn('[ExtractHandler] Extracted JSON repair failed:', repairError);
+          }
+        }
       }
 
       // Try to extract JSON array from text
       const jsonArrayMatch = output.match(/\[[\s\S]*\]/);
       if (jsonArrayMatch) {
-        const parsed = JSON.parse(jsonArrayMatch[0]);
-        // Wrap array in {items: [...]} for consistent downstream access
-        return { items: parsed };
+        try {
+          const parsed = JSON.parse(jsonArrayMatch[0]);
+          // Wrap array in {items: [...]} for consistent downstream access
+          return { items: parsed };
+        } catch (arrayParseError) {
+          // Try to repair extracted array
+          try {
+            console.log('[ExtractHandler] Extracted array parse failed, attempting repair');
+            const repairedJson = jsonrepair(jsonArrayMatch[0]);
+            const parsed = JSON.parse(repairedJson);
+            console.log('[ExtractHandler] Extracted array repaired successfully');
+            return { items: parsed };
+          } catch (repairError) {
+            console.warn('[ExtractHandler] Extracted array repair failed:', repairError);
+          }
+        }
       }
 
       // If not JSON, return as structured text

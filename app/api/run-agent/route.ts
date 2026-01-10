@@ -25,6 +25,7 @@ import {
   ExecutionLogRepository,
   SystemConfigRepository,
 } from '@/lib/repositories'
+import { buildUserContextFromAuth } from '@/lib/user-context'
 
 export const runtime = 'nodejs'
 
@@ -208,6 +209,10 @@ export async function POST(req: Request) {
           }
         }
 
+        // Build user context for personalization in ai_processing steps
+        const userContext = buildUserContextFromAuth(user);
+        logger.debug({ hasFullName: !!userContext.full_name, hasEmail: !!userContext.email }, 'User context built for pilot execution');
+
         // Execute using WorkflowPilot
         const pilot = new WorkflowPilot(supabase);
         // Transform agent to convert null to undefined for type compatibility with pilot types
@@ -237,7 +242,8 @@ export async function POST(req: Request) {
           sessionId,
           undefined, // stepEmitter
           debugMode, // Pass debugMode to enable debugging
-          debugRunId // Pass pre-generated debugRunId from frontend
+          debugRunId, // Pass pre-generated debugRunId from frontend
+          userContext // Pass user context for ai_processing personalization
         );
 
         executionType = 'pilot';

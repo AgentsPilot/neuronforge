@@ -801,6 +801,9 @@ export default function TestPluginsPage() {
   const [sandboxJsonImport, setSandboxJsonImport] = useState('');
   const [showJsonImportModal, setShowJsonImportModal] = useState(false);
 
+  // AI Service preload state (for transferring data from Thread tab)
+  const [aiServicePreload, setAiServicePreload] = useState<string | null>(null);
+
   // System Settings state
   const [systemSettings, setSystemSettings] = useState<SystemSettingsConfigItem[]>([]);
   const [filteredSettings, setFilteredSettings] = useState<SystemSettingsConfigItem[]>([]);
@@ -1538,7 +1541,14 @@ export default function TestPluginsPage() {
   // Update AI service template when selection changes
   useEffect(() => {
     if (selectedAIService) {
-      resetToAITemplate();
+      // Check if there's preloaded data from Thread tab
+      if (aiServicePreload) {
+        setAiServiceRequestBody(aiServicePreload);
+        setAiServicePreload(null); // Clear preload after consuming
+        addDebugLog('success', 'AI Service request body loaded from Thread tab');
+      } else {
+        resetToAITemplate();
+      }
       // Sync provider/model state from template for test/analyze-prompt
       if (selectedAIService === 'test/analyze-prompt') {
         const template = (AI_SERVICE_TEMPLATES as any)[selectedAIService];
@@ -1696,6 +1706,22 @@ export default function TestPluginsPage() {
           }
           if (thread.metadata.last_phase3_response?.missingPlugins) {
             setMissingPlugins(thread.metadata.last_phase3_response.missingPlugins);
+          }
+
+          // Restore Phase 4 data from iterations if thread is at Phase 4
+          if (thread.current_phase === 4 && thread.metadata.iterations?.length > 0) {
+            const phase4Iteration = [...thread.metadata.iterations]
+              .reverse()
+              .find((iter: any) => iter.phase === 4);
+
+            if (phase4Iteration?.response) {
+              const p4 = phase4Iteration.response;
+              if (p4.technical_workflow) setTechnicalWorkflow(p4.technical_workflow);
+              if (p4.technical_inputs_required) setTechnicalInputsRequired(p4.technical_inputs_required);
+              if (p4.feasibility) setFeasibility(p4.feasibility);
+              setPhase4Response(p4);
+              addDebugLog('info', `Restored Phase 4: ${p4.technical_workflow?.length || 0} workflow steps`);
+            }
           }
         }
 
@@ -2227,6 +2253,89 @@ export default function TestPluginsPage() {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
     addDebugLog('success', 'Communication history downloaded');
+  };
+
+  // Send Phase 4 data to AI Services V5 Generator
+  const handleSendToV5Generator = () => {
+    if (!enhancedPrompt) {
+      addDebugLog('error', 'No enhanced prompt available');
+      return;
+    }
+
+    // Build the v5-wrapper request body
+    const v5RequestBody = {
+      enhancedPrompt: JSON.stringify(enhancedPrompt),
+      technicalWorkflow: {
+        technical_workflow: technicalWorkflow || [],
+        technical_inputs_required: technicalInputsRequired || []
+      },
+      skipDslBuilder: false,
+      userId: userId
+    };
+
+    const requestBodyJson = JSON.stringify(v5RequestBody, null, 2);
+
+    // Set preload BEFORE changing service (useEffect will pick this up)
+    setAiServicePreload(requestBodyJson);
+
+    // Set the AI service (this triggers useEffect which will use the preload)
+    setSelectedAIService('test/generate-agent-v5-test-wrapper');
+
+    // Switch to AI Services tab
+    setActiveTab('ai-services');
+
+    const stepCount = technicalWorkflow?.length || 0;
+    addDebugLog('info', `Sending to V5 Generator: enhanced prompt + ${stepCount} workflow steps`);
+  };
+
+  // Send AI Service V5 response to Agent Execution Sandbox
+  const handleSendV5ToSandbox = () => {
+    if (!aiServiceResponse) {
+      addDebugLog('error', 'No AI service response available');
+      return;
+    }
+
+    // Extract workflow data from v5 response
+    // Support multiple response formats
+    const workflow = aiServiceResponse.workflow ||
+                    aiServiceResponse['Generate-agent-v5-wrapper']?.workflow ||
+                    aiServiceResponse;
+
+    const steps = workflow?.workflow_steps || workflow?.pilot_steps || [];
+    const plugins = workflow?.suggested_plugins || workflow?.plugins_required || [];
+    const inputs = workflow?.required_inputs || workflow?.input_schema || [];
+
+    if (steps.length === 0) {
+      addDebugLog('error', 'No workflow steps found in V5 response');
+      return;
+    }
+
+    // Build input variables from required_inputs
+    const inputVariables: Record<string, string> = {};
+    if (Array.isArray(inputs)) {
+      inputs.forEach((input: any) => {
+        const key = input.name || input.key;
+        if (key) {
+          inputVariables[key] = input.placeholder || input.description || '';
+        }
+      });
+    }
+
+    // Enable sandbox mode and populate fields
+    setSandboxMode(true);
+    setSandboxAgentName(workflow?.agent_name || enhancedPrompt?.plan_title || 'V5 Generated Agent');
+    setSandboxPilotSteps(JSON.stringify(steps, null, 2));
+    setSandboxPluginsRequired(JSON.stringify(plugins));
+    setAgentWorkflowSteps(steps);
+
+    if (Object.keys(inputVariables).length > 0) {
+      setAgentInputVariables(JSON.stringify(inputVariables, null, 2));
+    }
+
+    // Switch to Agent Execution tab
+    setActiveTab('agent-execution');
+
+    addDebugLog('success', `Sent to Sandbox: ${steps.length} steps, ${plugins.length} plugins`);
   };
 
   // Free Tier User Creation Functions
@@ -3296,27 +3405,51 @@ export default function TestPluginsPage() {
                 <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                     <h2 style={{ margin: 0 }}>AI Service Response</h2>
-                    <button
-                      onClick={async () => {
-                        try {
-                          await navigator.clipboard.writeText(JSON.stringify(aiServiceResponse, null, 2));
-                          addDebugLog('success', 'AI service response copied to clipboard');
-                        } catch (error: any) {
-                          addDebugLog('error', `Failed to copy: ${error.message}`);
-                        }
-                      }}
-                      style={{
-                        padding: '8px 16px',
-                        backgroundColor: '#007bff',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '3px',
-                        cursor: 'pointer',
-                        fontSize: '14px'
-                      }}
-                    >
-                      Copy to Clipboard
-                    </button>
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                      <button
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(JSON.stringify(aiServiceResponse, null, 2));
+                            addDebugLog('success', 'AI service response copied to clipboard');
+                          } catch (error: any) {
+                            addDebugLog('error', `Failed to copy: ${error.message}`);
+                          }
+                        }}
+                        style={{
+                          padding: '8px 16px',
+                          backgroundColor: '#007bff',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '3px',
+                          cursor: 'pointer',
+                          fontSize: '14px'
+                        }}
+                      >
+                        Copy to Clipboard
+                      </button>
+                      {/* Send to Sandbox button - only for v5 wrapper responses with workflow */}
+                      {selectedAIService === 'test/generate-agent-v5-test-wrapper' && (
+                        aiServiceResponse.workflow?.workflow_steps?.length > 0 ||
+                        aiServiceResponse['Generate-agent-v5-wrapper']?.workflow?.workflow_steps?.length > 0
+                      ) && (
+                        <button
+                          onClick={handleSendV5ToSandbox}
+                          style={{
+                            padding: '8px 16px',
+                            backgroundColor: '#6f42c1',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '3px',
+                            cursor: 'pointer',
+                            fontSize: '14px',
+                            fontWeight: 'bold'
+                          }}
+                          title="Send workflow to Agent Execution sandbox"
+                        >
+                          🚀 Send to Sandbox →
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <pre style={{
                     backgroundColor: '#f8f9fa',
@@ -4202,6 +4335,23 @@ export default function TestPluginsPage() {
                   title={`Download all API communications (${apiCommunications.length} calls)`}
                 >
                   📥 Download JSON ({apiCommunications.length})
+                </button>
+                <button
+                  onClick={handleSendToV5Generator}
+                  disabled={isLoading || !enhancedPrompt}
+                  style={{
+                    padding: '12px 24px',
+                    backgroundColor: !enhancedPrompt ? '#ccc' : '#6f42c1',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: (!enhancedPrompt || isLoading) ? 'not-allowed' : 'pointer',
+                    fontSize: '16px',
+                    fontWeight: 'bold'
+                  }}
+                  title="Send enhanced prompt and workflow to V5 Generator"
+                >
+                  🚀 Send to V5 Generator →
                 </button>
               </div>
             </div>

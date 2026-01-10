@@ -20,6 +20,7 @@ import type {
 } from './types';
 import { VariableResolutionError, getTokenTotal } from './types';
 import { createLogger } from '@/lib/logger';
+import type { UserContext } from '@/lib/user-context';
 
 // Create module-level logger for structured logging
 const logger = createLogger({ module: 'ExecutionContext', service: 'workflow-pilot' });
@@ -48,8 +49,15 @@ export class ExecutionContext {
   // Runtime variables
   public variables: Record<string, any>;
 
+  // Output alias registry: maps output keys to their source step IDs
+  // Enables resolving shorthand references like {{counts.total}} → {{step7.data.counts.total}}
+  private outputAliasRegistry: Map<string, string> = new Map();
+
   // Memory context (from MemoryInjector)
   public memoryContext?: MemoryContext;
+
+  // User context (for ai_processing personalization)
+  private userContext: UserContext | null = null;
 
   // Orchestration (from WorkflowOrchestrator - Phase 4)
   public orchestrator?: any; // WorkflowOrchestrator instance (avoiding circular dependency)
@@ -162,6 +170,45 @@ export class ExecutionContext {
 
     // Add NEW execution time
     this.totalExecutionTime += output.metadata.executionTime;
+
+    // Register output keys in alias registry for shorthand reference resolution
+    this.registerStepOutputs(stepId, output);
+  }
+
+  /**
+   * Register step outputs in the alias registry
+   *
+   * This enables resolving shorthand references like {{counts.*}} → {{step7.data.counts.*}}
+   * when Phase 4 generates templates with unqualified output key references.
+   *
+   * @param stepId - The step ID that produced the output
+   * @param output - The step output containing data keys to register
+   */
+  private registerStepOutputs(stepId: string, output: StepOutput): void {
+    if (output.data && typeof output.data === 'object' && !Array.isArray(output.data)) {
+      for (const key of Object.keys(output.data)) {
+        // Skip internal/reserved keys
+        if (key === 'raw' || key === 'format' || key === 'parseError') continue;
+
+        // Don't overwrite if another step already registered this key
+        // First step to output a key "wins" (this encourages unique naming)
+        if (!this.outputAliasRegistry.has(key)) {
+          this.outputAliasRegistry.set(key, stepId);
+          logger.debug({
+            outputKey: key,
+            stepId,
+            executionId: this.executionId
+          }, 'Registered output alias');
+        } else {
+          logger.debug({
+            outputKey: key,
+            stepId,
+            existingStepId: this.outputAliasRegistry.get(key),
+            executionId: this.executionId
+          }, 'Output alias already registered by another step');
+        }
+      }
+    }
   }
 
   /**
@@ -213,6 +260,25 @@ export class ExecutionContext {
    */
   getVariable(name: string): any {
     return this.variables[name];
+  }
+
+  /**
+   * Set user context for ai_processing personalization
+   */
+  setUserContext(user: UserContext): void {
+    this.userContext = user;
+    logger.debug({
+      hasFullName: !!user.full_name,
+      hasEmail: !!user.email,
+      hasCompany: !!user.company
+    }, 'User context set');
+  }
+
+  /**
+   * Get user context
+   */
+  getUserContext(): UserContext | null {
+    return this.userContext;
   }
 
   /**
@@ -277,7 +343,20 @@ export class ExecutionContext {
       }
 
       // Navigate nested path: data.email
-      const resolved = this.getNestedValue(stepOutput, parts.slice(1));
+      // First try the exact path (for metadata access like step1.metadata.executionTime)
+      let resolved = this.getNestedValue(stepOutput, parts.slice(1));
+
+      // ✅ FIX: If not found and path doesn't start with 'data', try inside stepOutput.data
+      // This allows {{step4.action_items}} to resolve to stepOutput.data.action_items
+      // DSL commonly uses {{stepX.field}} instead of {{stepX.data.field}}
+      if (resolved === undefined && parts.length > 1 && parts[1] !== 'data') {
+        const dataPath = ['data', ...parts.slice(1)];
+        resolved = this.getNestedValue(stepOutput, dataPath);
+        if (resolved !== undefined) {
+          logger.debug({ reference, stepId, actualPath: dataPath.join('.') }, 'Resolved via data fallback');
+        }
+      }
+
       logger.debug({
         reference,
         stepId,
@@ -334,6 +413,33 @@ export class ExecutionContext {
       return parts.length > 1 ? this.getNestedValue(itemValue, parts.slice(1)) : itemValue;
     }
 
+    // FALLBACK: Check if root is an aliased output key from a previous step
+    // This handles shorthand references like {{counts.total}} when step7 output { counts: {...} }
+    const aliasedStepId = this.outputAliasRegistry.get(root);
+    if (aliasedStepId) {
+      logger.warn({
+        reference,
+        root,
+        resolvedTo: `${aliasedStepId}.data.${root}`,
+        executionId: this.executionId
+      }, 'Resolving via output alias registry (shorthand reference - consider using explicit step prefix)');
+
+      const stepOutput = this.stepOutputs.get(aliasedStepId);
+      if (stepOutput) {
+        // Navigate: stepOutput.data.{root}.{remaining path}
+        const fullPath = ['data', root, ...parts.slice(1)];
+        const resolved = this.getNestedValue(stepOutput, fullPath);
+        logger.debug({
+          reference,
+          aliasedStepId,
+          fullPath: fullPath.join('.'),
+          resolvedType: Array.isArray(resolved) ? 'array' : typeof resolved,
+          executionId: this.executionId
+        }, 'Alias resolution successful');
+        return resolved;
+      }
+    }
+
     throw new VariableResolutionError(
       `Unknown variable reference root: ${root}`,
       reference
@@ -349,13 +455,31 @@ export class ExecutionContext {
     }
 
     if (typeof obj === 'string') {
-      // Check if entire string is a variable reference
-      if (obj.match(/^\{\{.*\}\}$/)) {
+      // Check if entire string is a SINGLE variable reference (not a template with multiple vars)
+      // Use non-greedy match and ensure no }} inside the variable name (which would indicate multiple vars)
+      // This prevents Handlebars templates like "{{#each data}}...{{/each}}" from being treated as a single variable
+      if (obj.match(/^\{\{[^}]+\}\}$/) && !obj.includes('\n')) {
         return this.resolveVariable(obj);
       }
 
       // Replace inline variables: "Email from {{step1.data.sender}}"
-      return obj.replace(/\{\{([^}]+)\}\}/g, (match) => {
+      return obj.replace(/\{\{([^}]+)\}\}/g, (match, inner) => {
+        const ref = String(inner).trim();
+
+        // ✅ Skip Handlebars block helpers & special vars
+        // Examples: {{#each ...}}, {{/each}}, {{else}}, {{@last}}, {{this}}
+        // These are Handlebars template syntax, not runtime variables
+        if (
+          ref.startsWith('#') ||
+          ref.startsWith('/') ||
+          ref === 'else' ||
+          ref.startsWith('@') ||
+          ref === 'this'
+        ) {
+          return match;
+        }
+
+        // ✅ Only resolve "real" runtime variables
         try {
           const value = this.resolveVariable(match);
           return String(value);
@@ -563,7 +687,9 @@ export class ExecutionContext {
     cloned.skippedSteps = [...this.skippedSteps];
     cloned.stepOutputs = new Map(this.stepOutputs);
     cloned.variables = { ...this.variables };
+    cloned.outputAliasRegistry = new Map(this.outputAliasRegistry);
     cloned.memoryContext = this.memoryContext;
+    cloned.userContext = this.userContext;
     cloned.orchestrator = this.orchestrator; // Copy orchestrator reference for consistent routing
     cloned.startedAt = this.startedAt;
     cloned.totalTokensUsed = this.totalTokensUsed;
@@ -604,6 +730,7 @@ export class ExecutionContext {
     this.skippedSteps = [];
     this.stepOutputs = new Map();
     this.variables = {};
+    this.outputAliasRegistry = new Map();
     this.totalTokensUsed = 0;
     this.totalExecutionTime = 0;
     this.status = 'running';

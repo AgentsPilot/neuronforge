@@ -406,6 +406,60 @@ Phase 4 (ControlStep - if)           PILOT_DSL_SCHEMA (ConditionalStep)
 
 ---
 
+### 4a. Post-Conditional Output Wiring (lastBranchOutput)
+
+When a conditional step completes, downstream steps need access to whichever branch was executed. The runtime exposes `lastBranchOutput` on the conditional step's output.
+
+**Problem:**
+```
+step5 (conditional)
+├── then_steps → step5_4 outputs { content: "..." }
+└── else_steps → step5_5 outputs { content: "..." }
+
+step8 needs the "content" - but which step produced it?
+```
+
+**Solution:**
+
+The `StepExecutor.executeConditional()` returns `lastBranchOutput` containing the last executed branch step's data:
+
+```typescript
+// StepExecutor returns:
+{
+  result: true,
+  branch: "then",
+  branchResults: [...],
+  lastBranchOutput: { content: "..." }  // Last branch step's data
+}
+```
+
+**DSL Reference Pattern:**
+
+| Pattern | Result | Use Case |
+|---------|--------|----------|
+| `{{step5.data.lastBranchOutput.content}}` | ✓ Correct | Access conditional output uniformly |
+| `{{step5_4.data.content}}` | ✗ Wrong | Fails if else_steps executed |
+| `{{step5_5.data.content}}` | ✗ Wrong | Fails if then_steps executed |
+
+**Best Practice:**
+- Both branches SHOULD output the same key (e.g., both output `content`)
+- Downstream steps reference `{{conditionalStep.data.lastBranchOutput.outputKey}}`
+
+**Example:**
+```json
+{
+  "id": "step8",
+  "type": "action",
+  "plugin": "google-mail",
+  "action": "send_email",
+  "params": {
+    "content": "{{step5.data.lastBranchOutput.content}}"
+  }
+}
+```
+
+---
+
 ## Input Source Resolution
 
 Each `StepInput` in Phase 4 has a `source` field that determines how to resolve the value:
@@ -1284,6 +1338,42 @@ if (step.intent && validIntents.includes(step.intent)) {
 
 ---
 
+## Runtime Cross-Step Reference Resolution (v2.10)
+
+The execution layer includes a fallback mechanism to resolve shorthand variable references that may slip through DSL generation.
+
+### Output Alias Registry
+
+When steps complete, `ExecutionContext` registers their output keys in an alias registry:
+
+```typescript
+// ExecutionContext.ts
+private outputAliasRegistry: Map<string, string> = new Map();
+
+// When step7 completes with output { counts: {...}, items: [...] }
+// Registry populated: { "counts" → "step7", "items" → "step7" }
+```
+
+### Resolution Fallback
+
+If a variable reference like `{{counts.total}}` reaches runtime without an explicit step prefix:
+
+1. `resolveVariable()` checks `outputAliasRegistry.get("counts")`
+2. Finds `"step7"` → resolves to `stepOutputs.get("step7").data.counts.total`
+3. Logs warning: `"Resolving via output alias registry (shorthand reference)"`
+
+### Defense-in-Depth Layers
+
+| Layer | When | Component | Action |
+|-------|------|-----------|--------|
+| 1 | Generation | Phase 4 Prompt | LLM instructed to use `{{step7.counts.*}}` |
+| 2 | Review | Technical Reviewer | Catches and rewrites `{{counts.*}}` → `{{step7.counts.*}}` |
+| 3 | Runtime | ExecutionContext | Alias registry resolves remaining shorthand refs |
+
+This ensures robust execution even when shorthand references slip through earlier layers.
+
+---
+
 ## Files Reference
 
 | File | Purpose |
@@ -1299,9 +1389,23 @@ if (step.intent && validIntents.includes(step.intent)) {
 
 ---
 
-**Document Version**: 2.9
-**Updated**: 2026-01-01
+**Document Version**: 2.12
+**Updated**: 2026-01-09
 **Changes**:
+- v2.12: Runtime LLM output handling improvements:
+  - **ai_processing Declared Output Mapping**: `StepExecutor.executeLLMDecision()` now maps parsed LLM results to declared output keys (e.g., `outputs: { content: "object" }` → `data.content = parsedResult`)
+  - **Filter Case Normalization**: `transformFilter()` normalizes item keys to handle both camelCase and snake_case (e.g., `actionRequired` and `action_required` both work)
+  - **Defense-in-depth**: These runtime fixes complement prompt-level guidance for LLM output formatting
+- v2.11: Post-conditional output wiring:
+  - **lastBranchOutput**: `StepExecutor.executeConditional()` now includes `lastBranchOutput` in return value for downstream step access
+  - **Technical Reviewer Update**: Added POST-CONDITIONAL OUTPUT WIRING rules requiring `{{conditionalStep.data.lastBranchOutput.outputKey}}` pattern
+  - **Best Practice**: Both branches should output the same key for uniform downstream access
+- v2.10: Cross-step reference validation defense-in-depth:
+  - **Phase 4 Prompt Update**: Added explicit step reference rules - all `{{...}}` references MUST use step prefixes
+  - **Technical Reviewer Enhancement**: Added cross-step reference validation and repair with `reviewer_note`
+  - **Runtime Output Alias Registry**: `ExecutionContext.outputAliasRegistry` resolves shorthand references like `{{counts.*}}` to `{{step7.data.counts.*}}`
+  - **ExtractHandler JSON Repair**: Added `jsonrepair` fallback for malformed LLM JSON responses
+  - **Removed**: `resolveTemplateStepReferences()` from Phase4DSLBuilder (redundant with runtime registry)
 - v2.9: Execution layer fixes (see Phase4-DSL-Debugging-Session-Dec31-2025.md):
   - **JSON Response Parsing**: `executeLLMDecision` now parses JSON strings and spreads properties for direct `{{stepX.data.items}}` access
   - **Scatter Variable Resolution**: Non-action steps now resolve `params` field, enabling `{{email}}` scatter variables in ai_processing steps

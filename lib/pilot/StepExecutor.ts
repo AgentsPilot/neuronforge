@@ -36,6 +36,7 @@ import { DataOperations } from './DataOperations';
 import { StepCache } from './StepCache';
 import { AISConfigService } from '@/lib/services/AISConfigService';
 import { createLogger } from '@/lib/logger';
+import Handlebars from 'handlebars';
 
 // Create module-level logger for structured logging to dev.log
 const logger = createLogger({ module: 'StepExecutor', service: 'workflow-pilot' });
@@ -276,6 +277,53 @@ export class StepExecutor {
 
         case 'transform':
           result = await this.executeTransform(step as TransformStep, resolvedParams, context);
+
+          // ✅ FIX: Map transform outputs to declared output keys
+          // Transforms return raw results, but downstream steps reference declared output keys
+          const transformOutputs = (step as any).outputs;
+          const operation = resolvedParams.operation || (step as any).operation;
+
+          if (transformOutputs) {
+            if (typeof result === 'object' && result !== null) {
+              // Object result (filter returns { items, filtered, count, etc. })
+              if (operation === 'filter' && result.items) {
+                // Map filtered array to each declared output key
+                for (const outputKey of Object.keys(transformOutputs)) {
+                  if (!result.hasOwnProperty(outputKey)) {
+                    result[outputKey] = result.items;
+                    logger.debug({ stepId: step.id, outputKey, itemCount: result.items.length },
+                      'Mapped filter items to declared output key');
+                  }
+                }
+              }
+            } else if (typeof result === 'string' && operation === 'format') {
+              // Format returns a string, wrap it in object with declared output key
+              // e.g., if outputs: { rows_html: {...} }, wrap as { rows_html: "<tr>..." }
+              const outputKeys = Object.keys(transformOutputs);
+              if (outputKeys.length === 1) {
+                const outputKey = outputKeys[0];
+                const outputDef = transformOutputs[outputKey];
+                let finalResult: any = result;
+
+                // If declared output type is "object" and result looks like JSON, parse it
+                if (outputDef?.type === 'object' && result.trim().startsWith('{')) {
+                  try {
+                    finalResult = JSON.parse(result);
+                    logger.debug({ stepId: step.id, outputKey },
+                      'Parsed JSON string to object for declared object output');
+                  } catch {
+                    // Not valid JSON, keep as string
+                    logger.warn({ stepId: step.id, outputKey },
+                      'Format result looks like JSON but failed to parse');
+                  }
+                }
+
+                result = { [outputKey]: finalResult };
+                logger.debug({ stepId: step.id, outputKey, resultType: typeof finalResult },
+                  'Wrapped format result in declared output key');
+              }
+            }
+          }
           break;
 
         case 'delay':
@@ -926,11 +974,24 @@ export class StepExecutor {
 
     const contextSummary = this.buildContextSummary(context);
 
+    // Build user context section if available (for personalization in ai_processing)
+    const userContext = context.getUserContext();
+    let userContextSection = '';
+    if (userContext && (userContext.full_name || userContext.email || userContext.company)) {
+      const userInfo: string[] = [];
+      if (userContext.full_name) userInfo.push(`Name: ${userContext.full_name}`);
+      if (userContext.email) userInfo.push(`Email: ${userContext.email}`);
+      if (userContext.company) userInfo.push(`Company: ${userContext.company}`);
+      if (userContext.role) userInfo.push(`Role: ${userContext.role}`);
+      userContextSection = `\n\n## User Context (for personalization):\n${userInfo.join('\n')}`;
+      logger.debug({ stepId: step.id, hasUserContext: true }, 'User context added to prompt');
+    }
+
     const fullPrompt = `
 ${prompt}
 
 ## Current Context:
-${contextSummary}
+${contextSummary}${userContextSection}
 
 ## Data for Analysis:
 ${JSON.stringify(enrichedParams, null, 2)}
@@ -1041,27 +1102,50 @@ Please analyze the above and provide your decision/response.
       }
     }
 
+    // Build the output data object
+    const outputData: any = {
+      // If we parsed JSON successfully, spread its properties for direct access
+      // e.g., {{stepX.data.items}} will now work
+      ...(parsedData && typeof parsedData === 'object' ? parsedData : {}),
+
+      // Additional metadata
+      toolCalls: result.toolCalls,
+    };
+
+    // Add generic aliases only if they don't overwrite parsed data
+    // This preserves parsed JSON properties like parsedData.result
+    if (!outputData.hasOwnProperty('result')) outputData.result = cleanedResponse;
+    if (!outputData.hasOwnProperty('response')) outputData.response = cleanedResponse;
+    if (!outputData.hasOwnProperty('output')) outputData.output = cleanedResponse;
+    if (!outputData.hasOwnProperty('summary')) outputData.summary = cleanedResponse;
+    if (!outputData.hasOwnProperty('analysis')) outputData.analysis = cleanedResponse;
+    if (!outputData.hasOwnProperty('decision')) outputData.decision = cleanedResponse;
+    if (!outputData.hasOwnProperty('reasoning')) outputData.reasoning = cleanedResponse;
+    if (!outputData.hasOwnProperty('classification')) outputData.classification = cleanedResponse;
+
+    // ✅ FIX: Map parsed result to declared output keys
+    // If step declares outputs like { content: "object" }, map the parsed result to that key
+    // This enables {{stepX.data.content}} to work when the DSL declares content as output
+    const declaredOutputs = (step as any).outputs;
+    if (declaredOutputs && typeof declaredOutputs === 'object' && parsedData) {
+      for (const outputKey of Object.keys(declaredOutputs)) {
+        if (outputKey !== 'next_step' && !outputData.hasOwnProperty(outputKey)) {
+          // If parsedData has a 'result' wrapper (common LLM pattern), unwrap it
+          if (parsedData.result && typeof parsedData.result === 'object') {
+            outputData[outputKey] = parsedData.result;
+            logger.debug({ stepId: step.id, outputKey, mapped: 'from parsedData.result' },
+              'Mapped parsed result to declared output key');
+          } else {
+            outputData[outputKey] = parsedData;
+            logger.debug({ stepId: step.id, outputKey, mapped: 'from parsedData' },
+              'Mapped parsed data to declared output key');
+          }
+        }
+      }
+    }
+
     return {
-      data: {
-        // If we parsed JSON successfully, spread its properties for direct access
-        // e.g., {{stepX.data.items}} will now work
-        ...(parsedData && typeof parsedData === 'object' ? parsedData : {}),
-
-        // Generic aliases (always available) - keep for backward compatibility
-        result: cleanedResponse,
-        response: cleanedResponse,
-        output: cleanedResponse,
-
-        // Semantic aliases for common use cases
-        summary: cleanedResponse,
-        analysis: cleanedResponse,
-        decision: cleanedResponse,
-        reasoning: cleanedResponse,
-        classification: cleanedResponse,
-
-        // Additional metadata
-        toolCalls: result.toolCalls,
-      },
+      data: outputData,
       tokensUsed: result.tokensUsed, // Return full breakdown {total, prompt, completion}
     };
   }
@@ -1131,12 +1215,24 @@ Please analyze the above and provide your decision/response.
           }
         }
 
+        // Extract last branch step's output for easy downstream access
+        const lastBranchResult = branchResults[branchResults.length - 1];
+        const lastBranchOutput = lastBranchResult?.data ?? null;
+
+        logger.debug({
+          stepId: step.id,
+          branchName,
+          lastBranchStepId: branchToExecute[branchToExecute.length - 1]?.id,
+          lastBranchOutputKeys: lastBranchOutput ? Object.keys(lastBranchOutput) : []
+        }, 'Conditional branch completed - exposing lastBranchOutput');
+
         return {
           result: conditionResult,
           condition: stepCondition,
           branch: branchName,
           branchResults,
           executedSteps: branchToExecute.length,
+          lastBranchOutput,  // Direct access to last executed step's output data
         };
       } else {
         logger.debug({ stepId: step.id, branchName }, 'No steps to execute in branch');
@@ -1146,6 +1242,7 @@ Please analyze the above and provide your decision/response.
           branch: branchName,
           branchResults: [],
           executedSteps: 0,
+          lastBranchOutput: null,
         };
       }
     }
@@ -1155,6 +1252,7 @@ Please analyze the above and provide your decision/response.
     return {
       result: conditionResult,
       condition: stepCondition,
+      lastBranchOutput: null,
     };
   }
 
@@ -1467,7 +1565,12 @@ Please analyze the above and provide your decision/response.
     const filtered = data.filter(item => {
       // Create temporary context with current item
       const tempContext = context.clone();
-      tempContext.setVariable('item', item);
+
+      // ✅ FIX: Normalize item keys to handle LLM case variations
+      // LLMs may output camelCase (actionRequired) when DSL expects snake_case (action_required)
+      // Add both variations so filter conditions work regardless of LLM output casing
+      const normalizedItem = this.normalizeItemKeys(item);
+      tempContext.setVariable('item', normalizedItem);
 
       // DSL builder ensures condition.field has 'item.' prefix (e.g., 'item.is_client_sender')
       return this.conditionalEvaluator.evaluate(config.condition, tempContext);
@@ -1728,7 +1831,8 @@ Please analyze the above and provide your decision/response.
     }
 
     // Primitive input - use as-is in template context
-    return this.expandTemplate(template, { value: data }, context);
+    // Support both {{value}} and {{data}} for accessing the input
+    return this.expandTemplate(template, { value: data, data: data }, context);
   }
 
   /**
@@ -1744,13 +1848,93 @@ Please analyze the above and provide your decision/response.
    * 3. Context variables for step references (e.g., {{step1.data.field}})
    */
   private expandTemplate(template: string, data: Record<string, any>, context: ExecutionContext): string {
+    // ✅ Detect Handlebars block helpers in template
+    // If template contains {{#...}}, {{/...}}, {{else}}, {{@...}}, or {{this}}, use Handlebars engine
+    const hasHandlebarsBlocks = /\{\{[#/]|else\}\}|\{\{@|\{\{this\}\}/.test(template);
+
+    if (hasHandlebarsBlocks) {
+      return this.expandHandlebarsTemplate(template, data, context);
+    }
+
+    // Fast path: Simple variable substitution without Handlebars block helpers
+    return this.expandSimpleTemplate(template, data, context);
+  }
+
+  /**
+   * Expand template using Handlebars engine (for templates with block helpers)
+   *
+   * Handles: {{#each}}, {{#if}}, {{#unless}}, {{/each}}, {{@index}}, {{this}}, etc.
+   */
+  private expandHandlebarsTemplate(template: string, data: Record<string, any>, context: ExecutionContext): string {
+    try {
+      // First, resolve any runtime variables ({{step1.data.field}}, {{input.x}}, {{var.y}})
+      // These need to be resolved before Handlebars compilation
+      const preResolvedTemplate = template.replace(/\{\{([^#/@}][^}]*)\}\}/g, (match, key) => {
+        const trimmedKey = key.trim();
+
+        // Skip Handlebars special syntax (already handled by the block regex above, but be safe)
+        if (trimmedKey === 'else' || trimmedKey === 'this') {
+          return match;
+        }
+
+        // Check if it's a runtime variable reference that needs resolution
+        if (trimmedKey.startsWith('step') || trimmedKey.startsWith('input.') || trimmedKey.startsWith('var.')) {
+          try {
+            const resolved = context.resolveVariable(match);
+            // If resolved value is an object/array, keep it for Handlebars to process
+            if (typeof resolved === 'object' && resolved !== null) {
+              // Store in data under a generated key for Handlebars access
+              const safeKey = `__resolved_${trimmedKey.replace(/\./g, '_')}`;
+              data[safeKey] = resolved;
+              return `{{${safeKey}}}`;
+            }
+            return resolved !== undefined && resolved !== null ? String(resolved) : '';
+          } catch {
+            logger.warn({ variable: match }, 'Could not pre-resolve variable for Handlebars template');
+            return match;
+          }
+        }
+
+        // Leave other variables for Handlebars to handle from data context
+        return match;
+      });
+
+      // Compile and execute Handlebars template
+      const compiledTemplate = Handlebars.compile(preResolvedTemplate, { noEscape: true });
+      const result = compiledTemplate(data);
+
+      logger.debug({ templateLength: template.length, resultLength: result.length }, 'Handlebars template rendered');
+      return result;
+    } catch (error: any) {
+      logger.error({ err: error, template: template.substring(0, 200) }, 'Handlebars template compilation failed');
+      // Fall back to simple template expansion on error
+      return this.expandSimpleTemplate(template, data, context);
+    }
+  }
+
+  /**
+   * Expand template using simple regex substitution (fast path for non-Handlebars templates)
+   *
+   * Handles: {{field}}, {{nested.field}}, {{step1.data.field}}, {{input.x}}, {{var.y}}
+   */
+  private expandSimpleTemplate(template: string, data: Record<string, any>, context: ExecutionContext): string {
+    // Detect if template is JSON-like (for proper escaping of inserted values)
+    const isJsonTemplate = template.trim().startsWith('{') && template.trim().endsWith('}');
+
+    // Helper to escape value for JSON string context
+    const escapeForJson = (val: string): string => {
+      // JSON.stringify adds quotes, so we slice them off and get the escaped content
+      return JSON.stringify(val).slice(1, -1);
+    };
+
     return template.replace(/\{\{([^}]+)\}\}/g, (match, key) => {
       const trimmedKey = key.trim();
 
       // First, try to resolve from the input data object directly
       if (data && trimmedKey in data) {
         const value = data[trimmedKey];
-        return value !== undefined && value !== null ? String(value) : '';
+        const strValue = value !== undefined && value !== null ? String(value) : '';
+        return isJsonTemplate ? escapeForJson(strValue) : strValue;
       }
 
       // Check for nested paths like "user.name" in the data object
@@ -1766,7 +1950,8 @@ Please analyze the above and provide your decision/response.
           }
         }
         if (value !== undefined) {
-          return value !== null ? String(value) : '';
+          const strValue = value !== null ? String(value) : '';
+          return isJsonTemplate ? escapeForJson(strValue) : strValue;
         }
       }
 
@@ -1774,9 +1959,9 @@ Please analyze the above and provide your decision/response.
       if (trimmedKey.startsWith('step') || trimmedKey.startsWith('input.') || trimmedKey.startsWith('var.')) {
         try {
           const resolved = context.resolveVariable(match);
-          return resolved !== undefined && resolved !== null ? String(resolved) : '';
+          const strValue = resolved !== undefined && resolved !== null ? String(resolved) : '';
+          return isJsonTemplate ? escapeForJson(strValue) : strValue;
         } catch {
-          // Variable not found - return empty string
           logger.warn({ template: match, key: trimmedKey }, 'Template variable not found in context');
           return '';
         }
@@ -1833,6 +2018,39 @@ Please analyze the above and provide your decision/response.
 
     // If we can't unwrap, return the data as-is (might be a single object)
     return data;
+  }
+
+  /**
+   * Normalize item keys to handle LLM case variations
+   * LLMs may output camelCase (actionRequired) when DSL expects snake_case (action_required)
+   * This adds both variations so filter conditions work regardless of LLM output casing
+   */
+  private normalizeItemKeys(item: any): any {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return item;
+    }
+
+    const normalized: any = { ...item };
+
+    for (const key of Object.keys(item)) {
+      const value = item[key];
+
+      // Convert camelCase to snake_case and add if not present
+      // actionRequired -> action_required
+      const snakeCase = key.replace(/([A-Z])/g, '_$1').toLowerCase();
+      if (snakeCase !== key && !normalized.hasOwnProperty(snakeCase)) {
+        normalized[snakeCase] = value;
+      }
+
+      // Convert snake_case to camelCase and add if not present
+      // action_required -> actionRequired
+      const camelCase = key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+      if (camelCase !== key && !normalized.hasOwnProperty(camelCase)) {
+        normalized[camelCase] = value;
+      }
+    }
+
+    return normalized;
   }
 
   /**

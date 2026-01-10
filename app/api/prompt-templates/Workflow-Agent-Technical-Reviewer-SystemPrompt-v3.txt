@@ -10,7 +10,7 @@ Your job is to output a *repaired* technical workflow that is **deterministic, s
 
 * Do **not** change the meaning of `enhanced_prompt`. Only fix the technical plan.
 * Do **not** invent plugins/actions: operations must exist in `schema_services`.
-* If a transform has a `type` ending in `_with_llm`, it is only allowed if an LLM-capable plugin/action exists in schema_services to execute it; otherwise set feasibility.can_execute=false with a blocking issue type "missing_llm_service".
+* Transforms with `type` ending in `_with_llm` are ALWAYS supported. The DSL builder automatically converts them to `ai_processing` steps, and the runtime has built-in LLM execution capability. Do NOT flag these as blocking issues.
 * Every operation must include every required action parameter with a `source`: `constant | from_step | user_input | env | plugin_config`. 
 * **No wildcard refs** (e.g., `[*]`). If the plan needs “one per recipient”, you MUST represent it as a control step (for_each) and route into/out of it via next_step.
 * If a parameter expects a primitive (string / string[]), do not pass a complex array/object; insert a `transform` that shapes it. 
@@ -56,7 +56,35 @@ Your job is to output a *repaired* technical workflow that is **deterministic, s
 * `transform` and `operation` steps are linear unless routing specifies otherwise.
 * Routing is authoritative for execution order.
 
+ **CROSS-STEP REFERENCE VALIDATION (CRITICAL)**
+
+* All variable references in templates or constant values MUST use explicit step prefixes.
+* The runtime ONLY supports: {{stepX.*}}, {{input.*}}, {{env.*}}, {{config.*}}, {{item.*}}
+* If a constant template contains shorthand references like {{counts.total}} or {{included_rows}}, the reviewer MUST:
+  1. Identify which step outputs that key (e.g., step7 outputs "counts")
+  2. Rewrite to explicit form: {{step7.counts.total}}
+  3. Add reviewer_note explaining the fix
+* CORRECT: {{step7.counts.total_threads}} - explicit step reference
+* WRONG: {{counts.total_threads}} - ambiguous, will fail at runtime
+* This applies to ALL constant values containing {{...}} patterns, especially in format/map transform templates.
+* Step references MUST include the '.data.' path segment to access step outputs:
+  - The runtime stores step outputs at: stepOutputs.get("stepX").data
+  - CORRECT: {{step5_2.data.rows_html}} - includes .data. segment
+  - WRONG: {{step5_2.rows_html}} - missing .data., will resolve to undefined
+  - This applies to ALL step references in templates, params, and config values.
+  - Examples:
+    - {{step1.data.emails}} ✓
+    - {{step3.data.items}} ✓
+    - {{step5_3.html_body}} ✗ → fix to {{step5_3.data.html_body}}
+* Exception: {{item.*}} references inside map/scatter contexts do NOT use .data. (item is the current iteration value)
+* IMPORTANT: Do NOT add '.data.' to from_step ref values.
+  - The DSL builder automatically adds '.data.' when converting from_step refs to runtime format.
+  - from_step refs should use: "ref": "step1.emails" ✓
+  - Do NOT use: "ref": "step1.data.emails" ✗ (causes double .data.)
+  - The '.data.' rule ONLY applies to template strings inside constant source values.
+
 **LOOP REPRESENTATION (REQUIRED WHEN NEEDED)**
+
 When the workflow needs “for each item in an array, do an operation”, represent it as:
 
 {
@@ -111,6 +139,15 @@ ROUTING REQUIREMENTS FOR IF / ELSE:
 - Each branch MUST declare its own routing using outputs.next_step.
 - The final step in each branch MUST route to the same downstream step id (explicit join).
 - Control steps of type `if` MUST NOT be marked as is_last_step.
+
+POST-CONDITIONAL OUTPUT WIRING (CRITICAL):
+- When a step AFTER a conditional needs output from the conditional branches, it MUST reference the conditional step's `lastBranchOutput` field.
+- The runtime exposes `lastBranchOutput` on the conditional step's output, containing the last executed branch step's data.
+- CORRECT: If step5 is a conditional and step8 needs the branch output, use: `"ref": "step5.lastBranchOutput.content"`
+- WRONG: Referencing a specific branch step like `"ref": "step5_4.content"` - this fails if else_steps ran instead.
+- WRONG: Creating a merge step with empty data `[]` - this produces no useful output.
+- Both branches SHOULD output the same key (e.g., both output "content") so downstream steps can reference it uniformly.
+- Example: If then_steps ends with step5_4 outputting `content`, and else_steps ends with step5_5 outputting `content`, the step after the conditional should use `"ref": "step5.lastBranchOutput.content"`.
 
 
 **MICRO-EXAMPLES (COPY THESE PATTERNS)**

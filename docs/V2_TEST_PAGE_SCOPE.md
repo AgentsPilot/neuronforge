@@ -185,6 +185,7 @@ Returns clear error messages with `missingFields` array when required values are
 - **Execute AI Service**: Calls the selected AI endpoint
 - **Response Display**: Shows full AI service response
 - **Copy to Clipboard**: Quick copy functionality
+- **Send to Sandbox →**: For V5 Generator responses, transfers workflow to Agent Execution sandbox (see UC-16)
 - **Scrollable Output**: Max height container with overflow
 
 **API Endpoints Used:**
@@ -334,8 +335,10 @@ When Phase 3 completes with `ready_for_generation: true`, a "Generate Technical 
   - `ready_for_generation`: Final readiness state
 
 **Action Buttons:**
-- **Re-generate Technical Workflow**: Re-runs Phase 4 for refinement
-- **Reset Thread**: Clears all state and starts fresh
+- **Create Agent**: Generates a V4 agent from the workflow (when `ready_for_generation: true`)
+- **Back to Phase 3**: Returns to Phase 3 for modifications
+- **Download JSON**: Exports all API communications
+- **Send to V5 Generator →**: Transfers enhanced prompt and workflow to AI Services V5 Generator (see UC-16)
 
 #### 3.7 Testing Controls
 - **Reset Thread**: Clears all state and starts fresh
@@ -356,6 +359,7 @@ Phase 3 → [If user_inputs_required] → Mini-Cycle Phase 2 → Refined Phase 3
 
 Phase 4 → [If technical_inputs_required] → Collect Inputs → Re-run Phase 4
         → [If can_execute: true] → Ready for Agent Execution
+        → [Send to V5 Generator →] → AI Services Tab → [Send to Sandbox →] → Agent Execution Tab
 ```
 
 ---
@@ -963,6 +967,35 @@ Present on all tabs:
 8. Click ✓ to save or ✗ to cancel
 9. Verify success message in Debug Logs
 
+### UC-16: Thread → V5 Generator → Sandbox Pipeline
+**Full workflow transfer from Thread Conversation through V5 Generator to Agent Execution.**
+
+**Step 1: Thread Phase 4 → AI Services**
+1. Complete thread flow through Phase 4 (or load an existing Phase 4 thread)
+2. Verify workflow steps are displayed in Phase 4 section
+3. Click **"🚀 Send to V5 Generator →"** button
+4. Observe automatic tab switch to AI Services
+5. Verify `test/generate-agent-v5-test-wrapper` is selected
+6. Verify request body is pre-populated with:
+   - `enhancedPrompt`: Stringified Phase 3 enhanced prompt
+   - `technicalWorkflow.technical_workflow`: Phase 4 workflow steps
+   - `technicalWorkflow.technical_inputs_required`: Phase 4 required inputs
+7. Optionally adjust provider/model selection
+8. Click **"Execute AI Service"**
+
+**Step 2: AI Services → Agent Execution**
+1. Wait for V5 Generator response
+2. Review the generated workflow in response JSON
+3. Click **"🚀 Send to Sandbox →"** button (appears for V5 responses with workflow)
+4. Observe automatic tab switch to Agent Execution
+5. Verify Sandbox Mode is enabled and pre-populated with:
+   - Agent Name (from `plan_title`)
+   - Pilot Steps (from `workflow_steps`)
+   - Plugins Required (from `suggested_plugins`)
+   - Input Variables (from `required_inputs`)
+6. Optionally adjust input variables
+7. Click **"Start Debug"** to execute workflow
+
 ---
 
 ## System Config Dependencies
@@ -1118,7 +1151,22 @@ All errors are:
 
 ## Changelog
 
-### Version 1.12 (Current)
+### Version 1.13 (Current)
+- **Thread → V5 Generator → Sandbox Pipeline**: New 3-step workflow transfer buttons
+  - **Send to V5 Generator →** button in Thread Phase 4:
+    - Formats `enhancedPrompt` and `technicalWorkflow` into V5 request body
+    - Auto-selects `test/generate-agent-v5-test-wrapper` service
+    - Switches to AI Services tab with pre-populated fields
+  - **Send to Sandbox →** button in AI Services (for V5 responses):
+    - Extracts `workflow_steps`, `suggested_plugins`, `required_inputs` from response
+    - Enables Sandbox Mode and populates Agent Execution fields
+    - Switches to Agent Execution tab ready for debug
+- **Phase 4 State Restoration on Thread Load**: Loading existing Phase 4 threads now restores:
+  - `technicalWorkflow`, `technicalInputsRequired`, `feasibility`, `phase4Response`
+  - Enables "Send to V5 Generator" button for loaded threads
+- Added UC-16: Thread → V5 Generator → Sandbox Pipeline use case
+
+### Version 1.12
 - **New System Settings Tab**: Added Tab 6 for viewing and editing `system_settings_config` table values
   - **View All Settings**: Displays all configuration keys with values, categories, and descriptions
   - **Text Filter**: Search by key, value, or description (case-insensitive, real-time)
@@ -1305,5 +1353,5 @@ For issues or questions about the Test Page:
 
 ---
 
-**Last Updated:** December 30, 2025 (v1.12 - New System Settings Tab for viewing and editing system_settings_config)
+**Last Updated:** January 7, 2026 (v1.13 - Thread → V5 Generator → Sandbox Pipeline)
 **Maintained By:** NeuronForge Development Team

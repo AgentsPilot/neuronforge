@@ -145,7 +145,20 @@ export class ConditionalEvaluator {
     // Match {{...}} or identifiers with property/array access (e.g., item[5], item.field, step1.data)
     // Requires at least one . or [ to avoid matching standalone identifiers or numbers
     return expression.replace(/\{\{([^}]+)\}\}|(\w+(?:\.\w+|\[\d+\])[\w.\[\]]*)/g, (match, explicit, implicit) => {
-      const ref = explicit || implicit;
+      const ref = (explicit || implicit || '').trim();
+
+      // ✅ Skip Handlebars block helpers & special vars (defense-in-depth)
+      // Examples: {{#each ...}}, {{/each}}, {{else}}, {{@last}}, {{this}}
+      // These should never appear in condition expressions, but skip them if they do
+      if (explicit && (
+        ref.startsWith('#') ||
+        ref.startsWith('/') ||
+        ref === 'else' ||
+        ref.startsWith('@') ||
+        ref === 'this'
+      )) {
+        return match;
+      }
 
       try {
         const value = context.resolveVariable(`{{${ref}}}`);

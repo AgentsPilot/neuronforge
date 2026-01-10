@@ -441,11 +441,10 @@ Phase 4 does **not** change the meaning of the agent’s behavior; it only expre
 		- Transform types are split into:
 			A) Deterministic (no LLM): filter, map, sort, group_by, aggregate, reduce, deduplicate, flatten, pick_fields, format, merge, split, convert
 			B) LLM-assisted (requires AI processing): summarize_with_llm, classify_with_llm, extract_with_llm, analyze_with_llm, generate_with_llm, translate_with_llm, enrich_with_llm
-		- Deterministic transforms MUST be implementable without calling an LLM.
-		- LLM-assisted transforms MUST be represented as either:
-			(a) a transform with one of the *_with_llm types AND an explicit dependency on an LLM-capable service in requiredServices, OR
-			(b) an "operation" step that calls an LLM-capable plugin/action (preferred when schema_services provides such actions).
-		- One-line intent for transform types (use these meanings):
+		- Deterministic transforms MUST be implementable without calling an LLM.		
+    - LLM-assisted transforms MUST use one of the *_with_llm types (e.g., extract_with_llm, summarize_with_llm).
+      - Do NOT require an LLM-capable service in schema_services for *_with_llm transforms.		
+    - One-line intent for transform types (use these meanings):
 			Deterministic:
 				- filter: keep/remove items based on a boolean condition
 				- map: reshape items and/or compute derived fields per item
@@ -560,7 +559,7 @@ Phase 4 does **not** change the meaning of the agent’s behavior; it only expre
 	- Each required parameter has a clear source (constant, from_step, or user_input).
 * Every step with kind="transform" MUST include a `type` that is one of the allowed transform types listed above.
 	- `transform.type` MUST be one of the allowed values. If not, add a blocking issue `invalid_transform_type` and set feasibility.can_execute=false.
-	- If a transform.type ends with "_with_llm" and no LLM-capable service exists in requiredServices (and/or schema_services), set feasibility.can_execute=false with blocking issue type "missing_llm_service".
+	- Transforms with type ending in "_with_llm" are ALWAYS executable - the runtime provides built-in LLM capability. Do NOT set feasibility.can_execute=false for these transforms.
 * next_step and is_last_step schema guidelines:
 	- Every step except the last MUST contain outputs.next_step OR (for branching steps) each output branch MUST contain its own next_step.
 	- Every next_step value MUST match an existing step id in technical_workflow.
@@ -569,6 +568,17 @@ Phase 4 does **not** change the meaning of the agent’s behavior; it only expre
 * Constant schema guidelines:
 	- Constant values MUST be literal constants only.
 	- Do NOT embed template strings like `{{step7.html_body}}` inside `source: "constant"`.
+* Cross-step reference guidelines (CRITICAL for template resolution):
+  - ALL references to outputs from other steps MUST use explicit step prefixes.
+  - Format: {{stepId.outputKey.field}} where stepId is the step that produced the output.
+  - CORRECT: {{step7.counts.total_threads}} - explicitly references step7's counts output
+  - WRONG: {{counts.total_threads}} - ambiguous, no step prefix
+  - This applies to ALL places where you reference another step's output:
+    - In template strings inside constant values
+    - In step descriptions that include data references
+    - In any string that will be processed at runtime
+  - The runtime ONLY understands: {{stepX.data.*}}, {{input.*}}, {{env.*}}, {{config.*}}, {{item.*}}
+  - Any unqualified reference like {{counts.*}} will FAIL at runtime.
 * If a value comes from a previous step, it MUST use `source: "from_step"` with a `ref`.
 * fre_ech schema guidelines:
 	- Within a `for_each` loop body, using `source: "constant"` with `value: "{{item.field}}"` is allowed ONLY for loop-item placeholders (e.g., `{{doc.id}}`, `{{email_payload.content}}`) and MUST NOT reference prior steps (no `{{stepN...}}`).

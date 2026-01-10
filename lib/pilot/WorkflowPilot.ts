@@ -48,6 +48,7 @@ import { WorkflowOrchestrator } from '@/lib/orchestration';
 import { PilotConfigService } from './PilotConfigService';
 import { StepCache } from './StepCache';
 import { DebugSessionManager } from '@/lib/debug/DebugSessionManager';
+import type { UserContext } from '@/lib/user-context';
 
 export class WorkflowPilot {
   private supabase: SupabaseClient;
@@ -145,7 +146,8 @@ export class WorkflowPilot {
       onStepFailed?: (stepId: string, stepName: string, error: string) => void;
     },
     debugMode?: boolean,
-    providedDebugRunId?: string
+    providedDebugRunId?: string,
+    userContext?: UserContext
   ): Promise<WorkflowExecutionResult> {
     console.log(`🚀 [WorkflowPilot] Starting execution for agent ${agent.id}: ${agent.agent_name}`);
 
@@ -257,6 +259,12 @@ export class WorkflowPilot {
       finalSessionId,
       inputValues
     );
+
+    // Set user context for ai_processing personalization
+    if (userContext) {
+      context.setUserContext(userContext);
+      console.log(`👤 [WorkflowPilot] User context set: ${userContext.full_name || 'unknown'} (${userContext.email || 'no email'})`);
+    }
 
     // 3. Load memory context and initialize orchestration IN PARALLEL
     const memoryConfig = await MemoryConfigService.getGlobalConfig(this.supabase);
@@ -499,8 +507,23 @@ export class WorkflowPilot {
 
       console.log(`✅ [WorkflowPilot] Execution completed successfully: ${executionId}`);
 
-      // Cleanup debug session
+      // Emit execution_complete event to debug stream BEFORE cleanup
+      // This ensures the frontend receives the completion signal
       if (debugRunId) {
+        DebugSessionManager.emitEvent(debugRunId, {
+          type: 'execution_complete',
+          data: {
+            success: true,
+            executionId,
+            stepsCompleted: context.completedSteps.length,
+            totalExecutionTime: context.totalExecutionTime,
+          },
+        });
+        console.log(`🐛 [WorkflowPilot] Emitted execution_complete event: ${debugRunId}`);
+
+        // Small delay to ensure event is sent before cleanup
+        await new Promise(resolve => setTimeout(resolve, 100));
+
         DebugSessionManager.cleanup(debugRunId);
         console.log(`🐛 [WorkflowPilot] Debug session cleaned up: ${debugRunId}`);
       }
@@ -541,8 +564,22 @@ export class WorkflowPilot {
     } catch (error: any) {
       console.error(`❌ [WorkflowPilot] Execution failed:`, error);
 
-      // Cleanup debug session
+      // Emit execution_error event to debug stream BEFORE cleanup
       if (debugRunId) {
+        DebugSessionManager.emitEvent(debugRunId, {
+          type: 'execution_error',
+          error: error.message,
+          data: {
+            success: false,
+            executionId,
+            stepsCompleted: context.completedSteps.length,
+          },
+        });
+        console.log(`🐛 [WorkflowPilot] Emitted execution_error event: ${debugRunId}`);
+
+        // Small delay to ensure event is sent before cleanup
+        await new Promise(resolve => setTimeout(resolve, 100));
+
         DebugSessionManager.cleanup(debugRunId);
         console.log(`🐛 [WorkflowPilot] Debug session cleaned up after failure: ${debugRunId}`);
       }
@@ -706,25 +743,72 @@ export class WorkflowPilot {
 
     // Handle conditional type
     if (stepDef.type === 'conditional') {
-      const result = this.conditionalEvaluator.evaluate(
-        stepDef.condition!,
-        context
-      );
+      // Check if this conditional has nested steps (V4 format)
+      const hasThenSteps = stepDef.then_steps && stepDef.then_steps.length > 0;
+      const hasElseSteps = stepDef.else_steps && stepDef.else_steps.length > 0;
 
-      // Store condition result
-      context.setStepOutput(stepDef.id, {
-        stepId: stepDef.id,
-        plugin: 'system',
-        action: 'conditional',
-        data: { result },
-        metadata: {
-          success: true,
-          executedAt: new Date().toISOString(),
-          executionTime: 0,
-        },
-      });
+      if (hasThenSteps || hasElseSteps) {
+        // V4 Format: Use StepExecutor to evaluate AND execute nested steps
+        const startTime = Date.now();
+        const stepOutput = await this.stepExecutor.execute(stepDef, context);
 
-      console.log(`  ✓ Condition evaluated: ${result}`);
+        // StepExecutor.execute() returns a StepOutput object with data containing the actual result
+        // data contains: { result, branch, branchResults, lastBranchOutput }
+        const conditionalResult = stepOutput.data;
+
+        // Store the StepOutput directly - it's already properly structured
+        context.setStepOutput(stepDef.id, stepOutput);
+
+        console.log(`  ✓ Condition evaluated: ${conditionalResult?.result} (branch: ${conditionalResult?.branch}, lastBranchOutput: ${conditionalResult?.lastBranchOutput ? 'present' : 'null'})`);
+
+        // Emit debug step_complete event for V4 conditional
+        if (debugRunId) {
+          DebugSessionManager.emitEvent(debugRunId, {
+            type: 'step_complete',
+            stepId: stepDef.id,
+            stepName: stepDef.name,
+            data: {
+              output: conditionalResult,
+              duration: Date.now() - startTime,
+            },
+          });
+        }
+      } else {
+        // Legacy Format: Only evaluate condition (orchestrator handles routing)
+        const result = this.conditionalEvaluator.evaluate(
+          stepDef.condition!,
+          context
+        );
+
+        // Store condition result
+        context.setStepOutput(stepDef.id, {
+          stepId: stepDef.id,
+          plugin: 'system',
+          action: 'conditional',
+          data: { result },
+          metadata: {
+            success: true,
+            executedAt: new Date().toISOString(),
+            executionTime: 0,
+          },
+        });
+
+        console.log(`  ✓ Condition evaluated: ${result}`);
+
+        // Emit debug step_complete event for legacy conditional
+        if (debugRunId) {
+          DebugSessionManager.emitEvent(debugRunId, {
+            type: 'step_complete',
+            stepId: stepDef.id,
+            stepName: stepDef.name,
+            data: {
+              output: { result },
+              duration: 0,
+            },
+          });
+        }
+      }
+
       await this.stateManager.checkpoint(context);
       // Emit step completed event
       if (stepEmitter?.onStepCompleted) {
