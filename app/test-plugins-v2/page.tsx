@@ -1560,8 +1560,8 @@ export default function TestPluginsPage() {
       }
       // Set default provider/model for v5 wrapper (not stored in template, injected at execution)
       if (selectedAIService === 'test/generate-agent-v5-test-wrapper') {
-        setSelectedProvider('anthropic');
-        setSelectedModel('claude-sonnet-4-20250514');
+        setSelectedProvider('openai');
+        setSelectedModel('gpt-5.2');
       }
     }
   }, [selectedAIService]);
