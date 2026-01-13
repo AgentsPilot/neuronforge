@@ -358,7 +358,7 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
       snippet: email.snippet || '',
       labels: email.labelIds || [],
       body: '',
-      attachments: []
+      attachments: [] as any[]
     };
 
     // Extract body text
