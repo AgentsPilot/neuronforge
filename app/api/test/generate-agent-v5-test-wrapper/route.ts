@@ -15,9 +15,13 @@ import {
   WorkflowGenerationInput,
   V5GenerationResult,
   TechnicalWorkflowInput,
+  ReviewedTechnicalWorkflowInput,
 } from '@/lib/agentkit/v4/v5-generator';
 import { ProviderName } from '@/lib/ai/providerFactory';
 import { createLogger } from '@/lib/logger';
+import { compileDsl, getErrorSummary } from '@/lib/pilot/dsl-compiler';
+import type { CompilationResult } from '@/lib/pilot/dsl-compiler';
+import { initializeSchemaRegistry } from '@/lib/pilot/schema-registry';
 
 export const runtime = 'nodejs';
 
@@ -31,6 +35,13 @@ interface V5TestWrapperRequest {
   enhancedPrompt?: string;
   /** Pre-built technical workflow - for LLM review path (string or object, only technical_workflow array needed) */
   technicalWorkflow?: string | Partial<TechnicalWorkflowInput>;
+  /**
+   * Pre-reviewed technical workflow - skips LLM reviewer entirely.
+   * Use for deterministic testing by injecting reviewer output directly.
+   * When provided, technicalWorkflow is ignored and LLM reviewer is bypassed.
+   * Must include technical_workflow, enhanced_prompt, reviewer_summary, and feasibility fields.
+   */
+  reviewedTechnicalWorkflow?: string | ReviewedTechnicalWorkflowInput;
   /** User ID to load connected plugins */
   userId: string;
   /** AI provider (e.g., "anthropic", "openai") */
@@ -72,6 +83,7 @@ export async function POST(req: NextRequest) {
     const {
       enhancedPrompt,
       technicalWorkflow,
+      reviewedTechnicalWorkflow,
       userId,
       provider,
       model,
@@ -134,24 +146,65 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Must have either enhancedPrompt or technicalWorkflow with steps
+    // Parse reviewedTechnicalWorkflow if provided (for deterministic testing - skips LLM reviewer)
+    let parsedReviewedWorkflow: ReviewedTechnicalWorkflowInput | undefined = undefined;
+    if (reviewedTechnicalWorkflow) {
+      if (typeof reviewedTechnicalWorkflow === 'string') {
+        try {
+          parsedReviewedWorkflow = JSON.parse(reviewedTechnicalWorkflow) as ReviewedTechnicalWorkflowInput;
+        } catch (parseError) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: 'reviewedTechnicalWorkflow must be a valid JSON string or object',
+              details: parseError instanceof Error ? parseError.message : 'JSON parse error',
+            },
+            { status: 400 }
+          );
+        }
+      } else {
+        parsedReviewedWorkflow = reviewedTechnicalWorkflow;
+      }
+
+      // Validate reviewed workflow has required fields
+      if (!parsedReviewedWorkflow.technical_workflow?.length) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'reviewedTechnicalWorkflow must include technical_workflow array with steps',
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Check if we have a reviewed workflow (takes priority over technicalWorkflow)
+    const hasReviewedWorkflowSteps = (parsedReviewedWorkflow?.technical_workflow?.length ?? 0) > 0;
+
+    // Must have either enhancedPrompt, technicalWorkflow with steps, or reviewedTechnicalWorkflow
     const hasTechnicalWorkflowSteps = (parsedTechnicalWorkflow?.technical_workflow?.length ?? 0) > 0;
-    if (!parsedEnhancedPrompt && !hasTechnicalWorkflowSteps) {
+    if (!parsedEnhancedPrompt && !hasTechnicalWorkflowSteps && !hasReviewedWorkflowSteps) {
       return NextResponse.json(
         {
           success: false,
-          error: 'Either enhancedPrompt (stringified JSON) or technicalWorkflow.technical_workflow (with steps) is required',
+          error: 'Either enhancedPrompt (stringified JSON), technicalWorkflow.technical_workflow (with steps), or reviewedTechnicalWorkflow is required',
         },
         { status: 400 }
       );
     }
 
     // Auto-extract required_services from multiple sources (in priority order)
-    // 1. enhancedPrompt.specifics.services_involved
-    // 2. parsedTechnicalWorkflow.requiredServices (from Phase 4 response)
-    // 3. parsedTechnicalWorkflow.enhanced_prompt.specifics.services_involved
+    // 1. reviewedTechnicalWorkflow.requiredServices (highest priority - injected workflow)
+    // 2. reviewedTechnicalWorkflow.enhanced_prompt.specifics.services_involved
+    // 3. enhancedPrompt.specifics.services_involved
+    // 4. parsedTechnicalWorkflow.requiredServices (from Phase 4 response)
+    // 5. parsedTechnicalWorkflow.enhanced_prompt.specifics.services_involved
     let required_services: string[] = [];
-    if (parsedEnhancedPrompt?.specifics?.services_involved) {
+    if ((parsedReviewedWorkflow as any)?.requiredServices?.length > 0) {
+      required_services = (parsedReviewedWorkflow as any).requiredServices;
+    } else if ((parsedReviewedWorkflow as any)?.enhanced_prompt?.specifics?.services_involved?.length > 0) {
+      required_services = (parsedReviewedWorkflow as any).enhanced_prompt.specifics.services_involved;
+    } else if (parsedEnhancedPrompt?.specifics?.services_involved) {
       required_services = parsedEnhancedPrompt.specifics.services_involved;
     } else if ((parsedTechnicalWorkflow as any)?.requiredServices?.length > 0) {
       required_services = (parsedTechnicalWorkflow as any).requiredServices;
@@ -228,7 +281,9 @@ export async function POST(req: NextRequest) {
       model,
       hasEnhancedPrompt: !!parsedEnhancedPrompt,
       hasTechnicalWorkflowSteps,
+      hasReviewedWorkflowSteps,
       technicalWorkflowStepsCount: fullTechnicalWorkflow?.technical_workflow?.length || 0,
+      reviewedWorkflowStepsCount: parsedReviewedWorkflow?.technical_workflow?.length || 0,
       requiredServicesCount: required_services.length,
       requiredServices: required_services,
       technicalInputsRequiredCount: fullTechnicalWorkflow?.technical_inputs_required?.length || 0,
@@ -286,6 +341,7 @@ export async function POST(req: NextRequest) {
     const generationInput: WorkflowGenerationInput = {
       enhancedPrompt,
       technicalWorkflow: fullTechnicalWorkflow,
+      reviewedTechnicalWorkflow: parsedReviewedWorkflow, // Skip LLM reviewer if provided
       provider,
       model,
       required_services,
@@ -297,8 +353,10 @@ export async function POST(req: NextRequest) {
       model,
       hasEnhancedPrompt: !!parsedEnhancedPrompt,
       hasTechnicalWorkflowSteps,
+      hasReviewedWorkflowSteps,
       requiredServices: required_services,
       skipDslBuilder,
+      reviewerWillBeSkipped: hasReviewedWorkflowSteps,
     }, 'Starting V5 workflow generation');
 
     // Generate workflow
@@ -330,11 +388,50 @@ export async function POST(req: NextRequest) {
       workflowGenerationSessionId: result.sessionId,
     }, 'V5 generation succeeded');
 
-    // Return raw V5GenerationResult with latency and session tracking info
+    // Run DSL compiler validation on generated workflow (if workflow exists)
+    let dslCompilation: {
+      valid: boolean;
+      errors: CompilationResult['errors'];
+      warnings: CompilationResult['warnings'];
+      errorSummary?: string;
+    } | undefined;
+
+    if (result.workflow?.workflow_steps?.length > 0) {
+      // Initialize schema registry for field validation (required by DSL compiler)
+      await initializeSchemaRegistry();
+
+      const compilationResult = compileDsl({ steps: result.workflow.workflow_steps });
+
+      dslCompilation = {
+        valid: compilationResult.valid,
+        errors: compilationResult.errors,
+        warnings: compilationResult.warnings,
+        errorSummary: !compilationResult.valid ? getErrorSummary(compilationResult) : undefined,
+      };
+
+      if (compilationResult.valid) {
+        logger.info({
+          valid: true,
+          warningsCount: compilationResult.warnings.length,
+        }, 'DSL compilation passed');
+      } else {
+        logger.error({
+          valid: false,
+          errorsCount: compilationResult.errors.length,
+          warningsCount: compilationResult.warnings.length,
+          errorSummary: dslCompilation.errorSummary,
+        }, 'DSL compilation failed');
+      }
+    } else {
+      logger.debug('Skipping DSL compilation (no workflow_steps in result)');
+    }
+
+    // Return raw V5GenerationResult with latency, session tracking, and DSL compilation info
     return NextResponse.json({
       ...result,
       latency_ms: latencyMs,
       workflowGenerationSessionId: result.sessionId,
+      dslCompilation,
     });
 
   } catch (error: any) {

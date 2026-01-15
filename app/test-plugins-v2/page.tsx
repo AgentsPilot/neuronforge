@@ -658,6 +658,13 @@ const AI_SERVICE_TEMPLATES = {
       technical_inputs_required: []
     },
 
+    // Optional: Pre-reviewed workflow (SKIPS LLM reviewer for deterministic testing)
+    // Use "Import JSON" button to load a previously saved reviewedWorkflow response
+    // When provided: LLM reviewer is bypassed, goes directly to DSL building
+    // Must include: technical_workflow, enhanced_prompt, requiredServices, reviewer_summary, feasibility
+    // Set to null to use normal LLM review flow
+    reviewedTechnicalWorkflow: null,
+
     // Skip DSL building and return only reviewed workflow (for testing LLM review in isolation)
     // When true: returns reviewedWorkflow only, workflow is undefined
     // When false: runs full flow including DSL building
@@ -697,7 +704,7 @@ export default function TestPluginsPage() {
   const [showJsonPromptModal, setShowJsonPromptModal] = useState(false);
   const [jsonPromptImportValue, setJsonPromptImportValue] = useState('');
   const [jsonPromptImportError, setJsonPromptImportError] = useState<string | null>(null);
-  const [jsonImportTargetField, setJsonImportTargetField] = useState<'prompt' | 'enhancedPrompt' | 'enhancedPromptTechnicalWorkflow' | 'technicalWorkflow' | 'technical_inputs_required'>('enhancedPrompt');
+  const [jsonImportTargetField, setJsonImportTargetField] = useState<'prompt' | 'enhancedPrompt' | 'enhancedPromptTechnicalWorkflow' | 'technicalWorkflow' | 'technical_inputs_required' | 'reviewedTechnicalWorkflow'>('enhancedPrompt');
 
   // Provider/Model selection state (shared by test/analyze-prompt and thread-conversation)
   const [selectedProvider, setSelectedProvider] = useState<ProviderOption>('openai');
@@ -1397,6 +1404,35 @@ export default function TestPluginsPage() {
               extractionNote = ' (wrapped single input in array)';
             }
             break;
+
+          case 'reviewedTechnicalWorkflow':
+            // Pre-reviewed workflow for deterministic testing (skips LLM reviewer)
+            // Must include: technical_workflow, enhanced_prompt, requiredServices, reviewer_summary, feasibility
+            if (importedData.technical_workflow !== undefined) {
+              // Extract the full reviewed workflow structure
+              extractedData = {
+                technical_workflow: importedData.technical_workflow,
+                ...(importedData.enhanced_prompt && { enhanced_prompt: importedData.enhanced_prompt }),
+                ...(importedData.requiredServices && { requiredServices: importedData.requiredServices }),
+                ...(importedData.technical_inputs_required && { technical_inputs_required: importedData.technical_inputs_required }),
+                ...(importedData.reviewer_summary && { reviewer_summary: importedData.reviewer_summary }),
+                ...(importedData.feasibility && { feasibility: importedData.feasibility }),
+                ...(importedData.analysis && { analysis: importedData.analysis }),
+              };
+              const includedFields = [
+                'technical_workflow',
+                importedData.enhanced_prompt ? 'enhanced_prompt' : null,
+                importedData.requiredServices ? 'requiredServices' : null,
+                importedData.reviewer_summary ? 'reviewer_summary' : null,
+                importedData.feasibility ? 'feasibility' : null,
+              ].filter(Boolean);
+              extractionNote = ` (extracted: ${includedFields.join(', ')})`;
+            } else if (importedData.reviewedWorkflow?.technical_workflow) {
+              // Handle case where reviewedWorkflow is nested in API response
+              extractedData = importedData.reviewedWorkflow;
+              extractionNote = ' (extracted from .reviewedWorkflow)';
+            }
+            break;
         }
       }
 
@@ -1430,6 +1466,13 @@ export default function TestPluginsPage() {
 
       // Set the stringified JSON into the target field
       currentBody[jsonImportTargetField] = stringifiedJson;
+
+      // Auto-set skipDslBuilder to false when importing reviewedTechnicalWorkflow
+      // (since the purpose of importing reviewed workflow is to run DSL builder, not skip it)
+      if (jsonImportTargetField === 'reviewedTechnicalWorkflow' && currentBody.skipDslBuilder === true) {
+        currentBody.skipDslBuilder = false;
+        addDebugLog('info', 'Auto-set skipDslBuilder to false (reviewed workflow should run DSL builder)');
+      }
 
       setAiServiceRequestBody(JSON.stringify(currentBody, null, 2));
       addDebugLog('success', `Imported JSON (${stringifiedJson.length} chars) into "${jsonImportTargetField}"${extractionNote}`);
@@ -5896,6 +5939,18 @@ export default function TestPluginsPage() {
                   />
                   <code style={{ backgroundColor: '#e2d6f5', padding: '2px 6px', borderRadius: '3px' }}>technical_inputs_required</code>
                   <span style={{ fontSize: '11px', color: '#666' }}>(V5 - merge into technicalWorkflow)</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="targetField"
+                    value="reviewedTechnicalWorkflow"
+                    checked={jsonImportTargetField === 'reviewedTechnicalWorkflow'}
+                    onChange={() => setJsonImportTargetField('reviewedTechnicalWorkflow')}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <code style={{ backgroundColor: '#d1ecf1', padding: '2px 6px', borderRadius: '3px' }}>reviewedTechnicalWorkflow</code>
+                  <span style={{ fontSize: '11px', color: '#666' }}>(V5 - skip LLM reviewer)</span>
                 </label>
               </div>
             </div>

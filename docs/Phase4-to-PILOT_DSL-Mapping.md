@@ -156,12 +156,12 @@ Phase 4 (TransformStep - LLM)            PILOT_DSL_SCHEMA (AIProcessingStep)
 | `group_by` | `group` | `{ field: string }` |
 | `aggregate` | `aggregate` | `{ aggregations: [...] }` |
 | `reduce` | `reduce` | `{ reducer: string, initialValue: any }` |
-| `deduplicate` | `filter` | `{ condition: ... }` (specialized) |
+| `deduplicate` | `deduplicate` | `{ field: string, keep?: string }` |
 | `flatten` | `map` | `{ mapping: ... }` (specialized) |
 | `pick_fields` | `map` | `{ mapping: { field: "{{item.field}}" } }` |
 | `format` | `format` | `{ mapping: { template: "..." } }` (dedicated operation) |
 | `merge` | `map` | `{ mapping: ... }` (combine objects) |
-| `split` | `map` | `{ mapping: ... }` (partition) |
+| `split` | `split` | `{ field: string }` (field-based grouping) |
 | `convert` | `map` | `{ mapping: ... }` (type coercion) |
 
 ---
@@ -627,7 +627,7 @@ The DSL Builder includes predefined output contracts for transform operations, m
 | `filter` | `T[]` | Filtered array of items matching condition |
 | `map` | `U[]` | Transformed array of items |
 | `group` | `{key: string, items: T[]}[]` | Array of groups with key and items |
-| `split` | `{with_field: T[], without_field: T[]}` | Partitioned arrays based on field presence |
+| `split` | `{[bucketKey]: T[], _meta: {...}}` | Items grouped by field value into named buckets |
 | `format` | `string` | Formatted string output (HTML, text, etc.) |
 | `sort` | `T[]` | Sorted array of items |
 | `aggregate` | `{[alias]: value}` | Object with aggregated values |
@@ -1268,12 +1268,12 @@ Special output field:
 | `group_by` | Bucket items by key | `field` |
 | `aggregate` | Compute metrics (sum/count/avg/min/max) | `aggregations` |
 | `reduce` | Fold list to single value | `reducer`, `initialValue` |
-| `deduplicate` | Remove duplicates by key | `condition` (specialized) |
+| `deduplicate` | Remove duplicates by key | `field`, `keep` (optional) |
 | `flatten` | Convert nested → flat structure | `mapping` (specialized) |
 | `pick_fields` | Select subset of fields | `mapping` |
 | `format` | Render to string/HTML/markdown | `mapping` |
 | `merge` | Combine objects/arrays | `mapping` |
-| `split` | Break string/list, partition items | `mapping` |
+| `split` | Group items by field value into buckets | `field` |
 | `convert` | Type coercion, normalize formats | `mapping` |
 
 ### LLM Types (Requires AI Processing)
@@ -1379,19 +1379,47 @@ This ensures robust execution even when shorthand references slip through earlie
 | File | Purpose |
 |------|---------|
 | `lib/validation/phase4-schema.ts` | Phase 4 input types and validation |
+| `lib/validation/technical-reviewer-schema.ts` | Reviewer response schema + OutputContract types (Phase 5) |
 | `lib/pilot/types.ts` | PILOT_DSL_SCHEMA output types |
 | `lib/pilot/schema/pilot-dsl-schema.ts` | Full JSON schema for OpenAI strict mode |
+| `lib/pilot/schema-registry.ts` | Schema registry with $ref resolution (Phase 5) |
+| `lib/pilot/dsl-compiler.ts` | DSL compiler with $ref and stepX.data.Y validation (Phase 5) |
 | `lib/agentkit/v4/core/phase4-dsl-builder.ts` | Phase4DSLBuilder implementation |
-| `lib/pilot/StepExecutor.ts` | Transform execution including `transformFormat` |
+| `lib/pilot/StepExecutor.ts` | Transform execution including `transformFormat`, deduplicate with sort_field |
 | `lib/orchestration/IntentClassifier.ts` | Intent classification with explicit intent support |
-| `app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v14-chatgpt.txt` | Phase 4 prompt with transform types |
-| `app/api/prompt-templates/Workflow-Agent-Technical-Reviewer-SystemPrompt-v3.txt` | Reviewer prompt with transform type validation |
+| `app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v15-chatgpt.txt` | Phase 4 prompt with explicit output schema declarations (Phase 5) |
+| `app/api/prompt-templates/Workflow-Agent-Technical-Reviewer-SystemPrompt-v4.txt` | Reviewer prompt with output schema enforcement (Phase 5) |
 
 ---
 
-**Document Version**: 2.12
-**Updated**: 2026-01-09
+**Document Version**: 2.16
+**Updated**: 2026-01-15
 **Changes**:
+- v2.16: **Runtime Execution Fixes (P19-P24)**:
+  - **Deterministic Map with Columns (P19)**: `hasMappingConfig()` now recognizes `columns` as valid config for deterministic map transforms
+  - **Field Name Normalization (P20)**: Added `findFieldValue()` and `generateFieldNameVariations()` to handle field name variations (snake_case, camelCase, spaces)
+  - **Static Values Support (P21)**: Added `extractStaticValuesFromDescription()` to parse patterns like `add Status="Open"` from step descriptions
+  - **Map Output Reference Auto-Append (P22)**: `resolveInput()` now auto-appends single output key for map transforms (`{{step5.data}}` → `{{step5.data.rows}}`)
+  - **Handlebars Block Helper Path Pre-Resolution (P23)**: `expandHandlebarsTemplate()` now pre-resolves paths in `{{#each step7.data.items}}` blocks before Handlebars compilation
+  - **Data Freshness Validation (P24)**: Technical Reviewer v4 prompt includes DATA FRESHNESS VALIDATION section to detect and fix stale read-modify-read patterns
+- v2.15: **Phase 5 Schema Validation Fix**:
+  - **StepOutputValueSchema**: Extended to accept explicit output schema objects (e.g., `{ subject: "string", html_body: "string" }`)
+  - Previously only accepted string type labels or branch objects, causing validation failures for Phase 5 explicit schemas
+  - Added `ExplicitOutputSchemaSchema` = `z.record(z.string(), z.string())` to the union
+- v2.14: **Phase 5 - Schema Contract Enforcement**:
+  - **Output Schema Declaration**: Phase 4 prompt v15 now requires explicit output schema declarations (rejects `"object"`, `"object[]"`, `"any"`)
+  - **Reviewer Enforcement**: Reviewer prompt v4 validates output schemas and adds blocking_gap for vague types
+  - **Schema Registry Extension**: Added `$ref` resolution, AI schema storage, transform schema storage to `schema-registry.ts`
+  - **New Types**: Added `OutputContract`, `AIOutputSchema`, `JSONSchema` types in `technical-reviewer-schema.ts`
+  - **DSL Compiler Enhancement**: Validates `$ref` references exist, validates `stepX.data.Y` field references against declared outputs
+  - **DSL Builder Enhancement**: Generates explicit split bucket outputs, passes split bucket keys to `buildStepOutputs`
+  - **Deduplicate Enhancement**: Added `sort_field` and `keep` config options for deterministic deduplication ordering
+- v2.13: Deterministic transform fixes for deduplicate and split:
+  - **deduplicate**: Now maps to `deduplicate` operation (was incorrectly mapped to `filter`), uses `{ field: string, keep?: string }` config
+  - **split**: Now maps to `split` operation (was incorrectly mapped to `map`), uses `{ field: string }` config for field-based grouping
+  - **Field-based grouping**: Split transform groups items by field value into named buckets (e.g., `{ action_required: [...], fyi: [...], _meta: {...} }`)
+  - **Removed from mapping-based classification**: deduplicate and split no longer require `{{item.*}}` mapping config
+  - **Transform-specific validation**: Added `buildDeduplicateConfig()` and `buildSplitConfig()` in Phase4DSLBuilder
 - v2.12: Runtime LLM output handling improvements:
   - **ai_processing Declared Output Mapping**: `StepExecutor.executeLLMDecision()` now maps parsed LLM results to declared output keys (e.g., `outputs: { content: "object" }` → `data.content = parsedResult`)
   - **Filter Case Normalization**: `transformFilter()` normalizes item keys to handle both camelCase and snake_case (e.g., `actionRequired` and `action_required` both work)

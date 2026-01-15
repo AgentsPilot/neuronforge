@@ -1,0 +1,25 @@
+{
+  "enhancedPrompt": {
+    "plan_title": "Weather Alert Agent",
+    "plan_description": "Checks weather conditions and sends an alert notification if rain is expected",
+    "sections": {
+      "data": ["Current weather data", "Weather forecast for next 24 hours"],
+      "output": ["Weather alert message"],
+      "actions": ["Check weather API", "Send notification"],
+      "delivery": ["Push notification to user"],
+      "processing_steps": [
+        "Fetch current weather and forecast",
+        "Analyze if rain is expected",
+        "Format alert message",
+        "Send notification"
+      ]
+    },
+    "specifics": {
+      "services_involved": ["weather-api", "notifications"],
+      "resolved_user_inputs": [
+        { "key": "location", "value": "Tel Aviv, Israel" },
+        { "key": "alert_threshold", "value": "50" }
+      ]
+    }
+  }
+}

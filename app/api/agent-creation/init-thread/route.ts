@@ -20,7 +20,8 @@ import { resolveThreadProviderConfig } from '@/lib/agent-creation/thread-provide
 
 //const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v10-chatgpt";
 //const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v13-chatgpt";
-const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v14-chatgpt";
+//const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v14-chatgpt";
+const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v15-chatgpt"; // Phase 5: Explicit output schema declarations
 
 // Initialize Supabase client (still needed for AIAnalyticsService)
 const supabase = createClient(

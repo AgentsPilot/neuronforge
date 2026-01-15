@@ -146,7 +146,8 @@ export async function POST(request: NextRequest) {
       email: user.email || '',
       role: user.user_metadata?.role || '',
       company: user.user_metadata?.company || '',
-      domain: user.user_metadata?.domain || ''
+      domain: user.user_metadata?.domain || '',
+      ...(user.user_metadata?.timezone && { timezone: user.user_metadata.timezone })
     };
 
     // Merge client-provided context with server context (client takes priority if provided)

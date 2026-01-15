@@ -316,6 +316,77 @@ This document provides a comprehensive end-to-end view of the agent creation flo
                                  │
                                  ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
+│  DSL EXECUTION PIPELINE (When Agent Runs)                                    │
+│  ────────────────────────────────────────                                    │
+│  Doc: V5_GENERATOR_ARCHITECTURE.md (DSL Execution Pipeline section)         │
+│  Doc: DSL_EXECUTION_ARCHITECTURAL_REDESIGN.md                               │
+│                                                                              │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │                      PILOT_DSL_SCHEMA                                 │  │
+│  │                  (Saved to agents table)                              │  │
+│  └───────────────────────────┬───────────────────────────────────────────┘  │
+│                              │                                               │
+│                              ▼                                               │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │  LAYER 1: DSL Compiler/Validator                                      │  │
+│  │  File: lib/pilot/dsl-compiler.ts                                      │  │
+│  │                                                                       │  │
+│  │  Pre-execution validation:                                            │  │
+│  │  • Step reference validation ({{stepX.field}} → real step)           │  │
+│  │  • Output key validation (keys exist in target outputs)               │  │
+│  │  • Template syntax validation (Handlebars well-formed)                │  │
+│  │  • Control flow: lastBranchOutput for conditionals (P10)              │  │
+│  │  • Control flow: Loop item_name scope tracking (P11)                  │  │
+│  │  • Schema field validation (names match plugin output_schema)         │  │
+│  └───────────────────────────┬───────────────────────────────────────────┘  │
+│                              │                                               │
+│                              ▼                                               │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │  LAYER 2: Schema Registry                                             │  │
+│  │  File: lib/pilot/schema-registry.ts                                   │  │
+│  │                                                                       │  │
+│  │  • Delegates to PluginManagerV2 for action definitions                │  │
+│  │  • getOutputSchema(plugin, action) → field names and types            │  │
+│  │  • validateFieldPath() for template field validation                  │  │
+│  └───────────────────────────┬───────────────────────────────────────────┘  │
+│                              │                                               │
+│                              ▼                                               │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │  LAYER 3: Step Executor                                               │  │
+│  │  File: lib/pilot/StepExecutor.ts                                      │  │
+│  │                                                                       │  │
+│  │  Per-step execution with:                                             │  │
+│  │  • Output Normalizer (consistent StepOutput structure)                │  │
+│  │  • LLM Output Validator (schema validation + retry)                   │  │
+│  │  • Transform output mapping (declared → actual keys)                  │  │
+│  │  • Case normalization (camelCase ↔ snake_case)                       │  │
+│  └───────────────────────────┬───────────────────────────────────────────┘  │
+│                              │                                               │
+│                              ▼                                               │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │  LAYER 4: Output Normalizer                                           │  │
+│  │  File: lib/pilot/output-normalizer.ts                                 │  │
+│  │                                                                       │  │
+│  │  • Wraps outputs in StepOutput { success, data, error?, metadata? }   │  │
+│  │  • Normalizes output keys to declared names                           │  │
+│  │  • Handles array/object wrapping consistently                         │  │
+│  └───────────────────────────┬───────────────────────────────────────────┘  │
+│                              │                                               │
+│                              ▼                                               │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │  LAYER 5: LLM Output Validator (ai_processing steps only)             │  │
+│  │  File: lib/pilot/llm-output-validator.ts                              │  │
+│  │                                                                       │  │
+│  │  • JSON schema validation against output_schema                       │  │
+│  │  • Automatic JSON repair (jsonrepair library)                         │  │
+│  │  • Retry logic (up to 2 retries with error feedback)                  │  │
+│  │  • Schema patterns: classification, extraction, summary, list, etc.   │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│                                                                              │
+└────────────────────────────────┬────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
 │  SCHEDULING FLOW (page.tsx - isAwaitingSchedule)                             │
 │  ───────────────────────────────────────────────                             │
 │  Doc: V2_Thread-Based-Agent-Creation-Flow.md                                │
@@ -406,6 +477,10 @@ This document provides a comprehensive end-to-end view of the agent creation flo
 
 ### DSL Conversion
 - **[Phase4-to-PILOT_DSL-Mapping.md](Phase4-to-PILOT_DSL-Mapping.md)** - Step kind→DSL type mapping, input resolution patterns, condition parsing, confidence calculation
+
+### DSL Execution Pipeline
+- **[DSL_EXECUTION_ARCHITECTURAL_REDESIGN.md](DSL_EXECUTION_ARCHITECTURAL_REDESIGN.md)** - Complete execution pipeline redesign, problem catalog, phase implementation details
+- **[DSL_EXECUTION_PROBLEMS.md](DSL_EXECUTION_PROBLEMS.md)** - Original problem catalog (all resolved)
 
 ### Schema Validation
 - **[PHASE3_SCHEMA_VALIDATION.md](PHASE3_SCHEMA_VALIDATION.md)** - Phase 3 Zod schema validation, response structure
@@ -554,10 +629,24 @@ static build(phase4Response: Phase4Response): Phase4DSLBuilderResult {
 
 ---
 
-**Document Version**: 1.2
+**Document Version**: 1.4
 **Created**: December 27, 2025
-**Updated**: January 9, 2026
+**Updated**: January 15, 2026
 **Changes**:
+- v1.4: Runtime execution fixes (P19-P24):
+  - **Deterministic Map with Columns**: Map transforms with `columns` config now execute without LLM fallback
+  - **Field Name Normalization**: Automatic handling of snake_case/camelCase/space variations in map transforms
+  - **Static Values Support**: Parse `Status="Open"` patterns from step descriptions
+  - **Map Output Reference**: Auto-append single output key (`{{step5.data}}` → `{{step5.data.rows}}`)
+  - **Block Helper Path Resolution**: `{{#each step7.data.items}}` now correctly resolves step references
+  - **Data Freshness Validation**: Technical Reviewer v4 detects stale read-modify-read patterns
+  - See [DSL_EXECUTION_ARCHITECTURAL_REDESIGN.md](DSL_EXECUTION_ARCHITECTURAL_REDESIGN.md) for P19-P26 details
+- v1.3: Added DSL Execution Pipeline diagram:
+  - **Layer 1: DSL Compiler/Validator**: Pre-execution validation of step references, output keys, templates, control flow (P10, P11)
+  - **Layer 2: Schema Registry**: Plugin schema access for field validation
+  - **Layer 3: Step Executor**: Per-step execution with normalizer and validator integration
+  - **Layer 4: Output Normalizer**: Consistent StepOutput structure wrapping
+  - **Layer 5: LLM Output Validator**: JSON schema validation with retry for ai_processing steps
 - v1.2: Runtime LLM output handling:
   - **Conditional lastBranchOutput**: Runtime returns `lastBranchOutput` for downstream access after conditional steps
   - **ai_processing Declared Output Mapping**: Maps LLM results to declared output keys

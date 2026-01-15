@@ -37,6 +37,19 @@ import { StepCache } from './StepCache';
 import { AISConfigService } from '@/lib/services/AISConfigService';
 import { createLogger } from '@/lib/logger';
 import Handlebars from 'handlebars';
+import {
+  validateLLMOutput,
+  buildSchemaPromptInstructions,
+  getSchemaPattern,
+  convertDslOutputsToSchema,
+  type LLMOutputSchema,
+  type SchemaPattern,
+} from './llm-output-validator';
+import {
+  normalizeStepOutput,
+  getTransformType,
+  extractDeclaredOutputs,
+} from './output-normalizer';
 
 // Create module-level logger for structured logging to dev.log
 const logger = createLogger({ module: 'StepExecutor', service: 'workflow-pilot' });
@@ -123,6 +136,22 @@ export class StepExecutor {
         logger.debug({ stepId: step.id, paramsBefore: stepParams }, 'Orchestration step params BEFORE resolution');
         logger.debug({ stepId: step.id, paramsAfter: resolvedParams }, 'Orchestration step params AFTER resolution');
 
+        // ✅ FIX: Convert DSL outputs to schema for orchestration
+        // This ensures orchestrated ai_processing steps also enforce their declared output structure
+        let orchestrationOutputSchema: LLMOutputSchema | undefined;
+        if (stepAny.output_schema) {
+          if (typeof stepAny.output_schema === 'string') {
+            orchestrationOutputSchema = getSchemaPattern(stepAny.output_schema as SchemaPattern);
+          } else {
+            orchestrationOutputSchema = stepAny.output_schema;
+          }
+        } else if (stepAny.outputs) {
+          orchestrationOutputSchema = convertDslOutputsToSchema(stepAny.outputs);
+          if (orchestrationOutputSchema) {
+            logger.debug({ stepId: step.id }, 'Converted DSL outputs to schema for orchestration');
+          }
+        }
+
         // Execute via orchestration handlers
         const orchestrationResult = await context.orchestrator.executeStep(
           step.id,
@@ -131,6 +160,7 @@ export class StepExecutor {
             params: resolvedParams,  // ✅ Use resolved params instead of raw params
             context: context.variables,  // Keep for backward compatibility
             executionContext: context,  // ✅ Pass full ExecutionContext for variable resolution
+            outputSchema: orchestrationOutputSchema,  // ✅ Pass schema for LLM prompt injection
           },
           context.memoryContext,
           context.agent.plugins_required
@@ -277,53 +307,7 @@ export class StepExecutor {
 
         case 'transform':
           result = await this.executeTransform(step as TransformStep, resolvedParams, context);
-
-          // ✅ FIX: Map transform outputs to declared output keys
-          // Transforms return raw results, but downstream steps reference declared output keys
-          const transformOutputs = (step as any).outputs;
-          const operation = resolvedParams.operation || (step as any).operation;
-
-          if (transformOutputs) {
-            if (typeof result === 'object' && result !== null) {
-              // Object result (filter returns { items, filtered, count, etc. })
-              if (operation === 'filter' && result.items) {
-                // Map filtered array to each declared output key
-                for (const outputKey of Object.keys(transformOutputs)) {
-                  if (!result.hasOwnProperty(outputKey)) {
-                    result[outputKey] = result.items;
-                    logger.debug({ stepId: step.id, outputKey, itemCount: result.items.length },
-                      'Mapped filter items to declared output key');
-                  }
-                }
-              }
-            } else if (typeof result === 'string' && operation === 'format') {
-              // Format returns a string, wrap it in object with declared output key
-              // e.g., if outputs: { rows_html: {...} }, wrap as { rows_html: "<tr>..." }
-              const outputKeys = Object.keys(transformOutputs);
-              if (outputKeys.length === 1) {
-                const outputKey = outputKeys[0];
-                const outputDef = transformOutputs[outputKey];
-                let finalResult: any = result;
-
-                // If declared output type is "object" and result looks like JSON, parse it
-                if (outputDef?.type === 'object' && result.trim().startsWith('{')) {
-                  try {
-                    finalResult = JSON.parse(result);
-                    logger.debug({ stepId: step.id, outputKey },
-                      'Parsed JSON string to object for declared object output');
-                  } catch {
-                    // Not valid JSON, keep as string
-                    logger.warn({ stepId: step.id, outputKey },
-                      'Format result looks like JSON but failed to parse');
-                  }
-                }
-
-                result = { [outputKey]: finalResult };
-                logger.debug({ stepId: step.id, outputKey, resultType: typeof finalResult },
-                  'Wrapped format result in declared output key');
-              }
-            }
-          }
+          // Normalization is applied after the switch block
           break;
 
         case 'delay':
@@ -378,19 +362,48 @@ export class StepExecutor {
 
       const executionTime = Date.now() - startTime;
 
-      // Build step output
+      // ============================================================
+      // PHASE 1 ARCHITECTURAL REDESIGN: Output Normalization
+      // ============================================================
+      // Normalize step output to match declared output schema.
+      // This ensures downstream steps can access data via declared keys.
+      const transformType = getTransformType(step);
+      const declaredOutputs = extractDeclaredOutputs(step);
+      const normalized = normalizeStepOutput(result, {
+        stepId: step.id,
+        transformType,
+        declaredOutputs,
+        preserveRaw: true,
+      });
+
+      // Log normalization if it occurred
+      if (normalized._meta.normalized) {
+        logger.info({
+          stepId: step.id,
+          keyMappings: normalized._meta.keyMappings,
+          wrappedKeys: normalized._meta.wrappedKeys,
+          parsedKeys: normalized._meta.parsedKeys,
+        }, 'Output normalized to declared schema');
+      }
+
+      // Build step output with normalized data
       const output: StepOutput = {
         stepId: step.id,
         plugin: (step as any).plugin || 'system',
         action: (step as any).action || step.type,
-        data: result,
+        data: normalized.data,
         metadata: {
           success: true,
           executedAt: new Date().toISOString(),
           executionTime,
-          itemCount: Array.isArray(result) ? result.length : undefined,
+          itemCount: Array.isArray(result) ? result.length :
+                     (normalized.data && typeof normalized.data === 'object'
+                       ? Object.values(normalized.data).find(v => Array.isArray(v))?.length
+                       : undefined),
           tokensUsed: tokensUsed || undefined,
         },
+        _raw: normalized._raw,
+        _meta: normalized._meta,
       };
 
       // Update step execution to completed in workflow_step_executions table
@@ -475,12 +488,12 @@ export class StepExecutor {
         severity: 'warning',
       });
 
-      // Build error output
+      // Build error output - data is empty object on failure
       return {
         stepId: step.id,
         plugin: (step as any).plugin || 'system',
         action: (step as any).action || step.type,
-        data: null,
+        data: {},
         metadata: {
           success: false,
           executedAt: new Date().toISOString(),
@@ -983,8 +996,41 @@ export class StepExecutor {
       if (userContext.email) userInfo.push(`Email: ${userContext.email}`);
       if (userContext.company) userInfo.push(`Company: ${userContext.company}`);
       if (userContext.role) userInfo.push(`Role: ${userContext.role}`);
+      if (userContext.timezone) userInfo.push(`Timezone: ${userContext.timezone}`);
       userContextSection = `\n\n## User Context (for personalization):\n${userInfo.join('\n')}`;
       logger.debug({ stepId: step.id, hasUserContext: true }, 'User context added to prompt');
+    }
+
+    // ========================================================================
+    // PHASE 4: Schema-aware prompt building
+    // ========================================================================
+    // Check if step has output_schema for structured output validation
+    const stepAny = step as any;
+    let outputSchema: LLMOutputSchema | undefined;
+
+    // Support both direct schema and schema pattern reference
+    if (stepAny.output_schema) {
+      if (typeof stepAny.output_schema === 'string') {
+        // Schema pattern reference like "extraction" or "classification"
+        outputSchema = getSchemaPattern(stepAny.output_schema as SchemaPattern);
+      } else {
+        // Direct schema object
+        outputSchema = stepAny.output_schema;
+      }
+    } else if (stepAny.outputs) {
+      // ✅ FIX: Convert DSL outputs declaration to LLMOutputSchema
+      // This ensures ai_processing steps enforce their declared output structure
+      outputSchema = convertDslOutputsToSchema(stepAny.outputs);
+      if (outputSchema) {
+        logger.debug({ stepId: step.id, outputs: stepAny.outputs }, 'Converted DSL outputs to LLMOutputSchema');
+      }
+    }
+
+    // Build schema instructions if schema is defined
+    let schemaInstructions = '';
+    if (outputSchema) {
+      schemaInstructions = '\n\n' + buildSchemaPromptInstructions(outputSchema);
+      logger.debug({ stepId: step.id, schemaType: outputSchema.type }, 'Adding schema instructions to LLM prompt');
     }
 
     const fullPrompt = `
@@ -995,8 +1041,8 @@ ${contextSummary}${userContextSection}
 
 ## Data for Analysis:
 ${JSON.stringify(enrichedParams, null, 2)}
-
-Please analyze the above and provide your decision/response.
+${schemaInstructions}
+${outputSchema ? '' : 'Please analyze the above and provide your decision/response.'}
     `.trim();
 
     // Use AgentKit for intelligent decision (with optional model override)
@@ -1018,20 +1064,67 @@ Please analyze the above and provide your decision/response.
       agentForExecution.model_preference = selectedModel;
     }
 
-    const result = await runAgentKit(
-      context.userId,
-      agentForExecution,
-      fullPrompt,
-      {},
-      context.sessionId
-    );
+    // ========================================================================
+    // PHASE 4: Execute with validation and retry
+    // ========================================================================
+    const MAX_RETRIES = 2;
+    let lastError: string | undefined;
+    let result: any;
 
-    if (!result.success) {
-      throw new ExecutionError(
-        result.error || 'LLM decision failed',
-        'LLM_DECISION_FAILED',
-        step.id
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      // Build retry prompt if this is a retry
+      let attemptPrompt = fullPrompt;
+      if (attempt > 0 && lastError) {
+        attemptPrompt = `${fullPrompt}\n\n## RETRY NOTICE\nYour previous response failed validation: ${lastError}\nPlease fix the issues and try again with valid JSON.`;
+        logger.info({ stepId: step.id, attempt, error: lastError }, 'Retrying LLM call due to validation failure');
+      }
+
+      result = await runAgentKit(
+        context.userId,
+        agentForExecution,
+        attemptPrompt,
+        {},
+        context.sessionId
       );
+
+      if (!result.success) {
+        throw new ExecutionError(
+          result.error || 'LLM decision failed',
+          'LLM_DECISION_FAILED',
+          step.id
+        );
+      }
+
+      // If we have a schema, validate the response
+      if (outputSchema) {
+        const validation = validateLLMOutput(result.response, outputSchema);
+
+        if (validation.valid) {
+          // Replace response with validated/parsed data
+          result.response = validation.data;
+          logger.debug({ stepId: step.id, attempt }, 'LLM response passed schema validation');
+          break;
+        } else {
+          lastError = validation.errors?.join('; ') || 'Validation failed';
+          logger.warn({
+            stepId: step.id,
+            attempt,
+            errors: validation.errors,
+            retryHint: validation.retryHint,
+          }, 'LLM response failed schema validation');
+
+          if (attempt === MAX_RETRIES) {
+            // Final attempt failed - log warning but continue with raw response
+            logger.error({
+              stepId: step.id,
+              errors: validation.errors,
+            }, 'LLM response failed validation after all retries, using raw response');
+          }
+        }
+      } else {
+        // No schema - response is valid as-is
+        break;
+      }
     }
 
     // Update routing metrics if routing was used
@@ -1435,49 +1528,65 @@ Please analyze the above and provide your decision/response.
       );
     }
 
+    let result: any;
+
     switch (operation) {
       case 'set':
         // Simple assignment - just return the input data as-is
-        return data;
+        result = data;
+        break;
 
       case 'map':
-        return this.transformMap(data, config, context);
+        result = this.transformMap(data, config, context);
+        break;
 
       case 'filter':
-        return this.transformFilter(data, config, context);
+        result = this.transformFilter(data, config, context, step.outputs);
+        break;
 
       case 'reduce':
-        return this.transformReduce(data, config);
+        result = this.transformReduce(data, config);
+        break;
 
       case 'sort':
-        return this.transformSort(data, config);
+        result = this.transformSort(data, config);
+        break;
 
       case 'group':
-        return this.transformGroup(data, config);
+        result = this.transformGroup(data, config);
+        break;
 
       case 'aggregate':
-        return this.transformAggregate(data, config);
+        result = this.transformAggregate(data, config);
+        break;
 
       case 'format':
-        return this.transformFormat(data, config, context);
+        result = this.transformFormat(data, config, context);
+        break;
 
       case 'deduplicate':
-        return this.transformDeduplicate(data, config);
+        result = this.transformDeduplicate(data, config);
+        break;
 
       case 'flatten':
-        return this.transformFlatten(data, config);
+        result = this.transformFlatten(data, config);
+        break;
 
       case 'join':
-        return this.transformJoin(data, config);
+        result = this.transformJoin(data, config);
+        break;
 
       case 'pivot':
-        return this.transformPivot(data, config);
+        result = this.transformPivot(data, config);
+        break;
 
       case 'split':
-        return this.transformSplit(data, config);
+        result = this.transformSplit(data, config);
+        break;
 
       case 'expand':
-        return this.transformExpand(data, config);
+        result = this.transformExpand(data, config);
+        break;
 
       default:
         throw new ExecutionError(
@@ -1486,6 +1595,41 @@ Please analyze the above and provide your decision/response.
           step.id
         );
     }
+
+    // Wrap result under the declared output key
+    return this.wrapTransformResult(result, step);
+  }
+
+  /**
+   * Wrap transform result under the declared output key
+   * This ensures transform outputs match the declared schema structure
+   */
+  private wrapTransformResult(result: any, step: TransformStep): any {
+    // Get declared output keys from the step
+    const outputs = (step as any).outputs;
+    if (!outputs || typeof outputs !== 'object') {
+      return result;
+    }
+
+    // Get output keys (excluding metadata like 'next_step')
+    const outputKeys = Object.keys(outputs).filter(k => k !== 'next_step');
+
+    // If there's exactly one declared output key, wrap the result under it
+    // This handles cases like outputs: { content: { type: "object" } }
+    if (outputKeys.length === 1) {
+      const outputKey = outputKeys[0];
+
+      // If result is already an object with the output key, return as-is
+      if (result && typeof result === 'object' && !Array.isArray(result) && outputKey in result) {
+        return result;
+      }
+
+      // Wrap the result under the output key
+      return { [outputKey]: result };
+    }
+
+    // Multiple output keys or no output keys - return as-is
+    return result;
   }
 
   /**
@@ -1498,21 +1642,32 @@ Please analyze the above and provide your decision/response.
     }
 
     // Check if this is a Google Sheets format conversion (columns + add_headers)
-    if (config && config.columns && Array.isArray(config.columns)) {
-      const columns = config.columns;
+    // Config may have columns at top level or nested under mapping (from buildMappingConfig)
+    const columns = config?.columns || config?.mapping?.columns;
+    const staticValues = config?.static_values || config?.mapping?.static_values || {};
+    const addHeaders = config?.add_headers || config?.mapping?.add_headers;
+
+    if (columns && Array.isArray(columns)) {
       const result: any[][] = [];
 
       // Add header row if requested
-      if (config.add_headers) {
+      if (addHeaders) {
         result.push(columns.map((col: string) =>
           col.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())
         ));
       }
 
       // Convert each object to array row based on column order
+      // With field name normalization to handle variations like "received time" → "received_time"
       data.forEach(item => {
         const row = columns.map((col: string) => {
-          const value = item[col];
+          // First check if there's a static value for this column
+          if (col in staticValues) {
+            return String(staticValues[col]);
+          }
+
+          // Try to find the value using field name normalization
+          const value = this.findFieldValue(item, col);
           return value !== undefined && value !== null ? String(value) : '';
         });
         result.push(row);
@@ -1521,7 +1676,20 @@ Please analyze the above and provide your decision/response.
       return result;
     }
 
-    // Standard map operation with mapping configuration
+    // Check for template-based map (config.mapping.template -> renders to string per item)
+    // Template can contain multiple placeholders like: <tr><td>{{item.sender}}</td><td>{{item.subject}}</td></tr>
+    if (config && config.mapping && typeof config.mapping.template === 'string') {
+      const template = config.mapping.template;
+      return data.map(item => {
+        // Create temporary context with current item
+        const tempContext = context.clone();
+        tempContext.setVariable('item', item);
+        // Use expandTemplate to handle templates with multiple {{item.field}} placeholders
+        return this.expandTemplate(template, { item }, tempContext);
+      });
+    }
+
+    // Standard map operation with mapping configuration (key -> value pairs)
     const mapping = config || {};
     return data.map(item => {
       const mapped: any = {};
@@ -1543,13 +1711,103 @@ Please analyze the above and provide your decision/response.
   }
 
   /**
+   * Find field value from an object using various name normalizations
+   * Handles column name variations like "received time" → "received_time", "CTA text" → "cta_text"
+   *
+   * @param item - The object to extract value from
+   * @param columnName - The column name (may be human-readable like "received time")
+   * @returns The field value or undefined if not found
+   */
+  private findFieldValue(item: any, columnName: string): any {
+    if (!item || typeof item !== 'object') {
+      return undefined;
+    }
+
+    // Direct match first
+    if (columnName in item) {
+      return item[columnName];
+    }
+
+    // Generate normalized variations of the column name
+    const variations = this.generateFieldNameVariations(columnName);
+
+    // Try each variation
+    for (const variation of variations) {
+      if (variation in item) {
+        return item[variation];
+      }
+    }
+
+    // Case-insensitive match as last resort
+    const lowerColumnName = columnName.toLowerCase();
+    for (const key of Object.keys(item)) {
+      if (key.toLowerCase() === lowerColumnName) {
+        return item[key];
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Generate field name variations for matching
+   * Examples:
+   *   "received time" → ["received_time", "receivedTime", "ReceivedTime", "received-time"]
+   *   "CTA text" → ["cta_text", "ctaText", "CTA_text", "cta-text"]
+   *   "due date (if mentioned)" → ["due_date", "dueDate", "due_date_if_mentioned"]
+   */
+  private generateFieldNameVariations(columnName: string): string[] {
+    const variations: string[] = [];
+
+    // Clean the column name - remove parenthetical suffixes, trim
+    let cleaned = columnName.trim();
+    const parenMatch = cleaned.match(/^([^(]+)\s*\(/);
+    if (parenMatch) {
+      cleaned = parenMatch[1].trim();
+    }
+
+    // Lowercase version
+    const lower = cleaned.toLowerCase();
+
+    // snake_case: replace spaces with underscores
+    const snakeCase = lower.replace(/\s+/g, '_');
+    variations.push(snakeCase);
+
+    // camelCase: remove spaces and capitalize first letter of each word (except first)
+    const words = cleaned.toLowerCase().split(/\s+/);
+    const camelCase = words[0] + words.slice(1).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join('');
+    variations.push(camelCase);
+
+    // PascalCase
+    const pascalCase = words.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join('');
+    variations.push(pascalCase);
+
+    // kebab-case
+    const kebabCase = lower.replace(/\s+/g, '-');
+    variations.push(kebabCase);
+
+    // Also try with full original cleaned (spaces as underscores, preserving case)
+    const preservedCase = cleaned.replace(/\s+/g, '_');
+    variations.push(preservedCase);
+
+    // For columns like "link to the email" → "link_to_email" or "link_to_the_email"
+    // Try removing common articles
+    const withoutArticles = lower.replace(/\b(the|a|an)\b/g, '').replace(/\s+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+    if (withoutArticles !== snakeCase) {
+      variations.push(withoutArticles);
+    }
+
+    return [...new Set(variations)]; // Remove duplicates
+  }
+
+  /**
    * Filter transformation
    *
    * Returns a structured object with backward compatibility:
    * - New workflows: use {{stepX.data.items}} or {{stepX.data.filtered}}
    * - Legacy workflows: array-like object with [index] access
    */
-  private transformFilter(data: any[], config: any, context: ExecutionContext): any {
+  private transformFilter(data: any[], config: any, context: ExecutionContext, stepOutputs?: any): any {
     if (!Array.isArray(data)) {
       const dataType = data === null ? 'null' : data === undefined ? 'undefined' : typeof data;
       const dataPreview = data && typeof data === 'object'
@@ -1576,6 +1834,14 @@ Please analyze the above and provide your decision/response.
       return this.conditionalEvaluator.evaluate(config.condition, tempContext);
     });
 
+    // Extract declared output key from step.outputs (e.g., "action_rows" from outputs: { action_rows: {...} })
+    // This allows downstream steps to reference {{stepX.data.action_rows}} instead of {{stepX.data.items}}
+    let declaredOutputKey: string | undefined;
+    if (stepOutputs && typeof stepOutputs === 'object') {
+      declaredOutputKey = Object.keys(stepOutputs)
+        .find(k => k !== 'next_step' && k !== 'is_last_step');
+    }
+
     // Return in format compatible with FilterHandler (orchestration)
     // This ensures consistent output whether using deterministic or AI-based filtering
     // PLUS backward compatibility for array-like access
@@ -1600,6 +1866,13 @@ Please analyze the above and provide your decision/response.
       every: filtered.every.bind(filtered),
       slice: filtered.slice.bind(filtered),
     };
+
+    // ✅ Add declared output key as alias pointing to the filtered array
+    // This allows {{stepX.data.action_rows}} to work alongside {{stepX.data.items}}
+    if (declaredOutputKey && declaredOutputKey !== 'items' && declaredOutputKey !== 'filtered') {
+      result[declaredOutputKey] = filtered;
+      logger.debug({ declaredOutputKey, filteredCount: filtered.length }, 'Added declared output key alias for filter result');
+    }
 
     // Add numeric index accessors for backward compatibility
     filtered.forEach((item, index) => {
@@ -1800,9 +2073,10 @@ Please analyze the above and provide your decision/response.
    * not from global context. This allows templates like {{to_log_count}}
    * to reference fields in the input object.
    */
-  private transformFormat(data: any, config: any, context: ExecutionContext): string {
+  private transformFormat(data: any, config: any, context: ExecutionContext): string | object {
     const mapping = config?.mapping || config || {};
     const template = mapping.template;
+    const jsonEscape = mapping.json_escape === true;
 
     if (!template || typeof template !== 'string') {
       throw new ExecutionError(
@@ -1811,28 +2085,153 @@ Please analyze the above and provide your decision/response.
       );
     }
 
+    // If JSON escaping is enabled, wrap the expand function to escape values
+    const expandFn = jsonEscape
+      ? (tpl: string, d: Record<string, any>, ctx: ExecutionContext) =>
+          this.expandTemplateWithJsonEscape(tpl, d, ctx)
+      : (tpl: string, d: Record<string, any>, ctx: ExecutionContext) =>
+          this.expandTemplate(tpl, d, ctx);
+
+    let result: string;
+
     // If data is an array, format each item and join (or take first)
     if (Array.isArray(data)) {
       if (data.length === 0) {
         // No items - resolve template with empty/zero values
-        return this.expandTemplate(template, {}, context);
+        result = expandFn(template, {}, context);
+      } else if (data.length === 1) {
+        // For single-item array, use that item
+        // Wrap so both {{field}} and {{item}} work
+        const item = data[0];
+        const dataForTemplate = typeof item === 'object' && item !== null
+          ? { ...item, item }
+          : { item };
+        result = expandFn(template, dataForTemplate, context);
+      } else {
+        // For multiple items, format each and join with newlines
+        // Wrap items so {{item}} resolves for primitives, and {{field}} still works for objects
+        result = data.map(item => {
+          const dataForTemplate = typeof item === 'object' && item !== null
+            ? { ...item, item }
+            : { item };
+          return expandFn(template, dataForTemplate, context);
+        }).join('\n');
       }
-      // For single-item array, use that item
-      if (data.length === 1) {
-        return this.expandTemplate(template, data[0], context);
-      }
-      // For multiple items, format each and join with newlines
-      return data.map(item => this.expandTemplate(template, item, context)).join('\n');
+    } else if (data && typeof data === 'object') {
+      // Single object input
+      result = expandFn(template, data, context);
+    } else {
+      // Primitive input - use as-is in template context
+      // Support both {{value}} and {{data}} for accessing the input
+      result = expandFn(template, { value: data, data: data }, context);
     }
 
-    // Single object input
-    if (data && typeof data === 'object') {
-      return this.expandTemplate(template, data, context);
+    // When json_escape is enabled and template looks like JSON, parse the result
+    // This ensures downstream steps receive an object, not a JSON string
+    if (jsonEscape) {
+      const trimmed = result.trim();
+      if ((trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+          (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+        try {
+          return JSON.parse(result);
+        } catch (e) {
+          // If parsing fails, log warning and return as string
+          logger.warn({
+            error: e instanceof Error ? e.message : String(e),
+            resultPreview: result.substring(0, 100)
+          }, 'JSON parse failed for json_escape template output, returning as string');
+        }
+      }
     }
 
-    // Primitive input - use as-is in template context
-    // Support both {{value}} and {{data}} for accessing the input
-    return this.expandTemplate(template, { value: data, data: data }, context);
+    return result;
+  }
+
+  /**
+   * Expand template with JSON escaping for interpolated values
+   * Used when template produces JSON and embedded values might contain quotes/newlines
+   */
+  private expandTemplateWithJsonEscape(
+    template: string,
+    data: Record<string, any>,
+    context: ExecutionContext
+  ): string {
+    // Detect Handlebars block helpers (same check as expandTemplate)
+    // If template contains {{#...}}, {{/...}}, {{else}}, {{@...}}, or {{this}}, use Handlebars engine
+    const hasHandlebarsBlocks = /\{\{[#/]|else\}\}|\{\{@|\{\{this\}\}/.test(template);
+
+    if (hasHandlebarsBlocks) {
+      return this.expandHandlebarsTemplateWithJsonEscape(template, data, context);
+    }
+
+    // Fast path: Simple variable substitution with JSON escaping
+    const result = template.replace(/\{\{([^}]+)\}\}/g, (match, key) => {
+      const trimmedKey = key.trim();
+
+      // Resolve the value
+      let value: any;
+
+      // Check if it's a step reference
+      // Note: resolveVariable expects the full {{...}} syntax
+      if (trimmedKey.startsWith('step')) {
+        try {
+          value = context.resolveVariable(match);
+        } catch {
+          value = match; // Keep original if can't resolve
+        }
+      } else if (trimmedKey.startsWith('input.') || trimmedKey.startsWith('var.')) {
+        try {
+          value = context.resolveVariable(match);
+        } catch {
+          value = match;
+        }
+      } else {
+        // Try to get from data
+        value = this.getNestedValue(data, trimmedKey);
+        if (value === undefined) {
+          value = match;
+        }
+      }
+
+      // JSON-escape the value if it's a string
+      if (typeof value === 'string') {
+        // Escape special JSON characters
+        return value
+          .replace(/\\/g, '\\\\')
+          .replace(/"/g, '\\"')
+          .replace(/\n/g, '\\n')
+          .replace(/\r/g, '\\r')
+          .replace(/\t/g, '\\t');
+      } else if (value !== null && value !== undefined && typeof value === 'object') {
+        // For objects/arrays, stringify and remove outer quotes if embedding in a string context
+        return JSON.stringify(value);
+      }
+
+      return String(value ?? '');
+    });
+
+    return result;
+  }
+
+  /**
+   * Get nested value from object by dot-separated path
+   * E.g., getNestedValue({a: {b: 1}}, 'a.b') returns 1
+   */
+  private getNestedValue(obj: any, path: string): any {
+    if (!obj || typeof obj !== 'object') return undefined;
+
+    const parts = path.split('.');
+    let value: any = obj;
+
+    for (const part of parts) {
+      if (value && typeof value === 'object' && part in value) {
+        value = value[part];
+      } else {
+        return undefined;
+      }
+    }
+
+    return value;
   }
 
   /**
@@ -1867,12 +2266,33 @@ Please analyze the above and provide your decision/response.
    */
   private expandHandlebarsTemplate(template: string, data: Record<string, any>, context: ExecutionContext): string {
     try {
-      // First, resolve any runtime variables ({{step1.data.field}}, {{input.x}}, {{var.y}})
-      // These need to be resolved before Handlebars compilation
-      const preResolvedTemplate = template.replace(/\{\{([^#/@}][^}]*)\}\}/g, (match, key) => {
+      // Create a mutable copy of data to add resolved step references
+      const handlebarsContext = { ...data };
+
+      // First, resolve paths inside block helpers ({{#each step7.data.open_items}}, {{#if step1.data.count}})
+      // These are NOT matched by the simple variable regex below
+      let preResolvedTemplate = template.replace(/\{\{#(each|if|unless|with)\s+(step[^}]+)\}\}/g, (match, helper, path) => {
+        const trimmedPath = path.trim();
+        if (trimmedPath.startsWith('step') || trimmedPath.startsWith('input.') || trimmedPath.startsWith('var.')) {
+          try {
+            const resolved = context.resolveVariable(`{{${trimmedPath}}}`);
+            if (resolved !== undefined && resolved !== null) {
+              const safeKey = `__resolved_${trimmedPath.replace(/\./g, '_')}`;
+              handlebarsContext[safeKey] = resolved;
+              return `{{#${helper} ${safeKey}}}`;
+            }
+          } catch {
+            logger.warn({ variable: trimmedPath }, 'Could not pre-resolve block helper path');
+          }
+        }
+        return match;
+      });
+
+      // Then resolve simple runtime variables ({{step1.data.field}}, {{input.x}}, {{var.y}})
+      preResolvedTemplate = preResolvedTemplate.replace(/\{\{([^#/@}][^}]*)\}\}/g, (match, key) => {
         const trimmedKey = key.trim();
 
-        // Skip Handlebars special syntax (already handled by the block regex above, but be safe)
+        // Skip Handlebars special syntax
         if (trimmedKey === 'else' || trimmedKey === 'this') {
           return match;
         }
@@ -1883,9 +2303,8 @@ Please analyze the above and provide your decision/response.
             const resolved = context.resolveVariable(match);
             // If resolved value is an object/array, keep it for Handlebars to process
             if (typeof resolved === 'object' && resolved !== null) {
-              // Store in data under a generated key for Handlebars access
               const safeKey = `__resolved_${trimmedKey.replace(/\./g, '_')}`;
-              data[safeKey] = resolved;
+              handlebarsContext[safeKey] = resolved;
               return `{{${safeKey}}}`;
             }
             return resolved !== undefined && resolved !== null ? String(resolved) : '';
@@ -1901,7 +2320,7 @@ Please analyze the above and provide your decision/response.
 
       // Compile and execute Handlebars template
       const compiledTemplate = Handlebars.compile(preResolvedTemplate, { noEscape: true });
-      const result = compiledTemplate(data);
+      const result = compiledTemplate(handlebarsContext);
 
       logger.debug({ templateLength: template.length, resultLength: result.length }, 'Handlebars template rendered');
       return result;
@@ -1909,6 +2328,114 @@ Please analyze the above and provide your decision/response.
       logger.error({ err: error, template: template.substring(0, 200) }, 'Handlebars template compilation failed');
       // Fall back to simple template expansion on error
       return this.expandSimpleTemplate(template, data, context);
+    }
+  }
+
+  /**
+   * Expand Handlebars template with JSON escaping for string values
+   * Used for JSON templates that contain Handlebars block helpers ({{#each}}, {{#if}}, etc.)
+   *
+   * String values are pre-escaped so the resulting output is valid JSON.
+   */
+  private expandHandlebarsTemplateWithJsonEscape(
+    template: string,
+    data: Record<string, any>,
+    context: ExecutionContext
+  ): string {
+    try {
+      // Helper to JSON-escape a string value (escape quotes, backslashes, newlines, etc.)
+      const jsonEscapeString = (val: string): string => {
+        return val
+          .replace(/\\/g, '\\\\')
+          .replace(/"/g, '\\"')
+          .replace(/\n/g, '\\n')
+          .replace(/\r/g, '\\r')
+          .replace(/\t/g, '\\t');
+      };
+
+      // Recursively JSON-escape all string values in an object/array
+      const jsonEscapeData = (obj: any): any => {
+        if (typeof obj === 'string') {
+          return jsonEscapeString(obj);
+        }
+        if (Array.isArray(obj)) {
+          return obj.map(item => jsonEscapeData(item));
+        }
+        if (obj && typeof obj === 'object') {
+          const escaped: Record<string, any> = {};
+          for (const key of Object.keys(obj)) {
+            escaped[key] = jsonEscapeData(obj[key]);
+          }
+          return escaped;
+        }
+        return obj;
+      };
+
+      // Pre-escape all string values in data and create Handlebars context
+      const handlebarsContext = jsonEscapeData(data);
+
+      // First, resolve paths inside block helpers ({{#each step7.data.open_items}}, {{#if step1.data.count}})
+      // These are NOT matched by the simple variable regex below
+      let preResolvedTemplate = template.replace(/\{\{#(each|if|unless|with)\s+(step[^}]+)\}\}/g, (match, helper, path) => {
+        const trimmedPath = path.trim();
+        if (trimmedPath.startsWith('step') || trimmedPath.startsWith('input.') || trimmedPath.startsWith('var.')) {
+          try {
+            const resolved = context.resolveVariable(`{{${trimmedPath}}}`);
+            if (resolved !== undefined && resolved !== null) {
+              const safeKey = `__resolved_${trimmedPath.replace(/\./g, '_')}`;
+              // JSON-escape the resolved data for block iteration
+              handlebarsContext[safeKey] = jsonEscapeData(resolved);
+              return `{{#${helper} ${safeKey}}}`;
+            }
+          } catch {
+            logger.warn({ variable: trimmedPath }, 'Could not pre-resolve block helper path for JSON template');
+          }
+        }
+        return match;
+      });
+
+      // Then resolve simple runtime variables ({{step1.data.field}}, {{input.x}}, {{var.y}})
+      // and JSON-escape resolved values
+      preResolvedTemplate = preResolvedTemplate.replace(/\{\{([^#/@}][^}]*)\}\}/g, (match, key) => {
+        const trimmedKey = key.trim();
+
+        if (trimmedKey === 'else' || trimmedKey === 'this') {
+          return match;
+        }
+
+        // Check if it's a runtime variable reference that needs resolution
+        if (trimmedKey.startsWith('step') || trimmedKey.startsWith('input.') || trimmedKey.startsWith('var.')) {
+          try {
+            const resolved = context.resolveVariable(match);
+            if (typeof resolved === 'object' && resolved !== null) {
+              // Store escaped version in data for Handlebars
+              const safeKey = `__resolved_${trimmedKey.replace(/\./g, '_')}`;
+              handlebarsContext[safeKey] = jsonEscapeData(resolved);
+              return `{{${safeKey}}}`;
+            }
+            // JSON-escape the resolved string value
+            return resolved !== undefined && resolved !== null
+              ? jsonEscapeString(String(resolved))
+              : '';
+          } catch {
+            logger.warn({ variable: match }, 'Could not pre-resolve variable for JSON Handlebars template');
+            return match;
+          }
+        }
+
+        return match;
+      });
+
+      // Compile and execute Handlebars template with noEscape (data is pre-escaped)
+      const compiledTemplate = Handlebars.compile(preResolvedTemplate, { noEscape: true });
+      const result = compiledTemplate(handlebarsContext);
+
+      logger.debug({ templateLength: template.length, resultLength: result.length }, 'JSON Handlebars template rendered');
+      return result;
+    } catch (error: any) {
+      logger.error({ err: error, template: template.substring(0, 200) }, 'JSON Handlebars template compilation failed');
+      // Fall back to simple template expansion with JSON escaping on error
+      return this.expandTemplateWithJsonEscape(template, data, context);
     }
   }
 
@@ -2135,6 +2662,10 @@ Please analyze the above and provide your decision/response.
    * - Arrays of primitives: deduplicates entire values
    * - Nested objects: supports dot notation (e.g., "fields.Name")
    *
+   * Phase 5 Enhancement:
+   * - sort_field: Optional field to sort by before deduplication (determines which duplicate to keep)
+   * - keep: 'first' (default) or 'last' - which duplicate to keep after sorting
+   *
    * Returns structured output compatible with filter and other transforms
    */
   private transformDeduplicate(data: any[], config: any): any {
@@ -2150,9 +2681,28 @@ Please analyze the above and provide your decision/response.
       );
     }
 
-    const { field, key, column } = config || {};
+    const { field, key, column, sort_field, keep = 'first' } = config || {};
     const deduplicateKey = column || field || key; // Support 'column', 'field', and 'key'
     const originalCount = unwrappedData.length;
+
+    // Phase 5: Pre-sort data if sort_field is specified
+    // This ensures deterministic deduplication (e.g., keep most recent by date)
+    let sortedData = [...unwrappedData];
+    if (sort_field) {
+      sortedData.sort((a, b) => {
+        const aVal = this.extractValueByKey(a, sort_field, unwrappedData);
+        const bVal = this.extractValueByKey(b, sort_field, unwrappedData);
+        // Default ascending sort (for 'first' to get earliest, 'last' to get latest)
+        if (aVal < bVal) return -1;
+        if (aVal > bVal) return 1;
+        return 0;
+      });
+      // If keep === 'last', reverse to process from end
+      if (keep === 'last') {
+        sortedData.reverse();
+      }
+      logger.debug({ sort_field, keep }, 'Pre-sorted data for deduplicate');
+    }
 
     let deduplicated: any[];
 
@@ -2161,15 +2711,15 @@ Please analyze the above and provide your decision/response.
       const seen = new Set();
 
       // Detect if 2D array pattern (array of arrays)
-      const is2DArray = Array.isArray(unwrappedData[0]);
+      const is2DArray = Array.isArray(sortedData[0]);
 
       if (is2DArray) {
         // For 2D arrays, preserve header row and deduplicate data rows
-        const headerRow = unwrappedData[0];
-        const dataRows = unwrappedData.slice(1);
+        const headerRow = sortedData[0];
+        const dataRows = sortedData.slice(1);
 
         const uniqueRows = dataRows.filter((row: any) => {
-          const value = this.extractValueByKey(row, deduplicateKey, unwrappedData);
+          const value = this.extractValueByKey(row, deduplicateKey, sortedData);
           if (seen.has(value)) {
             return false;
           }
@@ -2178,23 +2728,23 @@ Please analyze the above and provide your decision/response.
         });
 
         deduplicated = [headerRow, ...uniqueRows];
-        logger.debug({ deduplicateKey, removedCount: dataRows.length - uniqueRows.length, pattern: '2D array' }, 'Deduplicated rows');
+        logger.debug({ deduplicateKey, removedCount: dataRows.length - uniqueRows.length, pattern: '2D array', sort_field, keep }, 'Deduplicated rows');
       } else {
         // For objects or other patterns, deduplicate all items
-        deduplicated = unwrappedData.filter(item => {
-          const value = this.extractValueByKey(item, deduplicateKey, unwrappedData);
+        deduplicated = sortedData.filter(item => {
+          const value = this.extractValueByKey(item, deduplicateKey, sortedData);
           if (seen.has(value)) {
             return false;
           }
           seen.add(value);
           return true;
         });
-        logger.debug({ deduplicateKey, removedCount: unwrappedData.length - deduplicated.length, pattern: 'object/item' }, 'Deduplicated items');
+        logger.debug({ deduplicateKey, removedCount: sortedData.length - deduplicated.length, pattern: 'object/item', sort_field, keep }, 'Deduplicated items');
       }
     } else {
       // Deduplicate based on entire object (using JSON stringification)
       const seen = new Set();
-      deduplicated = unwrappedData.filter(item => {
+      deduplicated = sortedData.filter(item => {
         const serialized = JSON.stringify(item);
         if (seen.has(serialized)) {
           return false;
@@ -2202,7 +2752,7 @@ Please analyze the above and provide your decision/response.
         seen.add(serialized);
         return true;
       });
-      logger.debug({ removedCount: unwrappedData.length - deduplicated.length, pattern: 'entire value' }, 'Deduplicated items');
+      logger.debug({ removedCount: sortedData.length - deduplicated.length, pattern: 'entire value', sort_field, keep }, 'Deduplicated items');
     }
 
     // Return in structured format compatible with filter and other transforms
@@ -2330,8 +2880,14 @@ Please analyze the above and provide your decision/response.
   }
 
   /**
-   * Split transformation - Split array into chunks
-   * Config: {size: number} or {count: number}
+   * Split transformation - Split array by field grouping or size-based chunking
+   *
+   * Field-based grouping (preferred):
+   *   Config: {field: string} - Groups items by field value into named buckets
+   *   Example: field: "classification" → { action_required: [...], fyi: [...] }
+   *
+   * Size-based chunking (legacy):
+   *   Config: {size: number} or {count: number}
    */
   private transformSplit(data: any, config: any): any {
     const unwrappedData = this.unwrapStructuredOutput(data);
@@ -2340,10 +2896,60 @@ Please analyze the above and provide your decision/response.
       throw new ExecutionError('Split operation requires array input', 'INVALID_INPUT_TYPE');
     }
 
-    const { size, count } = config || {};
+    const { size, count, field } = config || {};
 
+    // Field-based grouping: group items by field value into named buckets
+    if (field) {
+      const buckets: Record<string, any[]> = {};
+
+      for (const item of unwrappedData) {
+        // Get the field value, handling nested paths like "metadata.category"
+        let fieldValue = item;
+        const fieldParts = field.split('.');
+        for (const part of fieldParts) {
+          fieldValue = fieldValue?.[part];
+        }
+
+        // Convert field value to a bucket key
+        // Handle various types: string, boolean, number
+        let bucketKey: string;
+        if (fieldValue === null || fieldValue === undefined) {
+          bucketKey = 'unknown';
+        } else if (typeof fieldValue === 'string') {
+          // Normalize the key: lowercase, replace spaces with underscores
+          bucketKey = fieldValue.toLowerCase().replace(/\s+/g, '_');
+        } else {
+          bucketKey = String(fieldValue);
+        }
+
+        // Add item to bucket, creating bucket if needed
+        if (!buckets[bucketKey]) {
+          buckets[bucketKey] = [];
+        }
+        buckets[bucketKey].push(item);
+      }
+
+      const bucketNames = Object.keys(buckets);
+      logger.debug({
+        originalCount: unwrappedData.length,
+        bucketCount: bucketNames.length,
+        buckets: bucketNames.map(k => `${k}:${buckets[k].length}`)
+      }, 'Split array by field');
+
+      // Return buckets with metadata
+      return {
+        ...buckets,
+        _meta: {
+          buckets: bucketNames,
+          counts: Object.fromEntries(bucketNames.map(k => [k, buckets[k].length])),
+          total: unwrappedData.length
+        }
+      };
+    }
+
+    // Size-based chunking (legacy behavior)
     if (!size && !count) {
-      throw new ExecutionError('Split requires either size or count config', 'MISSING_CONFIG');
+      throw new ExecutionError('Split requires either field (for grouping) or size/count (for chunking) config', 'MISSING_CONFIG');
     }
 
     let chunkSize: number;
@@ -2358,7 +2964,7 @@ Please analyze the above and provide your decision/response.
       chunks.push(unwrappedData.slice(i, i + chunkSize));
     }
 
-    logger.debug({ originalCount: unwrappedData.length, chunkCount: chunks.length, chunkSize }, 'Split array');
+    logger.debug({ originalCount: unwrappedData.length, chunkCount: chunks.length, chunkSize }, 'Split array by size');
 
     return {
       items: chunks,

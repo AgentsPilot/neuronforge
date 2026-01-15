@@ -132,13 +132,23 @@ export const BranchOutputSchema = z.object({
 });
 
 /**
+ * Phase 5: Explicit output schema declaration
+ * For steps that output structured objects (e.g., format transforms with subject/body)
+ * This is a nested object where each key is a field name and value is a type string
+ * Example: { subject: "string", html_body: "string" }
+ */
+export const ExplicitOutputSchemaSchema = z.record(z.string(), z.string());
+
+/**
  * Step output value can be:
  * - A string type label (e.g., "object[]", "string", "GmailMessage[]")
  * - A branch object with type and next_step for branching control steps
+ * - Phase 5: An explicit schema object with field definitions (e.g., { subject: "string", body: "string" })
  */
 export const StepOutputValueSchema = z.union([
   z.string(),
-  BranchOutputSchema
+  BranchOutputSchema,
+  ExplicitOutputSchemaSchema  // Phase 5: Support nested schema declarations
 ]);
 
 /**
@@ -173,6 +183,11 @@ export const OperationStepSchema = z.object({
   action: z.string().min(1),  // Required for operation
   inputs: z.record(z.string(), StepInputSchema),
   outputs: StepOutputSchema,
+  // Reviewer note for tracking changes
+  reviewer_note: z.object({
+    changed: z.boolean(),
+    note: z.string(),
+  }).optional(),
 });
 
 /**
@@ -189,6 +204,14 @@ export const TransformStepSchema = z.object({
   action: z.string().optional(),
   inputs: z.record(z.string(), StepInputSchema).optional(),
   outputs: StepOutputSchema.optional(),
+  // Phase 5: Optional output_schema for LLM transforms (added by Reviewer)
+  // Defines the structure of LLM output for downstream steps
+  output_schema: z.any().optional(),
+  // Reviewer note for tracking changes
+  reviewer_note: z.object({
+    changed: z.boolean(),
+    note: z.string(),
+  }).optional(),
 });
 
 /**
@@ -241,6 +264,11 @@ const ControlStepBaseFields = {
   inputs: z.record(z.string(), StepInputSchema).optional(),
   outputs: StepOutputSchema.optional(),
   is_last_step: z.boolean().optional(),  // Marks the final step(s) - must be true and no next_step
+  // Reviewer note for tracking changes
+  reviewer_note: z.object({
+    changed: z.boolean(),
+    note: z.string(),
+  }).optional(),
 };
 
 /**

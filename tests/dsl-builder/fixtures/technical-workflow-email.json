@@ -1,0 +1,64 @@
+{
+  "enhancedPrompt": {
+    "plan_title": "Daily Email Summary Agent",
+    "plan_description": "Fetches unread emails from Gmail and sends a summary to a Slack channel",
+    "specifics": {
+      "services_involved": ["google-mail", "slack"],
+      "resolved_user_inputs": [
+        { "key": "slack_channel", "value": "#daily-updates" }
+      ]
+    }
+  },
+  "technicalWorkflow": {
+    "technical_workflow": [
+      {
+        "id": "step1",
+        "kind": "operation",
+        "description": "Fetch unread emails from Gmail",
+        "plugin": "google-mail",
+        "action": "list_messages",
+        "inputs": {
+          "query": { "source": "hardcoded", "value": "is:unread" },
+          "maxResults": { "source": "hardcoded", "value": 10 }
+        },
+        "outputs": {
+          "emails": "Array<Email>"
+        }
+      },
+      {
+        "id": "step2",
+        "kind": "transform",
+        "description": "Summarize the email subjects and senders into a readable format",
+        "inputs": {
+          "emails": { "source": "from_step", "step_id": "step1", "output_key": "emails" }
+        },
+        "outputs": {
+          "summary": "String"
+        }
+      },
+      {
+        "id": "step3",
+        "kind": "operation",
+        "description": "Post the summary to the specified Slack channel",
+        "plugin": "slack",
+        "action": "send_message",
+        "inputs": {
+          "channel": { "source": "user_input", "key": "slack_channel" },
+          "message": { "source": "from_step", "step_id": "step2", "output_key": "summary" }
+        },
+        "outputs": {
+          "message_sent": "Boolean"
+        }
+      }
+    ],
+    "requiredServices": ["google-mail", "slack"],
+    "technical_inputs_required": [
+      {
+        "key": "slack_channel",
+        "description": "Slack channel to post the email summary",
+        "type": "string",
+        "required": true
+      }
+    ]
+  }
+}

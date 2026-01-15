@@ -121,9 +121,15 @@ export class ExtractHandler extends BaseHandler {
       // Use cost from provider
       const cost = llmResponse.cost;
 
+      // Get declared output key from step outputs (e.g., "rows" from outputs: { rows: {...} })
+      // This allows us to use the correct key name instead of always using "items"
+      const stepOutputs = context.input?.step?.outputs || {};
+      const declaredOutputKey = Object.keys(stepOutputs)
+        .find(k => k !== 'next_step' && k !== 'is_last_step');
+
       // Create success result
       const result = this.createSuccessResult(
-        this.parseExtractedData(output),
+        this.parseExtractedData(output, declaredOutputKey),
         tokensUsed,
         cost,
         Date.now() - startTime,
@@ -189,8 +195,11 @@ Return extracted data as valid JSON with clear field names.`;
    * 2. Object with "result": {"result": ...} - standard single output
    * 3. Raw JSON array: [...] - legacy/direct array output
    * 4. Raw JSON object: {...} - legacy/direct object output
+   *
+   * @param output - Raw LLM output string
+   * @param declaredOutputKey - Optional output key declared in step's outputs (e.g., "rows")
    */
-  private parseExtractedData(output: string): any {
+  private parseExtractedData(output: string, declaredOutputKey?: string): any {
     try {
       // First, try to parse the entire output as JSON (handles clean LLM responses)
       const trimmed = output.trim();
@@ -199,7 +208,7 @@ Return extracted data as valid JSON with clear field names.`;
       if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
         try {
           const parsed = JSON.parse(trimmed);
-          return this.normalizeExtractedObject(parsed);
+          return this.normalizeExtractedObject(parsed, declaredOutputKey);
         } catch (directParseError) {
           // Direct parse failed, try to repair malformed JSON
           try {
@@ -207,7 +216,7 @@ Return extracted data as valid JSON with clear field names.`;
             const repairedJson = jsonrepair(trimmed);
             const parsed = JSON.parse(repairedJson);
             console.log('[ExtractHandler] JSON repaired successfully');
-            return this.normalizeExtractedObject(parsed);
+            return this.normalizeExtractedObject(parsed, declaredOutputKey);
           } catch (repairError) {
             // Repair failed, continue with extraction methods below
             console.warn('[ExtractHandler] JSON repair failed:', repairError);
@@ -220,7 +229,7 @@ Return extracted data as valid JSON with clear field names.`;
       if (jsonObjectMatch) {
         try {
           const parsed = JSON.parse(jsonObjectMatch[0]);
-          return this.normalizeExtractedObject(parsed);
+          return this.normalizeExtractedObject(parsed, declaredOutputKey);
         } catch (extractParseError) {
           // Try to repair extracted JSON
           try {
@@ -228,7 +237,7 @@ Return extracted data as valid JSON with clear field names.`;
             const repairedJson = jsonrepair(jsonObjectMatch[0]);
             const parsed = JSON.parse(repairedJson);
             console.log('[ExtractHandler] Extracted JSON repaired successfully');
-            return this.normalizeExtractedObject(parsed);
+            return this.normalizeExtractedObject(parsed, declaredOutputKey);
           } catch (repairError) {
             console.warn('[ExtractHandler] Extracted JSON repair failed:', repairError);
           }
@@ -240,8 +249,8 @@ Return extracted data as valid JSON with clear field names.`;
       if (jsonArrayMatch) {
         try {
           const parsed = JSON.parse(jsonArrayMatch[0]);
-          // Wrap array in {items: [...]} for consistent downstream access
-          return { items: parsed };
+          // Wrap array using declared key (or "items" as fallback)
+          return this.normalizeExtractedObject(parsed, declaredOutputKey);
         } catch (arrayParseError) {
           // Try to repair extracted array
           try {
@@ -249,7 +258,7 @@ Return extracted data as valid JSON with clear field names.`;
             const repairedJson = jsonrepair(jsonArrayMatch[0]);
             const parsed = JSON.parse(repairedJson);
             console.log('[ExtractHandler] Extracted array repaired successfully');
-            return { items: parsed };
+            return this.normalizeExtractedObject(parsed, declaredOutputKey);
           } catch (repairError) {
             console.warn('[ExtractHandler] Extracted array repair failed:', repairError);
           }
@@ -276,38 +285,62 @@ Return extracted data as valid JSON with clear field names.`;
    * Normalize extracted object to ensure consistent structure
    *
    * Handles various LLM output formats:
-   * 1. {"items": [...]} - standard array output, return as-is
+   * 1. {"items": [...]} - standard array output, return as-is (with declared key alias if provided)
    * 2. {"result": ...} - standard single output, return as-is
-   * 3. [...] - raw array, wrap in {items: [...]}
-   * 4. {"some_key": [...]} - object with single array property, normalize to {items: [...]}
+   * 3. [...] - raw array, wrap using declared key (or "items" as fallback)
+   * 4. {"some_key": [...]} - object with array property, add declared key alias if different
    * 5. Other objects - return as-is (might have multiple properties)
+   *
+   * @param parsed - Parsed JSON object or array from LLM
+   * @param declaredOutputKey - Optional output key declared in step's outputs (e.g., "rows")
    */
-  private normalizeExtractedObject(parsed: any): any {
+  private normalizeExtractedObject(parsed: any, declaredOutputKey?: string): any {
     // Log the structure of what LLM returned
     const keys = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? Object.keys(parsed) : [];
     console.log(`[ExtractHandler] LLM returned object with keys: [${keys.join(', ')}]`);
+    console.log(`[ExtractHandler] Declared output key: ${declaredOutputKey || '(none)'}`);
     console.log(`[ExtractHandler] LLM response structure:`, JSON.stringify(parsed, null, 2).substring(0, 1000));
 
-    // If it's already in our expected format with 'items' or 'result', return as-is
+    // If it's already in our expected format with 'items' or 'result', add declared key alias if needed
     if (parsed && typeof parsed === 'object' && ('items' in parsed || 'result' in parsed)) {
       console.log('[ExtractHandler] Output already has items/result key');
+      // Add declared key alias if it's different from existing keys
+      if (declaredOutputKey && !(declaredOutputKey in parsed)) {
+        const arrayValue = parsed.items || parsed.result;
+        if (Array.isArray(arrayValue)) {
+          console.log(`[ExtractHandler] Adding declared key '${declaredOutputKey}' as alias`);
+          return { ...parsed, [declaredOutputKey]: arrayValue };
+        }
+      }
       return parsed;
     }
 
-    // If it's a raw array, wrap it in {items: [...]} for consistency
+    // If it's a raw array, wrap it using declared key (with items alias for backward compatibility)
     if (Array.isArray(parsed)) {
-      console.log('[ExtractHandler] Wrapping raw array in {items: [...]}');
-      return { items: parsed };
+      if (declaredOutputKey) {
+        console.log(`[ExtractHandler] Wrapping raw array in {${declaredOutputKey}: [...], items: [...]}`);
+        return { [declaredOutputKey]: parsed, items: parsed };
+      } else {
+        console.log('[ExtractHandler] Wrapping raw array in {items: [...]}');
+        return { items: parsed };
+      }
     }
 
     // Find the first array property, regardless of how many keys exist
     // This handles cases where LLM returns {"emails": [...], "metadata": {...}}
+    // Preserve the original key name AND add 'items' alias for backward compatibility
     if (parsed && typeof parsed === 'object') {
       const keys = Object.keys(parsed);
       for (const key of keys) {
         if (Array.isArray(parsed[key])) {
-          console.log(`[ExtractHandler] Found array in property '${key}', normalizing to 'items'`);
-          return { items: parsed[key] };
+          console.log(`[ExtractHandler] Found array in property '${key}', preserving key and adding 'items' alias`);
+          // Return object with original key, items alias, AND declared key alias if different
+          const result: any = { [key]: parsed[key], items: parsed[key] };
+          if (declaredOutputKey && declaredOutputKey !== key) {
+            console.log(`[ExtractHandler] Also adding declared key '${declaredOutputKey}' as alias`);
+            result[declaredOutputKey] = parsed[key];
+          }
+          return result;
         }
       }
     }

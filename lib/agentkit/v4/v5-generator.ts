@@ -69,7 +69,8 @@ const logger = createLogger({ module: 'AgentKit', service: 'V5WorkflowGenerator'
 
 // Prompt template file names for technical workflow reviewer
 //const TECHNICAL_REVIEWER_SYSTEM_PROMPT = 'Workflow-Agent-Technical-Reviewer-SystemPrompt-v2';
-const TECHNICAL_REVIEWER_SYSTEM_PROMPT = 'Workflow-Agent-Technical-Reviewer-SystemPrompt-v3';
+//const TECHNICAL_REVIEWER_SYSTEM_PROMPT = 'Workflow-Agent-Technical-Reviewer-SystemPrompt-v3';
+const TECHNICAL_REVIEWER_SYSTEM_PROMPT = 'Workflow-Agent-Technical-Reviewer-SystemPrompt-v4'; // Phase 5: Output schema enforcement
 const TECHNICAL_REVIEWER_USER_PROMPT = 'Workflow-Agent-Technical-Reviewer-UserPrompt-v1';
 
 // Re-export types from schema for backwards compatibility
@@ -99,15 +100,26 @@ export interface V5GeneratorOptions {
  * Supports two paths:
  * - enhancedPrompt: Traditional Stage 1 (LLM extraction) + Stage 2 (DSL)
  * - technicalWorkflow: LLM Review + Stage 2 (skips Stage 1 extraction)
+ *
+ * Testing options:
+ * - reviewedTechnicalWorkflow: Skip LLM reviewer entirely (inject reviewer output)
+ * - skipDslBuilder: Skip DSL building (return reviewed workflow only)
  */
 export interface WorkflowGenerationInput {
   /** Enhanced prompt string - triggers Stage 1 LLM extraction */
   enhancedPrompt?: string;
   /** Pre-built technical workflow - triggers LLM review before DSL building */
   technicalWorkflow?: TechnicalWorkflowInput;
-  /** AI provider to use for technical workflow review (required when technicalWorkflow is provided) */
+  /**
+   * Pre-reviewed technical workflow - skips LLM reviewer call entirely.
+   * Use for testing/debugging to inject reviewer output directly.
+   * Must include technical_workflow, reviewer_summary, and feasibility fields.
+   * When provided, technicalWorkflow is ignored.
+   */
+  reviewedTechnicalWorkflow?: ReviewedTechnicalWorkflowInput;
+  /** AI provider to use for technical workflow review (required when technicalWorkflow is provided without reviewedTechnicalWorkflow) */
   provider?: ProviderName;
-  /** Model to use for technical workflow review (required when technicalWorkflow is provided) */
+  /** Model to use for technical workflow review (required when technicalWorkflow is provided without reviewedTechnicalWorkflow) */
   model?: string;
   /** Plugin names to include in schema_services for LLM review context */
   required_services?: string[];
@@ -125,6 +137,8 @@ export interface V5GenerationResult {
   warnings?: string[];
   /** Indicates if technical workflow path was used (Stage 1 skipped) */
   technicalWorkflowUsed?: boolean;
+  /** Indicates if LLM reviewer was skipped (injected reviewed workflow used) */
+  reviewerSkipped?: boolean;
   /** Indicates if DSL building was skipped (only LLM review performed) */
   dslBuilderSkipped?: boolean;
   /** Session ID from workflow generation diary (if session tracking enabled) */
@@ -215,61 +229,91 @@ export class V5WorkflowGenerator {
       let cost = { stage1: 0, total: 0 };
       let technicalWorkflowUsed = false;
 
-      // Determine which path to use
+      // Determine which path to use (in priority order)
+      const hasReviewedWorkflow = (input.reviewedTechnicalWorkflow?.technical_workflow?.length ?? 0) > 0;
       const hasTechnicalWorkflow = (input.technicalWorkflow?.technical_workflow?.length ?? 0) > 0;
-      const inputPath = hasTechnicalWorkflow ? 'technical_workflow' : 'enhanced_prompt';
+      const inputPath = (hasReviewedWorkflow || hasTechnicalWorkflow) ? 'technical_workflow' : 'enhanced_prompt';
 
       // Start session for tracking (if enabled)
       const sessionId = await this.sessionTracker?.start({
-        technicalWorkflow: input.technicalWorkflow,
+        technicalWorkflow: input.reviewedTechnicalWorkflow || input.technicalWorkflow,
         enhancedPrompt: input.enhancedPrompt,
         provider: input.provider,
         model: input.model,
       }, inputPath);
 
-      if (!hasTechnicalWorkflow) {
+      if (!hasReviewedWorkflow && !hasTechnicalWorkflow) {
         logger.warn(
           { hasEnhancedPrompt: !!input.enhancedPrompt },
           'No technical workflow provided - V5 generator will use Stage 1 LLM extraction (less efficient path)'
         );
       }
 
-      if (hasTechnicalWorkflow) {
+      if (hasReviewedWorkflow || hasTechnicalWorkflow) {
         // TECHNICAL WORKFLOW PATH: Skip Stage 1, use pre-built workflow
+        const workflowStepsCount = hasReviewedWorkflow
+          ? input.reviewedTechnicalWorkflow!.technical_workflow.length
+          : input.technicalWorkflow!.technical_workflow.length;
+
         logger.info(
-          { stepsCount: input.technicalWorkflow!.technical_workflow.length },
+          { stepsCount: workflowStepsCount, reviewerSkipped: hasReviewedWorkflow },
           'Using technical workflow path (skipping Stage 1 LLM)'
         );
 
-        // Track technical_reviewer stage
-        await this.sessionTracker?.addStage({
-          stage_name: 'technical_reviewer',
-          input_data: input.technicalWorkflow,
-          input_summary: `TechnicalWorkflow with ${input.technicalWorkflow!.technical_workflow.length} steps`,
-        });
+        let reviewedWorkflow: ReviewedTechnicalWorkflowInput;
+        let reviewerSkipped = false;
 
-        // Review technical workflow via LLM before converting to DSL
-        const reviewedWorkflow = await this.reviewTechnicalWorkflow(input);
+        if (hasReviewedWorkflow) {
+          // INJECTED PATH: Skip LLM reviewer, use provided reviewed workflow
+          logger.info(
+            { stepsCount: input.reviewedTechnicalWorkflow!.technical_workflow.length },
+            'Using injected reviewed workflow (skipping LLM reviewer)'
+          );
+          reviewedWorkflow = input.reviewedTechnicalWorkflow!;
+          reviewerSkipped = true;
 
-        // Complete technical_reviewer stage
-        await this.sessionTracker?.completeStage({
-          output_data: reviewedWorkflow,
-          output_summary: `Reviewed workflow: ${reviewedWorkflow.reviewer_summary?.status || 'unknown'}, can_execute: ${reviewedWorkflow.feasibility?.can_execute}`,
-          llm_call: {
-            prompt_template: TECHNICAL_REVIEWER_SYSTEM_PROMPT,
-            input_tokens: 0, // TODO: Capture from reviewTechnicalWorkflow
-            output_tokens: 0,
-            finish_reason: 'stop',
-            model: input.model || 'unknown',
-            provider: input.provider || 'anthropic',
-          },
-        });
+          // Track that reviewer was skipped
+          await this.sessionTracker?.addStage({
+            stage_name: 'technical_reviewer',
+            input_data: input.reviewedTechnicalWorkflow,
+            input_summary: `Injected ReviewedWorkflow with ${workflowStepsCount} steps (reviewer skipped)`,
+          });
+          await this.sessionTracker?.completeStage({
+            output_data: reviewedWorkflow,
+            output_summary: `Reviewer skipped - using injected workflow`,
+          });
+        } else {
+          // NORMAL PATH: Call LLM reviewer
+          // Track technical_reviewer stage
+          await this.sessionTracker?.addStage({
+            stage_name: 'technical_reviewer',
+            input_data: input.technicalWorkflow,
+            input_summary: `TechnicalWorkflow with ${input.technicalWorkflow!.technical_workflow.length} steps`,
+          });
 
-        logger.info({
-          reviewerStatus: reviewedWorkflow.reviewer_summary?.status,
-          canExecute: reviewedWorkflow.feasibility?.can_execute,
-          reviewedStepsCount: reviewedWorkflow.technical_workflow.length,
-        }, 'Technical workflow reviewed by LLM');
+          // Review technical workflow via LLM before converting to DSL
+          reviewedWorkflow = await this.reviewTechnicalWorkflow(input);
+
+          // Complete technical_reviewer stage
+          await this.sessionTracker?.completeStage({
+            output_data: reviewedWorkflow,
+            output_summary: `Reviewed workflow: ${reviewedWorkflow.reviewer_summary?.status || 'unknown'}, can_execute: ${reviewedWorkflow.feasibility?.can_execute}`,
+            llm_call: {
+              prompt_template: TECHNICAL_REVIEWER_SYSTEM_PROMPT,
+              input_tokens: 0, // TODO: Capture from reviewTechnicalWorkflow
+              output_tokens: 0,
+              finish_reason: 'stop',
+              model: input.model || 'unknown',
+              provider: input.provider || 'anthropic',
+            },
+          });
+
+          logger.info({
+            reviewerStatus: reviewedWorkflow.reviewer_summary?.status,
+            canExecute: reviewedWorkflow.feasibility?.can_execute,
+            reviewedStepsCount: reviewedWorkflow.technical_workflow.length,
+          }, 'Technical workflow reviewed by LLM');
+        }
 
         // If skipDslBuilder is true, return reviewed workflow without DSL building
         if (input.skipDslBuilder) {
@@ -283,6 +327,7 @@ export class V5WorkflowGenerator {
             workflow: undefined,
             reviewedWorkflow,
             technicalWorkflowUsed: true,
+            reviewerSkipped,
             dslBuilderSkipped: true,
             sessionId,
             tokensUsed,
@@ -316,7 +361,8 @@ export class V5WorkflowGenerator {
         // Merge data from reviewer output AND original Phase 4 input
         // The reviewer only returns technical_workflow, reviewer_summary, and feasibility
         // We need to preserve enhanced_prompt, technical_inputs_required, and requiredServices from original input
-        const originalInput = input.technicalWorkflow!;
+        // When using injected reviewed workflow, it already contains all fields; otherwise use technicalWorkflow
+        const originalInput = input.reviewedTechnicalWorkflow || input.technicalWorkflow!;
 
         const phase4Input: Phase4Response = {
           // From reviewer output (the validated/repaired workflow)
@@ -336,7 +382,7 @@ export class V5WorkflowGenerator {
           servicesInvolved: phase4Input.enhanced_prompt?.specifics?.services_involved,
         }, 'Phase4Input merged from reviewer output and original input');
 
-        const dslResult: Phase4DSLBuilderResult = this.phase4DslBuilder.build(phase4Input);
+        const dslResult: Phase4DSLBuilderResult = await this.phase4DslBuilder.build(phase4Input);
 
         // Complete phase4_dsl_builder stage
         await this.sessionTracker?.completeStage({
@@ -405,6 +451,7 @@ export class V5WorkflowGenerator {
           workflow: dslResult.workflow,
           warnings: dslResult.warnings.map(w => `[${w.stepId}] ${w.message}`),
           technicalWorkflowUsed: true,
+          reviewerSkipped,
           sessionId,
           tokensUsed,
           cost,

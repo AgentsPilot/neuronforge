@@ -57,6 +57,12 @@ export interface WorkflowStepBase {
    * Metadata for UI display
    */
   metadata?: Record<string, any>;
+
+  /**
+   * Output declarations for this step
+   * Used by DSL compiler for reference validation and by executor for output key aliasing
+   */
+  outputs?: Record<string, { type: string; description?: string }>;
 }
 
 /**
@@ -124,7 +130,7 @@ export interface LoopStep extends WorkflowStepBase {
  */
 export interface TransformStep extends WorkflowStepBase {
   type: 'transform';
-  operation: 'map' | 'filter' | 'reduce' | 'sort' | 'group' | 'aggregate';
+  operation: 'map' | 'filter' | 'reduce' | 'sort' | 'group' | 'aggregate' | 'format' | 'deduplicate' | 'flatten' | 'join' | 'pivot' | 'split' | 'expand' | 'set';
   input: string;  // Variable reference
   config: TransformConfig;
 }
@@ -409,17 +415,129 @@ export type ExecutionStatus = 'running' | 'paused' | 'completed' | 'failed' | 'c
 
 /**
  * Step output from plugin execution
+ *
+ * Phase 1 Architectural Redesign:
+ * - `data` contains normalized output mapped to declared output keys
+ * - `_raw` preserves original runtime output for debugging
+ * - `_meta` tracks normalization actions taken
  */
 export interface StepOutput {
   stepId: string;
   plugin: string;
   action: string;
 
-  // Actual plugin response (EPHEMERAL - not persisted to DB)
-  data: any;
+  /**
+   * Normalized output data mapped to declared output keys
+   * Structure: { [declaredOutputKey]: value }
+   *
+   * Example: If DSL declares outputs: { action_items: "object[]" }
+   * and runtime returns { items: [...] }, data will be { action_items: [...] }
+   */
+  data: Record<string, any>;
 
   // Metadata (persisted to DB)
   metadata: StepOutputMetadata;
+
+  /**
+   * Original runtime output before normalization (for debugging)
+   * Only populated when normalization occurred
+   */
+  _raw?: any;
+
+  /**
+   * Normalization metadata - tracks what transformations were applied
+   */
+  _meta?: NormalizationMeta;
+}
+
+/**
+ * Metadata about output normalization actions
+ * Used for debugging and understanding how data was transformed
+ */
+export interface NormalizationMeta {
+  /**
+   * Whether any normalization was applied
+   */
+  normalized: boolean;
+
+  /**
+   * Mapping of runtime keys to declared keys
+   * Example: { "items": "action_items" }
+   */
+  keyMappings?: Record<string, string>;
+
+  /**
+   * Keys that were wrapped (primitive → object)
+   * Example: ["rows_html"] when string was wrapped as { rows_html: "..." }
+   */
+  wrappedKeys?: string[];
+
+  /**
+   * Keys that were parsed from string to object
+   * Example: ["email_content"] when JSON string was parsed
+   */
+  parsedKeys?: string[];
+
+  /**
+   * Warnings encountered during normalization
+   */
+  warnings?: string[];
+}
+
+/**
+ * Declared output definition from DSL step
+ * Used by normalizer to map runtime outputs to declared keys
+ */
+export interface DeclaredOutput {
+  key: string;
+  type: string;  // e.g., "object[]", "string", "object"
+  description?: string;
+}
+
+/**
+ * All valid transform types as a const array
+ * This is the single source of truth - the type is derived from this array
+ */
+export const TRANSFORM_TYPES = [
+  // Deterministic transforms
+  'filter',
+  'map',
+  'sort',
+  'group_by',
+  'aggregate',
+  'reduce',
+  'deduplicate',
+  'flatten',
+  'pick_fields',
+  'format',
+  'merge',
+  'split',
+  'convert',
+  // LLM-assisted transforms
+  'summarize_with_llm',
+  'classify_with_llm',
+  'extract_with_llm',
+  'analyze_with_llm',
+  'generate_with_llm',
+  'translate_with_llm',
+  'enrich_with_llm',
+  // Plugin operations
+  'operation',
+  // Unknown/other
+  'unknown',
+] as const;
+
+/**
+ * Transform type for output normalization
+ * Derived from TRANSFORM_TYPES array - no duplication needed
+ */
+export type TransformType = typeof TRANSFORM_TYPES[number];
+
+/**
+ * Check if a string is a valid TransformType
+ */
+export function isValidTransformType(type: string): type is TransformType {
+  return TRANSFORM_TYPES.includes(type as TransformType);
 }
 
 /**
@@ -433,10 +551,21 @@ export interface TokenUsage {
 }
 
 /**
+ * Legacy token format with prompt/completion naming
+ */
+interface LegacyTokenFormat {
+  total: number;
+  prompt?: number;
+  completion?: number;
+  input?: number;
+  output?: number;
+}
+
+/**
  * ✅ P1 FIX: Utility to normalize token formats
  * Converts both legacy number format and object format to standardized TokenUsage
  */
-export function normalizeTokens(tokens: number | { total: number; prompt?: number; completion?: number; input?: number; output?: number } | TokenUsage | undefined): TokenUsage {
+export function normalizeTokens(tokens: number | LegacyTokenFormat | TokenUsage | undefined): TokenUsage {
   if (!tokens) {
     return { input: 0, output: 0, total: 0 };
   }
@@ -447,9 +576,11 @@ export function normalizeTokens(tokens: number | { total: number; prompt?: numbe
   }
 
   // Object format - handle multiple naming conventions
-  const input = tokens.input ?? tokens.prompt ?? 0;
-  const output = tokens.output ?? tokens.completion ?? 0;
-  const total = tokens.total ?? (input + output);
+  // Cast to LegacyTokenFormat to access optional prompt/completion fields
+  const legacy = tokens as LegacyTokenFormat;
+  const input = legacy.input ?? legacy.prompt ?? 0;
+  const output = legacy.output ?? legacy.completion ?? 0;
+  const total = legacy.total ?? (input + output);
 
   return { input, output, total };
 }
@@ -679,7 +810,14 @@ export interface CacheConfig {
  */
 export interface TransformConfig {
   // Map operation
-  mapping?: Record<string, string>;
+  mapping?: {
+    template?: string;
+    columns?: string[];
+    static_values?: Record<string, string>;
+    output_schema?: Record<string, string>;
+    json_escape?: boolean;
+    [key: string]: any;  // Allow additional mapping properties
+  };
 
   // Filter operation
   condition?: Condition;
@@ -692,12 +830,20 @@ export interface TransformConfig {
   field?: string;
   order?: 'asc' | 'desc';
 
+  // Deduplicate operation
+  sort_field?: string;
+  keep?: 'first' | 'last' | 'most_recent';
+
   // Aggregate operation
   aggregations?: Array<{
     field: string;
     operation: 'sum' | 'avg' | 'min' | 'max' | 'count';
     alias?: string;
   }>;
+
+  // Format operation (alternative to mapping.template)
+  template?: string;
+  columns?: string[];
 }
 
 // ============================================================================

@@ -913,8 +913,8 @@ Present on all tabs:
 ### UC-13: Test V5 Workflow Generator (LLM Review Flow)
 1. Navigate to AI Services tab
 2. Select `test/generate-agent-v5-test-wrapper` from dropdown
-3. Select AI Provider (defaults to Anthropic)
-4. Select Model (defaults to Claude Sonnet 4)
+3. Select AI Provider (defaults to OpenAI)
+4. Select Model (defaults to gpt-5.2)
 5. Prepare enhancedPrompt JSON with required fields:
    - `sections` (data, output, actions, delivery, processing_steps)
    - `specifics.services_involved` (required for auto-extraction)
@@ -927,7 +927,43 @@ Present on all tabs:
    - Generated/reviewed workflow steps
    - Validation results
    - DSL output
+   - `dslCompilation` - DSL compiler pre-execution validation
 10. Check for validation errors with clear `missingFields` if inputs are incomplete
+
+**Response includes DSL Compilation:**
+```json
+{
+  "success": true,
+  "workflow": { "workflow_steps": [...] },
+  "dslCompilation": {
+    "valid": true,
+    "errors": [],
+    "warnings": [],
+    "errorSummary": "..." // only if valid=false
+  },
+  "latency_ms": 1234
+}
+```
+
+### UC-13b: Deterministic V5 Testing (Skip LLM Reviewer)
+For reproducible testing without LLM variability, use `reviewedTechnicalWorkflow` to bypass the LLM reviewer:
+
+1. **First run (generate reviewed workflow):**
+   - Set `skipDslBuilder: true` in request body
+   - Execute to get `reviewedWorkflow` in response
+   - Save the `reviewedWorkflow` JSON for later use
+
+2. **Subsequent runs (deterministic):**
+   - Use "Import JSON" button → select `reviewedTechnicalWorkflow` target
+   - Paste the saved `reviewedWorkflow` JSON
+   - `skipDslBuilder` is auto-set to `false` (since DSL building is the goal)
+   - Execute - LLM reviewer is bypassed, only Phase4DSLBuilder runs
+
+**Benefits:**
+- 100% reproducible results (no LLM variability)
+- Fast execution (~50ms vs ~2-5s)
+- Zero API cost (no LLM calls)
+- CI/CD friendly (no flaky tests)
 
 ### UC-14: Test Agent Execution with v5Generator JSON (Sandbox Mode)
 1. Navigate to Agent Execution tab
@@ -1151,7 +1187,24 @@ All errors are:
 
 ## Changelog
 
-### Version 1.13 (Current)
+### Version 1.15 (Current)
+- **DSL Compilation in V5 Test Wrapper**: Added pre-execution DSL validation to API response
+  - Runs `DslCompiler` on generated workflow before returning response
+  - Response includes `dslCompilation` object with `valid`, `errors`, `warnings`, `errorSummary`
+  - Initializes schema registry for accurate field validation
+  - Helps catch step reference and output key errors before agent execution
+
+### Version 1.14
+- **Deterministic V5 Testing (reviewedTechnicalWorkflow)**: Skip LLM reviewer for reproducible tests
+  - **New request field**: `reviewedTechnicalWorkflow` - inject pre-reviewed workflow to bypass LLM
+  - **New JSON import target**: `reviewedTechnicalWorkflow` option in Import JSON modal
+  - **Auto-behavior**: Importing `reviewedTechnicalWorkflow` auto-sets `skipDslBuilder: false`
+  - **Result flags**: Response includes `reviewerSkipped: true` when reviewer is bypassed
+  - **Use case**: Run LLM review once with `skipDslBuilder: true`, save output, reuse for deterministic DSL testing
+  - Benefits: 100% reproducible, ~50ms execution, zero API cost, CI/CD friendly
+- Added UC-13b: Deterministic V5 Testing use case
+
+### Version 1.13
 - **Thread → V5 Generator → Sandbox Pipeline**: New 3-step workflow transfer buttons
   - **Send to V5 Generator →** button in Thread Phase 4:
     - Formats `enhancedPrompt` and `technicalWorkflow` into V5 request body
@@ -1353,5 +1406,5 @@ For issues or questions about the Test Page:
 
 ---
 
-**Last Updated:** January 7, 2026 (v1.13 - Thread → V5 Generator → Sandbox Pipeline)
+**Last Updated:** January 13, 2026 (v1.15 - DSL Compilation in V5 Test Wrapper)
 **Maintained By:** NeuronForge Development Team

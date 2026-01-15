@@ -8,4 +8,5 @@ export interface UserContext {
   role?: string;
   company?: string;
   domain?: string;
+  timezone?: string;
 }

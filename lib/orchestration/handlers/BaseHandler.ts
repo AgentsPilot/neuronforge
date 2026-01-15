@@ -439,8 +439,35 @@ export abstract class BaseHandler implements IntentHandler {
       }
     }
 
+    // ✅ FIX: Inject output schema instructions if available
+    // This ensures ai_processing steps enforce their declared output structure
+    let enhancedSystemPrompt = systemPrompt;
+    const outputSchema = context.input?.outputSchema;
+    if (outputSchema) {
+      const schemaJson = JSON.stringify(outputSchema, null, 2);
+      const schemaInstructions = `
+
+## OUTPUT FORMAT REQUIREMENT (MANDATORY)
+
+You MUST respond with valid JSON that matches this exact schema:
+
+\`\`\`json
+${schemaJson}
+\`\`\`
+
+CRITICAL RULES:
+1. Your ENTIRE response must be a valid JSON object - no text before or after
+2. Include ALL required fields: ${outputSchema.required?.join(', ') || 'see schema'}
+3. Use the exact field names shown in the schema
+4. Do NOT wrap the JSON in markdown code blocks or add any explanation
+5. If the schema specifies array items with properties, include the FULL item objects (not just IDs)`;
+
+      enhancedSystemPrompt = `${systemPrompt}${schemaInstructions}`;
+      console.log(`[BaseHandler] Injected output schema instructions for step ${context.stepId}`);
+    }
+
     return {
-      system: systemPrompt,
+      system: enhancedSystemPrompt,
       user: enhancedUserPrompt,
     };
   }

@@ -49,6 +49,8 @@ import { PilotConfigService } from './PilotConfigService';
 import { StepCache } from './StepCache';
 import { DebugSessionManager } from '@/lib/debug/DebugSessionManager';
 import type { UserContext } from '@/lib/user-context';
+import { compileDsl, getErrorSummary } from './dsl-compiler';
+import { initializeSchemaRegistry } from './schema-registry';
 
 export class WorkflowPilot {
   private supabase: SupabaseClient;
@@ -237,6 +239,55 @@ export class WorkflowPilot {
         undefined,
         { agent_id: agent.id }
       );
+    }
+
+    // ============================================================
+    // PHASE 2 & 3 ARCHITECTURAL REDESIGN: DSL Compilation/Validation
+    // ============================================================
+    // Phase 3: Initialize schema registry for field validation
+    await initializeSchemaRegistry();
+
+    // Validate DSL before execution to catch reference errors early
+    const compilationResult = compileDsl({ steps: workflowSteps });
+
+    if (!compilationResult.valid) {
+      const errorSummary = getErrorSummary(compilationResult);
+      console.error(`❌ [WorkflowPilot] DSL compilation failed:\n${errorSummary}`);
+
+      // Log audit event for compilation failure
+      await this.auditTrail.log({
+        action: AUDIT_EVENTS.PILOT_VALIDATION_FAILED,
+        entityType: 'agent',
+        entityId: agent.id,
+        userId,
+        resourceName: agent.agent_name,
+        details: {
+          errors: compilationResult.errors,
+          warnings: compilationResult.warnings,
+        },
+        severity: 'warning',
+      });
+
+      throw new ValidationError(
+        `DSL validation failed: ${compilationResult.errors.length} error(s) found`,
+        undefined,
+        {
+          agent_id: agent.id,
+          errors: compilationResult.errors,
+          warnings: compilationResult.warnings,
+          summary: errorSummary,
+        }
+      );
+    }
+
+    // Log warnings if any
+    if (compilationResult.warnings.length > 0) {
+      console.warn(`⚠️ [WorkflowPilot] DSL compilation warnings (${compilationResult.warnings.length}):`);
+      for (const warning of compilationResult.warnings) {
+        console.warn(`   [${warning.type}] ${warning.stepId}: ${warning.message}`);
+      }
+    } else {
+      console.log(`✅ [WorkflowPilot] DSL compilation passed`);
     }
 
     const executionPlan = this.parser.parse(workflowSteps);

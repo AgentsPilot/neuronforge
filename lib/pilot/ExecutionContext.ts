@@ -496,8 +496,18 @@ export class ExecutionContext {
 
     if (typeof obj === 'object') {
       const resolved: any = {};
+
+      // Check if this is a mapping object with json_escape - if so, preserve the template
+      // The template will be expanded later by transformFormat with proper JSON escaping
+      const isJsonEscapeMapping = obj.json_escape === true && typeof obj.template === 'string';
+
       for (const [key, value] of Object.entries(obj)) {
-        resolved[key] = this.resolveAllVariables(value);
+        // Skip resolving template when json_escape is true - let transformFormat handle it
+        if (isJsonEscapeMapping && key === 'template') {
+          resolved[key] = value; // Preserve template as-is
+        } else {
+          resolved[key] = this.resolveAllVariables(value);
+        }
       }
       return resolved;
     }

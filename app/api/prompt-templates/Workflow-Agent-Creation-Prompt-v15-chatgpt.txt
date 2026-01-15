@@ -621,7 +621,71 @@ Phase 4 does **not** change the meaning of the agent’s behavior; it only expre
 	- A workflow with any invalid `from_step` ref MUST set feasibility.can_execute = false.
 * Enforce exact JSON Schema types and shapes.
 
-When you cannot fill a required parameter from known data (user_prompt, enhanced_prompt, user_context, resolved_user_inputs) or previous steps, mark it as source: "user_input" in the step’s inputs. The platform will derive the final technical_inputs_required list from these user_input bindings and the action schemas.
+### OUTPUT SCHEMA DECLARATION (REQUIRED - Phase 5 Enhancement)
+
+Every step that outputs structured data MUST declare the explicit structure in its outputs. Vague types are NOT acceptable.
+
+**REJECTED output declarations (will cause downstream failures):**
+- `"object"` without properties
+- `"object[]"` without item schema
+- `"any"`
+
+**REQUIRED: Explicit schema declarations:**
+
+1. **For operation steps:**
+   - Output keys MUST match the action's output_schema field names from schema_services
+   - Use the exact type labels from the action's output_schema
+   - Example: `"outputs": { "emails": "GmailMessage[]", "next_step": "step2" }`
+
+2. **For ai_processing / *_with_llm transform steps that output structured data:**
+   - MUST include `output_schema` field with explicit field definitions
+   - The output_schema MUST list ALL fields that downstream steps will reference
+   - Example:
+     ```json
+     {
+       "id": "step3",
+       "kind": "transform",
+       "type": "extract_with_llm",
+       "description": "Extract email classification and metadata",
+       "inputs": { "emails": { "source": "from_step", "ref": "step2.emails" } },
+       "output_schema": {
+         "type": "array",
+         "items": {
+           "type": "object",
+           "required": ["classification", "sender", "subject"],
+           "properties": {
+             "classification": { "type": "string", "enum": ["action_required", "fyi"] },
+             "sender": { "type": "string" },
+             "subject": { "type": "string" },
+             "received_time": { "type": "string" },
+             "priority": { "type": "string", "enum": ["High", "Medium", "Low"] },
+             "cta": { "type": "string" },
+             "suggested_next_step": { "type": "string" },
+             "due_date": { "type": "string" },
+             "link_to_email": { "type": "string" }
+           }
+         }
+       },
+       "outputs": { "rows": "EmailSummary[]", "next_step": "step4" }
+     }
+     ```
+
+3. **For split transforms:**
+   - MUST declare explicit bucket names in outputs based on the field values
+   - WRONG: `"outputs": { "buckets": "object", "next_step": "step5" }`
+   - CORRECT: `"outputs": { "action_required": "EmailSummary[]", "fyi": "EmailSummary[]", "next_step": "step5" }`
+
+4. **For format transforms that output structured objects:**
+   - If the step outputs a structured object (e.g., email content with subject and body), declare the shape
+   - Example: `"outputs": { "content": { "subject": "string", "html_body": "string" }, "next_step": "step6" }`
+
+**Why this matters:**
+- The DSL compiler validates all template references against declared output schemas
+- The runtime validates LLM responses against output_schema and fails fast on mismatch
+- Downstream steps depend on knowing the exact field names available
+- Vague types cause "compiler OK / runtime surprise" failures
+
+When you cannot fill a required parameter from known data (user_prompt, enhanced_prompt, user_context, resolved_user_inputs) or previous steps, mark it as source: "user_input" in the step's inputs. The platform will derive the final technical_inputs_required list from these user_input bindings and the action schemas.
 
 ### technical_workflow Output (example 1)
 {
@@ -634,8 +698,19 @@ When you cannot fill a required parameter from known data (user_prompt, enhanced
       "inputs": {
         "sheet_values": { "source": "from_step", "ref": "step0.values" }
       },
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "email": { "type": "string" },
+            "stage": { "type": "string" }
+          }
+        }
+      },
       "outputs": {
-        "leads": "object[]",
+        "leads": "Lead[]",
         "next_step": "step2"
       }
     },
@@ -658,7 +733,7 @@ When you cannot fill a required parameter from known data (user_prompt, enhanced
       "description": "Build email content for Leads List",
       "inputs": { "...": "..." },
       "outputs": {
-        "content": "object",
+        "content": { "subject": "string", "html_body": "string" },
         "next_step": "step5"
       }
     },
@@ -669,7 +744,7 @@ When you cannot fill a required parameter from known data (user_prompt, enhanced
       "description": "Build email content for No Leads",
       "inputs": { "...": "..." },
       "outputs": {
-        "content": "object",
+        "content": { "subject": "string", "html_body": "string" },
         "next_step": "step5"
       }
     },
@@ -698,7 +773,11 @@ When you cannot fill a required parameter from known data (user_prompt, enhanced
       "type": "map",
       "description": "Prepare per-item worklist",
       "inputs": { "items": { "source": "from_step", "ref": "step0.items" } },
-      "outputs": { "worklist": "object[]", "next_step": "step2" }
+      "output_schema": {
+        "type": "array",
+        "items": { "type": "object", "properties": { "id": { "type": "string" }, "name": { "type": "string" } } }
+      },
+      "outputs": { "worklist": "WorklistItem[]", "next_step": "step2" }
     },
     {
       "id": "step2",

@@ -1,6 +1,60 @@
 import { z } from 'zod';
 import { TechnicalWorkflowStepSchema } from './phase4-schema';
 
+// ===== OUTPUT CONTRACT SCHEMAS (Phase 5 Enhancement) =====
+
+/**
+ * JSON Schema representation for output contracts
+ * Supports both simple types and complex object schemas
+ */
+export const JSONSchemaSchema: z.ZodType<any> = z.lazy(() => z.object({
+  type: z.enum(['string', 'number', 'integer', 'boolean', 'object', 'array', 'null']),
+  description: z.string().optional(),
+  properties: z.record(z.string(), JSONSchemaSchema).optional(),
+  items: JSONSchemaSchema.optional(),
+  required: z.array(z.string()).optional(),
+  enum: z.array(z.union([z.string(), z.number(), z.boolean()])).optional(),
+  format: z.string().optional(),
+  additionalProperties: z.union([z.boolean(), JSONSchemaSchema]).optional(),
+  // Allow extension fields
+}).passthrough());
+
+/**
+ * Output contract for a single step output
+ * Supports three ways to declare schema:
+ * 1. $ref - reference to a registered schema (e.g., "$ref:plugins/gmail/draft")
+ * 2. type - simple type label (e.g., "string", "Lead[]")
+ * 3. schema - inline JSON Schema for complex structures
+ */
+export const OutputContractSchema = z.object({
+  /** Schema reference (e.g., "$ref:plugins/gmail/draft", "$ref:ai/leads") */
+  $ref: z.string().regex(/^\$ref:[a-z]+\/[a-z0-9_\-\/]+$/).optional(),
+  /** Simple type label (e.g., "string", "Lead[]", "GmailMessage") */
+  type: z.string().optional(),
+  /** Inline JSON Schema for complex structures */
+  schema: JSONSchemaSchema.optional(),
+  /** Human-readable description */
+  description: z.string().optional(),
+}).refine(
+  (data) => data.$ref || data.type || data.schema,
+  { message: 'OutputContract must have at least one of: $ref, type, or schema' }
+);
+
+/**
+ * AI Output Schema declaration for ai_processing steps
+ * Defines the expected structure of LLM-generated output
+ */
+export const AIOutputSchemaSchema = z.object({
+  /** Fields expected in the output */
+  properties: z.record(z.string(), z.object({
+    type: z.string(),
+    description: z.string().optional(),
+    enum: z.array(z.string()).optional(),
+  })),
+  /** Required fields in the output */
+  required: z.array(z.string()).optional(),
+});
+
 // ===== TECHNICAL REVIEWER RESPONSE SCHEMAS =====
 
 /**
@@ -54,6 +108,12 @@ export const TechnicalReviewerResponseSchema = z.object({
 
 // ===== TYPE EXPORTS =====
 
+// Phase 5 Output Contract types
+export type JSONSchema = z.infer<typeof JSONSchemaSchema>;
+export type OutputContract = z.infer<typeof OutputContractSchema>;
+export type AIOutputSchema = z.infer<typeof AIOutputSchemaSchema>;
+
+// Technical Reviewer types
 export type BlockingGap = z.infer<typeof BlockingGapSchema>;
 export type StepChange = z.infer<typeof StepChangeSchema>;
 export type ReviewerSummary = z.infer<typeof ReviewerSummarySchema>;
@@ -75,6 +135,50 @@ export function validateTechnicalReviewerResponse(data: unknown): {
   }
 
   // Format Zod errors for better debugging
+  const errors = result.error.errors.map(err => {
+    const path = err.path.join('.');
+    return `${path}: ${err.message}`;
+  });
+
+  return { success: false, errors };
+}
+
+/**
+ * Validate an output contract declaration
+ */
+export function validateOutputContract(data: unknown): {
+  success: boolean;
+  data?: OutputContract;
+  errors?: string[];
+} {
+  const result = OutputContractSchema.safeParse(data);
+
+  if (result.success) {
+    return { success: true, data: result.data };
+  }
+
+  const errors = result.error.errors.map(err => {
+    const path = err.path.join('.');
+    return `${path}: ${err.message}`;
+  });
+
+  return { success: false, errors };
+}
+
+/**
+ * Validate an AI output schema declaration
+ */
+export function validateAIOutputSchema(data: unknown): {
+  success: boolean;
+  data?: AIOutputSchema;
+  errors?: string[];
+} {
+  const result = AIOutputSchemaSchema.safeParse(data);
+
+  if (result.success) {
+    return { success: true, data: result.data };
+  }
+
   const errors = result.error.errors.map(err => {
     const path = err.path.join('.');
     return `${path}: ${err.message}`;

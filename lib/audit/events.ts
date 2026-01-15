@@ -181,6 +181,7 @@ export const AUDIT_EVENTS = {
   PILOT_STEP_RETRIED: 'PILOT_STEP_RETRIED', // Step retried after failure
   PILOT_DISABLED: 'PILOT_DISABLED', // Pilot disabled - execution blocked
   PILOT_CONFIG_UPDATED: 'PILOT_CONFIG_UPDATED', // Pilot settings changed
+  PILOT_VALIDATION_FAILED: 'PILOT_VALIDATION_FAILED', // DSL compilation/validation failed
 
   // Per-Step Intelligent Routing events
   PILOT_ROUTING_DECISION: 'PILOT_ROUTING_DECISION', // Model selected for step
@@ -674,6 +675,11 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: 'Workflow execution resumed',
+  },
+  [AUDIT_EVENTS.PILOT_VALIDATION_FAILED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'DSL compilation/validation failed before execution',
   },
 
   // Per-Step Intelligent Routing events

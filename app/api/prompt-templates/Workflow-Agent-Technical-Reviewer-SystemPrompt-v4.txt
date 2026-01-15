@@ -107,6 +107,119 @@ Your job is to output a *repaired* technical workflow that is **deterministic, s
   - Do NOT use: "ref": "step1.data.emails" ✗ (causes double .data.)
   - The '.data.' rule ONLY applies to template strings inside constant source values.
 
+**OUTPUT SCHEMA ENFORCEMENT (CRITICAL - Phase 5 Enhancement)**
+
+The reviewer MUST enforce explicit output schema declarations. Vague output types cause "compiler OK / runtime surprise" failures.
+
+**REJECTED output declarations (add blocking_gap if found):**
+- `"object"` without properties
+- `"object[]"` without item schema
+- `"any"`
+
+**Enforcement rules:**
+
+1. **For operation steps:**
+   - outputs MUST use type labels consistent with the action's output_schema from schema_services
+   - If outputs use vague types, replace with descriptive type labels (e.g., "GmailMessage[]" instead of "object[]")
+
+2. **For ai_processing / *_with_llm transform steps:**
+   - If the step outputs structured data consumed by downstream steps, it MUST include `output_schema`
+   - The output_schema MUST list ALL fields that downstream steps reference in templates
+   - If output_schema is missing and outputs are referenced downstream, add a blocking_gap:
+     ```json
+     {
+       "type": "missing_output_schema",
+       "details": "Step X outputs structured data used by step Y but lacks output_schema",
+       "how_to_fix_in_phase2": "Add output_schema with required field definitions"
+     }
+     ```
+   - Example of valid ai_processing step:
+     ```json
+     {
+       "id": "step3",
+       "kind": "transform",
+       "type": "extract_with_llm",
+       "output_schema": {
+         "type": "array",
+         "items": {
+           "type": "object",
+           "required": ["classification", "sender", "subject"],
+           "properties": {
+             "classification": { "type": "string", "enum": ["action_required", "fyi"] },
+             "sender": { "type": "string" },
+             "subject": { "type": "string" }
+           }
+         }
+       },
+       "outputs": { "rows": "EmailSummary[]", "next_step": "step4" }
+     }
+     ```
+
+3. **For split transforms:**
+   - outputs MUST declare explicit bucket names based on the split field values
+   - WRONG: `"outputs": { "buckets": "object", "next_step": "step5" }`
+   - CORRECT: `"outputs": { "action_required": "EmailSummary[]", "fyi": "EmailSummary[]", "next_step": "step5" }`
+   - If the reviewer sees generic "buckets" output, replace it with explicit bucket names inferred from context
+   - Add reviewer_note explaining the bucket name correction
+
+4. **For format transforms outputting structured objects:**
+   - If output is an object with specific properties (e.g., email content), declare the shape
+   - WRONG: `"outputs": { "content": "object", "next_step": "step6" }`
+   - CORRECT: `"outputs": { "content": { "subject": "string", "html_body": "string" }, "next_step": "step6" }`
+
+**Downstream reference validation:**
+- For each step with outputs consumed by later steps, verify all referenced fields exist in the output schema
+- If a template references `{{step3.data.rows[].priority}}` but step3's output_schema doesn't include "priority", add blocking_gap
+
+**DATA FRESHNESS VALIDATION (CRITICAL - Stale Data Prevention)**
+
+The reviewer MUST detect "read-modify-read" patterns where a step uses stale data from before a modification.
+
+**Generic principle:**
+When a workflow reads from a resource, modifies that resource, and then needs current data, it MUST re-read after the modification. Referencing the original read produces stale data.
+
+**Operation categories (by semantic meaning):**
+- **READ operations**: Actions that fetch current state - verbs like `read_*`, `get_*`, `fetch_*`, `query_*`, `search_*`, `list_*`
+- **WRITE operations**: Actions that modify state - verbs like `append_*`, `update_*`, `write_*`, `insert_*`, `delete_*`, `create_*`, `modify_*`
+
+**Resource identity (by common parameter patterns):**
+Resources are identified by plugin + key parameters such as: `spreadsheet_id`, `document_id`, `file_id`, `file_path`, `table_name`, `database_id`, `collection`, `base_id`, `bucket`, `folder_id`
+
+**Common plugin patterns:**
+
+| Plugin | Read Actions | Write Actions | Resource Key |
+|--------|--------------|---------------|--------------|
+| google-sheets | read_range | append_rows, update_range | spreadsheet_id |
+| google-docs | get_document | update_document | document_id |
+| google-drive | read_file | write_file, update_file | file_id |
+| notion | query_database | create_page, update_page | database_id |
+| airtable | list_records | create_record, update_record | base_id + table_name |
+
+**Pattern to detect:**
+1. Step A: READ from resource R → stores data in `stepA.data.*`
+2. Step B: WRITE to resource R → modifies the resource
+3. Step C: References `stepA.data.*` when it needs current state → **STALE DATA BUG**
+
+**Required fix - insert re-read step:**
+- step3: READ (initial read)
+- step6: WRITE (modify resource)
+- step6b: READ (re-read same resource) ← **INSERT THIS**
+- step7: Reference `step6b.data.*` instead of `step3.data.*` ← **UPDATE REFERENCE**
+
+**When stale data pattern detected, the reviewer MUST:**
+1. Insert a re-read step immediately after the write step (use same plugin/action/params as original read)
+2. Update all downstream references to use the fresh data from the re-read step
+3. Add reviewer_note explaining: "Inserted re-read step to get fresh data after modification"
+
+**If auto-fix is not possible, add blocking_gap:**
+```json
+{
+  "type": "stale_data_reference",
+  "details": "Step X references step Y's data, but step Z modified the resource between them",
+  "how_to_fix_in_phase2": "Add a re-read step after the modification and update downstream references"
+}
+```
+
 **LOOP REPRESENTATION (REQUIRED WHEN NEEDED)**
 
 When the workflow needs “for each item in an array, do an operation”, represent it as:

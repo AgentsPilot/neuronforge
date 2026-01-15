@@ -12,7 +12,8 @@ export function buildUserContextFromAuth(user: User): UserContext {
     email: user.email || '',
     role: user.user_metadata?.role || '',
     company: user.user_metadata?.company || '',
-    domain: user.user_metadata?.domain || ''
+    domain: user.user_metadata?.domain || '',
+    ...(user.user_metadata?.timezone && { timezone: user.user_metadata.timezone })
   };
 }
 
@@ -24,12 +25,14 @@ export async function buildUserContextFromProfile(user: User): Promise<UserConte
   const profileRepo = new UserProfileRepository();
   const { data: profile } = await profileRepo.findById(user.id);
 
+  const timezone = profile?.timezone || user.user_metadata?.timezone;
   return {
     full_name: profile?.full_name || user.user_metadata?.full_name || '',
     email: user.email || '',
     role: profile?.role || user.user_metadata?.role || '',
     company: profile?.company || user.user_metadata?.company || '',
-    domain: user.user_metadata?.domain || ''
+    domain: user.user_metadata?.domain || '',
+    ...(timezone && { timezone })
   };
 }
 
