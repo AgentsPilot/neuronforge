@@ -302,7 +302,8 @@ export class DataOperations {
         case '<':
           return value < expectedValue;
         case 'contains':
-          return String(value).includes(String(expectedValue));
+          // Case-insensitive contains check
+          return String(value).toLowerCase().includes(String(expectedValue).toLowerCase());
         default:
           return false;
       }

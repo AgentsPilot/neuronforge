@@ -1,0 +1,166 @@
+{
+  "ir_version": "2.0",
+  "goal": "Extract and consolidate expense data from recent emails into a structured table and send a summary email.",
+  "data_sources": [
+    {
+      "id": "gmail_search",
+      "type": "api",
+      "source": "gmail",
+      "location": "emails",
+      "tab": "",
+      "endpoint": "",
+      "trigger": "",
+      "role": "email data"
+    }
+  ],
+  "normalization": {
+    "required_headers": [
+      "date&time",
+      "vendor",
+      "amount",
+      "expense type"
+    ],
+    "case_sensitive": false,
+    "missing_header_action": "warn"
+  },
+  "filters": [
+    {
+      "id": "filter_subject",
+      "field": "subject",
+      "operator": "contains",
+      "value": "expenses",
+      "description": "Filter emails with subject containing 'expenses'"
+    },
+    {
+      "id": "filter_subject_receipt",
+      "field": "subject",
+      "operator": "contains",
+      "value": "receipt",
+      "description": "Filter emails with subject containing 'receipt'"
+    }
+  ],
+  "transforms": [
+    {
+      "id": "combine_rows",
+      "operation": "aggregate",
+      "config": {
+        "source": "all",
+        "field": "",
+        "group_by": "",
+        "sort_by": "",
+        "order": "asc",
+        "aggregation": "sum",
+        "join_key": "",
+        "mapping": ""
+      }
+    }
+  ],
+  "ai_operations": [
+    {
+      "id": "extract_expense_items",
+      "type": "extract",
+      "instruction": "Extract expense line items from PDF attachments, including date&time, vendor, amount, and expense type. Mark fields as 'need review' if uncertain.",
+      "input_source": "{{pdf_attachment}}",
+      "output_schema": {
+        "type": "object",
+        "fields": [
+          {
+            "name": "date&time",
+            "type": "string",
+            "required": true,
+            "description": "Date and time of the expense"
+          },
+          {
+            "name": "vendor",
+            "type": "string",
+            "required": true,
+            "description": "Vendor or merchant name"
+          },
+          {
+            "name": "amount",
+            "type": "string",
+            "required": true,
+            "description": "Total amount for the line item"
+          },
+          {
+            "name": "expense type",
+            "type": "string",
+            "required": true,
+            "description": "Type of expense inferred from receipt text"
+          }
+        ],
+        "enum": []
+      },
+      "constraints": {
+        "max_tokens": 500,
+        "temperature": 0.5,
+        "model_preference": "balanced"
+      }
+    }
+  ],
+  "conditionals": [],
+  "loops": [
+    {
+      "id": "loop_pdfs",
+      "for_each": "{{pdf_attachments}}",
+      "item_variable": "pdf_attachment",
+      "do": [
+        "extract_expense_items"
+      ],
+      "max_iterations": 100,
+      "max_concurrency": 5
+    }
+  ],
+  "partitions": [],
+  "grouping": {
+    "input_partition": "all",
+    "group_by": "",
+    "emit_per_group": false
+  },
+  "rendering": {
+    "type": "email_embedded_table",
+    "template": "",
+    "engine": "jinja",
+    "columns_in_order": [
+      "date&time",
+      "vendor",
+      "amount",
+      "expense type"
+    ],
+    "empty_message": "No expenses found."
+  },
+  "delivery": [
+    {
+      "id": "email_delivery",
+      "method": "email",
+      "config": {
+        "recipient": "offir.omer@gmail.com",
+        "recipient_source": "",
+        "cc": [],
+        "bcc": [],
+        "subject": "Expense Report Summary",
+        "body": "Summary of expenses extracted from emails. Number of emails scanned: {{emails_scanned}}, PDFs processed: {{pdfs_processed}}, expense rows extracted: {{rows_extracted}}, rows marked 'need review': {{rows_need_review}}.",
+        "channel": "",
+        "message": "",
+        "url": "",
+        "endpoint": "",
+        "method": "POST",
+        "headers": "",
+        "payload": "",
+        "table": "",
+        "operation": "insert",
+        "path": "",
+        "format": "json"
+      }
+    }
+  ],
+  "edge_cases": [
+    {
+      "condition": "no_rows_after_filter",
+      "action": "send_empty_result_message",
+      "message": "No emails matched the search criteria.",
+      "recipient": "offir.omer@gmail.com"
+    }
+  ],
+  "clarifications_required": []
+}

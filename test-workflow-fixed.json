@@ -1,0 +1,108 @@
+{
+  "workflow_steps": [
+    {
+      "id": "step1",
+      "step_id": "step1",
+      "name": "Fetch google-mail Data",
+      "type": "action",
+      "plugin": "google-mail",
+      "action": "search",
+      "params": {
+        "query": "label:inbox",
+        "max_results": 50,
+        "include_attachments": false
+      }
+    },
+    {
+      "id": "step2",
+      "step_id": "step2",
+      "name": "Read Complaints Log",
+      "type": "action",
+      "plugin": "google-sheets",
+      "action": "read_range",
+      "params": {
+        "spreadsheet_id": "1uOGlJMaF1h6j6eELNRn7gO9wLYVzQXKZJ3h8y_fPQA",
+        "range": "Complaints Log!A:Z"
+      }
+    },
+    {
+      "id": "step3",
+      "step_id": "step3",
+      "name": "Extract Existing IDs",
+      "type": "transform",
+      "operation": "map",
+      "input": "{{step2.data}}",
+      "config": {
+        "expression": "item.Email_ID"
+      }
+    },
+    {
+      "id": "step4",
+      "step_id": "step4",
+      "name": "Pre-compute Deduplication Check",
+      "type": "transform",
+      "operation": "map",
+      "input": "{{step1.data}}",
+      "config": {
+        "expression": "[item, !{{step3}}.includes(item.id)]"
+      }
+    },
+    {
+      "id": "step5",
+      "step_id": "step5",
+      "name": "Filter New Items Only",
+      "type": "transform",
+      "operation": "filter",
+      "input": "{{step4}}",
+      "config": {
+        "condition": "item[1] === true"
+      }
+    },
+    {
+      "id": "step6",
+      "step_id": "step6",
+      "name": "Extract Original Items",
+      "type": "transform",
+      "operation": "map",
+      "input": "{{step5}}",
+      "config": {
+        "expression": "item[0]"
+      }
+    },
+    {
+      "id": "step7",
+      "step_id": "step7",
+      "name": "Filter by Complaint Keywords",
+      "type": "transform",
+      "operation": "filter",
+      "input": "{{step6}}",
+      "config": {
+        "condition": "item.subject && (item.subject.toLowerCase().includes('complaint') || item.subject.toLowerCase().includes('issue') || item.subject.toLowerCase().includes('problem'))"
+      }
+    },
+    {
+      "id": "step8",
+      "step_id": "step8",
+      "name": "Render Table",
+      "type": "transform",
+      "operation": "render_table",
+      "input": "{{step7}}",
+      "config": {
+        "columns_in_order": ["id", "from", "subject", "date", "snippet"]
+      }
+    },
+    {
+      "id": "step9",
+      "step_id": "step9",
+      "name": "Append to Complaints Log",
+      "type": "action",
+      "plugin": "google-sheets",
+      "action": "append_rows",
+      "params": {
+        "spreadsheet_id": "1uOGlJMaF1h6j6eELNRn7gO9wLYVzQXKZJ3h8y_fPQA",
+        "range": "Complaints Log!A:Z",
+        "values": "{{step8}}"
+      }
+    }
+  ]
+}

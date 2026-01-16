@@ -115,8 +115,57 @@ export class WorkflowOrchestrator {
 
     try {
       // Find step metadata
-      const stepMeta = this.orchestrationMetadata.steps.find(s => s.stepId === stepId);
-      if (!stepMeta) {
+      let stepMeta = this.orchestrationMetadata.steps.find(s => s.stepId === stepId);
+
+      // ✅ SCATTER-GATHER FIX (Option B): Budget pooling for nested steps
+      // When a step is executed inside scatter-gather/loop multiple times,
+      // each execution needs its own budget allocation from the shared pool.
+      const executionContext = stepInput?.executionContext;
+      const isNestedExecution = executionContext?.getVariable?.('item') !== undefined ||
+                                executionContext?.getVariable?.('index') !== undefined ||
+                                executionContext?.getVariable?.('loop') !== undefined;
+
+      if (isNestedExecution) {
+        const itemIndex = executionContext?.getVariable?.('index') ?? 0;
+        console.log(`[WorkflowOrchestrator] Nested step execution: ${stepId} (item ${itemIndex}) - using budget pool`);
+
+        // Create a fresh budget allocation for this iteration
+        // Use totalBudget.remaining as the pool (it doesn't get decremented during execution)
+        const pooledBudget = {
+          allocated: this.orchestrationMetadata.totalBudget.allocated,
+          used: 0,
+          remaining: this.orchestrationMetadata.totalBudget.allocated,
+          compressed: 0,
+          overageAllowed: true,
+          overageLimit: Math.floor(this.orchestrationMetadata.totalBudget.allocated * 0.2),
+        };
+
+        if (stepMeta) {
+          // Step exists in metadata - override budget with fresh pool allocation
+          stepMeta = {
+            ...stepMeta,
+            budget: pooledBudget,
+          };
+        } else {
+          // Step not in metadata - create new stepMeta
+          const stepType = stepInput?.step?.type;
+          const inferredIntent = stepType === 'ai_processing' ? 'extract' :
+                                stepType === 'action' ? 'send' :
+                                stepType === 'transform' ? 'transform' : 'extract';
+
+          stepMeta = {
+            stepId,
+            intent: inferredIntent,
+            classification: { intent: inferredIntent, confidence: 0.9, reasoning: 'Inferred from step type' },
+            budget: pooledBudget,
+            compressionPolicy: { enabled: false },
+            routingDecision: null as any, // Will be set by routingService.route() below
+            startTime: new Date(),
+          } as StepMetadata;
+        }
+
+        console.log(`[WorkflowOrchestrator] Budget pool for ${stepId}: ${pooledBudget.remaining} tokens available`);
+      } else if (!stepMeta) {
         console.warn(`[WorkflowOrchestrator] Step ${stepId} not found in orchestration metadata`);
         return null;
       }
@@ -147,28 +196,33 @@ export class WorkflowOrchestrator {
       console.log(`✅ [WorkflowOrchestrator] Created step execution record for ${stepId}: ${stepName}`);
 
       // Check budget before execution
-      const canProceed = await this.orchestrationService.canStepProceed(
-        stepId,
-        stepMeta.budget.remaining
-      );
+      // Skip budget check for nested executions - they use the shared pool with fresh allocation
+      if (!isNestedExecution) {
+        const canProceed = await this.orchestrationService.canStepProceed(
+          stepId,
+          stepMeta.budget.remaining
+        );
 
-      if (!canProceed) {
-        console.warn(`[WorkflowOrchestrator] Insufficient budget for step ${stepId}`);
+        if (!canProceed) {
+          console.warn(`[WorkflowOrchestrator] Insufficient budget for step ${stepId}`);
 
-        // Audit: Budget exceeded
-        await this.auditTrail.log({
-          action: 'ORCHESTRATION_BUDGET_EXCEEDED',
-          entityType: 'workflow_step',
-          entityId: stepId,
-          userId: this.orchestrationMetadata.userId,
-          details: {
-            budget: stepMeta.budget,
-            intent: stepMeta.intent,
-          },
-          severity: 'warning',
-        });
+          // Audit: Budget exceeded
+          await this.auditTrail.log({
+            action: 'ORCHESTRATION_BUDGET_EXCEEDED',
+            entityType: 'workflow_step',
+            entityId: stepId,
+            userId: this.orchestrationMetadata.userId,
+            details: {
+              budget: stepMeta.budget,
+              intent: stepMeta.intent,
+            },
+            severity: 'warning',
+          });
 
-        throw new Error(`Budget exceeded for step ${stepId}`);
+          throw new Error(`Budget exceeded for step ${stepId}`);
+        }
+      } else {
+        console.log(`[WorkflowOrchestrator] Skipping budget check for nested step ${stepId} - using pool allocation`);
       }
 
       // Re-route with step complexity analysis (enhanced routing)
@@ -216,7 +270,7 @@ export class WorkflowOrchestrator {
             await routingService.logStepRouting(
               this.orchestrationMetadata.executionId,
               stepId,
-              stepMeta.name || stepId,
+              stepInput.step?.name || stepId,
               stepInput.step.type || stepMeta.intent,
               stepIndex,
               stepAnalysis,
@@ -240,7 +294,7 @@ export class WorkflowOrchestrator {
               this.orchestrationMetadata.userId,
               this.orchestrationMetadata.executionId,
               stepId,
-              stepMeta.name || stepId,
+              stepInput.step?.name || stepId,
               stepInput.step.type || stepMeta.intent,
               stepAnalysis.complexityScore,
               this.orchestrationMetadata.agentAIS?.combined_score || 5.0,

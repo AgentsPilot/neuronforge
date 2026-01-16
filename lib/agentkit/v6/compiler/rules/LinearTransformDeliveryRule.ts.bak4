@@ -1,0 +1,364 @@
+/**
+ * Linear Transform Delivery Rule
+ *
+ * Handles simple linear workflows:
+ * 1. Read from data source(s)
+ * 2. Apply transforms and filters (no loops, no conditionals)
+ * 3. Deliver results
+ *
+ * This is the most common workflow pattern - straightforward data processing.
+ * No branching, no parallel processing, no AI operations.
+ *
+ * Pattern Examples:
+ * - Read spreadsheet → Filter → Email
+ * - API call → Transform → Webhook
+ * - Database query → Map fields → Slack message
+ * - Multiple data sources → Merge → Deliver
+ */
+
+import type { ExtendedLogicalIR } from '../../logical-ir/schemas/extended-ir-types'
+import type { WorkflowStep } from '../../../../pilot/types/pilot-dsl-types'
+import type { CompilerContext } from '../LogicalIRCompiler'
+import { BaseCompilerRule } from './CompilerRule'
+import { DataSourceResolver } from '../resolvers/DataSourceResolver'
+import { DeliveryResolver } from '../resolvers/DeliveryResolver'
+import { FilterResolver } from '../resolvers/FilterResolver'
+
+// ============================================================================
+// Linear Transform Delivery Rule
+// ============================================================================
+
+export class LinearTransformDeliveryRule extends BaseCompilerRule {
+  name = 'LinearTransformDeliveryRule'
+  description = 'Compiles simple linear workflows (read → transform → deliver)'
+  priority = 80 // Lower priority - this is a fallback for simple workflows
+
+  private dataSourceResolver!: DataSourceResolver
+  private deliveryResolver!: DeliveryResolver
+  private filterResolver!: FilterResolver
+
+  /**
+   * Check if this rule supports the given IR
+   */
+  supports(ir: ExtendedLogicalIR): boolean {
+    this.log('Checking if rule supports IR...')
+
+    // Must have data sources
+    const hasDataSources = ir.data_sources && ir.data_sources.length > 0
+    if (!hasDataSources) {
+      this.log('✗ No data sources found')
+      return false
+    }
+
+    // Must have delivery
+    const hasDelivery = ir.delivery && ir.delivery.length > 0
+    if (!hasDelivery) {
+      this.log('✗ No delivery methods found')
+      return false
+    }
+
+    // Should NOT have loops (other rules handle that)
+    const hasLoops = ir.loops && ir.loops.length > 0
+    if (hasLoops) {
+      this.log('✗ Has loops - should use ParallelProcessingRule or APIDataSourceWithLoopsRule')
+      return false
+    }
+
+    // Should NOT have conditionals (ConditionalBranchingRule handles that)
+    const hasConditionals = ir.conditionals && ir.conditionals.length > 0
+    if (hasConditionals) {
+      this.log('✗ Has conditionals - should use ConditionalBranchingRule')
+      return false
+    }
+
+    // Should NOT have AI operations (APIDataSourceWithLoopsRule handles that)
+    const hasAIOperations = ir.ai_operations && ir.ai_operations.length > 0
+    if (hasAIOperations) {
+      this.log('✗ Has AI operations - should use APIDataSourceWithLoopsRule')
+      return false
+    }
+
+    // Should NOT have partitions or grouping (TabularGroupedDeliveryRule handles that)
+    const hasPartitions = ir.partitions && ir.partitions.length > 0
+    const hasGrouping = ir.grouping && Object.keys(ir.grouping).length > 0
+    if (hasPartitions || hasGrouping) {
+      this.log('✗ Has partitions/grouping - should use TabularGroupedDeliveryRule')
+      return false
+    }
+
+    this.log('✓ Rule supports this IR (simple linear workflow)')
+    this.log(`  - Data sources: ${ir.data_sources.length}`)
+    this.log(`  - Transforms: ${ir.transforms?.length || 0}`)
+    this.log(`  - Filters: ${ir.filters?.length || 0}`)
+    this.log(`  - Delivery methods: ${ir.delivery.length}`)
+
+    return true
+  }
+
+  /**
+   * Compile IR to workflow steps
+   */
+  async compile(context: CompilerContext): Promise<WorkflowStep[]> {
+    const { ir, plugin_manager } = context
+    this.log('Starting compilation...')
+
+    // Initialize resolvers with PluginManager
+    this.dataSourceResolver = new DataSourceResolver(plugin_manager)
+    this.deliveryResolver = new DeliveryResolver(plugin_manager)
+    this.filterResolver = new FilterResolver()
+
+    const steps: WorkflowStep[] = []
+
+    // STEP 1: Resolve data sources
+    this.log('Step 1: Resolving data sources...')
+    const dataSourceSteps = await this.dataSourceResolver.resolve(ir.data_sources, 'read')
+    steps.push(...dataSourceSteps)
+
+    let currentVariable = dataSourceSteps[dataSourceSteps.length - 1]?.output_variable || 'data'
+    this.log(`  ✓ Data will be available in: ${currentVariable}`)
+
+    // STEP 2: Merge multiple data sources (if > 1)
+    if (ir.data_sources.length > 1) {
+      this.log('Step 2: Merging multiple data sources...')
+      const mergeStep = this.createMergeStep(dataSourceSteps, 'merge')
+      steps.push(mergeStep)
+      currentVariable = mergeStep.output_variable!
+      this.log(`  ✓ Merged data in: ${currentVariable}`)
+    }
+
+    // STEP 3: Apply filters
+    if (ir.filters && ir.filters.length > 0) {
+      this.log('Step 3: Applying filters...')
+      const filterSteps = await this.filterResolver.resolve(ir.filters, currentVariable, 'filter')
+      steps.push(...filterSteps)
+      currentVariable = filterSteps[filterSteps.length - 1]?.output_variable || currentVariable
+      this.log(`  ✓ Filtered data in: ${currentVariable}`)
+    }
+
+    // STEP 4: Apply transforms
+    if (ir.transforms && ir.transforms.length > 0) {
+      this.log('Step 4: Applying transforms...')
+      for (let i = 0; i < ir.transforms.length; i++) {
+        const transform = ir.transforms[i]
+        const transformStep = this.createTransformStep(
+          transform,
+          currentVariable,
+          `transform_${i + 1}`
+        )
+        steps.push(transformStep)
+        currentVariable = transformStep.output_variable!
+      }
+      this.log(`  ✓ Transformed data in: ${currentVariable}`)
+    }
+
+    // STEP 5: Apply normalization (if specified)
+    if (ir.normalization && Object.keys(ir.normalization).length > 0) {
+      this.log('Step 5: Applying normalization...')
+      const normalizeStep = this.createNormalizationStep(
+        ir.normalization,
+        currentVariable,
+        'normalize'
+      )
+      steps.push(normalizeStep)
+      currentVariable = normalizeStep.output_variable!
+      this.log(`  ✓ Normalized data in: ${currentVariable}`)
+    }
+
+    // STEP 6: Apply rendering (if specified)
+    if (ir.rendering && ir.rendering.type) {
+      this.log('Step 6: Applying rendering...')
+      const renderStep = this.createRenderingStep(
+        ir.rendering,
+        currentVariable,
+        'render'
+      )
+      steps.push(renderStep)
+      currentVariable = renderStep.output_variable!
+      this.log(`  ✓ Rendered output in: ${currentVariable}`)
+    }
+
+    // STEP 7: Delivery
+    this.log('Step 7: Resolving delivery...')
+    const deliverySteps = await this.deliveryResolver.resolve(
+      ir.delivery,
+      currentVariable,
+      'deliver'
+    )
+    steps.push(...deliverySteps)
+
+    this.log(`✓ Compilation complete: ${steps.length} steps generated`)
+    return steps
+  }
+
+  /**
+   * Create merge step for multiple data sources
+   */
+  private createMergeStep(
+    dataSourceSteps: WorkflowStep[],
+    stepId: string
+  ): WorkflowStep {
+    const inputVariables = dataSourceSteps.map(step => step.output_variable).filter(Boolean)
+
+    return {
+      step_id: stepId,
+      type: 'transform',
+      operation: 'merge',
+      config: {
+        inputs: inputVariables.map(v => `{{${v}}}`),
+        merge_strategy: 'append' // Default: concatenate arrays
+      },
+      output_variable: `${stepId}_output`,
+      description: `Merge ${inputVariables.length} data sources`
+    }
+  }
+
+  /**
+   * Create transform step
+   */
+  private createTransformStep(
+    transform: any,
+    inputVariable: string,
+    stepId: string
+  ): WorkflowStep {
+    return {
+      step_id: stepId,
+      type: 'transform',
+      operation: transform.operation || 'map',
+      config: {
+        input: `{{${inputVariable}}}`,
+        input_source: transform.input_source,
+        output_format: transform.output_format,
+        mapping: transform.mapping,
+        expression: transform.expression
+      },
+      output_variable: `${stepId}_output`,
+      description: transform.description || `Transform: ${transform.operation || 'map'}`
+    }
+  }
+
+  /**
+   * Create normalization step
+   */
+  private createNormalizationStep(
+    normalization: any,
+    inputVariable: string,
+    stepId: string
+  ): WorkflowStep {
+    return {
+      step_id: stepId,
+      type: 'transform',
+      operation: 'normalize',
+      config: {
+        input: `{{${inputVariable}}}`,
+        required_headers: normalization.required_headers,
+        case_sensitive: normalization.case_sensitive,
+        missing_header_action: normalization.missing_header_action
+      },
+      output_variable: `${stepId}_output`,
+      description: 'Normalize data structure and headers'
+    }
+  }
+
+  /**
+   * Create rendering step
+   */
+  private createRenderingStep(
+    rendering: any,
+    inputVariable: string,
+    stepId: string
+  ): WorkflowStep {
+    return {
+      step_id: stepId,
+      type: 'transform',
+      operation: 'render',
+      config: {
+        input: `{{${inputVariable}}}`,
+        type: rendering.type,
+        template: rendering.template,
+        engine: rendering.engine,
+        columns_in_order: rendering.columns_in_order,
+        empty_message: rendering.empty_message
+      },
+      output_variable: `${stepId}_output`,
+      description: `Render as ${rendering.type}`
+    }
+  }
+
+  /**
+   * Get example IR that this rule can compile
+   */
+  getExampleIR(): ExtendedLogicalIR {
+    return {
+      ir_version: '2.0',
+      goal: 'Read spreadsheet, filter active records, and email results',
+      data_sources: [
+        {
+          id: 'leads_data',
+          type: 'tabular',
+          source: 'google-sheets',
+          location: 'MyLeads',
+          tab: 'Leads',
+          endpoint: '',
+          trigger: '',
+          role: 'sales leads'
+        }
+      ],
+      filters: [
+        {
+          id: 'filter_active',
+          field: 'status',
+          operator: 'equals',
+          value: 'active',
+          description: 'Filter active leads'
+        }
+      ],
+      transforms: [
+        {
+          id: 'transform_1',
+          operation: 'map',
+          input_source: '{{leads_data}}',
+          output_format: 'simplified',
+          mapping: {
+            name: '{{lead.name}}',
+            email: '{{lead.email}}',
+            stage: '{{lead.stage}}'
+          }
+        }
+      ],
+      ai_operations: [],
+      conditionals: [],
+      loops: [],
+      partitions: [],
+      grouping: undefined,
+      normalization: {},
+      rendering: {
+        type: 'email_embedded_table',
+        columns_in_order: ['name', 'email', 'stage']
+      },
+      delivery: [
+        {
+          id: 'email_delivery',
+          method: 'email',
+          config: {
+            recipient: 'sales@example.com',
+            subject: 'Active Leads Report',
+            body: '{{rendered_table}}'
+          }
+        }
+      ],
+      edge_cases: [],
+      clarifications_required: []
+    } as ExtendedLogicalIR
+  }
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/**
+ * Create a linear transform delivery rule instance
+ */
+export function createLinearTransformDeliveryRule(): LinearTransformDeliveryRule {
+  return new LinearTransformDeliveryRule()
+}

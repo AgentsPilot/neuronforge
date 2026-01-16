@@ -1,0 +1,181 @@
+{
+    "success": true,
+    "workflow": {
+        "workflow_steps": [
+            {
+                "step_id": "api_fetch_1",
+                "type": "action",
+                "plugin": "google-mail",
+                "operation": "search_emails",
+                "config": {
+                    "query": "\"email data\"",
+                    "max_results": 100
+                },
+                "output_variable": "gmail_search",
+                "description": "Search Gmail: email data"
+            },
+            {
+                "step_id": "filter_1",
+                "type": "transform",
+                "operation": "filter",
+                "config": {
+                    "input": "{{gmail_search}}",
+                    "condition": {
+                        "field": "subject",
+                        "operator": "contains",
+                        "value": "expenses"
+                    }
+                },
+                "output_variable": "filter_1_output",
+                "description": "Filter emails with subject containing 'expenses'"
+            },
+            {
+                "step_id": "filter_2",
+                "type": "transform",
+                "operation": "filter",
+                "config": {
+                    "input": "{{filter_1_output}}",
+                    "condition": {
+                        "field": "subject",
+                        "operator": "contains",
+                        "value": "receipt"
+                    }
+                },
+                "output_variable": "filter_2_output",
+                "description": "Filter emails with subject containing 'receipt'"
+            },
+            {
+                "step_id": "loop_1",
+                "type": "scatter_gather",
+                "operation": "parallel_process",
+                "config": {
+                    "input": "{{pdf_attachments}}",
+                    "item_variable": "pdf_attachment",
+                    "actions": [
+                        {
+                            "step_id": "loop_1_ai_extract_expense_items",
+                            "type": "ai_processing",
+                            "operation": "extract",
+                            "config": {
+                                "instruction": "Extract expense line items from PDF attachments, including date&time, vendor, amount, and expense type. Mark fields as 'need review' if uncertain.",
+                                "input_source": "{{pdf_attachment}}",
+                                "output_schema": {
+                                    "type": "object",
+                                    "fields": [
+                                        {
+                                            "name": "date&time",
+                                            "type": "string",
+                                            "required": true,
+                                            "description": "Date and time of the expense"
+                                        },
+                                        {
+                                            "name": "vendor",
+                                            "type": "string",
+                                            "required": true,
+                                            "description": "Vendor or merchant name"
+                                        },
+                                        {
+                                            "name": "amount",
+                                            "type": "string",
+                                            "required": true,
+                                            "description": "Total amount for the line item"
+                                        },
+                                        {
+                                            "name": "expense type",
+                                            "type": "string",
+                                            "required": true,
+                                            "description": "Type of expense inferred from receipt text"
+                                        }
+                                    ],
+                                    "enum": []
+                                },
+                                "constraints": {
+                                    "max_tokens": 500,
+                                    "temperature": 0.5,
+                                    "model_preference": "balanced"
+                                }
+                            },
+                            "output_variable": "loop_1_ai_extract_expense_items_result"
+                        }
+                    ],
+                    "max_iterations": 100,
+                    "max_concurrency": 5
+                },
+                "output_variable": "loop_1_output",
+                "description": "Process each pdf_attachment with AI operations"
+            },
+            {
+                "step_id": "normalize",
+                "type": "transform",
+                "operation": "normalize",
+                "config": {
+                    "input": "{{loop_1_output}}",
+                    "required_headers": [
+                        "date&time",
+                        "vendor",
+                        "amount",
+                        "expense type"
+                    ],
+                    "case_sensitive": false,
+                    "missing_header_action": "warn"
+                },
+                "output_variable": "normalize_output",
+                "description": "Normalize data structure and headers"
+            },
+            {
+                "step_id": "render",
+                "type": "transform",
+                "operation": "render",
+                "config": {
+                    "input": "{{normalize_output}}",
+                    "type": "email_embedded_table",
+                    "template": "",
+                    "engine": "jinja",
+                    "columns_in_order": [
+                        "date&time",
+                        "vendor",
+                        "amount",
+                        "expense type"
+                    ],
+                    "empty_message": "No expenses found."
+                },
+                "output_variable": "render_output",
+                "description": "Render as email_embedded_table"
+            },
+            {
+                "step_id": "deliver_1",
+                "type": "action",
+                "plugin": "google-mail",
+                "operation": "send_email",
+                "config": {
+                    "recipients": {
+                        "to": [
+                            "offir.omer@gmail.com"
+                        ]
+                    },
+                    "content": {
+                        "subject": "Expense Report Summary",
+                        "body": "Summary of expenses extracted from emails. Number of emails scanned: {{emails_scanned}}, PDFs processed: {{pdfs_processed}}, expense rows extracted: {{rows_extracted}}, rows marked 'need review': {{rows_need_review}}.",
+                        "html_body": "Summary of expenses extracted from emails. Number of emails scanned: {{emails_scanned}}, PDFs processed: {{pdfs_processed}}, expense rows extracted: {{rows_extracted}}, rows marked 'need review': {{rows_need_review}}."
+                    },
+                    "data_source": "{{render_output}}"
+                },
+                "output_variable": "deliver_1_result",
+                "description": "Send email to offir.omer@gmail.com"
+            }
+        ],
+        "metadata": {
+            "ir_version": "2.0",
+            "goal": "Extract and consolidate expense data from recent emails into a structured table and send a summary email.",
+            "compiled_at": "2025-12-25T07:55:39.660Z",
+            "compiler_version": "1.0.0"
+        }
+    },
+    "warnings": [],
+    "metadata": {
+        "compilation_time_ms": 1,
+        "rule_used": "APIDataSourceWithLoopsRule",
+        "step_count": 7,
+        "deterministic_step_percentage": 100
+    }
+}

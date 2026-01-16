@@ -195,7 +195,13 @@
           "include_attachments": {
             "type": "boolean",
             "default": false,
-            "description": "Include and process email attachments in results"
+            "description": "Include and process email attachments in results (forces content_level to 'full')"
+          },
+          "content_level": {
+            "type": "string",
+            "enum": ["metadata", "snippet", "full"],
+            "default": "snippet",
+            "description": "How much email content to fetch: 'metadata' (headers only, fastest), 'snippet' (~200 char preview, good for filtering/classification), 'full' (complete body, needed for extraction/deep analysis)"
           },
           "folder": {
             "type": "string",
@@ -237,9 +243,9 @@
                 "from": { "type": "string", "description": "Sender address" },
                 "to": { "type": "string", "description": "Recipient addresses" },
                 "date": { "type": "string", "description": "Email date" },
-                "snippet": { "type": "string", "description": "Email preview snippet" },
+                "snippet": { "type": "string", "description": "Email preview snippet (first ~200 chars of email body - USE THIS for content matching/filtering)" },
                 "labels": { "type": "array", "items": { "type": "string" }, "description": "Gmail labels" },
-                "body": { "type": "string", "description": "Email body text" },
+                "body": { "type": "string", "description": "Email body text (NOTE: Usually empty in search results - use 'snippet' field instead for email content)" },
                 "attachments": { "type": "array", "description": "Attachment metadata (if requested)" }
               }
             }
@@ -261,9 +267,9 @@
               "from": "sender@example.com",
               "to": "me@example.com",
               "date": "Mon, 1 Jan 2025 10:00:00 +0000",
-              "snippet": "Here's the latest update on...",
+              "snippet": "Here's the latest update on the project including next steps and timeline...",
               "labels": ["INBOX", "UNREAD"],
-              "body": "Here's the latest update on the project..."
+              "body": ""
             }
           ],
           "total_found": 1,

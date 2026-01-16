@@ -1,0 +1,140 @@
+[
+  {
+    "id": "step1",
+    "step_id": "step1",
+    "name": "Fetch google_mail Data",
+    "type": "action",
+    "plugin": "google-mail",
+    "action": "search_emails",
+    "params": {
+      "query": "in:inbox newer_than:7d",
+      "max_results": 100,
+      "include_attachments": false,
+      "folder": "inbox"
+    }
+  },
+  {
+    "id": "step2",
+    "step_id": "step2",
+    "name": "Read google_sheets",
+    "type": "action",
+    "plugin": "google-sheets",
+    "action": "read_range",
+    "params": {
+      "spreadsheet_id": "1pM8WbXtPgaYqokHn_spgQAfR7SBuql3JUtE1ugDtOpc",
+      "range": "UrgentEmails!A:Z",
+      "include_formula_values": false,
+      "major_dimension": "ROWS"
+    }
+  },
+  {
+    "id": "step3",
+    "step_id": "step3",
+    "name": "Extract Existing IDs",
+    "type": "transform",
+    "operation": "map",
+    "input": "{{step2.data}}",
+    "config": {
+      "expression": "item.id"
+    }
+  },
+  {
+    "id": "step4",
+    "step_id": "step4",
+    "name": "Pre-compute Deduplication Check",
+    "type": "transform",
+    "operation": "map",
+    "input": "{{step1.data}}",
+    "config": {
+      "expression": "[item, !({{step3}} || []).includes(item.id)]"
+    }
+  },
+  {
+    "id": "step5",
+    "step_id": "step5",
+    "name": "Filter New Items Only",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{step4}}",
+    "config": {
+      "condition": "item[1] == true"
+    }
+  },
+  {
+    "id": "step6",
+    "step_id": "step6",
+    "name": "Extract Original Items",
+    "type": "transform",
+    "operation": "map",
+    "input": "{{step5}}",
+    "config": {
+      "expression": "item[0]"
+    }
+  },
+  {
+    "id": "step7",
+    "step_id": "step7",
+    "name": "Filter Group 1",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{step6}}",
+    "config": {
+      "combineWith": "OR",
+      "conditions": [
+        {
+          "field": "snippet",
+          "operator": "contains",
+          "value": "complaint"
+        },
+        {
+          "field": "snippet",
+          "operator": "contains",
+          "value": "refund"
+        },
+        {
+          "field": "snippet",
+          "operator": "contains",
+          "value": "angry"
+        },
+        {
+          "field": "snippet",
+          "operator": "contains",
+          "value": "not working"
+        }
+      ]
+    }
+  },
+  {
+    "id": "step8",
+    "step_id": "step8",
+    "name": "Render Table",
+    "type": "transform",
+    "operation": "render_table",
+    "input": "{{step7}}",
+    "config": {
+      "rendering_type": "json",
+      "columns_in_order": [
+        "from",
+        "subject",
+        "date",
+        "snippet",
+        "id"
+      ]
+    }
+  },
+  {
+    "id": "step9",
+    "step_id": "step9",
+    "name": "Send Summary via google-sheets",
+    "type": "action",
+    "plugin": "google-sheets",
+    "action": "append_rows",
+    "params": {
+      "spreadsheet_id": "1pM8WbXtPgaYqokHn_spgQAfR7SBuql3JUtE1ugDtOpc",
+      "range": "UrgentEmails!A:Z",
+      "values": "{{step8}}",
+      "input_option": "USER_ENTERED",
+      "insert_data_option": "INSERT_ROWS"
+    }
+  }
+]

@@ -129,6 +129,48 @@ export class OrchestrationService {
    * Initialize orchestration for a workflow execution
    * Returns null if orchestration is disabled
    */
+  /**
+   * Flatten nested steps from scatter_gather, parallel, etc. into a single array
+   * This ensures orchestration metadata includes ALL steps that may need routing
+   */
+  private flattenNestedSteps(steps: any[]): any[] {
+    const flattened: any[] = [];
+
+    const processStep = (step: any) => {
+      // Add the step itself
+      flattened.push(step);
+
+      // Check for nested steps in scatter_gather
+      if (step.type === 'scatter_gather' && step.scatter?.steps) {
+        step.scatter.steps.forEach(processStep);
+      }
+
+      // Check for nested steps in parallel blocks
+      if (step.type === 'parallel' && step.branches) {
+        for (const branch of step.branches) {
+          if (Array.isArray(branch.steps)) {
+            branch.steps.forEach(processStep);
+          }
+        }
+      }
+
+      // Check for nested steps in sequential blocks
+      if (step.type === 'sequential' && step.steps) {
+        step.steps.forEach(processStep);
+      }
+
+      // Check for nested steps in loop/iterate blocks
+      if ((step.type === 'loop' || step.type === 'iterate') && step.steps) {
+        step.steps.forEach(processStep);
+      }
+    };
+
+    steps.forEach(processStep);
+
+    console.log(`[Orchestration] Flattened ${steps.length} top-level steps into ${flattened.length} total steps (including nested)`);
+    return flattened;
+  }
+
   async initialize(
     executionId: string,
     agentId: string,
@@ -144,7 +186,10 @@ export class OrchestrationService {
       return null;
     }
 
-    console.log(`[Orchestration] Initializing for execution ${executionId} with ${steps.length} steps`);
+    // Flatten nested steps to ensure all steps (including those in scatter_gather) get orchestration metadata
+    const allSteps = this.flattenNestedSteps(steps);
+
+    console.log(`[Orchestration] Initializing for execution ${executionId} with ${allSteps.length} steps (${steps.length} top-level)`);
 
     try {
       // Get agent AIS scores for routing and budget scaling
@@ -162,7 +207,7 @@ export class OrchestrationService {
       const stepsNeedingClassification: any[] = [];
       const stepIndexMap: Map<number, number> = new Map(); // maps original index to filtered index
 
-      steps.forEach((step, originalIndex) => {
+      allSteps.forEach((step, originalIndex) => {
         const isDeterministicAction = step.type === 'action' && step.plugin_key;
         if (!isDeterministicAction) {
           stepIndexMap.set(originalIndex, stepsNeedingClassification.length);
@@ -170,7 +215,7 @@ export class OrchestrationService {
         }
       });
 
-      console.log(`[Orchestration] Skipping classification for ${steps.length - stepsNeedingClassification.length} deterministic action step(s)`);
+      console.log(`[Orchestration] Skipping classification for ${allSteps.length - stepsNeedingClassification.length} deterministic action step(s)`);
 
       // Classify only the steps that need it
       const classifiedIntents = stepsNeedingClassification.length > 0
@@ -178,7 +223,7 @@ export class OrchestrationService {
         : [];
 
       // Build full intents array with placeholders for skipped steps
-      const intents = steps.map((step, originalIndex) => {
+      const intents = allSteps.map((step, originalIndex) => {
         const isDeterministicAction = step.type === 'action' && step.plugin_key;
         if (isDeterministicAction) {
           // Use placeholder intent for action steps (won't be used since they skip orchestration)
@@ -203,7 +248,7 @@ export class OrchestrationService {
       // Allocate token budgets
       console.log('[Orchestration] Allocating token budgets...');
       const budgetAllocationStart = Date.now();
-      const workflow = { workflow_steps: steps };
+      const workflow = { workflow_steps: allSteps };
       const budgets = await this.budgetManager.allocateBudget(workflow, intents, agentAIS);
       const budgetAllocationTime = Date.now() - budgetAllocationStart;
 
@@ -213,7 +258,7 @@ export class OrchestrationService {
       const summary = this.budgetManager.getTotalBudgetSummary();
       console.log('[Orchestration] Budget summary:', {
         totalAllocated: summary.totalAllocated,
-        avgPerStep: Math.round(summary.totalAllocated / steps.length)
+        avgPerStep: Math.round(summary.totalAllocated / allSteps.length)
       });
 
       // Check Phase 2 feature flags
@@ -224,7 +269,7 @@ export class OrchestrationService {
 
       // Create step metadata with Phase 2 integration
       const stepMetadata: StepMetadata[] = await Promise.all(
-        steps.map(async (step, index) => {
+        allSteps.map(async (step, index) => {
           const stepId = step.id || step.step_id || `step_${index}`;
           const budget = budgets.get(stepId);
           const intent = intents[index].intent;

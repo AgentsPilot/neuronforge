@@ -190,8 +190,9 @@ function validateWorkflowStep(
       break;
 
     case 'parallel_group':
+    case 'parallel':
       if (!step.steps) {
-        errors.push(`${path}: Parallel group missing required field "steps"`);
+        errors.push(`${path}: Parallel step missing required field "steps"`);
       } else if (!Array.isArray(step.steps)) {
         errors.push(`${path}.steps: Must be an array`);
       } else {
@@ -365,6 +366,38 @@ function validateWorkflowStep(
       if (!step.title) {
         errors.push(`${path}: Human approval step missing required field "title"`);
       }
+      break;
+
+    case 'deterministic_extraction':
+      // Deterministic extraction step: Extract data from documents without LLM
+      // Uses pdf-parse for text PDFs, AWS Textract for scanned documents
+      if (!step.input) {
+        errors.push(`${path}: Deterministic extraction step missing required field "input"`);
+      }
+      // output_schema is optional but if present, validate structure
+      // Supports three types:
+      // - object: output_schema.fields[] (single record per document)
+      // - array: output_schema.items.fields[] (multiple items per document)
+      // - string: output_schema.description (summary/text output)
+      if (step.output_schema) {
+        const schemaType = step.output_schema.type || 'object';
+        const hasFields = step.output_schema.fields && Array.isArray(step.output_schema.fields);
+        const hasItemsFields = step.output_schema.items?.fields && Array.isArray(step.output_schema.items.fields);
+        const hasDescription = typeof step.output_schema.description === 'string';
+
+        if (schemaType === 'object' && !hasFields) {
+          errors.push(`${path}: output_schema with type "object" must contain a "fields" array`);
+        } else if (schemaType === 'array' && !hasItemsFields) {
+          errors.push(`${path}: output_schema with type "array" must contain "items.fields" array`);
+        } else if (schemaType === 'string' && !hasDescription && !hasFields) {
+          // String type can have description or be used for classification with enum
+          // No strict validation needed - description is optional
+        } else if (!hasFields && !hasItemsFields && !hasDescription) {
+          errors.push(`${path}: output_schema must contain "fields" array (for object type), "items.fields" array (for array type), or "description" (for string type)`);
+        }
+      }
+      // document_type is optional, validated by enum in schema
+      // ocr_fallback is optional boolean
       break;
 
     default:
@@ -547,8 +580,14 @@ function validatePluginAction(pluginName: string, actionName: string): string[] 
 function validateTransformOperation(operation: string): string[] {
   const SUPPORTED_OPERATIONS = [
     'set', 'map', 'filter', 'reduce', 'sort',
-    'group', 'aggregate', 'deduplicate',
-    'flatten', 'join', 'pivot', 'split', 'expand'
+    'group', 'group_by',  // group_by is alias for group
+    'aggregate', 'deduplicate',
+    'flatten', 'join', 'pivot', 'split', 'expand',
+    'partition',  // Partition data by field value
+    'rows_to_objects',  // For converting 2D arrays (like Sheets) to objects
+    'map_headers',  // Normalize/rename headers in 2D arrays
+    'render_table',  // For rendering data as HTML/formatted tables
+    'fetch_content'  // For fetching attachment/file content from plugins
   ];
 
   if (!SUPPORTED_OPERATIONS.includes(operation)) {

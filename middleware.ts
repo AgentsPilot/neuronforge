@@ -9,7 +9,7 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   // Skip middleware for:
-  // - Static files
+  // - Static files (images, fonts, HTML)
   // - API routes
   // - OAuth callbacks (must not be redirected to /v2)
   // - Marketing pages
@@ -20,7 +20,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/api') ||
     pathname.startsWith('/oauth') ||
     pathname.startsWith('/static') ||
-    pathname.match(/\.(ico|png|jpg|jpeg|svg|gif|woff|woff2|ttf|eot)$/) ||
+    pathname.match(/\.(ico|png|jpg|jpeg|svg|gif|woff|woff2|ttf|eot|html)$/) ||
     pathname.startsWith('/v2') ||
     pathname.startsWith('/admin') ||
     pathname === '/' ||

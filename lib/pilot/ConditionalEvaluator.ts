@@ -79,10 +79,16 @@ export class ConditionalEvaluator {
     // Handle both wrapped ({{email.subject}}) and unwrapped (email.subject) formats
     let fieldRef = condition.field;
 
-    // If field is already wrapped in {{}}, use as-is
-    // Otherwise, wrap it
-    if (!fieldRef.startsWith('{{')) {
+    // Determine how to wrap the field reference
+    if (fieldRef.startsWith('{{')) {
+      // Already wrapped, use as-is
+    } else if (fieldRef.includes('.') || fieldRef.startsWith('step') || fieldRef.startsWith('input')) {
+      // Has a dot or is a known root (step*, input*) - wrap as-is
       fieldRef = `{{${fieldRef}}}`;
+    } else {
+      // Simple field name like "snippet" - resolve from current item
+      // In filter contexts, the item is set via tempContext.setVariable('item', item)
+      fieldRef = `{{item.${fieldRef}}}`;
     }
 
     const actualValue = context.resolveVariable(fieldRef);
@@ -444,10 +450,35 @@ export class ConditionalEvaluator {
         return left <= right;
 
       case 'contains':
-        return String(left).includes(String(right));
+        // Null check: null/undefined never contains anything
+        if (left === null || left === undefined) return false;
+        // Array contains: check if array includes the value
+        if (Array.isArray(left)) {
+          // For arrays, check if any element matches (case-insensitive for strings)
+          return left.some(item => {
+            if (typeof item === 'string' && typeof right === 'string') {
+              return item.toLowerCase() === right.toLowerCase();
+            }
+            return item === right;
+          });
+        }
+        // String contains: case-insensitive substring match
+        return String(left).toLowerCase().includes(String(right).toLowerCase());
 
       case 'not_contains':
-        return !String(left).includes(String(right));
+        // Null check: null/undefined does not contain anything (so not_contains = true)
+        if (left === null || left === undefined) return true;
+        // Array not_contains: check if array does NOT include the value
+        if (Array.isArray(left)) {
+          return !left.some(item => {
+            if (typeof item === 'string' && typeof right === 'string') {
+              return item.toLowerCase() === right.toLowerCase();
+            }
+            return item === right;
+          });
+        }
+        // String not_contains: case-insensitive check
+        return !String(left).toLowerCase().includes(String(right).toLowerCase());
 
       case 'in':
         return Array.isArray(right) && right.includes(left);
@@ -472,7 +503,10 @@ export class ConditionalEvaluator {
         return !this.compareValues(left, right, 'is_empty');
 
       case 'matches':
+      case 'matches_regex':  // alias for schema compatibility
         try {
+          // Null check: null/undefined never matches
+          if (left === null || left === undefined) return false;
           const regex = new RegExp(String(right));
           return regex.test(String(left));
         } catch (error) {
@@ -480,14 +514,84 @@ export class ConditionalEvaluator {
         }
 
       case 'starts_with':
+        // Null check: null/undefined never starts with anything
+        if (left === null || left === undefined) return false;
         return String(left).startsWith(String(right));
 
       case 'ends_with':
+        // Null check: null/undefined never ends with anything
+        if (left === null || left === undefined) return false;
         return String(left).endsWith(String(right));
+
+      // Date operators (Wave 8 - schema alignment)
+      case 'within_last_days': {
+        // Check if date is within N days from now
+        if (left === null || left === undefined) return false;
+        const date = this.parseDate(left);
+        if (!date) return false;
+        const days = Number(right);
+        if (isNaN(days)) {
+          throw new ConditionError(`within_last_days requires a number, got: ${right}`);
+        }
+        const now = new Date();
+        const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+        return date >= cutoff && date <= now;
+      }
+
+      case 'before': {
+        // Check if date is before reference date
+        if (left === null || left === undefined) return false;
+        const leftDate = this.parseDate(left);
+        const rightDate = this.parseDate(right);
+        if (!leftDate || !rightDate) return false;
+        return leftDate < rightDate;
+      }
+
+      case 'after': {
+        // Check if date is after reference date
+        if (left === null || left === undefined) return false;
+        const leftDate = this.parseDate(left);
+        const rightDate = this.parseDate(right);
+        if (!leftDate || !rightDate) return false;
+        return leftDate > rightDate;
+      }
 
       default:
         throw new ConditionError(`Unknown operator: ${operator}`);
     }
+  }
+
+  /**
+   * Parse date from various formats
+   * Returns null if parsing fails
+   */
+  private parseDate(value: any): Date | null {
+    if (value instanceof Date) {
+      return isNaN(value.getTime()) ? null : value;
+    }
+    if (typeof value === 'number') {
+      // Unix timestamp (seconds or milliseconds)
+      const date = new Date(value > 1e11 ? value : value * 1000);
+      return isNaN(date.getTime()) ? null : date;
+    }
+    if (typeof value === 'string') {
+      // Try ISO format first
+      const date = new Date(value);
+      if (!isNaN(date.getTime())) return date;
+      // Try common date formats
+      const formats = [
+        /^\d{4}-\d{2}-\d{2}$/,  // YYYY-MM-DD
+        /^\d{2}\/\d{2}\/\d{4}$/,  // MM/DD/YYYY
+        /^\d{2}-\d{2}-\d{4}$/,  // DD-MM-YYYY
+      ];
+      for (const format of formats) {
+        if (format.test(value)) {
+          const parsed = new Date(value);
+          if (!isNaN(parsed.getTime())) return parsed;
+        }
+      }
+    }
+    return null;
   }
 
   /**

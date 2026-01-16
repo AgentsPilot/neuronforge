@@ -1,0 +1,29 @@
+{
+  "sections": {
+    "data": [
+      "Read lead rows from the Google Sheet named \"MyLeads\".",
+      "Use the tab named \"Leads\" as the source of truth for lead rows.",
+      "Treat the column named \"stage\" as the qualification indicator used for filtering.",
+      "Treat the column named \"Sales Person\" as the salesperson email used for routing emails.",
+      "Use the following columns for the summary table: \"Date\", \"Lead Name\", \"Company Email\", \"Phone\", \"Notes\", \"Sales Person\"."
+    ],
+    "output": [
+      "Produce an email-body embedded table (not an attachment).",
+      "The table must include these columns in this order: Date, Lead Name, Company Email, Phone, Notes, Sales Person.",
+      "For each salesperson email, the table must include only rows assigned to that salesperson (based on the \"Sales Person\" column).",
+      "When there are zero high-qualified leads for a salesperson, the email body must state exactly: \"0 high qualified leads found\" (and may omit the table)."
+    ],
+    "actions": [
+      "Filter the lead rows to only those where the column \"stage\" equals 4.",
+      "Group the filtered lead rows by the value in the \"Sales Person\" column (one group per salesperson email).",
+      "For each salesperson group, build an email-ready table containing only that salesperson's filtered leads.",
+      "If a lead row has an empty or missing \"Sales Person\" value, include that row in a separate 'Missing Sales Person' section in the email sent to Barak (meiribarak@gmail.com).",
+      "If there are zero leads where \"stage\" equals 4, generate an email message that states exactly: \"0 high qualified leads found\"."
+    ],
+    "delivery": [
+      "Send one separate email per salesperson to the email address found in the \"Sales Person\" column.",
+      "Send Barak (meiribarak@gmail.com) a copy of each salesperson email (CC).",
+      "If there are zero high-qualified leads overall, still send an email to Barak (meiribarak@gmail.com) stating exactly: \"0 high qualified leads found\"."
+    ]
+  }
+}

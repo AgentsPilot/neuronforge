@@ -1,0 +1,93 @@
+{
+  "ir_version": "3.0",
+  "goal": "Extract expense data from Gmail PDF attachments and send summary table",
+
+  "data_sources": [{
+    "type": "api",
+    "source": "gmail",
+    "location": "emails",
+    "role": "Expense emails with PDF receipts from last 7 days"
+  }],
+
+  "filters": [
+    {
+      "field": "subject",
+      "operator": "contains",
+      "value": "expenses",
+      "description": "Emails about expenses"
+    },
+    {
+      "field": "subject",
+      "operator": "contains",
+      "value": "receipt",
+      "description": "Emails with receipts"
+    },
+    {
+      "field": "date",
+      "operator": "greater_than",
+      "value": "last_7_days",
+      "description": "Recent emails only"
+    }
+  ],
+
+  "ai_operations": [{
+    "type": "extract",
+    "instruction": "Extract expense line items from PDF receipts. For each line item extract: date&time (if time missing mark 'need review'), vendor name (if unclear mark 'need review'), amount (if unclear mark 'need review'), and infer expense type from receipt text (if low confidence mark 'need review'). Normalize date&time format and amount format consistently across all rows. Create multiple rows when receipt has multiple line items.",
+    "context": "PDF attachments from filtered emails",
+    "output_schema": {
+      "type": "object",
+      "fields": [
+        {
+          "name": "date&time",
+          "type": "string",
+          "required": true,
+          "description": "Receipt date and time, normalized format. Set to 'need review' if missing or unclear."
+        },
+        {
+          "name": "vendor",
+          "type": "string",
+          "required": true,
+          "description": "Merchant/vendor name. Set to 'need review' if unclear."
+        },
+        {
+          "name": "amount",
+          "type": "string",
+          "required": true,
+          "description": "Total amount, normalized format. Set to 'need review' if unclear."
+        },
+        {
+          "name": "expense type",
+          "type": "string",
+          "required": true,
+          "description": "Inferred expense type. Set to 'need review' if low confidence."
+        }
+      ]
+    },
+    "constraints": {
+      "max_tokens": 1000,
+      "temperature": 0.3,
+      "model_preference": "balanced"
+    }
+  }],
+
+  "rendering": {
+    "type": "email_embedded_table",
+    "columns_in_order": ["date&time", "vendor", "amount", "expense type"],
+    "empty_message": "No expenses found in the last 7 days"
+  },
+
+  "delivery_rules": {
+    "summary_delivery": {
+      "recipient": "offir.omer@gmail.com",
+      "subject": "Expense Report Summary - Last 7 Days"
+    },
+    "send_when_no_results": true
+  },
+
+  "edge_cases": [{
+    "condition": "no_rows_after_filter",
+    "action": "send_empty_result_message",
+    "message": "No expense emails found in the last 7 days",
+    "recipient": "offir.omer@gmail.com"
+  }]
+}

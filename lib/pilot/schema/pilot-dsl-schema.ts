@@ -200,7 +200,8 @@ export const PILOT_DSL_SCHEMA = {
             "validation",
             "comparison",
             "sub_workflow",
-            "human_approval"
+            "human_approval",
+            "deterministic_extraction"
           ],
           description: "Type of step to execute"
         },
@@ -343,7 +344,7 @@ export const PILOT_DSL_SCHEMA = {
           properties: {
             operation: {
               type: "string",
-              enum: ["collect", "merge", "reduce"],
+              enum: ["collect", "merge", "reduce", "flatten"],
               description: "How to aggregate the results"
             },
             outputKey: {
@@ -362,7 +363,7 @@ export const PILOT_DSL_SCHEMA = {
         // Transform step fields
         operation: {
           type: "string",
-          enum: ["map", "filter", "reduce", "sort", "group", "aggregate", "join", "match", "deduplicate"],
+          enum: ["map", "filter", "reduce", "sort", "group", "aggregate", "join", "match", "deduplicate", "flatten", "fetch_content", "render_table"],
           description: "Transform operation type"
         },
         input: {
@@ -546,6 +547,39 @@ export const PILOT_DSL_SCHEMA = {
         allowDelegate: {
           type: "boolean",
           description: "Whether approver can delegate to another user"
+        },
+
+        // Deterministic extraction step fields
+        output_schema: {
+          type: "object",
+          description: "Schema defining fields to extract (for deterministic_extraction steps)",
+          properties: {
+            fields: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string", description: "Field name" },
+                  type: { type: "string", enum: ["string", "number", "boolean", "date", "array", "object"], description: "Field type" },
+                  required: { type: "boolean", description: "Whether field is required" },
+                  description: { type: "string", description: "Field description" }
+                },
+                required: ["name", "type"],
+                additionalProperties: false
+              }
+            }
+          },
+          required: ["fields"],
+          additionalProperties: false
+        },
+        document_type: {
+          type: "string",
+          enum: ["invoice", "receipt", "form", "contract", "auto"],
+          description: "Document type hint for extraction (for deterministic_extraction steps)"
+        },
+        ocr_fallback: {
+          type: "boolean",
+          description: "Whether to use OCR (AWS Textract) if text extraction fails (for deterministic_extraction steps)"
         }
       },
       required: ["id", "name", "type"],
@@ -562,7 +596,8 @@ export const PILOT_DSL_SCHEMA = {
           enum: [
             "action", "ai_processing", "llm_decision", "conditional", "loop",
             "parallel_group", "switch", "scatter_gather", "transform", "delay",
-            "enrichment", "validation", "comparison", "sub_workflow", "human_approval"
+            "enrichment", "validation", "comparison", "sub_workflow", "human_approval",
+            "deterministic_extraction"
           ]
         },
         description: { type: "string" },
@@ -611,7 +646,7 @@ export const PILOT_DSL_SCHEMA = {
         gather: {
           type: "object",
           properties: {
-            operation: { type: "string", enum: ["collect", "merge", "reduce"] },
+            operation: { type: "string", enum: ["collect", "merge", "reduce", "flatten"] },
             outputKey: { type: "string" },
             reduceExpression: { type: "string" }
           },
@@ -620,7 +655,7 @@ export const PILOT_DSL_SCHEMA = {
         },
         operation: {
           type: "string",
-          enum: ["map", "filter", "reduce", "sort", "group", "aggregate", "join", "match", "deduplicate", "equals", "deep_equals", "diff", "contains", "subset"]
+          enum: ["map", "filter", "reduce", "sort", "group", "aggregate", "join", "match", "deduplicate", "flatten", "fetch_content", "render_table", "equals", "deep_equals", "diff", "contains", "subset"]
         },
         input: { type: "string" },
         config: { type: "object", additionalProperties: true },
@@ -688,7 +723,30 @@ export const PILOT_DSL_SCHEMA = {
         onTimeout: { type: "string", enum: ["approve", "reject", "escalate"] },
         escalateTo: { type: "array", items: { type: "string" } },
         requireComment: { type: "boolean" },
-        allowDelegate: { type: "boolean" }
+        allowDelegate: { type: "boolean" },
+        output_schema: {
+          type: "object",
+          properties: {
+            fields: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string" },
+                  type: { type: "string", enum: ["string", "number", "boolean", "date", "array", "object"] },
+                  required: { type: "boolean" },
+                  description: { type: "string" }
+                },
+                required: ["name", "type"],
+                additionalProperties: false
+              }
+            }
+          },
+          required: ["fields"],
+          additionalProperties: false
+        },
+        document_type: { type: "string", enum: ["invoice", "receipt", "form", "contract", "auto"] },
+        ocr_fallback: { type: "boolean" }
       },
       required: ["id", "name", "type"],
       additionalProperties: false
@@ -704,7 +762,8 @@ export const PILOT_DSL_SCHEMA = {
           enum: [
             "action", "ai_processing", "llm_decision", "conditional", "loop",
             "parallel_group", "switch", "scatter_gather", "transform", "delay",
-            "enrichment", "validation", "comparison", "sub_workflow", "human_approval"
+            "enrichment", "validation", "comparison", "sub_workflow", "human_approval",
+            "deterministic_extraction"
           ]
         },
         description: { type: "string" },
@@ -753,7 +812,7 @@ export const PILOT_DSL_SCHEMA = {
         gather: {
           type: "object",
           properties: {
-            operation: { type: "string", enum: ["collect", "merge", "reduce"] },
+            operation: { type: "string", enum: ["collect", "merge", "reduce", "flatten"] },
             outputKey: { type: "string" },
             reduceExpression: { type: "string" }
           },
@@ -762,7 +821,7 @@ export const PILOT_DSL_SCHEMA = {
         },
         operation: {
           type: "string",
-          enum: ["map", "filter", "reduce", "sort", "group", "aggregate", "join", "match", "deduplicate", "equals", "deep_equals", "diff", "contains", "subset"]
+          enum: ["map", "filter", "reduce", "sort", "group", "aggregate", "join", "match", "deduplicate", "flatten", "fetch_content", "render_table", "equals", "deep_equals", "diff", "contains", "subset"]
         },
         input: { type: "string" },
         config: { type: "object", additionalProperties: true },
@@ -830,7 +889,30 @@ export const PILOT_DSL_SCHEMA = {
         onTimeout: { type: "string", enum: ["approve", "reject", "escalate"] },
         escalateTo: { type: "array", items: { type: "string" } },
         requireComment: { type: "boolean" },
-        allowDelegate: { type: "boolean" }
+        allowDelegate: { type: "boolean" },
+        output_schema: {
+          type: "object",
+          properties: {
+            fields: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string" },
+                  type: { type: "string", enum: ["string", "number", "boolean", "date", "array", "object"] },
+                  required: { type: "boolean" },
+                  description: { type: "string" }
+                },
+                required: ["name", "type"],
+                additionalProperties: false
+              }
+            }
+          },
+          required: ["fields"],
+          additionalProperties: false
+        },
+        document_type: { type: "string", enum: ["invoice", "receipt", "form", "contract", "auto"] },
+        ocr_fallback: { type: "boolean" }
       },
       required: ["id", "name", "type"],
       additionalProperties: false
@@ -846,7 +928,8 @@ export const PILOT_DSL_SCHEMA = {
           enum: [
             "action", "ai_processing", "llm_decision", "conditional", "loop",
             "parallel_group", "switch", "scatter_gather", "transform", "delay",
-            "enrichment", "validation", "comparison", "sub_workflow", "human_approval"
+            "enrichment", "validation", "comparison", "sub_workflow", "human_approval",
+            "deterministic_extraction"
           ]
         },
         description: { type: "string" },
@@ -895,7 +978,7 @@ export const PILOT_DSL_SCHEMA = {
         gather: {
           type: "object",
           properties: {
-            operation: { type: "string", enum: ["collect", "merge", "reduce"] },
+            operation: { type: "string", enum: ["collect", "merge", "reduce", "flatten"] },
             outputKey: { type: "string" },
             reduceExpression: { type: "string" }
           },
@@ -904,7 +987,7 @@ export const PILOT_DSL_SCHEMA = {
         },
         operation: {
           type: "string",
-          enum: ["map", "filter", "reduce", "sort", "group", "aggregate", "join", "match", "deduplicate", "equals", "deep_equals", "diff", "contains", "subset"]
+          enum: ["map", "filter", "reduce", "sort", "group", "aggregate", "join", "match", "deduplicate", "flatten", "fetch_content", "render_table", "equals", "deep_equals", "diff", "contains", "subset"]
         },
         input: { type: "string" },
         config: { type: "object", additionalProperties: true },
@@ -972,7 +1055,30 @@ export const PILOT_DSL_SCHEMA = {
         onTimeout: { type: "string", enum: ["approve", "reject", "escalate"] },
         escalateTo: { type: "array", items: { type: "string" } },
         requireComment: { type: "boolean" },
-        allowDelegate: { type: "boolean" }
+        allowDelegate: { type: "boolean" },
+        output_schema: {
+          type: "object",
+          properties: {
+            fields: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string" },
+                  type: { type: "string", enum: ["string", "number", "boolean", "date", "array", "object"] },
+                  required: { type: "boolean" },
+                  description: { type: "string" }
+                },
+                required: ["name", "type"],
+                additionalProperties: false
+              }
+            }
+          },
+          required: ["fields"],
+          additionalProperties: false
+        },
+        document_type: { type: "string", enum: ["invoice", "receipt", "form", "contract", "auto"] },
+        ocr_fallback: { type: "boolean" }
       },
       required: ["id", "name", "type"],
       additionalProperties: false
@@ -987,7 +1093,8 @@ export const PILOT_DSL_SCHEMA = {
           type: "string",
           enum: [
             "action", "ai_processing", "llm_decision", "conditional", "delay",
-            "transform", "enrichment", "validation", "comparison", "human_approval"
+            "transform", "enrichment", "validation", "comparison", "human_approval",
+            "deterministic_extraction"
           ]
         },
         description: { type: "string" },
@@ -1009,7 +1116,7 @@ export const PILOT_DSL_SCHEMA = {
         default: { type: "array", items: { type: "string" } },
         operation: {
           type: "string",
-          enum: ["map", "filter", "reduce", "sort", "group", "aggregate", "join", "match", "deduplicate", "equals", "deep_equals", "diff", "contains", "subset"]
+          enum: ["map", "filter", "reduce", "sort", "group", "aggregate", "join", "match", "deduplicate", "flatten", "fetch_content", "render_table", "equals", "deep_equals", "diff", "contains", "subset"]
         },
         input: { type: "string" },
         config: { type: "object", additionalProperties: true },
@@ -1073,7 +1180,30 @@ export const PILOT_DSL_SCHEMA = {
         onTimeout: { type: "string", enum: ["approve", "reject", "escalate"] },
         escalateTo: { type: "array", items: { type: "string" } },
         requireComment: { type: "boolean" },
-        allowDelegate: { type: "boolean" }
+        allowDelegate: { type: "boolean" },
+        output_schema: {
+          type: "object",
+          properties: {
+            fields: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string" },
+                  type: { type: "string", enum: ["string", "number", "boolean", "date", "array", "object"] },
+                  required: { type: "boolean" },
+                  description: { type: "string" }
+                },
+                required: ["name", "type"],
+                additionalProperties: false
+              }
+            }
+          },
+          required: ["fields"],
+          additionalProperties: false
+        },
+        document_type: { type: "string", enum: ["invoice", "receipt", "form", "contract", "auto"] },
+        ocr_fallback: { type: "boolean" }
       },
       required: ["id", "name", "type"],
       additionalProperties: false
@@ -1098,7 +1228,7 @@ export function getSchemaStats() {
     sizeBytes: schemaStr.length,
     sizeKB: (schemaStr.length / 1024).toFixed(2),
     isUnderLimit: schemaStr.length < 100000,
-    stepTypes: 15,
+    stepTypes: 16,  // Added deterministic_extraction
     nestingLevels: 5,
     conditionOperators: 23
   };

@@ -67,6 +67,8 @@ export interface ActionStep extends WorkflowStepBase {
   plugin: string;
   action: string;
   params: Record<string, any>;
+  /** Plugin output schema - propagated from compilation for schema-aware execution */
+  output_schema?: any;
 }
 
 /**
@@ -169,7 +171,7 @@ export interface ScatterGatherStep extends WorkflowStepBase {
     itemVariable?: string; // Variable name for current item (default: "item")
   };
   gather: {
-    operation: 'collect' | 'merge' | 'reduce'; // How to aggregate results
+    operation: 'collect' | 'merge' | 'reduce' | 'flatten'; // How to aggregate results
     outputKey?: string; // Where to store aggregated results (default: step.id)
     reduceExpression?: string; // For 'reduce' operation
   };
@@ -243,6 +245,41 @@ export interface SubWorkflowStep extends WorkflowStepBase {
 }
 
 /**
+ * Deterministic extraction step: Extract data from documents using LLM
+ * OCR extracts text (FREE), then LLM extracts structured fields from text
+ *
+ * Supports flexible output formats based on user intent:
+ * - object: Single record per document (default)
+ * - array: Multiple items per document (e.g., line items from receipt)
+ * - string: Summary or unstructured text output
+ */
+export interface DeterministicExtractionStep extends WorkflowStepBase {
+  type: 'deterministic_extraction';
+  input: string;  // Variable reference to document content (e.g., "{{item.content}}")
+  output_schema?: {
+    type?: 'object' | 'array' | 'string';  // Output type (default: 'object')
+    fields?: Array<{
+      name: string;
+      type: 'string' | 'number' | 'boolean' | 'date' | 'array' | 'object';
+      required?: boolean;
+      description?: string;
+    }>;
+    items?: {  // For array type: schema of each item
+      fields: Array<{
+        name: string;
+        type: 'string' | 'number' | 'boolean' | 'date' | 'array' | 'object';
+        required?: boolean;
+        description?: string;
+      }>;
+    };
+    description?: string;  // For string type or overall description
+  };
+  instruction?: string;  // Extraction instruction from user intent
+  document_type?: 'invoice' | 'receipt' | 'form' | 'contract' | 'auto';
+  ocr_fallback?: boolean;  // Use AWS Textract if pdf-parse fails
+}
+
+/**
  * Human approval step: Pause workflow for human approval
  * Phase 6: Human-in-the-Loop
  */
@@ -292,7 +329,8 @@ export type WorkflowStep =
   | ValidationStep
   | ComparisonStep
   | SubWorkflowStep
-  | HumanApprovalStep;
+  | HumanApprovalStep
+  | DeterministicExtractionStep;
 
 // ============================================================================
 // CONDITIONAL EXPRESSIONS
@@ -352,8 +390,159 @@ export type ComparisonOperator =
   | 'is_empty'
   | 'is_not_empty'
   | 'matches'  // regex match
+  | 'matches_regex'  // alias for matches (schema compatibility)
   | 'starts_with'
-  | 'ends_with';
+  | 'ends_with'
+  // Date operators (Wave 8 - schema alignment)
+  | 'within_last_days'  // Date is within N days from now
+  | 'before'  // Date is before reference date
+  | 'after';  // Date is after reference date
+
+// ============================================================================
+// DEPENDENCY INTERFACES (Wave 7 Type Safety Fix)
+// ============================================================================
+
+/**
+ * Interface for WorkflowOrchestrator
+ * Replaces `any` type for type safety
+ */
+export interface IOrchestrator {
+  /**
+   * Check if orchestration is active
+   */
+  isActive(): boolean;
+
+  /**
+   * Execute a step with orchestration
+   */
+  executeStep(
+    stepId: string,
+    stepData: {
+      step: WorkflowStep;
+      params: Record<string, any>;
+      context: Record<string, any>;
+      executionContext: IExecutionContext;
+    },
+    memoryContext?: MemoryContext,
+    pluginsRequired?: string[]
+  ): Promise<{
+    output: any;
+    tokensUsed: { total: number; input?: number; output?: number };
+    tokensSaved: number;
+    executionTime: number;
+    compressionApplied?: boolean;
+    routedModel?: string;
+  } | null>;
+
+  /**
+   * Orchestrator configuration
+   */
+  config?: {
+    aisRoutingEnabled?: boolean;
+    [key: string]: any;
+  };
+}
+
+/**
+ * Interface for StateManager
+ * Used by StepExecutor for persistence
+ */
+export interface IStateManager {
+  /**
+   * Log step execution start
+   */
+  logStepExecution(
+    workflowExecutionId: string,
+    stepId: string,
+    stepName: string,
+    stepType: string,
+    status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped',
+    metadata?: Record<string, any>
+  ): Promise<void>;
+
+  /**
+   * Update step execution status
+   */
+  updateStepExecution(
+    workflowExecutionId: string,
+    stepId: string,
+    status: 'completed' | 'failed' | 'skipped',
+    metadata?: Record<string, any>,
+    errorMessage?: string
+  ): Promise<void>;
+}
+
+/**
+ * Interface for ParallelExecutor
+ * Used by StepExecutor for nested parallel operations
+ */
+export interface IParallelExecutor {
+  /**
+   * Execute scatter-gather step
+   */
+  executeScatterGather(
+    step: ScatterGatherStep,
+    context: IExecutionContext
+  ): Promise<any[]>;
+
+  /**
+   * Execute loop step
+   */
+  executeLoop(
+    step: LoopStep,
+    context: IExecutionContext
+  ): Promise<any[]>;
+}
+
+/**
+ * Interface for ExecutionContext (minimal interface for dependency injection)
+ * The full ExecutionContext class implements this plus additional methods
+ */
+export interface IExecutionContext {
+  // Execution metadata
+  executionId: string;
+  agentId: string;
+  userId: string;
+  sessionId: string;
+
+  // Agent configuration
+  agent: Agent;
+  inputValues: Record<string, any>;
+
+  // Execution state
+  status: ExecutionStatus;
+  currentStep: string | null;
+  completedSteps: string[];
+  failedSteps: string[];
+  skippedSteps: string[];
+
+  // Runtime variables
+  variables: Record<string, any>;
+
+  // Memory context
+  memoryContext?: MemoryContext;
+
+  // Orchestration (Phase 4) - now typed
+  orchestrator?: IOrchestrator;
+
+  // Timing
+  startedAt: Date;
+  completedAt?: Date;
+
+  // Metrics
+  totalTokensUsed: number;
+  totalExecutionTime: number;
+
+  // Methods required by StepExecutor and ParallelExecutor
+  resolveVariable(reference: string): any;
+  resolveAllVariables(obj: any): any;
+  setVariable(name: string, value: any): void;
+  getStepOutput(stepId: string): StepOutput | undefined;
+  setStepOutput(stepId: string, output: StepOutput): void;
+  getAllStepOutputs(): Map<string, StepOutput>;
+  markStepSkipped(stepId: string): void;
+  clone(resetMetrics?: boolean): IExecutionContext;
+}
 
 // ============================================================================
 // EXECUTION CONTEXT
@@ -361,6 +550,7 @@ export type ComparisonOperator =
 
 /**
  * Execution context: In-memory state during workflow execution
+ * @deprecated Use IExecutionContext interface for type declarations
  */
 export interface ExecutionContext {
   // Execution metadata
@@ -389,8 +579,8 @@ export interface ExecutionContext {
   // Memory context
   memoryContext?: MemoryContext;
 
-  // Orchestration (Phase 4)
-  orchestrator?: any; // WorkflowOrchestrator instance
+  // Orchestration (Phase 4) - now typed
+  orchestrator?: IOrchestrator;
 
   // Timing
   startedAt: Date;
@@ -432,28 +622,6 @@ export interface TokenUsage {
 }
 
 /**
- * ✅ P1 FIX: Utility to normalize token formats
- * Converts both legacy number format and object format to standardized TokenUsage
- */
-export function normalizeTokens(tokens: number | { total: number; prompt?: number; completion?: number; input?: number; output?: number } | TokenUsage | undefined): TokenUsage {
-  if (!tokens) {
-    return { input: 0, output: 0, total: 0 };
-  }
-
-  if (typeof tokens === 'number') {
-    // Legacy format - assume all tokens are total
-    return { input: 0, output: 0, total: tokens };
-  }
-
-  // Object format - handle multiple naming conventions
-  const input = tokens.input ?? tokens.prompt ?? 0;
-  const output = tokens.output ?? tokens.completion ?? 0;
-  const total = tokens.total ?? (input + output);
-
-  return { input, output, total };
-}
-
-/**
  * ✅ P1 FIX: Extract total tokens from any format
  * Backward compatible with existing code
  */
@@ -473,7 +641,7 @@ export interface StepOutputMetadata {
   itemCount?: number;
   /**
    * ✅ P1 UPDATE: Prefer TokenUsage format, but still support legacy number for backward compatibility
-   * Use normalizeTokens() utility to convert to standard format
+   * Use getTokenTotal() utility to extract total tokens
    */
   tokensUsed?: TokenUsage | number | { total: number; prompt: number; completion: number };
   error?: string;
@@ -1126,6 +1294,13 @@ export function isSubWorkflowStep(step: WorkflowStep): step is SubWorkflowStep {
  */
 export function isHumanApprovalStep(step: WorkflowStep): step is HumanApprovalStep {
   return step.type === 'human_approval';
+}
+
+/**
+ * Type guard for DeterministicExtractionStep
+ */
+export function isDeterministicExtractionStep(step: WorkflowStep): step is DeterministicExtractionStep {
+  return step.type === 'deterministic_extraction';
 }
 
 /**

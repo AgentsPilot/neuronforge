@@ -1,0 +1,1293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Cache buster: 2026-01-06-v3 -->
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>V6 Pipeline Test - Architecture Improvements Complete</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1600px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      overflow: hidden;
+    }
+
+    header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      text-align: center;
+    }
+
+    h1 { font-size: 2rem; margin-bottom: 10px; }
+    .subtitle { opacity: 0.95; font-size: 0.95rem; margin-bottom: 15px; }
+
+    .improvements-banner {
+      background: rgba(76, 175, 80, 0.2);
+      border: 2px solid rgba(76, 175, 80, 0.4);
+      border-radius: 8px;
+      padding: 12px;
+      margin-top: 15px;
+      font-size: 0.85rem;
+    }
+
+    .improvements-banner strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 0.95rem;
+    }
+
+    .improvements-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .improvement-badge {
+      background: rgba(255,255,255,0.3);
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+    }
+
+    .pipeline {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin: 15px 0;
+      font-size: 0.75rem;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .pipeline-step {
+      background: rgba(255,255,255,0.2);
+      padding: 4px 10px;
+      border-radius: 4px;
+    }
+
+    .content { padding: 25px; }
+
+    .test-section {
+      margin-bottom: 20px;
+      border: 2px solid #667eea;
+      border-radius: 8px;
+      padding: 20px;
+      background: #f8f9ff;
+    }
+
+    .test-section h2 {
+      color: #764ba2;
+      margin-bottom: 12px;
+      font-size: 1.2rem;
+    }
+
+    label {
+      display: block;
+      font-weight: 600;
+      color: #333;
+      margin: 12px 0 6px 0;
+      font-size: 0.9rem;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      padding: 10px;
+      border: 2px solid #ddd;
+      border-radius: 6px;
+      font-family: 'Monaco', monospace;
+      font-size: 0.85rem;
+      margin-bottom: 10px;
+    }
+
+    input:focus, textarea:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    button {
+      background: #667eea;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 6px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin: 5px 5px 5px 0;
+    }
+
+    button:hover:not(:disabled) {
+      background: #5568d3;
+      transform: translateY(-1px);
+    }
+
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+
+    .btn-secondary { background: #764ba2; }
+    .btn-secondary:hover:not(:disabled) { background: #5d3a82; }
+
+    .btn-danger { background: #f44336; }
+    .btn-danger:hover:not(:disabled) { background: #d32f2f; }
+
+    .loader {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 3px solid rgba(255,255,255,.3);
+      border-radius: 50%;
+      border-top-color: white;
+      animation: spin 1s linear infinite;
+      margin-left: 8px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .phase-progress {
+      display: none;
+      background: white;
+      border: 2px solid #667eea;
+      border-radius: 8px;
+      padding: 20px;
+      margin: 15px 0;
+    }
+
+    .phase-progress h3 {
+      color: #764ba2;
+      margin-bottom: 15px;
+      font-size: 1.1rem;
+    }
+
+    .phase-box {
+      display: none;
+      background: #f9f9f9;
+      border: 2px solid #e0e0e0;
+      border-radius: 6px;
+      padding: 15px;
+      margin: 10px 0;
+    }
+
+    .phase-box.active {
+      border-color: #667eea;
+      background: #e8eaf6;
+    }
+
+    .phase-box.completed {
+      border-color: #4caf50;
+      background: #e8f5e9;
+    }
+
+    .phase-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+      font-weight: 600;
+    }
+
+    .phase-status {
+      margin-left: auto;
+      font-size: 0.85rem;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+
+    .phase-status.running {
+      background: #667eea;
+      color: white;
+    }
+
+    .phase-status.completed {
+      background: #4caf50;
+      color: white;
+    }
+
+    .phase-metric {
+      margin: 5px 0;
+      padding: 6px 10px;
+      background: white;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .validation-badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 3px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      margin-left: 8px;
+    }
+
+    .validation-badge.success {
+      background: #4caf50;
+      color: white;
+    }
+
+    .validation-badge.retry {
+      background: #ff9800;
+      color: white;
+    }
+
+    .result {
+      margin-top: 15px;
+      padding: 18px;
+      border-radius: 6px;
+      background: white;
+      border: 2px solid #e0e0e0;
+      display: none;
+    }
+
+    .result.success {
+      border-color: #4caf50;
+      background: #e8f5e9;
+    }
+
+    .result.error {
+      border-color: #f44336;
+      background: #ffebee;
+    }
+
+    .result h3 {
+      margin-bottom: 12px;
+      font-size: 1.1rem;
+    }
+
+    .workflow-steps {
+      margin: 15px 0;
+      background: white;
+      border: 2px solid #e0e0e0;
+      border-radius: 6px;
+      padding: 15px;
+    }
+
+    .workflow-step-item {
+      padding: 12px;
+      margin: 8px 0;
+      background: #f9f9f9;
+      border-left: 4px solid #667eea;
+      border-radius: 4px;
+    }
+
+    .workflow-step-item .step-header {
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 6px;
+    }
+
+    .workflow-step-item .step-details {
+      font-size: 0.85rem;
+      color: #666;
+    }
+
+    details {
+      margin: 10px 0;
+      cursor: pointer;
+    }
+
+    summary {
+      font-weight: 600;
+      padding: 8px;
+      background: #f5f5f5;
+      border-radius: 4px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    summary:hover {
+      background: #eeeeee;
+    }
+
+    pre {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 12px;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 0.8rem;
+      line-height: 1.5;
+      margin-top: 8px;
+      max-height: 400px;
+    }
+
+    /* JSON output in phase boxes - ensure dark theme */
+    .phase-box pre {
+      background: #1e1e1e !important;
+      color: #d4d4d4 !important;
+    }
+
+    .info-box {
+      background: #e3f2fd;
+      border-left: 4px solid #2196f3;
+      padding: 12px;
+      border-radius: 4px;
+      margin: 15px 0;
+      font-size: 0.9rem;
+    }
+
+    .warning-box {
+      background: #fff3e0;
+      border-left: 4px solid #ff9800;
+      padding: 12px;
+      border-radius: 4px;
+      margin: 15px 0;
+      font-size: 0.9rem;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 10px;
+      margin: 15px 0;
+    }
+
+    .stat-card {
+      background: white;
+      padding: 12px;
+      border-radius: 6px;
+      border: 2px solid #e0e0e0;
+    }
+
+    .stat-label {
+      font-size: 0.8rem;
+      color: #666;
+      margin-bottom: 4px;
+    }
+
+    .stat-value {
+      font-size: 1.3rem;
+      font-weight: 700;
+      color: #333;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 5px;
+      border-bottom: 2px solid #667eea;
+      margin-bottom: 20px;
+    }
+
+    .tab {
+      padding: 12px 24px;
+      background: #f0f0f0;
+      border: none;
+      border-radius: 6px 6px 0 0;
+      cursor: pointer;
+      font-weight: 600;
+      color: #666;
+      transition: all 0.2s;
+    }
+
+    .tab.active {
+      background: #667eea;
+      color: white;
+    }
+
+    .tab:hover:not(.active) {
+      background: #e0e0e0;
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🧠 V6 Pure Declarative Architecture</h1>
+      <p class="subtitle">5-Phase Pipeline Complete - Production Ready with Phase 5 DSL Generation</p>
+
+      <div class="improvements-banner">
+        <strong>✅ Architecture Improvements Active:</strong>
+        <div class="improvements-list">
+          <div class="improvement-badge">✅ Phase 1: Variable Fix</div>
+          <div class="improvement-badge">✅ Phase 3: Strict Schema</div>
+          <div class="improvement-badge">✅ Phase 4: Transforms</div>
+          <div class="improvement-badge">✅ Phase 5: DSL + Validation</div>
+        </div>
+      </div>
+
+      <div class="pipeline">
+        <div class="pipeline-step">📝 Input</div>
+        <div>→</div>
+        <div class="pipeline-step">P1: Understanding</div>
+        <div>→</div>
+        <div class="pipeline-step">P2: Grounding</div>
+        <div>→</div>
+        <div class="pipeline-step">P3: Formalization</div>
+        <div>→</div>
+        <div class="pipeline-step">P4: Compilation</div>
+        <div>→</div>
+        <div class="pipeline-step">P5: DSL + Validation</div>
+        <div>→</div>
+        <div class="pipeline-step">✅ Execution</div>
+      </div>
+    </header>
+
+    <div class="content">
+      <!-- Tab Navigation -->
+      <div class="tabs">
+        <button class="tab active" onclick="switchTab(event, 'full-pipeline')">🚀 Compilation</button>
+        <button class="tab" onclick="switchTab(event, 'execution')">▶️ Execution</button>
+        <button class="tab" onclick="switchTab(event, 'saved-workflows')">💾 Saved</button>
+        <button class="tab" onclick="switchTab(event, 'diagnostics')">🔍 Diagnostics</button>
+      </div>
+
+      <!-- Tab 1: Full Pipeline Test -->
+      <div id="full-pipeline" class="tab-content active">
+        <div class="test-section">
+          <h2>🚀 Full Pipeline Test</h2>
+
+          <div class="info-box">
+            <strong>V6 5-Phase Pipeline Architecture:</strong>
+            <ul style="margin: 8px 0 0 20px; font-size: 0.85rem;">
+              <li><strong>Phase 1:</strong> Variable references use correct <code>.data.</code> prefix (prevents "undefined" errors)</li>
+              <li><strong>Phase 3:</strong> Strict schema validation with automatic retry (catches LLM mistakes early)</li>
+              <li><strong>Phase 4:</strong> Post-processing transforms (simplify conditions, remove output_vars, transform scatter)</li>
+              <li><strong>Phase 5:</strong> DSL generation + validation (PILOT DSL generated from final transformed steps)</li>
+            </ul>
+          </div>
+
+          <label>User ID (for plugin connection):</label>
+          <input type="text" id="user-id-input" placeholder="your-user-id" value="offir.omer@gmail.com">
+
+          <label>Enhanced Prompt (JSON):</label>
+          <textarea id="enhanced-prompt-input" rows="12" placeholder='Paste enhanced prompt JSON...'>{
+  "sections": {
+    "data": [
+      "- Read Gmail Inbox messages from the last 7 days.",
+      "- Use the spreadsheet ID 1pM8WbXtPgaYqokHn_spgQAfR7SBuql3JUtE1ugDtOpc",
+      "- Use the tab named UrgentEmails as the destination."
+    ],
+    "actions": [
+      "- Filter messages that contain keywords: complaint, refund, angry, not working",
+      "- Check if the message link/id already exists in the sheet to avoid duplicates"
+    ],
+    "output": [
+      "- Append new matching messages to the sheet with columns: sender email, subject, date, full email text, Gmail message link/id"
+    ],
+    "delivery": [
+      "- No email notifications, only append to sheet"
+    ]
+  }
+}</textarea>
+
+          <button id="run-pipeline-btn" onclick="runPipeline()">
+            🚀 Run Full Pipeline
+            <span id="pipeline-loader" class="loader" style="display:none;"></span>
+          </button>
+
+          <!-- Phase Progress -->
+          <div id="phase-progress" class="phase-progress">
+            <h3>📊 Pipeline Progress</h3>
+
+            <div id="phase-1-box" class="phase-box">
+              <div class="phase-header">
+                <span>🧠</span>
+                <strong>Phase 1: Understanding</strong>
+                <span class="phase-status" id="phase-1-status">⏳ Pending</span>
+              </div>
+              <div id="phase-1-content"></div>
+            </div>
+
+            <div id="phase-2-box" class="phase-box">
+              <div class="phase-header">
+                <span>🎯</span>
+                <strong>Phase 2: Grounding</strong>
+                <span class="phase-status" id="phase-2-status">⏳ Pending</span>
+              </div>
+              <div id="phase-2-content"></div>
+            </div>
+
+            <div id="phase-3-box" class="phase-box">
+              <div class="phase-header">
+                <span>⚙️</span>
+                <strong>Phase 3: Formalization</strong>
+                <span class="phase-status" id="phase-3-status">⏳ Pending</span>
+              </div>
+              <div id="phase-3-content"></div>
+            </div>
+
+            <div id="phase-4-box" class="phase-box">
+              <div class="phase-header">
+                <span>🔧</span>
+                <strong>Phase 4: Compilation</strong>
+                <span class="phase-status" id="phase-4-status">⏳ Pending</span>
+              </div>
+              <div id="phase-4-content"></div>
+            </div>
+
+            <div id="phase-5-box" class="phase-box">
+              <div class="phase-header">
+                <span>📦</span>
+                <strong>Phase 5: Final PILOT DSL</strong>
+                <span class="phase-status" id="phase-5-status">⏳ Pending</span>
+              </div>
+              <div id="phase-5-content"></div>
+            </div>
+          </div>
+
+          <div id="pipeline-result" class="result"></div>
+        </div>
+      </div>
+
+      <!-- Tab 2: Execution -->
+      <div id="execution" class="tab-content">
+        <div class="test-section">
+          <h2>▶️ Workflow Execution</h2>
+          <p style="color: #666; margin-bottom: 15px;">Execute the compiled workflow with real plugins</p>
+
+          <div id="no-workflow-message">
+            <div class="info-box">
+              <strong>Load Workflow JSON:</strong> Paste your workflow steps JSON below to execute directly without compiling.
+            </div>
+
+            <label>User ID:</label>
+            <input type="text" id="exec-user-id" placeholder="your-user-id" value="offir.omer@gmail.com">
+
+            <label>Workflow Steps (JSON Array):</label>
+            <textarea id="direct-workflow-input" rows="20" style="font-size: 0.8rem; line-height: 1.4;" placeholder='[
+  {
+    "step_id": "step1",
+    "type": "action",
+    "plugin": "google-mail",
+    "action": "fetch_messages",
+    "params": { ... }
+  },
+  ...
+]'></textarea>
+            <button onclick="loadDirectWorkflow()" class="btn-secondary" style="background: #4caf50;">📥 Load & Prepare for Execution</button>
+          </div>
+
+          <div id="workflow-ready" style="display: none;">
+            <div class="info-box">
+              <strong>Ready to Execute:</strong>
+              <div id="workflow-info" style="margin-top: 10px; font-size: 0.9rem;"></div>
+            </div>
+
+            <label style="margin-top: 15px;">Edit Workflow Steps (JSON):</label>
+            <textarea id="workflow-steps-editor" rows="20" style="font-size: 0.8rem; line-height: 1.4;"></textarea>
+            <div style="margin-bottom: 15px;">
+              <button onclick="resetWorkflowEditor()" style="background: #ff9800; margin-right: 5px;">Reset to Original</button>
+              <button onclick="applyWorkflowEdits()" class="btn-secondary">Apply Edits</button>
+            </div>
+
+            <button id="execute-btn" class="btn-secondary" style="background: #4caf50;">▶️ Execute Workflow</button>
+            <button onclick="showDirectInput()" style="background: #9e9e9e;">📥 Load Different Workflow</button>
+
+            <div id="exec-loader" style="display: none; margin-top: 15px;">
+              <div style="display: inline-block; width: 16px; height: 16px; border: 3px solid #4caf50; border-top: transparent; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+              <span style="margin-left: 10px;">Executing workflow...</span>
+            </div>
+
+            <div id="exec-result" style="margin-top: 15px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 3: Saved Workflows -->
+      <div id="saved-workflows" class="tab-content">
+        <div id="saved-workflow-section" class="test-section">
+          <h2>💾 Saved Workflows</h2>
+          <p style="color: #666; margin-bottom: 15px;">Load and execute your previously compiled workflows</p>
+
+          <div id="no-saved-message" class="warning-box">
+            <p>No saved workflow found. Compile a workflow first and click "Save for Later".</p>
+          </div>
+
+          <div id="saved-workflow-controls" style="display: none;">
+            <button id="load-workflow-btn" class="btn-secondary">📂 Load & Execute</button>
+            <button id="clear-workflow-btn" class="btn-danger">🗑️ Clear Saved</button>
+            <div id="load-result" style="margin-top: 15px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 4: Diagnostics -->
+      <div id="diagnostics" class="tab-content">
+        <div class="test-section">
+          <h2>🔍 System Diagnostics</h2>
+          <p style="color: #666; margin-bottom: 15px;">Test individual pipeline components and architecture improvements</p>
+
+          <div class="info-box">
+            <strong>Available Tests:</strong>
+            <ul style="margin: 8px 0 0 20px; font-size: 0.85rem;">
+              <li>API Endpoint Connectivity</li>
+              <li>Architecture Improvements Status</li>
+              <li>LocalStorage Capacity</li>
+              <li>Saved Workflow Validation</li>
+            </ul>
+          </div>
+
+          <button onclick="runDiagnostics()" style="background: #ff9800;">🔍 Run Diagnostics</button>
+
+          <div id="diagnostics-result" style="margin-top: 15px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ============================================================================
+    // Tab Switching
+    // ============================================================================
+    function switchTab(event, tabName) {
+      document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+      document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+      document.getElementById(tabName).classList.add('active');
+      event.target.classList.add('active');
+    }
+
+    // ============================================================================
+    // Phase Progress Helpers
+    // ============================================================================
+    function showPhaseProgress() {
+      document.getElementById('phase-progress').style.display = 'block';
+    }
+
+    function updatePhase(num, status, content) {
+      const box = document.getElementById(`phase-${num}-box`);
+      const statusEl = document.getElementById(`phase-${num}-status`);
+      const contentEl = document.getElementById(`phase-${num}-content`);
+
+      box.style.display = 'block';
+      box.className = status === 'running' ? 'phase-box active' : status === 'completed' ? 'phase-box completed' : 'phase-box';
+
+      if (status === 'running') {
+        statusEl.textContent = '⚡ Running';
+        statusEl.className = 'phase-status running';
+      } else if (status === 'completed') {
+        statusEl.textContent = '✅ Done';
+        statusEl.className = 'phase-status completed';
+      }
+
+      if (content) contentEl.innerHTML = content;
+      box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    // ============================================================================
+    // Format Workflow Steps for Display
+    // ============================================================================
+    function formatWorkflowSteps(workflow) {
+      if (!workflow || !Array.isArray(workflow)) return '';
+
+      return `
+        <div class="workflow-steps">
+          <h4 style="margin-bottom: 10px;">📋 Workflow Steps (${workflow.length}):</h4>
+          ${workflow.map((step, idx) => `
+            <div class="workflow-step-item">
+              <div class="step-header">
+                ${idx + 1}. ${step.step_id || step.id} - ${step.type || 'unknown'}
+                ${step.type === 'action' ? `<code>${step.plugin}.${step.action}</code>` : ''}
+              </div>
+              <div class="step-details">
+                ${step.dependencies && step.dependencies.length > 0 ? `Dependencies: ${step.dependencies.join(', ')}` : 'No dependencies'}
+                ${step.params ? `<br>Parameters: ${Object.keys(step.params).length} param(s)` : ''}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    // ============================================================================
+    // Main Pipeline Function
+    // ============================================================================
+    async function runPipeline() {
+      const btn = document.getElementById('run-pipeline-btn');
+      const loader = document.getElementById('pipeline-loader');
+      const resultDiv = document.getElementById('pipeline-result');
+
+      btn.disabled = true;
+      loader.style.display = 'inline-block';
+      resultDiv.style.display = 'none';
+      showPhaseProgress();
+
+      try {
+        const userId = document.getElementById('user-id-input').value.trim();
+        const promptText = document.getElementById('enhanced-prompt-input').value.trim();
+
+        if (!userId || !promptText) {
+          throw new Error('User ID and Enhanced Prompt required');
+        }
+
+        const enhancedPrompt = JSON.parse(promptText);
+
+        // Phase 1-3: Generate IR
+        updatePhase(1, 'running', '<div>Generating semantic plan...</div>');
+
+        const semanticResp = await fetch('/api/v6/generate-ir-semantic', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            enhanced_prompt: enhancedPrompt,
+            userId: userId,
+            config: { provider: 'openai', return_intermediate_results: true }
+          })
+        });
+
+        const semanticData = await semanticResp.json();
+        if (!semanticData.success) {
+          throw new Error(`Semantic plan failed: ${semanticData.error}`);
+        }
+
+        // Update Phase 1
+        const sp = semanticData.intermediate_results.semantic_plan;
+        updatePhase(1, 'completed', `
+          <pre style="max-height: 500px; overflow-y: auto;">${JSON.stringify(sp, null, 2)}</pre>
+        `);
+
+        // Update Phase 2
+        const gp = semanticData.intermediate_results.grounded_plan;
+        if (gp && semanticData.metadata?.grounding_confidence > 0) {
+          updatePhase(2, 'completed', `
+            <pre style="max-height: 500px; overflow-y: auto;">${JSON.stringify(gp, null, 2)}</pre>
+          `);
+        } else {
+          updatePhase(2, 'completed', '<div style="color: #999;">Skipped (no grounding)</div>');
+        }
+
+        // Update Phase 3
+        const ir = semanticData.ir;
+        updatePhase(3, 'completed', `
+          <pre style="max-height: 500px; overflow-y: auto;">${JSON.stringify(ir, null, 2)}</pre>
+        `);
+
+        // Phase 4: Compile
+        updatePhase(4, 'running', '<div>Compiling IR to DSL...</div>');
+
+        const compileResp = await fetch('/api/v6/compile-declarative', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ir: semanticData.ir,
+            userId: userId,
+            pipeline_context: semanticData.pipeline_context,
+            compiler_config: { provider: 'openai', model: 'gpt-5.2' }
+          })
+        });
+
+        const compileData = await compileResp.json();
+        if (!compileData.success) {
+          throw new Error(`Compilation failed: ${compileData.errors?.join('; ')}`);
+        }
+
+        // Update Phase 4 - show workflow steps
+        const workflowSteps = compileData.workflow || compileData.dsl?.workflow_steps || [];
+        updatePhase(4, 'completed', `
+          <div style="margin-bottom: 10px; color: #666;">
+            <strong>Compiled ${workflowSteps.length} workflow steps</strong>
+            ${compileData.metadata?.compiler_used ? ` (${compileData.metadata.compiler_used})` : ''}
+          </div>
+          <pre style="max-height: 500px; overflow-y: auto;">${JSON.stringify(workflowSteps, null, 2)}</pre>
+        `);
+
+        // Phase 5: Show final DSL
+        updatePhase(5, 'running', '<div>Generating final DSL structure...</div>');
+
+        const finalDSL = compileData.dsl || {
+          workflow_name: semanticData.ir?.goal || 'Generated Workflow',
+          workflow_steps: workflowSteps,
+          metadata: compileData.metadata
+        };
+
+        updatePhase(5, 'completed', `
+          <div style="margin-bottom: 10px; color: #666;">
+            <strong>Final PILOT DSL</strong> - Ready for execution
+            ${compileData.validation?.valid === false ? '<span style="color: #f44336;"> ⚠️ Has validation warnings</span>' : '<span style="color: #4caf50;"> ✓ Validated</span>'}
+          </div>
+          <pre style="max-height: 500px; overflow-y: auto;">${JSON.stringify(finalDSL, null, 2)}</pre>
+        `);
+
+        // Store workflow for execution
+        window.currentWorkflow = {
+          dsl: finalDSL,
+          workflow_steps: workflowSteps,
+          ir: semanticData.ir,
+          userId: userId,
+          compiledAt: new Date().toISOString()
+        };
+
+        // Update execution tab
+        updateExecutionTab();
+
+        // Success
+        resultDiv.className = 'result success';
+        resultDiv.innerHTML = `
+          <h3>✅ All 5 Phases Complete</h3>
+          <p>Pipeline executed successfully. Check each phase output above.</p>
+          <p style="color: #666; font-size: 0.9rem;">
+            Steps: ${workflowSteps.length} |
+            Compiler: ${compileData.metadata?.compiler_used || 'N/A'} |
+            Time: ${compileData.metadata?.compilation_time_ms || 'N/A'}ms
+          </p>
+          <div style="margin-top: 15px;">
+            <button onclick="saveWorkflow()" class="btn-secondary">💾 Save Workflow</button>
+            <button onclick="switchTab({target: document.querySelectorAll('.tab')[1]}, 'execution')" style="background: #4caf50;">▶️ Go to Execution</button>
+          </div>
+        `;
+        resultDiv.style.display = 'block';
+
+      } catch (error) {
+        console.error('Pipeline error:', error);
+        resultDiv.className = 'result error';
+        resultDiv.innerHTML = `
+          <h3>❌ Error</h3>
+          <p>${error.message}</p>
+        `;
+        resultDiv.style.display = 'block';
+      } finally {
+        btn.disabled = false;
+        loader.style.display = 'none';
+      }
+    }
+
+    // =========================================================================
+    // Tab 2: Direct Compilation
+    // =========================================================================
+
+    async function testDirectCompilation() {
+      const resultDiv = document.getElementById('direct-result');
+      const compileBtn = document.getElementById('compile-direct-btn');
+      const irInput = document.getElementById('ir-input').value;
+      const userId = document.getElementById('user-id-input-direct').value;
+
+      if (!irInput.trim()) {
+        alert('Please enter an IR JSON');
+        return;
+      }
+
+      compileBtn.disabled = true;
+      resultDiv.style.display = 'none';
+
+      try {
+        const ir = JSON.parse(irInput);
+
+        resultDiv.className = 'result';
+        resultDiv.innerHTML = '<div style="text-align: center;">Compiling...</div>';
+        resultDiv.style.display = 'block';
+
+        const response = await fetch('/api/v6/compile-declarative', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ir,
+            userId: userId || 'test-user',
+            compiler_config: { provider: 'openai', model: 'gpt-5.2' }
+          })
+        });
+
+        const data = await response.json();
+
+        if (!data.success) {
+          throw new Error(`Compilation failed: ${data.errors?.join('; ')}`);
+        }
+
+        resultDiv.className = 'result success';
+        resultDiv.innerHTML = `
+          <h3>✅ Compilation Successful</h3>
+          <h4>Compiled DSL:</h4>
+          <pre style="max-height: 600px; overflow-y: auto;">${JSON.stringify(data.dsl || data.workflow, null, 2)}</pre>
+        `;
+
+      } catch (error) {
+        console.error('Compilation error:', error);
+        resultDiv.className = 'result error';
+        resultDiv.innerHTML = `
+          <h3>❌ Error</h3>
+          <p>${error.message}</p>
+        `;
+      } finally {
+        compileBtn.disabled = false;
+      }
+    }
+
+    // Save/Load workflow functions
+    function checkSavedWorkflow() {
+      const saved = localStorage.getItem('v6_workflow');
+      if (saved) {
+        document.getElementById('saved-workflow-info').style.display = 'block';
+      }
+    }
+
+    function loadSavedWorkflow() {
+      const saved = localStorage.getItem('v6_workflow');
+      if (saved) {
+        document.getElementById('ir-input').value = saved;
+        switchTab(null, 'direct-compile');
+      }
+    }
+
+    function clearSavedWorkflow() {
+      localStorage.removeItem('v6_workflow');
+      document.getElementById('saved-workflow-info').style.display = 'none';
+    }
+
+    // =========================================================================
+    // Workflow Save/Load Functions
+    // =========================================================================
+
+    function saveWorkflow() {
+      if (!window.currentWorkflow) {
+        alert('No workflow to save. Run the pipeline first.');
+        return;
+      }
+      localStorage.setItem('v6_saved_workflow', JSON.stringify(window.currentWorkflow));
+      alert('✅ Workflow saved! You can load it from the "Saved" tab.');
+      updateSavedTab();
+    }
+
+    function updateSavedTab() {
+      const saved = localStorage.getItem('v6_saved_workflow');
+      const noSavedMsg = document.getElementById('no-saved-message');
+      const savedControls = document.getElementById('saved-workflow-controls');
+      const loadResult = document.getElementById('load-result');
+
+      if (saved) {
+        const workflow = JSON.parse(saved);
+        noSavedMsg.style.display = 'none';
+        savedControls.style.display = 'block';
+        loadResult.innerHTML = `
+          <div class="info-box">
+            <strong>Saved Workflow:</strong>
+            <div style="margin-top: 8px; font-size: 0.9rem;">
+              <div>📋 Steps: ${workflow.workflow_steps?.length || 0}</div>
+              <div>🎯 Goal: ${workflow.ir?.goal || 'N/A'}</div>
+              <div>👤 User: ${workflow.userId || 'N/A'}</div>
+              <div>📅 Saved: ${new Date(workflow.compiledAt).toLocaleString()}</div>
+            </div>
+          </div>
+          <details style="margin-top: 10px;">
+            <summary>View Workflow Steps JSON</summary>
+            <pre style="max-height: 400px; overflow-y: auto;">${JSON.stringify(workflow.workflow_steps, null, 2)}</pre>
+          </details>
+        `;
+      } else {
+        noSavedMsg.style.display = 'block';
+        savedControls.style.display = 'none';
+        loadResult.innerHTML = '';
+      }
+    }
+
+    function loadSavedWorkflow() {
+      const saved = localStorage.getItem('v6_saved_workflow');
+      if (!saved) {
+        alert('No saved workflow found.');
+        return;
+      }
+      window.currentWorkflow = JSON.parse(saved);
+      updateExecutionTab();
+      switchTab({target: document.querySelectorAll('.tab')[1]}, 'execution');
+      alert('✅ Workflow loaded! Ready to execute.');
+    }
+
+    function clearSavedWorkflow() {
+      if (confirm('Are you sure you want to delete the saved workflow?')) {
+        localStorage.removeItem('v6_saved_workflow');
+        updateSavedTab();
+        alert('Saved workflow cleared.');
+      }
+    }
+
+    // =========================================================================
+    // Execution Tab Functions
+    // =========================================================================
+
+    function updateExecutionTab() {
+      const noWorkflowMsg = document.getElementById('no-workflow-message');
+      const workflowReady = document.getElementById('workflow-ready');
+      const workflowInfo = document.getElementById('workflow-info');
+      const workflowEditor = document.getElementById('workflow-steps-editor');
+
+      if (window.currentWorkflow && window.currentWorkflow.workflow_steps) {
+        noWorkflowMsg.style.display = 'none';
+        workflowReady.style.display = 'block';
+
+        const steps = window.currentWorkflow.workflow_steps;
+        workflowInfo.innerHTML = `
+          <div><strong>📋 Steps:</strong> ${steps.length}</div>
+          <div><strong>🎯 Goal:</strong> ${window.currentWorkflow.ir?.goal || 'N/A'}</div>
+          <div><strong>👤 User:</strong> ${window.currentWorkflow.userId || 'N/A'}</div>
+        `;
+
+        // Populate the editor with workflow steps JSON
+        workflowEditor.value = JSON.stringify(steps, null, 2);
+
+        // Store original for reset
+        window.originalWorkflowSteps = JSON.parse(JSON.stringify(steps));
+      } else {
+        noWorkflowMsg.style.display = 'block';
+        workflowReady.style.display = 'none';
+      }
+    }
+
+    function resetWorkflowEditor() {
+      if (window.originalWorkflowSteps) {
+        document.getElementById('workflow-steps-editor').value = JSON.stringify(window.originalWorkflowSteps, null, 2);
+        window.currentWorkflow.workflow_steps = JSON.parse(JSON.stringify(window.originalWorkflowSteps));
+        alert('Editor reset to original workflow.');
+      }
+    }
+
+    function applyWorkflowEdits() {
+      const editor = document.getElementById('workflow-steps-editor');
+      try {
+        const editedSteps = JSON.parse(editor.value);
+        if (!Array.isArray(editedSteps)) {
+          throw new Error('Workflow steps must be an array');
+        }
+        window.currentWorkflow.workflow_steps = editedSteps;
+        alert(`✅ Applied edits! ${editedSteps.length} steps ready for execution.`);
+      } catch (e) {
+        alert(`❌ Invalid JSON: ${e.message}`);
+      }
+    }
+
+    function loadDirectWorkflow() {
+      const input = document.getElementById('direct-workflow-input');
+      const userId = document.getElementById('exec-user-id').value.trim();
+
+      if (!input.value.trim()) {
+        alert('Please paste workflow steps JSON');
+        return;
+      }
+
+      try {
+        const steps = JSON.parse(input.value);
+        if (!Array.isArray(steps)) {
+          throw new Error('Workflow steps must be an array');
+        }
+
+        // Create workflow object
+        window.currentWorkflow = {
+          workflow_steps: steps,
+          userId: userId || 'test-user',
+          ir: { goal: 'Direct Execution' },
+          compiledAt: new Date().toISOString()
+        };
+
+        // Store original
+        window.originalWorkflowSteps = JSON.parse(JSON.stringify(steps));
+
+        // Show the execution ready section
+        document.getElementById('no-workflow-message').style.display = 'none';
+        document.getElementById('workflow-ready').style.display = 'block';
+
+        // Update workflow info and editor
+        const workflowInfo = document.getElementById('workflow-info');
+        workflowInfo.innerHTML = `
+          <div><strong>📋 Steps:</strong> ${steps.length}</div>
+          <div><strong>👤 User:</strong> ${userId || 'test-user'}</div>
+          <div><strong>📥 Source:</strong> Direct JSON input</div>
+        `;
+
+        document.getElementById('workflow-steps-editor').value = JSON.stringify(steps, null, 2);
+
+        alert(`✅ Loaded ${steps.length} workflow steps. Ready to execute!`);
+      } catch (e) {
+        alert(`❌ Invalid JSON: ${e.message}`);
+      }
+    }
+
+    function showDirectInput() {
+      document.getElementById('no-workflow-message').style.display = 'block';
+      document.getElementById('workflow-ready').style.display = 'none';
+    }
+
+    async function executeWorkflow() {
+      if (!window.currentWorkflow) {
+        alert('No workflow loaded. Compile a workflow first.');
+        return;
+      }
+
+      const execBtn = document.getElementById('execute-btn');
+      const execLoader = document.getElementById('exec-loader');
+      const execResult = document.getElementById('exec-result');
+
+      execBtn.disabled = true;
+      execLoader.style.display = 'block';
+      execResult.innerHTML = '';
+
+      try {
+        // Extract plugins from workflow steps
+        const pluginsRequired = [...new Set(
+          window.currentWorkflow.workflow_steps
+            .filter(s => s.plugin)
+            .map(s => s.plugin)
+        )];
+
+        const response = await fetch('/api/v6/execute-test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            workflow: window.currentWorkflow.workflow_steps,
+            plugins_required: pluginsRequired,
+            user_id: window.currentWorkflow.userId,
+            workflow_name: window.currentWorkflow.ir?.goal || 'Test Workflow',
+            input_variables: {}
+          })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          const execData = data.data || {};
+          execResult.innerHTML = `
+            <div class="result success" style="display: block;">
+              <h3>✅ Execution Successful</h3>
+              <div class="stats-grid">
+                <div class="stat-card">
+                  <div class="stat-label">Steps Completed</div>
+                  <div class="stat-value">${execData.stepsCompleted || 0}</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-label">Steps Failed</div>
+                  <div class="stat-value">${execData.stepsFailed || 0}</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-label">Execution Time</div>
+                  <div class="stat-value">${execData.execution_time_ms || 'N/A'}ms</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-label">Tokens Used</div>
+                  <div class="stat-value">${execData.tokens_used || 'N/A'}</div>
+                </div>
+              </div>
+              ${execData.completedStepIds?.length > 0 ? `
+                <div style="margin-top: 10px; color: #4caf50;">
+                  <strong>✓ Completed:</strong> ${execData.completedStepIds.join(', ')}
+                </div>
+              ` : ''}
+              ${execData.failedStepIds?.length > 0 ? `
+                <div style="margin-top: 5px; color: #f44336;">
+                  <strong>✗ Failed:</strong> ${execData.failedStepIds.join(', ')}
+                </div>
+              ` : ''}
+              <details style="margin-top: 15px;">
+                <summary>View Full Results</summary>
+                <pre style="max-height: 500px; overflow-y: auto;">${JSON.stringify(data, null, 2)}</pre>
+              </details>
+            </div>
+          `;
+        } else {
+          throw new Error(data.error || 'Execution failed');
+        }
+
+      } catch (error) {
+        console.error('Execution error:', error);
+        execResult.innerHTML = `
+          <div class="result error" style="display: block;">
+            <h3>❌ Execution Failed</h3>
+            <p>${error.message}</p>
+          </div>
+        `;
+      } finally {
+        execBtn.disabled = false;
+        execLoader.style.display = 'none';
+      }
+    }
+
+    // =========================================================================
+    // Diagnostics
+    // =========================================================================
+
+    async function runDiagnostics() {
+      const resultDiv = document.getElementById('diagnostics-result');
+      resultDiv.innerHTML = '<div>Running diagnostics...</div>';
+
+      const results = [];
+
+      // Test 1: LocalStorage
+      try {
+        localStorage.setItem('diag_test', 'ok');
+        localStorage.removeItem('diag_test');
+        results.push({ test: 'LocalStorage', status: '✅ OK' });
+      } catch (e) {
+        results.push({ test: 'LocalStorage', status: '❌ Failed', error: e.message });
+      }
+
+      // Test 2: Saved Workflow
+      const saved = localStorage.getItem('v6_saved_workflow');
+      results.push({
+        test: 'Saved Workflow',
+        status: saved ? '✅ Found' : '⚠️ None',
+        details: saved ? `${JSON.parse(saved).workflow_steps?.length || 0} steps` : ''
+      });
+
+      // Test 3: Current Workflow in Memory
+      results.push({
+        test: 'Current Workflow',
+        status: window.currentWorkflow ? '✅ Loaded' : '⚠️ None',
+        details: window.currentWorkflow ? `${window.currentWorkflow.workflow_steps?.length || 0} steps` : ''
+      });
+
+      // Test 4: API Endpoint
+      try {
+        const resp = await fetch('/api/v6/compile-declarative', { method: 'OPTIONS' });
+        results.push({ test: 'Compile API', status: '✅ Reachable' });
+      } catch (e) {
+        results.push({ test: 'Compile API', status: '❌ Unreachable', error: e.message });
+      }
+
+      resultDiv.innerHTML = `
+        <div class="result success" style="display: block;">
+          <h3>🔍 Diagnostics Results</h3>
+          <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+            <tr style="background: #f5f5f5;">
+              <th style="padding: 8px; text-align: left; border-bottom: 2px solid #ddd;">Test</th>
+              <th style="padding: 8px; text-align: left; border-bottom: 2px solid #ddd;">Status</th>
+              <th style="padding: 8px; text-align: left; border-bottom: 2px solid #ddd;">Details</th>
+            </tr>
+            ${results.map(r => `
+              <tr>
+                <td style="padding: 8px; border-bottom: 1px solid #eee;">${r.test}</td>
+                <td style="padding: 8px; border-bottom: 1px solid #eee;">${r.status}</td>
+                <td style="padding: 8px; border-bottom: 1px solid #eee; font-size: 0.85rem;">${r.details || r.error || ''}</td>
+              </tr>
+            `).join('')}
+          </table>
+        </div>
+      `;
+    }
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('load-workflow-btn').onclick = loadSavedWorkflow;
+      document.getElementById('clear-workflow-btn').onclick = clearSavedWorkflow;
+      document.getElementById('execute-btn').onclick = executeWorkflow;
+      updateSavedTab();
+      updateExecutionTab();
+    });
+  </script>
+</body>
+</html>

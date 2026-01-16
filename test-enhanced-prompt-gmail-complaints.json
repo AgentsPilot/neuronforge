@@ -1,0 +1,29 @@
+{
+  "sections": {
+    "data": [
+      "Get emails from Gmail inbox from the last 7 days",
+      "Search for emails with subject containing 'complaint' or 'issue'"
+    ],
+    "actions": [
+      "Filter emails containing the word 'complaint' in subject or body",
+      "Extract sender email and complaint details",
+      "Count total number of complaints"
+    ],
+    "delivery": [
+      "Send summary email to support@company.com with complaint count and list"
+    ]
+  },
+  "metadata": {
+    "data_source": {
+      "type": "gmail",
+      "config": {
+        "query": "in:inbox newer_than:7d (subject:complaint OR subject:issue)",
+        "max_results": 100,
+        "action": "search_messages"
+      }
+    },
+    "intent": "complaint_tracker",
+    "complexity": "moderate",
+    "user_goal": "Track and summarize customer complaints from Gmail"
+  }
+}

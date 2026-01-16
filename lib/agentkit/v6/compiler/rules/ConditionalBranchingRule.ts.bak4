@@ -1,0 +1,416 @@
+/**
+ * Conditional Branching Rule
+ *
+ * Handles workflows that:
+ * 1. Read from data sources
+ * 2. Apply conditional logic (if/then/else)
+ * 3. Execute different paths based on conditions
+ * 4. Deliver results
+ *
+ * Pattern Examples:
+ * - Read data → If field > threshold → Send alert, Else → Log
+ * - API call → If status = error → Retry, Else → Continue
+ * - Tabular data → Filter → If count > 0 → Email, Else → Skip
+ */
+
+import type { ExtendedLogicalIR } from '../../logical-ir/schemas/extended-ir-types'
+import type { WorkflowStep } from '../../../../pilot/types/pilot-dsl-types'
+import type { CompilerContext } from '../LogicalIRCompiler'
+import { BaseCompilerRule } from './CompilerRule'
+import { DataSourceResolver } from '../resolvers/DataSourceResolver'
+import { DeliveryResolver } from '../resolvers/DeliveryResolver'
+import { FilterResolver } from '../resolvers/FilterResolver'
+import { AIOperationResolver } from '../resolvers/AIOperationResolver'
+
+// ============================================================================
+// Conditional Branching Rule
+// ============================================================================
+
+export class ConditionalBranchingRule extends BaseCompilerRule {
+  name = 'ConditionalBranchingRule'
+  description = 'Compiles workflows with conditional logic (if/then/else)'
+  priority = 150 // High priority for complex conditional workflows
+
+  private dataSourceResolver!: DataSourceResolver
+  private deliveryResolver!: DeliveryResolver
+  private filterResolver!: FilterResolver
+  private aiOperationResolver!: AIOperationResolver
+
+  /**
+   * Check if this rule supports the given IR
+   */
+  supports(ir: ExtendedLogicalIR): boolean {
+    this.log('Checking if rule supports IR...')
+
+    // Must have conditionals
+    const hasConditionals = ir.conditionals && ir.conditionals.length > 0
+    if (!hasConditionals) {
+      this.log('✗ No conditionals found')
+      return false
+    }
+
+    // Must have data sources
+    const hasDataSources = ir.data_sources && ir.data_sources.length > 0
+    if (!hasDataSources) {
+      this.log('✗ No data sources found')
+      return false
+    }
+
+    // Must have delivery
+    const hasDelivery = ir.delivery && ir.delivery.length > 0
+    if (!hasDelivery) {
+      this.log('✗ No delivery methods found')
+      return false
+    }
+
+    // Should NOT have loops (that would be APIDataSourceWithLoopsRule territory)
+    const hasLoops = ir.loops && ir.loops.length > 0
+    if (hasLoops) {
+      this.log('✗ Has loops - should use APIDataSourceWithLoopsRule instead')
+      return false
+    }
+
+    this.log('✓ Rule supports this IR')
+    this.log(`  - Data sources: ${ir.data_sources.length}`)
+    this.log(`  - Conditionals: ${ir.conditionals.length}`)
+    this.log(`  - Delivery methods: ${ir.delivery.length}`)
+
+    return true
+  }
+
+  /**
+   * Compile IR to workflow steps
+   */
+  async compile(context: CompilerContext): Promise<WorkflowStep[]> {
+    const { ir, plugin_manager } = context
+    this.log('Starting compilation...')
+
+    // Initialize resolvers with PluginManager
+    this.dataSourceResolver = new DataSourceResolver(plugin_manager)
+    this.deliveryResolver = new DeliveryResolver(plugin_manager)
+    this.filterResolver = new FilterResolver()
+    this.aiOperationResolver = new AIOperationResolver()
+
+    const steps: WorkflowStep[] = []
+
+    // STEP 1: Resolve data sources
+    this.log('Step 1: Resolving data sources...')
+    const dataSourceSteps = await this.dataSourceResolver.resolve(ir.data_sources, 'read')
+    steps.push(...dataSourceSteps)
+
+    const dataVariable = dataSourceSteps[dataSourceSteps.length - 1]?.output_variable || 'data'
+    this.log(`  ✓ Data will be available in: ${dataVariable}`)
+
+    // STEP 2: Apply filters (if any)
+    let currentVariable = dataVariable
+    if (ir.filters && ir.filters.length > 0) {
+      this.log('Step 2: Applying filters...')
+      const filterSteps = await this.filterResolver.resolve(ir.filters, currentVariable, 'filter')
+      steps.push(...filterSteps)
+      currentVariable = filterSteps[filterSteps.length - 1]?.output_variable || currentVariable
+      this.log(`  ✓ Filtered data in: ${currentVariable}`)
+    }
+
+    // STEP 3: Apply AI operations (if any)
+    if (ir.ai_operations && ir.ai_operations.length > 0) {
+      this.log('Step 3: Applying AI operations...')
+      const aiSteps = await this.aiOperationResolver.resolve(ir.ai_operations, currentVariable, 'ai')
+      steps.push(...aiSteps)
+      currentVariable = aiSteps[aiSteps.length - 1]?.output_variable || currentVariable
+      this.log(`  ✓ AI-processed data in: ${currentVariable}`)
+    }
+
+    // STEP 4: Process conditionals
+    this.log('Step 4: Processing conditionals...')
+    for (let i = 0; i < ir.conditionals.length; i++) {
+      const conditional = ir.conditionals[i]
+      this.log(`  Processing conditional ${i + 1}: ${conditional.id}`)
+
+      const conditionalStep = this.createConditionalStep(
+        conditional,
+        currentVariable,
+        `conditional_${i + 1}`,
+        ir.delivery
+      )
+      steps.push(conditionalStep)
+      currentVariable = conditionalStep.output_variable!
+      this.log(`  ✓ Conditional output in: ${currentVariable}`)
+    }
+
+    // STEP 5: Final delivery (if not handled in conditionals)
+    // Check if delivery is already handled inside conditionals
+    const deliveryInConditionals = ir.conditionals.some(c =>
+      c.then?.some((action: any) => typeof action === 'string' && action.includes('delivery')) ||
+      c.else?.some((action: any) => typeof action === 'string' && action.includes('delivery'))
+    )
+
+    if (!deliveryInConditionals) {
+      this.log('Step 5: Resolving final delivery...')
+      const deliverySteps = await this.deliveryResolver.resolve(
+        ir.delivery,
+        currentVariable,
+        'deliver'
+      )
+      steps.push(...deliverySteps)
+    } else {
+      this.log('Step 5: Delivery handled within conditionals')
+    }
+
+    this.log(`✓ Compilation complete: ${steps.length} steps generated`)
+    return steps
+  }
+
+  /**
+   * Create a conditional step (if/then/else)
+   */
+  private createConditionalStep(
+    conditional: any,
+    inputVariable: string,
+    stepId: string,
+    deliveryMethods: any[]
+  ): WorkflowStep {
+    this.log(`  Creating conditional step: ${conditional.id}`)
+
+    // Build condition object
+    const condition = this.buildCondition(conditional.condition)
+
+    // Build then_do actions
+    const thenActions = this.buildConditionalActions(
+      conditional.then_do || [],
+      deliveryMethods,
+      'then'
+    )
+
+    // Build else_do actions
+    const elseActions = this.buildConditionalActions(
+      conditional.else_do || [],
+      deliveryMethods,
+      'else'
+    )
+
+    return {
+      step_id: stepId,
+      type: 'conditional',
+      operation: 'branch',
+      config: {
+        input: `{{${inputVariable}}}`,
+        condition,
+        then_do: thenActions,
+        else_do: elseActions
+      },
+      output_variable: `${stepId}_output`,
+      description: `Conditional: ${conditional.description || conditional.id}`
+    }
+  }
+
+  /**
+   * Build condition object from IR condition
+   */
+  private buildCondition(condition: any): any {
+    if (!condition) {
+      return { field: 'count', operator: '>', value: 0 }
+    }
+
+    // Handle simple conditions
+    if (condition.field && condition.operator && condition.value !== undefined) {
+      return {
+        field: condition.field,
+        operator: condition.operator,
+        value: condition.value
+      }
+    }
+
+    // Handle complex conditions (and/or/not)
+    if (condition.and) {
+      return {
+        and: condition.and.map((c: any) => this.buildCondition(c))
+      }
+    }
+
+    if (condition.or) {
+      return {
+        or: condition.or.map((c: any) => this.buildCondition(c))
+      }
+    }
+
+    if (condition.not) {
+      return {
+        not: this.buildCondition(condition.not)
+      }
+    }
+
+    return condition
+  }
+
+  /**
+   * Build actions for then_do or else_do branches
+   */
+  private buildConditionalActions(
+    actions: any[],
+    deliveryMethods: any[],
+    branch: 'then' | 'else'
+  ): any[] {
+    return actions.map((action, i) => {
+      // Handle delivery actions
+      if (action.type === 'delivery') {
+        const deliveryMethod = deliveryMethods.find(d => d.id === action.id) || deliveryMethods[0]
+        return {
+          step_id: `${branch}_delivery_${i + 1}`,
+          type: 'action',
+          plugin: this.getDeliveryPlugin(deliveryMethod.method),
+          operation: 'send',
+          config: deliveryMethod.config
+        }
+      }
+
+      // Handle AI operations
+      if (action.type === 'ai_operation') {
+        return {
+          step_id: `${branch}_ai_${i + 1}`,
+          type: 'ai_processing',
+          operation: action.config?.type || 'extract',
+          config: {
+            instruction: action.config?.instruction || action.instruction,
+            input_source: action.config?.input_source || action.input_source,
+            output_schema: action.config?.output_schema || action.output_schema
+          }
+        }
+      }
+
+      // Handle transforms
+      if (action.type === 'transform') {
+        return {
+          step_id: `${branch}_transform_${i + 1}`,
+          type: 'transform',
+          operation: action.config?.operation || action.operation,
+          config: action.config?.config || action.config
+        }
+      }
+
+      // Handle log actions
+      if (action.type === 'log') {
+        return {
+          step_id: `${branch}_log_${i + 1}`,
+          type: 'action',
+          plugin: 'logger',
+          operation: 'log',
+          config: {
+            message: action.message || 'Conditional branch executed',
+            level: action.level || 'info'
+          }
+        }
+      }
+
+      return action
+    })
+  }
+
+  /**
+   * Get plugin name for delivery method
+   */
+  private getDeliveryPlugin(method: string): string {
+    const pluginMap: Record<string, string> = {
+      email: 'google-mail',
+      slack: 'slack',
+      webhook: 'http-request',
+      database: 'database',
+      api_call: 'http-request',
+      file: 'file-system',
+      sms: 'sms'
+    }
+
+    return pluginMap[method] || method
+  }
+
+  /**
+   * Get example IR that this rule can compile
+   */
+  getExampleIR(): ExtendedLogicalIR {
+    return {
+      ir_version: '2.0',
+      goal: 'Send alert if high-value leads found, else log',
+      data_sources: [
+        {
+          id: 'leads_data',
+          type: 'tabular',
+          source: 'google-sheets',
+          location: 'MyLeads',
+          tab: 'Leads',
+          endpoint: '',
+          trigger: '',
+          role: 'sales leads'
+        }
+      ],
+      filters: [
+        {
+          id: 'filter_active',
+          field: 'status',
+          operator: 'equals',
+          value: 'active',
+          description: 'Filter active leads'
+        }
+      ],
+      transforms: [],
+      ai_operations: [],
+      conditionals: [
+        {
+          id: 'check_high_value',
+          condition: {
+            field: 'value',
+            operator: '>',
+            value: 10000
+          },
+          then_do: [
+            {
+              type: 'delivery',
+              id: 'email_alert',
+              config: {
+                method: 'email',
+                recipient: 'sales@example.com',
+                subject: 'High-value lead alert',
+                body: 'New high-value lead detected'
+              }
+            }
+          ],
+          else_do: [
+            {
+              type: 'log',
+              message: 'No high-value leads found',
+              level: 'info'
+            }
+          ],
+          description: 'Alert on high-value leads'
+        }
+      ],
+      loops: [],
+      partitions: [],
+      grouping: undefined,
+      normalization: undefined,
+      rendering: undefined,
+      delivery: [
+        {
+          id: 'email_alert',
+          method: 'email',
+          config: {
+            recipient: 'sales@example.com',
+            subject: 'Lead Alert',
+            body: 'Lead processing complete'
+          }
+        }
+      ],
+      edge_cases: [],
+      clarifications_required: []
+    } as ExtendedLogicalIR
+  }
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/**
+ * Create a conditional branching rule instance
+ */
+export function createConditionalBranchingRule(): ConditionalBranchingRule {
+  return new ConditionalBranchingRule()
+}

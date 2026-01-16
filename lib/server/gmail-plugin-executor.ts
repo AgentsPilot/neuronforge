@@ -111,13 +111,26 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
       };
     }
 
+    // Determine content level
+    // include_attachments forces 'full' content level
+    const contentLevel = parameters.include_attachments
+      ? 'full'
+      : (parameters.content_level || 'snippet');
+
+    this.logger.debug({ contentLevel, includeAttachments: parameters.include_attachments }, 'Email content level');
+
     // Fetch email details
     const emails = [];
     const messagesToFetch = listData.messages.slice(0, parameters.max_results || 10);
 
     for (const message of messagesToFetch) {
       try {
-        const emailDetail = await this.fetchEmailDetail(connection.access_token, message.id, parameters.include_attachments || false);
+        const emailDetail = await this.fetchEmailDetail(
+          connection.access_token,
+          message.id,
+          parameters.include_attachments || false,
+          contentLevel
+        );
         emails.push(emailDetail);
       } catch (error) {
         this.logger.warn({ err: error, messageId: message.id }, 'Failed to fetch email');
@@ -229,7 +242,8 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
         mimeType,
         size: attachmentData.size || 0,
         data: attachmentData.data, // Base64-encoded content from Gmail API
-        is_image: mimeType.startsWith('image/')
+        // PDFs can be processed visually by vision models (GPT-4o, etc.)
+        is_image: mimeType.startsWith('image/') || mimeType === 'application/pdf'
       };
 
       // Attempt text extraction for text files
@@ -325,9 +339,22 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
   }
 
   // Fetch detailed email information
-  private async fetchEmailDetail(accessToken: string, messageId: string, includeAttachments: boolean): Promise<any> {
-    const format = includeAttachments ? 'full' : 'metadata';
-    
+  // contentLevel: 'metadata' (headers only), 'snippet' (headers + snippet), 'full' (complete body)
+  private async fetchEmailDetail(
+    accessToken: string,
+    messageId: string,
+    includeAttachments: boolean,
+    contentLevel: 'metadata' | 'snippet' | 'full' = 'snippet'
+  ): Promise<any> {
+    // Determine Gmail API format based on content level
+    // - 'metadata': Only fetch headers (fastest, no body/snippet in payload)
+    // - 'snippet': Use 'metadata' format but Gmail always returns snippet in response
+    // - 'full': Fetch complete message including body and attachments
+    const needsFullFormat = contentLevel === 'full' || includeAttachments;
+    const format = needsFullFormat ? 'full' : 'metadata';
+
+    this.logger.debug({ messageId, contentLevel, format }, 'Fetching email detail');
+
     const response = await fetch(
       `${this.gmailApisUrl}/users/me/messages/${messageId}?format=${format}`,
       {
@@ -344,29 +371,30 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
 
     const email = await response.json();
     const headers = email.payload?.headers || [];
-    
-    const getHeader = (name: string) => 
+
+    const getHeader = (name: string) =>
       headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase())?.value || '';
 
-    const emailInfo = {
+    const emailInfo: any = {
       id: email.id,
       thread_id: email.threadId,
       subject: getHeader('Subject'),
       from: getHeader('From'),
       to: getHeader('To'),
       date: getHeader('Date'),
-      snippet: email.snippet || '',
+      snippet: email.snippet || '', // Gmail always returns snippet regardless of format
       labels: email.labelIds || [],
-      body: '',
-      attachments: []
     };
 
-    // Extract body text
-    if (email.payload) {
-      emailInfo.body = this.extractEmailBody(email.payload);
+    // Only include body field if content_level is 'full'
+    // This prevents sending large body data to LLM when not needed
+    if (contentLevel === 'full') {
+      emailInfo.body = email.payload ? this.extractEmailBody(email.payload) : '';
     }
+    // Note: For 'metadata' and 'snippet' levels, body field is intentionally omitted
+    // Use the 'snippet' field (~200 chars) for content matching/filtering
 
-    // Process attachments if requested
+    // Only include attachments array if explicitly requested
     if (includeAttachments && email.payload) {
       emailInfo.attachments = await this.processEmailAttachments(email.payload, messageId, accessToken);
     }

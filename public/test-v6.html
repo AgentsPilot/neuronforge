@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>V6 Architecture Manual Test Page</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+      overflow: hidden;
+    }
+
+    header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      text-align: center;
+    }
+
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 10px;
+    }
+
+    .subtitle {
+      opacity: 0.9;
+      font-size: 1rem;
+    }
+
+    .content {
+      padding: 30px;
+    }
+
+    .test-section {
+      margin-bottom: 40px;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 20px;
+      background: #f9f9f9;
+    }
+
+    .test-section h2 {
+      color: #333;
+      margin-bottom: 15px;
+      font-size: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .step-badge {
+      background: #667eea;
+      color: white;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      font-weight: bold;
+    }
+
+    textarea {
+      width: 100%;
+      padding: 12px;
+      border: 2px solid #ddd;
+      border-radius: 6px;
+      font-family: 'Monaco', 'Courier New', monospace;
+      font-size: 0.9rem;
+      resize: vertical;
+      margin-bottom: 10px;
+    }
+
+    textarea:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    button {
+      background: #667eea;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 6px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+
+    button:hover {
+      background: #5568d3;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .result {
+      margin-top: 20px;
+      padding: 15px;
+      border-radius: 6px;
+      background: white;
+      border: 2px solid #e0e0e0;
+      display: none;
+    }
+
+    .result.success {
+      border-color: #4caf50;
+      background: #f1f8f4;
+    }
+
+    .result.error {
+      border-color: #f44336;
+      background: #fef1f0;
+    }
+
+    .result h3 {
+      margin-bottom: 10px;
+      color: #333;
+    }
+
+    .result pre {
+      background: #2d2d2d;
+      color: #f8f8f2;
+      padding: 15px;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.5;
+    }
+
+    .plan-preview {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      margin-top: 15px;
+    }
+
+    .plan-goal {
+      background: #e3f2fd;
+      padding: 15px;
+      border-radius: 6px;
+      border-left: 4px solid #2196f3;
+      margin-bottom: 15px;
+    }
+
+    .plan-step {
+      background: #f5f5f5;
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 10px;
+      border-left: 4px solid #667eea;
+    }
+
+    .plan-step-title {
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 5px;
+    }
+
+    .plan-step-detail {
+      color: #666;
+      font-size: 0.9rem;
+      margin-left: 20px;
+    }
+
+    .loader {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 3px solid rgba(255,255,255,.3);
+      border-radius: 50%;
+      border-top-color: white;
+      animation: spin 1s ease-in-out infinite;
+      margin-left: 10px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .info-box {
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      border-radius: 6px;
+      padding: 15px;
+      margin-bottom: 20px;
+    }
+
+    .info-box strong {
+      color: #856404;
+    }
+
+    .workflow-steps {
+      background: white;
+      padding: 15px;
+      border-radius: 6px;
+      margin-top: 10px;
+    }
+
+    .workflow-step {
+      background: #f0f0f0;
+      padding: 10px;
+      margin-bottom: 8px;
+      border-radius: 4px;
+      border-left: 3px solid #4caf50;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🚀 V6 Architecture Test Page</h1>
+      <p class="subtitle">Manual testing for Extended IR Architecture</p>
+    </header>
+
+    <div class="content">
+      <!-- Info Box -->
+      <div class="info-box">
+        <strong>📋 Test Instructions:</strong><br>
+        1. Fill in the Enhanced Prompt sections below<br>
+        2. Click "Generate Plan" to see the natural language preview<br>
+        3. Optionally update the plan with corrections<br>
+        4. Click "Compile Workflow" to generate the executable PILOT_DSL workflow
+      </div>
+
+      <!-- Step 1: Generate Plan -->
+      <div class="test-section">
+        <h2>
+          <span class="step-badge">Step 1</span>
+          Generate Workflow Plan
+        </h2>
+
+        <label><strong>Enhanced Prompt (JSON format as produced by Agent Enhancement):</strong></label>
+        <textarea id="enhanced-prompt-input" rows="30" placeholder="Paste the complete enhanced prompt JSON...">{
+  "sections": {
+    "data": [
+      "- Read lead rows from the Google Sheet named \"MyLeads\".",
+      "- Use the tab named \"Leads\" as the source of truth for lead rows.",
+      "- Treat the column named \"stage\" as the qualification indicator used for filtering.",
+      "- Treat the column named \"Sales Person\" as the salesperson email used for routing emails.",
+      "- Use the following columns for the summary table: \"Date\", \"Lead Name\", \"Company Email\", \"Phone\", \"Notes\", \"Sales Person\"."
+    ],
+    "output": [
+      "- Produce an email-body embedded table (not an attachment).",
+      "- The table must include these columns in this order: Date, Lead Name, Company Email, Phone, Notes, Sales Person.",
+      "- For each salesperson email, the table must include only rows assigned to that salesperson (based on the \"Sales Person\" column).",
+      "- When there are zero high-qualified leads for a salesperson, the email body must state exactly: \"0 high qualified leads found\" (and may omit the table)."
+    ],
+    "actions": [
+      "- Filter the lead rows to only those where the column \"stage\" equals 4.",
+      "- Group the filtered lead rows by the value in the \"Sales Person\" column (one group per salesperson email).",
+      "- For each salesperson group, build an email-ready table containing only that salesperson's filtered leads.",
+      "- If a lead row has an empty or missing \"Sales Person\" value, include that row in a separate 'Missing Sales Person' section in the email sent to Barak (meiribarak@gmail.com).",
+      "- If there are zero leads where \"stage\" equals 4, generate an email message that states exactly: \"0 high qualified leads found\"."
+    ],
+    "delivery": [
+      "- Send one separate email per salesperson to the email address found in the \"Sales Person\" column.",
+      "- Send Barak (meiribarak@gmail.com) a copy of each salesperson email (CC).",
+      "- If there are zero high-qualified leads overall, still send an email to Barak (meiribarak@gmail.com) stating exactly: \"0 high qualified leads found\"."
+    ],
+    "processing_steps": [
+      "- Load all rows from Google Sheet \"MyLeads\" → tab \"Leads\".",
+      "- Normalize column names to match exactly: stage, Date, Lead Name, Company Email, Phone, Notes, Sales Person.",
+      "- Filter rows where stage = 4.",
+      "- Partition filtered rows by Sales Person email.",
+      "- Render an HTML table for each partition using the specified column order.",
+      "- Send emails via Gmail according to the delivery rules."
+    ]
+  }
+}</textarea>
+
+        <div style="margin-top: 10px; padding: 10px; background: #f0f8ff; border-radius: 4px; font-size: 0.9em;">
+          <strong>How V6 Works:</strong>
+          <ol style="margin: 5px 0; padding-left: 20px;">
+            <li>Paste the <strong>Enhanced Prompt JSON</strong> (produced by Agent Enhancement in production)</li>
+            <li>Click "Generate Plan" → LLM converts Enhanced Prompt to <strong>Logical IR</strong></li>
+            <li>Review the natural language plan and IR structure</li>
+            <li>Click "Compile to PILOT_DSL" → Deterministic compiler generates executable workflow</li>
+          </ol>
+          <em>This demonstrates the real V6 pipeline: Enhanced Prompt → IR → DSL</em>
+        </div>
+
+        <button id="generate-btn" onclick="generatePlan()">
+          Generate Plan
+          <span id="generate-loader" class="loader" style="display:none;"></span>
+        </button>
+
+        <div id="generate-result" class="result"></div>
+      </div>
+
+      <!-- Step 2: Update Plan (Optional) -->
+      <div class="test-section">
+        <h2>
+          <span class="step-badge">Step 2</span>
+          Update Plan (Optional)
+        </h2>
+
+        <label><strong>Correction Message:</strong></label>
+        <textarea id="correction-input" rows="3" placeholder='Change filter to use "status" column equals "qualified" instead'>Change filter to use "status" column equals "qualified" instead</textarea>
+
+        <button id="update-btn" onclick="updatePlan()" disabled>
+          Update Plan
+          <span id="update-loader" class="loader" style="display:none;"></span>
+        </button>
+
+        <div id="update-result" class="result"></div>
+      </div>
+
+      <!-- Step 3: Compile Workflow -->
+      <div class="test-section">
+        <h2>
+          <span class="step-badge">Step 3</span>
+          Compile Workflow
+        </h2>
+
+        <button id="compile-btn" onclick="compileWorkflow()" disabled>
+          Compile to PILOT_DSL
+          <span id="compile-loader" class="loader" style="display:none;"></span>
+        </button>
+
+        <div id="compile-result" class="result"></div>
+      </div>
+
+      <!-- NEW: Declarative IR Test Section -->
+      <div class="test-section" style="border: 3px solid #4caf50; background: #f1f8f4;">
+        <h2>
+          <span class="step-badge" style="background: #4caf50;">NEW</span>
+          Test Declarative IR Compiler
+        </h2>
+
+        <div style="margin-bottom: 15px; padding: 15px; background: #e8f5e9; border-radius: 6px; border-left: 4px solid #4caf50;">
+          <strong>🎯 V6 Pure Declarative Architecture</strong><br>
+          <em style="font-size: 0.9em;">This demonstrates the smart compiler with PURE declarative IR (NO IDs, NO loops, NO execution tokens).</em>
+          <ul style="margin: 10px 0; padding-left: 20px; font-size: 0.9em;">
+            <li>IR expresses WHAT (business intent) not HOW (execution)</li>
+            <li>Compiler infers loops from delivery patterns</li>
+            <li>Compiler auto-generates all step IDs</li>
+            <li>Compiler auto-injects missing transforms</li>
+            <li>Forbidden token validation ensures purity</li>
+          </ul>
+        </div>
+
+        <label><strong>Declarative IR (JSON):</strong></label>
+        <textarea id="declarative-ir-input" rows="25" placeholder="Paste declarative IR JSON...">{
+  "ir_version": "3.0",
+  "goal": "Send stage 4 leads to each salesperson with table of their leads",
+  "data_sources": [{
+    "type": "tabular",
+    "source": "google_sheets",
+    "location": "MyLeads",
+    "tab": "Leads",
+    "role": "Lead data from sales team"
+  }],
+  "normalization": {
+    "required_headers": ["stage", "Sales Person", "Date", "Lead Name", "Company Email", "Phone", "Notes"],
+    "case_sensitive": false,
+    "missing_header_action": "error"
+  },
+  "filters": [{
+    "field": "stage",
+    "operator": "equals",
+    "value": 4,
+    "description": "Only qualified leads"
+  }],
+  "partitions": [{
+    "field": "Sales Person",
+    "split_by": "value",
+    "handle_empty": {
+      "partition_name": "unassigned",
+      "description": "Leads without assigned salesperson"
+    }
+  }],
+  "grouping": {
+    "group_by": "Sales Person",
+    "emit_per_group": true
+  },
+  "rendering": {
+    "type": "email_embedded_table",
+    "columns_in_order": ["Date", "Lead Name", "Company Email", "Phone", "Notes", "Sales Person"],
+    "empty_message": "No qualified leads found"
+  },
+  "delivery_rules": {
+    "per_group_delivery": {
+      "recipient_source": "Sales Person",
+      "cc": ["meiribarak@gmail.com"],
+      "subject": "Your Qualified Leads"
+    },
+    "send_when_no_results": true
+  },
+  "edge_cases": [{
+    "condition": "no_rows_after_filter",
+    "action": "send_empty_result_message",
+    "message": "No stage 4 leads found today",
+    "recipient": "meiribarak@gmail.com"
+  }]
+}</textarea>
+
+        <button id="compile-declarative-btn" onclick="compileDeclarative()" style="background: #4caf50;">
+          🚀 Compile Declarative IR
+          <span id="compile-declarative-loader" class="loader" style="display:none; border-top-color: white;"></span>
+        </button>
+
+        <div id="compile-declarative-result" class="result"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentIR = null;
+    let currentPlan = null;
+
+    async function generatePlan() {
+      const generateBtn = document.getElementById('generate-btn');
+      const generateLoader = document.getElementById('generate-loader');
+      const resultDiv = document.getElementById('generate-result');
+
+      // Disable button and show loader
+      generateBtn.disabled = true;
+      generateLoader.style.display = 'inline-block';
+      resultDiv.style.display = 'none';
+
+      try {
+        // Parse the enhanced prompt JSON from the textarea
+        const promptText = document.getElementById('enhanced-prompt-input').value;
+        const enhancedPrompt = JSON.parse(promptText);
+
+        console.log('[Test] Generating plan from enhanced prompt...', enhancedPrompt);
+
+        // Call API
+        const response = await fetch('/api/v6/generate-workflow-plan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enhancedPrompt, modelProvider: 'openai' })
+        });
+
+        const data = await response.json();
+
+        console.log('[Test] Generate plan response:', data);
+
+        if (data.success) {
+          currentIR = data.ir;
+          currentPlan = data.plan;
+
+          // Show success result
+          resultDiv.className = 'result success';
+          resultDiv.innerHTML = `
+            <h3>✓ Plan Generated Successfully</h3>
+            <div class="plan-preview">
+              <div class="plan-goal">
+                <strong>Goal:</strong> ${data.plan.goal}
+              </div>
+              <strong>Steps:</strong>
+              ${data.plan.steps.map((step, i) => `
+                <div class="plan-step">
+                  <div class="plan-step-title">${step.icon} ${i + 1}. ${step.title}</div>
+                  ${step.details.map(d => `<div class="plan-step-detail">• ${d}</div>`).join('')}
+                </div>
+              `).join('')}
+              ${data.plan.estimation ? `
+                <div style="margin-top: 15px; padding: 10px; background: #f0f0f0; border-radius: 6px;">
+                  <strong>Estimated:</strong>
+                  ${data.plan.estimation.emails ? `📧 ${data.plan.estimation.emails} | ` : ''}
+                  ${data.plan.estimation.time ? `⏱️ ${data.plan.estimation.time}` : ''}
+                </div>
+              ` : ''}
+            </div>
+            <details style="margin-top: 15px;">
+              <summary style="cursor: pointer; font-weight: 600; margin-bottom: 10px;">View Raw IR (JSON)</summary>
+              <pre>${JSON.stringify(data.ir, null, 2)}</pre>
+            </details>
+          `;
+          resultDiv.style.display = 'block';
+
+          // Enable next steps
+          document.getElementById('update-btn').disabled = false;
+          document.getElementById('compile-btn').disabled = false;
+        } else {
+          // Show error
+          resultDiv.className = 'result error';
+          resultDiv.innerHTML = `
+            <h3>✗ Error Generating Plan</h3>
+            <pre>${JSON.stringify(data.errors, null, 2)}</pre>
+          `;
+          resultDiv.style.display = 'block';
+        }
+      } catch (error) {
+        console.error('[Test] Error:', error);
+        resultDiv.className = 'result error';
+        resultDiv.innerHTML = `
+          <h3>✗ Network Error</h3>
+          <pre>${error.message}</pre>
+        `;
+        resultDiv.style.display = 'block';
+      } finally {
+        generateBtn.disabled = false;
+        generateLoader.style.display = 'none';
+      }
+    }
+
+    async function updatePlan() {
+      const updateBtn = document.getElementById('update-btn');
+      const updateLoader = document.getElementById('update-loader');
+      const resultDiv = document.getElementById('update-result');
+
+      if (!currentIR) {
+        alert('Please generate a plan first');
+        return;
+      }
+
+      const correctionMessage = document.getElementById('correction-input').value;
+      if (!correctionMessage.trim()) {
+        alert('Please enter a correction message');
+        return;
+      }
+
+      updateBtn.disabled = true;
+      updateLoader.style.display = 'inline-block';
+      resultDiv.style.display = 'none';
+
+      try {
+        console.log('[Test] Updating plan...', correctionMessage);
+
+        const response = await fetch('/api/v6/update-workflow-plan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            correctionMessage,
+            currentIR,
+            modelProvider: 'openai'
+          })
+        });
+
+        const data = await response.json();
+
+        console.log('[Test] Update plan response:', data);
+
+        if (data.success) {
+          currentIR = data.ir;
+          currentPlan = data.plan;
+
+          resultDiv.className = 'result success';
+          resultDiv.innerHTML = `
+            <h3>✓ Plan Updated Successfully</h3>
+            <div style="background: #e8f5e9; padding: 10px; border-radius: 6px; margin-bottom: 15px;">
+              <strong>Changes Applied:</strong>
+              <ul style="margin-left: 20px; margin-top: 5px;">
+                ${data.changes.map(c => `<li>${c}</li>`).join('')}
+              </ul>
+            </div>
+            <div class="plan-preview">
+              <div class="plan-goal">
+                <strong>Updated Goal:</strong> ${data.plan.goal}
+              </div>
+              <strong>Updated Steps:</strong>
+              ${data.plan.steps.map((step, i) => `
+                <div class="plan-step">
+                  <div class="plan-step-title">${step.icon} ${i + 1}. ${step.title}</div>
+                  ${step.details.map(d => `<div class="plan-step-detail">• ${d}</div>`).join('')}
+                </div>
+              `).join('')}
+            </div>
+            <details style="margin-top: 15px;">
+              <summary style="cursor: pointer; font-weight: 600; margin-bottom: 10px;">View Updated IR (JSON)</summary>
+              <pre>${JSON.stringify(data.ir, null, 2)}</pre>
+            </details>
+          `;
+          resultDiv.style.display = 'block';
+        } else {
+          resultDiv.className = 'result error';
+          resultDiv.innerHTML = `
+            <h3>✗ Error Updating Plan</h3>
+            <pre>${JSON.stringify(data.errors, null, 2)}</pre>
+          `;
+          resultDiv.style.display = 'block';
+        }
+      } catch (error) {
+        console.error('[Test] Error:', error);
+        resultDiv.className = 'result error';
+        resultDiv.innerHTML = `
+          <h3>✗ Network Error</h3>
+          <pre>${error.message}</pre>
+        `;
+        resultDiv.style.display = 'block';
+      } finally {
+        updateBtn.disabled = false;
+        updateLoader.style.display = 'none';
+      }
+    }
+
+    async function compileWorkflow() {
+      const compileBtn = document.getElementById('compile-btn');
+      const compileLoader = document.getElementById('compile-loader');
+      const resultDiv = document.getElementById('compile-result');
+
+      if (!currentIR) {
+        alert('Please generate a plan first');
+        return;
+      }
+
+      compileBtn.disabled = true;
+      compileLoader.style.display = 'inline-block';
+      resultDiv.style.display = 'none';
+
+      try {
+        console.log('[Test] Compiling workflow...');
+
+        const response = await fetch('/api/v6/compile-workflow', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ir: currentIR,
+            userId: 'test-user',
+            availablePlugins: ['googlesheets', 'email', 'slack']
+          })
+        });
+
+        const data = await response.json();
+
+        console.log('[Test] Compile response:', data);
+
+        if (data.success) {
+          resultDiv.className = 'result success';
+          resultDiv.innerHTML = `
+            <h3>✓ Workflow Compiled Successfully</h3>
+            <div style="background: #e8f5e9; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
+              <strong>Compilation Metadata:</strong><br>
+              • Rule Used: <code>${data.metadata.rule_used}</code><br>
+              • Total Steps: <strong>${data.metadata.step_count}</strong><br>
+              • Deterministic: <strong>${data.metadata.deterministic_step_percentage.toFixed(1)}%</strong><br>
+              • Compilation Time: <strong>${data.metadata.compilation_time_ms}ms</strong>
+            </div>
+            <div class="workflow-steps">
+              <strong>Workflow Steps:</strong>
+              ${data.workflow.workflow_steps.map((step, i) => `
+                <div class="workflow-step">
+                  <strong>Step ${i + 1}:</strong> ${step.type}
+                  ${step.plugin ? `<br>Plugin: <code>${step.plugin}</code>` : ''}
+                  ${step.operation ? `<br>Operation: <code>${step.operation}</code>` : ''}
+                </div>
+              `).join('')}
+            </div>
+            <details style="margin-top: 15px;">
+              <summary style="cursor: pointer; font-weight: 600; margin-bottom: 10px;">View Full Workflow (JSON)</summary>
+              <pre>${JSON.stringify(data.workflow, null, 2)}</pre>
+            </details>
+          `;
+          resultDiv.style.display = 'block';
+        } else {
+          resultDiv.className = 'result error';
+          resultDiv.innerHTML = `
+            <h3>✗ Error Compiling Workflow</h3>
+            <pre>${JSON.stringify(data.errors, null, 2)}</pre>
+          `;
+          resultDiv.style.display = 'block';
+        }
+      } catch (error) {
+        console.error('[Test] Error:', error);
+        resultDiv.className = 'result error';
+        resultDiv.innerHTML = `
+          <h3>✗ Network Error</h3>
+          <pre>${error.message}</pre>
+        `;
+        resultDiv.style.display = 'block';
+      } finally {
+        compileBtn.disabled = false;
+        compileLoader.style.display = 'none';
+      }
+    }
+
+    async function compileDeclarative() {
+      const compileBtn = document.getElementById('compile-declarative-btn');
+      const compileLoader = document.getElementById('compile-declarative-loader');
+      const resultDiv = document.getElementById('compile-declarative-result');
+
+      compileBtn.disabled = true;
+      compileLoader.style.display = 'inline-block';
+      resultDiv.style.display = 'none';
+
+      try {
+        // Parse the declarative IR JSON from the textarea
+        const irText = document.getElementById('declarative-ir-input').value;
+        const declarativeIR = JSON.parse(irText);
+
+        console.log('[Test] Compiling declarative IR...', declarativeIR);
+
+        const response = await fetch('/api/v6/compile-declarative', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ir: declarativeIR,
+            userId: 'test-user'
+          })
+        });
+
+        const data = await response.json();
+
+        console.log('[Test] Compile declarative response:', data);
+
+        if (data.success) {
+          resultDiv.className = 'result success';
+          resultDiv.innerHTML = `
+            <h3>✓ Declarative IR Compiled Successfully</h3>
+            <div style="background: #e8f5e9; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
+              <strong>🎯 Compilation Intelligence:</strong><br>
+              • Total Steps Generated: <strong>${data.metadata.step_count}</strong><br>
+              • Patterns Detected: <strong>${data.metadata.patterns_detected.join(', ')}</strong><br>
+              • Compilation Time: <strong>${data.metadata.compilation_time_ms}ms</strong><br>
+              • IR Validation: <strong style="color: #4caf50;">✓ PASSED (No forbidden tokens!)</strong>
+            </div>
+            ${data.logs && data.logs.length > 0 ? `
+              <div style="background: #fff3cd; padding: 12px; border-radius: 6px; margin-bottom: 15px; border-left: 4px solid #ffc107;">
+                <strong>📋 Compiler Logs:</strong>
+                <ul style="margin: 8px 0; padding-left: 20px; font-size: 0.9em;">
+                  ${data.logs.map(log => `<li>${log}</li>`).join('')}
+                </ul>
+              </div>
+            ` : ''}
+            <div class="workflow-steps">
+              <strong>Generated Workflow Steps:</strong>
+              ${data.workflow.map((step, i) => `
+                <div class="workflow-step">
+                  <strong>Step ${i + 1}:</strong> ${step.step_id}
+                  <br>Type: <code>${step.type}</code>
+                  ${step.plugin ? `<br>Plugin: <code>${step.plugin}</code>` : ''}
+                  ${step.operation ? `<br>Operation: <code>${step.operation}</code>` : ''}
+                  ${step.output_variable ? `<br>Output: <code>${step.output_variable}</code>` : ''}
+                  ${step.type === 'scatter_gather' ? `<br>📦 Loop Actions: <strong>${step.config?.actions?.length || 0}</strong>` : ''}
+                </div>
+              `).join('')}
+            </div>
+            <details style="margin-top: 15px;">
+              <summary style="cursor: pointer; font-weight: 600; margin-bottom: 10px;">View Full Workflow (JSON)</summary>
+              <pre>${JSON.stringify(data.workflow, null, 2)}</pre>
+            </details>
+          `;
+          resultDiv.style.display = 'block';
+        } else {
+          resultDiv.className = 'result error';
+          resultDiv.innerHTML = `
+            <h3>✗ Error Compiling Declarative IR</h3>
+            ${data.validation && !data.validation.valid ? `
+              <div style="background: #ffebee; padding: 12px; border-radius: 6px; margin-bottom: 10px; border-left: 4px solid #f44336;">
+                <strong>⚠️ IR Validation Failed:</strong>
+                <ul style="margin: 8px 0; padding-left: 20px;">
+                  ${data.validation.errors.map(err => `
+                    <li><strong>${err.error_code}:</strong> ${err.message}
+                    ${err.leaked_token ? `<br><em style="color: #d32f2f;">Forbidden token found: ${err.leaked_token}</em>` : ''}
+                    </li>
+                  `).join('')}
+                </ul>
+              </div>
+            ` : ''}
+            <pre>${JSON.stringify(data.errors, null, 2)}</pre>
+          `;
+          resultDiv.style.display = 'block';
+        }
+      } catch (error) {
+        console.error('[Test] Error:', error);
+        resultDiv.className = 'result error';
+        resultDiv.innerHTML = `
+          <h3>✗ Error</h3>
+          <pre>${error.message}</pre>
+        `;
+        resultDiv.style.display = 'block';
+      } finally {
+        compileBtn.disabled = false;
+        compileLoader.style.display = 'none';
+      }
+    }
+  </script>
+</body>
+</html>

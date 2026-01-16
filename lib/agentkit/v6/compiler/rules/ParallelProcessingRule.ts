@@ -1,0 +1,405 @@
+/**
+ * Parallel Processing Rule
+ *
+ * Handles workflows that:
+ * 1. Read from data sources
+ * 2. Process items in parallel (high concurrency)
+ * 3. Apply transforms, filters, or simple operations
+ * 4. Aggregate and deliver results
+ *
+ * This rule is for scatter-gather WITHOUT complex AI operations or conditionals.
+ * For AI-heavy parallel processing, use APIDataSourceWithLoopsRule.
+ *
+ * Pattern Examples:
+ * - Read spreadsheet → Process each row in parallel → Aggregate → Email
+ * - API call → Transform items concurrently → Filter → Webhook delivery
+ * - Database query → Enrich data in parallel → Update records
+ */
+
+import type { ExtendedLogicalIR } from '../../logical-ir/schemas/extended-ir-types'
+import type { WorkflowStep } from '../../../../pilot/types/pilot-dsl-types'
+import type { CompilerContext } from '../LogicalIRCompiler'
+import { BaseCompilerRule } from './CompilerRule'
+import { DataSourceResolver } from '../resolvers/DataSourceResolver'
+import { DeliveryResolver } from '../resolvers/DeliveryResolver'
+import { FilterResolver } from '../resolvers/FilterResolver'
+import { LoopResolver } from '../resolvers/LoopResolver'
+
+// ============================================================================
+// Parallel Processing Rule
+// ============================================================================
+
+export class ParallelProcessingRule extends BaseCompilerRule {
+  name = 'ParallelProcessingRule'
+  description = 'Compiles workflows with high-concurrency parallel processing (no AI/conditionals)'
+  priority = 120 // Medium-high priority
+
+  private dataSourceResolver!: DataSourceResolver
+  private deliveryResolver!: DeliveryResolver
+  private filterResolver!: FilterResolver
+  private loopResolver!: LoopResolver
+
+  /**
+   * Check if this rule supports the given IR
+   */
+  supports(ir: ExtendedLogicalIR): boolean {
+    this.log('Checking if rule supports IR...')
+
+    // Must have loops (scatter-gather)
+    const hasLoops = ir.loops && ir.loops.length > 0
+    if (!hasLoops) {
+      this.log('✗ No loops found')
+      return false
+    }
+
+    // Must have data sources
+    const hasDataSources = ir.data_sources && ir.data_sources.length > 0
+    if (!hasDataSources) {
+      this.log('✗ No data sources found')
+      return false
+    }
+
+    // Must have delivery
+    const hasDelivery = ir.delivery && ir.delivery.length > 0
+    if (!hasDelivery) {
+      this.log('✗ No delivery methods found')
+      return false
+    }
+
+    // Should NOT have AI operations (that would be APIDataSourceWithLoopsRule)
+    const hasAIOperations = ir.ai_operations && ir.ai_operations.length > 0
+    if (hasAIOperations) {
+      this.log('✗ Has AI operations - should use APIDataSourceWithLoopsRule instead')
+      return false
+    }
+
+    // Should NOT have conditionals (that would be ConditionalBranchingRule)
+    const hasConditionals = ir.conditionals && ir.conditionals.length > 0
+    if (hasConditionals) {
+      this.log('✗ Has conditionals - should use ConditionalBranchingRule instead')
+      return false
+    }
+
+    // Should NOT be API data source (APIDataSourceWithLoopsRule handles that)
+    const hasAPIDataSource = ir.data_sources.some(ds => ds.type === 'api')
+    if (hasAPIDataSource) {
+      this.log('✗ Has API data source - should use APIDataSourceWithLoopsRule instead')
+      return false
+    }
+
+    this.log('✓ Rule supports this IR')
+    this.log(`  - Data sources: ${ir.data_sources.length}`)
+    this.log(`  - Loops: ${ir.loops.length}`)
+    this.log(`  - Transforms: ${ir.transforms?.length || 0}`)
+    this.log(`  - Filters: ${ir.filters?.length || 0}`)
+
+    return true
+  }
+
+  /**
+   * Compile IR to workflow steps
+   */
+  async compile(context: CompilerContext): Promise<WorkflowStep[]> {
+    const { ir, plugin_manager } = context
+    this.log('Starting compilation...')
+
+    // Initialize resolvers with PluginManager
+    this.dataSourceResolver = new DataSourceResolver(plugin_manager)
+    this.deliveryResolver = new DeliveryResolver(plugin_manager)
+    this.filterResolver = new FilterResolver()
+    this.loopResolver = new LoopResolver(plugin_manager)
+
+    const steps: WorkflowStep[] = []
+
+    // STEP 1: Resolve data sources
+    this.log('Step 1: Resolving data sources...')
+    const dataSourceSteps = await this.dataSourceResolver.resolve(ir.data_sources, 'read')
+    steps.push(...dataSourceSteps)
+
+    const dataVariable = dataSourceSteps[dataSourceSteps.length - 1]?.output_variable || 'data'
+    this.log(`  ✓ Data will be available in: ${dataVariable}`)
+
+    // STEP 2: Apply filters (pre-loop)
+    let currentVariable = dataVariable
+    if (ir.filters && ir.filters.length > 0) {
+      this.log('Step 2: Applying filters...')
+      const filterSteps = await this.filterResolver.resolve(ir.filters, currentVariable, 'filter')
+      steps.push(...filterSteps)
+      currentVariable = filterSteps[filterSteps.length - 1]?.output_variable || currentVariable
+      this.log(`  ✓ Filtered data in: ${currentVariable}`)
+    }
+
+    // STEP 3: Apply partitions (if any)
+    if (ir.partitions && ir.partitions.length > 0) {
+      this.log('Step 3: Applying partitions...')
+      const partitionSteps = await this.loopResolver.resolvePartitions(
+        ir.partitions,
+        currentVariable,
+        'partition'
+      )
+      steps.push(...partitionSteps)
+      currentVariable = partitionSteps[partitionSteps.length - 1]?.output_variable || currentVariable
+      this.log(`  ✓ Partitioned data in: ${currentVariable}`)
+    }
+
+    // STEP 4: Apply grouping (if specified)
+    if (ir.grouping) {
+      this.log('Step 4: Applying grouping...')
+      const groupStep = await this.loopResolver.resolveGrouping(ir.grouping, currentVariable, 'group')
+      if (groupStep) {
+        steps.push(groupStep)
+        currentVariable = groupStep.output_variable!
+        this.log(`  ✓ Grouped data in: ${currentVariable}`)
+      }
+    }
+
+    // STEP 5: Process loops (scatter-gather with transforms)
+    this.log('Step 5: Processing loops with transforms...')
+    for (let i = 0; i < ir.loops.length; i++) {
+      const loop = ir.loops[i]
+      this.log(`  Processing loop ${i + 1}: ${loop.id}`)
+
+      const loopStep = this.createScatterGatherWithTransforms(
+        loop,
+        ir.transforms || [],
+        currentVariable,
+        `loop_${i + 1}`
+      )
+      steps.push(loopStep)
+      currentVariable = loopStep.output_variable!
+      this.log(`  ✓ Loop output in: ${currentVariable}`)
+    }
+
+    // STEP 6: Apply normalization (if specified)
+    if (ir.normalization) {
+      this.log('Step 6: Applying normalization...')
+      const normalizeStep = this.createNormalizationStep(
+        ir.normalization,
+        currentVariable,
+        'normalize'
+      )
+      steps.push(normalizeStep)
+      currentVariable = normalizeStep.output_variable!
+      this.log(`  ✓ Normalized data in: ${currentVariable}`)
+    }
+
+    // STEP 7: Apply rendering (if specified)
+    if (ir.rendering && ir.rendering.type) {
+      this.log('Step 7: Applying rendering...')
+      const renderStep = this.createRenderingStep(
+        ir.rendering,
+        currentVariable,
+        'render'
+      )
+      steps.push(renderStep)
+      currentVariable = renderStep.output_variable!
+      this.log(`  ✓ Rendered output in: ${currentVariable}`)
+    }
+
+    // STEP 8: Delivery
+    this.log('Step 8: Resolving delivery...')
+    const deliverySteps = await this.deliveryResolver.resolve(
+      ir.delivery,
+      currentVariable,
+      'deliver'
+    )
+    steps.push(...deliverySteps)
+
+    this.log(`✓ Compilation complete: ${steps.length} steps generated`)
+    return steps
+  }
+
+  /**
+   * Create scatter-gather step with transforms
+   */
+  private createScatterGatherWithTransforms(
+    loop: any,
+    transforms: any[],
+    inputVariable: string,
+    stepId: string
+  ): WorkflowStep {
+    this.log(`  Creating scatter-gather with transforms: ${loop.id}`)
+
+    // Find transforms referenced in this loop
+    const loopTransforms = transforms.filter(transform =>
+      loop.do && loop.do.includes(transform.id)
+    )
+
+    // Build nested steps for the loop
+    const nestedSteps: any[] = []
+
+    for (const transform of loopTransforms) {
+      nestedSteps.push({
+        step_id: `${stepId}_transform_${transform.id}`,
+        type: 'transform',
+        operation: transform.operation || 'map',
+        config: {
+          input_source: transform.input_source,
+          output_format: transform.output_format,
+          mapping: transform.mapping
+        },
+        output_variable: `${stepId}_transform_${transform.id}_result`
+      })
+    }
+
+    return {
+      id: stepId,
+      step_id: stepId,
+      name: `Process ${loop.item_variable} in Parallel`,
+      type: 'scatter_gather',
+      operation: 'parallel_process',
+      config: {
+        input: `{{${this.extractVariableName(loop.for_each)}}}`,
+        item_variable: loop.item_variable,
+        actions: nestedSteps,
+        max_iterations: loop.max_iterations || 1000,
+        max_concurrency: loop.max_concurrency || 10
+      },
+      output_variable: `${stepId}_output`,
+      description: `Process each ${loop.item_variable} with transforms in parallel`
+    }
+  }
+
+  /**
+   * Create normalization step
+   */
+  private createNormalizationStep(
+    normalization: any,
+    inputVariable: string,
+    stepId: string
+  ): WorkflowStep {
+    return {
+      step_id: stepId,
+      type: 'transform',
+      operation: 'normalize',
+      config: {
+        input: `{{${inputVariable}}}`,
+        required_headers: normalization.required_headers,
+        case_sensitive: normalization.case_sensitive,
+        missing_header_action: normalization.missing_header_action
+      },
+      output_variable: `${stepId}_output`,
+      description: 'Normalize data structure and headers'
+    }
+  }
+
+  /**
+   * Create rendering step
+   */
+  private createRenderingStep(
+    rendering: any,
+    inputVariable: string,
+    stepId: string
+  ): WorkflowStep {
+    return {
+      step_id: stepId,
+      type: 'transform',
+      operation: 'render',
+      config: {
+        input: `{{${inputVariable}}}`,
+        type: rendering.type,
+        template: rendering.template,
+        engine: rendering.engine,
+        columns_in_order: rendering.columns_in_order,
+        empty_message: rendering.empty_message
+      },
+      output_variable: `${stepId}_output`,
+      description: `Render as ${rendering.type}`
+    }
+  }
+
+  /**
+   * Extract variable name from {{variable}} or just return the string
+   */
+  private extractVariableName(source: string): string {
+    if (!source) return source
+    const match = source.match(/\{\{([^}]+)\}\}/)
+    return match ? match[1] : source
+  }
+
+  /**
+   * Get example IR that this rule can compile
+   */
+  getExampleIR(): ExtendedLogicalIR {
+    return {
+      ir_version: '2.0',
+      goal: 'Process spreadsheet rows in parallel with transforms and deliver',
+      data_sources: [
+        {
+          id: 'customer_data',
+          type: 'tabular',
+          source: 'google-sheets',
+          location: 'Customers',
+          tab: 'Active',
+          endpoint: '',
+          trigger: '',
+          role: 'customer list'
+        }
+      ],
+      filters: [
+        {
+          id: 'filter_active',
+          field: 'status',
+          operator: 'equals',
+          value: 'active',
+          description: 'Filter active customers'
+        }
+      ],
+      transforms: [
+        {
+          id: 'transform_1',
+          operation: 'map',
+          input_source: '{{customer}}',
+          output_format: 'enriched_customer',
+          mapping: {
+            full_name: '{{customer.first_name}} {{customer.last_name}}',
+            account_age_days: 'DAYS_SINCE({{customer.created_at}})'
+          }
+        }
+      ],
+      ai_operations: [],
+      conditionals: [],
+      loops: [
+        {
+          id: 'loop_customers',
+          for_each: '{{filtered_data}}',
+          item_variable: 'customer',
+          do: ['transform_1'],
+          max_iterations: 1000,
+          max_concurrency: 20
+        }
+      ],
+      partitions: [],
+      grouping: undefined,
+      normalization: {},
+      rendering: {
+        type: 'email_embedded_table',
+        columns_in_order: ['full_name', 'account_age_days']
+      },
+      delivery: [
+        {
+          id: 'email_delivery',
+          method: 'email',
+          config: {
+            recipient: 'team@example.com',
+            subject: 'Customer Report',
+            body: '{{rendered_table}}'
+          }
+        }
+      ],
+      edge_cases: [],
+      clarifications_required: []
+    } as unknown as ExtendedLogicalIR
+  }
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/**
+ * Create a parallel processing rule instance
+ */
+export function createParallelProcessingRule(): ParallelProcessingRule {
+  return new ParallelProcessingRule()
+}

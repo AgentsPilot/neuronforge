@@ -48,6 +48,7 @@ import { WorkflowOrchestrator } from '@/lib/orchestration';
 import { PilotConfigService } from './PilotConfigService';
 import { StepCache } from './StepCache';
 import { DebugSessionManager } from '@/lib/debug/DebugSessionManager';
+import { WorkflowValidator } from './WorkflowValidator';
 
 export class WorkflowPilot {
   private supabase: SupabaseClient;
@@ -62,6 +63,7 @@ export class WorkflowPilot {
   private approvalTracker: ApprovalTracker;
   private notificationService: NotificationService;
   private stepCache: StepCache;
+  private workflowValidator: WorkflowValidator;
   private options: PilotOptions | null = null;
   private optionsOverride: PilotOptions | undefined;
   private optimizationsEnabled: boolean = false;
@@ -80,6 +82,7 @@ export class WorkflowPilot {
     this.conditionalEvaluator = new ConditionalEvaluator();
     this.errorRecovery = new ErrorRecovery();
     this.outputValidator = new OutputValidator();
+    this.workflowValidator = new WorkflowValidator(); // PHASE 5: Pre-flight validation
     this.auditTrail = AuditTrailService.getInstance();
     this.approvalTracker = new ApprovalTracker(supabase);
     this.notificationService = new NotificationService();
@@ -240,6 +243,31 @@ export class WorkflowPilot {
     const executionPlan = this.parser.parse(workflowSteps);
 
     console.log(`📋 [WorkflowPilot] Execution plan:\n${this.parser.visualize(executionPlan)}`);
+
+    // PHASE 5: Pre-flight validation before execution
+    console.log('🔍 [WorkflowPilot] Running pre-flight validation...');
+    const validation = this.workflowValidator.validatePreFlight(workflowSteps);
+
+    if (!validation.valid) {
+      const errorMessage = `Workflow pre-flight validation failed: ${validation.errors.join(', ')}`;
+      console.error(`❌ [WorkflowPilot] ${errorMessage}`);
+
+      throw new ValidationError(
+        errorMessage,
+        undefined,
+        {
+          agent_id: agent.id,
+          validation_errors: validation.errors,
+          step_count: workflowSteps.length
+        }
+      );
+    }
+
+    if (validation.warnings && validation.warnings.length > 0) {
+      console.warn(`⚠️  [WorkflowPilot] Pre-flight warnings: ${validation.warnings.join(', ')}`);
+    }
+
+    console.log('✅ [WorkflowPilot] Pre-flight validation passed');
 
     // 2. Initialize execution context
     const executionId = await this.stateManager.createExecution(
@@ -747,6 +775,13 @@ export class WorkflowPilot {
         },
       });
 
+      // Register output_variable if specified (allows referencing by name instead of step ID)
+      const outputVariable = (stepDef as any).output_variable;
+      if (outputVariable) {
+        context.setVariable(outputVariable, results);
+        console.log(`  ✓ Registered output variable: ${outputVariable}`);
+      }
+
       console.log(`  ✓ Loop completed: ${results.length} iterations`);
       await this.stateManager.checkpoint(context);
       // Emit step completed event
@@ -774,6 +809,13 @@ export class WorkflowPilot {
           itemCount: Array.isArray(results) ? results.length : undefined,
         },
       });
+
+      // Register output_variable if specified (allows referencing by name instead of step ID)
+      const outputVariable = (stepDef as any).output_variable;
+      if (outputVariable) {
+        context.setVariable(outputVariable, results);
+        console.log(`  ✓ Registered output variable: ${outputVariable}`);
+      }
 
       console.log(`  ✓ Scatter-gather completed in ${Date.now() - startTime}ms`);
       await this.stateManager.checkpoint(context);
@@ -894,6 +936,13 @@ export class WorkflowPilot {
 
     // Store output
     context.setStepOutput(stepDef.id, output);
+
+    // Register output_variable if specified (allows referencing by name instead of step ID)
+    const outputVariable = (stepDef as any).output_variable;
+    if (outputVariable) {
+      context.setVariable(outputVariable, output.data);
+      console.log(`  ✓ Registered output variable: ${outputVariable}`);
+    }
 
     // Checkpoint
     await this.stateManager.checkpoint(context);

@@ -17,6 +17,8 @@ import type {
   ExecutionSummary,
   MemoryContext,
   VariableReference,
+  IOrchestrator,
+  IExecutionContext,
 } from './types';
 import { VariableResolutionError, getTokenTotal } from './types';
 import { createLogger } from '@/lib/logger';
@@ -24,7 +26,7 @@ import { createLogger } from '@/lib/logger';
 // Create module-level logger for structured logging
 const logger = createLogger({ module: 'ExecutionContext', service: 'workflow-pilot' });
 
-export class ExecutionContext {
+export class ExecutionContext implements IExecutionContext {
   // Execution metadata
   public executionId: string;
   public agentId: string;
@@ -52,7 +54,8 @@ export class ExecutionContext {
   public memoryContext?: MemoryContext;
 
   // Orchestration (from WorkflowOrchestrator - Phase 4)
-  public orchestrator?: any; // WorkflowOrchestrator instance (avoiding circular dependency)
+  // Wave 8: Changed from `any` to `IOrchestrator` for type safety
+  public orchestrator?: IOrchestrator;
 
   // Timing
   public startedAt: Date;
@@ -224,6 +227,7 @@ export class ExecutionContext {
    * - {{input.recipient}} - User input value
    * - {{var.counter}} - Runtime variable
    * - {{current.item}} - Loop current item
+   * - ["{{email.id}}"] - Literal expressions with embedded variables
    */
   resolveVariable(reference: VariableReference): any {
     // If it's not a string, return as-is (already resolved)
@@ -236,6 +240,14 @@ export class ExecutionContext {
       return reference;
     }
 
+    // ✅ FIX #11: Handle literal expressions with embedded variables
+    // Example: "[\"{{email.gmail_message_link_id}}\"]" → ["actual_id_value"]
+    // This handles cases where LLM outputs JSON literals containing template variables
+    if (!reference.match(/^\{\{[^}]+\}\}$/)) {
+      // This is not a simple {{var}} reference, but contains {{var}} inside a literal
+      return this.resolveLiteralWithVariables(reference);
+    }
+
     // Extract variable path from {{...}}
     const match = reference.match(/\{\{([^}]+)\}\}/);
     if (!match) {
@@ -245,99 +257,17 @@ export class ExecutionContext {
     const path = match[1].trim();
     logger.debug({ reference, path, executionId: this.executionId }, 'Resolving variable');
 
-    // Parse path: "step1.data[0].email"
-    const parts = this.parsePath(path);
+    // Use the refactored resolveSimpleVariable method
+    const resolved = this.resolveSimpleVariable(path);
 
-    if (parts.length === 0) {
-      throw new VariableResolutionError(
-        `Invalid variable reference: ${reference}`,
-        reference
-      );
-    }
+    logger.debug({
+      reference,
+      resolvedType: Array.isArray(resolved) ? 'array' : typeof resolved,
+      resolvedLength: Array.isArray(resolved) ? resolved.length : undefined,
+      executionId: this.executionId
+    }, 'Variable resolved');
 
-    const root = parts[0];
-
-    // Check if it's a step output reference
-    if (root.startsWith('step')) {
-      const stepId = root;
-      const stepOutput = this.stepOutputs.get(stepId);
-
-      if (!stepOutput) {
-        logger.warn({
-          reference,
-          stepId,
-          availableSteps: Array.from(this.stepOutputs.keys()),
-          executionId: this.executionId
-        }, 'Step output not found for variable resolution');
-        throw new VariableResolutionError(
-          `Step ${stepId} has not been executed yet or does not exist`,
-          reference,
-          stepId
-        );
-      }
-
-      // Navigate nested path: data.email
-      const resolved = this.getNestedValue(stepOutput, parts.slice(1));
-      logger.debug({
-        reference,
-        stepId,
-        resolvedType: Array.isArray(resolved) ? 'array' : typeof resolved,
-        resolvedLength: Array.isArray(resolved) ? resolved.length : undefined,
-        executionId: this.executionId
-      }, 'Step variable resolved');
-      return resolved;
-    }
-
-    // Check if it's an input value reference
-    if (root === 'input') {
-      const resolved = this.getNestedValue(this.inputValues, parts.slice(1));
-      logger.debug({ reference, resolvedType: typeof resolved, executionId: this.executionId }, 'Input variable resolved');
-      return resolved;
-    }
-
-    // Check if it's a variable reference
-    if (root === 'var') {
-      const resolved = this.getNestedValue(this.variables, parts.slice(1));
-      logger.debug({ reference, resolvedType: typeof resolved, executionId: this.executionId }, 'Var variable resolved');
-      return resolved;
-    }
-
-    // Check if it's a current item reference (for loops/filters)
-    if (root === 'current' || root === 'item') {
-      // Get the variable value (e.g., this.variables['item'])
-      const itemValue = this.variables[root];
-
-      if (itemValue === undefined) {
-        throw new VariableResolutionError(
-          `Variable '${root}' is not defined in current context`,
-          reference,
-          root
-        );
-      }
-
-      // Navigate nested path if present: item[5], item.field, etc.
-      return parts.length > 1 ? this.getNestedValue(itemValue, parts.slice(1)) : itemValue;
-    }
-
-    // Check if it's a loop variable reference (loop.item, loop.index, etc.)
-    if (root === 'loop') {
-      // For loop.item or loop.index, look in variables with the specific key
-      // The loop context should have set these variables
-      return this.getNestedValue(this.variables, parts);
-    }
-
-    // Check if root is a custom scatter/loop variable (e.g., 'email', 'customer', etc.)
-    // This handles itemVariable from scatter_gather steps
-    if (this.variables.hasOwnProperty(root)) {
-      const itemValue = this.variables[root];
-      // Navigate nested path if present: email.id, customer.name, etc.
-      return parts.length > 1 ? this.getNestedValue(itemValue, parts.slice(1)) : itemValue;
-    }
-
-    throw new VariableResolutionError(
-      `Unknown variable reference root: ${root}`,
-      reference
-    );
+    return resolved;
   }
 
   /**
@@ -358,6 +288,14 @@ export class ExecutionContext {
       return obj.replace(/\{\{([^}]+)\}\}/g, (match) => {
         try {
           const value = this.resolveVariable(match);
+          // ✅ CRITICAL FIX: Use JSON.stringify for arrays and objects
+          // String([]) returns "" (empty string) which breaks expressions
+          // JSON.stringify([]) returns "[]" which is correct JavaScript
+          if (Array.isArray(value)) {
+            return JSON.stringify(value);
+          } else if (typeof value === 'object' && value !== null) {
+            return JSON.stringify(value);
+          }
           return String(value);
         } catch (error) {
           logger.warn({ err: error, variable: match, executionId: this.executionId }, 'Failed to resolve variable');
@@ -379,6 +317,186 @@ export class ExecutionContext {
     }
 
     return obj;
+  }
+
+  /**
+   * Resolve literal expressions containing embedded variables
+   *
+   * Handles cases where LLM outputs JSON literals with template variables:
+   * - "[\"{{email.id}}\"]" → ["resolved_id_value"]
+   * - "{\"key\": \"{{step1.value}}\"}" → {key: "resolved_value"}
+   *
+   * This is needed because the LLM doesn't distinguish between:
+   * - JSON structure (what it's outputting)
+   * - Variable resolution syntax (what gets evaluated at runtime)
+   */
+  private resolveLiteralWithVariables(expression: string): any {
+    logger.debug({ expression, executionId: this.executionId }, 'Resolving literal with embedded variables');
+
+    // Replace all {{var}} references with their actual values
+    let resolvedExpression = expression;
+    const variableMatches = expression.matchAll(/\{\{([^}]+)\}\}/g);
+
+    for (const match of variableMatches) {
+      const fullMatch = match[0]; // "{{email.id}}"
+      const varPath = match[1].trim(); // "email.id"
+
+      try {
+        // Resolve the variable using existing logic
+        const resolvedValue = this.resolveSimpleVariable(varPath);
+
+        // Check if the variable is inside quotes: "{{var}}" or '{{var}}'
+        // This handles patterns like: ["{{email.id}}"] where the quotes are part of JSON structure
+        const quotedPattern1 = `"${fullMatch}"`;  // "{{var}}"
+        const quotedPattern2 = `'${fullMatch}'`;  // '{{var}}'
+        const escapedQuotedPattern1 = `\\"${fullMatch}\\"`; // \"{{var}}\"
+        const escapedQuotedPattern2 = `\\'${fullMatch}\\'`; // \'{{var}}\'
+
+        if (resolvedExpression.includes(quotedPattern1)) {
+          // Replace "{{var}}" with JSON value (which adds its own quotes if string)
+          resolvedExpression = resolvedExpression.replace(quotedPattern1, JSON.stringify(resolvedValue));
+        } else if (resolvedExpression.includes(quotedPattern2)) {
+          // Replace '{{var}}' with JSON value
+          resolvedExpression = resolvedExpression.replace(quotedPattern2, JSON.stringify(resolvedValue));
+        } else if (resolvedExpression.includes(escapedQuotedPattern1)) {
+          // Replace \"{{var}}\" with JSON value
+          resolvedExpression = resolvedExpression.replace(escapedQuotedPattern1, JSON.stringify(resolvedValue));
+        } else if (resolvedExpression.includes(escapedQuotedPattern2)) {
+          // Replace \'{{var}}\' with JSON value
+          resolvedExpression = resolvedExpression.replace(escapedQuotedPattern2, JSON.stringify(resolvedValue));
+        } else {
+          // Variable is not quoted, replace as-is
+          const jsonValue = JSON.stringify(resolvedValue);
+          resolvedExpression = resolvedExpression.replace(fullMatch, jsonValue);
+        }
+
+        logger.debug({
+          variable: fullMatch,
+          resolvedValue,
+          executionId: this.executionId
+        }, 'Variable resolved in literal expression');
+      } catch (error: any) {
+        logger.warn({
+          err: error,
+          variable: fullMatch,
+          executionId: this.executionId
+        }, 'Failed to resolve variable in literal expression');
+        throw new VariableResolutionError(
+          `Cannot resolve variable ${fullMatch} in literal expression: ${error.message}`,
+          expression
+        );
+      }
+    }
+
+    // Now evaluate the resolved expression
+    try {
+      // Try parsing as JSON first (most common case)
+      const result = JSON.parse(resolvedExpression);
+      logger.debug({
+        originalExpression: expression,
+        resolvedExpression,
+        resultType: Array.isArray(result) ? 'array' : typeof result,
+        executionId: this.executionId
+      }, 'Literal expression resolved as JSON');
+      return result;
+    } catch (jsonError) {
+      // If not valid JSON, try evaluating as JavaScript expression
+      try {
+        const result = new Function(`return ${resolvedExpression}`)();
+        logger.debug({
+          originalExpression: expression,
+          resolvedExpression,
+          resultType: Array.isArray(result) ? 'array' : typeof result,
+          executionId: this.executionId
+        }, 'Literal expression evaluated as JavaScript');
+        return result;
+      } catch (evalError: any) {
+        throw new VariableResolutionError(
+          `Failed to parse literal expression after variable resolution: ${evalError.message}`,
+          expression
+        );
+      }
+    }
+  }
+
+  /**
+   * Resolve a simple variable path without the surrounding {{}}
+   * Used internally for variable resolution
+   */
+  private resolveSimpleVariable(path: string): any {
+    const parts = this.parsePath(path);
+
+    if (parts.length === 0) {
+      throw new VariableResolutionError(
+        `Invalid variable path: ${path}`,
+        path
+      );
+    }
+
+    const root = parts[0];
+
+    // Check if it's a step output reference
+    if (root.startsWith('step')) {
+      const stepId = root;
+      const stepOutput = this.stepOutputs.get(stepId);
+
+      if (!stepOutput) {
+        throw new VariableResolutionError(
+          `Step ${stepId} has not been executed yet or does not exist`,
+          path,
+          stepId
+        );
+      }
+
+      return this.getNestedValue(stepOutput, parts.slice(1));
+    }
+
+    // Check if it's an input value reference
+    // Wave 9: Support both 'input' and 'inputs' (plural) for flexibility
+    // DSLWrapper generates {{inputs.xyz}} while legacy uses {{input.xyz}}
+    if (root === 'input' || root === 'inputs') {
+      return this.getNestedValue(this.inputValues, parts.slice(1));
+    }
+
+    // Check if it's a variable reference
+    if (root === 'var') {
+      return this.getNestedValue(this.variables, parts.slice(1));
+    }
+
+    // Check if it's a current item reference (for loops/filters)
+    if (root === 'current' || root === 'item') {
+      const itemValue = this.variables[root];
+
+      if (itemValue === undefined) {
+        // Provide helpful error message explaining when 'item' is available
+        throw new VariableResolutionError(
+          `Variable '${root}' is not defined in current context. ` +
+          `'${root}' is only available inside: (1) transform filter/map operations, ` +
+          `(2) loop iterations, or (3) scatter-gather steps. ` +
+          `If you need to filter an array, use a transform step with operation='filter' instead of a conditional step.`,
+          path,
+          root
+        );
+      }
+
+      return parts.length > 1 ? this.getNestedValue(itemValue, parts.slice(1)) : itemValue;
+    }
+
+    // Check if it's a loop variable reference
+    if (root === 'loop') {
+      return this.getNestedValue(this.variables, parts);
+    }
+
+    // Check if root is a custom scatter/loop variable (e.g., 'email', 'customer', etc.)
+    if (this.variables.hasOwnProperty(root)) {
+      const itemValue = this.variables[root];
+      return parts.length > 1 ? this.getNestedValue(itemValue, parts.slice(1)) : itemValue;
+    }
+
+    throw new VariableResolutionError(
+      `Unknown variable reference root: ${root}`,
+      path
+    );
   }
 
   /**
@@ -442,8 +560,19 @@ export class ExecutionContext {
     let current = obj;
 
     for (const part of path) {
-      if (current === undefined || current === null) {
-        return undefined;
+      // ✅ FIX: Distinguish between null and undefined
+      // undefined = key doesn't exist (resolution error)
+      // null = key exists but value is explicitly null (preserve it)
+      if (current === undefined) {
+        return undefined;  // Path doesn't exist
+      }
+
+      // ✅ FIX: If current is null and we're trying to access a property, return null
+      // This preserves explicit null values from API responses
+      if (current === null) {
+        // If there are more path parts, we can't traverse into null
+        // Return null to indicate "value exists but is null" rather than undefined
+        return null;
       }
 
       // Handle bracket notation: [0], [1], ['key'], ["key"], etc.
@@ -546,8 +675,11 @@ export class ExecutionContext {
 
   /**
    * Clone context (useful for parallel execution)
+   *
+   * @param resetMetrics - If true, resets token/time tracking to 0 (for parallel scatter execution)
+   *                       This prevents double-counting when cloned contexts are merged back
    */
-  clone(): ExecutionContext {
+  clone(resetMetrics: boolean = false): ExecutionContext {
     const cloned = new ExecutionContext(
       this.executionId,
       this.agent,
@@ -566,8 +698,16 @@ export class ExecutionContext {
     cloned.memoryContext = this.memoryContext;
     cloned.orchestrator = this.orchestrator; // Copy orchestrator reference for consistent routing
     cloned.startedAt = this.startedAt;
-    cloned.totalTokensUsed = this.totalTokensUsed;
-    cloned.totalExecutionTime = this.totalExecutionTime;
+
+    // For parallel execution, reset metrics to 0 so only NEW tokens/time are tracked
+    // This prevents double-counting when merging back to parent
+    if (resetMetrics) {
+      cloned.totalTokensUsed = 0;
+      cloned.totalExecutionTime = 0;
+    } else {
+      cloned.totalTokensUsed = this.totalTokensUsed;
+      cloned.totalExecutionTime = this.totalExecutionTime;
+    }
 
     return cloned;
   }

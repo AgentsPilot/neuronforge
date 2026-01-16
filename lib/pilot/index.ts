@@ -89,6 +89,12 @@ export type {
   StepId,
   PluginKey,
   ActionName,
+
+  // Dependency Interfaces (Wave 8 - Type Safety)
+  IOrchestrator,
+  IStateManager,
+  IParallelExecutor,
+  IExecutionContext,
 } from './types';
 
 // Error classes

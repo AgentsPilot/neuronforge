@@ -510,11 +510,15 @@ export abstract class BaseHandler implements IntentHandler {
   /**
    * Call LLM using the provider specified in routing decision
    * This is the unified method that all handlers should use instead of calling provider SDKs directly
+   *
+   * @param userPrompt - Either a string (text-only) or an array (multimodal content for vision)
+   *                     For vision, pass an array like:
+   *                     [{ type: 'image_url', image_url: { url: 'data:image/png;base64,...' } }, { type: 'text', text: '...' }]
    */
   protected async callLLM(
     context: HandlerContext,
     systemPrompt: string,
-    userPrompt: string,
+    userPrompt: string | any[],  // Support multimodal content for vision
     temperature: number,
     maxTokens?: number
   ): Promise<{
@@ -535,13 +539,17 @@ export abstract class BaseHandler implements IntentHandler {
         context.routingDecision.provider as 'openai' | 'anthropic' | 'kimi'
       );
 
+      // Detect if this is a vision call (multimodal content)
+      const isVisionMode = Array.isArray(userPrompt);
+
       console.log(
         `🎯 [Handler:${this.intent}] Step ${context.stepId} - LLM Call:`,
         `\n   🤖 Model: ${sanitizedModel}`,
         `\n   🏢 Provider: ${context.routingDecision.provider}`,
         `\n   📊 Tier: ${context.routingDecision.tier}`,
         `\n   🎫 Token Budget: ${context.budget.remaining} remaining`,
-        `\n   🔥 Temperature: ${temperature}`
+        `\n   🔥 Temperature: ${temperature}`,
+        isVisionMode ? `\n   📷 Vision Mode: ${userPrompt.filter((p: any) => p.type === 'image_url').length} image(s)` : ''
       );
 
       // Call provider's unified interface
@@ -550,7 +558,7 @@ export abstract class BaseHandler implements IntentHandler {
           model: sanitizedModel,  // ✅ Use sanitized model name
           messages: [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
+            { role: 'user', content: userPrompt }  // Works for both string and multimodal array
           ],
           temperature,
           max_tokens: maxTokens || Math.min(context.budget.remaining, 4096),

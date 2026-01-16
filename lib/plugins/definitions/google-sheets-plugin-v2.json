@@ -122,8 +122,8 @@
       }
     },
     "write_range": {
-      "description": "Write or update data in a specific range of cells",
-      "usage_context": "When user wants to write data to cells, update existing values, or save structured output from processing",
+      "description": "Write or update data in a specific range of cells (OVERWRITES existing data)",
+      "usage_context": "ONLY use when user wants to OVERWRITE specific cells or UPDATE existing values at known positions. Do NOT use for adding/appending new rows - use append_rows instead.",
       "parameters": {
         "type": "object",
         "required": ["spreadsheet_id", "range", "values"],
@@ -222,8 +222,8 @@
       }
     },
     "append_rows": {
-      "description": "Append new rows of data to the end of a sheet",
-      "usage_context": "When user wants to add new records, log data, or continuously append information without specifying exact cell positions",
+      "description": "Append new rows of data to the end of a sheet (ADDS without overwriting)",
+      "usage_context": "PREFERRED for most workflows. Use when adding new records, logging data, saving extracted items, or any operation that adds rows without specifying exact cell positions.",
       "parameters": {
         "type": "object",
         "required": ["spreadsheet_id", "range", "values"],

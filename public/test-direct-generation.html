@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Direct Workflow Generation</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        label {
+            display: block;
+            margin: 20px 0 10px 0;
+            font-weight: bold;
+            color: #555;
+        }
+        textarea {
+            width: 100%;
+            min-height: 300px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 20px 5px 10px 0;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:disabled {
+            background: #cccccc;
+            cursor: not-allowed;
+        }
+        #status {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 4px;
+            display: none;
+        }
+        #status.loading {
+            display: block;
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            color: #856404;
+        }
+        #status.success {
+            display: block;
+            background: #d4edda;
+            border: 1px solid #28a745;
+            color: #155724;
+        }
+        #status.error {
+            display: block;
+            background: #f8d7da;
+            border: 1px solid #dc3545;
+            color: #721c24;
+        }
+        pre {
+            background: #f4f4f4;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        .result-section {
+            margin-top: 20px;
+        }
+        .info {
+            background: #e7f3ff;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+            border-left: 4px solid #2196F3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Test: Direct Workflow Generation</h1>
+
+        <div class="info">
+            <strong>Simple Test:</strong><br>
+            Paste your Enhanced Prompt JSON below and click Generate.<br><br>
+            The system will:
+            1. Extract plugin schemas from services_involved<br>
+            2. Inject full PILOT DSL schema<br>
+            3. Ask LLM to build perfect workflow steps
+        </div>
+
+        <label for="enhancedPromptInput">Enhanced Prompt (JSON):</label>
+        <textarea id="enhancedPromptInput" placeholder='Paste your enhanced prompt JSON here...'></textarea>
+
+        <button id="generateBtn" onclick="generateWorkflow()">🚀 Generate Workflow</button>
+
+        <div id="status"></div>
+
+        <div id="results" class="result-section" style="display: none;">
+            <h2>Generated Workflow</h2>
+            <div id="validationStatus"></div>
+            <pre id="workflowOutput"></pre>
+        </div>
+    </div>
+
+    <script>
+        async function generateWorkflow() {
+            const btn = document.getElementById('generateBtn');
+            const status = document.getElementById('status');
+            const results = document.getElementById('results');
+            const input = document.getElementById('enhancedPromptInput').value;
+
+            if (!input.trim()) {
+                status.className = 'error';
+                status.textContent = '❌ Please paste Enhanced Prompt JSON';
+                status.style.display = 'block';
+                return;
+            }
+
+            btn.disabled = true;
+            status.className = 'loading';
+            status.textContent = '⏳ Generating workflow with direct method...';
+            status.style.display = 'block';
+            results.style.display = 'none';
+
+            try {
+                // Parse the input
+                const enhancedPrompt = JSON.parse(input);
+
+                console.log('Calling /api/v6/test-direct-generation...');
+                console.log('Enhanced Prompt:', enhancedPrompt);
+
+                const response = await fetch('/api/v6/test-direct-generation', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        enhanced_prompt: enhancedPrompt
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Request failed');
+                }
+
+                console.log('Success!', data);
+
+                // Show success
+                status.className = 'success';
+                status.textContent = '✅ Workflow generated successfully!';
+
+                // Display validation status
+                let validationHtml = '';
+                if (data.validation) {
+                    const v = data.validation;
+                    if (v.valid) {
+                        validationHtml = '<div class="info" style="border-left-color: #4CAF50; background: #d4edda;">';
+                        validationHtml += '<strong>✅ Validation: PASSED</strong>';
+                    } else {
+                        validationHtml = '<div class="info" style="border-left-color: #ffc107; background: #fff3cd;">';
+                        validationHtml += '<strong>⚠️ Validation: ISSUES FOUND (' + v.issueCount + ')</strong>';
+                    }
+
+                    if (v.autoFixed) {
+                        validationHtml += '<br>🔧 Auto-fixed issues: ' + v.issues.filter(i => i.autoFixable).map(i => i.code).join(', ');
+                    }
+
+                    if (v.issueCount > 0) {
+                        validationHtml += '<br><br><strong>Issues:</strong><ul>';
+                        v.issues.forEach(issue => {
+                            const icon = issue.severity === 'error' ? '❌' : '⚠️';
+                            validationHtml += '<li>' + icon + ' [' + issue.stepId + '] ' + issue.code + ': ' + issue.message +
+                                (issue.autoFixable ? ' <em>(auto-fixed)</em>' : '') + '</li>';
+                        });
+                        validationHtml += '</ul>';
+                    }
+                    validationHtml += '</div>';
+                }
+                document.getElementById('validationStatus').innerHTML = validationHtml;
+
+                // Display results
+                results.style.display = 'block';
+                document.getElementById('workflowOutput').textContent = JSON.stringify(data.workflow, null, 2);
+
+            } catch (error) {
+                console.error('Error:', error);
+                status.className = 'error';
+                status.textContent = `❌ Error: ${error.message}`;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
