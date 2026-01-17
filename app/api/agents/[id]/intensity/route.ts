@@ -77,12 +77,17 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
     }
 
-    // Get intensity metrics
-    const { data: metrics, error: metricsError } = await supabase
-      .from('agent_intensity_metrics')
-      .select('*')
-      .eq('agent_id', agentId)
-      .single();
+    // Run metrics and routing config queries in parallel (both independent after agent check)
+    const [metricsResult, routingConfig] = await Promise.all([
+      supabase
+        .from('agent_intensity_metrics')
+        .select('*')
+        .eq('agent_id', agentId)
+        .single(),
+      SystemConfigService.getRoutingConfig(supabase),
+    ]);
+
+    const { data: metrics, error: metricsError } = metricsResult;
 
     if (metricsError || !metrics) {
       // Initialize metrics if they don't exist
@@ -106,9 +111,6 @@ export async function GET(
       // Use newly created metrics
       const breakdown = await buildIntensityBreakdown(supabase, newMetrics as AgentIntensityMetrics, agent);
 
-      // Fetch routing configuration for UI to determine which model would be selected
-      const routingConfig = await SystemConfigService.getRoutingConfig(supabase);
-
       return NextResponse.json({
         ...breakdown,
         routing_config: {
@@ -119,11 +121,8 @@ export async function GET(
       });
     }
 
-    // Build and return breakdown with routing config
+    // Build and return breakdown with routing config (already fetched in parallel above)
     const breakdown = await buildIntensityBreakdown(supabase, metrics as AgentIntensityMetrics, agent);
-
-    // Fetch routing configuration for UI to determine which model would be selected
-    const routingConfig = await SystemConfigService.getRoutingConfig(supabase);
 
     return NextResponse.json({
       ...breakdown,
@@ -154,12 +153,22 @@ async function buildIntensityBreakdown(
   // CRITICAL FIX: Get creation tokens from token_usage table
   // agent_intensity_metrics.total_tokens_used only includes execution tokens
   // We need to add creation tokens for accurate total
-  // ✅ FIX: Fetch ALL creation token records and sum them (not just one with .maybeSingle())
-  const { data: creationTokenRecords, error: creationError } = await supabase
-    .from('token_usage')
-    .select('input_tokens, output_tokens')
-    .eq('agent_id', agent.id)
-    .eq('activity_type', 'agent_creation');
+
+  // Phase 6: Run all independent queries in parallel for performance
+  const [creationTokenResult, executionWeights, creationWeights, ranges] = await Promise.all([
+    // ✅ FIX: Fetch ALL creation token records and sum them (not just one with .maybeSingle())
+    supabase
+      .from('token_usage')
+      .select('input_tokens, output_tokens')
+      .eq('agent_id', agent.id)
+      .eq('activity_type', 'agent_creation'),
+    // Load weights from database (no more hardcoded constants!)
+    AISConfigService.getExecutionWeights(supabase),
+    AISConfigService.getCreationWeights(supabase),
+    AISConfigService.getRanges(supabase),
+  ]);
+
+  const { data: creationTokenRecords, error: creationError } = creationTokenResult;
 
   console.log(`[Intensity API] Creation token records for agent ${agent.id}:`, {
     found: !!creationTokenRecords,
@@ -179,10 +188,6 @@ async function buildIntensityBreakdown(
     console.log(`[Intensity API] ✅ Total creation tokens for agent ${agent.id}: ${creationTokens} (from ${creationTokenRecords?.length || 0} records)`);
   }
 
-  // Phase 6: Load weights from database (no more hardcoded constants!)
-  const executionWeights = await AISConfigService.getExecutionWeights(supabase);
-  const creationWeights = await AISConfigService.getCreationWeights(supabase);
-
   // Parse agent design data
   const workflowSteps = typeof agent.workflow_steps === 'string'
     ? JSON.parse(agent.workflow_steps)
@@ -200,8 +205,7 @@ async function buildIntensityBreakdown(
     ? JSON.parse(agent.trigger_conditions)
     : (agent.trigger_conditions || {});
 
-  // Fetch AIS ranges from database (same logic as AgentIntensityService)
-  const ranges = await AISConfigService.getRanges(supabase);
+  // Note: AIS ranges already fetched in parallel above
 
   // Calculate design dimension scores using database-driven ranges
   const workflowScore = AISConfigService.normalize(workflowSteps.length, ranges.creation_workflow_steps);

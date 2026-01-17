@@ -2,6 +2,8 @@
 // Client-side API service for agent operations
 // Use this in 'use client' components instead of importing repositories directly
 
+import { requestDeduplicator } from '@/lib/utils/request-deduplication'
+
 interface ApiResponse<T> {
   success: boolean;
   data?: T;
@@ -214,55 +216,73 @@ export const agentApi = {
    * @param includeTokens - If true, enriches executions with token usage data from token_usage table
    */
   async getExecutions(agentId: string, userId: string, options?: { limit?: number; includeTokens?: boolean }): Promise<ApiResponse<Execution[]>> {
-    try {
-      const token = getStoredToken();
-      const params = new URLSearchParams();
-      if (options?.limit) params.set('limit', options.limit.toString());
-      if (options?.includeTokens) params.set('includeTokens', 'true');
+    // Create cache key based on parameters to deduplicate identical requests
+    const cacheKey = `executions-${agentId}-${options?.includeTokens || false}-${options?.limit || 'all'}`
 
-      const queryString = params.toString();
-      const url = queryString
-        ? `/api/agents/${agentId}/executions?${queryString}`
-        : `/api/agents/${agentId}/executions`;
+    return requestDeduplicator.deduplicate(
+      cacheKey,
+      async () => {
+        try {
+          const token = getStoredToken();
+          const params = new URLSearchParams();
+          if (options?.limit) params.set('limit', options.limit.toString());
+          if (options?.includeTokens) params.set('includeTokens', 'true');
 
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: getAuthHeaders(userId, token || undefined),
-      });
+          const queryString = params.toString();
+          const url = queryString
+            ? `/api/agents/${agentId}/executions?${queryString}`
+            : `/api/agents/${agentId}/executions`;
 
-      const data = await response.json();
+          const response = await fetch(url, {
+            method: 'GET',
+            headers: getAuthHeaders(userId, token || undefined),
+          });
 
-      if (!response.ok || !data.success) {
-        return { success: false, error: data.error || 'Failed to fetch executions' };
-      }
+          const data = await response.json();
 
-      return { success: true, data: data.executions };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Network error' };
-    }
+          if (!response.ok || !data.success) {
+            return { success: false, error: data.error || 'Failed to fetch executions' };
+          }
+
+          return { success: true, data: data.executions };
+        } catch (error) {
+          return { success: false, error: error instanceof Error ? error.message : 'Network error' };
+        }
+      },
+      5000 // 5 second cache TTL
+    )
   },
 
   /**
    * Get memory count for agent
+   * Uses request deduplication with 30s cache - memory count doesn't change often
    */
   async getMemoryCount(agentId: string, userId: string): Promise<ApiResponse<number>> {
-    try {
-      const token = getStoredToken();
-      const response = await fetch(`/api/agents/${agentId}/memory/count`, {
-        method: 'GET',
-        headers: getAuthHeaders(userId, token || undefined),
-      });
+    const cacheKey = `memory-count-${agentId}`
 
-      const data = await response.json();
+    return requestDeduplicator.deduplicate(
+      cacheKey,
+      async () => {
+        try {
+          const token = getStoredToken();
+          const response = await fetch(`/api/agents/${agentId}/memory/count`, {
+            method: 'GET',
+            headers: getAuthHeaders(userId, token || undefined),
+          });
 
-      if (!response.ok || !data.success) {
-        return { success: false, error: data.error || 'Failed to fetch memory count' };
-      }
+          const data = await response.json();
 
-      return { success: true, data: data.count };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Network error' };
-    }
+          if (!response.ok || !data.success) {
+            return { success: false, error: data.error || 'Failed to fetch memory count' };
+          }
+
+          return { success: true, data: data.count };
+        } catch (error) {
+          return { success: false, error: error instanceof Error ? error.message : 'Network error' };
+        }
+      },
+      30000 // 30 second cache TTL - memory count doesn't change often
+    )
   },
 };
 

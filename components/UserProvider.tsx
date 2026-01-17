@@ -29,13 +29,14 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
   const [loading, setLoading] = useState(true)
   const [connectedPlugins, setConnectedPlugins] = useState<Record<string, any> | null>(null)
 
-  // Fetch user plugins from the V2 API (using cookie auth, no userId needed)
+  // Fetch user plugins from the V2 API
   const fetchUserPlugins = async (currentUser: User) => {
     try {
       const apiClient = getPluginAPIClient()
 
-      // Use V2 endpoint with cookie auth (no userId needed - uses session)
-      const status = await apiClient.getUserPluginStatus()
+      // Pass userId explicitly to avoid race condition with cookie-based auth
+      // Cookie auth may not be ready immediately after session is established
+      const status = await apiClient.getUserPluginStatus(currentUser.id)
 
       // Transform array format to object format for backward compatibility
       // connected: [{ key: "google-mail", ... }] -> { "google-mail": { ... } }

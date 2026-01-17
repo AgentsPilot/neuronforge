@@ -1,7 +1,7 @@
 // app/api/plugins/user-status/route.ts
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createAuthenticatedServerClient } from '@/lib/supabaseServerAuth';
+import { getCachedUser } from '@/lib/cachedAuth';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 import { createLogger } from '@/lib/logger';
 
@@ -62,14 +62,14 @@ export const pluginStatusCache = new ResponseCache();
 export async function GET(request: NextRequest) {
   try {
     // Try cookie-based authentication first (preferred method)
+    // Using cached auth to avoid repeated Supabase calls
     let userId: string | null = null;
     let authMethod = 'query-param'; // for logging
 
-    const supabase = await createAuthenticatedServerClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    const user = await getCachedUser();
 
-    if (user && !authError) {
-      // Cookie auth successful
+    if (user) {
+      // Cookie auth successful (from cache or fresh validation)
       userId = user.id;
       authMethod = 'cookie';
     } else {
@@ -104,17 +104,20 @@ export async function GET(request: NextRequest) {
     // Get plugin manager instance
     const pluginManager = await PluginManagerV2.getInstance();
 
-    // Get user's connected plugins (status display - no token refresh needed)
-    // Using getConnectedPlugins() for fast status checks without OAuth operations
-    const connectedPlugins = await pluginManager.getConnectedPlugins(userId);
+    // Run independent plugin queries in parallel for performance
+    // getConnectedPlugins and getActiveExpiredPluginKeys are independent
+    const [connectedPlugins, activeExpiredKeys] = await Promise.all([
+      // Get user's connected plugins (status display - no token refresh needed)
+      pluginManager.getConnectedPlugins(userId),
+      // Get plugins with expired tokens (active in DB but need refresh)
+      pluginManager.getActiveExpiredPluginKeys(userId),
+    ]);
 
     // Extract connected plugin keys to pass to getDisconnectedPlugins (avoid duplicate DB query)
     const connectedKeys = Object.keys(connectedPlugins);
 
-    // Get plugins with expired tokens (active in DB but need refresh)
-    const activeExpiredKeys = await pluginManager.getActiveExpiredPluginKeys(userId);
-
     // Get disconnected plugins, passing all active keys to avoid counting expired as disconnected
+    // This must be sequential as it depends on results from above
     const allActiveKeys = [...connectedKeys, ...activeExpiredKeys];
     const disconnectedPlugins = await pluginManager.getDisconnectedPlugins(userId, allActiveKeys);
         

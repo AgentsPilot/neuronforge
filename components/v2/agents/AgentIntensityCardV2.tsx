@@ -12,16 +12,25 @@ import { requestDeduplicator } from '@/lib/utils/request-deduplication'
 
 interface AgentIntensityCardV2Props {
   agentId: string
+  /** Optional: Parent can provide latest execution time to avoid redundant API calls.
+   *  If provided, the component won't poll for executions - it will use this value instead. */
+  latestExecutionTime?: number
 }
 
-export function AgentIntensityCardV2({ agentId }: AgentIntensityCardV2Props) {
+export function AgentIntensityCardV2({ agentId, latestExecutionTime: propExecutionTime }: AgentIntensityCardV2Props) {
   const { user } = useAuth()
   const [breakdown, setBreakdown] = useState<IntensityBreakdown | null>(null)
   const [loading, setLoading] = useState(true)
-  const [lastExecutionTime, setLastExecutionTime] = useState<number>(0)
+  const [internalExecutionTime, setInternalExecutionTime] = useState<number>(0)
 
-  // Poll for new executions to detect when agent runs
+  // Use prop value if provided, otherwise use internal state
+  const lastExecutionTime = propExecutionTime ?? internalExecutionTime
+
+  // Only poll for new executions if parent doesn't provide latestExecutionTime
+  // This eliminates redundant API calls when parent already has execution data
   useEffect(() => {
+    // Skip polling if parent provides execution time
+    if (propExecutionTime !== undefined) return
     if (!agentId || !user?.id) return
 
     const checkForNewExecutions = async () => {
@@ -33,8 +42,8 @@ export function AgentIntensityCardV2({ agentId }: AgentIntensityCardV2Props) {
         }).then(r => r.json())
         if (executions && executions.length > 0) {
           const latestExecTime = new Date(executions[0].started_at).getTime()
-          // Use functional update to avoid dependency on lastExecutionTime
-          setLastExecutionTime(prev => {
+          // Use functional update to avoid dependency on internalExecutionTime
+          setInternalExecutionTime(prev => {
             if (latestExecTime > prev) {
               return latestExecTime
             }
@@ -53,7 +62,7 @@ export function AgentIntensityCardV2({ agentId }: AgentIntensityCardV2Props) {
     const interval = setInterval(checkForNewExecutions, 30000)
 
     return () => clearInterval(interval)
-  }, [agentId, user?.id]) // Added user?.id to deps
+  }, [agentId, user?.id, propExecutionTime]) // Added propExecutionTime to deps
 
   useEffect(() => {
     if (!user?.id || !agentId) return

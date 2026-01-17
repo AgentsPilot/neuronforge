@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { usePathname, useRouter } from 'next/navigation'
 import { MessageCircle, X, Send, Loader2, ThumbsUp, ThumbsDown, BookOpen, Database, Zap, Sparkles, Bot, XCircle } from 'lucide-react'
 import { useAuth } from '@/components/UserProvider'
+import { requestDeduplicator } from '@/lib/utils/request-deduplication'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -133,8 +134,15 @@ export function HelpBot(props: HelpBotProps) {
   useEffect(() => {
     async function loadPageContexts() {
       try {
-        const response = await fetch('/api/helpbot/page-contexts')
-        const result = await response.json()
+        // Use request deduplication with 5 minute cache - config rarely changes
+        const result = await requestDeduplicator.deduplicate(
+          'helpbot-page-contexts',
+          async () => {
+            const response = await fetch('/api/helpbot/page-contexts')
+            return response.json()
+          },
+          300000 // 5 minute cache TTL
+        )
 
         if (result.success && result.contexts) {
           // Convert array to object keyed by page_route
@@ -158,8 +166,15 @@ export function HelpBot(props: HelpBotProps) {
 
     async function loadThemeColors() {
       try {
-        const response = await fetch('/api/admin/helpbot-config')
-        const result = await response.json()
+        // Use request deduplication with 5 minute cache - config rarely changes
+        const result = await requestDeduplicator.deduplicate(
+          'helpbot-theme-config',
+          async () => {
+            const response = await fetch('/api/admin/helpbot-config')
+            return response.json()
+          },
+          300000 // 5 minute cache TTL
+        )
 
         if (result.success && result.config?.theme) {
           const primaryColor = result.config.theme.primaryColor || '#8b5cf6'

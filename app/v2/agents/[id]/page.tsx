@@ -142,8 +142,7 @@ export default function V2AgentDetailPage() {
       clientLogger.info('Agent detail page mounted', { agentId })
 
       fetchAgentData()
-      fetchTokensPerPilotCredit()
-      fetchSharingRewardAmount()
+      fetchPageConfig()  // Batched call for tokens_per_pilot_credit + agent_sharing_reward_amount
       fetchShareRewardStatus()
 
       return () => {
@@ -169,18 +168,26 @@ export default function V2AgentDetailPage() {
     }
   }
 
-  const fetchTokensPerPilotCredit = async () => {
-    const value = await systemConfigApi.getNumber('tokens_per_pilot_credit', 10)
-    if (value > 0 && value <= 1000) {
-      setTokensPerPilotCredit(value)
-      clientLogger.debug('Fetched tokens per pilot credit', { value })
-    }
-  }
+  // Batched config fetch - combines tokens_per_pilot_credit and agent_sharing_reward_amount into single API call
+  const fetchPageConfig = async () => {
+    const result = await systemConfigApi.getByKeys([
+      'tokens_per_pilot_credit',
+      'agent_sharing_reward_amount'
+    ])
 
-  const fetchSharingRewardAmount = async () => {
-    const result = await systemConfigApi.getByKeys(['agent_sharing_reward_amount'])
-    if (result.success && result.data?.['agent_sharing_reward_amount']) {
-      setSharingRewardAmount(Number(result.data['agent_sharing_reward_amount']) || 500)
+    if (result.success && result.data) {
+      // Tokens per credit
+      const tokensValue = Number(result.data['tokens_per_pilot_credit'])
+      if (tokensValue > 0 && tokensValue <= 1000) {
+        setTokensPerPilotCredit(tokensValue)
+        clientLogger.debug('Fetched tokens per pilot credit', { value: tokensValue })
+      }
+
+      // Sharing reward amount
+      const rewardValue = Number(result.data['agent_sharing_reward_amount'])
+      if (rewardValue) {
+        setSharingRewardAmount(rewardValue)
+      }
     }
   }
 
@@ -1383,7 +1390,10 @@ export default function V2AgentDetailPage() {
 
           {/* AIS Complexity Card */}
           <Card className="!p-4 sm:!p-6">
-            <AgentIntensityCardV2 agentId={agentId} />
+            <AgentIntensityCardV2
+              agentId={agentId}
+              latestExecutionTime={executions[0]?.started_at ? new Date(executions[0].started_at).getTime() : undefined}
+            />
           </Card>
         </div>
 
