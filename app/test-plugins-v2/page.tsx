@@ -3195,6 +3195,28 @@ export default function TestPluginsPage() {
                 }}>
                   {JSON.stringify(enhancedPrompt, null, 2)}
                 </pre>
+                <button
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(JSON.stringify(enhancedPrompt, null, 2));
+                      addDebugLog('success', 'Enhanced Prompt JSON copied to clipboard');
+                    } catch (err) {
+                      addDebugLog('error', 'Failed to copy to clipboard');
+                    }
+                  }}
+                  style={{
+                    marginTop: '10px',
+                    padding: '8px 16px',
+                    backgroundColor: '#17a2b8',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: 'pointer',
+                    fontSize: '14px'
+                  }}
+                >
+                  📋 Copy Enhanced Prompt JSON
+                </button>
               </details>
 
               {/* Analysis Data */}
