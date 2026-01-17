@@ -6,7 +6,6 @@
  */
 
 import type { DeclarativeLogicalIR, IRValidationResult, IRValidationError } from '../schemas/declarative-ir-types'
-import { DECLARATIVE_IR_SCHEMA_STRICT } from '../schemas/declarative-ir-schema-strict'
 import Ajv from 'ajv'
 
 // ============================================================================
@@ -39,10 +38,22 @@ export const FORBIDDEN_IR_TOKENS = [
 export class DeclarativeIRValidator {
   private ajv: Ajv
   private validateSchema: any
+  private schemaCompiled = false
 
   constructor() {
     this.ajv = new Ajv({ allErrors: true, allowUnionTypes: true, strict: false })
-    this.validateSchema = this.ajv.compile(DECLARATIVE_IR_SCHEMA_STRICT)
+  }
+
+  /**
+   * Lazy schema compilation to avoid bundling large schema at import time
+   */
+  private ensureSchemaCompiled(): void {
+    if (!this.schemaCompiled) {
+      // Dynamic require to avoid bundling schema at module load time
+      const { DECLARATIVE_IR_SCHEMA_STRICT } = require('../schemas/declarative-ir-schema-strict')
+      this.validateSchema = this.ajv.compile(DECLARATIVE_IR_SCHEMA_STRICT)
+      this.schemaCompiled = true
+    }
   }
 
   /**
@@ -54,6 +65,9 @@ export class DeclarativeIRValidator {
    * 3. Semantic validation
    */
   validate(ir: any): IRValidationResult {
+    // Ensure schema is compiled on first use
+    this.ensureSchemaCompiled()
+
     const errors: IRValidationError[] = []
 
     // Step 1: Schema validation

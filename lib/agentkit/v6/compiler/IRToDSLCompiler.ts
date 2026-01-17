@@ -14,7 +14,6 @@
 import OpenAI from 'openai'
 import type { PluginManagerV2 } from '../../../server/plugin-manager-v2'
 import type { DeclarativeLogicalIR } from '../logical-ir/schemas/declarative-ir-types'
-import { PILOT_DSL_SCHEMA } from '../../../pilot/schema/pilot-dsl-schema'
 import { validateWorkflowStructure } from '../../../pilot/schema/runtime-validator'
 import { WorkflowPostValidator } from './WorkflowPostValidator'
 import { PilotNormalizer } from './PilotNormalizer'

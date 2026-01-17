@@ -14,8 +14,6 @@
 
 import { OpenAI } from 'openai'
 import Anthropic from '@anthropic-ai/sdk'
-import { DECLARATIVE_IR_SCHEMA } from '../logical-ir/schemas/declarative-ir-schema'
-import { DECLARATIVE_IR_SCHEMA_STRICT } from '../logical-ir/schemas/declarative-ir-schema-strict'
 import { validateDeclarativeIR } from '../logical-ir/validation/DeclarativeIRValidator'
 import type { DeclarativeLogicalIR, IRValidationResult } from '../logical-ir/schemas/declarative-ir-types'
 import { readFileSync } from 'fs'
@@ -234,6 +232,9 @@ export class EnhancedPromptToDeclarativeIRGenerator {
       console.log('[DeclarativeIRGenerator] Calling OpenAI with model:', this.getModelName())
 
       const userMessage = this.buildUserMessage(enhancedPrompt)
+
+      // Dynamic import to avoid bundling large schema at module load time
+      const { DECLARATIVE_IR_SCHEMA_STRICT } = await import('../logical-ir/schemas/declarative-ir-schema-strict')
 
       const response = await this.openai.chat.completions.create({
         model: this.getModelName(),

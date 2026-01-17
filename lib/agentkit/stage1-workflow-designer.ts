@@ -20,7 +20,6 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { PILOT_DSL_SCHEMA } from '../pilot/schema/pilot-dsl-schema';
 import { PluginManagerV2 } from '../server/plugin-manager-v2';
 
 // Initialize Anthropic client

@@ -3,7 +3,6 @@
 
 import { openai, AGENTKIT_CONFIG } from './agentkitClient';
 import { convertPluginsToTools, getPluginContextPrompt } from './convertPlugins';
-import { PILOT_DSL_SCHEMA } from '@/lib/pilot/schema';
 
 export interface AnalyzedWorkflowStep {
   id: string;
@@ -854,6 +853,9 @@ CRITICAL: Every plugin_action step MUST have a "params" field with proper variab
     // gpt-4o-mini and other models don't support strict mode
     const modelToUse = 'gpt-4o';
     console.log(`🔍 [DEBUG] Using model: ${modelToUse} (forced for strict JSON schema support)`);
+
+    // Dynamic import to avoid bundling large schema at module load time
+    const { PILOT_DSL_SCHEMA } = await import('@/lib/pilot/schema');
 
     const completion = await openai.chat.completions.create({
       model: modelToUse,
