@@ -1421,12 +1421,18 @@ export class StepExecutor {
     let data = input !== undefined ? input : params.data;
 
     // 🔍 DEBUG: Log what we're actually receiving
+    // Note: JSON.stringify(undefined) returns undefined (not a string), so we need to handle this
+    const inputValueForLog = input === undefined
+      ? 'undefined'
+      : Array.isArray(input)
+        ? `array[${input.length}]`
+        : (JSON.stringify(input) || 'null').slice(0, 200);
     logger.debug({
       stepId: step.id,
       operation,
       inputType: typeof input,
       inputIsArray: Array.isArray(input),
-      inputValue: Array.isArray(input) ? `array[${input.length}]` : JSON.stringify(input).slice(0, 200),
+      inputValue: inputValueForLog,
       dataType: typeof data,
       dataIsArray: Array.isArray(data)
     }, '🔍 Transform input received');
@@ -2425,8 +2431,8 @@ export class StepExecutor {
       `.replace(/\s+/g, ' ').trim();
 
       const headerCellStyle = `
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        background-color: #667eea;
+        background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+        background-color: #f97316;
         color: white;
         padding: 12px 16px;
         text-align: left;
@@ -3125,9 +3131,18 @@ export class StepExecutor {
 
     // Pattern 2: If item is an object (record from CRM, API, etc.)
     if (typeof item === 'object' && item !== null) {
-      // Direct property access
+      // Direct property access (case-sensitive first)
       if (key in item) {
         return item[key];
+      }
+
+      // ✅ FIX: Case-insensitive fallback for object keys
+      // rows_to_objects lowercases headers (Sales Person → sales person)
+      // but partition/group_by may use original case from IR
+      const lowerKey = String(key).toLowerCase();
+      const matchingKey = Object.keys(item).find(k => k.toLowerCase() === lowerKey);
+      if (matchingKey) {
+        return item[matchingKey];
       }
 
       // ✅ FIX: Auto-detect nested 'fields' wrapper for CRM records (Airtable, HubSpot, etc.)
@@ -3137,6 +3152,11 @@ export class StepExecutor {
         if (key in item.fields) {
           return item.fields[key];
         }
+        // Case-insensitive fallback for fields
+        const fieldsMatchingKey = Object.keys(item.fields).find(k => k.toLowerCase() === lowerKey);
+        if (fieldsMatchingKey) {
+          return item.fields[fieldsMatchingKey];
+        }
       }
 
       // ✅ FIX: Auto-detect nested 'properties' wrapper for HubSpot-style records
@@ -3145,6 +3165,11 @@ export class StepExecutor {
         if (key in item.properties) {
           return item.properties[key];
         }
+        // Case-insensitive fallback for properties
+        const propsMatchingKey = Object.keys(item.properties).find(k => k.toLowerCase() === lowerKey);
+        if (propsMatchingKey) {
+          return item.properties[propsMatchingKey];
+        }
       }
 
       // ✅ FIX: Auto-detect nested 'data' wrapper for generic API responses
@@ -3152,14 +3177,31 @@ export class StepExecutor {
         if (key in item.data) {
           return item.data[key];
         }
+        // Case-insensitive fallback for data
+        const dataMatchingKey = Object.keys(item.data).find(k => k.toLowerCase() === lowerKey);
+        if (dataMatchingKey) {
+          return item.data[dataMatchingKey];
+        }
       }
 
       // Nested property access (e.g., "fields.Name" for explicit Airtable access)
+      // ✅ FIX: Added case-insensitive fallback for nested access
       const keyParts = String(key).split('.');
       let value = item;
       for (const part of keyParts) {
-        if (value && typeof value === 'object' && part in value) {
-          value = value[part];
+        if (value && typeof value === 'object') {
+          if (part in value) {
+            value = value[part];
+          } else {
+            // Case-insensitive fallback
+            const partLower = part.toLowerCase();
+            const nestedMatchingKey = Object.keys(value).find(k => k.toLowerCase() === partLower);
+            if (nestedMatchingKey) {
+              value = value[nestedMatchingKey];
+            } else {
+              return undefined;
+            }
+          }
         } else {
           return undefined;
         }

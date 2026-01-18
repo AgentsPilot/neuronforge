@@ -146,19 +146,39 @@ export const DECLARATIVE_IR_SCHEMA_STRICT = {
 
     normalization: {
       type: ['object', 'null'],
-      required: ['required_headers', 'case_sensitive', 'missing_header_action'],
       additionalProperties: false,
       properties: {
         required_headers: {
-          type: 'array',
+          type: ['array', 'null'],
           items: { type: 'string' }
         },
         case_sensitive: {
-          type: 'boolean'
+          type: ['boolean', 'null']
         },
         missing_header_action: {
-          type: 'string',
-          enum: ['error', 'warn', 'ignore']
+          type: ['string', 'null'],
+          enum: ['error', 'warn', 'ignore', null]
+        },
+        // Additional normalization options for field transformations
+        description: {
+          type: ['string', 'null'],
+          description: 'Description of normalization logic'
+        },
+        fields: {
+          type: ['array', 'null'],
+          items: {
+            type: 'object',
+            properties: {
+              field: { type: 'string' },
+              operation: { type: 'string' },
+              on_failure: { type: ['string', 'null'] }
+            }
+          }
+        },
+        // Grounded facts from semantic plan
+        grounded_facts: {
+          type: ['array', 'null'],
+          items: { type: 'string' }
         }
       }
     },
@@ -212,8 +232,8 @@ export const DECLARATIVE_IR_SCHEMA_STRICT = {
                 ]
               },
               value: {
-                type: ['string', 'number', 'null'],
-                description: 'Value to compare (null for operators like is_empty, number for numeric comparisons)'
+                type: ['string', 'number', 'boolean', 'null'],
+                description: 'Value to compare (null for operators like is_empty, number for numeric comparisons, boolean for true/false checks)'
               },
               description: {
                 type: ['string', 'null']
@@ -267,7 +287,7 @@ export const DECLARATIVE_IR_SCHEMA_STRICT = {
                       ]
                     },
                     value: {
-                      type: ['string', 'number', 'null']
+                      type: ['string', 'number', 'boolean', 'null']
                     },
                     description: {
                       type: ['string', 'null']
@@ -658,6 +678,11 @@ export const DECLARATIVE_IR_SCHEMA_STRICT = {
               type: ['string', 'null']
               // Note: operation_type must match an action name from the plugin definition
               // This is validated semantically via plugin manager, not via static enum
+            },
+            // Plugin-specific configuration (e.g., email recipients, content format)
+            config: {
+              type: ['object', 'null'],
+              additionalProperties: true
             }
           }
         },

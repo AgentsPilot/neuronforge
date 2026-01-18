@@ -30,6 +30,15 @@ interface GenerateDeclarativeIRRequest {
       delivery: string[]
       processing_steps?: string[]
     }
+    // Production format includes specifics with key resolved inputs like filter rules
+    specifics?: {
+      services_involved?: string[]
+      user_inputs_required?: any[]
+      resolved_user_inputs?: Array<{
+        key: string
+        value: any
+      }>
+    }
   }
   modelProvider?: 'openai' | 'anthropic'
   modelName?: string

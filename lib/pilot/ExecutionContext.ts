@@ -448,7 +448,28 @@ export class ExecutionContext implements IExecutionContext {
         );
       }
 
-      return this.getNestedValue(stepOutput, parts.slice(1));
+      const remainingPath = parts.slice(1);
+
+      // ✅ USABILITY FIX: Auto-navigate into .data for step outputs
+      // StepOutput structure is: { stepId, plugin, action, data, metadata }
+      // If user writes {{step4.assigned}}, they likely mean {{step4.data.assigned}}
+      // Only auto-navigate if the first property isn't 'data' or 'metadata'
+      if (remainingPath.length > 0) {
+        const firstProp = remainingPath[0];
+        const isDirectProperty = ['data', 'metadata', 'stepId', 'plugin', 'action'].includes(firstProp);
+
+        if (!isDirectProperty) {
+          // Auto-navigate into .data
+          logger.debug({
+            stepId,
+            originalPath: path,
+            autoNavigatedPath: `${stepId}.data.${remainingPath.join('.')}`
+          }, 'Auto-navigating into step.data for convenience');
+          return this.getNestedValue(stepOutput.data, remainingPath);
+        }
+      }
+
+      return this.getNestedValue(stepOutput, remainingPath);
     }
 
     // Check if it's an input value reference
@@ -619,7 +640,24 @@ export class ExecutionContext implements IExecutionContext {
       }
       // Handle object property access
       else {
-        current = current[part];
+        // Direct property access first (case-sensitive)
+        if (part in current) {
+          current = current[part];
+        }
+        // ✅ CRITICAL FIX: Case-insensitive fallback
+        // rows_to_objects lowercases headers (Stage → stage)
+        // but filter conditions may use original case (Stage)
+        else if (typeof current === 'object' && current !== null) {
+          const lowerPart = part.toLowerCase();
+          const matchingKey = Object.keys(current).find(k => k.toLowerCase() === lowerPart);
+          if (matchingKey) {
+            current = current[matchingKey];
+          } else {
+            current = undefined;  // Key not found
+          }
+        } else {
+          current = undefined;
+        }
       }
     }
 

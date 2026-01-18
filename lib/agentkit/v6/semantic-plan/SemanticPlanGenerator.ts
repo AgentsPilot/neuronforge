@@ -40,6 +40,15 @@ export interface EnhancedPrompt {
     original_request: string
     clarifications?: Record<string, string>
   }
+  // Production format includes specifics with key resolved inputs like filter rules
+  specifics?: {
+    services_involved?: string[]
+    user_inputs_required?: any[]
+    resolved_user_inputs?: Array<{
+      key: string
+      value: any
+    }>
+  }
 }
 
 export interface SemanticPlanConfig {
@@ -444,6 +453,7 @@ export class SemanticPlanGenerator {
   private buildUserMessage(enhancedPrompt: EnhancedPrompt): string {
     const sections = enhancedPrompt.sections
     const context = enhancedPrompt.user_context
+    const specifics = enhancedPrompt.specifics
 
     let message = '# Enhanced Prompt\n\n'
 
@@ -472,6 +482,19 @@ export class SemanticPlanGenerator {
       for (const [question, answer] of Object.entries(context.clarifications)) {
         message += `- ${question}: ${answer}\n`
       }
+      message += '\n'
+    }
+
+    // Include resolved user inputs - critical for filter rules, column names, etc.
+    if (specifics?.resolved_user_inputs && specifics.resolved_user_inputs.length > 0) {
+      message += '## Resolved User Inputs (USE THESE EXACT VALUES)\n'
+      message += 'These are pre-validated values from the user. Use them exactly as specified:\n\n'
+      specifics.resolved_user_inputs.forEach(input => {
+        message += `- **${input.key}**: ${input.value}\n`
+      })
+      message += '\n'
+      message += 'IMPORTANT: For filter conditions, use the exact field names and values from above.\n'
+      message += 'Example: If "high_qualified_rule" = "Stage = 4", the filter field must be "Stage" and value must be "4".\n'
       message += '\n'
     }
 

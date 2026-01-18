@@ -26,6 +26,7 @@ export interface IRFormalizerConfig {
   openai_api_key?: string
   pluginManager?: PluginManagerV2
   servicesInvolved?: string[] // From Enhanced Prompt specifics.services_involved
+  resolvedUserInputs?: Array<{ key: string; value: any }> // From Enhanced Prompt specifics.resolved_user_inputs
 }
 
 export interface FormalizationResult {
@@ -48,12 +49,14 @@ export class IRFormalizer {
     openai_api_key: string
     pluginManager?: PluginManagerV2
     servicesInvolved?: string[]
+    resolvedUserInputs?: Array<{ key: string; value: any }>
   }
   private openai: OpenAI
   private systemPrompt: string
   private pluginManager?: PluginManagerV2
   private groundedPlan?: any  // Store current grounded plan for plugin extraction
   private servicesInvolved?: string[]  // From Enhanced Prompt
+  private resolvedUserInputs?: Array<{ key: string; value: any }>  // From Enhanced Prompt
 
   constructor(config: IRFormalizerConfig) {
     this.config = {
@@ -62,11 +65,13 @@ export class IRFormalizer {
       max_tokens: config.max_tokens ?? 4000,
       openai_api_key: config.openai_api_key || process.env.OPENAI_API_KEY || '',
       pluginManager: config.pluginManager,
-      servicesInvolved: config.servicesInvolved
+      servicesInvolved: config.servicesInvolved,
+      resolvedUserInputs: config.resolvedUserInputs
     }
 
     this.pluginManager = config.pluginManager
     this.servicesInvolved = config.servicesInvolved
+    this.resolvedUserInputs = config.resolvedUserInputs
 
     // Initialize OpenAI client
     this.openai = new OpenAI({ apiKey: this.config.openai_api_key })
@@ -252,10 +257,27 @@ The semantic understanding includes search_criteria or filter conditions.
 \`\`\`
 ` : ''
 
+    // Build resolved user inputs section if available
+    let resolvedUserInputsSection = ''
+    if (this.resolvedUserInputs && this.resolvedUserInputs.length > 0) {
+      resolvedUserInputsSection = `
+## Resolved User Inputs (USE THESE EXACT VALUES - HIGHEST PRIORITY)
+
+These are pre-validated values from the user. Use them EXACTLY as specified:
+
+${this.resolvedUserInputs.map(input => `- **${input.key}**: ${input.value}`).join('\n')}
+
+**CRITICAL**: For filter conditions, parse these values to extract field names and values:
+- If "high_qualified_rule" = "Stage = 4", then filters.conditions[].field MUST be "Stage" and value MUST be "4"
+- If "filter_rule" = "Status equals Active", then filters.conditions[].field MUST be "Status" and value MUST be "Active"
+- These override any field names from grounded facts or plugin output fields
+`
+    }
+
     return `# Formalization Request
 
 You must map this grounded semantic plan to precise IR.
-
+${resolvedUserInputsSection}
 ## Grounded Facts (USE THESE EXACTLY)
 
 \`\`\`json
@@ -301,6 +323,8 @@ Map the semantic understanding to IR structure.
    - NEVER use null for filter field names - ALWAYS populate with actual field name from Output Fields
    - NEVER invent semantic names like "email_content_text" - use ONLY names from Output Fields
    - Example: If filtering Gmail for complaints, use "snippet" or "body" (from Output Fields), NOT null
+
+7. **RESOLVED USER INPUTS OVERRIDE**: If "Resolved User Inputs" section exists above, parse the filter rules to extract exact field names and values. These take precedence over plugin output fields for tabular data filtering.
 
 Output ONLY the IR JSON (no explanations, no markdown).`
   }
@@ -610,6 +634,23 @@ ${pluginDetails}
             ds.config.max_results = isNaN(maxResults) ? undefined : maxResults
           }
         }
+      }
+    }
+
+    // Fix normalization.grounded_facts: LLM sometimes outputs object instead of array
+    // Schema expects: array of strings or null
+    // LLM sometimes outputs: {"A4": true, "A5": "not_executed"}
+    if (ir.normalization && ir.normalization.grounded_facts) {
+      const gf = ir.normalization.grounded_facts as any
+      if (!Array.isArray(gf) && typeof gf === 'object') {
+        // Convert object to array of strings (keys or key=value pairs)
+        const asArray = Object.entries(gf).map(([key, value]) => {
+          if (value === true) return key
+          if (typeof value === 'string') return `${key}=${value}`
+          return key
+        })
+        ir.normalization.grounded_facts = asArray
+        console.log('[IRFormalizer] Coerced normalization.grounded_facts from object to array:', asArray)
       }
     }
   }

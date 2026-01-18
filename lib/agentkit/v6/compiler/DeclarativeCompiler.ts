@@ -1497,20 +1497,65 @@ export class DeclarativeCompiler {
       return this.compileMultiDestinationDelivery(ir, ctx)
     }
 
-    // Pattern 1: Per-Group Delivery
-    if (delivery_rules.per_group_delivery) {
+    // ✅ COMBINED PATTERNS: Support multiple delivery types in one workflow
+    // Order: summary_delivery → per_group_delivery → per_item_delivery
+    // Each pattern resets ctx.currentVariable to ensure proper data flow
+
+    const hasSummary = !!delivery_rules.summary_delivery
+    const hasPerGroup = !!delivery_rules.per_group_delivery
+    const hasPerItem = !!delivery_rules.per_item_delivery
+
+    // Count active patterns
+    const activePatterns = [hasSummary, hasPerGroup, hasPerItem].filter(Boolean).length
+
+    if (activePatterns > 1) {
+      this.log(ctx, `Detected combined delivery pattern: ${hasSummary ? 'summary ' : ''}${hasPerGroup ? 'per-group ' : ''}${hasPerItem ? 'per-item' : ''}`)
+
+      // Save current variable - all patterns start from the same filtered data
+      const dataVariableBeforeDelivery = ctx.currentVariable
+
+      // 1. Summary delivery first (sends full dataset to owner/admin)
+      if (hasSummary) {
+        const summarySteps = this.compileSummaryDelivery(ir, ctx)
+        steps.push(...summarySteps)
+        ctx.currentVariable = dataVariableBeforeDelivery  // Reset for next pattern
+        this.log(ctx, '✓ Compiled summary delivery')
+      }
+
+      // 2. Per-group delivery (partitions + groups + loop)
+      if (hasPerGroup) {
+        const perGroupSteps = this.compilePerGroupDelivery(ir, ctx)
+        steps.push(...perGroupSteps)
+        ctx.currentVariable = dataVariableBeforeDelivery  // Reset for next pattern
+        this.log(ctx, '✓ Compiled per-group delivery')
+      }
+
+      // 3. Per-item delivery (loop over individual items)
+      if (hasPerItem) {
+        const perItemSteps = this.compilePerItemDelivery(ir, ctx)
+        steps.push(...perItemSteps)
+        this.log(ctx, '✓ Compiled per-item delivery')
+      }
+
+      return steps
+    }
+
+    // Single pattern handling (original logic)
+
+    // Pattern 1: Per-Group Delivery (standalone)
+    if (hasPerGroup) {
       this.log(ctx, 'Detected pattern: Per-Group Delivery → Will create partition + group + loop')
       return this.compilePerGroupDelivery(ir, ctx)
     }
 
-    // Pattern 2: Per-Item Delivery
-    if (delivery_rules.per_item_delivery) {
+    // Pattern 2: Per-Item Delivery (standalone)
+    if (hasPerItem) {
       this.log(ctx, 'Detected pattern: Per-Item Delivery → Will create loop over items')
       return this.compilePerItemDelivery(ir, ctx)
     }
 
-    // Pattern 3: Summary Delivery
-    if (delivery_rules.summary_delivery) {
+    // Pattern 3: Summary Delivery (standalone)
+    if (hasSummary) {
       this.log(ctx, 'Detected pattern: Summary Delivery → Single delivery, no loop')
       return this.compileSummaryDelivery(ir, ctx)
     }
@@ -1555,7 +1600,10 @@ export class DeclarativeCompiler {
           }
         })
 
-        ctx.currentVariable = `${metadata.id}.assigned`
+        // ✅ FIX: Transform step outputs are stored in .data
+        // partition returns { partitions: {}, assigned: [], unassigned: [] }
+        // So we need step.data.assigned, not step.assigned
+        ctx.currentVariable = `${metadata.id}.data.assigned`
         this.log(ctx, `✓ Created partition by ${partition.field}`)
       }
     }
@@ -1573,7 +1621,9 @@ export class DeclarativeCompiler {
     })
 
     // Transform step outputs are stored in .data
-    ctx.currentVariable = `${groupMetadata.id}.data`
+    // ✅ FIX: group_by returns { grouped: {}, groups: [], keys: [], count: N }
+    // For scatter-gather, we need to iterate over the `groups` array
+    ctx.currentVariable = `${groupMetadata.id}.data.groups`
     this.log(ctx, `✓ Created grouping by ${grouping.group_by}`)
 
     // Step 3: Create scatter-gather loop over groups
@@ -1625,10 +1675,11 @@ export class DeclarativeCompiler {
           rendering_type: ir.rendering.type,
           columns: mappedColumns,
           empty_message: ir.rendering.empty_message
-        }
+        },
+        output_variable: 'rendered_table'  // ✅ FIX: Set output variable for reference in delivery step
       })
 
-      this.log(ctx, `✓ Added rendering step in loop`)
+      this.log(ctx, `✓ Added rendering step in loop (output: rendered_table)`)
     }
 
     // Add delivery via plugin (email, slack, etc.)
@@ -1658,7 +1709,15 @@ export class DeclarativeCompiler {
     )
 
     // Override recipient with group key for per-group delivery
-    if (groupDeliveryParams.to || groupDeliveryParams.recipients) {
+    // Handle both nested (google-mail: recipients.to) and flat (to) structures
+    if (groupDeliveryParams.recipients && groupDeliveryParams.recipients.to !== undefined) {
+      // Nested structure (google-mail pattern)
+      groupDeliveryParams.recipients.to = [`{{group.key}}`]
+    } else if (groupDeliveryParams.to !== undefined) {
+      // Flat structure
+      groupDeliveryParams.to = [`{{group.key}}`]
+    } else {
+      // Neither exists - add flat to for backward compatibility
       groupDeliveryParams.to = [`{{group.key}}`]
     }
 

@@ -35,6 +35,15 @@ export interface EnhancedPrompt {
     original_request: string
     clarifications?: Record<string, string>
   }
+  // Production format includes specifics with key resolved inputs like filter rules
+  specifics?: {
+    services_involved?: string[]
+    user_inputs_required?: any[]
+    resolved_user_inputs?: Array<{
+      key: string
+      value: any
+    }>
+  }
 }
 
 export interface DeclarativeIRGenerationResult {
@@ -338,6 +347,7 @@ export class EnhancedPromptToDeclarativeIRGenerator {
    */
   private buildUserMessage(enhancedPrompt: EnhancedPrompt): string {
     const sections = enhancedPrompt.sections
+    const specifics = enhancedPrompt.specifics
 
     let message = '# Enhanced Prompt\n\n'
 
@@ -378,6 +388,19 @@ export class EnhancedPromptToDeclarativeIRGenerator {
       sections.processing_steps.forEach(item => {
         message += `${item}\n`
       })
+      message += '\n'
+    }
+
+    // Include resolved user inputs - critical for filter rules, column names, etc.
+    if (specifics?.resolved_user_inputs && specifics.resolved_user_inputs.length > 0) {
+      message += '## Resolved User Inputs (USE THESE EXACT VALUES)\n'
+      message += 'These are pre-validated values from the user. Use them exactly as specified:\n\n'
+      specifics.resolved_user_inputs.forEach(input => {
+        message += `- **${input.key}**: ${input.value}\n`
+      })
+      message += '\n'
+      message += 'IMPORTANT: For filter conditions, use the exact field names and values from above.\n'
+      message += 'Example: If "high_qualified_rule" = "Stage = 4", then filter.field must be "Stage" and filter.value must be "4" or 4.\n'
       message += '\n'
     }
 

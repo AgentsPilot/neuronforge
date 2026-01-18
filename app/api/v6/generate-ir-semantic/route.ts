@@ -572,13 +572,17 @@ export async function POST(request: NextRequest) {
     const pluginManager = await PluginManagerV2.getInstance()
     console.log(`[API] PluginManager initialized with ${Object.keys(pluginManager.getAvailablePlugins()).length} plugins`)
 
+    // Extract resolved user inputs from Enhanced Prompt (for filter rules, column names, etc.)
+    const resolvedUserInputs = body.enhanced_prompt?.specifics?.resolved_user_inputs
+
     const irFormalizer = new IRFormalizer({
       model: config.model || 'gpt-5.2',
       temperature: config.formalization_temperature ?? 0.0, // Very low - mechanical
       max_tokens: 4000,
       openai_api_key: process.env.OPENAI_API_KEY,
       pluginManager, // ← Pass PluginManagerV2 so LLM knows available plugins
-      servicesInvolved // ← Pass services from Enhanced Prompt (simple, no guessing!)
+      servicesInvolved, // ← Pass services from Enhanced Prompt (simple, no guessing!)
+      resolvedUserInputs // ← Pass resolved user inputs for exact filter field names
     })
 
     const formalizationResult = await irFormalizer.formalize(groundedPlan)
