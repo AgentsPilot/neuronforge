@@ -711,11 +711,14 @@ export const DECLARATIVE_IR_SCHEMA_STRICT = {
           type: ['array', 'null'],
           items: {
             type: 'object',
-            required: ['plugin_key', 'operation_type', 'recipient'],
+            // ✅ FIX: Allow either 'recipient' (static) OR 'recipient_source' (dynamic from data field)
+            // Per-group delivery uses recipient_source to get recipient from each group's key
+            required: ['plugin_key', 'operation_type'],
             additionalProperties: false,
             properties: {
               name: { type: ['string', 'null'] },
-              recipient: { type: 'string' },
+              recipient: { type: ['string', 'null'] },  // Static recipient
+              recipient_source: { type: ['string', 'null'] },  // Dynamic: field name containing recipient
               cc: { type: ['array', 'null'], items: { type: 'string' } },
               subject: { type: ['string', 'null'] },
               body_template: { type: ['string', 'null'] },

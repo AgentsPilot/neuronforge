@@ -269,13 +269,14 @@ export class DeclarativeIRValidator {
             suggestion: `Specify the operation_type (e.g., "send", "post", "append_rows")`
           })
         }
-        // Wave 8: Validate recipient is present (required by schema)
-        if (!dest.recipient) {
+        // Wave 8: Validate recipient OR recipient_source is present
+        // recipient = static email address, recipient_source = dynamic field name (for per-group delivery)
+        if (!dest.recipient && !dest.recipient_source) {
           errors.push({
             error_code: 'MISSING_REQUIRED_FIELD',
-            message: `multiple_destinations[${idx}] is missing 'recipient'. This is required for delivery.`,
+            message: `multiple_destinations[${idx}] is missing 'recipient' or 'recipient_source'. One is required for delivery.`,
             ir_path: `$.delivery_rules.multiple_destinations[${idx}].recipient`,
-            suggestion: `Specify the recipient (e.g., an email address or variable reference like "{{email}}")`
+            suggestion: `Specify either 'recipient' (static email) or 'recipient_source' (field name containing recipient)`
           })
         }
       })
