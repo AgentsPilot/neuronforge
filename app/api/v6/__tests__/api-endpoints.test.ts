@@ -11,7 +11,7 @@ import { POST as generatePlanPOST } from '../generate-workflow-plan/route'
 import { POST as updatePlanPOST } from '../update-workflow-plan/route'
 import { POST as compilePOST } from '../compile-workflow/route'
 import { NextRequest } from 'next/server'
-import type { EnhancedPrompt } from '@/lib/agentkit/v6/generation/EnhancedPromptToIRGenerator'
+import type { EnhancedPrompt } from '@/lib/agentkit/v6/generation/EnhancedPromptToDeclarativeIRGenerator'
 import type { ExtendedLogicalIR } from '@/lib/agentkit/v6/logical-ir/schemas/extended-ir-types'
 
 // ============================================================================
@@ -209,7 +209,7 @@ describe('V6 API Endpoints', () => {
     }, TEST_TIMEOUT)
 
     it('should return validation error for missing correction message', async () => {
-      const ir: ExtendedLogicalIR = {
+      const ir = {
         ir_version: '2.0',
         goal: 'Test',
         data_sources: [{
@@ -219,13 +219,14 @@ describe('V6 API Endpoints', () => {
           location: 'Test'
         }],
         delivery: [{
+          id: 'delivery1',
           method: 'email',
           config: {
             recipient: ['test@example.com']
           }
         }],
         clarifications_required: []
-      }
+      } as unknown as ExtendedLogicalIR  // Partial IR for testing
 
       const request = createMockRequest({ currentIR: ir })
       const response = await updatePlanPOST(request)
@@ -283,7 +284,7 @@ describe('V6 API Endpoints', () => {
 
   describe('POST /api/v6/compile-workflow', () => {
     it('should compile IR to PILOT_DSL workflow', async () => {
-      const ir: ExtendedLogicalIR = {
+      const ir = {
         ir_version: '2.0',
         goal: 'Send weekly report',
         data_sources: [{
@@ -294,6 +295,7 @@ describe('V6 API Endpoints', () => {
           tab: 'Report'
         }],
         delivery: [{
+          id: 'delivery1',
           method: 'email',
           config: {
             recipient: ['manager@example.com'],
@@ -301,7 +303,7 @@ describe('V6 API Endpoints', () => {
           }
         }],
         clarifications_required: []
-      }
+      } as unknown as ExtendedLogicalIR  // Partial IR for testing
 
       const request = createMockRequest({ ir })
       const response = await compilePOST(request)
@@ -342,7 +344,7 @@ describe('V6 API Endpoints', () => {
     })
 
     it('should include compilation metadata', async () => {
-      const ir: ExtendedLogicalIR = {
+      const ir = {
         ir_version: '2.0',
         goal: 'Test compilation',
         data_sources: [{
@@ -352,13 +354,14 @@ describe('V6 API Endpoints', () => {
           location: 'Test'
         }],
         delivery: [{
+          id: 'delivery1',
           method: 'email',
           config: {
             recipient: ['test@example.com']
           }
         }],
         clarifications_required: []
-      }
+      } as unknown as ExtendedLogicalIR  // Partial IR for testing
 
       const request = createMockRequest({ ir })
       const response = await compilePOST(request)
@@ -373,7 +376,7 @@ describe('V6 API Endpoints', () => {
     })
 
     it('should compile within performance target', async () => {
-      const ir: ExtendedLogicalIR = {
+      const ir = {
         ir_version: '2.0',
         goal: 'Performance test',
         data_sources: [{
@@ -383,13 +386,14 @@ describe('V6 API Endpoints', () => {
           location: 'Test'
         }],
         delivery: [{
+          id: 'delivery1',
           method: 'email',
           config: {
             recipient: ['test@example.com']
           }
         }],
         clarifications_required: []
-      }
+      } as unknown as ExtendedLogicalIR  // Partial IR for testing
 
       const request = createMockRequest({ ir })
       const response = await compilePOST(request)
@@ -400,7 +404,7 @@ describe('V6 API Endpoints', () => {
     })
 
     it('should handle grouped delivery workflows', async () => {
-      const ir: ExtendedLogicalIR = {
+      const ir = {
         ir_version: '2.0',
         goal: 'Email per sales rep',
         data_sources: [{
@@ -410,10 +414,12 @@ describe('V6 API Endpoints', () => {
           location: 'Opportunities'
         }],
         grouping: {
+          input_partition: 'data',
           group_by: 'sales_rep',
           emit_per_group: true
         },
         delivery: [{
+          id: 'delivery1',
           method: 'email',
           config: {
             recipient_source: 'email',
@@ -421,7 +427,7 @@ describe('V6 API Endpoints', () => {
           }
         }],
         clarifications_required: []
-      }
+      } as unknown as ExtendedLogicalIR  // Partial IR for testing
 
       const request = createMockRequest({ ir })
       const response = await compilePOST(request)
@@ -433,7 +439,7 @@ describe('V6 API Endpoints', () => {
     })
 
     it('should handle workflows with AI operations', async () => {
-      const ir: ExtendedLogicalIR = {
+      const ir = {
         ir_version: '2.0',
         goal: 'Analyze sentiment',
         data_sources: [{
@@ -447,18 +453,19 @@ describe('V6 API Endpoints', () => {
           instruction: 'Analyze sentiment',
           input_source: '{{data.comment}}',
           output_schema: {
-            type: 'enum',
+            type: 'string',
             enum: ['positive', 'neutral', 'negative']
           }
         }],
         delivery: [{
+          id: 'delivery1',
           method: 'email',
           config: {
             recipient: ['support@example.com']
           }
         }],
         clarifications_required: []
-      }
+      } as unknown as ExtendedLogicalIR  // Partial IR for testing
 
       const request = createMockRequest({ ir })
       const response = await compilePOST(request)

@@ -300,9 +300,12 @@ export async function POST(request: NextRequest) {
     console.log('[API] Phase 1: Understanding (Semantic Plan Generation)')
     const phase1Start = Date.now()
 
+    // Resolve model name with provider-specific defaults
+    const resolvedModel = config.model || (provider === 'openai' ? 'gpt-5.2' : 'claude-3-5-sonnet-20241022')
+
     const semanticPlanGenerator = new SemanticPlanGenerator({
       model_provider: provider,
-      model_name: config.model,
+      model_name: resolvedModel,
       temperature: config.understanding_temperature ?? 0.3,
       max_tokens: 6000
     })
@@ -677,14 +680,14 @@ export async function POST(request: NextRequest) {
         compilationResult = declarativeResult
         compilationMethod = 'DeclarativeCompiler (deterministic)'
       } else {
-        console.log('[API] ✗ DeclarativeCompiler returned empty workflow, falling back to LLM')
-        throw new Error('DeclarativeCompiler returned no steps')
+        // Empty workflow triggers fallback - this is handled gracefully
+        throw new Error('DeclarativeCompiler returned empty workflow')
       }
     } catch (declarativeError: any) {
-      console.log('[API] ⚠ DeclarativeCompiler failed:', declarativeError.message)
-      console.log('[API] Error stack:', declarativeError.stack)
-      console.log('[API] Error details:', JSON.stringify(declarativeError, null, 2))
-      console.log('[API] Falling back to LLM-based compilation...')
+      // DeclarativeCompiler fallback is expected for complex workflows
+      // Log concisely - this is a graceful degradation, not an error
+      console.log('[API] ℹ️ DeclarativeCompiler could not handle this workflow:', declarativeError.message)
+      console.log('[API] → Using LLM-based compilation (this is normal for complex workflows)')
 
       const llmCompiler = new IRToDSLCompiler({
         pluginManager,
