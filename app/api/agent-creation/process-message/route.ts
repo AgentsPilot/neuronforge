@@ -141,7 +141,8 @@ export async function POST(request: NextRequest) {
       email: user.email || '',
       role: user.user_metadata?.role || '',
       company: user.user_metadata?.company || '',
-      domain: user.user_metadata?.domain || ''
+      domain: user.user_metadata?.domain || '',
+      ...(user.user_metadata?.timezone && { timezone: user.user_metadata.timezone })
     };
 
     // Merge client-provided context with server context (client takes priority if provided)
@@ -739,6 +740,14 @@ export async function POST(request: NextRequest) {
         newStatus,
         updatedMetadata
       );
+
+      // Phase 1: Store user_prompt as top-level column for quick context
+      if (phase === 1 && user_prompt) {
+        await threadRepository.updateThread(threadRecord.id, {
+          user_prompt: user_prompt
+        });
+        requestLogger.debug({ userPromptLength: user_prompt.length }, 'User prompt saved to thread');
+      }
 
       requestLogger.debug({
         dbRecordId: threadRecord.id,

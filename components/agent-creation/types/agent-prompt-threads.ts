@@ -5,12 +5,16 @@
  */
 
 import type { ProviderName } from '@/lib/ai/providerFactory';
+import type { UserContext } from '@/lib/user-context';
 
 export type ThreadStatus = 'active' | 'expired' | 'completed' | 'abandoned';
 export type ThreadPhase = 1 | 2 | 3 | 4;
 
 // Re-export ProviderName for convenience
 export type { ProviderName };
+
+// Re-export UserContext from common location for backward compatibility
+export type { UserContext };
 
 export interface AgentPromptThread {
   id: string; // UUID
@@ -19,6 +23,7 @@ export interface AgentPromptThread {
   status: ThreadStatus;
   current_phase: ThreadPhase;
   agent_id: string | null; // UUID, nullable until agent is created
+  user_prompt: string | null; // User's original prompt, populated at Phase 1 for quick context
   ai_provider: ProviderName; // AI provider for this thread (cannot change after creation)
   ai_model: string; // AI model for this thread (cannot change after creation)
   created_at: string; // ISO timestamp
@@ -34,14 +39,6 @@ export interface ThreadMetadata {
   clarification_answers?: Record<string, any>;
   user_context?: UserContext;
   [key: string]: any; // Allow additional metadata
-}
-
-export interface UserContext {
-  full_name?: string;
-  email?: string;
-  role?: string;
-  company?: string;
-  domain?: string;
 }
 
 export interface ConnectedService {
