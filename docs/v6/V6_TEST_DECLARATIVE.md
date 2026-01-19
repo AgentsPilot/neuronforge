@@ -121,27 +121,31 @@ When you click **Run Full Pipeline**, the page shows progress through all 5 phas
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  Phase 1: Understanding                                  │
+│  Phase 1: Understanding                      [📋 Copy]  │
 │  ├── Status: ⚡ Running / ✅ Done                        │
 │  └── Output: Semantic Plan JSON                         │
 ├─────────────────────────────────────────────────────────┤
-│  Phase 2: Grounding                                      │
+│  Phase 2: Grounding                          [📋 Copy]  │
 │  ├── Status: ⚡ Running / ✅ Done / Skipped             │
 │  └── Output: Grounded Plan with validated fields        │
 ├─────────────────────────────────────────────────────────┤
-│  Phase 3: Formalization                                  │
+│  Phase 3: Formalization                      [📋 Copy]  │
 │  ├── Status: ⚡ Running / ✅ Done                        │
 │  └── Output: Declarative IR JSON                        │
 ├─────────────────────────────────────────────────────────┤
-│  Phase 4: Compilation                                    │
+│  Phase 4: Compilation                        [📋 Copy]  │
 │  ├── Status: ⚡ Running / ✅ Done                        │
 │  └── Output: Workflow Steps array                       │
 ├─────────────────────────────────────────────────────────┤
-│  Phase 5: Final PILOT DSL                               │
+│  Phase 5: Final PILOT DSL                    [📋 Copy]  │
 │  ├── Status: ⚡ Running / ✅ Done                        │
 │  └── Output: Complete DSL with validation status        │
 └─────────────────────────────────────────────────────────┘
 ```
+
+### Copy Buttons
+
+Each phase has a **"📋 Copy"** button in the top-right corner of its JSON output. Click to copy that phase's JSON to clipboard. The button shows "✓ Copied!" feedback when successful.
 
 ### Phase Status Indicators
 
@@ -165,8 +169,40 @@ When you click **Run Full Pipeline**, the page shows progress through all 5 phas
 
 On successful completion:
 - Shows step count, compiler used, and compilation time
-- Provides buttons to **Save Workflow** or **Go to Execution**
 - Stores workflow in `window.currentWorkflow` for execution
+- Stores all phase outputs in `window.allPhaseOutputs` for download
+
+### Action Buttons (After Successful Compilation)
+
+| Button | Action |
+|--------|--------|
+| **💾 Save to Browser** | Save workflow to localStorage for later use |
+| **📥 Download All Phases** | Download complete JSON file with all phase outputs |
+| **▶️ Go to Execution** | Switch to Execution tab to run the workflow |
+
+### Download All Phases
+
+The **"📥 Download All Phases"** button downloads a single JSON file containing:
+
+```json
+{
+  "metadata": {
+    "userId": "...",
+    "compiledAt": "2026-01-17T12:30:45.000Z",
+    "compiler": "DeclarativeCompiler",
+    "compilationTimeMs": 150,
+    "stepsCount": 12
+  },
+  "phase1_semantic_plan": {...},
+  "phase2_grounded_plan": {...},
+  "phase3_declarative_ir": {...},
+  "phase4_workflow_steps": [...],
+  "phase5_final_dsl": {...},
+  "enhanced_prompt_input": {...}
+}
+```
+
+**Filename format**: `v6-pipeline-output-YYYY-MM-DDTHH-MM-SS.json`
 
 ---
 
@@ -258,7 +294,26 @@ Request body:
 ## Tab 3: Saved Workflows
 
 ### Purpose
-Persist workflows to browser localStorage for later use.
+Persist workflows to browser localStorage for later use. This is **client-side only** - nothing is saved to a database or server.
+
+### How It Works
+
+The **"💾 Save to Browser"** button (appears after successful compilation) saves the compiled workflow to browser localStorage, allowing you to:
+
+1. **Compile once, execute later** - No need to re-run the 5-phase pipeline
+2. **Persist across sessions** - Close browser, come back later
+3. **Quick iteration** - Edit and re-execute without recompiling
+
+### Typical Use Case
+
+```
+1. Run the pipeline → compile a workflow
+2. Click "💾 Save to Browser" → saves to localStorage
+3. Close the page or browser
+4. Come back later → go to "Saved" tab
+5. Click "📂 Load & Execute" → loads the saved workflow
+6. Execute without re-compiling
+```
 
 ### Storage Key
 Workflows are stored in `localStorage` under the key: `v6_saved_workflow`
