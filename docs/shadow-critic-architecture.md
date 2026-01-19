@@ -1,7 +1,8 @@
 # Shadow Agent + Business Insight System - Complete Architecture
 
-**Document Version:** 1.0
+**Document Version:** 1.1
 **Created:** 2026-01-06
+**Updated:** 2026-01-18
 **Status:** Design Complete - Ready for Implementation
 
 ---
@@ -15,6 +16,378 @@
    - **Growth Insights** - Help users improve business operations
 4. **No full reruns** - Resume from checkpoint, not step 1
 5. **User decides** - Alert patterns: Stop workflow? Continue with fallback? Auto-retry?
+6. **Pre-Execution Intent Validation** = Catch intent mismatches BEFORE first run
+
+---
+
+## 🆕 SYSTEM 0: PRE-EXECUTION INTENT VALIDATOR
+
+### Purpose
+
+Catch workflow issues **before execution** by validating that the compiled workflow matches the user's original intent. This prevents "workflow ran but did the wrong thing" failures.
+
+### The Problem It Solves
+
+Workflows can be created successfully but fail to deliver business value because:
+- User answers clarification questions ambiguously
+- LLM misinterprets user intent during generation
+- Assumptions are made silently without user awareness
+- No validation that compiled workflow matches original intent
+
+**Key Insight:** The workflow runs fine technically, but doesn't do what the user actually wanted.
+
+### When It Runs
+
+**After grounding (Phase 2)**, as a single unified step that combines clarifications + confirmations:
+
+```
+[Describe] → [Connect] → [Ground & Validate] → [Review & Confirm] → ✓ Created
+                                                      ↑
+                                               SINGLE UI
+                                    (clarifications + assumptions + edge cases)
+```
+
+**Why after grounding, not after semantic (Phase 1)?**
+
+| Show After Phase 1 | Show After Phase 2 (Grounding) |
+|--------------------|-------------------------------|
+| Questions are generic | Questions enriched with real data |
+| "Which sheet?" | "Found 3 sheets: Sales, Q1, Old - which one?" |
+| Assumptions not validated | Fake validations exposed |
+| Two UI interruptions | One unified UI |
+| User answers twice | User answers once |
+
+### User-Facing Output: Single Unified UI
+
+All clarifications, assumptions, and edge cases in ONE screen:
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│  📋 Review & Customize Your Agent                                          │
+├────────────────────────────────────────────────────────────────────────────┤
+│                                                                            │
+│  YOUR REQUEST:                                                             │
+│  "Send each salesperson their Stage 4 leads daily"                         │
+│                                                                            │
+├────────────────────────────────────────────────────────────────────────────┤
+│  ❓ QUESTIONS                                                              │
+│  (from clarifications_needed[], enriched by grounding)                     │
+│────────────────────────────────────────────────────────────────────────────│
+│                                                                            │
+│  Which Google Sheet?                                                       │
+│  [Sales Pipeline 2026 ▼]  ← Grounding found 3 matching sheets             │
+│                                                                            │
+│  Email subject line?                                                       │
+│  [Your Stage 4 Leads for Today_______________]                             │
+│                                                                            │
+├────────────────────────────────────────────────────────────────────────────┤
+│  ⚠️ PLEASE CONFIRM                                                         │
+│  (from 5-layer detection: patterns, fake validations, risks)              │
+│────────────────────────────────────────────────────────────────────────────│
+│                                                                            │
+│  ┌──────────────────────────────────────────────────────────────────────┐ │
+│  │ How should leads be sent?                                             │ │
+│  │                                                                       │ │
+│  │  ○ ONE email to ALL salespeople                                       │ │
+│  │    Everyone sees everyone's leads                                     │ │
+│  │                                                                       │ │
+│  │  ● ONE email PER salesperson ⭐                                        │ │
+│  │    Each person sees only their leads                                  │ │
+│  └──────────────────────────────────────────────────────────────────────┘ │
+│                                                                            │
+├────────────────────────────────────────────────────────────────────────────┤
+│  ✓ ASSUMPTIONS                                                  [Expand] │
+│  (from assumptions[], validated by grounding)                              │
+│────────────────────────────────────────────────────────────────────────────│
+│  3 validated • Click to review                                            │
+│                                                                            │
+├────────────────────────────────────────────────────────────────────────────┤
+│  ❓ EDGE CASES                                                             │
+│  (from edge_cases[])                                                       │
+│────────────────────────────────────────────────────────────────────────────│
+│                                                                            │
+│  No Stage 4 leads found:     [Skip email entirely ▼]                       │
+│  Salesperson has no email:   [Send their leads to me ▼]                    │
+│                                                                            │
+├────────────────────────────────────────────────────────────────────────────┤
+│                                                    [Create Agent]          │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Key Design Principles
+
+1. **Single UI** - All decisions in one place (no two-stage flow)
+2. **Grounding-Enriched Questions** - Real data options, not generic questions
+3. **Plain Language** - No technical terms (no "IR", "plugin", "action")
+4. **Show Assumptions** - Surface what the system assumed
+5. **Highlight Edge Cases** - What might not work as expected
+6. **Inline Editing** - Click to modify without full regeneration
+7. **Always Show on First Run** - Builds user trust
+
+### Data Sources for Each UI Section
+
+| UI Section | Source | When Available |
+|------------|--------|----------------|
+| **Questions** | `clarifications_needed[]` | Phase 1, enriched by Phase 2 |
+| **Please Confirm** | 5-layer detection results | After Phase 2 |
+| **Assumptions** | `assumptions[]` + grounding validation | After Phase 2 |
+| **Edge Cases** | `edge_cases[]` | Phase 1 + Phase 2 |
+
+### Inline Editing Flow
+
+When user clicks "Make Changes":
+
+```
+┌────────────────────────────────────────────────────────┐
+│ 1. 📥 Fetch tickets from Zendesk                       │
+│    ┌──────────────────────────────────────────────┐   │
+│    │ → All tickets from [last 24 hours ▼]         │   │
+│    │ → Filtered by: [Priority = High/Urgent ✏️]   │   │
+│    └──────────────────────────────────────────────┘   │
+│    [+ Add condition]                                   │
+│                                                        │
+│ ⚠️ ASSUMPTIONS (click to change):                      │
+│    [✓] "Urgent" = Priority field is High or Urgent    │
+│    [✓] Include tickets assigned to anyone             │
+│    [ ] Skip email if no tickets found                  │
+└────────────────────────────────────────────────────────┘
+```
+
+**Edit → IR Patch Flow:**
+```
+User edits inline → System captures as "intent correction"
+  → Re-run IR formalization with correction hint
+  → Update workflow without full regeneration
+  → Show updated summary for confirmation
+```
+
+### Two-Layer Validation
+
+**Layer 1: Deterministic Checks (No LLM)**
+- All filter fields exist in data source
+- Plugin + operation_type combinations are valid
+- Required config params present
+- Email recipient fields resolve to valid emails
+
+**Layer 2: Semantic Intent Check (LLM)**
+- Does this workflow accomplish the user's stated goal?
+- Are there missing business requirements?
+- What edge cases might fail?
+
+### Post-Grounding Ambiguity Detection (Critical)
+
+**Why Post-Grounding Validation is the Key:**
+
+| Stage | What's Available | Limitation |
+|-------|------------------|------------|
+| Before Grounding | Only LLM's interpretation | Can be overconfident, no real validation |
+| **After Grounding** | Actual validation results, confidence scores, evidence | **Exposes fake validations** |
+
+Grounding reveals when the LLM claims "high confidence" but the evidence shows "Behavior validation not implemented, assuming valid" with confidence 0.7.
+
+**The 5-Layer Ambiguity Detection Framework:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    AMBIGUITY DETECTION LAYERS                   │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Layer 1: CONFIDENCE MISMATCH                                   │
+│  ├─ LLM says "high" but grounding score < 0.8 → flag            │
+│  ├─ LLM says "high" but alternatives exist → flag               │
+│  └─ Behavior assumption with "not implemented" evidence → flag  │
+│                                                                 │
+│  Layer 2: SEMANTIC PATTERN DETECTION                            │
+│  ├─ Loop intent (grouping + single delivery)                    │
+│  ├─ Data visibility (dynamic recipients + shared data)          │
+│  ├─ Ownership patterns (assigned_to + broadcast output)         │
+│  └─ Time ambiguity ("recent" without definition)                │
+│                                                                 │
+│  Layer 3: CROSS-ASSUMPTION CONFLICTS                            │
+│  ├─ Assumption A depends on field X, B says X missing           │
+│  ├─ Filter assumes format, Delivery assumes different format    │
+│  └─ Grouping assumes field, Rendering uses different field      │
+│                                                                 │
+│  Layer 4: VAGUE LANGUAGE DETECTION                              │
+│  ├─ Ambiguous terms: "appropriate", "relevant", "some"          │
+│  ├─ Time references: "recent", "latest", "old"                  │
+│  └─ Quantity references: "few", "many", "all"                   │
+│                                                                 │
+│  Layer 5: BUSINESS LOGIC RISKS                                  │
+│  ├─ PII exposure (personal data visible to multiple people)     │
+│  ├─ Irreversible actions (delete, send, post)                   │
+│  └─ Data aggregation direction (per-item vs summary)            │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Assumption Prioritization (How to Display):**
+
+| Priority | Criteria | UI Treatment |
+|----------|----------|--------------|
+| **MUST CONFIRM** | Fake validation + high impact + pattern detected | Expanded, requires explicit approval |
+| **SHOULD REVIEW** | Failed grounding OR medium confidence | Visible, checkbox pre-checked |
+| **LOOKS GOOD** | High confidence + validated | Collapsed, shown as "N assumptions validated" |
+
+**Real Example: Loop Intent Bug Caught by This Framework:**
+
+User intent: "Send each salesperson their own email with their leads"
+LLM assumption (A5): "One email to all salespeople" with `confidence: "high"`
+
+Grounding result exposed the issue:
+```json
+{
+  "assumption_id": "A5",
+  "validated": true,
+  "confidence": 0.7,
+  "evidence": "Behavior validation not implemented, assuming valid"
+}
+```
+
+**How the 5 layers catch it:**
+1. **Layer 1**: High confidence claim + 0.7 grounding + "not implemented" evidence → **FLAG**
+2. **Layer 2**: `grouping_by_person` + `single_delivery` pattern → **SURFACE QUESTION**
+3. **Layer 5**: PII exposure (emails visible to all) → **MUST CONFIRM**
+
+Result: User sees clear question before execution, not after wrong emails are sent.
+
+### What to Surface in the Single UI (After Grounding)
+
+All information is collected and shown in ONE unified screen after Phase 2:
+
+**QUESTIONS Section (from Phase 1 + Phase 2 enrichment):**
+
+| Source | What to Extract | UI Element |
+|--------|-----------------|------------|
+| `clarifications_needed[]` | Questions LLM identified | Dropdowns with grounding-discovered options |
+| `ambiguities[]` where `requires_user_input: true` | Unresolved design decisions | Radio buttons |
+
+**PLEASE CONFIRM Section (from 5-layer detection on grounded data):**
+
+| Source | What to Extract | UI Element |
+|--------|-----------------|------------|
+| Layer 1: Confidence mismatches | Fake validations exposed | MUST answer radio |
+| Layer 2: Semantic patterns | Loop intent, data visibility | MUST answer radio |
+| Layer 5: Business risks | PII exposure, irreversible actions | Warning + confirm |
+| `grounding_errors[]` | Failed validations | Warning banner |
+
+**ASSUMPTIONS Section (from Phase 1 + Phase 2 validation):**
+
+| Source | What to Extract | UI Element |
+|--------|-----------------|------------|
+| `assumptions[]` with high confidence | Validated assumptions | Collapsed, expandable |
+| `assumptions[]` with medium confidence | Need review | Visible checkboxes |
+| `assumptions[]` with fake validation | "Not implemented" evidence | MUST CONFIRM |
+
+**EDGE CASES Section (from Phase 1 edge_cases[]):**
+
+| Source | What to Extract | UI Element |
+|--------|-----------------|------------|
+| `edge_cases[]` | Failure scenarios | Dropdown with handling options |
+| Empty result scenarios | No data found | Dropdown: skip/send anyway/notify |
+| Missing field scenarios | Data gaps | Dropdown: skip/fallback/stop |
+
+### Edge Cases: Always Present to User
+
+Edge cases should **always** be surfaced because they represent the system's assumptions about failure handling:
+
+```typescript
+interface EdgeCasePresentation {
+  scenario: string;           // "No rows match Stage = 4"
+  current_handling: string;   // "Send email with 'none found'"
+  alternatives: string[];     // ["Don't send", "Send different message"]
+  user_choice?: string;       // What user selected
+  is_default_approved: boolean; // Did user accept the default?
+}
+```
+
+**Why edge cases matter:**
+1. They expose hidden assumptions about failure behavior
+2. Users often have different expectations for edge cases
+3. Edge case handling is where "wrong thing" failures happen
+4. Users may want alerts/notifications instead of silent handling
+
+**Files to Create for Ambiguity Detection:**
+
+```
+lib/pilot/intent-validation/
+├── AmbiguityDetector.ts              # Orchestrates all 5 layers
+├── detectors/
+│   ├── ConfidenceMismatchDetector.ts # Layer 1
+│   ├── SemanticPatternDetector.ts    # Layer 2
+│   ├── ConflictDetector.ts           # Layer 3
+│   ├── VagueLanguageDetector.ts      # Layer 4
+│   ├── BusinessLogicDetector.ts      # Layer 5
+│   └── LoopIntentDetector.ts         # Specific pattern (part of Layer 2)
+```
+
+### Data Model
+
+```typescript
+interface IntentValidationResult {
+  validation_id: string;
+  agent_id: string;
+
+  // Confidence
+  overall_confidence: number;
+
+  // User-facing content
+  plain_language_summary: PlainLanguageSummary;
+  assumptions_made: Assumption[];
+  edge_cases: EdgeCase[];
+
+  // Validation results
+  deterministic_issues: DeterministicIssue[];
+  semantic_issues: SemanticIssue[];
+
+  // User decision
+  status: 'pending' | 'approved' | 'rejected' | 'modified';
+}
+
+interface Assumption {
+  assumption: string;           // "Urgent = Priority High"
+  derived_from: string;         // "User answer: urgent tickets"
+  risk_level: 'low' | 'medium' | 'high';
+  user_approved: boolean;       // User checked the box
+}
+
+interface EdgeCase {
+  scenario: string;              // "No urgent tickets found"
+  current_behavior: string;      // "Sends empty email"
+  suggestion?: string;           // "Skip email if no tickets?"
+}
+```
+
+### Connection to Shadow Agent
+
+Assumptions captured during Intent Validation flow into Shadow Agent:
+
+```typescript
+// If step fails and has high-risk assumption
+if (step_fails && step.assumptions.some(a => a.risk_level === 'high')) {
+  // Likely cause: assumption was wrong
+  // Propose: Review assumption with user
+}
+```
+
+### Files to Create
+
+```
+lib/pilot/intent-validation/
+├── IntentValidator.ts           # Main orchestrator
+├── DeterministicChecker.ts      # Rule-based validation
+├── PlainLanguageGenerator.ts    # IR → human-readable summary
+├── AssumptionExtractor.ts       # Surface assumptions from plan
+├── EdgeCaseDetector.ts          # Identify potential issues
+├── InlineEditHandler.ts         # Process user edits
+└── types.ts                     # Interfaces
+
+components/agent-creation/
+├── IntentConfirmationStep.tsx   # Main UI component
+├── EditableSummary.tsx          # Inline editable summary
+├── AssumptionCheckboxes.tsx     # Toggle assumptions
+└── EdgeCaseWarnings.tsx         # Show potential issues
+```
 
 ---
 
