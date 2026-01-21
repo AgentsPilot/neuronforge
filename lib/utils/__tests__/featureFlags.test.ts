@@ -151,6 +151,80 @@ describe('Feature Flags', () => {
       expect(typeof flags).toBe('object');
       expect(flags).not.toBeNull();
       expect('useThreadBasedAgentCreation' in flags).toBe(true);
+      expect('useV6AgentGeneration' in flags).toBe(true);
+    });
+  });
+
+  describe('useV6AgentGeneration', () => {
+    beforeEach(() => {
+      jest.resetModules();
+      delete process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION;
+    });
+
+    it('should return false when flag is not set', () => {
+      const { useV6AgentGeneration } = require('../featureFlags');
+      delete process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION;
+      expect(useV6AgentGeneration()).toBe(false);
+    });
+
+    it('should return false when flag is "false"', () => {
+      process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION = 'false';
+      const { useV6AgentGeneration } = require('../featureFlags');
+      expect(useV6AgentGeneration()).toBe(false);
+    });
+
+    it('should return false when flag is "0"', () => {
+      process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION = '0';
+      const { useV6AgentGeneration } = require('../featureFlags');
+      expect(useV6AgentGeneration()).toBe(false);
+    });
+
+    it('should return true when flag is "true"', () => {
+      process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION = 'true';
+      const { useV6AgentGeneration } = require('../featureFlags');
+      expect(useV6AgentGeneration()).toBe(true);
+    });
+
+    it('should return true when flag is "1"', () => {
+      process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION = '1';
+      const { useV6AgentGeneration } = require('../featureFlags');
+      expect(useV6AgentGeneration()).toBe(true);
+    });
+
+    it('should return false for invalid values', () => {
+      process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION = 'invalid';
+      const { useV6AgentGeneration } = require('../featureFlags');
+      expect(useV6AgentGeneration()).toBe(false);
+    });
+
+    it('should be case-insensitive for "true"', () => {
+      process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION = 'TRUE';
+      const { useV6AgentGeneration } = require('../featureFlags');
+      expect(useV6AgentGeneration()).toBe(true);
+    });
+
+    it('should be case-insensitive for "false"', () => {
+      process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION = 'FALSE';
+      const { useV6AgentGeneration } = require('../featureFlags');
+      expect(useV6AgentGeneration()).toBe(false);
+    });
+
+    it('should return false for empty string', () => {
+      process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION = '';
+      const { useV6AgentGeneration } = require('../featureFlags');
+      expect(useV6AgentGeneration()).toBe(false);
+    });
+
+    it('should return false for whitespace', () => {
+      process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION = '   ';
+      const { useV6AgentGeneration } = require('../featureFlags');
+      expect(useV6AgentGeneration()).toBe(false);
+    });
+
+    it('should handle mixed case correctly', () => {
+      process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION = 'TrUe';
+      const { useV6AgentGeneration } = require('../featureFlags');
+      expect(useV6AgentGeneration()).toBe(true);
     });
   });
 });

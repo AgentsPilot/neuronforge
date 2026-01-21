@@ -22,7 +22,11 @@ import type {
   SemanticPlanGenerationResult
 } from './schemas/semantic-plan-types'
 import { SEMANTIC_PLAN_SCHEMA, SEMANTIC_PLAN_SCHEMA_STRICT } from './schemas/semantic-plan-schema'
-import Ajv from 'ajv'
+import Ajv, { Ajv as AjvInstance } from 'ajv'
+import { createLogger, Logger } from '@/lib/logger'
+
+// Create module-scoped logger
+const moduleLogger = createLogger({ module: 'V6', service: 'SemanticPlanGenerator' })
 
 // ============================================================================
 // Types
@@ -67,11 +71,13 @@ export class SemanticPlanGenerator {
   private anthropic?: Anthropic
   private config: SemanticPlanConfig
   private systemPrompt: string
-  private ajv: Ajv
+  private ajv: AjvInstance
   private validateSchema: any
+  private logger: Logger
 
   constructor(config: SemanticPlanConfig) {
-    console.log('[SemanticPlanGenerator] Initializing with config:', config)
+    this.logger = moduleLogger.child({ method: 'constructor' })
+    this.logger.info({ provider: config.model_provider, model: config.model_name }, 'Initializing')
 
     this.config = {
       temperature: 0.3, // Higher than IR generation - we want reasoning, not just precision
@@ -92,10 +98,10 @@ export class SemanticPlanGenerator {
 
     // Load system prompt
     this.systemPrompt = this.loadSystemPrompt()
-    console.log('[SemanticPlanGenerator] System prompt loaded, length:', this.systemPrompt.length)
+    this.logger.debug({ promptLength: this.systemPrompt.length }, 'System prompt loaded')
 
     // Initialize validator using strict schema to match OpenAI generation
-    this.ajv = new Ajv({ allErrors: true, strict: false })
+    this.ajv = new Ajv({ allErrors: true })
     this.validateSchema = this.ajv.compile(SEMANTIC_PLAN_SCHEMA_STRICT)
   }
 
@@ -122,10 +128,10 @@ export class SemanticPlanGenerator {
         promptFileName
       )
       const prompt = readFileSync(promptPath, 'utf-8')
-      console.log(`[SemanticPlanGenerator] Loaded system prompt (${promptVersion}) from:`, promptPath)
+      this.logger.debug({ promptVersion, promptPath }, 'Loaded system prompt')
       return prompt
     } catch (error) {
-      console.error('[SemanticPlanGenerator] Failed to load system prompt:', error)
+      this.logger.error({ err: error }, 'Failed to load system prompt')
       throw new Error('Semantic plan system prompt is required but could not be loaded')
     }
   }
@@ -134,8 +140,9 @@ export class SemanticPlanGenerator {
    * Generate semantic plan from enhanced prompt
    */
   async generate(enhancedPrompt: EnhancedPrompt): Promise<SemanticPlanGenerationResult> {
-    console.log('[SemanticPlanGenerator] Starting semantic plan generation...')
-    console.log('[SemanticPlanGenerator] Enhanced prompt sections:', Object.keys(enhancedPrompt.sections))
+    const generateLogger = moduleLogger.child({ method: 'generate' })
+    const sections = Object.keys(enhancedPrompt.sections)
+    generateLogger.info({ sections }, 'Starting semantic plan generation')
 
     const startTime = Date.now()
 
@@ -144,13 +151,15 @@ export class SemanticPlanGenerator {
       const llmResponse = await this.callLLM(enhancedPrompt)
 
       if (!llmResponse.success || !llmResponse.semantic_plan) {
+        const duration = Date.now() - startTime
+        generateLogger.warn({ duration, errors: llmResponse.errors }, 'LLM generation failed')
         return {
           success: false,
           errors: llmResponse.errors || ['Failed to generate semantic plan from LLM'],
           metadata: {
             model: this.getModelName(),
             tokens_used: llmResponse.tokens_used || 0,
-            generation_time_ms: Date.now() - startTime
+            generation_time_ms: duration
           }
         }
       }
@@ -158,11 +167,12 @@ export class SemanticPlanGenerator {
       const semanticPlan = llmResponse.semantic_plan
 
       // Validate structure (permissive validation)
-      console.log('[SemanticPlanGenerator] Validating semantic plan structure...')
+      generateLogger.debug('Validating semantic plan structure')
       const validation = this.validateSemanticPlan(semanticPlan)
 
       if (!validation.valid) {
-        console.warn('[SemanticPlanGenerator] Semantic plan has structural issues:', validation.errors)
+        const duration = Date.now() - startTime
+        generateLogger.warn({ duration, validationErrors: validation.errors }, 'Semantic plan has structural issues')
         // Don't fail - just warn. Semantic plans are allowed to be imperfect.
         return {
           success: true,
@@ -171,15 +181,19 @@ export class SemanticPlanGenerator {
           metadata: {
             model: this.getModelName(),
             tokens_used: llmResponse.tokens_used || 0,
-            generation_time_ms: Date.now() - startTime
+            generation_time_ms: duration
           }
         }
       }
 
-      console.log('[SemanticPlanGenerator] ✓ Semantic plan generated successfully')
-      console.log('[SemanticPlanGenerator] Assumptions:', semanticPlan.assumptions?.length || 0)
-      console.log('[SemanticPlanGenerator] Ambiguities:', semanticPlan.ambiguities?.length || 0)
-      console.log('[SemanticPlanGenerator] Inferences:', semanticPlan.inferences?.length || 0)
+      const duration = Date.now() - startTime
+      generateLogger.info({
+        duration,
+        assumptionsCount: semanticPlan.assumptions?.length || 0,
+        ambiguitiesCount: semanticPlan.ambiguities?.length || 0,
+        inferencesCount: semanticPlan.inferences?.length || 0,
+        tokensUsed: llmResponse.tokens_used
+      }, 'Semantic plan generated successfully')
 
       return {
         success: true,
@@ -187,20 +201,20 @@ export class SemanticPlanGenerator {
         metadata: {
           model: this.getModelName(),
           tokens_used: llmResponse.tokens_used || 0,
-          generation_time_ms: Date.now() - startTime
+          generation_time_ms: duration
         }
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      console.error('[SemanticPlanGenerator] ✗ Generation failed:', errorMessage)
+      const duration = Date.now() - startTime
+      generateLogger.error({ err: error, duration }, 'Generation failed')
 
       return {
         success: false,
-        errors: [errorMessage],
+        errors: [error instanceof Error ? error.message : 'Unknown error'],
         metadata: {
           model: this.getModelName(),
           tokens_used: 0,
-          generation_time_ms: Date.now() - startTime
+          generation_time_ms: duration
         }
       }
     }
@@ -262,7 +276,10 @@ export class SemanticPlanGenerator {
     errors?: string[]
     tokens_used?: number
   }> {
+    const openaiLogger = moduleLogger.child({ method: 'callOpenAI', model: this.getModelName() })
+
     if (!this.openai) {
+      openaiLogger.error('OpenAI client not initialized')
       return { success: false, errors: ['OpenAI client not initialized'] }
     }
 
@@ -271,8 +288,9 @@ export class SemanticPlanGenerator {
     let totalTokens = 0
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const attemptStartTime = Date.now()
       try {
-        console.log(`[SemanticPlanGenerator] Calling OpenAI (attempt ${attempt}/${maxAttempts})...`)
+        openaiLogger.info({ attempt, maxAttempts }, 'Calling OpenAI API')
 
         const userMessage = this.buildUserMessage(enhancedPrompt)
 
@@ -309,11 +327,11 @@ export class SemanticPlanGenerator {
 
         if (!content) {
           lastError = 'Empty response from OpenAI'
-          console.warn(`[SemanticPlanGenerator] Attempt ${attempt} failed: ${lastError}`)
+          openaiLogger.warn({ attempt, error: lastError }, 'Attempt failed - empty response')
           continue
         }
 
-        console.log('[SemanticPlanGenerator] Raw LLM response length:', content.length)
+        openaiLogger.debug({ responseLength: content.length }, 'Received LLM response')
 
         // Try to parse JSON
         let semanticPlan: SemanticPlan
@@ -321,7 +339,7 @@ export class SemanticPlanGenerator {
           semanticPlan = JSON.parse(content) as SemanticPlan
         } catch (parseError) {
           lastError = `JSON parse error: ${parseError instanceof Error ? parseError.message : 'Invalid JSON'}`
-          console.warn(`[SemanticPlanGenerator] Attempt ${attempt} failed: ${lastError}`)
+          openaiLogger.warn({ attempt, error: lastError }, 'Attempt failed - JSON parse error')
           continue
         }
 
@@ -329,12 +347,12 @@ export class SemanticPlanGenerator {
         const validation = this.validateSemanticPlan(semanticPlan)
         if (!validation.valid) {
           lastError = `Schema validation failed: ${validation.errors.map(e => e.message).join(', ')}`
-          console.warn(`[SemanticPlanGenerator] Attempt ${attempt} failed validation: ${lastError}`)
+          openaiLogger.warn({ attempt, validationErrors: validation.errors }, 'Attempt failed - validation error')
 
           // CRITICAL FIX: If validation failed after max attempts, return success: false
           // Previously returned success: true which masked validation failures
           if (attempt === maxAttempts) {
-            console.warn('[SemanticPlanGenerator] Max attempts reached with validation errors')
+            openaiLogger.warn({ totalTokens }, 'Max attempts reached with validation errors')
             return {
               success: false,  // FIXED: Was incorrectly returning success: true
               semantic_plan: semanticPlan,  // Still include plan for debugging
@@ -345,8 +363,13 @@ export class SemanticPlanGenerator {
           continue
         }
 
-        console.log('[SemanticPlanGenerator] ✓ Attempt', attempt, 'succeeded')
-        console.log('[SemanticPlanGenerator] Parsed semantic plan version:', semanticPlan.plan_version)
+        const attemptDuration = Date.now() - attemptStartTime
+        openaiLogger.info({
+          attempt,
+          duration: attemptDuration,
+          planVersion: semanticPlan.plan_version,
+          tokensUsed: totalTokens
+        }, 'Attempt succeeded')
 
         return {
           success: true,
@@ -355,7 +378,7 @@ export class SemanticPlanGenerator {
         }
       } catch (error) {
         lastError = error instanceof Error ? error.message : 'Unknown OpenAI error'
-        console.error(`[SemanticPlanGenerator] Attempt ${attempt} threw error:`, lastError)
+        openaiLogger.error({ err: error, attempt }, 'Attempt threw error')
 
         // If this is the last attempt or a non-retryable error, fail immediately
         if (attempt === maxAttempts || lastError.includes('API key') || lastError.includes('rate limit')) {
@@ -364,7 +387,7 @@ export class SemanticPlanGenerator {
       }
     }
 
-    console.error('[SemanticPlanGenerator] ✗ All attempts failed')
+    openaiLogger.error({ totalTokens, lastError }, 'All attempts failed')
     return {
       success: false,
       errors: [lastError || 'Failed to generate semantic plan after retries'],
@@ -381,12 +404,17 @@ export class SemanticPlanGenerator {
     errors?: string[]
     tokens_used?: number
   }> {
+    const anthropicLogger = moduleLogger.child({ method: 'callAnthropic', model: this.getModelName() })
+
     if (!this.anthropic) {
+      anthropicLogger.error('Anthropic client not initialized')
       return { success: false, errors: ['Anthropic client not initialized'] }
     }
 
+    const startTime = Date.now()
+
     try {
-      console.log('[SemanticPlanGenerator] Calling Anthropic with model:', this.getModelName())
+      anthropicLogger.info('Calling Anthropic API')
 
       const userMessage = this.buildUserMessage(enhancedPrompt)
 
@@ -405,10 +433,11 @@ export class SemanticPlanGenerator {
 
       const content = response.content[0]
       if (content.type !== 'text') {
+        anthropicLogger.warn('Unexpected response type from Anthropic')
         return { success: false, errors: ['Unexpected response type from Anthropic'] }
       }
 
-      console.log('[SemanticPlanGenerator] Raw LLM response length:', content.text.length)
+      anthropicLogger.debug({ responseLength: content.text.length }, 'Received LLM response')
 
       // Extract JSON from response (Anthropic sometimes wraps it in markdown)
       let jsonText = content.text.trim()
@@ -423,27 +452,36 @@ export class SemanticPlanGenerator {
       try {
         semanticPlan = JSON.parse(jsonText) as SemanticPlan
       } catch (parseError) {
-        const errorMessage = parseError instanceof Error ? parseError.message : 'Invalid JSON'
-        console.error('[SemanticPlanGenerator] Anthropic JSON parse error:', errorMessage)
-        console.error('[SemanticPlanGenerator] Raw response:', jsonText.substring(0, 500))
+        const tokensUsed = response.usage.input_tokens + response.usage.output_tokens
+        anthropicLogger.error({
+          err: parseError,
+          tokensUsed,
+          responsePreview: jsonText.substring(0, 500)
+        }, 'JSON parse error')
         return {
           success: false,
-          errors: [`JSON parse error: ${errorMessage}`],
-          tokens_used: response.usage.input_tokens + response.usage.output_tokens
+          errors: [`JSON parse error: ${parseError instanceof Error ? parseError.message : 'Invalid JSON'}`],
+          tokens_used: tokensUsed
         }
       }
 
-      console.log('[SemanticPlanGenerator] Parsed semantic plan version:', semanticPlan.plan_version)
+      const duration = Date.now() - startTime
+      const tokensUsed = response.usage.input_tokens + response.usage.output_tokens
+      anthropicLogger.info({
+        duration,
+        planVersion: semanticPlan.plan_version,
+        tokensUsed
+      }, 'Anthropic call succeeded')
 
       return {
         success: true,
         semantic_plan: semanticPlan,
-        tokens_used: response.usage.input_tokens + response.usage.output_tokens
+        tokens_used: tokensUsed
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown Anthropic error'
-      console.error('[SemanticPlanGenerator] Anthropic call failed:', errorMessage)
-      return { success: false, errors: [errorMessage] }
+      const duration = Date.now() - startTime
+      anthropicLogger.error({ err: error, duration }, 'Anthropic call failed')
+      return { success: false, errors: [error instanceof Error ? error.message : 'Unknown Anthropic error'] }
     }
   }
 

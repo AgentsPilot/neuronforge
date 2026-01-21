@@ -695,6 +695,60 @@
       box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
 
+    // Helper to create JSON block with copy button
+    function jsonWithCopy(data, phaseLabel) {
+      const jsonStr = JSON.stringify(data, null, 2);
+      const escapedJson = jsonStr.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return `
+        <div style="position: relative;">
+          <button onclick="copyPhaseJson(this, '${phaseLabel}')" style="position: absolute; top: 5px; right: 5px; padding: 4px 10px; font-size: 12px; background: #17a2b8; color: white; border: none; border-radius: 3px; cursor: pointer;">
+            📋 Copy
+          </button>
+          <pre style="max-height: 500px; overflow-y: auto; padding-top: 35px;">${escapedJson}</pre>
+        </div>
+      `;
+    }
+
+    function copyPhaseJson(btn, phaseLabel) {
+      const pre = btn.parentElement.querySelector('pre');
+      const text = pre.textContent;
+      navigator.clipboard.writeText(text).then(() => {
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '✓ Copied!';
+        btn.style.background = '#28a745';
+        setTimeout(() => {
+          btn.innerHTML = originalText;
+          btn.style.background = '#17a2b8';
+        }, 1500);
+      }).catch(err => {
+        console.error('Copy failed:', err);
+        alert('Failed to copy to clipboard');
+      });
+    }
+
+    // Download all phase outputs as a single JSON file
+    function downloadAllPhases() {
+      if (!window.allPhaseOutputs) {
+        alert('No pipeline results to save. Run the pipeline first.');
+        return;
+      }
+
+      const dataStr = JSON.stringify(window.allPhaseOutputs, null, 2);
+      const blob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const filename = `v6-pipeline-output-${timestamp}.json`;
+
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
     // ============================================================================
     // Format Workflow Steps for Display
     // ============================================================================
@@ -763,25 +817,19 @@
 
         // Update Phase 1
         const sp = semanticData.intermediate_results.semantic_plan;
-        updatePhase(1, 'completed', `
-          <pre style="max-height: 500px; overflow-y: auto;">${JSON.stringify(sp, null, 2)}</pre>
-        `);
+        updatePhase(1, 'completed', jsonWithCopy(sp, 'Phase 1 - Semantic Plan'));
 
         // Update Phase 2
         const gp = semanticData.intermediate_results.grounded_plan;
         if (gp && semanticData.metadata?.grounding_confidence > 0) {
-          updatePhase(2, 'completed', `
-            <pre style="max-height: 500px; overflow-y: auto;">${JSON.stringify(gp, null, 2)}</pre>
-          `);
+          updatePhase(2, 'completed', jsonWithCopy(gp, 'Phase 2 - Grounded Plan'));
         } else {
           updatePhase(2, 'completed', '<div style="color: #999;">Skipped (no grounding)</div>');
         }
 
         // Update Phase 3
         const ir = semanticData.ir;
-        updatePhase(3, 'completed', `
-          <pre style="max-height: 500px; overflow-y: auto;">${JSON.stringify(ir, null, 2)}</pre>
-        `);
+        updatePhase(3, 'completed', jsonWithCopy(ir, 'Phase 3 - Declarative IR'));
 
         // Phase 4: Compile
         updatePhase(4, 'running', '<div>Compiling IR to DSL...</div>');
@@ -809,7 +857,7 @@
             <strong>Compiled ${workflowSteps.length} workflow steps</strong>
             ${compileData.metadata?.compiler_used ? ` (${compileData.metadata.compiler_used})` : ''}
           </div>
-          <pre style="max-height: 500px; overflow-y: auto;">${JSON.stringify(workflowSteps, null, 2)}</pre>
+          ${jsonWithCopy(workflowSteps, 'Phase 4 - Workflow Steps')}
         `);
 
         // Phase 5: Show final DSL
@@ -826,7 +874,7 @@
             <strong>Final PILOT DSL</strong> - Ready for execution
             ${compileData.validation?.valid === false ? '<span style="color: #f44336;"> ⚠️ Has validation warnings</span>' : '<span style="color: #4caf50;"> ✓ Validated</span>'}
           </div>
-          <pre style="max-height: 500px; overflow-y: auto;">${JSON.stringify(finalDSL, null, 2)}</pre>
+          ${jsonWithCopy(finalDSL, 'Phase 5 - Final DSL')}
         `);
 
         // Store workflow for execution
@@ -836,6 +884,23 @@
           ir: semanticData.ir,
           userId: userId,
           compiledAt: new Date().toISOString()
+        };
+
+        // Store all phase outputs for local save
+        window.allPhaseOutputs = {
+          metadata: {
+            userId: userId,
+            compiledAt: new Date().toISOString(),
+            compiler: compileData.metadata?.compiler_used || 'N/A',
+            compilationTimeMs: compileData.metadata?.compilation_time_ms || null,
+            stepsCount: workflowSteps.length
+          },
+          phase1_semantic_plan: sp,
+          phase2_grounded_plan: gp || null,
+          phase3_declarative_ir: ir,
+          phase4_workflow_steps: workflowSteps,
+          phase5_final_dsl: finalDSL,
+          enhanced_prompt_input: enhancedPrompt
         };
 
         // Update execution tab
@@ -851,8 +916,9 @@
             Compiler: ${compileData.metadata?.compiler_used || 'N/A'} |
             Time: ${compileData.metadata?.compilation_time_ms || 'N/A'}ms
           </p>
-          <div style="margin-top: 15px;">
-            <button onclick="saveWorkflow()" class="btn-secondary">💾 Save Workflow</button>
+          <div style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
+            <button onclick="saveWorkflow()" class="btn-secondary">💾 Save to Browser</button>
+            <button onclick="downloadAllPhases()" style="background: #6f42c1; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer;">📥 Download All Phases</button>
             <button onclick="switchTab({target: document.querySelectorAll('.tab')[1]}, 'execution')" style="background: #4caf50;">▶️ Go to Execution</button>
           </div>
         `;

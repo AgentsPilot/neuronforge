@@ -18,6 +18,10 @@ import type { DeclarativeLogicalIR } from '../logical-ir/schemas/declarative-ir-
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import type { PluginManagerV2 } from '../../../server/plugin-manager-v2'
+import { createLogger, Logger } from '@/lib/logger'
+
+// Create module-scoped logger
+const moduleLogger = createLogger({ module: 'V6', service: 'IRFormalizer' })
 
 export interface IRFormalizerConfig {
   model?: string
@@ -57,8 +61,11 @@ export class IRFormalizer {
   private groundedPlan?: any  // Store current grounded plan for plugin extraction
   private servicesInvolved?: string[]  // From Enhanced Prompt
   private resolvedUserInputs?: Array<{ key: string; value: any }>  // From Enhanced Prompt
+  private logger: Logger
 
   constructor(config: IRFormalizerConfig) {
+    this.logger = moduleLogger.child({ method: 'constructor' })
+
     this.config = {
       model: config.model || 'gpt-5.2',
       temperature: config.temperature ?? 0.0, // Very low - this is mechanical mapping
@@ -81,15 +88,18 @@ export class IRFormalizer {
     const promptPath = join(process.cwd(), 'lib', 'agentkit', 'v6', 'semantic-plan', 'prompts', 'formalization-system.md')
     this.systemPrompt = readFileSync(promptPath, 'utf-8')
 
-    console.log('[IRFormalizer] Loaded formalization system prompt from:', promptPath)
-    console.log('[IRFormalizer] System prompt length:', this.systemPrompt.length)
+    this.logger.info({ model: this.config.model, promptPath }, 'Initialized')
+    this.logger.debug({ promptLength: this.systemPrompt.length }, 'System prompt loaded')
   }
 
   /**
    * Formalize a grounded semantic plan to IR
    */
   async formalize(groundedPlan: GroundedSemanticPlan): Promise<FormalizationResult> {
-    console.log('[IRFormalizer] Starting formalization...')
+    const formalizeLogger = moduleLogger.child({ method: 'formalize' })
+    const startTime = Date.now()
+
+    formalizeLogger.info('Starting formalization')
 
     // Store grounded plan for plugin extraction
     this.groundedPlan = groundedPlan
@@ -98,11 +108,13 @@ export class IRFormalizer {
     const groundedFacts = this.extractGroundedFacts(groundedPlan)
     const missingFacts = this.identifyMissingFacts(groundedPlan)
 
-    console.log(`[IRFormalizer] Grounded facts: ${Object.keys(groundedFacts).length}`)
-    console.log(`[IRFormalizer] Missing facts: ${missingFacts.length}`)
+    formalizeLogger.info({
+      groundedFactsCount: Object.keys(groundedFacts).length,
+      missingFactsCount: missingFacts.length
+    }, 'Extracted facts from grounded plan')
 
     if (missingFacts.length > 0) {
-      console.warn(`[IRFormalizer] WARNING: Missing grounded facts:`, missingFacts)
+      formalizeLogger.warn({ missingFacts }, 'Missing grounded facts')
     }
 
     // Build formalization request
@@ -110,9 +122,10 @@ export class IRFormalizer {
 
     // Debug: Log the available plugins section
     if (process.env.DEBUG_IR_FORMALIZER === 'true') {
-      console.log('[IRFormalizer] DEBUG: User message length:', userMessage.length)
-      console.log('[IRFormalizer] DEBUG: First 2000 chars of user message:')
-      console.log(userMessage.substring(0, 2000))
+      formalizeLogger.debug({
+        userMessageLength: userMessage.length,
+        userMessagePreview: userMessage.substring(0, 2000)
+      }, 'User message for LLM')
     }
 
     // Call OpenAI LLM
@@ -121,20 +134,18 @@ export class IRFormalizer {
     // Ensure goal field is present (required by schema but sometimes omitted by LLM)
     if (!ir.goal) {
       ir.goal = groundedPlan.goal
-      console.log('[IRFormalizer] Added missing goal field from grounded plan')
+      formalizeLogger.debug('Added missing goal field from grounded plan')
     }
 
     // CRITICAL FIX: Wire up validateFormalization() - was never called before!
     const validation = this.validateFormalization(ir, groundedFacts)
     if (!validation.valid) {
-      console.error('[IRFormalizer] ✗ Formalization validation failed:', validation.errors)
+      formalizeLogger.error({ errors: validation.errors }, 'Formalization validation failed')
       throw new Error(`Formalization validation failed: ${validation.errors.join(', ')}`)
     }
     if (validation.warnings.length > 0) {
-      console.warn('[IRFormalizer] ⚠ Formalization warnings:', validation.warnings)
+      formalizeLogger.warn({ warnings: validation.warnings }, 'Formalization warnings')
     }
-
-    console.log('[IRFormalizer] ✓ Formalization complete and validated')
 
     // Calculate confidence based on grounded facts usage
     const formalizationConfidence = this.calculateFormalizationConfidence(
@@ -142,6 +153,13 @@ export class IRFormalizer {
       groundedFacts,
       missingFacts
     )
+
+    const duration = Date.now() - startTime
+    formalizeLogger.info({
+      duration,
+      confidence: formalizationConfidence,
+      dataSourcesCount: ir.data_sources?.length || 0
+    }, 'Formalization complete and validated')
 
     return {
       ir,
@@ -163,12 +181,13 @@ export class IRFormalizer {
    * Logs warnings when grounding results are empty or all validations failed.
    */
   private extractGroundedFacts(groundedPlan: GroundedSemanticPlan): Record<string, any> {
+    const extractLogger = moduleLogger.child({ method: 'extractGroundedFacts' })
     const facts: Record<string, any> = {}
 
     // Check if grounding_results exists and has entries
     if (!groundedPlan.grounding_results || groundedPlan.grounding_results.length === 0) {
-      console.warn('[IRFormalizer] ⚠️ No grounding_results in groundedPlan - formalization will proceed without grounded facts')
-      console.warn('[IRFormalizer] This may indicate an API-only workflow (no tabular metadata) or a grounding failure')
+      extractLogger.warn('No grounding_results in groundedPlan - formalization will proceed without grounded facts')
+      extractLogger.warn('This may indicate an API-only workflow (no tabular metadata) or a grounding failure')
       return facts
     }
 
@@ -180,11 +199,14 @@ export class IRFormalizer {
 
     // Warn if no facts were extracted despite having grounding results
     if (Object.keys(facts).length === 0) {
-      console.warn('[IRFormalizer] ⚠️ All grounding_results failed validation - no grounded facts available')
-      console.warn('[IRFormalizer] Formalization will rely on LLM inference for field names (may be less accurate)')
-      console.warn('[IRFormalizer] Failed assumptions:', groundedPlan.grounding_results.map(r => r.assumption_id).join(', '))
+      extractLogger.warn({
+        failedAssumptions: groundedPlan.grounding_results.map(r => r.assumption_id)
+      }, 'All grounding_results failed validation - no grounded facts available')
     } else {
-      console.log('[IRFormalizer] ✓ Extracted', Object.keys(facts).length, 'grounded facts:', Object.keys(facts).join(', '))
+      extractLogger.info({
+        factsCount: Object.keys(facts).length,
+        factKeys: Object.keys(facts)
+      }, 'Extracted grounded facts')
     }
 
     return facts
@@ -333,13 +355,15 @@ Output ONLY the IR JSON (no explanations, no markdown).`
    * Detect if semantic understanding includes search criteria that should use plugin queries
    */
   private detectSearchCriteria(understanding: any): boolean {
+    const detectLogger = moduleLogger.child({ method: 'detectSearchCriteria' })
+
     if (!understanding) {
       return false
     }
 
     // CRITICAL: Check if filtering section exists (keyword matching, etc.)
     if (understanding.filtering && understanding.filtering.conditions) {
-      console.log('[IRFormalizer] ✅ Detected filtering section with conditions - will inject filter instructions')
+      detectLogger.debug('Detected filtering section with conditions - will inject filter instructions')
       return true
     }
 
@@ -368,14 +392,16 @@ Output ONLY the IR JSON (no explanations, no markdown).`
    * Get plugin keys from Enhanced Prompt services_involved (simple, no guessing!)
    */
   private extractUsedPluginsFromSemanticPlan(plan: any): string[] {
+    const extractPluginsLogger = moduleLogger.child({ method: 'extractUsedPluginsFromSemanticPlan' })
+
     // Use services_involved directly from Enhanced Prompt if available
     if (this.servicesInvolved && this.servicesInvolved.length > 0) {
-      console.log(`[IRFormalizer] Using services_involved from Enhanced Prompt: ${this.servicesInvolved.join(', ')}`)
+      extractPluginsLogger.debug({ services: this.servicesInvolved }, 'Using services_involved from Enhanced Prompt')
       return this.servicesInvolved
     }
 
     // Fallback: If no services_involved, inject all plugins
-    console.log('[IRFormalizer] No services_involved provided, will inject all plugins')
+    extractPluginsLogger.debug('No services_involved provided, will inject all plugins')
     return []
   }
 
@@ -384,6 +410,8 @@ Output ONLY the IR JSON (no explanations, no markdown).`
    * OPTIMIZED: Only inject plugins that are actually used in the semantic plan
    */
   private buildAvailablePluginsSection(): string {
+    const buildPluginsLogger = moduleLogger.child({ method: 'buildAvailablePluginsSection' })
+
     if (!this.pluginManager) {
       return ''
     }
@@ -394,10 +422,14 @@ Output ONLY the IR JSON (no explanations, no markdown).`
     const usedPluginKeys = this.extractUsedPluginsFromSemanticPlan(this.groundedPlan)
 
     if (usedPluginKeys.length === 0) {
-      console.log('[IRFormalizer] ⚠️ No plugins detected in semantic plan, injecting all plugins')
+      buildPluginsLogger.warn('No plugins detected in semantic plan, injecting all plugins')
       // Fallback to all plugins if extraction fails
     } else {
-      console.log(`[IRFormalizer] ✓ Injecting only used plugins: ${usedPluginKeys.join(', ')} (${usedPluginKeys.length} of ${Object.keys(availablePlugins).length})`)
+      buildPluginsLogger.info({
+        usedPlugins: usedPluginKeys,
+        usedCount: usedPluginKeys.length,
+        totalAvailable: Object.keys(availablePlugins).length
+      }, 'Injecting only used plugins')
     }
 
     // Filter to only used plugins (or all if extraction failed)
@@ -568,8 +600,10 @@ ${pluginDetails}
    * Formalize using OpenAI with timeout protection
    */
   private async formalizeWithOpenAI(userMessage: string): Promise<DeclarativeLogicalIR> {
-    console.log('[IRFormalizer] Calling OpenAI...')
-    console.log(`[IRFormalizer] Model: ${this.config.model}`)
+    const openaiLogger = moduleLogger.child({ method: 'formalizeWithOpenAI', model: this.config.model })
+    const startTime = Date.now()
+
+    openaiLogger.info('Calling OpenAI API')
 
     const apiCall = this.openai.chat.completions.create({
       model: this.config.model,
@@ -588,6 +622,7 @@ ${pluginDetails}
     const content = response.choices[0]?.message?.content
 
     if (!content) {
+      openaiLogger.error('No response content from OpenAI')
       throw new Error('No response content from OpenAI')
     }
 
@@ -596,7 +631,8 @@ ${pluginDetails}
     // Fix type coercion: LLM sometimes outputs numeric strings instead of numbers
     this.coerceIRTypes(ir)
 
-    console.log('[IRFormalizer] OpenAI response parsed successfully')
+    const duration = Date.now() - startTime
+    openaiLogger.info({ duration, responseLength: content.length }, 'OpenAI response parsed successfully')
 
     return ir
   }
@@ -650,7 +686,7 @@ ${pluginDetails}
           return key
         })
         ir.normalization.grounded_facts = asArray
-        console.log('[IRFormalizer] Coerced normalization.grounded_facts from object to array:', asArray)
+        moduleLogger.debug({ coercedArray: asArray }, 'Coerced normalization.grounded_facts from object to array')
       }
     }
   }

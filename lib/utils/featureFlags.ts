@@ -5,15 +5,12 @@
  */
 
 /**
- * Check if thread-based agent creation flow is enabled
+ * Parse a boolean feature flag from environment variable
  *
- * @returns {boolean} True if thread-based flow should be used, false to use legacy flow
+ * @param flag - The environment variable value (may be undefined)
+ * @returns {boolean} True if flag is 'true' or '1', false otherwise
  */
-export function useThreadBasedAgentCreation(): boolean {
-  const flag = process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION;
-
-  console.log("Feature Flag: NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION=",flag || 'none');
-
+function parseBooleanFlag(flag: string | undefined): boolean {
   // Default to false if not set, empty, or whitespace-only
   if (!flag || flag.trim() === '') {
     return false;
@@ -37,6 +34,17 @@ export function useThreadBasedAgentCreation(): boolean {
 }
 
 /**
+ * Check if thread-based agent creation flow is enabled
+ *
+ * @returns {boolean} True if thread-based flow should be used, false to use legacy flow
+ */
+export function useThreadBasedAgentCreation(): boolean {
+  const flag = process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION;
+  console.log("Feature Flag: NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION=", flag || 'none');
+  return parseBooleanFlag(flag);
+}
+
+/**
  * Check if enhanced technical workflow review (V5 generator) is enabled
  *
  * When enabled, the technical workflow path uses LLM-based review and repair
@@ -49,13 +57,7 @@ export function useThreadBasedAgentCreation(): boolean {
  */
 export function useEnhancedTechnicalWorkflowReview(): boolean {
   const flag = process.env.USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW;
-
-  if (!flag || flag.trim() === '') {
-    return false;
-  }
-
-  const normalizedFlag = flag.trim().toLowerCase();
-  return normalizedFlag === 'true' || normalizedFlag === '1';
+  return parseBooleanFlag(flag);
 }
 
 /**
@@ -65,24 +67,23 @@ export function useEnhancedTechnicalWorkflowReview(): boolean {
  */
 export function useNewAgentCreationUI(): boolean {
   const flag = process.env.NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI;
-
   console.log("Feature Flag: NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI=", flag || 'none');
+  return parseBooleanFlag(flag);
+}
 
-  if (!flag || flag.trim() === '') {
-    return false;
-  }
-
-  const normalizedFlag = flag.trim().toLowerCase();
-
-  if (normalizedFlag === 'false' || normalizedFlag === '0') {
-    return false;
-  }
-
-  if (normalizedFlag === 'true' || normalizedFlag === '1') {
-    return true;
-  }
-
-  return false;
+/**
+ * Check if V6 agent generation is enabled
+ *
+ * When enabled, the agent creation flow will use the V6 5-phase pipeline
+ * (semantic plan → grounding → formalization → compilation → validation)
+ * instead of the V4 direct generation approach.
+ *
+ * @returns {boolean} True if V6 generation is enabled, false otherwise
+ */
+export function useV6AgentGeneration(): boolean {
+  const flag = process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION;
+  console.log("Feature Flag: NEXT_PUBLIC_USE_V6_AGENT_GENERATION=", flag || 'none');
+  return parseBooleanFlag(flag);
 }
 
 /**
@@ -96,5 +97,6 @@ export function getFeatureFlags() {
     useThreadBasedAgentCreation: useThreadBasedAgentCreation(),
     useNewAgentCreationUI: useNewAgentCreationUI(),
     useEnhancedTechnicalWorkflowReview: useEnhancedTechnicalWorkflowReview(),
+    useV6AgentGeneration: useV6AgentGeneration(),
   };
 }

@@ -276,6 +276,10 @@ When Phase 3 detects `user_inputs_required` in the enhanced prompt, the system a
 4. Generates refined Phase 3 output
 
 #### 3.5 Phase 3 - Enhanced Prompt
+
+**Feature Flag Behavior:**
+When `NEXT_PUBLIC_USE_V6_AGENT_GENERATION=true`, the Phase 4 buttons are hidden and only the V6 Intent Validation flow is available. This is controlled by the `useV6AgentGeneration()` feature flag from `@/lib/utils/featureFlags`.
+
 - **Plan Title & Description**: High-level overview
 - **Workflow Sections**:
   - Data sources
@@ -332,12 +336,106 @@ When Phase 3 completes with `ready_for_generation: true`, a "Generate Technical 
 - **Re-generate Technical Workflow**: Re-runs Phase 4 for refinement
 - **Reset Thread**: Clears all state and starts fresh
 
-#### 3.7 Testing Controls
+#### 3.7 Import Enhanced Prompt JSON
+
+**Purpose:** Skip Phases 1-2 and jump directly to Phase 3 with a pre-existing Enhanced Prompt.
+
+**Button Location:** "Start New Thread" section header (purple button)
+
+**How to Use:**
+1. Click "📥 Import Enhanced Prompt JSON" button
+2. Paste your Phase 3 Enhanced Prompt JSON in the modal textarea
+3. Click "Import & Skip to Phase 3"
+
+**Modal Features:**
+- JSON validation on import
+- Required fields hint: `plan_title` or `plan_description`
+- Optional fields: `sections`, `specifics`, `original_prompt`
+- Error display for invalid JSON
+
+**What Happens on Import:**
+```typescript
+enhancedPrompt = parsed JSON
+currentPhase = 3
+threadId = new UUID
+initialPrompt = extracted from JSON (original_prompt || plan_description || plan_title)
+clarityScore = 100%
+conversationHistory = [{ role: 'assistant', content: 'Enhanced Prompt imported...' }]
+apiCommunications = [{ phase: 'import', ... }]
+```
+
+**Use Case:** Test V6 Intent Validation or other Phase 3+ features without going through the full conversation flow.
+
+#### 3.8 V6 Intent Validation
+
+**Purpose:** Test the V6 agent generation pipeline with 5-layer ambiguity detection and user review flow.
+
+**Feature Flag:** `NEXT_PUBLIC_USE_V6_AGENT_GENERATION`
+- When `true`: V6 flow is enabled by default, Phase 4 buttons are hidden
+- When `false`: V6 flow must be triggered manually, Phase 4 buttons are visible
+
+**Button Location:** Phase 3 Action Buttons section (blue button: "🔍 V6 Intent Validation")
+
+**How to Use:**
+1. Reach Phase 3 (either through conversation or import)
+2. Click "🔍 V6 Intent Validation" button
+3. Review the ambiguity report in the V6ReviewCustomizeUI component
+4. Make decisions on must-confirm items
+5. Click "Compile and Generate DSL" to compile the workflow
+
+**V6 Flow Components:**
+
+**API Call 1: `/api/v6/generate-semantic-grounded`**
+- Input: Enhanced Prompt, userId, provider/model
+- Output: semantic_plan, grounded_plan, ambiguity_report
+- Runs: Phase 1 (Understanding) + Phase 2 (Grounding) + 5-Layer Detection
+
+**Review & Customize UI:**
+- **Must Confirm** (red): Blocking items that require user decision
+- **Should Review** (yellow): Non-blocking items expanded by default
+- **Looks Good** (green): Pre-approved items, collapsed
+- **Grounding Ambiguities** (blue): Multiple matches found during grounding
+
+**API Call 2: `/api/v6/compile-with-decisions`**
+- Input: semantic_plan, user_decisions, enhanced_prompt
+- Output: Compiled agent with pilot_steps
+- Runs: Phase 3 (IR Formalization) + Phase 4+5 (Compilation)
+
+**Workflow Preview UI (V6WorkflowPreview Component):**
+After successful compilation, users see a visual workflow preview before approving the agent:
+- **Visual Step Cards**: Each workflow step displayed with icons, badges, and descriptions
+- **Step Type Indicators**: Color-coded badges for operation, transform, conditional, scatter_gather
+- **Plugin Badges**: Shows which plugin each step uses (Google Sheets, Gmail, etc.)
+- **Expandable Details**: Click to expand and see inputs, config, and nested steps
+- **User Decisions Summary**: Recap of all confirmed patterns and resolved ambiguities
+- **Action Buttons**:
+  - **Go Back**: Return to Review & Customize UI to modify decisions
+  - **Copy JSON**: Copy compiled workflow to clipboard
+  - **Approve & Save Agent**: Confirm and persist the agent (save logic placeholder)
+- **Raw JSON View**: Collapsible section showing full compiled result JSON
+
+**V6 State Variables:**
+```typescript
+v6FlowEnabled: boolean              // V6 mode active
+v6AmbiguityReport: object | null    // From API call 1
+v6SemanticPlan: object | null       // From API call 1
+v6UserDecisions: object | null      // User's choices in Review UI
+v6Loading: boolean                  // Loading state
+v6Error: string | null              // Error message
+v6CompiledResult: object | null     // From API call 2
+v6ShowWorkflowPreview: boolean      // Show workflow preview after compilation
+```
+
+**Reset V6 Flow:** "Close V6 Flow" or "Reset" button clears all V6 state.
+
+#### 3.9 Testing Controls
 - **Reset Thread**: Clears all state and starts fresh
 
 **API Endpoints Used:**
 - `POST /api/agent-creation/init-thread` - Initialize conversation thread
 - `POST /api/agent-creation/process-message` - Process each phase
+- `POST /api/v6/generate-semantic-grounded` - V6 Intent Validation (API Call 1)
+- `POST /api/v6/compile-with-decisions` - V6 Compilation with user decisions (API Call 2)
 
 **Phase Flow:**
 ```
@@ -623,6 +721,19 @@ Present on all tabs:
 - feasibility: any
 - phase4Response: any
 - technicalInputsCollected: Record<string, string>
+// V6 Intent Validation state
+- isV6FeatureFlagEnabled: boolean  // from useV6AgentGeneration() feature flag
+- v6FlowEnabled: boolean           // initialized from feature flag
+- v6AmbiguityReport: V6AmbiguityReport | null
+- v6SemanticPlan: object | null
+- v6UserDecisions: V6UserDecisions | null
+- v6Loading: boolean
+- v6Error: string | null
+- v6CompiledResult: any
+// Enhanced Prompt Import state
+- showEnhancedPromptImportModal: boolean
+- enhancedPromptImportValue: string
+- enhancedPromptImportError: string | null
 ```
 
 **Agent Execution State:**
@@ -854,6 +965,38 @@ Present on all tabs:
    - DSL output
 10. Check for validation errors with clear `missingFields` if inputs are incomplete
 
+### UC-14: Import Enhanced Prompt JSON (Skip to Phase 3)
+1. Navigate to Thread Conversation tab
+2. Click "📥 Import Enhanced Prompt JSON" button (purple, in header)
+3. Paste a valid Enhanced Prompt JSON with at least `plan_title` or `plan_description`
+4. Click "Import & Skip to Phase 3"
+5. Verify:
+   - Phase 3 UI appears with the imported Enhanced Prompt
+   - Thread ID is generated
+   - Clarity score shows 100%
+   - Conversation history shows "Enhanced Prompt imported successfully"
+   - API Communications tracks the import
+6. Proceed with Phase 4 or V6 Intent Validation testing
+
+### UC-15: Test V6 Intent Validation Flow
+1. Reach Phase 3 (via conversation flow or UC-14 import)
+2. Click "🔍 V6 Intent Validation" button (blue)
+3. Wait for API Call 1 (`/api/v6/generate-semantic-grounded`)
+4. Review the V6ReviewCustomizeUI component:
+   - **Must Confirm** section: Make required decisions
+   - **Should Review** section: Review and optionally modify
+   - **Looks Good** section: Expand to verify auto-approved items
+   - **Grounding Ambiguities**: Resolve any multiple-match issues
+5. Verify all must-confirm items are resolved (button enables)
+6. Click "Compile and Generate DSL" button
+7. Wait for API Call 2 (`/api/v6/compile-with-decisions`)
+8. Verify V6 Compiled Result:
+   - Agent name displayed
+   - Pilot steps count shown
+   - Full JSON available in expandable section
+9. Download communication history (includes both V6 API calls)
+10. Click "Reset" to clear V6 flow and test again
+
 ---
 
 ## System Config Dependencies
@@ -1009,7 +1152,66 @@ All errors are:
 
 ## Changelog
 
-### Version 1.6 (Current)
+### Version 1.9.1 (Current)
+- **User Decisions Summary Improvements**:
+  - Enhanced `getV6UserDecisionsForPreview()` to look up human-readable labels from `v6AmbiguityReport`:
+    - `confirmed_patterns` → looks up `must_confirm` items, uses `description` or `title`
+    - `resolved_ambiguities` → looks up both `must_confirm` (semantic_ambiguity/vague_language types) and `grounding_ambiguities`
+    - `approved_assumptions` / `disabled_assumptions` → looks up from `should_review`, `looks_good`, or `v6SemanticPlan.assumptions`
+    - `edge_case_handling` → formats edge case IDs as readable labels
+  - Added text truncation (50 chars max) with dotted underline indicator
+  - Added native browser tooltips showing full text on hover
+- **DecisionSummary Component Updates** (`V6WorkflowPreview.tsx`):
+  - Truncates long labels/values to improve readability
+  - Shows full `label: value` in tooltip on hover
+
+### Version 1.9
+- **V6 Workflow Preview UI**:
+  - Added `V6WorkflowPreview` component (`@/components/v6/V6WorkflowPreview`)
+  - Visual step cards with type icons, badges, and expandable details
+  - User decisions summary showing confirmed patterns and resolved ambiguities
+  - Action buttons: Go Back, Copy JSON, Approve & Save Agent
+  - Raw JSON view in collapsible section
+- **New State Variable**: `v6ShowWorkflowPreview` - controls when workflow preview is displayed
+- **New Handler Functions**:
+  - `handleV6WorkflowGoBack()` - return to Review UI
+  - `handleV6WorkflowCopyJSON()` - copy compiled result to clipboard
+  - `handleV6WorkflowApprove()` - approve and save agent (placeholder)
+  - `getV6UserDecisionsForPreview()` - transform decisions for preview format
+  - `convertPilotStepsToWorkflowSteps()` - convert pilot_steps to WorkflowStep format
+- **UI Flow Update**: After clicking "Compile and Generate DSL", shows Workflow Preview instead of simple success box
+
+### Version 1.8
+- **V6 Feature Flag Integration**:
+  - Added `useV6AgentGeneration()` feature flag from `@/lib/utils/featureFlags`
+  - `v6FlowEnabled` state now initializes from `NEXT_PUBLIC_USE_V6_AGENT_GENERATION` environment variable
+  - When feature flag is `true`: Phase 4 buttons are hidden, V6 flow is enabled by default
+  - When feature flag is `false`: Phase 4 buttons are visible, V6 flow must be triggered manually
+- **Button Rename**: "Create Agent" → "Compile and Generate DSL" in V6ReviewCustomizeUI
+- **New State Variable**: `isV6FeatureFlagEnabled` from feature flag hook
+- **Debug Logging**: Added response logging to `/api/v6/generate-semantic-grounded` before returning
+
+### Version 1.7
+- **V6 Intent Validation Integration**:
+  - New "🔍 V6 Intent Validation" button in Phase 3 Action Buttons
+  - Calls `/api/v6/generate-semantic-grounded` for semantic plan + 5-layer ambiguity detection
+  - Integrated `V6ReviewCustomizeUI` component for user review/customization
+  - "Compile and Generate DSL" button calls `/api/v6/compile-with-decisions` with user decisions
+  - V6 compiled result display with agent name, steps count, and full JSON view
+- **Import Enhanced Prompt JSON**:
+  - New "📥 Import Enhanced Prompt JSON" button in Thread Conversation header
+  - Modal to paste Phase 3 Enhanced Prompt JSON
+  - Skips directly to Phase 3 without going through Phase 1-2
+  - Validates required fields (`plan_title` or `plan_description`)
+  - Sets thread state (threadId, currentPhase, clarityScore, etc.)
+- **New State Variables**:
+  - V6: `v6FlowEnabled`, `v6AmbiguityReport`, `v6SemanticPlan`, `v6UserDecisions`, `v6Loading`, `v6Error`, `v6CompiledResult`
+  - Import: `showEnhancedPromptImportModal`, `enhancedPromptImportValue`, `enhancedPromptImportError`
+- **New Components Imported**: `V6ReviewCustomizeUI` from `@/components/v6/V6ReviewCustomizeUI`
+- Added UC-14: Import Enhanced Prompt JSON use case
+- Added UC-15: Test V6 Intent Validation Flow use case
+
+### Version 1.6
 - **Prompt Version Updates**:
   - Agent Creation Prompt upgraded to v13 (`Workflow-Agent-Creation-Prompt-v13-chatgpt.txt`)
   - Technical Reviewer upgraded to v2 (`Workflow-Agent-Technical-Reviewer-SystemPrompt-v2.txt`)
@@ -1113,5 +1315,5 @@ For issues or questions about the Test Page:
 
 ---
 
-**Last Updated:** December 23, 2025 (Prompt v13/v2 + Technical Reviewer Schema Validation)
+**Last Updated:** January 21, 2026 (User Decisions Summary Improvements)
 **Maintained By:** NeuronForge Development Team

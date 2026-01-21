@@ -86,6 +86,8 @@ export interface Normalization {
   required_headers?: string[]
   case_sensitive?: boolean
   missing_header_action?: 'error' | 'warn' | 'ignore'
+  // LLM sometimes outputs grounded_facts here - coerced from object to array if needed
+  grounded_facts?: string[] | null
 }
 
 // ============================================================================
