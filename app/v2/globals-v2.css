@@ -147,6 +147,57 @@
   animation: slideIn 0.4s ease-out;
 }
 
+@keyframes flowRight {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+.animate-flow-right {
+  animation: flowRight 1.5s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(99, 102, 241, 0.1) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s ease-in-out infinite;
+}
+
+@keyframes glow {
+  0%, 100% {
+    box-shadow: 0 0 5px rgba(99, 102, 241, 0.5), 0 0 10px rgba(99, 102, 241, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 10px rgba(99, 102, 241, 0.8), 0 0 20px rgba(99, 102, 241, 0.5);
+  }
+}
+
+.animate-glow {
+  animation: glow 2s ease-in-out infinite;
+}
+
 /* React Joyride Tour Theming */
 .__floater__arrow polygon {
   fill: white !important;
@@ -200,6 +251,15 @@
   color: rgb(226 232 240) !important; /* slate-200 */
 }
 
+/* Strong tags in dark mode */
+.react-joyride__tooltip strong {
+  color: rgb(31 41 55) !important; /* gray-800 */
+}
+
+.dark .react-joyride__tooltip strong {
+  color: rgb(226 232 240) !important; /* slate-200 */
+}
+
 /* Badge spans with inline-flex - explicit amber styling for Draft badge */
 .react-joyride__tooltip span.inline-flex.bg-amber-100 {
   background-color: rgb(254 243 199) !important; /* amber-100 */
@@ -226,12 +286,20 @@
   background-color: rgba(6, 95, 70, 0.2) !important; /* emerald-900/20 */
 }
 
+.dark .react-joyride__tooltip .bg-blue-50 {
+  background-color: rgba(30, 58, 138, 0.3) !important; /* blue-900/30 */
+}
+
 .dark .react-joyride__tooltip .bg-gray-50 {
   background-color: rgba(51, 65, 85, 0.5) !important; /* slate-700/50 - lighter than tooltip bg */
 }
 
 .dark .react-joyride__tooltip .border-amber-100 {
   border-color: rgb(146 64 14) !important; /* amber-800 */
+}
+
+.dark .react-joyride__tooltip .border-blue-200 {
+  border-color: rgb(29 78 216) !important; /* blue-700 */
 }
 
 .dark .react-joyride__tooltip .border-emerald-100 {
@@ -246,6 +314,10 @@
   color: rgb(253 230 138) !important; /* amber-200 */
 }
 
+.dark .react-joyride__tooltip .text-blue-900 {
+  color: rgb(191 219 254) !important; /* blue-200 */
+}
+
 .dark .react-joyride__tooltip .text-emerald-900 {
   color: rgb(167 243 208) !important; /* emerald-200 */
 }
@@ -258,30 +330,43 @@
   color: rgb(251 191 36) !important; /* amber-400 */
 }
 
+.dark .react-joyride__tooltip .text-blue-700 {
+  color: rgb(147 197 253) !important; /* blue-300 */
+}
+
 .dark .react-joyride__tooltip .text-emerald-700 {
   color: rgb(52 211 153) !important; /* emerald-400 */
+}
+
+.dark .react-joyride__tooltip .text-blue-600 {
+  color: rgb(96 165 250) !important; /* blue-400 */
 }
 
 .dark .react-joyride__tooltip .text-gray-600 {
   color: rgb(148 163 184) !important; /* slate-400 */
 }
 
-/* Primary button - smaller size to fit better */
-.react-joyride__tooltip button[data-action="primary"] {
-  background: linear-gradient(to bottom right, #10B981, #059669) !important;
+/* Primary button - matches platform design (indigo to purple gradient) */
+.react-joyride__tooltip button[data-action="primary"],
+.__floater button[data-action="primary"] {
+  background: linear-gradient(to right, var(--v2-primary), var(--v2-secondary)) !important;
+  background-color: transparent !important;
   color: white !important;
   border: none !important;
-  border-radius: 10px !important;
-  padding: 8px 18px !important;
-  font-weight: 600 !important;
-  font-size: 14px !important;
-  box-shadow: 0 4px 16px rgba(16, 185, 129, 0.3) !important;
+  border-radius: 12px !important;
+  padding: 11px 24px !important;
+  font-weight: 500 !important;
+  font-size: 16px !important;
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.3) !important;
   transition: all 0.2s ease !important;
 }
 
-.react-joyride__tooltip button[data-action="primary"]:hover {
-  box-shadow: 0 8px 24px rgba(16, 185, 129, 0.4) !important;
-  transform: translateY(-2px) !important;
+.react-joyride__tooltip button[data-action="primary"]:hover,
+.__floater button[data-action="primary"]:hover {
+  background: linear-gradient(to right, var(--v2-primary), var(--v2-secondary)) !important;
+  background-color: transparent !important;
+  box-shadow: 0 8px 24px rgba(99, 102, 241, 0.4) !important;
+  transform: translateY(-1px) !important;
 }
 
 /* Secondary buttons - ghost variant */

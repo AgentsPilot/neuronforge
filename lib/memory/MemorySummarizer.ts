@@ -450,70 +450,52 @@ Response (JSON only):`;
   ): Promise<string> {
     const tokenCount = this.estimateTokens(memory.summary);
 
-    // Retry logic to handle race conditions with run_number
-    const maxRetries = 5;
-    let lastError: any = null;
+    // Get next run_number atomically using database function
+    // This eliminates race conditions when multiple executions finish simultaneously
+    const { data: runNumberData, error: runNumberError } = await this.supabase
+      .rpc('get_next_run_number', { p_agent_id: input.agent_id });
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      // Calculate run_number atomically right before insert to minimize race window
-      const { data: maxRunData } = await this.supabase
-        .from('run_memories')
-        .select('run_number')
-        .eq('agent_id', input.agent_id)
-        .order('run_number', { ascending: false })
-        .limit(1);
+    if (runNumberError) {
+      console.error('❌ [MemorySummarizer] Error getting next run_number:', runNumberError);
+      throw runNumberError;
+    }
 
-      const runNumber = (maxRunData && maxRunData.length > 0 ? maxRunData[0].run_number : 0) + 1;
+    // Ensure runNumber is an integer (Supabase RPC may return it as various types)
+    const runNumber = Math.floor(Number(runNumberData));
+    console.log(`📊 [MemorySummarizer] Got atomic run_number=${runNumber} for agent ${input.agent_id}`);
 
-      console.log(`📊 [MemorySummarizer] Attempt ${attempt}/${maxRetries}: Calculated run_number=${runNumber} (previous max: ${maxRunData?.[0]?.run_number || 0})`);
+    const { data, error } = await this.supabase
+      .from('run_memories')
+      .insert({
+        agent_id: input.agent_id,
+        user_id: input.user_id,
+        execution_id: input.execution_id,
+        run_number: runNumber,
+        run_timestamp: new Date().toISOString(),
 
-      const { data, error } = await this.supabase
-        .from('run_memories')
-        .insert({
-          agent_id: input.agent_id,
-          user_id: input.user_id,
-          execution_id: input.execution_id,
-          run_number: runNumber, // Use freshly calculated run_number
-          run_timestamp: new Date().toISOString(),
+        summary: memory.summary,
+        sentiment: memory.sentiment,
+        key_outcomes: memory.key_outcomes,
+        patterns_detected: memory.patterns_detected,
+        suggestions: memory.suggestions,
+        user_feedback: input.user_feedback || null,
 
-          summary: memory.summary,
-          sentiment: memory.sentiment,
-          key_outcomes: memory.key_outcomes,
-          patterns_detected: memory.patterns_detected,
-          suggestions: memory.suggestions,
-          user_feedback: input.user_feedback || null,
+        importance_score: Math.floor(importanceScore),
+        memory_type: 'run',
+        token_count: tokenCount,
 
-          importance_score: importanceScore,
-          memory_type: 'run',
-          token_count: tokenCount,
+        model_used: input.model_used,
+        credits_consumed: input.credits_consumed,
+        execution_time_ms: input.execution_time_ms ? Math.floor(Number(input.execution_time_ms)) : null,
+        ais_score: input.ais_score ? Math.floor(Number(input.ais_score)) : null,
 
-          model_used: input.model_used,
-          credits_consumed: input.credits_consumed,
-          execution_time_ms: input.execution_time_ms,
-          ais_score: input.ais_score || null,
+        // Embedding will be generated immediately after save
+        embedding: null
+      })
+      .select('id')
+      .single();
 
-          // Embedding will be generated immediately after save
-          embedding: null
-        })
-        .select('id')
-        .single();
-
-      // Success - exit retry loop and return ID
-      if (!error && data) {
-        console.log(`✅ [MemorySummarizer] Memory saved successfully with run_number=${runNumber}, id=${data.id}`);
-        return data.id;
-      }
-
-      // Check if it's a duplicate key error (23505)
-      if (error.code === '23505' && attempt < maxRetries) {
-        console.warn(`⚠️  [MemorySummarizer] Duplicate run_number detected (attempt ${attempt}/${maxRetries}), retrying...`);
-        lastError = error;
-        // Small random delay to reduce collision probability
-        await new Promise(resolve => setTimeout(resolve, Math.random() * 100 + 50));
-        continue;
-      }
-
-      // Other error or max retries reached
+    if (error) {
       console.error('❌ [MemorySummarizer] Error saving memory to database:', {
         error,
         errorMessage: error?.message,
@@ -523,15 +505,13 @@ Response (JSON only):`;
         agentId: input.agent_id,
         userId: input.user_id,
         executionId: input.execution_id,
-        runNumber,
-        attempt
+        runNumber
       });
       throw error;
     }
 
-    // If we get here, we exhausted all retries
-    console.error(`❌ [MemorySummarizer] Failed to save memory after ${maxRetries} attempts`);
-    throw lastError;
+    console.log(`✅ [MemorySummarizer] Memory saved successfully with run_number=${runNumber}, id=${data.id}`);
+    return data.id;
   }
 
   /**
@@ -614,11 +594,34 @@ Response (JSON only):`;
           `${m.summary} ${JSON.stringify(m.key_outcomes)} ${JSON.stringify(m.patterns_detected)}`
         );
 
-        // Generate embeddings in batch
-        const response = await this.openai.embeddings.create({
-          model: config.model,
-          input: texts
-        });
+        // Generate embeddings in batch with retry logic
+        let response;
+        const maxRetries = 3;
+        let lastError;
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            response = await this.openai.embeddings.create({
+              model: config.model,
+              input: texts
+            });
+            break; // Success - exit retry loop
+          } catch (error: any) {
+            lastError = error;
+            if (attempt < maxRetries) {
+              const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000); // Exponential backoff, max 5s
+              console.warn(`⚠️  [MemorySummarizer] Embedding API error (attempt ${attempt}/${maxRetries}), retrying in ${delayMs}ms...`);
+              await new Promise(resolve => setTimeout(resolve, delayMs));
+            } else {
+              console.error(`❌ [MemorySummarizer] Failed to generate embeddings after ${maxRetries} attempts:`, error);
+              throw error;
+            }
+          }
+        }
+
+        if (!response) {
+          throw lastError || new Error('Failed to generate embeddings');
+        }
 
         // Validate dimensions
         const expectedDimensions = config.dimensions || 1536;
@@ -630,21 +633,23 @@ Response (JSON only):`;
           );
         }
 
-        // Save embeddings to database
-        const updates = memories.map((m, idx) => ({
+        // Save embeddings to database in a single batch upsert
+        // This eliminates N+1 query problem (was doing 100 individual updates)
+        const updates = memories.map((m: any, idx: any) => ({
           id: m.id,
           embedding: response.data[idx].embedding
         }));
 
-        for (const update of updates) {
-          const { error: updateError } = await this.supabase
-            .from('run_memories')
-            .update({ embedding: update.embedding })
-            .eq('id', update.id);
+        const { error: batchUpdateError } = await this.supabase
+          .from('run_memories')
+          .upsert(updates, {
+            onConflict: 'id',
+            ignoreDuplicates: false
+          });
 
-          if (updateError) {
-            console.error(`❌ [MemorySummarizer] Error saving embedding for ${update.id}:`, updateError);
-          }
+        if (batchUpdateError) {
+          console.error(`❌ [MemorySummarizer] Error saving batch embeddings:`, batchUpdateError);
+          throw batchUpdateError;
         }
 
         console.log(`✅ [MemorySummarizer] Batch ${i / batchSize + 1}: Generated ${batch.length} embeddings`);
@@ -680,11 +685,34 @@ Response (JSON only):`;
       // Load config
       const config = await MemoryConfigService.getEmbeddingConfig(this.supabase);
 
-      // Generate embedding
-      const response = await this.openai.embeddings.create({
-        model: config.model,
-        input: embeddingText
-      });
+      // Generate embedding with retry logic
+      let response;
+      const maxRetries = 3;
+      let lastError;
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          response = await this.openai.embeddings.create({
+            model: config.model,
+            input: embeddingText
+          });
+          break; // Success - exit retry loop
+        } catch (error: any) {
+          lastError = error;
+          if (attempt < maxRetries) {
+            const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000); // Exponential backoff, max 5s
+            console.warn(`⚠️  [MemorySummarizer] Embedding API error (attempt ${attempt}/${maxRetries}), retrying in ${delayMs}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+          } else {
+            console.error(`❌ [MemorySummarizer] Failed to generate embedding after ${maxRetries} attempts:`, error);
+            throw error;
+          }
+        }
+      }
+
+      if (!response) {
+        throw lastError || new Error('Failed to generate embedding');
+      }
 
       const embedding = response.data[0].embedding;
 
@@ -730,11 +758,34 @@ Response (JSON only):`;
       // Load config
       const config = await MemoryConfigService.getEmbeddingConfig(this.supabase);
 
-      // Generate embedding
-      const response = await this.openai.embeddings.create({
-        model: config.model,
-        input: embeddingText
-      });
+      // Generate embedding with retry logic
+      let response;
+      const maxRetries = 3;
+      let lastError;
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          response = await this.openai.embeddings.create({
+            model: config.model,
+            input: embeddingText
+          });
+          break; // Success - exit retry loop
+        } catch (error: any) {
+          lastError = error;
+          if (attempt < maxRetries) {
+            const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000); // Exponential backoff, max 5s
+            console.warn(`⚠️  [MemorySummarizer] Embedding API error (attempt ${attempt}/${maxRetries}), retrying in ${delayMs}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+          } else {
+            console.error(`❌ [MemorySummarizer] Failed to generate embedding after ${maxRetries} attempts:`, error);
+            throw error;
+          }
+        }
+      }
+
+      if (!response) {
+        throw lastError || new Error('Failed to generate embedding');
+      }
 
       const embedding = response.data[0].embedding;
 

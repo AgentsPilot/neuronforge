@@ -461,6 +461,7 @@
         <button class="tab" onclick="switchTab(event, 'execution')">▶️ Execution</button>
         <button class="tab" onclick="switchTab(event, 'saved-workflows')">💾 Saved</button>
         <button class="tab" onclick="switchTab(event, 'diagnostics')">🔍 Diagnostics</button>
+        <button class="tab" onclick="switchTab(event, 'create-agent')">🤖 Create Agent</button>
       </div>
 
       <!-- Tab 1: Full Pipeline Test -->
@@ -652,6 +653,44 @@
           <button onclick="runDiagnostics()" style="background: #ff9800;">🔍 Run Diagnostics</button>
 
           <div id="diagnostics-result" style="margin-top: 15px;"></div>
+        </div>
+      </div>
+
+      <!-- Tab 5: Create Agent -->
+      <div id="create-agent" class="tab-content">
+        <div class="test-section">
+          <h2>🤖 Create Agent</h2>
+          <p style="color: #666; margin-bottom: 15px;">Save your compiled workflow as an agent in the database for execution and testing</p>
+
+          <div id="create-agent-no-workflow" class="warning-box" style="display: none;">
+            <p><strong>No compiled workflow found.</strong> Run the pipeline in the Compilation tab first, then come back here to create an agent.</p>
+          </div>
+
+          <div id="create-agent-workflow-info" class="info-box" style="display: none;">
+            <strong>Compiled Workflow Loaded:</strong>
+            <div id="create-agent-workflow-summary" style="margin-top: 8px; font-size: 0.9rem;"></div>
+          </div>
+
+          <label>Agent Name (required):</label>
+          <input type="text" id="create-agent-name" placeholder="e.g. Urgent Email Monitor">
+
+          <label>User Prompt (optional — what the user originally asked):</label>
+          <textarea id="create-agent-prompt" rows="3" placeholder="e.g. Monitor my Gmail for urgent emails and log them to a Google Sheet"></textarea>
+
+          <label>Description (optional):</label>
+          <textarea id="create-agent-description" rows="2" placeholder="e.g. Checks Gmail inbox every day for complaint/refund emails"></textarea>
+
+          <label>Status:</label>
+          <select id="create-agent-status">
+            <option value="active" selected>Active (ready to execute)</option>
+            <option value="draft">Draft</option>
+          </select>
+
+          <div style="margin-top: 15px;">
+            <button id="create-agent-btn" onclick="createAgent()">🤖 Create Agent</button>
+          </div>
+
+          <div id="create-agent-result" class="result"></div>
         </div>
       </div>
     </div>
@@ -920,6 +959,7 @@
             <button onclick="saveWorkflow()" class="btn-secondary">💾 Save to Browser</button>
             <button onclick="downloadAllPhases()" style="background: #6f42c1; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer;">📥 Download All Phases</button>
             <button onclick="switchTab({target: document.querySelectorAll('.tab')[1]}, 'execution')" style="background: #4caf50;">▶️ Go to Execution</button>
+            <button onclick="switchTab({target: document.querySelectorAll('.tab')[4]}, 'create-agent')" style="background: #764ba2;">🤖 Create Agent</button>
           </div>
         `;
         resultDiv.style.display = 'block';
@@ -1115,6 +1155,9 @@
         noWorkflowMsg.style.display = 'block';
         workflowReady.style.display = 'none';
       }
+
+      // Also update create agent tab
+      updateCreateAgentTab();
     }
 
     function resetWorkflowEditor() {
@@ -1284,6 +1327,151 @@
     }
 
     // =========================================================================
+    // Create Agent Tab
+    // =========================================================================
+
+    function updateCreateAgentTab() {
+      const noWorkflow = document.getElementById('create-agent-no-workflow');
+      const workflowInfo = document.getElementById('create-agent-workflow-info');
+      const workflowSummary = document.getElementById('create-agent-workflow-summary');
+
+      if (window.currentWorkflow && window.currentWorkflow.workflow_steps) {
+        noWorkflow.style.display = 'none';
+        workflowInfo.style.display = 'block';
+
+        const steps = window.currentWorkflow.workflow_steps;
+        const plugins = [...new Set(steps.filter(s => s.plugin).map(s => s.plugin))];
+
+        workflowSummary.innerHTML = `
+          <div>📋 Steps: ${steps.length}</div>
+          <div>🔌 Plugins: ${plugins.join(', ') || 'None'}</div>
+          <div>🎯 Goal: ${window.currentWorkflow.ir?.goal || 'N/A'}</div>
+          <div>👤 User: ${document.getElementById('user-id-input').value || 'N/A'}</div>
+        `;
+      } else {
+        noWorkflow.style.display = 'block';
+        workflowInfo.style.display = 'none';
+      }
+    }
+
+    async function createAgent() {
+      const btn = document.getElementById('create-agent-btn');
+      const resultDiv = document.getElementById('create-agent-result');
+
+      const agentName = document.getElementById('create-agent-name').value.trim();
+      const userPrompt = document.getElementById('create-agent-prompt').value.trim();
+      const description = document.getElementById('create-agent-description').value.trim();
+      const status = document.getElementById('create-agent-status').value;
+      const userId = document.getElementById('user-id-input').value.trim();
+
+      if (!agentName) {
+        alert('Agent name is required.');
+        return;
+      }
+
+      if (!userId) {
+        alert('User ID is required. Set it in the Compilation tab.');
+        return;
+      }
+
+      // Validate that userId is a UUID, not an email
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(userId)) {
+        alert('User ID must be a UUID (e.g. 08456106-aa50-4810-b12c-7ca84102da31), not an email. The agents table requires a UUID referencing auth.users.');
+        return;
+      }
+
+      btn.disabled = true;
+      resultDiv.style.display = 'none';
+
+      try {
+        // Build agent data
+        const agentData = {
+          agent_name: agentName,
+          status: status,
+        };
+
+        if (userPrompt) agentData.user_prompt = userPrompt;
+        if (description) agentData.description = description;
+
+        // Add workflow data if available
+        if (window.currentWorkflow && window.currentWorkflow.workflow_steps) {
+          const steps = window.currentWorkflow.workflow_steps;
+          agentData.pilot_steps = steps;
+          agentData.workflow_steps = steps;
+
+          // Extract plugins
+          const plugins = [...new Set(steps.filter(s => s.plugin).map(s => s.plugin))];
+          if (plugins.length > 0) {
+            agentData.connected_plugins = plugins;
+            agentData.plugins_required = plugins;
+          }
+        }
+
+        // Add IR goal as created_from_prompt if available
+        if (window.currentWorkflow?.ir?.goal) {
+          agentData.created_from_prompt = window.currentWorkflow.ir.goal;
+        }
+
+        const response = await fetch('/api/create-agent', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-id': userId
+          },
+          body: JSON.stringify({ agent: agentData })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          const agent = data.agent;
+          window.createdAgentId = agent.id;
+
+          resultDiv.className = 'result success';
+          resultDiv.innerHTML = `
+            <h3>✅ Agent Created Successfully</h3>
+            <div class="stats-grid">
+              <div class="stat-card">
+                <div class="stat-label">Agent ID</div>
+                <div class="stat-value" style="font-size: 0.85rem; word-break: break-all;">${agent.id}</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Name</div>
+                <div class="stat-value" style="font-size: 1rem;">${agent.agent_name}</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Status</div>
+                <div class="stat-value" style="font-size: 1rem;">${agent.status}</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Pilot Steps</div>
+                <div class="stat-value">${agent.pilot_steps?.length || 0}</div>
+              </div>
+            </div>
+            <details style="margin-top: 15px;">
+              <summary>View Full Agent Response</summary>
+              <pre style="max-height: 400px; overflow-y: auto;">${JSON.stringify(data, null, 2)}</pre>
+            </details>
+          `;
+          resultDiv.style.display = 'block';
+        } else {
+          throw new Error(data.error || 'Failed to create agent');
+        }
+      } catch (error) {
+        console.error('Create agent error:', error);
+        resultDiv.className = 'result error';
+        resultDiv.innerHTML = `
+          <h3>❌ Agent Creation Failed</h3>
+          <p>${error.message}</p>
+        `;
+        resultDiv.style.display = 'block';
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    // =========================================================================
     // Diagnostics
     // =========================================================================
 
@@ -1353,6 +1541,7 @@
       document.getElementById('execute-btn').onclick = executeWorkflow;
       updateSavedTab();
       updateExecutionTab();
+      updateCreateAgentTab();
     });
   </script>
 </body>

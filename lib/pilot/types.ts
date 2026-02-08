@@ -654,6 +654,26 @@ export interface StepOutputMetadata {
   routedModel?: string;
   orchestrated?: boolean;
   subWorkflowStepCount?: number;
+
+  // Parameter error detection (Shadow Agent)
+  parameter_error_details?: {
+    parameterName: string;
+    problematicValue: string;
+    errorMessage: string;
+  };
+  failure_category?: string;
+  failure_sub_type?: string;
+
+  // Auto-repair metadata
+  auto_repaired?: boolean;
+  repair_action?: string;
+  repair_description?: string;
+
+  // Additional metadata fields
+  plugin?: string;
+  action?: string;
+  field_names?: string[];
+  started_at?: string;
 }
 
 /**
@@ -807,6 +827,83 @@ export interface WorkflowExecutionResult {
   error?: string;
   errorStack?: string;
   failedStep?: string;
+
+  // Batch calibration results
+  collectedIssues?: CollectedIssue[];
+  context?: any; // ExecutionContext (for hardcode detection after execution)
+}
+
+// ============================================================================
+// BATCH CALIBRATION INTERFACES
+// ============================================================================
+
+/**
+ * Issue collected during batch calibration
+ */
+export interface CollectedIssue {
+  id: string; // uuid
+  category: 'parameter_error' | 'hardcode_detected' | 'data_shape_mismatch' |
+            'logic_error' | 'execution_error' | 'data_unavailable';
+  severity: 'critical' | 'high' | 'medium' | 'low';
+
+  // Affected steps
+  affectedSteps: Array<{
+    stepId: string;
+    stepName: string;
+    friendlyName: string;
+  }>;
+
+  // Issue details
+  title: string; // "Parameter 'range' not found"
+  message: string; // Plain English explanation
+  technicalDetails: string; // Technical error message
+
+  // Fix information
+  suggestedFix?: {
+    type: 'parameter_correction' | 'parameterization' | 'data_repair' | 'logic_suggestion';
+    action: any; // Depends on type
+    confidence: number; // 0-1
+  };
+
+  // Auto-repair info
+  autoRepairAvailable: boolean;
+  autoRepairProposal?: any; // RepairProposal from RepairEngine
+
+  // UI metadata
+  requiresUserInput: boolean;
+  estimatedImpact: 'high' | 'medium' | 'low';
+}
+
+/**
+ * Calibration session from database
+ */
+export interface CalibrationSession {
+  id: string;
+  agent_id: string;
+  user_id: string;
+  execution_id?: string;
+  status: 'running' | 'collecting_issues' | 'awaiting_fixes' | 'fixes_applied' | 'completed' | 'failed';
+  issues: CollectedIssue[];
+  issue_summary: {
+    critical: number;
+    warnings: number;
+    auto_repairs: number;
+  };
+  auto_repairs_proposed: any[];
+  user_fixes: Record<string, any>;
+  applied_fixes?: {
+    parameters: number;
+    parameterizations: number;
+    autoRepairs: number;
+  };
+  backup_pilot_steps?: any;
+  total_steps: number;
+  completed_steps: number;
+  failed_steps: number;
+  skipped_steps: number;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
 }
 
 // ============================================================================
@@ -898,6 +995,10 @@ export interface Agent {
   // Triggers
   schedule_cron?: string;
   trigger_condintion?: any;
+
+  // Production & Insights
+  production_ready?: boolean;       // Whether agent is ready for production
+  insights_enabled?: boolean;       // Whether to generate AI-powered insights (requires LLM calls)
 
   // Metadata
   status: string;

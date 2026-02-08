@@ -141,6 +141,21 @@ export class SemanticPlanGenerator {
    */
   async generate(enhancedPrompt: EnhancedPrompt): Promise<SemanticPlanGenerationResult> {
     const generateLogger = moduleLogger.child({ method: 'generate' })
+
+    // Validate enhanced prompt structure
+    if (!enhancedPrompt || !enhancedPrompt.sections) {
+      generateLogger.warn('Invalid enhanced prompt: missing sections property')
+      return {
+        success: false,
+        errors: ['Invalid enhanced prompt: missing sections property'],
+        metadata: {
+          model: this.getModelName(),
+          tokens_used: 0,
+          generation_time_ms: 0
+        }
+      }
+    }
+
     const sections = Object.keys(enhancedPrompt.sections)
     generateLogger.info({ sections }, 'Starting semantic plan generation')
 

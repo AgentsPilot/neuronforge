@@ -39,6 +39,7 @@ export class ExecutionRepository {
 
   /**
    * Find all executions for an agent
+   * Only returns production executions (filters out calibration runs)
    */
   async findByAgentId(
     agentId: string,
@@ -52,6 +53,7 @@ export class ExecutionRepository {
         .from('agent_executions')
         .select('*')
         .eq('agent_id', agentId)
+        .neq('run_mode', 'calibration')  // Filter out calibration runs, show production and null (backward compat)
         .order(options?.orderBy || 'started_at', { ascending: options?.ascending ?? false });
 
       if (options?.limit) {

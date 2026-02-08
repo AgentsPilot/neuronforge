@@ -304,10 +304,9 @@ export class MemoryInjector {
 
     if (error) {
       // If RPC function doesn't exist, fall back to manual query
-      // This is expected on first run before migration is applied
-      if (process.env.NODE_ENV !== 'production') {
-        console.warn('⚠️  [MemoryInjector] RPC function not found, using manual query. Run migration: supabase/migrations/20251201000000_create_search_similar_memories_function.sql');
-      }
+      // Apply migration to fix: see FIX_MEMORY_SEARCH_FUNCTION.md
+      console.log('ℹ️  [MemoryInjector] Using fallback memory search (function not found)');
+      console.log('   To optimize: Apply supabase/SQL Scripts/20251201000000_create_search_similar_memories_function.sql');
 
       const { data: manualData, error: manualError } = await this.supabase
         .from('run_memories')

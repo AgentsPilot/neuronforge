@@ -202,17 +202,27 @@ export class UserMemoryService {
         model: 'gpt-4o-mini',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.3,
-        max_tokens: 500,
+        max_tokens: 1000, // Increased from 500 to prevent JSON truncation
         response_format: { type: 'json_object' }
       });
 
       const responseText = completion.choices[0].message.content;
       if (!responseText) {
-        console.log('⚠️ [UserMemoryService] Empty LLM response');
+        console.log('⚠️  [UserMemoryService] Empty LLM response');
         return [];
       }
 
-      const response = JSON.parse(responseText);
+      let response;
+      try {
+        response = JSON.parse(responseText);
+      } catch (parseError: any) {
+        console.error('❌ [UserMemoryService] Failed to parse LLM response as JSON:', {
+          error: parseError.message,
+          responsePreview: responseText.substring(0, 500) + '...'
+        });
+        return [];
+      }
+
       const extracted: ExtractedMemory[] = response.memories || [];
 
       console.log(`✅ [UserMemoryService] Extracted ${extracted.length} user memories`);
@@ -382,13 +392,9 @@ Response (JSON only):`;
    */
   async recordMemoryUsage(memoryId: string): Promise<void> {
     try {
+      // Use database function for atomic increment
       const { error } = await this.supabase
-        .from('user_memory')
-        .update({
-          usage_count: this.supabase.rpc('increment', { row_id: memoryId }),
-          last_used_at: new Date().toISOString()
-        })
-        .eq('id', memoryId);
+        .rpc('increment_memory_usage', { p_memory_id: memoryId });
 
       if (error) {
         console.error('❌ [UserMemoryService] Error recording memory usage:', error);

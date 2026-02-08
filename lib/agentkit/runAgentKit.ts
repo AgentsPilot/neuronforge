@@ -290,11 +290,11 @@ export async function runAgentKit(
     try {
       console.log('🧠 [Memory] Loading agent memory context...');
 
-      // Load memory with 1000ms timeout (same as WorkflowPilot)
+      // Load memory with 3000ms timeout (increased from 1000ms to prevent premature timeouts)
       memoryContext = await Promise.race([
         memoryInjector.buildMemoryContext(agent.id, userId, { userInput, inputValues }),
         new Promise<null>((_, reject) =>
-          setTimeout(() => reject(new Error('Memory loading timeout (1000ms)')), 1000)
+          setTimeout(() => reject(new Error('Memory loading timeout (3000ms)')), 3000)
         )
       ]);
 

@@ -172,7 +172,7 @@ export class SchemaFieldExtractor {
     schemaField: OutputSchemaField,
     structuredData: Record<string, any>[] | Record<string, any>
   ): ExtractedField | null {
-    const variations = this.getFieldNameVariations(schemaField.name);
+    const variations = this.getFieldNameVariations(schemaField);
 
     // Handle array of objects (CSV rows)
     if (Array.isArray(structuredData)) {
@@ -238,7 +238,7 @@ export class SchemaFieldExtractor {
     schemaField: OutputSchemaField,
     keyValuePairs: Array<{ key: string; value: string; confidence: number }>
   ): ExtractedField | null {
-    const variations = this.getFieldNameVariations(schemaField.name);
+    const variations = this.getFieldNameVariations(schemaField);
 
     for (const variation of variations) {
       const normalizedVariation = this.normalizeKey(variation);
@@ -323,7 +323,7 @@ export class SchemaFieldExtractor {
     schemaField: OutputSchemaField,
     text: string
   ): ExtractedField | null {
-    const variations = this.getFieldNameVariations(schemaField.name);
+    const variations = this.getFieldNameVariations(schemaField);
 
     // Strategy 1: Try "FieldName: value" pattern for each variation
     for (const variation of variations) {
@@ -365,47 +365,69 @@ export class SchemaFieldExtractor {
 
   /**
    * Get variations of a field name for matching
+   * Uses field description to extract relevant keywords dynamically
    */
-  private getFieldNameVariations(fieldName: string): string[] {
+  private getFieldNameVariations(schemaField: OutputSchemaField): string[] {
+    const fieldName = schemaField.name;
     const variations = new Set<string>();
 
-    // Original
+    // 1. Original field name
     variations.add(fieldName);
 
-    // camelCase to words: "invoiceNumber" -> "invoice number"
+    // 2. camelCase to words: "invoiceNumber" -> "invoice number"
     variations.add(fieldName.replace(/([A-Z])/g, ' $1').toLowerCase().trim());
 
-    // snake_case to words: "invoice_number" -> "invoice number"
+    // 3. snake_case to words: "invoice_number" -> "invoice number"
     variations.add(fieldName.replace(/_/g, ' '));
 
-    // Words to camelCase
-    const words = fieldName.replace(/[_\s]+/g, ' ').trim().split(' ');
-    if (words.length > 1) {
-      variations.add(words[0].toLowerCase() + words.slice(1).map(w =>
-        w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
-      ).join(''));
-    }
-
-    // Common synonyms
-    const synonyms: Record<string, string[]> = {
-      'date': ['date', 'dated', 'date_time', 'datetime', 'timestamp'],
-      'amount': ['amount', 'total', 'total_amount', 'sum', 'price', 'cost'],
-      'vendor': ['vendor', 'merchant', 'seller', 'company', 'from', 'store'],
-      'customer': ['customer', 'client', 'buyer', 'bill to', 'sold to'],
-      'email': ['email', 'e-mail', 'email_address', 'mail'],
-      'phone': ['phone', 'telephone', 'tel', 'mobile', 'phone_number'],
-      'address': ['address', 'location', 'street', 'addr'],
-      'name': ['name', 'full_name', 'fullname'],
-    };
-
-    const lowerName = fieldName.toLowerCase().replace(/[_\s]/g, '');
-    for (const [key, aliasList] of Object.entries(synonyms)) {
-      if (lowerName.includes(key) || aliasList.some(a => lowerName.includes(a.replace(/[_\s]/g, '')))) {
-        aliasList.forEach(a => variations.add(a));
+    // 4. Individual words from field name
+    const words = fieldName.replace(/[_\s&]+/g, ' ').trim().split(' ');
+    words.forEach(word => {
+      if (word.length > 2) {
+        variations.add(word.toLowerCase());
       }
+    });
+
+    // 5. Extract keywords from description (uses agent's schema!)
+    if (schemaField.description) {
+      const descKeywords = this.extractKeywordsFromDescription(schemaField.description);
+      descKeywords.forEach(keyword => variations.add(keyword));
     }
 
     return Array.from(variations);
+  }
+
+  /**
+   * Extract meaningful keywords from field description
+   * Example: "Merchant/vendor name; if unclear..." → ["merchant", "vendor", "name"]
+   * This allows the system to work with ANY field the agent defines!
+   */
+  private extractKeywordsFromDescription(description: string): string[] {
+    const keywords = new Set<string>();
+
+    // Common stop words to filter out
+    const stopWords = new Set([
+      'the', 'a', 'an', 'and', 'or', 'if', 'to', 'for', 'of', 'in', 'on', 'at', 'by',
+      'from', 'with', 'as', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+      'this', 'that', 'these', 'those', 'it', 'its', 'should', 'would', 'could',
+      'unclear', 'set', 'literal', 'need', 'review', 'required', 'optional',
+      'internal', 'traceability', 'not', 'included', 'final', 'table', 'flag',
+      'indicating', 'whether', 'any', 'row', 'use', 'normalized', 'consistent',
+    ]);
+
+    // Extract words from description
+    const words = description
+      .toLowerCase()
+      .replace(/[^\w\s]/g, ' ') // Remove punctuation
+      .split(/\s+/)
+      .filter(word => word.length > 2 && !stopWords.has(word));
+
+    // Add meaningful words
+    words.forEach(word => {
+      keywords.add(word);
+    });
+
+    return Array.from(keywords);
   }
 
   /**

@@ -64,6 +64,9 @@ export function DynamicSelectField({
     return emojiToIcon[iconEmoji] || <span className="text-base flex-shrink-0">{iconEmoji}</span>
   }
 
+  // Create a stable key from dependent values to prevent infinite loops
+  const dependentValuesKey = JSON.stringify(dependentValues)
+
   // Fetch options from API
   const fetchOptions = useCallback(async (refresh: boolean = false) => {
     setLoading(true)
@@ -103,13 +106,13 @@ export function DynamicSelectField({
     } finally {
       setLoading(false)
     }
-  }, [plugin, action, parameter, dependentValues])
+  }, [plugin, action, parameter, dependentValuesKey]) // Use stable string key instead of object
 
   // Fetch options on mount and when dependent values change
   useEffect(() => {
-    console.log('[DynamicSelectField] useEffect triggered, dependentValues:', dependentValues)
+    console.log('[DynamicSelectField] useEffect triggered, dependentValuesKey:', dependentValuesKey)
     fetchOptions()
-  }, [fetchOptions]) // fetchOptions already includes dependentValues in its deps
+  }, [fetchOptions]) // fetchOptions already includes dependentValuesKey in its deps
 
   // Filter options based on search query
   const filteredOptions = query === ''
@@ -129,19 +132,43 @@ export function DynamicSelectField({
     groupedOptions[group].push(option)
   })
 
-  // Find selected option
-  const selectedOption = options.find((opt) => opt.value === value)
+  // Stable displayValue function for Combobox
+  const displayValue = useCallback((selectedValue: string) => {
+    console.log('[DynamicSelectField] displayValue called with:', selectedValue, 'options:', options.length)
+    if (!selectedValue) return ''
+    const option = options.find((opt) => opt.value === selectedValue)
+    const result = option?.label || selectedValue
+    console.log('[DynamicSelectField] displayValue returning:', result)
+    return result
+  }, [options])
+
+  console.log('[DynamicSelectField] Render - value:', value, 'query:', query, 'options:', options.length)
+
+  // Log when value prop changes
+  useEffect(() => {
+    console.log('[DynamicSelectField] value prop changed to:', value)
+  }, [value])
 
   return (
     <div className="relative">
-      <Combobox value={value} onChange={onChange}>
+      <Combobox
+        value={value || ''}
+        onChange={(newValue) => {
+          console.log('[DynamicSelectField] Combobox onChange:', newValue)
+          onChange(newValue || '')
+          setQuery('') // Clear search query when option is selected
+        }}
+      >
         <div className="relative">
           <div className="relative w-full">
             <Combobox.Input
               className={`w-full px-3 py-2 pr-20 border text-sm focus:outline-none focus:ring-1 bg-[var(--v2-surface)] border-[var(--v2-border)] focus:ring-[var(--v2-primary)] focus:border-[var(--v2-primary)] text-[var(--v2-text-primary)] placeholder-[var(--v2-text-muted)] ${className}`}
               style={style}
-              displayValue={() => selectedOption ? selectedOption.label : ''}
-              onChange={(event) => setQuery(event.target.value)}
+              displayValue={displayValue}
+              onChange={(event) => {
+                console.log('[DynamicSelectField] Input onChange:', event.target.value)
+                setQuery(event.target.value)
+              }}
               placeholder={placeholder}
               required={required}
             />

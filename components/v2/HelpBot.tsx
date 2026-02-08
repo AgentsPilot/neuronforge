@@ -185,7 +185,6 @@ export function HelpBot(props: HelpBotProps) {
             shadow: result.config.theme.shadowColor || 'rgba(139, 92, 246, 0.2)',
             closeButton: result.config.theme.closeButtonColor || '#ef4444'
           })
-          console.log('[HelpBot] Loaded theme colors:', result.config.theme)
         }
       } catch (error) {
         console.error('[HelpBot] Failed to load theme colors:', error)
@@ -291,14 +290,9 @@ export function HelpBot(props: HelpBotProps) {
   }, [messages, isInputHelp, context?.agentId, context?.fieldName, user?.id])
 
   useEffect(() => {
-    console.log('[HelpBot Init Effect] TRIGGERED - isOpen:', isOpen, 'isInputHelp:', isInputHelp, 'context?.fieldName:', context?.fieldName || 'null', 'sessionInitialized:', sessionInitialized)
-    console.log('[HelpBot Init Effect] Current messages count:', messages.length)
-    console.log('[HelpBot Init Effect] Context object:', context)
-
     if (!isOpen) {
       // Only reset when explicitly closed, not on re-renders
       if (sessionInitialized) {
-        console.log('[HelpBot Init Effect] Chatbot closed, resetting session')
         setSessionInitialized(false)
         sessionIdRef.current = null
       }
@@ -311,20 +305,10 @@ export function HelpBot(props: HelpBotProps) {
       ? `input_help_${user?.id || 'anonymous'}_${context.agentId}_${context.fieldName}`
       : `general_help_${user?.id || 'anonymous'}_${pathname}`
 
-    console.log('[HelpBot Init Effect] SESSION CHECK:')
-    console.log('  - currentSessionId:', currentSessionId)
-    console.log('  - sessionIdRef.current:', sessionIdRef.current)
-    console.log('  - Are they equal?', sessionIdRef.current === currentSessionId)
-    console.log('  - isInputHelp:', isInputHelp)
-    console.log('  - context exists:', !!context)
-
     // Only initialize if this is a NEW session
     if (sessionIdRef.current === currentSessionId) {
-      console.log('[HelpBot Init Effect] ❌ Same session, skipping initialization')
       return // Same session, don't reinitialize
     }
-
-    console.log('[HelpBot Init Effect] ✅ NEW SESSION DETECTED! Switching conversations...')
 
     // New session - initialize
     // Update session ref IMMEDIATELY to prevent re-runs
@@ -332,11 +316,8 @@ export function HelpBot(props: HelpBotProps) {
     sessionIdRef.current = currentSessionId
     setSessionInitialized(false) // Reset flag for new session
 
-    console.log('[HelpBot Init Effect] New session! previous:', previousSessionId, 'current:', currentSessionId)
-
     if (isInputHelp && context) {
       // Input help mode - load field-specific conversation
-      console.log('[HelpBot Init Effect] Loading input help for field:', context.fieldName)
       if (typeof window !== 'undefined' && user?.id) {
         // Version 3: includes user ID to prevent cross-user contamination
         const STORAGE_VERSION = 'v3'
@@ -356,7 +337,6 @@ export function HelpBot(props: HelpBotProps) {
         if (saved) {
           // Load existing conversation for this field
           let savedMessages = JSON.parse(saved)
-          console.log('[HelpBot Init Effect] Loaded saved conversation:', savedMessages.length, 'messages')
 
           const displayLabel = context.fieldLabel || context.fieldName
 
@@ -424,7 +404,6 @@ export function HelpBot(props: HelpBotProps) {
           setMessages([...savedMessages])
         } else {
           // New field - show welcome message
-          console.log('[HelpBot Init Effect] New field conversation, showing welcome')
           const displayLabel = context.fieldLabel || context.fieldName
           const fieldType = context.expectedType || 'string'
 
@@ -460,7 +439,6 @@ export function HelpBot(props: HelpBotProps) {
       setSessionInitialized(true)
     } else {
       // General help mode
-      console.log('[HelpBot Init Effect] Loading general help mode')
       setMessages([
         {
           role: 'assistant',
@@ -479,7 +457,6 @@ What would you like to know?`,
   }, [isOpen, context?.agentId, context?.fieldName, user?.id, pathname])
 
   useEffect(() => {
-    console.log('[HelpBot] Messages state updated:', messages.length, 'messages')
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
@@ -778,10 +755,6 @@ What would you like to know?`,
     }
   }
 
-  console.log('[HelpBot] Rendering with messages:', messages.length, 'messages for field:', context?.fieldName)
-  messages.forEach((msg, idx) => {
-    console.log(`  Message ${idx} (${msg.role}):`, msg.content.substring(0, 100))
-  })
 
   // Don't render until mounted on client and portal target is available
   if (!isMounted || !portalTarget) {

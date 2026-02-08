@@ -42,7 +42,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: true, contexts: data || [] })
     }
   } catch (error: any) {
-    console.error('[Page Contexts API] GET Error:', error)
     return NextResponse.json({ success: false, error: error.message }, { status: 500 })
   }
 }
@@ -82,7 +81,6 @@ export async function POST(request: NextRequest) {
       context: data,
     })
   } catch (error: any) {
-    console.error('[Page Contexts API] POST Error:', error)
     return NextResponse.json({ success: false, error: error.message }, { status: 500 })
   }
 }
@@ -123,7 +121,6 @@ export async function PUT(request: NextRequest) {
       context: data,
     })
   } catch (error: any) {
-    console.error('[Page Contexts API] PUT Error:', error)
     return NextResponse.json({ success: false, error: error.message }, { status: 500 })
   }
 }
@@ -156,7 +153,6 @@ export async function DELETE(request: NextRequest) {
       message: 'Page context deleted successfully',
     })
   } catch (error: any) {
-    console.error('[Page Contexts API] DELETE Error:', error)
     return NextResponse.json({ success: false, error: error.message }, { status: 500 })
   }
 }

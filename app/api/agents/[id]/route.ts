@@ -1,6 +1,7 @@
 // app/api/agents/[id]/route.ts - FIXED with timezone-safe schedule updates
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { createAuthenticatedServerClient } from '@/lib/supabaseServerAuth';
 import { auditLog } from '@/lib/services/AuditTrailService';
 import { generateDiff } from '@/lib/audit/diff';
 import { preparePluginTokens } from '@/lib/services/PluginTokenService';
@@ -27,7 +28,7 @@ function getUserIdFromRequest(request: NextRequest): string | null {
   return null;
 }
 
-// GET /api/agents/[id] - Retrieve a specific agent (unchanged)
+// GET /api/agents/[id] - Retrieve a specific agent
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -35,21 +36,24 @@ export async function GET(
   try {
     const { id } = await params;
     console.log('GET /api/agents/[id] - Fetching agent:', id);
-    
-    const userId = getUserIdFromRequest(request);
-    
-    if (!userId) {
+
+    // Use createAuthenticatedServerClient for consistent auth
+    const supabase = await createAuthenticatedServerClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      console.log('Unauthorized request - missing user');
       return NextResponse.json(
-        { 
-          success: false, 
-          error: 'Unauthorized - Please provide user authentication',
-          details: 'Missing x-user-id header or authorization token'
+        {
+          success: false,
+          error: 'Unauthorized - Please authenticate',
         },
         { status: 401 }
       );
     }
 
     const agentId = id;
+    const userId = user.id;
 
     if (!agentId) {
       return NextResponse.json(
@@ -143,21 +147,24 @@ export async function PUT(
   try {
     const { id } = await params;
     console.log('PUT /api/agents/[id] - Updating agent:', id);
-    
-    const userId = getUserIdFromRequest(request);
-    
-    if (!userId) {
+
+    // Use createAuthenticatedServerClient for consistent auth
+    const authSupabase = await createAuthenticatedServerClient();
+    const { data: { user }, error: authError } = await authSupabase.auth.getUser();
+
+    if (authError || !user) {
+      console.log('Unauthorized request - missing user');
       return NextResponse.json(
-        { 
-          success: false, 
-          error: 'Unauthorized - Please provide user authentication',
-          details: 'Missing x-user-id header or authorization token'
+        {
+          success: false,
+          error: 'Unauthorized - Please authenticate',
         },
         { status: 401 }
       );
     }
 
     const agentId = id;
+    const userId = user.id;
     const body = await request.json();
     const { agent: agentData } = body;
 
@@ -175,9 +182,10 @@ export async function PUT(
       );
     }
 
-    console.log('=== SCHEDULE UPDATE DEBUG ===');
+    console.log('=== AGENT UPDATE DEBUG ===');
     console.log('Incoming schedule_cron:', agentData.schedule_cron);
     console.log('Incoming mode:', agentData.mode);
+    console.log('Incoming insights_enabled:', agentData.insights_enabled);
     console.log('===========================');
 
     console.log(`Updating agent ${agentId} for user ${userId}`);
@@ -250,47 +258,46 @@ export async function PUT(
     }
 
     // Prepare update data for non-schedule fields
-    const updateData: any = {
-      agent_name: agentData.agent_name,
-      description: agentData.description,
-      system_prompt: agentData.system_prompt,
-      user_prompt: agentData.user_prompt,
-      input_schema: agentData.input_schema,
-      output_schema: agentData.output_schema,
-      connected_plugins: agentData.connected_plugins,
-      plugins_required: agentData.plugins_required,
-      workflow_steps: agentData.workflow_steps,
-      generated_plan: agentData.generated_plan,
-      detected_categories: agentData.detected_categories,
-      trigger_conditions: agentData.trigger_conditions,
-      ai_reasoning: aiReasoning,
-      ai_confidence: agentData.ai_confidence,
-      created_from_prompt: agentData.created_from_prompt,
-      ai_generated_at: agentData.ai_generated_at ? new Date(agentData.ai_generated_at).toISOString() : null,
-      status: agentData.status,
-      agent_config: agentData.agent_config || null
-    };
+    // Only include fields that are explicitly provided in agentData
+    const updateData: any = {};
 
-    // CRITICAL FIX: Always include mode field in updates
+    if (agentData.agent_name !== undefined) updateData.agent_name = agentData.agent_name;
+    if (agentData.description !== undefined) updateData.description = agentData.description;
+    if (agentData.system_prompt !== undefined) updateData.system_prompt = agentData.system_prompt;
+    if (agentData.user_prompt !== undefined) updateData.user_prompt = agentData.user_prompt;
+    if (agentData.input_schema !== undefined) updateData.input_schema = agentData.input_schema;
+    if (agentData.output_schema !== undefined) updateData.output_schema = agentData.output_schema;
+    if (agentData.connected_plugins !== undefined) updateData.connected_plugins = agentData.connected_plugins;
+    if (agentData.plugins_required !== undefined) updateData.plugins_required = agentData.plugins_required;
+    if (agentData.workflow_steps !== undefined) updateData.workflow_steps = agentData.workflow_steps;
+    if (agentData.generated_plan !== undefined) updateData.generated_plan = agentData.generated_plan;
+    if (agentData.detected_categories !== undefined) updateData.detected_categories = agentData.detected_categories;
+    if (agentData.trigger_conditions !== undefined) updateData.trigger_conditions = agentData.trigger_conditions;
+    if (agentData.ai_reasoning !== undefined) updateData.ai_reasoning = Array.isArray(agentData.ai_reasoning) ? agentData.ai_reasoning.join('\n') : agentData.ai_reasoning;
+    if (agentData.ai_confidence !== undefined) updateData.ai_confidence = agentData.ai_confidence;
+    if (agentData.created_from_prompt !== undefined) updateData.created_from_prompt = agentData.created_from_prompt;
+    if (agentData.ai_generated_at !== undefined) updateData.ai_generated_at = new Date(agentData.ai_generated_at).toISOString();
+    if (agentData.status !== undefined) updateData.status = agentData.status;
+    if (agentData.agent_config !== undefined) updateData.agent_config = agentData.agent_config || null;
+    if (agentData.insights_enabled !== undefined) updateData.insights_enabled = agentData.insights_enabled;
+    if (agentData.production_ready !== undefined) updateData.production_ready = agentData.production_ready;
+
+    // CRITICAL FIX: Only include mode field if explicitly provided
     // The timezone-safe function only updates schedule_cron, timezone, and next_run
-    // We must separately update the mode field
-    updateData.mode = agentData.mode || 'on_demand';
+    // We must separately update the mode field if it's being changed
+    if (agentData.mode !== undefined) {
+      updateData.mode = agentData.mode;
+    }
 
     // Only include schedule_cron and timezone if we didn't use the safe function
     // (because the safe function already updated those fields)
     if (!scheduleUpdateResult) {
-      updateData.schedule_cron = agentData.schedule_cron || null;
-      updateData.timezone = agentData.timezone || 'UTC';
+      if (agentData.schedule_cron !== undefined) updateData.schedule_cron = agentData.schedule_cron;
+      if (agentData.timezone !== undefined) updateData.timezone = agentData.timezone;
     }
 
-    // Remove undefined values to avoid Supabase errors
-    Object.keys(updateData).forEach(key => {
-      if (updateData[key] === undefined) {
-        delete updateData[key];
-      }
-    });
-
     console.log('Update data prepared:', Object.keys(updateData));
+    console.log('insights_enabled in updateData:', updateData.insights_enabled);
 
     // Update the agent with non-schedule fields
     const { data: updatedAgent, error: updateError } = await supabase
@@ -379,7 +386,7 @@ export async function PUT(
   }
 }
 
-// DELETE /api/agents/[id] - Delete a specific agent (unchanged)
+// DELETE /api/agents/[id] - Delete a specific agent
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -387,21 +394,24 @@ export async function DELETE(
   try {
     const { id } = await params;
     console.log('DELETE /api/agents/[id] - Deleting agent:', id);
-    
-    const userId = getUserIdFromRequest(request);
-    
-    if (!userId) {
+
+    // Use createAuthenticatedServerClient for consistent auth
+    const authSupabase = await createAuthenticatedServerClient();
+    const { data: { user }, error: authError } = await authSupabase.auth.getUser();
+
+    if (authError || !user) {
+      console.log('Unauthorized request - missing user');
       return NextResponse.json(
-        { 
-          success: false, 
-          error: 'Unauthorized - Please provide user authentication',
-          details: 'Missing x-user-id header or authorization token'
+        {
+          success: false,
+          error: 'Unauthorized - Please authenticate',
         },
         { status: 401 }
       );
     }
 
     const agentId = id;
+    const userId = user.id;
 
     if (!agentId) {
       return NextResponse.json(

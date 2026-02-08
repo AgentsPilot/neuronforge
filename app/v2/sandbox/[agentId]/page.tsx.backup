@@ -1,0 +1,2359 @@
+'use client'
+
+import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { useRouter, useParams } from 'next/navigation'
+import { useAuth } from '@/components/UserProvider'
+import { supabase } from '@/lib/supabaseClient'
+import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/v2/ui/card'
+import { Button } from '@/components/v2/ui/button'
+import { Badge } from '@/components/v2/ui/badge'
+import { Panel } from '@/components/v2/ui/panel'
+import { V2Logo, V2Controls } from '@/components/v2/V2Header'
+import { HelpBot } from '@/components/v2/HelpBot'
+import InputHelpButton from '@/components/v2/InputHelpButton'
+import { AgentInputFields } from '@/components/v2/AgentInputFields'
+import {
+  CheckCircle,
+  XCircle,
+  Clock,
+  AlertCircle,
+  Database,
+  ArrowLeft,
+  Loader2,
+  Play,
+  ChevronDown,
+  ChevronRight,
+  ChevronLeft,
+  Sparkles,
+  Wrench,
+  PartyPopper,
+  Settings,
+  TrendingUp,
+  Edit,
+  X,
+} from 'lucide-react'
+import { PageLoading } from '@/components/v2/ui/loading'
+import { DataDecisionModal } from '@/components/v2/insights/DataDecisionModal'
+import { HardcodeRepairModal } from '@/components/v2/insights/HardcodeRepairModal'
+import { AgentSetupWizard } from '@/components/v2/wizard/AgentSetupWizard'
+import { CalibrationStoryView } from '@/components/v2/wizard/CalibrationStoryView'
+import type { DataDecisionRequest } from '@/lib/pilot/shadow/types'
+import type { DetectionResult } from '@/lib/pilot/shadow/HardcodeDetector'
+
+// ─── Types ──────────────────────────────────────────────────
+
+interface CalibrationStepStatus {
+  step_id: string
+  step_name: string
+  friendly_name: string
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
+  auto_repaired: boolean
+  friendly_summary: string
+  friendly_error?: string
+  repair_tooltip?: string
+  item_count?: number
+  duration_ms?: number
+  plugin?: string
+  action?: string
+  output_summary?: {
+    type: 'array' | 'object' | 'primitive' | 'empty'
+    item_count?: number
+    field_names?: string[]
+    is_empty: boolean
+    preview?: string // Sanitized preview of output
+  }
+  parameter_error_details?: {
+    parameterName: string
+    problematicValue: string
+    errorMessage: string
+  }
+}
+
+interface CalibrationStatusResponse {
+  execution_id: string
+  status: 'running' | 'completed' | 'failed' | 'pending'
+  steps: CalibrationStepStatus[]
+  summary: {
+    total: number
+    completed: number
+    failed: number
+    skipped: number
+    tokens_used: number
+    execution_time_ms: number
+  }
+  calibration_run_count?: number
+  production_ready?: boolean
+  error?: string
+  data_decision_requests?: DataDecisionRequest[] // Phase 4: Pending decision requests
+}
+
+// ─── Constants ──────────────────────────────────────────────
+
+const CALIBRATION_TARGET_RUNS = 5
+
+// ─── Main Page ──────────────────────────────────────────────
+
+export default function AgentCalibrationPage() {
+  const router = useRouter()
+  const params = useParams()
+  const { user, loading: authLoading } = useAuth()
+  const agentId = params?.agentId as string
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.push('/login?redirect=/v2/sandbox')
+    }
+  }, [user, authLoading, router])
+
+  // ─── State ────────────────────────────────────────────────
+
+  const [agent, setAgent] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [inputValues, setInputValues] = useState<Record<string, any>>({})
+  const [schemaMetadata, setSchemaMetadata] = useState<Record<string, any[]> | null>(null)
+
+  // Execution state
+  const [isRunning, setIsRunning] = useState(false)
+  const [executionId, setExecutionId] = useState<string | null>(null)
+  const [steps, setSteps] = useState<CalibrationStepStatus[]>([])
+  const [executionResult, setExecutionResult] = useState<CalibrationStatusResponse | null>(null)
+  const [executionError, setExecutionError] = useState<string | null>(null)
+  const [expandedStepId, setExpandedStepId] = useState<string | null>(null)
+  const [showSuccessScreen, setShowSuccessScreen] = useState(false)
+  const [showDetailedResults, setShowDetailedResults] = useState(false)
+  const [showDataFlowSummary, setShowDataFlowSummary] = useState(false)
+
+  // HelpBot state
+  const [helpBotOpen, setHelpBotOpen] = useState(false)
+  const [helpBotContext, setHelpBotContext] = useState<any>(null)
+
+  // Data decision state (Phase 4)
+  const [pendingDecision, setPendingDecision] = useState<DataDecisionRequest | null>(null)
+
+  // Repair success message state
+  const [repairSuccessMessage, setRepairSuccessMessage] = useState<string | null>(null)
+
+  // Hardcode detection state (old reactive modal - deprecated)
+  const [showRepairModal, setShowRepairModal] = useState(false)
+  const [detectionResult, setDetectionResult] = useState<DetectionResult | null>(null)
+  const [isRepairing, setIsRepairing] = useState(false)
+  const [hasTriedRepair, setHasTriedRepair] = useState(false)
+
+  // Step-specific hardcode detection (for failed steps)
+  const [stepHardcodedValues, setStepHardcodedValues] = useState<any>(null)
+  const [isDetectingHardcoded, setIsDetectingHardcoded] = useState(false)
+
+  // Repair choice tracking (parameter error handling)
+  const [repairChoiceStep, setRepairChoiceStep] = useState<CalibrationStepStatus | null>(null)
+
+  // Story-driven wizard state (new proactive approach)
+  const [showSetupWizard, setShowSetupWizard] = useState(false)
+  const [wizardDetectionResult, setWizardDetectionResult] = useState<DetectionResult | null>(null)
+  const [useStoryView, setUseStoryView] = useState(false)
+
+  // Settings panel state
+  const [settingsExpanded, setSettingsExpanded] = useState(false)
+
+  // Polling ref
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pollFailureCountRef = useRef<number>(0)
+
+  // ─── Fetch Agent ──────────────────────────────────────────
+
+  useEffect(() => {
+    const fetchAgent = async () => {
+      if (!user || !agentId) return
+
+      try {
+        const { data, error } = await supabase
+          .from('agents')
+          .select('*')
+          .eq('id', agentId)
+          .eq('user_id', user.id)
+          .single()
+
+        if (error || !data) {
+          console.error('Error fetching agent:', error)
+          setLoading(false)
+          return
+        }
+
+        setAgent(data)
+
+        // Load input values in priority order:
+        // 1. Session storage (persists during page refresh)
+        // 2. agent_configurations (saved production values)
+        // 3. input_schema.default_value (fallback defaults)
+
+        const sessionKey = `calibration_inputs_${agentId}`
+        const savedSession = sessionStorage.getItem(sessionKey)
+
+        if (savedSession) {
+          // Priority 1: Use session storage
+          try {
+            const sessionValues = JSON.parse(savedSession)
+            setInputValues(sessionValues)
+          } catch (err) {
+            console.error('Failed to parse session storage:', err)
+          }
+        } else {
+          // Priority 2: Load from agent_configurations
+          const { data: configData } = await supabase
+            .from('agent_configurations')
+            .select('input_values')
+            .eq('agent_id', agentId)
+            .eq('user_id', user.id)
+            .eq('status', 'configured')
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .single()
+
+          if (configData?.input_values) {
+            setInputValues(configData.input_values as Record<string, any>)
+          } else if (data.input_schema && Array.isArray(data.input_schema)) {
+            // Priority 3: Use schema defaults
+            const defaults: Record<string, any> = {}
+            data.input_schema.forEach((field: any) => {
+              if (field.default_value !== undefined) {
+                defaults[field.name] = field.default_value
+              }
+            })
+            if (Object.keys(defaults).length > 0) {
+              setInputValues(defaults)
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching agent:', error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchAgent()
+  }, [user, agentId, router])
+
+  // ─── Fetch Schema Metadata ────────────────────────────────
+
+  useEffect(() => {
+    const fetchSchemaMetadata = async () => {
+      try {
+        const response = await fetch('/api/plugins/schema-metadata', {
+          credentials: 'include',
+        })
+        if (!response.ok) {
+          console.error('Failed to fetch schema metadata:', response.statusText)
+          return
+        }
+        const data = await response.json()
+        console.log('[Calibration Page] Schema metadata loaded:', data.metadata)
+        setSchemaMetadata(data.metadata)
+      } catch (error) {
+        console.error('[Calibration Page] Error fetching schema metadata:', error)
+      }
+    }
+
+    fetchSchemaMetadata()
+  }, [])
+
+  // ─── Polling ──────────────────────────────────────────────
+
+  const stopPolling = useCallback(() => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current)
+      pollingRef.current = null
+    }
+  }, [])
+
+  const startPolling = useCallback((execId: string) => {
+    stopPolling()
+    pollFailureCountRef.current = 0 // Reset failure counter
+
+    pollingRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/calibrate/status?executionId=${execId}`)
+        if (!res.ok) {
+          // Count consecutive failures
+          pollFailureCountRef.current += 1
+
+          // If we get 10+ consecutive 404s (20 seconds), stop polling and show error
+          if (pollFailureCountRef.current >= 10) {
+            console.error('[Calibration] Too many failed polls - stopping')
+            stopPolling()
+            setIsRunning(false)
+            setExecutionError('Calibration failed to start. Please check the server logs and try again.')
+          }
+          return
+        }
+
+        // Success - reset failure counter
+        pollFailureCountRef.current = 0
+
+        const data: CalibrationStatusResponse = await res.json()
+        console.log('[Calibration Poll] CODE_VERSION=2026-01-29-FIX - data.status:', data.status, 'failed count:', data.summary.failed)
+        setSteps(data.steps)
+        setExecutionResult(data)
+
+        // Phase 4: Check for pending data decision requests
+        if (data.data_decision_requests && data.data_decision_requests.length > 0) {
+          setPendingDecision(data.data_decision_requests[0])
+        } else {
+          setPendingDecision(null)
+        }
+
+        if (data.status === 'completed' || data.status === 'failed' || data.status === 'paused') {
+          stopPolling()
+          setIsRunning(false)
+
+          // Check if all steps passed — agent becomes production-ready
+          if (data.status === 'completed' && data.summary.failed === 0 && data.production_ready) {
+            setShowSuccessScreen(true)
+          }
+
+          // Detect hardcoded values in failed step
+          // IMPORTANT: Skip hardcode detection if backend already detected parameter error
+          // IMPORTANT: 'paused' status means parameter error detected - treat same as 'failed' for UI
+          if ((data.status === 'failed' || data.status === 'paused') && data.summary.failed > 0) {
+            console.log('[Calibration] EXECUTION FAILED/PAUSED - Checking for failed step...')
+            const failedStep = data.steps.find(s => s.status === 'failed')
+            console.log('[Calibration] Failed step found:', failedStep?.step_id, 'has parameter_error_details:', !!failedStep?.parameter_error_details)
+            if (failedStep) {
+              // Only run hardcode detection if there's NO parameter_error_details
+              // (parameter errors are detected by backend ResumeOrchestrator and take priority)
+              if (!failedStep.parameter_error_details) {
+                console.log('[Calibration] No parameter error details - running hardcode detection for step:', failedStep.step_id)
+                detectHardcodedValuesForStep(failedStep.step_id)
+              } else {
+                console.log('[Calibration] Skipping hardcode detection - parameter error already detected by backend:', failedStep.parameter_error_details)
+              }
+            } else {
+              console.log('[Calibration] ERROR: No failed step found despite failed/paused status!')
+            }
+          }
+
+          // OLD REACTIVE APPROACH (Deprecated - now using proactive wizard)
+          // Trigger hardcode detection on first failure (if not already tried repair)
+          // if (data.status === 'failed' && data.summary.failed > 0 && !hasTriedRepair && agent?.pilot_steps) {
+          //   detectHardcodedValues()
+          // }
+        }
+      } catch (err) {
+        console.error('[Calibration] Poll error:', err)
+      }
+    }, 2000)
+  }, [stopPolling, hasTriedRepair, agent])
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => stopPolling()
+  }, [stopPolling])
+
+  // ─── Proactive Setup Check (NEW: Story-Driven) ───────────
+
+  const handleCalibrateClick = async () => {
+    if (!agent) return
+
+    // Check if this is first-time calibration (no previous runs)
+    // For now, always show wizard if hardcoded values exist
+    const shouldShowWizard = !hasTriedRepair
+
+    if (shouldShowWizard && agent.pilot_steps) {
+      try {
+        // Import HardcodeDetector dynamically
+        const { HardcodeDetector } = await import('@/lib/pilot/shadow/HardcodeDetector')
+        const detector = new HardcodeDetector()
+
+        // Extract resolvedUserInputs from enhanced_prompt in user_prompt field (V6+ agents)
+        let resolvedUserInputs: Array<{ key: string; value: any }> | undefined
+        try {
+          if (agent.user_prompt) {
+            const enhancedPrompt = typeof agent.user_prompt === 'string'
+              ? JSON.parse(agent.user_prompt)
+              : agent.user_prompt
+            resolvedUserInputs = enhancedPrompt?.specifics?.resolved_user_inputs
+            console.log('[Calibration] Resolved user inputs:', resolvedUserInputs)
+            if (resolvedUserInputs) {
+              console.log('[Calibration] User inputs details:', resolvedUserInputs.map((x: any) => `${x.key}: ${x.value}`).join('\n'))
+            }
+          }
+        } catch (e) {
+          console.log('[Calibration] Could not parse user_prompt as enhanced_prompt:', e)
+        }
+
+        // Run detection with user inputs (if available)
+        const result = detector.detect(agent.pilot_steps, resolvedUserInputs)
+
+        // If hardcoded values found, show wizard BEFORE calibration
+        if (result.total_count > 0) {
+          setWizardDetectionResult(result)
+          setShowSetupWizard(true)
+          setUseStoryView(true) // Enable story-driven UI
+          return // Don't start calibration yet
+        }
+      } catch (error) {
+        console.error('[Calibration] Pre-flight detection error:', error)
+        // Fall through to normal calibration if detection fails
+      }
+    }
+
+    // If no hardcoded values or wizard skipped, start calibration directly
+    handleRun()
+  }
+
+  // Dynamic dropdown options for wizard inputs
+  const getDynamicOptions = useCallback((fieldName: string): { plugin: string; action: string; parameter: string; depends_on?: string[] } | null => {
+    if (!schemaMetadata) {
+      return null
+    }
+
+    const matchingParams = schemaMetadata[fieldName]
+    if (matchingParams && matchingParams.length > 0) {
+      const match = matchingParams[0]
+      return {
+        plugin: match.plugin,
+        action: match.action,
+        parameter: match.parameter,
+        depends_on: match.depends_on
+      }
+    }
+
+    return null
+  }, [schemaMetadata])
+
+  const handleWizardComplete = async (newInputValues: Record<string, any>, makeConfigurable: boolean) => {
+    setShowSetupWizard(false)
+
+    // Update input values with what user provided
+    setInputValues(newInputValues)
+
+    // Save to session storage
+    sessionStorage.setItem(`calibration_inputs_${agentId}`, JSON.stringify(newInputValues))
+
+    // If user wants to make values configurable, parameterize the agent BEFORE running calibration
+    if (makeConfigurable && wizardDetectionResult && wizardDetectionResult.total_count > 0 && agentId && user) {
+      console.log('[Calibration] User chose to make values configurable - parameterizing agent...')
+
+      const currentUser = user // Capture for TypeScript
+      try {
+        // Build selections from detection result and input values
+        const selections = []
+
+        // Add resource IDs
+        for (const item of wizardDetectionResult.resource_ids) {
+          selections.push({
+            path: item.path,
+            param_name: item.suggested_param,
+            value: newInputValues[item.suggested_param] || item.value,
+            original_value: item.value,
+          })
+        }
+
+        // Add configuration
+        for (const item of wizardDetectionResult.configuration) {
+          selections.push({
+            path: item.path,
+            param_name: item.suggested_param,
+            value: newInputValues[item.suggested_param] || item.value,
+            original_value: item.value,
+          })
+        }
+
+        // Add business logic
+        for (const item of wizardDetectionResult.business_logic) {
+          selections.push({
+            path: item.path,
+            param_name: item.suggested_param,
+            value: newInputValues[item.suggested_param] || item.value,
+            original_value: item.value,
+          })
+        }
+
+        console.log('[Calibration] Parameterizing agent with selections:', selections)
+
+        const response = await fetch(`/api/agents/${agentId}/repair-hardcode`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ selections }),
+        })
+
+        if (!response.ok) {
+          throw new Error('Failed to parameterize agent')
+        }
+
+        const result = await response.json()
+        console.log('[Calibration] Parameterization successful:', result)
+
+        // Reload agent to get updated pilot_steps and input_schema
+        const { data: updatedAgent } = await supabase
+          .from('agents')
+          .select('*')
+          .eq('id', agentId)
+          .eq('user_id', currentUser.id)
+          .single()
+
+        if (updatedAgent) {
+          setAgent(updatedAgent)
+          console.log('[Calibration] Agent reloaded after parameterization')
+          console.log('[Calibration] Sample pilot_steps:', JSON.stringify(updatedAgent.pilot_steps).substring(0, 500))
+        } else {
+          console.warn('[Calibration] Failed to reload agent after parameterization')
+        }
+      } catch (error) {
+        console.error('[Calibration] Error parameterizing agent:', error)
+        alert('Failed to make values configurable. Continuing with test...')
+        // Continue anyway - calibration will still work with input_variables
+      }
+    }
+
+    // Mark that wizard has been completed
+    setHasTriedRepair(true)
+
+    // Start calibration with the (now parameterized if user chose) agent and input values
+    handleRun()
+  }
+
+  const handleWizardSkip = () => {
+    setShowSetupWizard(false)
+    setHasTriedRepair(true)
+    setUseStoryView(false) // Use traditional UI if wizard skipped
+    handleRun()
+  }
+
+  // ─── Run Handler ──────────────────────────────────────────
+
+  const handleRun = async () => {
+    if (!agent || isRunning) return
+
+    // Validate required inputs
+    if (agent.input_schema && Array.isArray(agent.input_schema)) {
+      const missing = agent.input_schema.filter(
+        (field: any) => field.required && !inputValues[field.name]
+      )
+      if (missing.length > 0) {
+        setExecutionError(`Please fill in: ${missing.map((f: any) => f.label || f.name).join(', ')}`)
+        return
+      }
+    }
+
+    // Reset state
+    setIsRunning(true)
+    setExecutionError(null)
+    setExecutionResult(null)
+    setSteps([])
+    setExpandedStepId(null)
+    setShowSuccessScreen(false)
+    setRepairChoiceStep(null) // Clear repair choice from previous failures
+    setRepairSuccessMessage(null) // Clear repair success message
+
+    // Generate execution ID for polling
+    const execId = crypto.randomUUID()
+    setExecutionId(execId)
+
+    // Start polling immediately
+    startPolling(execId)
+
+    // Fire POST to /api/run-agent (non-blocking — fetch waits but polling works)
+    try {
+      const response = await fetch('/api/run-agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          agent_id: agentId,
+          execution_type: 'test',
+          input_variables: inputValues,
+          execution_id: execId,
+        }),
+      })
+
+      const result = await response.json()
+
+      if (!response.ok || !result.success) {
+        setExecutionError(result.error || 'Execution failed')
+        setIsRunning(false)
+        stopPolling()
+      }
+      // On success, polling will detect completion and update UI
+    } catch (error: any) {
+      setExecutionError(error.message || 'Failed to start execution')
+      setIsRunning(false)
+      stopPolling()
+    }
+  }
+
+  // ─── Resume Handler ──────────────────────────────────────
+
+  const handleResume = async () => {
+    console.log('[handleResume] Called with:', { executionId, isRunning });
+
+    if (!executionId || isRunning) {
+      console.log('[handleResume] Aborting - no executionId or already running');
+      return;
+    }
+
+    console.log('[handleResume] Starting resume process');
+    setIsRunning(true)
+    setExecutionError(null)
+
+    try {
+      console.log('[handleResume] Calling /api/calibrate/resume with:', {
+        executionId,
+        updatedInputValues: inputValues
+      });
+
+      const response = await fetch('/api/calibrate/resume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          executionId,
+          updatedInputValues: inputValues, // Send current input values (user may have edited them)
+        }),
+      })
+
+      const result = await response.json()
+      console.log('[handleResume] Response from /api/calibrate/resume:', {
+        ok: response.ok,
+        status: response.status,
+        result
+      });
+
+      if (!response.ok || !result.success) {
+        console.error('[handleResume] Resume failed:', result.error);
+        setExecutionError(result.error || 'Resume failed')
+        setIsRunning(false)
+        return
+      }
+
+      // Resume creates a NEW execution, so update our execution ID to the new one
+      const newExecutionId = result.execution_id
+      console.log('[handleResume] Resume successful, execution ID:', newExecutionId);
+      setExecutionId(newExecutionId)
+
+      // Start polling to track the new execution
+      startPolling(newExecutionId)
+    } catch (error: any) {
+      console.error('[handleResume] Exception:', error);
+      setExecutionError(error.message || 'Failed to resume execution')
+      setIsRunning(false)
+    }
+  }
+
+  // ─── Step-Specific Hardcode Detection (for failed steps) ──────────
+
+  const detectHardcodedValuesForStep = async (stepId: string) => {
+    if (!agent?.id) return
+
+    setIsDetectingHardcoded(true)
+    try {
+      const response = await fetch('/api/calibrate/detect-hardcoded', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          agentId: agent.id,
+          stepId,
+        }),
+      })
+
+      const result = await response.json()
+
+      if (response.ok && result.success) {
+        setStepHardcodedValues(result)
+      } else {
+        console.error('[DetectHardcoded] Failed:', result.error)
+        setStepHardcodedValues(null)
+      }
+    } catch (error) {
+      console.error('[DetectHardcoded] Error:', error)
+      setStepHardcodedValues(null)
+    } finally {
+      setIsDetectingHardcoded(false)
+    }
+  }
+
+  const handleParameterizeStep = async () => {
+    if (!stepHardcodedValues?.detected_values || !agent?.id) return
+
+    setIsRepairing(true)
+    try {
+      // Convert detected values to repair selections format
+      const selections = stepHardcodedValues.detected_values.map((v: any) => ({
+        path: v.path,
+        param_name: v.suggested_param,
+        value: v.value,
+        original_value: v.value,
+      }))
+
+      const response = await fetch(`/api/agents/${agent.id}/repair-hardcode`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ selections }),
+      })
+
+      const result = await response.json()
+
+      if (response.ok && result.success) {
+        // Refresh agent data to get updated schema and workflow
+        const agentResponse = await fetch(`/api/agents/${agent.id}`, {
+          credentials: 'include',
+        })
+        const agentData = await agentResponse.json()
+        setAgent(agentData)
+
+        // Clear hardcoded values state
+        setStepHardcodedValues(null)
+
+        // Show success message
+        alert('Step parameterized successfully! Please retry the calibration.')
+      } else {
+        alert(`Failed to parameterize step: ${result.error}`)
+      }
+    } catch (error: any) {
+      alert(`Error: ${error.message}`)
+    } finally {
+      setIsRepairing(false)
+    }
+  }
+
+  // ─── Parameter Error Repair Choice Handlers ───────────────
+
+  const handleSaveFixedValue = async () => {
+    // User has edited the value and wants to save it to the workflow
+    if (!repairChoiceStep || !agent?.id) return
+
+    setIsRepairing(true)
+
+    try {
+      const paramError = repairChoiceStep.parameter_error_details
+      if (!paramError) {
+        throw new Error('No parameter error details found')
+      }
+
+      // Get the new value from the input field
+      const newValue = inputValues[paramError.parameterName]
+      if (newValue === undefined || newValue === paramError.problematicValue) {
+        alert('Please enter a different value than the current one')
+        setIsRepairing(false)
+        return
+      }
+
+      // Call the fix-hardcode API to update the workflow
+      // Note: Backend will automatically resolve the path (params.X, config.X, or X)
+      const response = await fetch(`/api/agents/${agent.id}/fix-hardcode`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          stepId: repairChoiceStep.step_id,
+          path: paramError.parameterName, // Just the parameter name - backend resolves the path
+          newValue,
+        }),
+      })
+
+      const result = await response.json()
+
+      if (response.ok && result.success) {
+        // Refresh agent data to get updated workflow
+        const agentResponse = await fetch(`/api/agents/${agent.id}`, {
+          credentials: 'include',
+        })
+        const agentData = await agentResponse.json()
+        setAgent(agentData.agent || agentData)
+
+        // Success! Don't auto-retry - let user decide when to retry
+        setIsRepairing(false)
+
+        // Keep repairChoiceStep set so the retry button stays visible
+        // Show success message
+        setRepairSuccessMessage('✅ Value updated successfully! Click "Retry with Fixed Value" below to continue calibration.')
+
+        console.log('[handleSaveFixedValue] Success! Current executionId:', executionId);
+        console.log('[handleSaveFixedValue] repairSuccessMessage set, button should now show "Retry with Fixed Value"');
+
+        // Don't auto-clear the message - let it stay until user retries or navigates away
+      } else {
+        alert(`Failed to fix hardcoded value: ${result.error}`)
+      }
+    } catch (error: any) {
+      alert(`Error: ${error.message}`)
+    } finally {
+      setIsRepairing(false)
+    }
+  }
+
+  const handleParameterizeValue = async () => {
+    // User wants to convert the hardcoded value to a parameter
+    if (!repairChoiceStep || !agent?.id) return
+
+    setIsRepairing(true)
+
+    try {
+      // First, detect hardcoded values for this specific step
+      await detectHardcodedValuesForStep(repairChoiceStep.step_id)
+
+      // Wait a moment for state to update, then show the repair modal
+      setTimeout(() => {
+        setIsRepairing(false)
+        setShowRepairModal(true)
+      }, 500)
+    } catch (error: any) {
+      alert(`Error: ${error.message}`)
+      setIsRepairing(false)
+    }
+  }
+
+  // ─── Hardcode Detection Handlers ──────────────────────────
+
+  const detectHardcodedValues = async () => {
+    if (!agent?.pilot_steps) return
+
+    try {
+      // Import HardcodeDetector dynamically (client-side only)
+      const { HardcodeDetector } = await import('@/lib/pilot/shadow/HardcodeDetector')
+      const detector = new HardcodeDetector()
+
+      // Extract resolvedUserInputs from enhanced_prompt in user_prompt field (V6+ agents)
+      let resolvedUserInputs: Array<{ key: string; value: any }> | undefined
+      try {
+        if (agent.user_prompt) {
+          const enhancedPrompt = typeof agent.user_prompt === 'string'
+            ? JSON.parse(agent.user_prompt)
+            : agent.user_prompt
+          resolvedUserInputs = enhancedPrompt?.specifics?.resolved_user_inputs
+          console.log('[DetectHardcode] Resolved user inputs:', resolvedUserInputs)
+        }
+      } catch (e) {
+        console.log('[DetectHardcode] Could not parse user_prompt as enhanced_prompt:', e)
+      }
+
+      // Run detection with user inputs (if available)
+      const result = detector.detect(agent.pilot_steps, resolvedUserInputs)
+
+      // Only show modal if we found hardcoded values
+      if (result.total_count > 0) {
+        setDetectionResult(result)
+        setShowRepairModal(true)
+      }
+    } catch (error) {
+      console.error('[Calibration] Hardcode detection error:', error)
+    }
+  }
+
+  const handleRepairAgent = async (selections: Array<{ path: string; param_name: string; value: any; original_value: any }>) => {
+    setIsRepairing(true)
+
+    try {
+      const response = await fetch(`/api/agents/${agentId}/repair-hardcode`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ selections }),
+      })
+
+      const result = await response.json()
+
+      if (!response.ok || !result.success) {
+        setExecutionError(result.error || 'Failed to repair agent')
+        setIsRepairing(false)
+        return
+      }
+
+      // Close modal and clear states
+      setShowRepairModal(false)
+      setStepHardcodedValues(null)
+      setRepairChoiceStep(null)
+      setHasTriedRepair(true)
+
+      // Update input values with new parameter values
+      const newInputValues = { ...inputValues }
+      selections.forEach(sel => {
+        newInputValues[sel.param_name] = sel.value
+      })
+      setInputValues(newInputValues)
+
+      // Save to session storage
+      sessionStorage.setItem(`calibration_inputs_${agentId}`, JSON.stringify(newInputValues))
+
+      // Reload agent to get updated pilot_steps and input_schema
+      if (user?.id) {
+        const { data: updatedAgent, error: fetchError } = await supabase
+          .from('agents')
+          .select('*')
+          .eq('id', agentId)
+          .eq('user_id', user.id)
+          .single()
+
+        if (updatedAgent && !fetchError) {
+          setAgent(updatedAgent)
+        }
+      }
+
+      // Automatically retry execution with new values
+      setIsRepairing(false)
+      handleRun()
+    } catch (error: any) {
+      setExecutionError(error.message || 'Failed to repair agent')
+      setIsRepairing(false)
+    }
+  }
+
+  // ─── HelpBot Handlers ─────────────────────────────────────
+
+  const openChatbot = (context?: any) => {
+    setHelpBotContext(context || null)
+    setHelpBotOpen(true)
+  }
+
+  const toggleChatbot = () => {
+    if (helpBotOpen) {
+      setHelpBotOpen(false)
+      setHelpBotContext(null)
+    } else {
+      openChatbot()
+    }
+  }
+
+  const handleChatbotFill = (value: string) => {
+    if (helpBotContext?.fieldName) {
+      setInputValues(prev => ({ ...prev, [helpBotContext.fieldName]: value }))
+    }
+  }
+
+  // ─── Data Decision Handler ────────────────────────────────
+
+  const handleDecisionMade = async (decision: 'continue' | 'stop' | 'skip', remember: boolean) => {
+    // Close modal
+    setPendingDecision(null)
+
+    // Re-poll status after decision is made to allow execution to resume
+    if (executionId) {
+      // Wait a moment for backend to process
+      await new Promise(resolve => setTimeout(resolve, 1000))
+
+      // Manually trigger a poll
+      try {
+        const res = await fetch(`/api/calibrate/status?executionId=${executionId}`)
+        if (res.ok) {
+          const data: CalibrationStatusResponse = await res.json()
+          setSteps(data.steps)
+          setExecutionResult(data)
+        }
+      } catch (err) {
+        console.error('[Calibration] Error re-polling after decision:', err)
+      }
+    }
+  }
+
+  // ─── Approve & Go Live Handler ────────────────────────────
+
+  const handleApproveAndGoLive = async () => {
+    if (!agent) return
+
+    try {
+      // Mark agent as production_ready
+      const { error } = await supabase
+        .from('agents')
+        .update({ production_ready: true })
+        .eq('id', agentId)
+
+      if (error) {
+        console.error('[Calibration] Error marking agent as production ready:', error)
+        alert('Failed to mark agent as production ready')
+        return
+      }
+
+      // Show success message and navigate after a delay
+      alert('Success! Your agent is now live.')
+      router.push(`/v2/agents/${agentId}`)
+    } catch (err) {
+      console.error('[Calibration] Error in handleApproveAndGoLive:', err)
+      alert('Failed to mark agent as production ready')
+    }
+  }
+
+  // ─── Helper Functions ─────────────────────────────────────
+
+  const inferPluginFromFieldName = (fieldName: string): string | undefined => {
+    const fieldLower = fieldName.toLowerCase()
+    if (fieldLower.includes('sheet') || fieldLower.includes('spreadsheet') || fieldLower.includes('range') || fieldLower.includes('row') || fieldLower.includes('column')) return 'google-sheets'
+    if (fieldLower.includes('email') || fieldLower.includes('gmail') || fieldLower.includes('message') || fieldLower.includes('inbox')) return 'google-mail'
+    if (fieldLower.includes('drive') || fieldLower.includes('file') || fieldLower.includes('folder')) return 'google-drive'
+    if (fieldLower.includes('slack') || fieldLower.includes('channel')) return 'slack'
+    return agent?.plugins_required?.[0]
+  }
+
+  const formatFieldName = (name: string): string => {
+    return name
+      .replace(/[_-]/g, ' ')
+      .replace(/([A-Z])/g, ' $1')
+      .trim()
+      .split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ')
+  }
+
+  // ─── Loading / Error States ───────────────────────────────
+
+  if (loading) {
+    return <PageLoading message="Loading calibration..." />
+  }
+
+  if (!agent) {
+    return (
+      <div className="text-center py-12">
+        <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
+        <h2 className="text-xl font-semibold text-gray-800 dark:text-gray-100 mb-2">Agent not found</h2>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => router.push('/v2/agent-list')}
+        >
+          Back to agents
+        </Button>
+      </div>
+    )
+  }
+
+  // ─── Main Render ──────────────────────────────────────────
+
+  const completedCount = steps.filter(s => s.status === 'completed').length
+  const totalCount = executionResult?.summary?.total || steps.length
+  const progressPercent = totalCount > 0 ? (completedCount / totalCount) * 100 : 0
+  const currentRunNumber = (agent.calibration_run_count || 0) + (isRunning ? 1 : 0)
+
+  return (
+    <div className="space-y-4 sm:space-y-5 lg:space-y-6">
+      {/* Logo */}
+      <div className="mb-3"><V2Logo /></div>
+
+      {/* Back Button + Controls */}
+      <div className="flex items-center justify-between">
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => router.push(`/v2/agents/${agentId}`)}
+          className="gap-2"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to Agent
+        </Button>
+        <V2Controls />
+      </div>
+
+      {/* Calibration Header */}
+      <div className="bg-[var(--v2-surface)] rounded-lg border border-[var(--v2-border)] px-6 py-4" style={{ borderRadius: 'var(--v2-radius-card)', boxShadow: 'var(--v2-shadow-card)' }}>
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex-shrink-0">
+            <h2 className="text-lg font-semibold text-[var(--v2-text-primary)]">
+              {agent.agent_name}
+            </h2>
+            <p className="text-sm text-[var(--v2-text-secondary)] mt-0.5">
+              {isRunning
+                ? 'Calibrating your agent...'
+                : executionResult?.status === 'failed'
+                  ? 'Your agent ran into an issue. Try calibrating again.'
+                  : executionResult?.status === 'completed'
+                    ? 'Calibration complete.'
+                    : 'Calibrate your agent before it goes live.'}
+            </p>
+          </div>
+
+          {/* Progress Dots - Center */}
+          {(steps.length > 0 || isRunning) && (
+            <div className="flex items-center gap-2 flex-1 justify-center">
+              {steps.length > 0 ? (
+                steps.map((step, index) => (
+                  <div
+                    key={step.step_id}
+                    className="relative group"
+                  >
+                    <div
+                      className={`w-2 h-2 rounded-full transition-all duration-300 ${
+                        step.status === 'completed'
+                          ? 'bg-[var(--v2-status-success-text)] scale-110'
+                          : step.status === 'running'
+                          ? 'bg-[var(--v2-primary)] scale-125 animate-pulse'
+                          : step.status === 'failed'
+                          ? 'bg-[var(--v2-status-error-text)] scale-110'
+                          : 'bg-[var(--v2-border)]'
+                      }`}
+                    />
+                    {/* Tooltip on hover */}
+                    <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-[10px] rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                      {step.friendly_name}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                /* Loading skeleton - show pulsing dots while waiting for steps to load */
+                Array.from({ length: 5 }).map((_, index) => (
+                  <div key={index} className="w-2 h-2 rounded-full bg-[var(--v2-border)] animate-pulse" />
+                ))
+              )}
+            </div>
+          )}
+
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={handleCalibrateClick}
+            disabled={isRunning}
+            className="gap-2 flex-shrink-0"
+          >
+            {isRunning ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Calibrating...
+              </>
+            ) : (
+              <>
+                <Play className="w-4 h-4" />
+                Run Calibration
+              </>
+            )}
+          </Button>
+        </div>
+      </div>
+
+      {/* Dynamic Layout: Collapsed Settings OR Full-width Settings Editor OR 3-Column View */}
+      {settingsExpanded ? (
+        /* Full-width Settings Editor */
+        <div className="mb-4">
+          <Card className="!box-border">
+            <CardHeader className="!mb-0 pb-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Settings className="w-4 h-4 text-[var(--v2-primary)]" />
+                  <CardTitle className="text-sm text-[var(--v2-text-primary)]">Your Settings</CardTitle>
+                </div>
+                <button
+                  onClick={() => setSettingsExpanded(false)}
+                  className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  <X className="w-4 h-4" style={{ color: 'var(--v2-text-secondary)' }} />
+                </button>
+              </div>
+            </CardHeader>
+            <CardContent className="px-6 py-4">
+              {agent.input_schema && Array.isArray(agent.input_schema) && agent.input_schema.length > 0 ? (
+                <AgentInputFields
+                  schema={agent.input_schema}
+                  values={inputValues}
+                  onChange={(name, value) => {
+                    const newValues = { ...inputValues, [name]: value }
+                    setInputValues(newValues)
+                    sessionStorage.setItem(`calibration_inputs_${agentId}`, JSON.stringify(newValues))
+                  }}
+                  getDynamicOptions={getDynamicOptions}
+                  wrapperClassName="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl"
+                />
+              ) : (
+                <p className="text-sm" style={{ color: 'var(--v2-text-secondary)' }}>
+                  No settings to configure.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
+
+      {/* 3-Column Layout OR 2-Column Layout (when settings collapsed) */}
+      <div className={`grid grid-cols-1 gap-3 sm:gap-4 ${settingsExpanded ? 'hidden' : 'lg:grid-cols-12'}`}>
+
+        {/* Collapsed Settings Card OR Left Column */}
+        {!settingsExpanded && agent.input_schema && Array.isArray(agent.input_schema) && agent.input_schema.length > 0 && (
+          <div className="lg:col-span-2">
+            <Card className="lg:!h-[600px] flex flex-col !box-border">
+              <CardHeader className="!mb-0 pb-2 pt-3 flex-shrink-0">
+                <div className="flex items-center gap-2">
+                  <Settings className="w-4 h-4 text-[var(--v2-primary)]" />
+                  <CardTitle className="text-sm text-[var(--v2-text-primary)]">Your Settings</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent className="flex-1 flex items-center justify-center">
+                <button
+                  onClick={() => setSettingsExpanded(true)}
+                  className="flex flex-col items-center gap-2 p-4 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors rounded"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  <Edit className="w-6 h-6" style={{ color: 'var(--v2-primary)' }} />
+                  <p className="text-xs font-semibold" style={{ color: 'var(--v2-text-primary)' }}>
+                    Edit {agent.input_schema.length} value{agent.input_schema.length !== 1 ? 's' : ''}
+                  </p>
+                </button>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* If no settings, show empty state */}
+        {!settingsExpanded && (!agent.input_schema || !Array.isArray(agent.input_schema) || agent.input_schema.length === 0) && (
+          <div className="lg:col-span-2">
+            <Card className="lg:!h-[600px] flex flex-col items-center justify-center !box-border">
+              <div className="text-center p-4">
+                <Settings className="w-8 h-8 opacity-20 mb-2 mx-auto" style={{ color: 'var(--v2-text-muted)' }} />
+                <p className="text-xs" style={{ color: 'var(--v2-text-secondary)' }}>No settings required</p>
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* Middle Column — Activity Feed (4 cols) */}
+        <div className="lg:col-span-4">
+          <Card className="lg:!h-[600px] overflow-hidden !box-border">
+            <CardHeader className="!mb-0 pb-2 pt-3">
+              {/* Title and Status */}
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-[var(--v2-primary)]" />
+                  <CardTitle className="text-sm text-[var(--v2-text-primary)]">Activity</CardTitle>
+                  {isRunning && (
+                    <Badge variant="info" dot className="!text-[10px] !px-1.5 !py-0.5">Running</Badge>
+                  )}
+                </div>
+                {steps.length > 0 && (
+                  <div className="flex items-center gap-3 text-[10px] text-[var(--v2-text-muted)]">
+                    <span>{completedCount}/{totalCount} steps</span>
+                    {executionResult?.summary?.execution_time_ms && (
+                      <span>{(executionResult.summary.execution_time_ms / 1000).toFixed(1)}s</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </CardHeader>
+
+            <CardContent className="overflow-y-auto space-y-1.5 px-4 scrollbar-hide max-h-[520px]">
+              {useStoryView ? (
+                // NEW: Story-driven view
+                <CalibrationStoryView
+                  steps={steps}
+                  isRunning={isRunning}
+                  currentStepIndex={steps.findIndex(s => s.status === 'running')}
+                  agentName={agent?.agent_name || 'Your Agent'}
+                />
+              ) : (
+                // OLD: Traditional technical view
+                <>
+                  {steps.length > 0 ? (
+                    steps.map((step, index) => (
+                      <StepCard
+                        key={step.step_id}
+                        step={step}
+                        index={index}
+                        expanded={expandedStepId === step.step_id}
+                        onToggle={() => setExpandedStepId(
+                          expandedStepId === step.step_id ? null : step.step_id
+                        )}
+                      />
+                    ))
+                  ) : (
+                    <div className="flex flex-col items-center justify-center h-full text-center py-12">
+                      <Sparkles className="w-12 h-12 opacity-20 mb-3 text-[var(--v2-text-muted)]" />
+                      <p className="text-sm text-[var(--v2-text-secondary)]">
+                        {isRunning ? 'Starting...' : 'Click "Run Calibration" to begin testing'}
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Right Column — Data Flow Summary (6 cols) */}
+        <div className="lg:col-span-6">
+          <Card className="lg:!h-[600px] overflow-hidden !box-border">
+            <CardHeader className="!mb-0 pb-2 pt-3">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-[var(--v2-primary)]" />
+                <CardTitle className="text-sm text-[var(--v2-text-primary)]">What Happened</CardTitle>
+              </div>
+            </CardHeader>
+
+            <CardContent className="overflow-y-auto space-y-2 px-4 scrollbar-hide max-h-[520px]">
+              {(() => {
+                // Check if we should render the right column
+                // 1. Normal case: execution is completed/failed/paused
+                // 2. Race condition case: execution is 'running' but there's a failed step with parameter error
+                const hasParameterError = steps.some(s => s.status === 'failed' && s.parameter_error_details);
+                const shouldRender = (
+                  (executionResult?.status === 'completed' || executionResult?.status === 'failed' || executionResult?.status === 'paused') ||
+                  (executionResult?.status === 'running' && hasParameterError)
+                ) && steps.length > 0;
+
+                console.log('[Right Column Render Check]', {
+                  executionStatus: executionResult?.status,
+                  stepsCount: steps.length,
+                  hasParameterError,
+                  shouldRender
+                });
+                return null;
+              })()}
+              {(() => {
+                const hasParameterError = steps.some(s => s.status === 'failed' && s.parameter_error_details);
+                const shouldRender = (
+                  (executionResult?.status === 'completed' || executionResult?.status === 'failed' || executionResult?.status === 'paused') ||
+                  (executionResult?.status === 'running' && hasParameterError)
+                ) && steps.length > 0;
+                return shouldRender;
+              })() ? (
+                <>
+                  {/* Smart Insights */}
+                  {(() => {
+                    const completedSteps = steps.filter(s => s.status === 'completed' && s.output_summary);
+                    const failedSteps = steps.filter(s => s.status === 'failed');
+
+                    // Auto-show troubleshooting when there's a failure
+                    // Use the LAST failed step (most recent), not the first
+                    const failedStep = failedSteps.length > 0 ? failedSteps[failedSteps.length - 1] : null;
+                    const showTroubleshooting = !!failedStep;
+
+                    // Debug logging
+                    console.log('[Right Column Debug]', {
+                      totalSteps: steps.length,
+                      completedCount: completedSteps.length,
+                      failedCount: failedSteps.length,
+                      showTroubleshooting,
+                      failedStep: failedStep ? { id: failedStep.step_id, name: failedStep.friendly_name, hasParamError: !!failedStep.parameter_error_details } : null
+                    });
+
+                    // Show insights if we have completed steps OR failed steps OR selected step
+                    if (completedSteps.length === 0 && failedSteps.length === 0 && !showTroubleshooting) return null;
+
+                    // === Data Flow Analysis ===
+                    const itemCounts = completedSteps.map(s => s.output_summary?.item_count || 0);
+                    const maxItems = Math.max(...itemCounts);
+                    const finalCount = itemCounts[itemCounts.length - 1] || 0;
+                    const firstCount = itemCounts[0] || 0;
+
+                    // Find steps with 0 items
+                    const emptySteps = completedSteps
+                      .map((s, idx) => ({ step: s, index: idx, count: itemCounts[idx] }))
+                      .filter(x => x.count === 0);
+
+                    // Find the first bottleneck (where data drops to 0)
+                    const firstBottleneck = emptySteps.length > 0 ? emptySteps[0] : null;
+                    const itemsBeforeBottleneck = firstBottleneck && firstBottleneck.index > 0
+                      ? itemCounts[firstBottleneck.index - 1]
+                      : 0;
+
+                    // Detect steep drops (>50% loss in one step)
+                    const steepDrops = completedSteps
+                      .map((s, idx) => {
+                        if (idx === 0) return null;
+                        const prev = itemCounts[idx - 1];
+                        const curr = itemCounts[idx];
+                        if (prev > 0 && curr < prev) {
+                          const dropPercent = ((prev - curr) / prev) * 100;
+                          if (dropPercent > 50) {
+                            return { step: s, index: idx, prev, curr, dropPercent };
+                          }
+                        }
+                        return null;
+                      })
+                      .filter(x => x !== null);
+
+                    // Detect data expansion (deduplication/joins)
+                    const expansions = completedSteps
+                      .map((s, idx) => {
+                        if (idx === 0) return null;
+                        const prev = itemCounts[idx - 1];
+                        const curr = itemCounts[idx];
+                        if (curr > prev && prev > 0) {
+                          const expansionPercent = ((curr - prev) / prev) * 100;
+                          if (expansionPercent > 100) {
+                            return { step: s, index: idx, prev, curr, expansionPercent };
+                          }
+                        }
+                        return null;
+                      })
+                      .filter(x => x !== null);
+
+                    // Check for failures (already defined above)
+                    const hasFailures = failedSteps.length > 0;
+
+                    // Check for auto-repairs
+                    const repairedSteps = steps.filter(s => s.auto_repaired);
+                    const hasRepairs = repairedSteps.length > 0;
+
+                    // === Generate Insights ===
+                    const insights: Array<{ type: 'error' | 'warning' | 'info' | 'success', title: string, message: string, icon: string }> = [];
+
+                    // 1. Failures
+                    if (hasFailures) {
+                      // Use the LAST failed step (most recent), not the first
+                      const failedStep = failedSteps[failedSteps.length - 1];
+                      const errorMessage = failedStep.friendly_error || 'Something went wrong';
+
+                      insights.push({
+                        type: 'error',
+                        icon: '❌',
+                        title: 'Step Failed',
+                        message: `"${failedStep.friendly_name}" failed: ${errorMessage}`
+                      });
+                    }
+
+                    // 2. Auto-repairs (positive signal)
+                    if (hasRepairs && !hasFailures) {
+                      insights.push({
+                        type: 'info',
+                        icon: '🔧',
+                        title: 'Issues Fixed Automatically',
+                        message: `We detected and fixed ${repairedSteps.length} data issue${repairedSteps.length > 1 ? 's' : ''} so your agent could keep running smoothly.`
+                      });
+                    }
+
+                    // 3. No data at source
+                    if (firstCount === 0 && emptySteps.length === completedSteps.length) {
+                      insights.push({
+                        type: 'warning',
+                        icon: '⚠️',
+                        title: 'No Data Found',
+                        message: `The first step "${completedSteps[0].friendly_name}" didn't find any results. Check your search terms or make sure data exists in the source.`
+                      });
+                    }
+
+                    // 4. Data filtered to zero (bottleneck)
+                    else if (firstBottleneck && itemsBeforeBottleneck > 0 && finalCount === 0) {
+                      const stepName = firstBottleneck.step.friendly_name.toLowerCase();
+                      const stepSummary = firstBottleneck.step.friendly_summary || '';
+
+                      // Distinguish between deduplication and criteria filtering
+                      const isDeduplication =
+                        stepName.includes('deduplicate') ||
+                        stepName.includes('new items only') ||
+                        stepName.includes('existing') && stepName.includes('filter');
+
+                      const isCriteriaFilter =
+                        (stepName.includes('filter') && !isDeduplication) ||
+                        stepName.includes('where') ||
+                        stepName.includes('match');
+
+                      let insightType: 'info' | 'warning' = 'info';
+                      let message = '';
+
+                      // Extract filter details from friendly_summary if available
+                      const filterDetails = stepSummary ? ` (${stepSummary})` : '';
+
+                      if (isDeduplication) {
+                        // Deduplication filtered everything - this is expected
+                        insightType = 'info';
+                        message = `All ${itemsBeforeBottleneck} items were already in your system, so nothing new was added. When new items appear, your agent will process them automatically.`;
+                      } else if (isCriteriaFilter) {
+                        // Criteria filtering - likely an issue with filter logic
+                        insightType = 'warning';
+                        message = `None of the ${itemsBeforeBottleneck} items matched the filter "${firstBottleneck.step.friendly_name}". Try adjusting your filter conditions, or check if your data has the expected values.`;
+                      } else {
+                        // Generic filtering
+                        insightType = 'info';
+                        message = `The step "${firstBottleneck.step.friendly_name}" filtered out all ${itemsBeforeBottleneck} items. This might mean your filter is too strict, or your data doesn't match what you're looking for.`;
+                      }
+
+                      insights.push({
+                        type: insightType,
+                        icon: insightType === 'warning' ? '⚠️' : '🔍',
+                        title: isCriteriaFilter ? 'No Items Match Filter' : 'Filtering Bottleneck',
+                        message
+                      });
+                    }
+
+                    // 5. Steep drops (significant filtering)
+                    else if (steepDrops.length > 0 && finalCount > 0) {
+                      const biggestDrop = steepDrops.reduce((max, curr) =>
+                        curr!.dropPercent > max!.dropPercent ? curr : max
+                      );
+                      insights.push({
+                        type: 'info',
+                        icon: '📉',
+                        title: 'Some Items Filtered Out',
+                        message: `The step "${biggestDrop!.step.friendly_name}" narrowed down ${biggestDrop!.prev} items to ${biggestDrop!.curr}. In the end, ${finalCount} item${finalCount > 1 ? 's were' : ' was'} processed.`
+                      });
+                    }
+
+                    // 6. Data expansion (joins/cross-referencing)
+                    if (expansions.length > 0 && finalCount > 0) {
+                      const biggestExpansion = expansions.reduce((max, curr) =>
+                        curr!.expansionPercent > max!.expansionPercent ? curr : max
+                      );
+                      insights.push({
+                        type: 'info',
+                        icon: '📊',
+                        title: 'Data Combined',
+                        message: `The step "${biggestExpansion!.step.friendly_name}" combined ${biggestExpansion!.prev} items with additional data, creating ${biggestExpansion!.curr} enriched items.`
+                      });
+                    }
+
+                    // 7. Success case - data flowed through
+                    if (insights.length === 0 && finalCount > 0) {
+                      insights.push({
+                        type: 'success',
+                        icon: '✅',
+                        title: 'Calibration Successful',
+                        message: `Your agent successfully processed ${firstCount} item${firstCount > 1 ? 's' : ''} and completed with ${finalCount} result${finalCount > 1 ? 's' : ''}. Everything is working correctly!`
+                      });
+                    }
+
+                    // 8. Fallback success for empty results (validation mode)
+                    if (insights.length === 0) {
+                      insights.push({
+                        type: 'success',
+                        icon: '✅',
+                        title: 'Agent Ready',
+                        message: 'Your agent is set up correctly and will process data when it finds matching results.'
+                      });
+                    }
+
+                    // === Render Insights ===
+                    const colorMap = {
+                      error: { bg: 'var(--v2-status-error-bg)', border: 'var(--v2-status-error-border)', text: 'var(--v2-status-error-text)', subtext: 'var(--v2-status-error-text)' },
+                      warning: { bg: 'var(--v2-status-warning-bg)', border: 'var(--v2-status-warning-border)', text: 'var(--v2-status-warning-text)', subtext: 'var(--v2-status-warning-text)' },
+                      info: { bg: 'var(--v2-status-executing-bg)', border: 'var(--v2-status-executing-border)', text: 'var(--v2-status-executing-text)', subtext: 'var(--v2-status-executing-text)' },
+                      success: { bg: 'var(--v2-status-success-bg)', border: 'var(--v2-status-success-border)', text: 'var(--v2-status-success-text)', subtext: 'var(--v2-status-success-text)' },
+                    };
+
+                    return (
+                      <>
+                        {/* Troubleshooting view for failed step */}
+                        {showTroubleshooting && failedStep ? (
+                          <div className="border rounded-lg p-3 shadow-sm" style={{ backgroundColor: 'var(--v2-status-error-bg)', borderColor: 'var(--v2-status-error-border)' }}>
+                            <div className="flex items-start gap-2.5 mb-3">
+                              <div className="w-8 h-8 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center flex-shrink-0">
+                                <XCircle className="w-4 h-4 text-red-600 dark:text-red-400" />
+                              </div>
+                              <div className="flex-1">
+                                <p className="font-semibold text-xs mb-0.5" style={{ color: 'var(--v2-status-error-text)' }}>
+                                  {failedStep.friendly_name}
+                                </p>
+                                <p className="text-xs leading-snug" style={{ color: 'var(--v2-status-error-text)', opacity: 0.9 }}>
+                                  {failedStep.friendly_error || 'Something went wrong with this step'}
+                                </p>
+                              </div>
+                            </div>
+
+                            {/* Show different UI based on error type - PRIORITIZE parameter errors over hardcode detection */}
+                            {(() => {
+                              // DEBUG: Log why repair options are/aren't showing
+                              console.log('[Repair Options Debug - FULL STATE]', {
+                                stepId: failedStep.step_id,
+                                stepName: failedStep.step_name,
+                                stepStatus: failedStep.status,
+                                isDetectingHardcoded,
+                                hasStepHardcodedValues: !!stepHardcodedValues?.has_hardcoded_values,
+                                hasParameterError: !!failedStep.parameter_error_details,
+                                repairChoiceStepSet: !!repairChoiceStep,
+                                repairSuccessMessage,
+                                parameterErrorDetails: failedStep.parameter_error_details,
+                                fullFailedStep: JSON.stringify(failedStep, null, 2),
+                                condition1_isDetecting: isDetectingHardcoded,
+                                condition2_hasHardcodeNoParamError: stepHardcodedValues?.has_hardcoded_values && !failedStep.parameter_error_details,
+                                condition3_showParamErrorUI: !isDetectingHardcoded && !(stepHardcodedValues?.has_hardcoded_values && !failedStep.parameter_error_details),
+                                willShowRepairOptions: !!failedStep.parameter_error_details && !repairChoiceStep
+                              });
+                              return null;
+                            })()}
+                            {isDetectingHardcoded ? (
+                              <div className="border-t pt-3 mb-3 text-center" style={{ borderColor: 'var(--v2-status-error-border)' }}>
+                                <Loader2 className="w-4 h-4 animate-spin inline-block" style={{ color: 'var(--v2-status-error-text)' }} />
+                                <p className="mt-2" style={{ color: 'var(--v2-status-error-text)' }}>Analyzing step...</p>
+                              </div>
+                            ) : stepHardcodedValues?.has_hardcoded_values && !failedStep.parameter_error_details ? (
+                              /* Hardcoded values detected (no parameter error) - offer parameterization */
+                              <div className="border-t pt-3 mb-3" style={{ borderColor: 'var(--v2-status-error-border)' }}>
+                                <p className="font-medium mb-2" style={{ color: 'var(--v2-status-error-text)' }}>
+                                  ⚠️ This step has hardcoded values that should be parameterized
+                                </p>
+                                <p className="mb-3" style={{ color: 'var(--v2-status-error-text)' }}>
+                                  The step contains hardcoded values that should be turned into inputs. Let's parameterize them so you can change them easily:
+                                </p>
+                                <div className="bg-white dark:bg-gray-900 rounded p-3 border mb-3" style={{ borderColor: 'var(--v2-border)' }}>
+                                  {stepHardcodedValues.detected_values.map((v: any, idx: number) => (
+                                    <div key={idx} className="py-1.5 border-b last:border-b-0" style={{ borderColor: 'var(--v2-border)' }}>
+                                      <span className="font-medium text-xs" style={{ color: 'var(--v2-text-primary)' }}>{v.label}:</span>
+                                      <span className="ml-2 text-xs font-mono" style={{ color: 'var(--v2-text-secondary)' }}>{String(v.value)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                                <Button
+                                  variant="primary"
+                                  size="sm"
+                                  onClick={handleParameterizeStep}
+                                  disabled={isRepairing}
+                                  className="w-full gap-2"
+                                >
+                                  {isRepairing ? (
+                                    <>
+                                      <Loader2 className="w-4 h-4 animate-spin" />
+                                      Parameterizing...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Wrench className="w-4 h-4" />
+                                      Parameterize This Step
+                                    </>
+                                  )}
+                                </Button>
+                              </div>
+                            ) : (
+                              /* No hardcoded values - show repair options or input editing UI */
+                              <>
+                                {(() => {
+                                  // Check if step has parameter_error_details (detected by Shadow Agent)
+                                  const paramError = failedStep.parameter_error_details;
+
+                                  // Step 1: Show repair choice options if parameter error detected and user hasn't chosen yet
+                                  if (paramError && !repairChoiceStep) {
+                                    return (
+                                      <div className="border-t pt-3 mt-3" style={{ borderColor: 'var(--v2-status-error-border)' }}>
+                                        <div className="mb-3 p-2 bg-white/50 dark:bg-gray-900/50 border border-red-200 dark:border-red-800 rounded">
+                                          <p className="text-xs leading-snug" style={{ color: 'var(--v2-status-error-text)' }}>
+                                            The value <code className="px-1 py-0.5 bg-red-100 dark:bg-red-900/30 rounded text-[11px] font-mono">{paramError.problematicValue}</code> is not valid.
+                                          </p>
+                                        </div>
+
+                                        <p className="font-semibold mb-2.5 text-xs" style={{ color: 'var(--v2-text-primary)' }}>
+                                          How would you like to fix this?
+                                        </p>
+
+                                        {/* Repair Options */}
+                                        <div className="space-y-2">
+                                          {/* Option 1: Fix hardcoded value */}
+                                          <button
+                                            onClick={() => {
+                                              setRepairChoiceStep(failedStep)
+                                              // Initialize input value with current problematic value for editing
+                                              if (!inputValues[paramError.parameterName]) {
+                                                const newValues = { ...inputValues, [paramError.parameterName]: paramError.problematicValue }
+                                                setInputValues(newValues)
+                                                sessionStorage.setItem(`calibration_inputs_${agentId}`, JSON.stringify(newValues))
+                                              }
+                                            }}
+                                            className="w-full p-2.5 text-left border hover:shadow-sm rounded-lg transition-all duration-200 group"
+                                            style={{
+                                              borderColor: 'var(--v2-border)',
+                                              backgroundColor: 'var(--v2-surface)',
+                                            }}
+                                            onMouseEnter={(e) => {
+                                              e.currentTarget.style.borderColor = 'var(--v2-primary)'
+                                              e.currentTarget.style.backgroundColor = 'var(--v2-primary-bg-subtle)'
+                                            }}
+                                            onMouseLeave={(e) => {
+                                              e.currentTarget.style.borderColor = 'var(--v2-border)'
+                                              e.currentTarget.style.backgroundColor = 'var(--v2-surface)'
+                                            }}
+                                          >
+                                            <div className="flex items-start gap-2.5">
+                                              <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-blue-100 dark:bg-blue-900/30">
+                                                <Edit className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                                              </div>
+                                              <div className="flex-1">
+                                                <h4 className="font-semibold text-xs mb-0.5 transition-colors" style={{ color: 'var(--v2-text-primary)' }}>
+                                                  Fix the Hardcoded Value
+                                                </h4>
+                                                <p className="text-xs leading-snug" style={{ color: 'var(--v2-text-secondary)' }}>
+                                                  Update the incorrect value directly in the workflow
+                                                </p>
+                                              </div>
+                                            </div>
+                                          </button>
+
+                                          {/* Option 2: Make it a parameter */}
+                                          <button
+                                            onClick={handleParameterizeValue}
+                                            disabled={isRepairing}
+                                            className="w-full p-2.5 text-left border hover:shadow-sm rounded-lg transition-all duration-200 group disabled:opacity-50 disabled:cursor-not-allowed"
+                                            style={{
+                                              borderColor: 'var(--v2-border)',
+                                              backgroundColor: 'var(--v2-surface)',
+                                            }}
+                                            onMouseEnter={(e) => {
+                                              if (!isRepairing) {
+                                                e.currentTarget.style.borderColor = 'var(--v2-primary)'
+                                                e.currentTarget.style.backgroundColor = 'var(--v2-primary-bg-subtle)'
+                                              }
+                                            }}
+                                            onMouseLeave={(e) => {
+                                              e.currentTarget.style.borderColor = 'var(--v2-border)'
+                                              e.currentTarget.style.backgroundColor = 'var(--v2-surface)'
+                                            }}
+                                          >
+                                            <div className="flex items-start gap-2.5">
+                                              <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-purple-100 dark:bg-purple-900/30">
+                                                <Settings className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                                              </div>
+                                              <div className="flex-1">
+                                                <h4 className="font-semibold text-xs mb-0.5 transition-colors" style={{ color: 'var(--v2-text-primary)' }}>
+                                                  Make it a Parameter
+                                                </h4>
+                                                <p className="text-xs leading-snug" style={{ color: 'var(--v2-text-secondary)' }}>
+                                                  Convert to an input so you can change it anytime
+                                                </p>
+                                              </div>
+                                            </div>
+                                          </button>
+
+                                          {/* Option 3: Just retry */}
+                                          <button
+                                            onClick={() => {
+                                              // Just allow retry without fixing - for testing or other manual fixes
+                                              setRepairChoiceStep(failedStep)
+                                            }}
+                                            className="w-full p-2.5 text-left border hover:shadow-sm rounded-lg transition-all duration-200 group"
+                                            style={{
+                                              borderColor: 'var(--v2-border)',
+                                              backgroundColor: 'var(--v2-surface)',
+                                            }}
+                                            onMouseEnter={(e) => {
+                                              e.currentTarget.style.borderColor = 'var(--v2-primary)'
+                                              e.currentTarget.style.backgroundColor = 'var(--v2-primary-bg-subtle)'
+                                            }}
+                                            onMouseLeave={(e) => {
+                                              e.currentTarget.style.borderColor = 'var(--v2-border)'
+                                              e.currentTarget.style.backgroundColor = 'var(--v2-surface)'
+                                            }}
+                                          >
+                                            <div className="flex items-start gap-2.5">
+                                              <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-gray-100 dark:bg-gray-800">
+                                                <Play className="w-4 h-4 text-gray-700 dark:text-gray-300" />
+                                              </div>
+                                              <div className="flex-1">
+                                                <h4 className="font-semibold text-xs mb-0.5 transition-colors" style={{ color: 'var(--v2-text-primary)' }}>
+                                                  Just Retry
+                                                </h4>
+                                                <p className="text-xs leading-snug" style={{ color: 'var(--v2-text-secondary)' }}>
+                                                  Test without making permanent changes
+                                                </p>
+                                              </div>
+                                            </div>
+                                          </button>
+                                        </div>
+                                      </div>
+                                    );
+                                  }
+
+                                  // Step 2: Show input field if user chose to fix hardcoded value
+                                  if (agent.input_schema && Array.isArray(agent.input_schema) && agent.input_schema.length > 0) {
+                                    // Filter schema based on what we know about the error
+                                    let filteredSchema;
+                                    let errorHint = null;
+
+                                    if (paramError) {
+                                      // Shadow Agent detected a specific parameter error - show only that field
+                                      filteredSchema = agent.input_schema.filter((field: any) => field.name === paramError.parameterName);
+                                      // Show a simple error hint without the full technical error message
+                                      errorHint = `The value "${paramError.problematicValue}" is not valid.`;
+                                    } else if (stepHardcodedValues?.referenced_inputs) {
+                                      // Fallback: Use referenced inputs from step analysis
+                                      const referencedInputs = stepHardcodedValues.referenced_inputs;
+                                      filteredSchema = referencedInputs.length > 0
+                                        ? agent.input_schema.filter((field: any) => referencedInputs.includes(field.name))
+                                        : agent.input_schema;
+                                    } else {
+                                      // Fallback: Show all inputs
+                                      filteredSchema = agent.input_schema;
+                                    }
+
+                                    // Only show if we have fields to display and user has made a choice
+                                    if (filteredSchema.length === 0 || (paramError && !repairChoiceStep)) return null;
+
+                                    return (
+                                      <div className="border-t pt-3 mb-3" style={{ borderColor: 'var(--v2-status-error-border)' }}>
+                                        {errorHint && repairChoiceStep && (
+                                          <div className="mb-2 p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded" style={{ borderColor: 'var(--v2-status-error-border)' }}>
+                                            <p className="text-xs" style={{ color: 'var(--v2-status-error-text)' }}>
+                                              {errorHint}
+                                            </p>
+                                          </div>
+                                        )}
+                                        <p className="font-medium mb-2 text-xs" style={{ color: 'var(--v2-status-error-text)' }}>
+                                          {paramError ? `Fix the ${paramError.parameterName}:` : `Check and fix these values for "${failedStep.friendly_name}":`}
+                                        </p>
+                                        <div className="space-y-2 bg-white dark:bg-gray-900 rounded p-3 border" style={{ borderColor: 'var(--v2-border)' }}>
+                                          <AgentInputFields
+                                            schema={filteredSchema}
+                                            values={inputValues}
+                                            onChange={(name, value) => {
+                                              const newValues = { ...inputValues, [name]: value }
+                                              setInputValues(newValues)
+                                              sessionStorage.setItem(`calibration_inputs_${agentId}`, JSON.stringify(newValues))
+                                            }}
+                                            getDynamicOptions={getDynamicOptions}
+                                          />
+                                        </div>
+                                      </div>
+                                    );
+                                  }
+
+                                  return null;
+                                })()}
+
+                                {/* Show "Save to Workflow" button if user chose to fix hardcoded value */}
+                                {repairChoiceStep && failedStep.parameter_error_details && (
+                                  <div className="border-t pt-3 mb-3" style={{ borderColor: 'var(--v2-status-error-border)' }}>
+                                    {/* Back button to change selection */}
+                                    <button
+                                      onClick={() => setRepairChoiceStep(null)}
+                                      className="text-xs mb-3 flex items-center gap-1 hover:underline"
+                                      style={{ color: 'var(--v2-text-secondary)' }}
+                                    >
+                                      <ChevronLeft className="w-3 h-3" />
+                                      Change repair option
+                                    </button>
+
+                                    <p className="text-xs mb-3" style={{ color: 'var(--v2-status-error-text)' }}>
+                                      💡 Save this corrected value to the workflow so it's fixed permanently, or just retry to test it first.
+                                    </p>
+
+                                    {/* Success message */}
+                                    {repairSuccessMessage && (
+                                      <div className="mb-3 p-2 rounded-lg border" style={{
+                                        backgroundColor: 'var(--v2-status-success-bg)',
+                                        borderColor: 'var(--v2-status-success-border)'
+                                      }}>
+                                        <p className="text-xs leading-snug" style={{ color: 'var(--v2-status-success-text)' }}>
+                                          {repairSuccessMessage}
+                                        </p>
+                                      </div>
+                                    )}
+
+                                    {repairSuccessMessage ? (
+                                      /* After successful save, show only Retry button */
+                                      <Button
+                                        type="button"
+                                        variant="primary"
+                                        size="sm"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          console.log('[Retry Button Click] Calling handleResume');
+                                          handleResume();
+                                        }}
+                                        disabled={isRunning}
+                                        className="w-full gap-2"
+                                      >
+                                        {isRunning ? (
+                                          <>
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            Retrying...
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Play className="w-4 h-4" />
+                                            Retry with Fixed Value
+                                          </>
+                                        )}
+                                      </Button>
+                                    ) : (
+                                      /* Before save, show both Save and Retry buttons */
+                                      <div className="grid grid-cols-2 gap-2 mb-3">
+                                        <Button
+                                          variant="secondary"
+                                          size="sm"
+                                          onClick={handleSaveFixedValue}
+                                          disabled={isRepairing || isRunning || (() => {
+                                            const paramError = failedStep.parameter_error_details;
+                                            if (!paramError) return true;
+                                            const newValue = inputValues[paramError.parameterName];
+                                            const shouldDisable = newValue === undefined || newValue === paramError.problematicValue;
+                                            console.log('[Save Button Disabled Check]', {
+                                              parameterName: paramError.parameterName,
+                                              currentValue: newValue,
+                                              problematicValue: paramError.problematicValue,
+                                              shouldDisable,
+                                              isEqual: newValue === paramError.problematicValue
+                                            });
+                                            return shouldDisable;
+                                          })()}
+                                          className="gap-2"
+                                        >
+                                          {isRepairing ? (
+                                            <>
+                                              <Loader2 className="w-4 h-4 animate-spin" />
+                                              Saving...
+                                            </>
+                                          ) : (
+                                            <>
+                                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                                              </svg>
+                                              Save to Workflow
+                                            </>
+                                          )}
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          variant="primary"
+                                          size="sm"
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            console.log('[Retry Button (Before Save) Click] Calling handleResume');
+                                            handleResume();
+                                          }}
+                                          disabled={isRunning || isRepairing || (() => {
+                                            const paramError = failedStep.parameter_error_details;
+                                            if (!paramError) return false;
+                                            const newValue = inputValues[paramError.parameterName];
+                                            const shouldDisable = newValue === undefined || newValue === paramError.problematicValue;
+                                            console.log('[Retry Button Disabled Check]', {
+                                              parameterName: paramError.parameterName,
+                                              currentValue: newValue,
+                                              problematicValue: paramError.problematicValue,
+                                              shouldDisable,
+                                              isEqual: newValue === paramError.problematicValue
+                                            });
+                                            return shouldDisable;
+                                          })()}
+                                          className="gap-2"
+                                        >
+                                          {isRunning ? (
+                                            <>
+                                              <Loader2 className="w-4 h-4 animate-spin" />
+                                              Retrying...
+                                            </>
+                                          ) : (
+                                            <>
+                                              <Play className="w-4 h-4" />
+                                              Just Retry
+                                            </>
+                                          )}
+                                        </Button>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+
+                                {/* Normal troubleshooting tips when no hardcoded fix is in progress */}
+                                {!repairChoiceStep && !failedStep.parameter_error_details && (
+                                  <>
+                                    <div className="border-t pt-3 mb-3" style={{ borderColor: 'var(--v2-status-error-border)' }}>
+                                      <p className="font-semibold mb-2 text-xs" style={{ color: 'var(--v2-status-error-text)' }}>What to check:</p>
+                                      <ul className="space-y-1 ml-4 text-xs" style={{ color: 'var(--v2-status-error-text)' }}>
+                                        <li className="list-disc leading-snug">Verify all resource names and IDs are correct</li>
+                                        <li className="list-disc leading-snug">Check your account is connected with proper permissions</li>
+                                        <li className="list-disc leading-snug">Ensure the resource (file, folder, sheet, etc.) exists</li>
+                                      </ul>
+                                    </div>
+                                    <Button
+                                      type="button"
+                                      variant="primary"
+                                      size="sm"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        console.log('[Retry Button (Generic) Click] Calling handleResume');
+                                        handleResume();
+                                      }}
+                                      disabled={isRunning}
+                                      className="w-full gap-2"
+                                    >
+                                      {isRunning ? (
+                                        <>
+                                          <Loader2 className="w-4 h-4 animate-spin" />
+                                          Retrying...
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Play className="w-4 h-4" />
+                                          Retry with Updated Values
+                                        </>
+                                      )}
+                                    </Button>
+                                  </>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        ) : (
+                          /* Normal data flow summary + insights */
+                          <>
+                            {/* Step summary list - Collapsible */}
+                            {completedSteps.length > 0 && (
+                              <div className="border rounded-lg" style={{ borderColor: 'var(--v2-border)', backgroundColor: 'var(--v2-surface)' }}>
+                                <button
+                                  onClick={() => setShowDataFlowSummary(!showDataFlowSummary)}
+                                  className="w-full p-4 flex items-center justify-between text-left hover:opacity-80 transition-opacity"
+                                  style={{ borderRadius: showDataFlowSummary ? 'var(--v2-radius-button) var(--v2-radius-button) 0 0' : 'var(--v2-radius-button)' }}
+                                >
+                                  <span className="text-sm font-semibold" style={{ color: 'var(--v2-text-primary)' }}>
+                                    Data Flow Summary
+                                  </span>
+                                  <ChevronDown
+                                    className={`w-4 h-4 transition-transform ${showDataFlowSummary ? 'rotate-180' : ''}`}
+                                    style={{ color: 'var(--v2-primary)' }}
+                                  />
+                                </button>
+                                {showDataFlowSummary && (
+                                  <div className="px-4 pb-4 pt-2">
+                                    <div className="space-y-1 text-xs">
+                                      {steps.map((step, idx) => {
+                                        if (step.status !== 'completed') return null;
+                                        const summary = step.output_summary;
+                                        if (!summary) return null;
+
+                                        return (
+                                          <div key={step.step_id} className="flex items-center gap-2">
+                                            <span className="text-gray-600 dark:text-gray-400 font-mono">
+                                              {idx + 1}.
+                                            </span>
+                                            <span className="text-gray-700 dark:text-gray-300 flex-1 truncate">
+                                              {step.friendly_name}
+                                            </span>
+                                            <span className={`font-medium ${
+                                              summary.is_empty
+                                                ? 'text-amber-600 dark:text-amber-400'
+                                                : 'text-green-600 dark:text-green-400'
+                                            }`}>
+                                              {summary.is_empty
+                                                ? '0 items'
+                                                : summary.item_count !== undefined
+                                                  ? `${summary.item_count} item${summary.item_count === 1 ? '' : 's'}`
+                                                  : '✓'
+                                              }
+                                            </span>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Insights */}
+                            <div className="space-y-2">
+                              {insights.map((insight, idx) => {
+                                const colors = colorMap[insight.type];
+                                return (
+                                  <div
+                                    key={idx}
+                                    className="border rounded-lg p-3"
+                                    style={{
+                                      backgroundColor: colors.bg,
+                                      borderColor: colors.border,
+                                      borderRadius: 'var(--v2-radius-button)'
+                                    }}
+                                  >
+                                    <div className="flex items-start gap-2.5">
+                                      <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                                        style={{
+                                          backgroundColor: 'var(--v2-surface)',
+                                          borderColor: colors.border,
+                                          border: '1px solid'
+                                        }}>
+                                        <span className="text-sm">{insight.icon}</span>
+                                      </div>
+                                      <div className="flex-1">
+                                        <p className="font-semibold text-xs mb-0.5" style={{ color: colors.text }}>
+                                          {insight.title}
+                                        </p>
+                                        <p className="text-xs leading-snug" style={{ color: colors.text, opacity: 0.9 }}>
+                                          {insight.message}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            {/* Success Celebration UI - shown when calibration completes successfully */}
+                            {executionResult?.status === 'completed' && !hasFailures && (
+                              <div className="pt-4 mt-4 border-t space-y-3" style={{ borderColor: 'var(--v2-border)' }}>
+                                <div className="text-center py-4">
+                                  <PartyPopper className="w-12 h-12 mx-auto mb-3" style={{ color: 'var(--v2-primary)' }} />
+                                  <h3 className="text-base font-semibold mb-1" style={{ color: 'var(--v2-text-primary)' }}>
+                                    Ready to Go Live!
+                                  </h3>
+                                  <p className="text-xs" style={{ color: 'var(--v2-text-secondary)' }}>
+                                    Your agent is calibrated and working correctly
+                                  </p>
+                                </div>
+
+                                {executionResult?.summary && (
+                                  <div className="flex justify-center gap-3 mb-2">
+                                    <Badge variant="success" className="text-[10px]">
+                                      {executionResult.summary.completed} steps passed
+                                    </Badge>
+                                    <Badge variant="neutral" className="text-[10px]">
+                                      {((executionResult.summary.execution_time_ms || 0) / 1000).toFixed(1)}s
+                                    </Badge>
+                                  </div>
+                                )}
+
+                                <Button
+                                  variant="primary"
+                                  size="sm"
+                                  onClick={handleApproveAndGoLive}
+                                  className="gap-2 w-full"
+                                >
+                                  Approve & Go Live
+                                  <ChevronRight className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </>
+                    );
+                  })()}
+                </>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-full text-center py-12">
+                  {/* Empty state - no content shown */}
+                </div>
+              )}
+
+              {/* Back button below summary */}
+              {showDetailedResults && executionResult?.status === 'completed' && (
+                <div className="pt-4">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowDetailedResults(false)}
+                    className="w-full gap-1"
+                  >
+                    <ChevronLeft className="w-3 h-3" />
+                    Back to Summary View
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      {/* HelpBot */}
+      <HelpBot
+        isOpen={helpBotOpen}
+        onClose={() => setHelpBotOpen(false)}
+        onFill={handleChatbotFill}
+        context={helpBotContext}
+      />
+
+      {/* Phase 4: Data Decision Modal */}
+      {pendingDecision && (
+        <DataDecisionModal
+          decisionRequest={pendingDecision}
+          onDecisionMade={handleDecisionMade}
+          onClose={() => setPendingDecision(null)}
+        />
+      )}
+
+      {/* Hardcode Repair Modal (OLD - Deprecated, keeping for backward compatibility) */}
+      {showRepairModal && (detectionResult || stepHardcodedValues) && (
+        <HardcodeRepairModal
+          detectionResult={detectionResult || stepHardcodedValues}
+          agentId={agentId}
+          onRepair={handleRepairAgent}
+          onCancel={() => {
+            setShowRepairModal(false)
+            setStepHardcodedValues(null)
+            setHasTriedRepair(true) // Don't show again this session
+          }}
+          isRepairing={isRepairing}
+        />
+      )}
+
+      {/* Agent Setup Wizard (NEW - Story-Driven Proactive Approach) */}
+      {showSetupWizard && wizardDetectionResult && agent && (
+        <AgentSetupWizard
+          agentName={agent.agent_name || 'Your Agent'}
+          detectionResult={wizardDetectionResult}
+          existingInputValues={inputValues}
+          inputSchema={[]} // Pass empty array to force wizard to generate schema from detection results only
+          onComplete={handleWizardComplete}
+          onSkip={handleWizardSkip}
+          isOpen={showSetupWizard}
+          getDynamicOptions={getDynamicOptions}
+        />
+      )}
+
+      {/* Parameterization Confirmation Dialog */}
+    </div>
+  )
+}
+
+// ─── Step Card Component ────────────────────────────────────
+
+function StepCard({
+  step,
+  index,
+  expanded,
+  onToggle,
+}: {
+  step: CalibrationStepStatus
+  index: number
+  expanded: boolean
+  onToggle: () => void
+}) {
+  const statusIcon = {
+    completed: <CheckCircle className="w-4 h-4 text-green-500" />,
+    failed: <XCircle className="w-4 h-4 text-red-500" />,
+    running: <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />,
+    skipped: <Clock className="w-4 h-4 text-gray-400" />,
+    pending: <Clock className="w-4 h-4 text-gray-300" />,
+  }
+
+  const statusBg = {
+    completed: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800',
+    failed: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',
+    running: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',
+    skipped: 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700',
+    pending: 'bg-gray-50 dark:bg-gray-800/20 border-gray-200 dark:border-gray-700',
+  }
+
+  return (
+    <div
+      className={`border rounded-[12px] transition-all ${statusBg[step.status]} ${
+        expanded ? 'shadow-sm' : ''
+      }`}
+    >
+      {/* Collapsed Header */}
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center gap-2.5 p-2.5 text-left"
+        disabled={step.status === 'pending'}
+      >
+        {/* Status Icon */}
+        <div className="flex-shrink-0">
+          {statusIcon[step.status]}
+        </div>
+
+        {/* Step Info */}
+        <div className="flex-1 min-w-0">
+          {/* Line 1: Step number and name only */}
+          <div className="flex items-center gap-1.5 mb-0.5">
+            <span className="text-[10px] font-bold text-gray-400 dark:text-gray-500">
+              {index + 1}
+            </span>
+            <span className="text-xs font-semibold text-gray-800 dark:text-gray-100">
+              {step.friendly_name}
+            </span>
+          </div>
+
+          {/* Line 2: Badges */}
+          <div className="flex items-center gap-1.5 ml-4">
+            {/* Auto-repaired badge */}
+            {step.auto_repaired && (
+              <Badge
+                variant="warning"
+                className="!text-[9px] !px-1 !py-0 gap-0.5 whitespace-nowrap"
+                title={step.repair_tooltip || 'Auto-fixed a data issue'}
+              >
+                <Wrench className="w-2.5 h-2.5" />
+                auto-fixed
+              </Badge>
+            )}
+            {/* Result indicator badge */}
+            {step.status === 'completed' && step.output_summary && (
+              <Badge
+                variant={step.output_summary.is_empty ? 'neutral' : 'success'}
+                className="!text-[9px] !px-1 !py-0 whitespace-nowrap"
+                title={step.output_summary.preview}
+              >
+                {step.output_summary.is_empty ? (
+                  '0 results'
+                ) : step.output_summary.item_count !== undefined ? (
+                  `${step.output_summary.item_count} result${step.output_summary.item_count === 1 ? '' : 's'}`
+                ) : (
+                  'Has data'
+                )}
+              </Badge>
+            )}
+          </div>
+
+          {/* Line 3: Summary */}
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 ml-4 truncate leading-snug">
+            {step.friendly_summary}
+          </p>
+        </div>
+
+        {/* Duration */}
+        {step.duration_ms !== undefined && (
+          <span className="text-[9px] text-gray-400 dark:text-gray-500 flex-shrink-0">
+            {(step.duration_ms / 1000).toFixed(1)}s
+          </span>
+        )}
+
+        {/* Expand chevron */}
+        {step.status !== 'pending' && (
+          <div className="flex-shrink-0 text-gray-400 dark:text-gray-500">
+            {expanded ? (
+              <ChevronDown className="w-4 h-4" />
+            ) : (
+              <ChevronRight className="w-4 h-4" />
+            )}
+          </div>
+        )}
+      </button>
+
+      {/* Expanded Details */}
+      {expanded && step.status !== 'pending' && (
+        <div className="px-3 pb-3 pt-0">
+          <div className="border-t border-gray-200 dark:border-gray-700 pt-2 mt-1">
+            {/* Error details */}
+            {step.status === 'failed' && step.friendly_error && (
+              <div className="flex items-start gap-2 p-2.5 bg-red-50 dark:bg-red-900/30 rounded-[8px] mb-2">
+                <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-red-700 dark:text-red-300">
+                  {step.friendly_error}
+                </p>
+              </div>
+            )}
+
+            {/* Output Summary */}
+            {step.status === 'completed' && step.output_summary && (
+              <div className={`flex items-start gap-2 p-2.5 rounded-[8px] mb-2 ${
+                step.output_summary.is_empty
+                  ? 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800'
+                  : 'bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800'
+              }`}>
+                <Database className={`w-4 h-4 flex-shrink-0 mt-0.5 ${
+                  step.output_summary.is_empty
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-blue-600 dark:text-blue-400'
+                }`} />
+                <div className="flex-1">
+                  <p className={`text-xs font-medium mb-1 ${
+                    step.output_summary.is_empty
+                      ? 'text-amber-800 dark:text-amber-200'
+                      : 'text-blue-800 dark:text-blue-200'
+                  }`}>
+                    {step.output_summary.preview}
+                  </p>
+                  {step.output_summary.is_empty && (
+                    <p className="text-[10px] text-amber-700 dark:text-amber-300">
+                      No data matched your criteria - this is normal.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Metadata */}
+            <div className="flex flex-wrap gap-2 text-[10px]">
+              {step.item_count !== undefined && (
+                <Badge variant="neutral" className="!text-[10px]">{step.item_count} items</Badge>
+              )}
+              {step.plugin && (
+                <Badge variant="neutral" className="!text-[10px]">
+                  {step.plugin}{step.action ? `/${step.action}` : ''}
+                </Badge>
+              )}
+              {step.auto_repaired && step.repair_tooltip && (
+                <Badge variant="warning" className="!text-[10px]">
+                  {step.repair_tooltip}
+                </Badge>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

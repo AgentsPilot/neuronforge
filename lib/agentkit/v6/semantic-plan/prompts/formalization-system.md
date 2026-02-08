@@ -29,6 +29,7 @@ ALL top-level fields are REQUIRED (use `null` if not applicable):
   "partitions": null,
   "grouping": null,
   "rendering": null,
+  "file_operations": null,
   "delivery_rules": {},
   "edge_cases": null,
   "clarifications_required": null

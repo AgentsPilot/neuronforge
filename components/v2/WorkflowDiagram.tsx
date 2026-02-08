@@ -36,22 +36,19 @@ interface PilotStep {
 interface PilotDiagramProps {
   steps: PilotStep[]
   getStepStatus: (stepId: string) => 'pending' | 'executing' | 'completed' | 'failed' | 'skipped'
+  getStepOutput?: (stepId: string) => any
   executing?: boolean
 }
 
 const stepTypeIcons: Record<string, { icon: any, color: string, label: string }> = {
-  'action': { icon: Settings, color: 'var(--v2-primary)', label: 'Action' },
+  'action': { icon: Settings, color: '#6366F1', label: 'Action' },
   'conditional': { icon: GitBranch, color: '#8B5CF6', label: 'Decision' },
   'scatter_gather': { icon: RefreshCw, color: '#EC4899', label: 'Loop' },
   'ai_processing': { icon: Bot, color: '#8B5CF6', label: 'AI' },
   'llm_decision': { icon: Bot, color: '#8B5CF6', label: 'AI' },
 }
 
-function StepCard({ step, status, stepConfig, hasPluginIcon, Icon }: any) {
-  const [showTooltip, setShowTooltip] = useState(false)
-  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 })
-  const cardRef = React.useRef<HTMLDivElement>(null)
-
+function StepCard({ step, status, stepConfig, hasPluginIcon, Icon, stepOutput }: any) {
   const getStepName = () => {
     if (step.name) return step.name
     if (step.action) {
@@ -61,144 +58,183 @@ function StepCard({ step, status, stepConfig, hasPluginIcon, Icon }: any) {
     return stepConfig.label
   }
 
-  const handleMouseEnter = () => {
-    if (cardRef.current) {
-      const rect = cardRef.current.getBoundingClientRect()
-      setTooltipPos({
-        x: rect.left + rect.width / 2,
-        y: rect.top - 8
-      })
+  const getStepDescription = () => {
+    if (step.action && step.plugin) {
+      return `Using ${step.plugin}`
     }
-    setShowTooltip(true)
+    if (step.operation) {
+      return `Operation: ${step.operation.replace(/_/g, ' ')}`
+    }
+    return stepConfig.label
+  }
+
+  const getStepResultCount = () => {
+    if (status !== 'completed') return null
+
+    // If no output, still show Success badge
+    if (!stepOutput) {
+      return 'Success'
+    }
+
+    // Debug logging - always log for completed steps
+    console.log('[WorkflowDiagram] Analyzing step output:', {
+      stepId: step.id,
+      status,
+      outputType: Array.isArray(stepOutput) ? 'array' : typeof stepOutput,
+      outputKeys: typeof stepOutput === 'object' ? Object.keys(stepOutput) : [],
+      output: stepOutput
+    })
+
+    // Check if output is an array
+    if (Array.isArray(stepOutput)) {
+      const count = `${stepOutput.length} item${stepOutput.length !== 1 ? 's' : ''}`
+      console.log('[WorkflowDiagram] ✓ Found array, count:', count)
+      return count
+    }
+
+    // Check if output is an object with common result patterns
+    if (typeof stepOutput === 'object' && stepOutput !== null) {
+      // Check for result property
+      if (stepOutput.result !== undefined) {
+        if (Array.isArray(stepOutput.result)) {
+          const count = `${stepOutput.result.length} item${stepOutput.result.length !== 1 ? 's' : ''}`
+          console.log('[WorkflowDiagram] ✓ Found result array, count:', count)
+          return count
+        }
+      }
+
+      // Check for common array properties
+      const arrayKeys = ['items', 'results', 'data', 'rows', 'records', 'messages', 'emails', 'values']
+      for (const key of arrayKeys) {
+        if (Array.isArray(stepOutput[key])) {
+          const count = `${stepOutput[key].length} ${key}`
+          console.log('[WorkflowDiagram] ✓ Found array in key "' + key + '", count:', count)
+          return count
+        }
+      }
+
+      // Check for success message
+      if (stepOutput.success === true) {
+        console.log('[WorkflowDiagram] ✓ Found success flag')
+        return 'Success'
+      }
+
+      // Check if it's a simple object with a message or value
+      if (stepOutput.message || stepOutput.value || stepOutput.text) {
+        console.log('[WorkflowDiagram] ✓ Found message/value/text field')
+        return 'Success'
+      }
+    }
+
+    console.log('[WorkflowDiagram] ✗ No count pattern matched, defaulting to Success')
+    // Default to "Success" for completed steps
+    return 'Success'
   }
 
   const getCardStyle = () => {
     switch (status) {
       case 'executing':
-        return 'border-[var(--v2-status-executing-border)] bg-[var(--v2-status-executing-bg)] shadow-lg'
+        return 'border-[var(--v2-status-executing-border)] bg-[var(--v2-status-executing-bg)] shadow-md'
       case 'completed':
         return 'border-[var(--v2-status-success-border)] bg-[var(--v2-status-success-bg)]'
       case 'failed':
         return 'border-[var(--v2-status-error-border)] bg-[var(--v2-status-error-bg)]'
       case 'skipped':
-        return 'border-[var(--v2-border)] bg-[var(--v2-surface)] opacity-60'
+        return 'border-[var(--v2-border)] bg-[var(--v2-surface-hover)] opacity-60'
       default:
-        return 'border-[var(--v2-border)] bg-[var(--v2-surface)] hover:bg-[var(--v2-surface-hover)]'
-    }
-  }
-
-  const getTextColor = () => {
-    switch (status) {
-      case 'executing': return 'text-[var(--v2-status-executing-text)]'
-      case 'completed': return 'text-[var(--v2-status-success-text)]'
-      case 'failed': return 'text-[var(--v2-status-error-text)]'
-      default: return 'text-[var(--v2-text-primary)]'
+        return 'border-[var(--v2-border)] bg-[var(--v2-surface-hover)]'
     }
   }
 
   return (
-    <>
-      <div
-        ref={cardRef}
-        className={`relative flex-shrink-0 w-[140px] h-[88px] p-2 border rounded-[var(--v2-radius-button)] transition-all duration-200 flex flex-col justify-between ${getCardStyle()}`}
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={() => setShowTooltip(false)}
-      >
-        {status === 'executing' && (
-          <div className="absolute inset-0 rounded-[var(--v2-radius-button)] bg-[var(--v2-primary)] opacity-5 animate-pulse pointer-events-none" />
-        )}
-
+    <div
+      data-step-id={step.id}
+      className={`flex items-center gap-3 p-2.5 border transition-all duration-300 mb-2 ${getCardStyle()}`}
+      style={{ borderRadius: 'var(--v2-radius-card)' }}
+    >
       {/* Icon */}
-      <div className="relative flex items-center justify-center">
+      <div className="relative flex-shrink-0">
         <div
-          className="w-7 h-7 flex items-center justify-center rounded-lg transition-transform hover:scale-105"
+          className="w-8 h-8 flex items-center justify-center rounded-full"
           style={{
-            backgroundColor: status === 'executing' ? 'var(--v2-primary)' :
+            backgroundColor: status === 'executing' ? 'var(--v2-status-executing-border)' :
                             status === 'completed' ? 'var(--v2-status-success-border)' :
                             status === 'failed' ? 'var(--v2-status-error-border)' :
-                            `${stepConfig.color}15`
+                            'var(--v2-border)'
           }}
         >
           {status === 'executing' ? (
-            <Loader2 className="w-4 h-4 animate-spin text-white" />
+            <Loader2 className="w-4 h-4 animate-spin text-white dark:text-white" />
+          ) : status === 'completed' ? (
+            <CheckCircle className="w-4 h-4 text-white dark:text-white" />
+          ) : status === 'failed' ? (
+            <XCircle className="w-4 h-4 text-white dark:text-white" />
           ) : hasPluginIcon ? (
-            <PluginIcon pluginId={step.plugin!} className="w-4 h-4" />
+            <PluginIcon pluginId={step.plugin!} className="w-4 h-4 text-[var(--v2-text-muted)]" />
           ) : (
-            <Icon className="w-4 h-4" style={{ color: stepConfig.color }} />
+            <Icon className="w-4 h-4" style={{ color: status === 'pending' ? 'var(--v2-text-muted)' : stepConfig.color }} />
           )}
         </div>
-
-        {/* Status indicator */}
-        {status === 'completed' && (
-          <CheckCircle className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 text-[var(--v2-status-success-border)] fill-[var(--v2-surface)]" />
-        )}
-        {status === 'failed' && (
-          <XCircle className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 text-[var(--v2-status-error-border)] fill-[var(--v2-surface)]" />
-        )}
       </div>
 
-      {/* Step name */}
-      <p className={`text-[10.5px] font-medium text-center line-clamp-2 leading-tight px-1.5 ${getTextColor()}`}>
-        {getStepName()}
-      </p>
-
-      {/* Type badge */}
-      <div className="flex justify-center">
-        <span
-          className="text-[7.5px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide"
-          style={{
-            backgroundColor: `${stepConfig.color}15`,
-            color: stepConfig.color
-          }}
-        >
-          {stepConfig.label}
-        </span>
+      {/* Step Info */}
+      <div className="flex-1 min-w-0">
+        <h4 className="text-sm font-medium text-[var(--v2-text-primary)] mb-0.5">
+          {getStepName()}
+        </h4>
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs text-[var(--v2-text-muted)]">
+            {getStepDescription()}
+          </p>
+          {/* Counter on same line as description, aligned right */}
+          {status === 'completed' && getStepResultCount() && getStepResultCount() !== 'Success' && (
+            <p className="text-xs text-[var(--v2-text-muted)] whitespace-nowrap ml-auto">
+              {getStepResultCount()}
+            </p>
+          )}
+        </div>
       </div>
+
+      {/* Success Badge */}
+      {status === 'completed' && (
+        <div className="flex-shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-700">
+          Success
+        </div>
+      )}
+      {status === 'executing' && (
+        <div className="flex-shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-700">
+          Running...
+        </div>
+      )}
+      {status === 'failed' && (
+        <div className="flex-shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-700">
+          Failed
+        </div>
+      )}
     </div>
-
-    {/* Fixed Tooltip - outside overflow container */}
-    {showTooltip && (
-      <div
-        className="fixed z-[9999] px-3 py-1.5 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded shadow-lg pointer-events-none max-w-xs text-center -translate-x-1/2 -translate-y-full"
-        style={{
-          left: `${tooltipPos.x}px`,
-          top: `${tooltipPos.y}px`
-        }}
-      >
-        {getStepName()}
-        <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900 dark:border-t-gray-700"></div>
-      </div>
-    )}
-  </>
   )
 }
 
-function StepNode({ step, getStepStatus, isLast = false }: {
+function StepNode({ step, getStepStatus, getStepOutput, isLast = false }: {
   step: PilotStep
   getStepStatus: (stepId: string) => string
+  getStepOutput?: (stepId: string) => any
   isLast?: boolean
 }) {
   const status = getStepStatus(step.id)
+  const stepOutput = getStepOutput ? getStepOutput(step.id) : null
   const stepType = step.type || (step.plugin ? 'action' : 'ai_processing')
   const stepConfig = stepTypeIcons[stepType] || stepTypeIcons['action']
   const hasPluginIcon = Boolean(step.plugin)
   const Icon = stepConfig.icon
 
-  const hasNested = Boolean(
-    step.then_steps?.length ||
-    step.else_steps?.length ||
-    step.steps?.length ||
-    step.scatter?.steps?.length ||
-    step.loopSteps?.length
-  )
-
-  // For conditional steps with branches
+  // For conditional steps with branches - simplified for vertical layout
   if (step.type === 'conditional' && (step.then_steps || step.else_steps)) {
     const hasThen = step.then_steps && step.then_steps.length > 0
     const hasElse = step.else_steps && step.else_steps.length > 0
 
     return (
-      <div className="flex items-center gap-3">
+      <>
         {/* Decision step card */}
         <StepCard
           step={step}
@@ -206,135 +242,50 @@ function StepNode({ step, getStepStatus, isLast = false }: {
           stepConfig={stepConfig}
           hasPluginIcon={hasPluginIcon}
           Icon={Icon}
+          stepOutput={stepOutput}
         />
 
-        {/* Branch connector icon and branches */}
-        {(hasThen || hasElse) && (() => {
-          // Check if any branch is executing
-          const thenStatuses = step.then_steps?.map(s => getStepStatus(s.id)) || [];
-          const elseStatuses = step.else_steps?.map(s => getStepStatus(s.id)) || [];
-          const isBranchExecuting = [...thenStatuses, ...elseStatuses].includes('executing');
-
-          return (
-            <>
-              <div className="flex items-center justify-center">
-                <GitBranch className={`w-5 h-5 transition-all ${
-                  isBranchExecuting
-                    ? 'text-[var(--v2-primary)] animate-pulse'
-                    : 'text-[var(--v2-primary)]'
-                }`} />
-              </div>
-
-              {/* Branches container */}
-              <div className="flex flex-col gap-3">
-              {/* Yes/Then branch */}
-              {hasThen && (() => {
-                // Check if any step in this branch is executing
-                const branchStatuses = step.then_steps!.map(s => getStepStatus(s.id));
-                const isExecuting = branchStatuses.includes('executing');
-                const isCompleted = branchStatuses.every(s => s === 'completed' || s === 'skipped');
-
-                return (
-                  <div className="flex items-center gap-2">
-                    {/* Branch label */}
-                    <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full transition-all flex-shrink-0 ${
-                      isExecuting
-                        ? 'bg-[var(--v2-status-executing-bg)] border-[var(--v2-status-executing-border)] animate-pulse'
-                        : isCompleted
-                          ? 'bg-[var(--v2-status-success-bg)] border-[var(--v2-status-success-border)]'
-                          : 'bg-[var(--v2-status-success-bg)] border-[var(--v2-status-success-border)] opacity-50'
-                    } border`}>
-                      <span className={`text-[9px] font-bold uppercase ${
-                        isExecuting ? 'text-[var(--v2-status-executing-text)]' : 'text-[var(--v2-status-success-text)]'
-                      }`}>Yes</span>
-                      <ChevronRight className={`w-3 h-3 ${
-                        isExecuting ? 'text-[var(--v2-status-executing-text)]' : 'text-[var(--v2-status-success-text)]'
-                      }`} />
-                    </div>
-
-                    {/* Branch steps */}
-                    {step.then_steps!.map((s, i) => (
-                      <React.Fragment key={`${step.id}-then-${i}`}>
-                        <StepNode
-                          step={s}
-                          getStepStatus={getStepStatus}
-                          isLast={i === step.then_steps!.length - 1}
-                        />
-                      </React.Fragment>
-                    ))}
-                  </div>
-                );
-              })()}
-
-              {/* No/Else branch */}
-              {hasElse && (() => {
-                // Check if any step in this branch is executing
-                const branchStatuses = step.else_steps!.map(s => getStepStatus(s.id));
-                const isExecuting = branchStatuses.includes('executing');
-                const isCompleted = branchStatuses.every(s => s === 'completed' || s === 'skipped');
-
-                return (
-                  <div className="flex items-center gap-2">
-                    {/* Branch label */}
-                    <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full transition-all flex-shrink-0 ${
-                      isExecuting
-                        ? 'bg-[var(--v2-status-executing-bg)] border-[var(--v2-status-executing-border)] animate-pulse'
-                        : isCompleted
-                          ? 'bg-[var(--v2-status-error-bg)] border-[var(--v2-status-error-border)]'
-                          : 'bg-[var(--v2-status-error-bg)] border-[var(--v2-status-error-border)] opacity-50'
-                    } border`}>
-                      <span className={`text-[9px] font-bold uppercase ${
-                        isExecuting ? 'text-[var(--v2-status-executing-text)]' : 'text-[var(--v2-status-error-text)]'
-                      }`}>No</span>
-                      <ChevronRight className={`w-3 h-3 ${
-                        isExecuting ? 'text-[var(--v2-status-executing-text)]' : 'text-[var(--v2-status-error-text)]'
-                      }`} />
-                    </div>
-
-                    {/* Branch steps */}
-                    {step.else_steps!.map((s, i) => (
-                      <React.Fragment key={`${step.id}-else-${i}`}>
-                        <StepNode
-                          step={s}
-                          getStepStatus={getStepStatus}
-                          isLast={i === step.else_steps!.length - 1}
-                        />
-                      </React.Fragment>
-                    ))}
-                  </div>
-                );
-              })()}
-            </div>
-          </>
-          );
-        })()}
-
-        {/* Arrow after branch (if not last) */}
-        {!isLast && (
-          <ArrowRight
-            className={`flex-shrink-0 w-4 h-4 transition-colors ${
-              status === 'completed' ? 'text-[var(--v2-status-success-border)]' :
-              status === 'failed' ? 'text-[var(--v2-status-error-border)]' :
-              status === 'executing' ? 'text-[var(--v2-primary)] animate-pulse' :
-              'text-[var(--v2-border)]'
-            }`}
-          />
+        {/* Then branch */}
+        {hasThen && (
+          <div className="ml-8 border-l-2 border-[var(--v2-status-success-border)] pl-4">
+            <div className="text-xs font-semibold text-[var(--v2-status-success-text)] mb-2 uppercase">Then</div>
+            {step.then_steps!.map((s, i) => (
+              <StepNode
+                key={`${step.id}-then-${i}`}
+                step={s}
+                getStepStatus={getStepStatus}
+                getStepOutput={getStepOutput}
+                isLast={i === step.then_steps!.length - 1}
+              />
+            ))}
+          </div>
         )}
-      </div>
+
+        {/* Else branch */}
+        {hasElse && (
+          <div className="ml-8 border-l-2 border-[var(--v2-status-error-border)] pl-4">
+            <div className="text-xs font-semibold text-[var(--v2-status-error-text)] mb-2 uppercase">Else</div>
+            {step.else_steps!.map((s, i) => (
+              <StepNode
+                key={`${step.id}-else-${i}`}
+                step={s}
+                getStepStatus={getStepStatus}
+                getStepOutput={getStepOutput}
+                isLast={i === step.else_steps!.length - 1}
+              />
+            ))}
+          </div>
+        )}
+      </>
     )
   }
 
-  // For loop/scatter-gather steps
+  // For loop/scatter-gather steps - simplified for vertical layout
   if (step.type === 'scatter_gather' && (step.steps || step.scatter?.steps)) {
     const loopSteps = step.steps || step.scatter?.steps || []
 
-    // Check if any loop step is executing
-    const loopStatuses = loopSteps.map(s => getStepStatus(s.id));
-    const isLoopExecuting = loopStatuses.includes('executing');
-    const isLoopCompleted = loopStatuses.every(s => s === 'completed' || s === 'skipped');
-
     return (
-      <div className="flex items-center gap-3">
+      <>
         {/* Loop step card */}
         <StepCard
           step={step}
@@ -342,109 +293,67 @@ function StepNode({ step, getStepStatus, isLast = false }: {
           stepConfig={stepConfig}
           hasPluginIcon={hasPluginIcon}
           Icon={Icon}
+          stepOutput={stepOutput}
         />
 
-        {/* Loop indicator */}
-        <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all border ${
-          isLoopExecuting
-            ? 'bg-[var(--v2-status-executing-bg)] border-[var(--v2-status-executing-border)] animate-pulse'
-            : isLoopCompleted
-              ? 'bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-700'
-              : 'bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-700 opacity-50'
-        }`}>
-          <RefreshCw className={`w-3 h-3 ${
-            isLoopExecuting
-              ? 'text-[var(--v2-status-executing-text)] animate-spin'
-              : 'text-purple-600 dark:text-purple-400'
-          }`} />
-          <span className={`text-[9px] font-bold uppercase ${
-            isLoopExecuting ? 'text-[var(--v2-status-executing-text)]' : 'text-purple-600 dark:text-purple-400'
-          }`}>Loop</span>
-          <ChevronRight className={`w-3 h-3 ${
-            isLoopExecuting ? 'text-[var(--v2-status-executing-text)]' : 'text-purple-600 dark:text-purple-400'
-          }`} />
-        </div>
-
         {/* Loop steps */}
-        <div className="flex items-center gap-3">
+        <div className="ml-8 border-l-2 border-[var(--v2-secondary)] pl-4">
+          <div className="text-xs font-semibold text-[var(--v2-secondary)] mb-2 uppercase flex items-center gap-1">
+            <RefreshCw className="w-3 h-3" />
+            Loop
+          </div>
           {loopSteps.map((s, i) => (
-            <React.Fragment key={`${step.id}-loop-${i}`}>
-              <StepNode
-                step={s}
-                getStepStatus={getStepStatus}
-                isLast={i === loopSteps.length - 1}
-              />
-            </React.Fragment>
+            <StepNode
+              key={`${step.id}-loop-${i}`}
+              step={s}
+              getStepStatus={getStepStatus}
+              getStepOutput={getStepOutput}
+              isLast={i === loopSteps.length - 1}
+            />
           ))}
         </div>
-
-        {/* Arrow after loop */}
-        {!isLast && (
-          <ArrowRight
-            className={`flex-shrink-0 w-4 h-4 transition-colors ${
-              status === 'completed' ? 'text-[var(--v2-status-success-border)]' :
-              status === 'failed' ? 'text-[var(--v2-status-error-border)]' :
-              status === 'executing' ? 'text-[var(--v2-primary)] animate-pulse' :
-              'text-[var(--v2-border)]'
-            }`}
-          />
-        )}
-      </div>
+      </>
     )
   }
 
   // Regular step (action, AI, etc.)
   return (
-    <>
-      <StepCard
-        step={step}
-        status={status}
-        stepConfig={stepConfig}
-        hasPluginIcon={hasPluginIcon}
-        Icon={Icon}
-      />
-
-      {/* Arrow connector */}
-      {!isLast && (
-        <ArrowRight
-          className={`flex-shrink-0 w-4 h-4 transition-colors ${
-            status === 'completed' ? 'text-[var(--v2-status-success-border)]' :
-            status === 'failed' ? 'text-[var(--v2-status-error-border)]' :
-            status === 'executing' ? 'text-[var(--v2-primary)] animate-pulse' :
-            'text-[var(--v2-border)]'
-          }`}
-        />
-      )}
-    </>
+    <StepCard
+      step={step}
+      status={status}
+      stepConfig={stepConfig}
+      hasPluginIcon={hasPluginIcon}
+      Icon={Icon}
+      stepOutput={stepOutput}
+    />
   )
 }
 
-export function PilotDiagram({ steps, getStepStatus }: PilotDiagramProps) {
+export function PilotDiagram({ steps, getStepStatus, getStepOutput }: PilotDiagramProps) {
   if (!steps || steps.length === 0) {
     return (
       <div className="text-center py-12 text-[var(--v2-text-muted)]">
-        <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-[var(--v2-surface)] border border-[var(--v2-border)] mb-3">
+        <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] mb-3">
           <GitBranch className="w-8 h-8" />
         </div>
-        <p className="text-sm font-medium">No pilot steps defined</p>
+        <p className="text-sm font-medium">No workflow steps defined</p>
       </div>
     )
   }
 
   return (
     <div className="relative">
-      {/* Horizontal scrollable container */}
-      <div className="overflow-x-auto pb-4 scrollbar-thin">
-        <div className="flex items-center gap-3 min-w-max px-4 py-6">
-          {steps.map((step, idx) => (
-            <StepNode
-              key={step.id || `step-${idx}`}
-              step={step}
-              getStepStatus={getStepStatus}
-              isLast={idx === steps.length - 1}
-            />
-          ))}
-        </div>
+      {/* Vertical stacked container */}
+      <div className="space-y-0">
+        {steps.map((step, idx) => (
+          <StepNode
+            key={step.id || `step-${idx}`}
+            step={step}
+            getStepStatus={getStepStatus}
+            getStepOutput={getStepOutput}
+            isLast={idx === steps.length - 1}
+          />
+        ))}
       </div>
     </div>
   )

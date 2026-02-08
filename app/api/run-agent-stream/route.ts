@@ -154,6 +154,7 @@ export async function POST(request: NextRequest) {
                 sendEvent('step_completed', {
                   stepId: executionEvent.data.step_id,
                   stepName: executionEvent.data.step_name,
+                  output: executionEvent.data.result, // result field from ExecutionEventEmitter
                   timestamp: executionEvent.timestamp,
                 });
                 break;
