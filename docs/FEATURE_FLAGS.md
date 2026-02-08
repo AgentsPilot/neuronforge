@@ -1,7 +1,7 @@
 # Feature Flags
 
 > **Last Updated**: February 8, 2026
-> **Version**: 1.1.0
+> **Version**: 1.2.0
 
 This document describes the feature flag system used in NeuronForge for gradual rollouts, A/B testing, and feature toggling.
 
@@ -11,6 +11,7 @@ This document describes the feature flag system used in NeuronForge for gradual 
 
 | Date | Version | Author | Changes |
 |------|---------|--------|---------|
+| 2026-02-08 | 1.2.0 | - | Added `useV6ReviewMode` flag for controlling V6 split API vs single API flow. |
 | 2026-02-08 | 1.1.0 | - | Added `useV6AgentGeneration` flag. Clarified that Thread-Based and New UI flags are for legacy route only. Expanded database-based flags documentation with detailed sections for each orchestration flag. |
 | 2026-01-17 | 1.0.0 | - | Initial documentation created. Documented 3 environment-based flags and 4 database-based orchestration flags. |
 
@@ -38,6 +39,7 @@ Feature flag functions are defined in:
 | Flag | Environment Variable | Scope | Default | Active Routes |
 |------|---------------------|-------|---------|---------------|
 | V6 Agent Generation | `NEXT_PUBLIC_USE_V6_AGENT_GENERATION` | Client | `false` | `/v2/agents/new`, `/test-plugins-v2` |
+| V6 Review Mode | `NEXT_PUBLIC_USE_V6_REVIEW_MODE` | Client | `true` | `/v2/agents/new`, `/test-plugins-v2` |
 | Enhanced Technical Workflow Review | `USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW` | Server | `false` | `/v2/agents/new`, `/test-plugins-v2` (via API) |
 | Thread-Based Agent Creation | `NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION` | Client | `false` | Legacy: `/agents/new/chat` only |
 | New Agent Creation UI | `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` | Client | `false` | Legacy: `/agents/new/chat` only |
@@ -76,7 +78,53 @@ if (useV6) {
 
 ---
 
-### 2. Enhanced Technical Workflow Review (V5 Generator)
+### 2. V6 Review Mode
+
+**Environment Variable**: `NEXT_PUBLIC_USE_V6_REVIEW_MODE`
+
+**Purpose**: Controls whether V6 agent generation uses the split API flow with user review UI or the single API flow for direct generation.
+
+**Function**: `useV6ReviewMode()`
+
+**Used In**:
+- [v2/agents/new/page.tsx](app/v2/agents/new/page.tsx) - Main agent creation page
+- [test-plugins-v2/page.tsx](app/test-plugins-v2/page.tsx) - Plugin testing page
+
+**Values**:
+- `true`, `1`, or omit - Use split API flow with Review UI (default)
+- `false` or `0` - Use single API flow without review
+
+> **Note**: This flag only has effect when `NEXT_PUBLIC_USE_V6_AGENT_GENERATION=true`. It defaults to `true` (enabled) when not set.
+
+**API Flows**:
+
+| Review Mode | API Calls | User Review |
+|-------------|-----------|-------------|
+| Enabled (default) | 1. `/api/v6/generate-semantic-grounded` (P1+P2+Detection) → 2. `/api/v6/compile-with-decisions` (P3+P4+P5) | Yes - V6ReviewCustomizeUI |
+| Disabled | 1. `/api/v6/generate-ir-semantic` (all 5 phases) | No |
+
+```typescript
+import { useV6AgentGeneration, useV6ReviewMode } from '@/lib/utils/featureFlags';
+
+const useV6 = useV6AgentGeneration();
+const useReviewMode = useV6ReviewMode();
+
+if (useV6) {
+  if (useReviewMode) {
+    // Split API flow with Review UI
+    const grounded = await fetch('/api/v6/generate-semantic-grounded', ...);
+    // Show V6ReviewCustomizeUI for user decisions
+    const compiled = await fetch('/api/v6/compile-with-decisions', ...);
+  } else {
+    // Single API flow (no review)
+    const result = await fetch('/api/v6/generate-ir-semantic', ...);
+  }
+}
+```
+
+---
+
+### 3. Enhanced Technical Workflow Review (V5 Generator)
 
 **Environment Variable**: `USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW`
 
@@ -109,7 +157,7 @@ const generator = useV5
 
 > **Note**: The following flags are only used in the legacy agent creation route (`/agents/new/chat`). They do NOT affect the current `/v2/agents/new` or `/test-plugins-v2` pages.
 
-### 3. Thread-Based Agent Creation (Legacy)
+### 4. Thread-Based Agent Creation (Legacy)
 
 **Environment Variable**: `NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION`
 
@@ -139,7 +187,7 @@ if (useThreadFlow) {
 
 ---
 
-### 4. New Agent Creation UI (Legacy)
+### 5. New Agent Creation UI (Legacy)
 
 **Environment Variable**: `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI`
 
@@ -175,6 +223,7 @@ return useNewUI ? (
 ```bash
 # Active Feature Flags (v2/agents/new, test-plugins-v2)
 NEXT_PUBLIC_USE_V6_AGENT_GENERATION=false
+NEXT_PUBLIC_USE_V6_REVIEW_MODE=true  # Only has effect when V6 is enabled
 USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW=false
 
 # Legacy Feature Flags (agents/new/chat only)
@@ -185,8 +234,13 @@ NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI=false
 ### Testing Configurations
 
 ```bash
-# Test V6 5-phase pipeline
+# Test V6 5-phase pipeline with Review UI (default)
 NEXT_PUBLIC_USE_V6_AGENT_GENERATION=true
+NEXT_PUBLIC_USE_V6_REVIEW_MODE=true  # or omit (true by default)
+
+# Test V6 5-phase pipeline without Review UI (single API)
+NEXT_PUBLIC_USE_V6_AGENT_GENERATION=true
+NEXT_PUBLIC_USE_V6_REVIEW_MODE=false
 
 # Test V5 generator (LLM review) with V4 flow
 NEXT_PUBLIC_USE_V6_AGENT_GENERATION=false
@@ -224,6 +278,7 @@ const flags = getFeatureFlags();
 // Returns:
 // {
 //   useV6AgentGeneration: boolean,
+//   useV6ReviewMode: boolean,              // Defaults to true
 //   useEnhancedTechnicalWorkflowReview: boolean,
 //   useThreadBasedAgentCreation: boolean,  // Legacy
 //   useNewAgentCreationUI: boolean,        // Legacy

@@ -8,12 +8,13 @@
  * Parse a boolean feature flag from environment variable
  *
  * @param flag - The environment variable value (may be undefined)
- * @returns {boolean} True if flag is 'true' or '1', false otherwise
+ * @param defaultValue - Default value when flag is not set (defaults to false)
+ * @returns {boolean} True if flag is 'true' or '1', false if 'false' or '0', defaultValue otherwise
  */
-function parseBooleanFlag(flag: string | undefined): boolean {
-  // Default to false if not set, empty, or whitespace-only
+function parseBooleanFlag(flag: string | undefined, defaultValue: boolean = false): boolean {
+  // Default to defaultValue if not set, empty, or whitespace-only
   if (!flag || flag.trim() === '') {
-    return false;
+    return defaultValue;
   }
 
   // Normalize the flag value (lowercase and trim)
@@ -29,8 +30,8 @@ function parseBooleanFlag(flag: string | undefined): boolean {
     return true;
   }
 
-  // Default to false for any other value
-  return false;
+  // Default to defaultValue for any other/unrecognized value
+  return defaultValue;
 }
 
 /**
@@ -87,6 +88,28 @@ export function useV6AgentGeneration(): boolean {
 }
 
 /**
+ * Check if V6 Review Mode is enabled
+ *
+ * When enabled, V6 agent generation uses split API flow with user review UI:
+ * - API 1: generate-semantic-grounded (P1+P2+Detection)
+ * - Review UI: User reviews ambiguities and makes decisions
+ * - API 2: compile-with-decisions (P3+P4+P5)
+ *
+ * When disabled, uses single API flow (generate-ir-semantic) without review.
+ *
+ * NOTE: This flag only has effect when NEXT_PUBLIC_USE_V6_AGENT_GENERATION=true.
+ * NOTE: This flag defaults to TRUE (enabled) when not set.
+ *
+ * @returns {boolean} True if review mode enabled, false for direct generation
+ */
+export function useV6ReviewMode(): boolean {
+  const flag = process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE;
+  console.log("Feature Flag: NEXT_PUBLIC_USE_V6_REVIEW_MODE=", flag || 'none (default: true)');
+  // Default to TRUE - review mode is enabled by default
+  return parseBooleanFlag(flag, true);
+}
+
+/**
  * Get all feature flags status
  * Useful for debugging and admin dashboards
  *
@@ -98,5 +121,6 @@ export function getFeatureFlags() {
     useNewAgentCreationUI: useNewAgentCreationUI(),
     useEnhancedTechnicalWorkflowReview: useEnhancedTechnicalWorkflowReview(),
     useV6AgentGeneration: useV6AgentGeneration(),
+    useV6ReviewMode: useV6ReviewMode(),
   };
 }

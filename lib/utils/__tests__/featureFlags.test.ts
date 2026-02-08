@@ -227,4 +227,116 @@ describe('Feature Flags', () => {
       expect(useV6AgentGeneration()).toBe(true);
     });
   });
+
+  describe('useV6ReviewMode', () => {
+    beforeEach(() => {
+      jest.resetModules();
+      delete process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE;
+    });
+
+    // NOTE: This flag defaults to TRUE (unlike other flags that default to false)
+    it('should return true when flag is not set (default behavior)', () => {
+      const { useV6ReviewMode } = require('../featureFlags');
+      delete process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE;
+      expect(useV6ReviewMode()).toBe(true);
+    });
+
+    it('should return false when flag is "false"', () => {
+      process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = 'false';
+      const { useV6ReviewMode } = require('../featureFlags');
+      expect(useV6ReviewMode()).toBe(false);
+    });
+
+    it('should return false when flag is "0"', () => {
+      process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = '0';
+      const { useV6ReviewMode } = require('../featureFlags');
+      expect(useV6ReviewMode()).toBe(false);
+    });
+
+    it('should return true when flag is "true"', () => {
+      process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = 'true';
+      const { useV6ReviewMode } = require('../featureFlags');
+      expect(useV6ReviewMode()).toBe(true);
+    });
+
+    it('should return true when flag is "1"', () => {
+      process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = '1';
+      const { useV6ReviewMode } = require('../featureFlags');
+      expect(useV6ReviewMode()).toBe(true);
+    });
+
+    // NOTE: Invalid values default to TRUE for this flag
+    it('should return true for invalid values (defaults to true)', () => {
+      process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = 'invalid';
+      const { useV6ReviewMode } = require('../featureFlags');
+      expect(useV6ReviewMode()).toBe(true);
+    });
+
+    it('should be case-insensitive for "true"', () => {
+      process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = 'TRUE';
+      const { useV6ReviewMode } = require('../featureFlags');
+      expect(useV6ReviewMode()).toBe(true);
+    });
+
+    it('should be case-insensitive for "false"', () => {
+      process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = 'FALSE';
+      const { useV6ReviewMode } = require('../featureFlags');
+      expect(useV6ReviewMode()).toBe(false);
+    });
+
+    // NOTE: Empty string defaults to TRUE for this flag
+    it('should return true for empty string (defaults to true)', () => {
+      process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = '';
+      const { useV6ReviewMode } = require('../featureFlags');
+      expect(useV6ReviewMode()).toBe(true);
+    });
+
+    // NOTE: Whitespace defaults to TRUE for this flag
+    it('should return true for whitespace (defaults to true)', () => {
+      process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = '   ';
+      const { useV6ReviewMode } = require('../featureFlags');
+      expect(useV6ReviewMode()).toBe(true);
+    });
+
+    it('should handle mixed case correctly', () => {
+      process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = 'TrUe';
+      const { useV6ReviewMode } = require('../featureFlags');
+      expect(useV6ReviewMode()).toBe(true);
+    });
+
+    it('should handle mixed case for false correctly', () => {
+      process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = 'FaLsE';
+      const { useV6ReviewMode } = require('../featureFlags');
+      expect(useV6ReviewMode()).toBe(false);
+    });
+  });
+
+  describe('getFeatureFlags includes useV6ReviewMode', () => {
+    beforeEach(() => {
+      jest.resetModules();
+      delete process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE;
+    });
+
+    it('should include useV6ReviewMode property', () => {
+      const { getFeatureFlags } = require('../featureFlags');
+      const flags = getFeatureFlags();
+
+      expect('useV6ReviewMode' in flags).toBe(true);
+    });
+
+    it('should return useV6ReviewMode as true by default', () => {
+      const { getFeatureFlags } = require('../featureFlags');
+      const flags = getFeatureFlags();
+
+      expect(flags.useV6ReviewMode).toBe(true);
+    });
+
+    it('should return useV6ReviewMode as false when explicitly disabled', () => {
+      process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = 'false';
+      const { getFeatureFlags } = require('../featureFlags');
+      const flags = getFeatureFlags();
+
+      expect(flags.useV6ReviewMode).toBe(false);
+    });
+  });
 });
