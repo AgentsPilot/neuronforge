@@ -1,7 +1,7 @@
 # Feature Flags
 
-> **Last Updated**: January 17, 2026
-> **Version**: 1.0.0
+> **Last Updated**: February 8, 2026
+> **Version**: 1.1.0
 
 This document describes the feature flag system used in NeuronForge for gradual rollouts, A/B testing, and feature toggling.
 
@@ -11,6 +11,7 @@ This document describes the feature flag system used in NeuronForge for gradual 
 
 | Date | Version | Author | Changes |
 |------|---------|--------|---------|
+| 2026-02-08 | 1.1.0 | - | Added `useV6AgentGeneration` flag. Clarified that Thread-Based and New UI flags are for legacy route only. Expanded database-based flags documentation with detailed sections for each orchestration flag. |
 | 2026-01-17 | 1.0.0 | - | Initial documentation created. Documented 3 environment-based flags and 4 database-based orchestration flags. |
 
 ---
@@ -34,76 +35,48 @@ Feature flag functions are defined in:
 
 ### Available Flags
 
-| Flag | Environment Variable | Scope | Default |
-|------|---------------------|-------|---------|
-| Thread-Based Agent Creation | `NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION` | Client | `false` |
-| New Agent Creation UI | `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` | Client | `false` |
-| Enhanced Technical Workflow Review | `USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW` | Server | `false` |
+| Flag | Environment Variable | Scope | Default | Active Routes |
+|------|---------------------|-------|---------|---------------|
+| V6 Agent Generation | `NEXT_PUBLIC_USE_V6_AGENT_GENERATION` | Client | `false` | `/v2/agents/new`, `/test-plugins-v2` |
+| Enhanced Technical Workflow Review | `USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW` | Server | `false` | `/v2/agents/new`, `/test-plugins-v2` (via API) |
+| Thread-Based Agent Creation | `NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION` | Client | `false` | Legacy: `/agents/new/chat` only |
+| New Agent Creation UI | `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` | Client | `false` | Legacy: `/agents/new/chat` only |
 
 ---
 
 ## Flag Details
 
-### 1. Thread-Based Agent Creation
+### 1. V6 Agent Generation
 
-**Environment Variable**: `NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION`
+**Environment Variable**: `NEXT_PUBLIC_USE_V6_AGENT_GENERATION`
 
-**Purpose**: Enables OpenAI Threads API for the agent creation flow (phases 1-3: analyze, clarify, enhance). Provides approximately 36% token savings via prompt caching.
+**Purpose**: Enables the V6 5-phase agent generation pipeline (semantic plan → grounding → formalization → compilation → validation) instead of the V4 direct generation approach.
 
-**Function**: `useThreadBasedAgentCreation()`
+**Function**: `useV6AgentGeneration()`
 
 **Used In**:
-- [useConversationalBuilder.ts](components/agent-creation/useConversationalBuilder.ts)
-- [useThreadManagement.ts](components/agent-creation/conversational/hooks/useThreadManagement.ts)
+- [v2/agents/new/page.tsx](app/v2/agents/new/page.tsx) - Main agent creation page
+- [test-plugins-v2/page.tsx](app/test-plugins-v2/page.tsx) - Plugin testing page
 
 **Values**:
-- `true` or `1` - Use OpenAI Threads API
-- `false`, `0`, or omit - Use legacy sequential API calls
+- `true` or `1` - Use V6 5-phase pipeline
+- `false`, `0`, or omit - Use V4 direct generation
 
 ```typescript
-import { useThreadBasedAgentCreation } from '@/lib/utils/featureFlags';
+import { useV6AgentGeneration } from '@/lib/utils/featureFlags';
 
-const useThreadFlow = useThreadBasedAgentCreation();
+const useV6 = useV6AgentGeneration();
 
-if (useThreadFlow) {
-  // Use thread-based flow with caching
+if (useV6) {
+  // Call /api/v6/generate-ir-semantic
 } else {
-  // Use legacy sequential API calls
+  // Call /api/generate-agent-v4
 }
 ```
 
 ---
 
-### 2. New Agent Creation UI (V2)
-
-**Environment Variable**: `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI`
-
-**Purpose**: Enables the new conversational UI V2 with a ChatGPT/Claude-style interface for agent creation.
-
-**Function**: `useNewAgentCreationUI()`
-
-**Used In**:
-- [AgentBuilderParent.tsx](components/agent-creation/AgentBuilderParent.tsx)
-
-**Values**:
-- `true` or `1` - Show `ConversationalAgentBuilderV2`
-- `false`, `0`, or omit - Show legacy `ConversationalAgentBuilder`
-
-```typescript
-import { useNewAgentCreationUI } from '@/lib/utils/featureFlags';
-
-const useNewUI = useNewAgentCreationUI();
-
-return useNewUI ? (
-  <ConversationalAgentBuilderV2 {...props} />
-) : (
-  <ConversationalAgentBuilder {...props} />
-);
-```
-
----
-
-### 3. Enhanced Technical Workflow Review (V5 Generator)
+### 2. Enhanced Technical Workflow Review (V5 Generator)
 
 **Environment Variable**: `USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW`
 
@@ -132,40 +105,107 @@ const generator = useV5
 
 ---
 
+## Legacy Flags
+
+> **Note**: The following flags are only used in the legacy agent creation route (`/agents/new/chat`). They do NOT affect the current `/v2/agents/new` or `/test-plugins-v2` pages.
+
+### 3. Thread-Based Agent Creation (Legacy)
+
+**Environment Variable**: `NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION`
+
+**Purpose**: Enables OpenAI Threads API for the agent creation flow (phases 1-3: analyze, clarify, enhance). Provides approximately 36% token savings via prompt caching.
+
+**Function**: `useThreadBasedAgentCreation()`
+
+**Used In** (legacy route only):
+- [useConversationalBuilder.ts](components/agent-creation/useConversationalBuilder.ts)
+- [useThreadManagement.ts](components/agent-creation/conversational/hooks/useThreadManagement.ts)
+
+**Values**:
+- `true` or `1` - Use OpenAI Threads API
+- `false`, `0`, or omit - Use legacy sequential API calls
+
+```typescript
+import { useThreadBasedAgentCreation } from '@/lib/utils/featureFlags';
+
+const useThreadFlow = useThreadBasedAgentCreation();
+
+if (useThreadFlow) {
+  // Use thread-based flow with caching
+} else {
+  // Use legacy sequential API calls
+}
+```
+
+---
+
+### 4. New Agent Creation UI (Legacy)
+
+**Environment Variable**: `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI`
+
+**Purpose**: Toggles between `ConversationalAgentBuilderV2` and legacy `ConversationalAgentBuilder` in the old `/agents/new/chat` route.
+
+**Function**: `useNewAgentCreationUI()`
+
+**Used In** (legacy route only):
+- [AgentBuilderParent.tsx](components/agent-creation/AgentBuilderParent.tsx)
+
+**Values**:
+- `true` or `1` - Show `ConversationalAgentBuilderV2`
+- `false`, `0`, or omit - Show legacy `ConversationalAgentBuilder`
+
+```typescript
+import { useNewAgentCreationUI } from '@/lib/utils/featureFlags';
+
+const useNewUI = useNewAgentCreationUI();
+
+return useNewUI ? (
+  <ConversationalAgentBuilderV2 {...props} />
+) : (
+  <ConversationalAgentBuilder {...props} />
+);
+```
+
+---
+
 ## Configuration
 
 ### Development (.env.local)
 
 ```bash
-# Feature Flags
+# Active Feature Flags (v2/agents/new, test-plugins-v2)
+NEXT_PUBLIC_USE_V6_AGENT_GENERATION=false
+USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW=false
+
+# Legacy Feature Flags (agents/new/chat only)
 NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION=false
 NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI=false
-USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW=false
 ```
 
 ### Testing Configurations
 
 ```bash
-# Test new UI with mock data
-NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION=false
-NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI=true
+# Test V6 5-phase pipeline
+NEXT_PUBLIC_USE_V6_AGENT_GENERATION=true
 
-# Test thread-based flow with new UI
+# Test V5 generator (LLM review) with V4 flow
+NEXT_PUBLIC_USE_V6_AGENT_GENERATION=false
+USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW=true
+
+# Test legacy route with thread-based flow
 NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION=true
 NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI=true
-
-# Test V5 generator
-USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW=true
 ```
 
 ### Production (Gradual Rollout)
 
 ```bash
-# Start conservative
-NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION=true
-NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI=false
+# Current recommended setup
+NEXT_PUBLIC_USE_V6_AGENT_GENERATION=false  # Enable when V6 is stable
+USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW=true
 
-# Gradually enable new UI after validation
+# Legacy route (if still in use)
+NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION=true
 NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI=true
 ```
 
@@ -183,9 +223,10 @@ import { getFeatureFlags } from '@/lib/utils/featureFlags';
 const flags = getFeatureFlags();
 // Returns:
 // {
-//   useThreadBasedAgentCreation: boolean,
-//   useNewAgentCreationUI: boolean,
+//   useV6AgentGeneration: boolean,
 //   useEnhancedTechnicalWorkflowReview: boolean,
+//   useThreadBasedAgentCreation: boolean,  // Legacy
+//   useNewAgentCreationUI: boolean,        // Legacy
 // }
 
 console.log('Current feature flags:', flags);
@@ -195,21 +236,155 @@ console.log('Current feature flags:', flags);
 
 ## Database-Based Feature Flags (Orchestration)
 
-Orchestration features are configured via the database and accessed through `OrchestrationMetadata`:
+These flags control workflow execution behavior and are stored in the `system_settings_config` database table. They are managed via the admin UI at `/admin/orchestration-config`.
 
-| Flag | Purpose |
-|------|---------|
-| `orchestrationEnabled` | Enable intelligent orchestration for workflow execution |
-| `compressionEnabled` | Enable context compression for token savings |
-| `aisRoutingEnabled` | Enable AIS-based model routing |
-| `adaptiveBudgetEnabled` | Enable adaptive token budget allocation |
+### Location
 
-These flags are stored in `system_settings_config` table and managed via the admin UI.
+- **Storage**: `system_settings_config` table in Supabase
+- **Admin UI**: [/admin/orchestration-config](app/admin/orchestration-config/page.tsx)
+- **API**: [/api/admin/orchestration-config](app/api/admin/orchestration-config/route.ts)
+- **Types**: [types.ts](lib/orchestration/types.ts)
+
+### Available Database Flags
+
+| Flag | DB Key | Default | Phase |
+|------|--------|---------|-------|
+| Orchestration Enabled | `orchestration_enabled` | `false` | Phase 1 |
+| Compression Enabled | `orchestration_compression_enabled` | `false` | Phase 2 |
+| AIS Routing Enabled | `orchestration_ais_routing_enabled` | `false` | Phase 2 |
+| Adaptive Budget Enabled | `orchestration_adaptive_budget_enabled` | `false` | Phase 3+ |
+
+---
+
+### 1. Orchestration Enabled
+
+**DB Key**: `orchestration_enabled`
+
+**Purpose**: Master switch for the intelligent orchestration system. When enabled, workflow execution uses intent classification, token budget management, and orchestration metadata tracking.
 
 **Used In**:
-- [WorkflowOrchestrator.ts](lib/orchestration/WorkflowOrchestrator.ts)
-- [OrchestrationService.ts](lib/orchestration/OrchestrationService.ts)
-- [types.ts](lib/orchestration/types.ts)
+- [OrchestrationService.ts](lib/orchestration/OrchestrationService.ts) - `isEnabled()` method
+- [WorkflowOrchestrator.ts](lib/orchestration/WorkflowOrchestrator.ts) - Initializes orchestration metadata
+
+**Effect when enabled**:
+- Intent classification runs for each workflow step
+- Token budgets are allocated based on intent type
+- Orchestration metadata is tracked throughout execution
+- Audit logs capture orchestration events
+
+```typescript
+// Check if orchestration is enabled
+const orchestrationService = new OrchestrationService(supabase);
+const isEnabled = await orchestrationService.isEnabled();
+
+if (isEnabled) {
+  const metadata = await orchestrationService.prepareWorkflowExecution(workflow, agentId, userId);
+  // Use orchestrated execution
+}
+```
+
+---
+
+### 2. Compression Enabled
+
+**DB Key**: `orchestration_compression_enabled`
+
+**Purpose**: Enables context compression to reduce token usage. Uses semantic, structural, or template-based compression strategies based on intent type.
+
+**Used In**:
+- [OrchestrationService.ts](lib/orchestration/OrchestrationService.ts) - `isCompressionEnabled()` method
+- [CompressionService.ts](lib/orchestration/CompressionService.ts) - Applies compression policies
+- [MemoryCompressor.ts](lib/orchestration/MemoryCompressor.ts) - Memory context compression
+
+**Effect when enabled**:
+- Content is compressed before LLM calls based on intent-specific policies
+- Compression strategies: `semantic`, `structural`, `template`, `truncate`
+- Target compression ratios are configurable per intent type
+- Quality scores ensure compression doesn't degrade output
+
+**Related Configuration Keys**:
+- `orchestration_compression_target_ratio` - Target reduction (e.g., 0.5 = 50%)
+- `orchestration_compression_min_quality` - Minimum quality threshold
+- `orchestration_compression_aggressiveness` - `low`, `medium`, `high`
+
+---
+
+### 3. AIS Routing Enabled
+
+**DB Key**: `orchestration_ais_routing_enabled`
+
+**Purpose**: Enables Agent Intensity Score (AIS) based model routing. Routes requests to appropriate model tiers (fast/balanced/powerful) based on the agent's complexity scores.
+
+**Used In**:
+- [OrchestrationService.ts](lib/orchestration/OrchestrationService.ts) - `isRoutingEnabled()` method
+- [RoutingService.ts](lib/orchestration/RoutingService.ts) - Makes routing decisions
+- [WorkflowOrchestrator.ts](lib/orchestration/WorkflowOrchestrator.ts) - Applies routing per step
+
+**Effect when enabled**:
+- Agent's AIS scores (`creation_score`, `execution_score`, `combined_score`) determine model tier
+- Fast tier (Haiku): Low complexity agents (combined_score < 3.0)
+- Balanced tier (GPT-4o-mini): Medium complexity (3.0 - 6.5)
+- Powerful tier (Sonnet): High complexity (> 6.5)
+
+**Related Configuration Keys**:
+- `orchestration_ais_fast_tier_max_score` - Max score for fast tier (default: 3.0)
+- `orchestration_ais_balanced_tier_max_score` - Max score for balanced tier (default: 6.5)
+- `orchestration_ais_quality_weight` - Weight for quality in routing decisions
+- `orchestration_ais_cost_weight` - Weight for cost in routing decisions
+
+**Model Configuration**:
+- `orchestration_model_fast` - Fast tier model (default: `claude-3-haiku-20240307`)
+- `orchestration_model_balanced` - Balanced tier model (default: `gpt-4o-mini`)
+- `orchestration_model_powerful` - Powerful tier model (default: `claude-3-5-sonnet-20241022`)
+
+---
+
+### 4. Adaptive Budget Enabled
+
+**DB Key**: `orchestration_adaptive_budget_enabled`
+
+**Purpose**: Enables adaptive token budget allocation based on execution history and predictive analytics. Currently planned for Phase 3+.
+
+**Status**: Not yet implemented (hardcoded to `false`)
+
+**Planned Effect when enabled**:
+- Token budgets adjust dynamically based on historical step execution data
+- Predictive allocation based on similar workflows
+- Budget rebalancing during execution if steps under/over-utilize
+
+---
+
+### Accessing Database Flags in Code
+
+```typescript
+import { OrchestrationService } from '@/lib/orchestration/OrchestrationService';
+
+const orchestrationService = new OrchestrationService(supabaseClient);
+
+// Check individual flags
+const orchestrationEnabled = await orchestrationService.isEnabled();
+const compressionEnabled = await orchestrationService.isCompressionEnabled();
+const routingEnabled = await orchestrationService.isRoutingEnabled();
+
+// Flags are included in OrchestrationMetadata
+const metadata = await orchestrationService.prepareWorkflowExecution(workflow, agentId, userId);
+console.log(metadata.featureFlags);
+// {
+//   orchestrationEnabled: true,
+//   compressionEnabled: true,
+//   aisRoutingEnabled: true,
+//   adaptiveBudgetEnabled: false
+// }
+```
+
+### Managing via Admin UI
+
+Navigate to `/admin/orchestration-config` to:
+- Toggle feature flags on/off
+- Configure model routing thresholds
+- Set compression parameters
+- Adjust token budgets per intent type
+- Monitor orchestration metrics
 
 ---
 
@@ -281,9 +456,10 @@ export function useMyNewFeature(): boolean {
 ```typescript
 export function getFeatureFlags() {
   return {
+    useV6AgentGeneration: useV6AgentGeneration(),
+    useEnhancedTechnicalWorkflowReview: useEnhancedTechnicalWorkflowReview(),
     useThreadBasedAgentCreation: useThreadBasedAgentCreation(),
     useNewAgentCreationUI: useNewAgentCreationUI(),
-    useEnhancedTechnicalWorkflowReview: useEnhancedTechnicalWorkflowReview(),
     useMyNewFeature: useMyNewFeature(), // Add here
   };
 }
