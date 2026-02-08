@@ -1,74 +1,54 @@
-/**
- * Quick script to check the agent workflow JSON in the database
- *
- * Usage:
- * 1. Go to your Supabase SQL Editor
- * 2. Run this query:
- *
- * SELECT
- *   id,
- *   name,
- *   workflow_definition->'workflow' as workflow_steps
- * FROM agents
- * WHERE name ILIKE '%expense%'
- * ORDER BY created_at DESC
- * LIMIT 1;
- *
- * 3. Copy the workflow_steps JSON and paste it below
- * 4. Run: node check-agent-workflow.js
- */
+require('dotenv').config({ path: '.env.local' });
+const { createClient } = require('@supabase/supabase-js');
 
-const workflowJson = {
-  // PASTE YOUR WORKFLOW JSON HERE
-};
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
-console.log('=== WORKFLOW ANALYSIS ===\n');
+async function checkWorkflowConfig() {
+  const agentId = '08eb9918-e60f-4179-a5f4-bc83b95fc15c';
 
-// Check each step
-const steps = Object.entries(workflowJson);
-console.log(`Total steps: ${steps.length}\n`);
+  const { data: agentData } = await supabase
+    .from('agents')
+    .select('*')
+    .eq('id', agentId)
+    .single();
 
-steps.forEach(([stepId, step]) => {
-  console.log(`Step: ${stepId}`);
-  console.log(`  Type: ${step.type}`);
+  if (agentData) {
+    console.log('\n✅ Agent found:');
+    console.log('Name:', agentData.agent_name);
+    console.log('Description:', agentData.description);
 
-  if (step.type === 'scatter_gather') {
-    console.log(`  Scatter input: ${step.scatter?.input}`);
-    console.log(`  ❌ PROBLEM: Should be {{step1.data.emails}} not {{step1.emails}}`);
-  }
+    if (agentData.workflow) {
+      console.log('\n🔧 Workflow Steps:\n');
 
-  if (step.type === 'transform') {
-    console.log(`  Transform input: ${step.input}`);
-    if (step.input?.includes('.data.')) {
-      console.log(`  ✅ Looks correct`);
-    } else {
-      console.log(`  ❌ PROBLEM: Missing .data accessor`);
+      const workflow = agentData.workflow;
+
+      if (workflow.steps) {
+        workflow.steps.forEach((step, index) => {
+          console.log('Step', index + 1, ':', step.type, '(ID:', step.id + ')');
+
+          if (step.label) {
+            console.log('  Label:', step.label);
+          }
+
+          if (step.type === 'filter_group') {
+            console.log('  Logic:', step.logic || 'AND');
+            console.log('  Group Name:', step.groupName || 'N/A');
+            console.log('  Conditions:');
+            if (step.conditions) {
+              step.conditions.forEach((cond, i) => {
+                console.log('   ', i + 1 + '.', cond.field, cond.operator, '"' + cond.value + '"');
+              });
+            }
+          }
+
+          console.log('');
+        });
+      }
     }
   }
-
-  if (step.executeIf) {
-    console.log(`  ⚠️  Has executeIf condition: ${JSON.stringify(step.executeIf)}`);
-  }
-
-  console.log('');
-});
-
-console.log('\n=== VARIABLE REFERENCE CHECKS ===\n');
-
-// Check for common issues
-const jsonStr = JSON.stringify(workflowJson);
-const issues = [];
-
-// Check for missing .data
-const stepRefs = jsonStr.match(/\{\{step\d+\.[^}]+\}\}/g) || [];
-stepRefs.forEach(ref => {
-  if (!ref.includes('.data.') && !ref.includes('.data}}')) {
-    issues.push(`❌ Missing .data in: ${ref}`);
-  }
-});
-
-if (issues.length === 0) {
-  console.log('✅ No obvious variable reference issues found');
-} else {
-  issues.forEach(issue => console.log(issue));
 }
+
+checkWorkflowConfig().catch(console.error);

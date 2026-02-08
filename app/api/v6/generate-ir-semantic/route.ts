@@ -281,6 +281,13 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    if (!body.enhanced_prompt.sections) {
+      return NextResponse.json(
+        { error: 'Invalid enhanced_prompt: missing sections property' },
+        { status: 400 }
+      )
+    }
+
     // data_source_metadata is optional - if not provided, grounding will be skipped
 
     const config = body.config || {}

@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Option 2: Stepped Wizard Flow</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      background: white;
+      border-radius: 24px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      max-width: 900px;
+      width: 100%;
+      min-height: 600px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Progress Steps */
+    .progress-bar {
+      display: flex;
+      padding: 32px 48px 24px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+    .progress-step {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      position: relative;
+    }
+    .progress-step:not(:last-child)::after {
+      content: '';
+      position: absolute;
+      right: -50%;
+      top: 18px;
+      width: 100%;
+      height: 2px;
+      background: rgba(255,255,255,0.3);
+    }
+    .progress-step.active:not(:last-child)::after {
+      background: rgba(255,255,255,0.6);
+    }
+    .step-number {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 16px;
+      z-index: 1;
+    }
+    .progress-step.active .step-number {
+      background: white;
+      color: #667eea;
+    }
+    .progress-step.completed .step-number {
+      background: white;
+      color: #10B981;
+    }
+    .step-label {
+      font-size: 14px;
+      font-weight: 500;
+      opacity: 0.8;
+    }
+    .progress-step.active .step-label {
+      opacity: 1;
+      font-weight: 600;
+    }
+
+    /* Content Area */
+    .content {
+      flex: 1;
+      padding: 48px;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+    .step-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    .step-title {
+      font-size: 28px;
+      font-weight: 700;
+      color: #111827;
+      margin-bottom: 8px;
+    }
+    .step-subtitle {
+      font-size: 16px;
+      color: #6B7280;
+      margin-bottom: 32px;
+    }
+
+    /* Form Fields (Step 1) */
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-bottom: 32px;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+    }
+    .form-group.full-width {
+      grid-column: 1 / -1;
+    }
+    .form-group label {
+      font-size: 14px;
+      font-weight: 600;
+      color: #374151;
+      margin-bottom: 8px;
+    }
+    .form-group input, .form-group select {
+      padding: 12px;
+      border: 2px solid #E5E7EB;
+      border-radius: 10px;
+      font-size: 15px;
+      transition: all 0.2s;
+    }
+    .form-group input:focus, .form-group select:focus {
+      outline: none;
+      border-color: #667eea;
+      box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
+    }
+
+    /* Review Card (Step 2) */
+    .review-card {
+      background: #F9FAFB;
+      border: 2px solid #E5E7EB;
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+    .review-card h3 {
+      font-size: 16px;
+      font-weight: 600;
+      color: #111827;
+      margin-bottom: 16px;
+    }
+    .review-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 12px 0;
+      border-bottom: 1px solid #E5E7EB;
+    }
+    .review-item:last-child {
+      border-bottom: none;
+    }
+    .review-item dt {
+      font-size: 14px;
+      color: #6B7280;
+    }
+    .review-item dd {
+      font-size: 14px;
+      font-weight: 600;
+      color: #111827;
+    }
+
+    /* Execution Animation (Step 3) */
+    .execution-animation {
+      text-align: center;
+      padding: 48px 0;
+    }
+    .spinner {
+      width: 80px;
+      height: 80px;
+      margin: 0 auto 24px;
+      border: 6px solid #E5E7EB;
+      border-top-color: #667eea;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .execution-status {
+      font-size: 18px;
+      font-weight: 600;
+      color: #111827;
+      margin-bottom: 8px;
+    }
+    .execution-detail {
+      font-size: 14px;
+      color: #6B7280;
+    }
+
+    /* Results Summary (Step 4) */
+    .results-summary {
+      background: linear-gradient(135deg, #ECFDF5 0%, #D1FAE5 100%);
+      border: 2px solid #10B981;
+      border-radius: 16px;
+      padding: 32px;
+      text-align: center;
+      margin-bottom: 24px;
+    }
+    .success-icon {
+      width: 64px;
+      height: 64px;
+      background: #10B981;
+      color: white;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
+      margin: 0 auto 16px;
+    }
+    .results-summary h3 {
+      font-size: 24px;
+      font-weight: 700;
+      color: #065F46;
+      margin-bottom: 8px;
+    }
+    .results-summary p {
+      font-size: 16px;
+      color: #047857;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-top: 24px;
+    }
+    .stat-card {
+      background: white;
+      padding: 16px;
+      border-radius: 12px;
+    }
+    .stat-value {
+      font-size: 28px;
+      font-weight: 700;
+      color: #111827;
+    }
+    .stat-label {
+      font-size: 12px;
+      color: #6B7280;
+      margin-top: 4px;
+    }
+
+    /* Navigation Buttons */
+    .nav-buttons {
+      display: flex;
+      gap: 12px;
+      margin-top: auto;
+      padding-top: 24px;
+      border-top: 1px solid #E5E7EB;
+    }
+    .btn {
+      flex: 1;
+      padding: 14px 24px;
+      border-radius: 12px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      border: none;
+    }
+    .btn-secondary {
+      background: #F3F4F6;
+      color: #374151;
+    }
+    .btn-secondary:hover {
+      background: #E5E7EB;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(102, 126, 234, 0.4);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Progress Bar -->
+    <div class="progress-bar">
+      <div class="progress-step completed">
+        <div class="step-number">✓</div>
+        <div class="step-label">Configure</div>
+      </div>
+      <div class="progress-step active">
+        <div class="step-number">2</div>
+        <div class="step-label">Review</div>
+      </div>
+      <div class="progress-step">
+        <div class="step-number">3</div>
+        <div class="step-label">Execute</div>
+      </div>
+      <div class="progress-step">
+        <div class="step-number">4</div>
+        <div class="step-label">Results</div>
+      </div>
+    </div>
+
+    <!-- Content Area -->
+    <div class="content">
+      <!-- STEP 2: REVIEW (Currently Active) -->
+      <div class="step-content">
+        <h1 class="step-title">Review Configuration</h1>
+        <p class="step-subtitle">Verify your inputs before execution</p>
+
+        <div class="review-card">
+          <h3>🎯 Target Configuration</h3>
+          <dl>
+            <div class="review-item">
+              <dt>Email Address</dt>
+              <dd>user@example.com</dd>
+            </div>
+            <div class="review-item">
+              <dt>Date Range</dt>
+              <dd>Last 7 days</dd>
+            </div>
+          </dl>
+        </div>
+
+        <div class="review-card">
+          <h3>📊 Output Configuration</h3>
+          <dl>
+            <div class="review-item">
+              <dt>Google Sheet</dt>
+              <dd>Customer Complaints 2026</dd>
+            </div>
+            <div class="review-item">
+              <dt>Keywords</dt>
+              <dd>complaint, issue, problem</dd>
+            </div>
+          </dl>
+        </div>
+
+        <div class="review-card">
+          <h3>⚡ Execution Plan</h3>
+          <dl>
+            <div class="review-item">
+              <dt>Estimated Time</dt>
+              <dd>~8 seconds</dd>
+            </div>
+            <div class="review-item">
+              <dt>Credits</dt>
+              <dd>~2 credits</dd>
+            </div>
+          </dl>
+        </div>
+      </div>
+
+      <!-- Navigation -->
+      <div class="nav-buttons">
+        <button class="btn btn-secondary">← Back</button>
+        <button class="btn btn-primary">Execute Workflow →</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

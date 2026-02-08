@@ -42,6 +42,8 @@ import { createLogger } from '@/lib/logger';
 import { schemaExtractor, analyzeOutputSchema } from './utils/SchemaAwareDataExtractor';
 import { VisionContentBuilder } from './utils/VisionContentBuilder';
 import { DeterministicExtractor } from '@/lib/extraction';
+import { IssueCollector } from './shadow/IssueCollector';
+import { FailureClassifier } from './shadow/FailureClassifier';
 
 // Create module-level logger for structured logging to dev.log
 const logger = createLogger({ module: 'StepExecutor', service: 'workflow-pilot' });
@@ -56,6 +58,9 @@ export class StepExecutor {
   private stateManager?: IStateManager; // Wave 7: Now properly typed
   private stepCache: StepCache;
   private parallelExecutor?: IParallelExecutor; // Wave 7: Now properly typed
+  // Batch calibration services
+  private issueCollector: IssueCollector;
+  private failureClassifier: FailureClassifier;
   // private complexityAnalyzer: TaskComplexityAnalyzer;
   // private modelRouter: PerStepModelRouter;
 
@@ -65,6 +70,8 @@ export class StepExecutor {
     this.conditionalEvaluator = new ConditionalEvaluator();
     this.stateManager = stateManager;
     this.stepCache = stepCache || new StepCache(false);
+    this.issueCollector = new IssueCollector();
+    this.failureClassifier = new FailureClassifier();
     // this.complexityAnalyzer = new TaskComplexityAnalyzer();
     // this.modelRouter = new PerStepModelRouter();
   }
@@ -87,6 +94,55 @@ export class StepExecutor {
     const startTime = Date.now();
 
     logger.info({ stepId: step.id, stepName: step.name, stepType: step.type }, 'Executing step');
+
+    // === BATCH CALIBRATION: DEPENDENCY CHECK ===
+    // In batch mode, check if dependencies failed with non-recoverable errors
+    if (context.batchCalibrationMode) {
+      const shouldSkip = this.shouldSkipDueToDependencies(step, context);
+      if (shouldSkip) {
+        logger.info({
+          stepId: step.id,
+          stepName: step.name,
+          reason: 'dependency_failed'
+        }, 'Skipping step due to failed dependency');
+
+        // Skip this step to avoid cascading errors
+        context.skippedSteps.push(step.id);
+
+        // Log skipped step to database
+        if (this.stateManager) {
+          await this.stateManager.logStepExecution(
+            context.executionId,
+            step.id,
+            step.name,
+            step.type,
+            'skipped',
+            {
+              skipped: true,
+              reason: 'dependency_failed',
+              message: 'Skipped because a required upstream step failed'
+            }
+          );
+        }
+
+        return {
+          stepId: step.id,
+          plugin: (step as any).plugin || 'system',
+          action: (step as any).action || step.type,
+          data: null,
+          metadata: {
+            success: false,
+            executedAt: new Date().toISOString(),
+            executionTime: 0,
+            skipped: true,
+            // @ts-ignore - adding custom metadata for batch calibration
+            reason: 'dependency_failed',
+            // @ts-ignore
+            message: 'Skipped because a required upstream step failed'
+          }
+        };
+      }
+    }
 
     // === CACHING CHECK ===
     // Check cache before execution (for deterministic steps only)
@@ -359,6 +415,27 @@ export class StepExecutor {
 
       const executionTime = Date.now() - startTime;
 
+      // Calculate item count for business intelligence
+      // Handles both direct arrays and nested array structures
+      const itemCount = this.calculateItemCount(result);
+
+      // 🔍 Extract field names for business intelligence (BEFORE building output)
+      // This ensures field_names are included in output.metadata for WorkflowPilot
+      let fieldNames: string[] = [];
+      if (Array.isArray(result) && result.length > 0 && typeof result[0] === 'object' && result[0] !== null) {
+        // Extract field names from first item (for UI preview)
+        fieldNames = Object.keys(result[0]).slice(0, 10);
+        console.log(`✅ [StepExecutor] Extracted ${fieldNames.length} field names from step ${step.id}:`, fieldNames);
+      } else if (result && typeof result === 'object' && !Array.isArray(result)) {
+        // For object results, get top-level keys
+        fieldNames = Object.keys(result).slice(0, 10);
+        console.log(`✅ [StepExecutor] Extracted ${fieldNames.length} fields from object result (step ${step.id}):`, fieldNames);
+      } else if (itemCount > 0) {
+        // Log when we have items but no field extraction
+        console.warn(`⚠️  [StepExecutor] Step ${step.id} (${step.name}) has ${itemCount} items but no field names extracted.`);
+        console.warn(`    Result type: ${typeof result}, isArray: ${Array.isArray(result)}, hasData: ${result && 'data' in result}`);
+      }
+
       // Build step output
       const output: StepOutput = {
         stepId: step.id,
@@ -369,8 +446,9 @@ export class StepExecutor {
           success: true,
           executedAt: new Date().toISOString(),
           executionTime,
-          itemCount: Array.isArray(result) ? result.length : undefined,
+          itemCount,
           tokensUsed: tokensUsed || undefined,
+          field_names: fieldNames.length > 0 ? fieldNames : undefined, // ✅ CRITICAL: Include field_names in output.metadata
         },
       };
 
@@ -387,21 +465,30 @@ export class StepExecutor {
           : (JSON.stringify(result) || 'undefined').slice(0, 200)
       });
 
-      // Update step execution to completed in workflow_step_executions table
-      if (this.stateManager) {
-        await this.stateManager.updateStepExecution(
+      // Cache step output in database for resume flow (privacy-first: temporary storage)
+      // IMPORTANT: Must await to prevent race condition on resume
+      try {
+        const { executionOutputCache } = await import('./ExecutionOutputCache');
+        await executionOutputCache.setStepOutput(
           context.executionId,
           step.id,
-          'completed',
+          result, // Full data (temporary in execution_trace.cached_outputs)
           {
+            plugin: step.plugin,
+            action: (step as any).action,
             success: true,
             execution_time: executionTime,
             tokens_used: tokensUsed || undefined,
-            item_count: Array.isArray(result) ? result.length : undefined,
-            completed_at: new Date().toISOString(),
+            item_count: itemCount, // ✅ Use calculated item count
           }
         );
+      } catch (err) {
+        console.warn(`[StepExecutor] Failed to cache step ${step.id} output (non-critical):`, err);
       }
+
+      // ✅ NOTE: Step execution metadata will be updated by WorkflowPilot
+      // We've already included field_names in output.metadata above (line ~448)
+      // WorkflowPilot will call updateStepExecution with the complete metadata
 
       // Audit trail
       await this.auditTrail.log({
@@ -436,6 +523,109 @@ export class StepExecutor {
 
       logger.error({ err: error, stepId: step.id, executionTimeMs: executionTime }, 'Step execution failed');
 
+      // === BATCH CALIBRATION: COLLECT ISSUE AND DECIDE CONTINUATION ===
+      if (context.batchCalibrationMode) {
+        // Collect the issue for later presentation to user
+        const issue = this.issueCollector.collectFromError(
+          error,
+          step.id,
+          step.name,
+          step.type,
+          context
+        );
+        context.collectedIssues.push(issue);
+
+        // Mark step as failed
+        context.failedSteps.push(step.id);
+
+        // Classify error to decide if we should continue or stop
+        const classification = this.failureClassifier.classify(
+          {
+            message: error.message,
+            code: error.code
+          },
+          {
+            stepId: step.id,
+            stepName: step.name,
+            stepType: step.type,
+            plugin: (step as any).plugin,
+            action: (step as any).action,
+            availableVariableKeys: Object.keys(context.variables),
+            completedSteps: context.completedSteps,
+            retryCount: 0
+          }
+        );
+
+        const shouldContinue = this.shouldContinueAfterError(classification);
+
+        logger.info({
+          stepId: step.id,
+          category: classification.category,
+          severity: classification.severity,
+          shouldContinue
+        }, 'Batch calibration: error classified');
+
+        // Update step execution to failed in database
+        if (this.stateManager) {
+          await this.stateManager.updateStepExecution(
+            context.executionId,
+            step.id,
+            'failed',
+            {
+              success: false,
+              execution_time: executionTime,
+              error: error.message,
+              failed_at: new Date().toISOString(),
+              failure_category: classification.category,
+              failure_sub_type: classification.sub_type,
+              // @ts-ignore - adding custom field for batch calibration
+              recoverable: shouldContinue
+            },
+            error.message
+          );
+        }
+
+        if (shouldContinue) {
+          // Return empty output to allow downstream steps to attempt
+          logger.info({ stepId: step.id }, 'Batch calibration: continuing despite error (recoverable)');
+
+          return {
+            stepId: step.id,
+            plugin: (step as any).plugin || 'system',
+            action: (step as any).action || step.type,
+            data: null,
+            metadata: {
+              success: false,
+              executedAt: new Date().toISOString(),
+              executionTime,
+              error: error.message,
+              errorCode: error.code,
+              failure_category: classification.category,
+              // @ts-ignore - adding custom fields for batch calibration
+              failed: true,
+              // @ts-ignore
+              issue: issue.id,
+              // @ts-ignore
+              recoverable: true
+            }
+          };
+        } else {
+          // Stop execution - this is a non-recoverable error
+          logger.warn({ stepId: step.id, category: classification.category }, 'Batch calibration: stopping execution (fatal error)');
+
+          throw new ExecutionError(
+            `Calibration stopped at ${step.name}: ${error.message}. ` +
+            `This error prevents downstream steps from executing. ` +
+            `Fix this issue and retry calibration.`,
+            error.code || 'FATAL_ERROR',
+            step.id,
+            // @ts-ignore - adding custom flag
+            { cause: error, stopCalibration: true }
+          );
+        }
+      }
+
+      // === NORMAL MODE: Original error handling ===
       // Update step execution to failed in workflow_step_executions table
       if (this.stateManager) {
         await this.stateManager.updateStepExecution(
@@ -3741,9 +3931,19 @@ Please analyze the above and provide your decision/response.
       );
     }
 
-    // Extract document content and mime type
+    // Extract document content, mime type, and context fields
     let content: string;
     let mimeType: string;
+    let inputContext: Record<string, any> = {};
+
+    // Log input data structure for debugging
+    logger.info({
+      stepId: step.id,
+      inputDataKeys: typeof inputData === 'object' && inputData !== null ? Object.keys(inputData).slice(0, 20) : typeof inputData,
+      hasParentData: typeof inputData === 'object' && inputData !== null && '_parentData' in inputData,
+      hasContent: typeof inputData === 'object' && inputData !== null && 'content' in inputData,
+      filename: typeof inputData === 'object' && inputData !== null ? inputData.filename : undefined,
+    }, 'Deterministic extraction input data structure');
 
     if (typeof inputData === 'string') {
       // Assume base64 PDF content
@@ -3753,15 +3953,43 @@ Please analyze the above and provide your decision/response.
       // Structured input with content and mimeType
       content = inputData.content;
       mimeType = inputData.mimeType;
+
+      // Extract context fields (e.g., email subject, attachment filename, parent data)
+      // Spread _parentData first, then override with specific fields
+      inputContext = {
+        ...(inputData._parentData || {}),
+        filename: inputData.filename,
+        attachment_filename: inputData.filename,
+        subject: inputData.subject || inputData._parentData?.subject,
+        email_subject: inputData._parentData?.subject || inputData.subject,
+      };
     } else if (inputData.base64 || inputData.data) {
       // Alternative field names for base64 content
       content = inputData.base64 || inputData.data;
       mimeType = inputData.mimeType || inputData.mime_type || 'application/pdf';
+
+      // Extract context fields
+      inputContext = {
+        ...(inputData._parentData || {}),
+        filename: inputData.filename,
+        attachment_filename: inputData.filename,
+        subject: inputData.subject || inputData._parentData?.subject,
+        email_subject: inputData._parentData?.subject || inputData.subject,
+      };
     } else if (Array.isArray(inputData) && inputData.length > 0) {
       // Array of items - process first item (or could be modified to process all)
       const firstItem = inputData[0];
       content = firstItem.content || firstItem.base64 || firstItem.data;
       mimeType = firstItem.mimeType || firstItem.mime_type || 'application/pdf';
+
+      // Extract context fields
+      inputContext = {
+        ...(firstItem._parentData || {}),
+        filename: firstItem.filename,
+        attachment_filename: firstItem.filename,
+        subject: firstItem.subject || firstItem._parentData?.subject,
+        email_subject: firstItem._parentData?.subject || firstItem.subject,
+      };
     } else {
       throw new ExecutionError(
         `Deterministic extraction step ${step.id}: Cannot extract document content from input`,
@@ -3769,6 +3997,23 @@ Please analyze the above and provide your decision/response.
         step.id
       );
     }
+
+    // Filter out undefined/null values from context
+    inputContext = Object.fromEntries(
+      Object.entries(inputContext).filter(([_, value]) => value !== undefined && value !== null && value !== '')
+    );
+
+    logger.info({
+      stepId: step.id,
+      hasInputContext: Object.keys(inputContext).length > 0,
+      contextKeys: Object.keys(inputContext),
+      contextSample: Object.keys(inputContext).slice(0, 5).reduce((acc, key) => {
+        acc[key] = typeof inputContext[key] === 'string' && inputContext[key].length > 50
+          ? inputContext[key].substring(0, 50) + '...'
+          : inputContext[key];
+        return acc;
+      }, {} as Record<string, any>),
+    }, 'Extraction input context extracted');
 
     // Build output schema from step definition (preserving type for flexible output)
     const outputSchema = step.output_schema ? {
@@ -3797,6 +4042,8 @@ Please analyze the above and provide your decision/response.
     const result = await extractor.extract({
       content,
       mimeType,
+      filename: inputContext.filename,
+      inputContext, // Pass context fields (email subject, filename, etc.) for field extraction
       config: {
         documentType: step.document_type || 'auto',
         outputSchema: outputSchema ? { fields: outputSchema.fields || outputSchema.items?.fields || [] } : undefined,
@@ -3809,15 +4056,51 @@ Please analyze the above and provide your decision/response.
       confidence: result.confidence,
       outputType: outputSchema?.type || 'object',
       hasRawText: !!result.rawText,
-    }, 'Text extraction complete, sending to LLM for field extraction');
+      extractionMethod: result.metadata?.extractionMethod,
+    }, 'Deterministic extraction complete');
 
-    // Always use LLM to extract structured data from the raw text
+    // CRITICAL: Check if deterministic extraction was successful
+    // Only use LLM fallback if confidence is low or extraction failed
+    const CONFIDENCE_THRESHOLD = 0.7; // 70% confidence required to skip LLM
+
+    if (result.success && result.confidence >= CONFIDENCE_THRESHOLD) {
+      // Deterministic extraction succeeded with high confidence - use it directly (no LLM cost!)
+      logger.info({
+        stepId: step.id,
+        confidence: result.confidence,
+        fieldsExtracted: result.metadata?.fieldsExtracted,
+        method: result.metadata?.extractionMethod,
+      }, 'Using deterministic extraction result (high confidence, no LLM needed)');
+
+      return {
+        data: result.data,
+        confidence: result.confidence,
+        needsLlmFallback: false,
+        metadata: {
+          ...result.metadata,
+          llmTokensUsed: 0, // No LLM used!
+          outputType: outputSchema?.type || 'object',
+          extractionMethod: result.metadata?.extractionMethod,
+        },
+      };
+    }
+
+    // Deterministic extraction failed or low confidence - fallback to LLM
+    logger.info({
+      stepId: step.id,
+      confidence: result.confidence,
+      threshold: CONFIDENCE_THRESHOLD,
+      reason: !result.success ? 'extraction_failed' : 'low_confidence',
+      hasInputContext: Object.keys(inputContext).length > 0,
+    }, 'Falling back to LLM for field extraction');
+
     const llmResult = await this.extractFieldsWithLLM(
       step.id,
       outputSchema,
       result.rawText || '',
       step.instruction,
-      context
+      context,
+      inputContext // Pass context fields to LLM for fields like email_subject, attachment_filename
     );
 
     return {
@@ -3828,6 +4111,8 @@ Please analyze the above and provide your decision/response.
         ...result.metadata,
         llmTokensUsed: llmResult.tokensUsed,
         outputType: outputSchema?.type || 'object',
+        fallbackReason: !result.success ? 'extraction_failed' : 'low_confidence',
+        deterministicConfidence: result.confidence,
       },
     };
   }
@@ -3849,7 +4134,8 @@ Please analyze the above and provide your decision/response.
     } | undefined,
     rawText: string,
     instruction: string | undefined,
-    context: ExecutionContext
+    context: ExecutionContext,
+    inputContext?: Record<string, any>
   ): Promise<{ data: any; confidence: number; tokensUsed: number }> {
     const outputType = outputSchema?.type || 'object';
     const fields = outputType === 'array' ? outputSchema?.items?.fields : outputSchema?.fields;
@@ -3860,7 +4146,7 @@ Please analyze the above and provide your decision/response.
       : rawText;
 
     // Build prompt based on output type
-    const prompt = this.buildExtractionPrompt(outputType, fields, outputSchema?.description, instruction, truncatedText);
+    const prompt = this.buildExtractionPrompt(outputType, fields, outputSchema?.description, instruction, truncatedText, inputContext);
 
     try {
       const result = await runAgentKit(
@@ -3908,13 +4194,27 @@ Please analyze the above and provide your decision/response.
     fields: Array<{ name: string; type: string; required?: boolean; description?: string }> | undefined,
     schemaDescription: string | undefined,
     instruction: string | undefined,
-    documentText: string
+    documentText: string,
+    inputContext?: Record<string, any>
   ): string {
     const baseInstruction = instruction || schemaDescription || 'Extract the requested information from this document.';
 
+    // Build context section if available
+    let contextSection = '';
+    if (inputContext && Object.keys(inputContext).length > 0) {
+      const contextFields = Object.entries(inputContext)
+        .filter(([_, value]) => value !== undefined && value !== null && value !== '')
+        .map(([key, value]) => `- ${key}: ${JSON.stringify(value)}`)
+        .join('\n');
+
+      if (contextFields) {
+        contextSection = `\nContext:\n${contextFields}\n`;
+      }
+    }
+
     if (outputType === 'string') {
       return `${baseInstruction}
-
+${contextSection}
 Document text:
 ${documentText}
 
@@ -3923,7 +4223,7 @@ Respond with your answer as plain text.`;
 
     if (!fields || fields.length === 0) {
       return `${baseInstruction}
-
+${contextSection}
 Document text:
 ${documentText}
 
@@ -3935,21 +4235,27 @@ Respond with a JSON ${outputType === 'array' ? 'array' : 'object'} containing th
     ).join('\n');
 
     if (outputType === 'array') {
+      // Build context instruction for array output
+      let contextInstruction = '';
+      if (inputContext && Object.keys(inputContext).length > 0) {
+        const contextFieldNames = Object.keys(inputContext)
+          .filter(key => fields.some(f => f.name === key))
+          .join(', ');
+
+        if (contextFieldNames) {
+          contextInstruction = `\n\nIMPORTANT: For fields ${contextFieldNames}, use the SAME values from the context below for ALL items extracted from this document:`;
+        }
+      }
+
       return `${baseInstruction}
 
 Fields to extract for EACH item:
-${fieldDescriptions}
-
+${fieldDescriptions}${contextInstruction}
+${contextSection}
 Document text:
 ${documentText}
 
-Respond with a JSON array where each element is an object with the fields above.
-For fields you cannot determine, use null. If a value is uncertain, use "need review" as the value.
-Example response format:
-[
-  { "field_name": "value1", "other_field": "value2" },
-  { "field_name": "value3", "other_field": "value4" }
-]`;
+Respond with a JSON array where each element is an object with the fields above.${contextInstruction ? '\nRemember: Context fields should have the SAME value for ALL items in the array.' : ''}`;
     }
 
     // Default: object type
@@ -3957,16 +4263,11 @@ Example response format:
 
 Fields to extract:
 ${fieldDescriptions}
-
+${contextSection}
 Document text:
 ${documentText}
 
-Respond with a JSON object containing the extracted field values.
-For fields you cannot find, use null. If a value is uncertain, use "need review" as the value.
-Example response format:
-{
-  "field_name": "extracted_value"
-}`;
+Respond with a JSON object containing the extracted field values.`;
   }
 
   /**
@@ -4078,5 +4379,173 @@ Example response format:
     if (!expectedFields || expectedFields.length === 0) return 1.0;
     const extractedCount = Object.values(data).filter(v => v !== null && v !== undefined).length;
     return expectedFields.length > 0 ? extractedCount / expectedFields.length : 1.0;
+  }
+
+  // ============================================================================
+  // BATCH CALIBRATION HELPER METHODS
+  // ============================================================================
+
+  /**
+   * Check if step should be skipped due to failed dependencies
+   * Used in batch calibration mode to avoid cascading errors
+   */
+  private shouldSkipDueToDependencies(
+    step: WorkflowStep,
+    context: ExecutionContext
+  ): boolean {
+    const dependencies = step.dependencies || [];
+
+    // Check if any dependency failed with non-recoverable error
+    for (const depId of dependencies) {
+      if (context.failedSteps.includes(depId)) {
+        // Check if the failure was recoverable
+        const failedOutput = context.getStepOutput(depId);
+        if (!failedOutput || !(failedOutput.metadata as any).recoverable) {
+          logger.debug({
+            stepId: step.id,
+            dependencyId: depId,
+            reason: 'non_recoverable_dependency_failure'
+          }, 'Step will be skipped due to failed dependency');
+          return true; // Skip this step
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Determine if execution should continue after error (batch calibration mode)
+   *
+   * CONTINUE for:
+   * - Parameter errors (e.g., "range not found") - other steps might have different errors
+   * - Data shape mismatches - RepairEngine can fix these
+   * - Data unavailable (empty results) - not a fatal error
+   *
+   * STOP for:
+   * - Auth errors - no point continuing without API access
+   * - Connection errors - API unavailable
+   * - Logic errors with null data - downstream will cascade
+   */
+  private shouldContinueAfterError(
+    classification: import('./shadow/types').FailureClassification
+  ): boolean {
+    const category = classification.category;
+    const subType = classification.sub_type;
+
+    // Diagnostic logging to help debug error classification
+    console.log(`[BatchCalibration] Error classification: ${category}${subType ? ` (sub_type: ${subType})` : ''}`);
+
+    // Always continue for parameter errors
+    // (Other steps might have different parameter errors we want to catch)
+    if (category === 'execution_error') {
+      // Stop for auth errors specifically
+      if (subType === 'auth') {
+        console.log('[BatchCalibration] ❌ Stopping execution - auth error requires user intervention');
+        return false;
+      }
+      // Continue for other execution errors (timeout, rate limit, parameter errors, etc.)
+      console.log('[BatchCalibration] ✅ Continuing after execution error - collecting issues');
+      return true;
+    }
+
+    // Continue for data shape mismatches (RepairEngine can help)
+    if (category === 'data_shape_mismatch') {
+      console.log('[BatchCalibration] ✅ Continuing after data shape mismatch - collecting issues');
+      return true;
+    }
+
+    // Continue for data unavailable (empty results)
+    if (category === 'data_unavailable') {
+      console.log('[BatchCalibration] ✅ Continuing after data unavailable - collecting issues');
+      return true;
+    }
+
+    // Stop for logic errors (null references, etc.)
+    if (category === 'logic_error') {
+      console.log('[BatchCalibration] ❌ Stopping execution - logic error may cause cascading failures');
+      return false;
+    }
+
+    // Stop for capability mismatch (wrong plugin/action)
+    if (category === 'capability_mismatch') {
+      console.log('[BatchCalibration] ❌ Stopping execution - capability mismatch cannot be auto-fixed');
+      return false;
+    }
+
+    // Stop for missing steps
+    if (category === 'missing_step') {
+      console.log('[BatchCalibration] ❌ Stopping execution - missing step breaks workflow');
+      return false;
+    }
+
+    // Stop for invalid step order
+    if (category === 'invalid_step_order') {
+      console.log('[BatchCalibration] ❌ Stopping execution - invalid step order breaks dependencies');
+      return false;
+    }
+
+    // Default: continue to be safe (collect as many issues as possible)
+    // We can adjust this later based on real-world testing
+    console.log('[BatchCalibration] ✅ Continuing after unknown error category - collecting issues (safe default)');
+    return true;
+  }
+
+  /**
+   * Calculate item count from step result for business intelligence
+   *
+   * Handles multiple output formats:
+   * - Direct arrays: [item1, item2, ...] → count = length
+   * - Nested arrays: {emails: [...], total: 20} → count = emails.length
+   * - Count field: {count: 20, ...} → count = 20
+   * - Single object: {id: 1, ...} → count = 1
+   *
+   * @private
+   */
+  private calculateItemCount(result: any): number | undefined {
+    if (!result) {
+      return undefined;
+    }
+
+    // Direct array
+    if (Array.isArray(result)) {
+      return result.length;
+    }
+
+    // Object with nested arrays or count fields
+    if (typeof result === 'object') {
+      // Look for nested array fields (e.g., {emails: [...], total_found: 20})
+      const arrayFields = Object.entries(result).filter(
+        ([key, value]) => Array.isArray(value) && (value as any[]).length > 0
+      );
+
+      if (arrayFields.length > 0) {
+        // Use the first array field's length
+        const [fieldName, arrayValue] = arrayFields[0];
+        logger.debug({
+          fieldName,
+          count: (arrayValue as any[]).length,
+        }, 'Calculated item count from nested array field');
+        return (arrayValue as any[]).length;
+      }
+
+      // Look for explicit count/total fields
+      const countFields = ['count', 'total', 'total_found', 'total_count', 'length'];
+      for (const field of countFields) {
+        if (typeof result[field] === 'number') {
+          logger.debug({
+            field,
+            count: result[field],
+          }, 'Calculated item count from count field');
+          return result[field];
+        }
+      }
+
+      // Single object result (not an array container)
+      return 1;
+    }
+
+    // Primitive values
+    return undefined;
   }
 }

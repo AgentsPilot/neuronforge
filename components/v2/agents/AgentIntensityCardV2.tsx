@@ -146,7 +146,7 @@ export function AgentIntensityCardV2({ agentId, latestExecutionTime: propExecuti
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <Brain className="w-6 h-6 sm:w-7 sm:h-7 text-[#6366F1]" />
+          <Brain className="w-6 h-6 sm:w-7 sm:h-7 text-[var(--v2-primary)]" />
           <div>
             <h3 className="text-sm font-semibold text-[var(--v2-text-primary)]">Agent Complexity</h3>
             <p className="text-[10px] text-[var(--v2-text-muted)]">AIS Score & Model</p>
@@ -180,7 +180,7 @@ export function AgentIntensityCardV2({ agentId, latestExecutionTime: propExecuti
         </div>
 
         {/* Progress Bar */}
-        <div className="relative h-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-full overflow-hidden">
+        <div className="relative h-2 bg-gray-200 dark:bg-slate-700 border border-[var(--v2-border)] rounded-full overflow-hidden">
           <div
             className={`h-full transition-all ${
               combinedScore < 3
@@ -199,7 +199,7 @@ export function AgentIntensityCardV2({ agentId, latestExecutionTime: propExecuti
       {/* Score Breakdown */}
       <div className="grid grid-cols-2 gap-2 mb-3">
         {/* Creation Complexity */}
-        <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-3">
+        <div className="bg-[var(--v2-surface)] dark:bg-slate-800/80 border border-[var(--v2-border)] rounded-lg p-3">
           <div className="text-[10px] font-medium text-[var(--v2-text-muted)] mb-1">
             Agent Creation
           </div>
@@ -212,7 +212,7 @@ export function AgentIntensityCardV2({ agentId, latestExecutionTime: propExecuti
         </div>
 
         {/* Runtime Complexity */}
-        <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-3">
+        <div className="bg-[var(--v2-surface)] dark:bg-slate-800/80 border border-[var(--v2-border)] rounded-lg p-3">
           <div className="text-[10px] font-medium text-[var(--v2-text-muted)] mb-1">
             Agent Execution
           </div>
@@ -228,7 +228,7 @@ export function AgentIntensityCardV2({ agentId, latestExecutionTime: propExecuti
       {/* Pilot Credits */}
       <div className="grid grid-cols-2 gap-2">
         {/* Creation Credits */}
-        <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-2">
+        <div className="bg-[var(--v2-surface)] dark:bg-slate-800/80 border border-[var(--v2-border)] rounded-lg p-2">
           <div className="text-[10px] text-[var(--v2-text-muted)] mb-0.5">Pilot Credit Creation</div>
           <div className="text-base font-bold text-[var(--v2-text-primary)]">
             {breakdown.details?.creation_stats?.creation_tokens_used
@@ -238,7 +238,7 @@ export function AgentIntensityCardV2({ agentId, latestExecutionTime: propExecuti
         </div>
 
         {/* Execution Credits */}
-        <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-2">
+        <div className="bg-[var(--v2-surface)] dark:bg-slate-800/80 border border-[var(--v2-border)] rounded-lg p-2">
           <div className="text-[10px] text-[var(--v2-text-muted)] mb-0.5">Pilot Credit Execution</div>
           <div className="text-base font-bold text-[var(--v2-text-primary)]">
             {breakdown.details?.token_stats?.total_tokens_execution_only

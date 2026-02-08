@@ -52,6 +52,7 @@ import { WorkflowValidator } from './WorkflowValidator';
 import { ShadowAgent } from './shadow/ShadowAgent';
 import { CheckpointManager } from './shadow/CheckpointManager';
 import { ResumeOrchestrator } from './shadow/ResumeOrchestrator';
+import { IssueCollector } from './shadow/IssueCollector';
 
 // Create admin client inline to avoid module initialization issues
 const supabaseAdmin = createClient(
@@ -165,7 +166,7 @@ export class WorkflowPilot {
     debugMode?: boolean,
     providedDebugRunId?: string,
     providedExecutionId?: string,
-    runMode?: 'calibration' | 'production'  // Separate from execution_type (manual/scheduled)
+    runMode?: 'calibration' | 'production' | 'batch_calibration'  // Separate from execution_type (manual/scheduled)
   ): Promise<WorkflowExecutionResult> {
     console.log(`🚀 [WorkflowPilot] Starting execution for agent ${agent.id}: ${agent.agent_name}`);
 
@@ -301,12 +302,16 @@ export class WorkflowPilot {
       runMode
     );
 
+    // Determine if this is batch calibration mode
+    const isBatchCalibration = runMode === 'batch_calibration';
+
     context = new ExecutionContext(
       executionId,
       agent,
       userId,
       finalSessionId,
-      inputValues
+      inputValues,
+      isBatchCalibration
     );
 
     // 2b. Shadow Agent: lifecycle-aware initialization
@@ -593,28 +598,36 @@ export class WorkflowPilot {
           }
         } catch (reconciliationError: any) {
           // Non-critical - log but don't fail execution
-          // Only log if it's not a "not found" error (which can happen if execution failed before completing)
+          // Silently ignore "not found" errors (race condition - DB transaction still completing)
           if (!reconciliationError.message?.includes('not found')) {
             console.warn(`⚠️  [WorkflowPilot] Token reconciliation failed (non-critical):`, reconciliationError.message);
           }
         }
-      }, 2000); // Wait 2 seconds for DB transaction to complete
+      }, 5000); // Wait 5 seconds for DB transaction to complete (increased from 2s to handle load)
 
       // 14. Update AIS metrics (async)
       this.updateAISMetrics(agent.id, context).catch(err =>
         console.error('❌ AIS update failed (non-critical):', err)
       );
 
+      // 15. Collect Business Insights (async, production-only, if enabled)
+      // IMPORTANT: Collect insights even when there are failures - that's when they're most valuable!
+      console.log(`💡 [WorkflowPilot] Checking insights: production_ready=${agent.production_ready}, insights_enabled=${agent.insights_enabled}, failedSteps=${context.failedSteps.length}`);
+      if (agent.production_ready && agent.insights_enabled) {
+        console.log(`💡 [WorkflowPilot] Insights enabled - collecting business insights for execution ${executionId}`);
+        this.collectInsights(executionId, agent.id, context.userId).catch(err =>
+          console.error('❌ Insight collection failed (non-critical):', err)
+        );
+      } else {
+        console.log(`💡 [WorkflowPilot] Insights NOT collected. Reasons: production_ready=${!agent.production_ready ? 'false' : 'true'}, insights_enabled=${!agent.insights_enabled ? 'false/undefined' : 'true'}`);
+      }
+
       console.log(`✅ [WorkflowPilot] Execution completed successfully: ${executionId}`);
 
-      // Shadow Agent: mark agent as production ready after first full success
-      if (shadowAgent && context.failedSteps.length === 0) {
-        try {
-          await shadowAgent.onExecutionSuccess();
-        } catch (shadowSuccessErr) {
-          console.error('[ShadowAgent] onExecutionSuccess failed (non-blocking):', shadowSuccessErr);
-        }
-      }
+      // NOTE: We do NOT automatically mark agent as production_ready here
+      // User must explicitly click "Approve for Production" button in the calibration UI
+      // This ensures user reviews all calibration results (including hardcoded values) before approving
+      console.log(`🔍 [WorkflowPilot] Agent will remain in calibration mode until user approves via UI`);
 
       // Cleanup debug session
       if (debugRunId) {
@@ -626,6 +639,19 @@ export class WorkflowPilot {
       const cpManager = (this as any)._checkpointManager as CheckpointManager | null;
       if (cpManager) {
         cpManager.clear();
+      }
+
+      // Batch calibration: collect hardcoded values after successful execution
+      if (isBatchCalibration) {
+        console.log('🔍 [WorkflowPilot] Batch calibration mode - collecting hardcoded values');
+        try {
+          const issueCollector = new IssueCollector();
+          const hardcodeIssues = issueCollector.collectHardcodedValues(agent);
+          context.collectedIssues.push(...hardcodeIssues);
+          console.log(`🔍 [WorkflowPilot] Detected ${hardcodeIssues.length} hardcoded values`);
+        } catch (hardcodeErr) {
+          console.error('❌ [WorkflowPilot] Hardcode detection failed (non-critical):', hardcodeErr);
+        }
       }
 
       // Emit execution complete event globally
@@ -660,6 +686,8 @@ export class WorkflowPilot {
           totalCost: orchestrationMetrics.totalCost,
           budgetUtilization: (orchestrationMetrics.budgetUtilization * 100).toFixed(1) + '%',
         } : undefined,
+        // Batch calibration: include collected issues
+        collectedIssues: isBatchCalibration ? context.collectedIssues : undefined,
       };
     } catch (error: any) {
       console.error(`❌ [WorkflowPilot] Execution failed:`, error);
@@ -757,6 +785,23 @@ export class WorkflowPilot {
         severity: 'critical',
       });
 
+      // In batch calibration mode, collect hardcoded values even if execution failed
+      // This ensures we show ALL improvements, not just the first error
+      // Allows users to fix both execution errors AND hardcode issues in one go
+      if (isBatchCalibration && context) {
+        try {
+          console.log('🔍 [WorkflowPilot] Batch calibration mode - collecting hardcoded values after failure');
+          const { IssueCollector } = await import('./shadow/IssueCollector');
+          const issueCollector = new IssueCollector();
+          const hardcodeIssues = issueCollector.collectHardcodedValues(agent);
+          context.collectedIssues.push(...hardcodeIssues);
+          console.log(`🔍 [WorkflowPilot] Detected ${hardcodeIssues.length} hardcoded values (after failure)`);
+        } catch (hardcodeErr: any) {
+          // Non-critical - hardcode detection is best-effort
+          console.error('❌ [WorkflowPilot] Hardcode detection failed (non-critical):', hardcodeErr.message);
+        }
+      }
+
       return {
         success: false,
         executionId,
@@ -773,6 +818,9 @@ export class WorkflowPilot {
         completedStepIds: context ? context.completedSteps : [],
         failedStepIds: context ? context.failedSteps : [],
         skippedStepIds: context ? context.skippedSteps : [],
+        // CRITICAL: Include collected issues even when execution fails
+        // In batch calibration mode, we want to show ALL issues collected before the fatal error
+        collectedIssues: isBatchCalibration && context ? context.collectedIssues : undefined,
       };
     }
   }
@@ -1083,6 +1131,21 @@ export class WorkflowPilot {
       return;
     }
 
+    // CRITICAL: Create or reset step execution record BEFORE execution
+    // This ensures status API shows the step as "running" even before it completes
+    await this.stateManager.logStepExecution(
+      context.executionId,
+      stepDef.id,
+      stepDef.name,
+      stepDef.type,
+      'running',
+      {
+        plugin: (stepDef as any).plugin,
+        action: (stepDef as any).action,
+        started_at: new Date().toISOString()
+      }
+    );
+
     // Execute step with retry policy (use step-level or default from config)
     context.currentStep = stepDef.id;
 
@@ -1113,6 +1176,15 @@ export class WorkflowPilot {
     // Emit appropriate event (both local and global)
     if (output.metadata.success) {
       console.log(`  ✓ Completed in ${output.metadata.executionTime}ms`);
+
+      // CRITICAL: Update step execution record to 'completed' status
+      // This ensures status API shows the step as completed
+      await this.stateManager.updateStepExecution(
+        context.executionId,
+        stepDef.id,
+        'completed',
+        output.metadata
+      );
 
       // Emit debug step_complete event with real data
       if (debugRunId) {
@@ -1173,10 +1245,11 @@ export class WorkflowPilot {
       });
 
       // ─── ResumeOrchestrator: capture + classify + repair + resume ───
+      // Skip ResumeOrchestrator in batch calibration mode - StepExecutor handles issue collection
       const resumeOrchestrator = (this as any)._resumeOrchestrator as ResumeOrchestrator | null;
       let repairSucceeded = false;
 
-      if (resumeOrchestrator) {
+      if (resumeOrchestrator && !context.batchCalibrationMode) {
         try {
           const decision = await resumeOrchestrator.handleStepFailure(
             context.executionId,
@@ -1366,6 +1439,13 @@ export class WorkflowPilot {
         return;
       }
 
+      // In batch calibration mode, StepExecutor already decided whether to continue or stop
+      // If we got here, it means we should continue (issue was collected)
+      if (context.batchCalibrationMode) {
+        console.log(`[WorkflowPilot] 📊 Batch calibration mode: Step failed, continuing to collect more issues`);
+        return; // Continue to next step
+      }
+
       // Normal failure path: check if we should continue on error
       if (!stepDef.continueOnError && !this.options?.continueOnError) {
         throw new ExecutionError(
@@ -1485,7 +1565,7 @@ export class WorkflowPilot {
       for (const [key, variableRef] of Object.entries(step.inputs)) {
         const value = parentContext.resolveVariable?.(variableRef) ?? variableRef;
         subContext.setVariable?.(key, value);
-        console.log(`    • ${key} = ${typeof value === 'object' ? JSON.stringify(value).substring(0, 50) + '...' : value}`);
+        console.log(`    • ${key} = ${typeof value === 'object' ? JSON.stringify(this.sanitizeForLogging(value, 50)).substring(0, 100) : value}`);
       }
 
       // 4. Inherit parent context variables if specified
@@ -1703,6 +1783,58 @@ export class WorkflowPilot {
     ]);
   }
 
+  /**
+   * Sanitize data for logging by truncating large base64 strings and file content
+   */
+  private sanitizeForLogging(data: any, maxLength: number = 200): any {
+    if (!data) return data;
+
+    if (typeof data === 'string') {
+      // Truncate long strings (likely base64 data)
+      if (data.length > maxLength) {
+        return `[String truncated - ${data.length} chars]`;
+      }
+      return data;
+    }
+
+    if (Array.isArray(data)) {
+      return data.map(item => this.sanitizeForLogging(item, maxLength));
+    }
+
+    if (typeof data === 'object') {
+      const sanitized: any = {};
+
+      for (const [key, value] of Object.entries(data)) {
+        // Detect file content fields
+        if (key === '_content' && value && typeof value === 'object') {
+          const content = value as any;
+          sanitized[key] = {
+            filename: content.filename,
+            mimeType: content.mimeType,
+            size: content.size,
+            is_image: content.is_image,
+            data: content.data ? `[Base64 data - ${content.data.length} bytes - truncated]` : undefined,
+            extracted_text: content.extracted_text ?
+              (content.extracted_text.length > 100 ? content.extracted_text.substring(0, 100) + '...' : content.extracted_text)
+              : undefined
+          };
+        } else if (key === 'data' && typeof value === 'string' && value.length > 1000) {
+          // Detect large base64 strings in data fields
+          sanitized[key] = `[Data truncated - ${value.length} chars]`;
+        } else if (key === 'content' && typeof value === 'string' && value.length > 1000) {
+          // Detect large content strings
+          sanitized[key] = `[Content truncated - ${value.length} chars]`;
+        } else {
+          sanitized[key] = this.sanitizeForLogging(value, maxLength);
+        }
+      }
+
+      return sanitized;
+    }
+
+    return data;
+  }
+
   private buildFinalOutput(
     context: ExecutionContext,
     outputSchema: any
@@ -1710,11 +1842,11 @@ export class WorkflowPilot {
     console.log('🔍 [buildFinalOutput] Starting output build');
     console.log('🔍 [buildFinalOutput] outputSchema:', JSON.stringify(outputSchema, null, 2));
 
-    // Get all step outputs for debugging
+    // Get all step outputs for debugging (sanitized to prevent massive logs)
     const allStepOutputs = context.getAllStepOutputs();
     console.log('🔍 [buildFinalOutput] All step outputs:', Array.from(allStepOutputs.entries()).map(([stepId, output]) => ({
       stepId,
-      data: output.data
+      data: this.sanitizeForLogging(output.data)
     })));
 
     // If output schema specifies sources
@@ -1752,7 +1884,7 @@ export class WorkflowPilot {
         }
       });
 
-      console.log('🔍 [buildFinalOutput] Final output (schema-based):', JSON.stringify(output, null, 2));
+      console.log('🔍 [buildFinalOutput] Final output (schema-based):', JSON.stringify(this.sanitizeForLogging(output), null, 2));
       return output;
     }
 
@@ -1763,7 +1895,7 @@ export class WorkflowPilot {
       output[stepId] = stepOutput.data;
     });
 
-    console.log('🔍 [buildFinalOutput] Final output (all steps):', JSON.stringify(output, null, 2));
+    console.log('🔍 [buildFinalOutput] Final output (all steps):', JSON.stringify(this.sanitizeForLogging(output), null, 2));
     return output;
   }
 
@@ -1884,6 +2016,223 @@ export class WorkflowPilot {
 
     // Return memory tokens so caller can add to total
     return memoryTokens;
+  }
+
+  /**
+   * Collect Business Insights from execution patterns
+   * Runs asynchronously after execution completes (non-critical)
+   * Includes failure detection to alert users about issues like changed spreadsheet names
+   */
+  private async collectInsights(
+    executionId: string,
+    agentId: string,
+    userId: string
+  ): Promise<void> {
+    try {
+      console.log(`💡 [WorkflowPilot] Starting unified insight collection for execution ${executionId}`);
+
+      // Import dependencies (removed InsightGenerator - using only BusinessInsightGenerator via InsightAnalyzer)
+      const { InsightAnalyzer } = await import('@/lib/pilot/insight/InsightAnalyzer');
+      const { InsightRepository } = await import('@/lib/repositories/InsightRepository');
+
+      const repository = new InsightRepository(this.supabase);
+      const analyzer = new InsightAnalyzer(this.supabase);
+
+      // Run unified analysis (detects patterns + generates insights via BusinessInsightGenerator)
+      console.log(`💡 [WorkflowPilot] Running unified analysis for agent ${agentId}...`);
+      const analysisResult = await analyzer.analyze(agentId, 20);
+
+      console.log(`💡 [WorkflowPilot] Analysis completed:`);
+      console.log(`   - Technical patterns detected: ${analysisResult.patterns.length}`);
+      console.log(`   - Business insights generated: ${analysisResult.businessInsights.length}`);
+      console.log(`   - Confidence mode: ${analysisResult.confidence_mode}`);
+      console.log(`   - Executions analyzed: ${analysisResult.execution_count}`);
+
+      if (analysisResult.patterns.length === 0 && analysisResult.businessInsights.length === 0) {
+        console.log(`💡 [WorkflowPilot] No insights generated - system working normally or insufficient data`);
+        return;
+      }
+
+      // Store technical patterns as data_quality insights
+      for (const pattern of analysisResult.patterns) {
+        try {
+          // Check if this pattern type already exists
+          const existing = await repository.findExistingInsight(
+            agentId,
+            pattern.insight_type,
+            7 // Look for insights created in last 7 days
+          );
+
+          if (existing) {
+            console.log(`💡 [WorkflowPilot] Skipping duplicate technical pattern: "${pattern.insight_type}"`);
+            await repository.addExecutionToInsight(existing.id, executionId);
+            continue;
+          }
+
+          // Convert pattern to insight format with human-readable text
+          const insightText = this.formatPatternAsInsight(pattern);
+
+          console.log(`💡 [WorkflowPilot] Saving technical pattern: "${pattern.insight_type}"`);
+          const createResult = await repository.create({
+            user_id: userId,
+            agent_id: agentId,
+            execution_ids: pattern.execution_ids.length > 0 ? pattern.execution_ids : [executionId],
+            insight_type: pattern.insight_type,
+            category: 'data_quality', // Technical patterns are data_quality
+            severity: pattern.severity,
+            confidence: analysisResult.confidence_mode,
+            title: insightText.title,
+            description: insightText.description,
+            business_impact: insightText.business_impact,
+            recommendation: insightText.recommendation,
+            pattern_data: pattern.pattern_data,
+            metrics: pattern.metrics,
+            status: 'new',
+          });
+
+          if (createResult) {
+            console.log(`✅ [WorkflowPilot] Successfully saved technical pattern: "${pattern.insight_type}"`);
+          }
+        } catch (err) {
+          console.error(`⚠️  [WorkflowPilot] Failed to save technical pattern "${pattern.insight_type}":`, err);
+          // Continue with other patterns
+        }
+      }
+
+      // Store business insights (generated by LLM)
+      for (const insight of analysisResult.businessInsights) {
+        try {
+          // Check for duplicate by title (insights are now context-aware and unique)
+          const existing = await repository.findExistingByTitle(
+            agentId,
+            insight.title,
+            7 // Look for insights created in last 7 days
+          );
+
+          if (existing) {
+            console.log(`💡 [WorkflowPilot] Skipping duplicate insight: "${insight.title}"`);
+            await repository.addExecutionToInsight(existing.id, executionId);
+            continue;
+          }
+
+          // Map BusinessInsight to database format
+          const insightType = insight.type as any;  // Type already matches InsightType
+
+          console.log(`💡 [WorkflowPilot] Saving insight: "${insight.title}"`);
+          const createResult = await repository.create({
+            user_id: userId,
+            agent_id: agentId,
+            execution_ids: [executionId],  // Current execution
+            insight_type: insightType,
+            category: 'growth',  // All unified insights are growth category
+            severity: insight.severity,
+            confidence: analysisResult.confidence_mode,
+            title: insight.title,
+            description: insight.description,
+            business_impact: insight.business_impact,
+            recommendation: insight.recommendation,
+            pattern_data: {},  // Patterns already processed by BusinessInsightGenerator
+            metrics: {},
+            status: 'new',
+          });
+
+          if (createResult) {
+            console.log(`✅ [WorkflowPilot] Successfully saved insight: "${insight.title}"`);
+          } else {
+            console.error(`❌ [WorkflowPilot] Failed to save insight (no result returned)`);
+          }
+        } catch (err) {
+          console.error(`⚠️  [WorkflowPilot] Failed to save insight "${insight.title}":`, err);
+          // Continue with other insights
+        }
+      }
+
+      console.log(`✅ [WorkflowPilot] Unified insight collection completed (1 LLM call, ${analysisResult.businessInsights.length} insights)`);
+    } catch (error) {
+      console.error(`❌ [WorkflowPilot] Insight collection failed:`, error);
+      // Non-critical failure - don't throw
+    }
+  }
+
+  /**
+   * Format technical pattern as human-readable insight
+   */
+  private formatPatternAsInsight(pattern: any): {
+    title: string;
+    description: string;
+    business_impact: string;
+    recommendation: string;
+  } {
+    const affectedCount = pattern.execution_ids?.length || 0;
+    const frequency = pattern.metrics?.pattern_frequency
+      ? `${(pattern.metrics.pattern_frequency * 100).toFixed(0)}%`
+      : 'multiple';
+
+    switch (pattern.insight_type) {
+      case 'data_unavailable':
+        return {
+          title: 'Workflow returning empty results',
+          description: `The workflow is consistently returning no data in ${frequency} of recent executions. This could indicate: (1) no data available from the source, (2) filters are too restrictive, or (3) source system changes.`,
+          business_impact: 'Empty results may mean missing important data or indicate the workflow needs adjustment to match current data patterns.',
+          recommendation: 'Review your data source and filters. Check if this is expected (e.g., no complaints is good) or if the workflow configuration needs updating.',
+        };
+
+      case 'performance_degradation':
+        return {
+          title: 'Processing time increased',
+          description: `Workflow execution time has increased compared to historical baseline, affecting ${affectedCount} recent run(s).`,
+          business_impact: 'Slower processing may delay time-sensitive workflows and increase operational costs.',
+          recommendation: 'Review recent changes to the workflow. Check for slow data sources or added complexity in processing steps.',
+        };
+
+      case 'cost_optimization':
+        return {
+          title: 'High token usage detected',
+          description: `Token consumption is higher than expected in ${frequency} of executions, indicating potential for cost optimization.`,
+          business_impact: 'Higher token usage directly increases operational costs without necessarily improving results.',
+          recommendation: 'Review LLM calls for caching opportunities, prompt optimization, or reduce unnecessary context being sent.',
+        };
+
+      case 'reliability_risk':
+        return {
+          title: 'Reliability issue detected',
+          description: `Workflow has reliability concerns affecting ${affectedCount} execution(s). This may include missing fallbacks or single points of failure.`,
+          business_impact: 'Reliability issues can cause workflow failures and require manual intervention.',
+          recommendation: 'Add error handling, fallback mechanisms, or retry logic to improve workflow resilience.',
+        };
+
+      case 'automation_opportunity':
+        return {
+          title: 'Automation opportunity identified',
+          description: `Pattern detected in ${frequency} of executions suggesting potential for improved automation or reduced manual intervention.`,
+          business_impact: 'Manual steps reduce efficiency and may cause delays in workflow completion.',
+          recommendation: 'Review manual approval steps or conditional logic that could be automated based on patterns.',
+        };
+
+      case 'schedule_optimization':
+        const peakHours = pattern.pattern_data?.sample_data?.peak_hours || [];
+        const peakHoursStr = peakHours.length > 0
+          ? peakHours.map((h: number) => {
+              const period = h >= 12 ? 'PM' : 'AM';
+              const hour12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+              return `${hour12}${period}`;
+            }).join(', ')
+          : 'peak activity times';
+        return {
+          title: 'Schedule optimization opportunity',
+          description: `Workflow runs are concentrated during ${peakHoursStr}. Analysis of ${affectedCount} execution(s) shows ${frequency} occur during peak hours.`,
+          business_impact: 'Running workflows during off-peak hours could reduce costs and improve performance by avoiding high-traffic periods.',
+          recommendation: `Consider scheduling this workflow during off-peak hours if timing is flexible, or ensure it runs during peak activity (${peakHoursStr}) if real-time processing is important.`,
+        };
+
+      default:
+        return {
+          title: `${pattern.insight_type.replace(/_/g, ' ')} detected`,
+          description: `Technical pattern "${pattern.insight_type}" was detected in ${frequency} of recent executions.`,
+          business_impact: 'This pattern may affect workflow performance or data quality.',
+          recommendation: 'Review the affected executions to understand the root cause and determine if action is needed.',
+        };
+    }
   }
 
   /**
@@ -2046,68 +2395,90 @@ export class WorkflowPilot {
           }
         }
 
+        // CRITICAL: Create or reset step execution record BEFORE execution
+        // This ensures status API shows the step as "running" even before it completes
+        await this.stateManager.logStepExecution(
+          context.executionId,
+          step.id,
+          step.name,
+          step.type,
+          'running',
+          {
+            plugin: (step as any).plugin,
+            action: (step as any).action,
+            started_at: new Date().toISOString()
+          }
+        );
+
         // Execute step
         console.log(`▶️  [WorkflowPilot] Executing resumed step: ${step.id} - ${step.name}`);
         const result = await this.stepExecutor.execute(step, context);
 
         // Check if step failed
         if (!result.metadata?.success) {
-          // Handle failure - call ResumeOrchestrator for parameter error detection
-          const resumeOrchestrator = (this as any)._resumeOrchestrator as any;
-          if (resumeOrchestrator) {
-            try {
-              const decision = await resumeOrchestrator.handleStepFailure(
-                context.executionId,
-                step,
-                {
-                  message: result.metadata?.error || 'Unknown error',
-                  code: result.metadata?.errorCode,
-                },
-                context,
-                result
-              );
+          // In batch calibration mode, StepExecutor already handled issue collection
+          // Skip ResumeOrchestrator logic to avoid stopping execution prematurely
+          if (context.batchCalibrationMode) {
+            console.log('[WorkflowPilot] 📊 Batch calibration mode: Step failed, issue already collected by StepExecutor');
+            // Continue to next step - don't throw error
+          } else {
+            // Handle failure - call ResumeOrchestrator for parameter error detection
+            const resumeOrchestrator = (this as any)._resumeOrchestrator as any;
+            if (resumeOrchestrator) {
+              try {
+                const decision = await resumeOrchestrator.handleStepFailure(
+                  context.executionId,
+                  step,
+                  {
+                    message: result.metadata?.error || 'Unknown error',
+                    code: result.metadata?.errorCode,
+                  },
+                  context,
+                  result
+                );
 
-              // Persist metadata changes (e.g., parameter_error_details)
-              console.log('[WorkflowPilot] 📝 Persisting updated metadata to database...');
-              console.log('[WorkflowPilot] Metadata being persisted:', JSON.stringify(result.metadata, null, 2));
-              await this.stateManager.updateStepExecution(
-                context.executionId,
-                step.id,
-                'failed',
-                result.metadata,
-                result.metadata?.error
-              );
-              console.log('[WorkflowPilot] ✅ Metadata persisted successfully');
+                // Persist metadata changes (e.g., parameter_error_details)
+                console.log('[WorkflowPilot] 📝 Persisting updated metadata to database...');
+                console.log('[WorkflowPilot] Metadata being persisted:', JSON.stringify(result.metadata, null, 2));
+                await this.stateManager.updateStepExecution(
+                  context.executionId,
+                  step.id,
+                  'failed',
+                  result.metadata,
+                  result.metadata?.error
+                );
+                console.log('[WorkflowPilot] ✅ Metadata persisted successfully');
 
-              // For resume flow, we don't auto-retry - just detect and stop
-              // This allows frontend to show repair UI
-              if (decision.action === 'stop_execution') {
+                // For resume flow, we don't auto-retry - just detect and stop
+                // This allows frontend to show repair UI
+                if (decision.action === 'stop_execution') {
+                  throw new ExecutionError(
+                    decision.message || 'Calibration stop: Parameter error detected',
+                    step.id,
+                    { errorCode: result.metadata?.errorCode }
+                  );
+                }
+              } catch (orchErr: any) {
+                console.error('[WorkflowPilot] ResumeOrchestrator error:', orchErr);
+                // If it's already an ExecutionError, re-throw it
+                if (orchErr.name === 'ExecutionError') {
+                  throw orchErr;
+                }
+                // Otherwise throw a new ExecutionError
                 throw new ExecutionError(
-                  decision.message || 'Calibration stop: Parameter error detected',
+                  result.metadata?.error || 'Step execution failed',
                   step.id,
                   { errorCode: result.metadata?.errorCode }
                 );
               }
-            } catch (orchErr: any) {
-              console.error('[WorkflowPilot] ResumeOrchestrator error:', orchErr);
-              // If it's already an ExecutionError, re-throw it
-              if (orchErr.name === 'ExecutionError') {
-                throw orchErr;
-              }
-              // Otherwise throw a new ExecutionError
+            } else {
+              // No ResumeOrchestrator - just throw error
               throw new ExecutionError(
                 result.metadata?.error || 'Step execution failed',
                 step.id,
                 { errorCode: result.metadata?.errorCode }
               );
             }
-          } else {
-            // No ResumeOrchestrator - just throw error
-            throw new ExecutionError(
-              result.metadata?.error || 'Step execution failed',
-              step.id,
-              { errorCode: result.metadata?.errorCode }
-            );
           }
         }
 
@@ -2122,6 +2493,15 @@ export class WorkflowPilot {
         } else if (tokens && typeof tokens === 'object' && 'total' in tokens) {
           context.totalTokensUsed += tokens.total;
         }
+
+        // CRITICAL: Update step execution record to 'completed' status
+        // This ensures status API shows the step as completed
+        await this.stateManager.updateStepExecution(
+          context.executionId,
+          step.id,
+          'completed',
+          result.metadata
+        );
 
         // Checkpoint after each step
         await this.stateManager.checkpoint(context);

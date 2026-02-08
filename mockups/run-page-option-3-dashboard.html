@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Option 3: Dashboard-Style Overview</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #F3F4F6;
+      min-height: 100vh;
+      padding: 24px;
+    }
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    /* Header with Quick Action */
+    .header {
+      background: white;
+      border-radius: 16px;
+      padding: 24px 32px;
+      margin-bottom: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .header-left h1 {
+      font-size: 24px;
+      font-weight: 700;
+      color: #111827;
+      margin-bottom: 4px;
+    }
+    .header-left p {
+      font-size: 14px;
+      color: #6B7280;
+    }
+    .quick-run-btn {
+      padding: 12px 24px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 12px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: transform 0.2s;
+    }
+    .quick-run-btn:hover {
+      transform: translateY(-2px);
+    }
+
+    /* Main Grid Layout */
+    .grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 20px;
+      margin-bottom: 20px;
+    }
+
+    /* Latest Result Card (Prominent) */
+    .result-card {
+      background: white;
+      border-radius: 16px;
+      padding: 32px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .result-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+    .result-header h2 {
+      font-size: 18px;
+      font-weight: 600;
+      color: #111827;
+    }
+    .result-badge {
+      padding: 6px 12px;
+      background: #ECFDF5;
+      color: #065F46;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .metric {
+      text-align: center;
+      padding: 16px;
+      background: #F9FAFB;
+      border-radius: 12px;
+    }
+    .metric-value {
+      font-size: 32px;
+      font-weight: 700;
+      color: #111827;
+      margin-bottom: 4px;
+    }
+    .metric-label {
+      font-size: 12px;
+      color: #6B7280;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .result-preview {
+      background: #F9FAFB;
+      border-radius: 12px;
+      padding: 20px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .result-preview h3 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #111827;
+      margin-bottom: 12px;
+    }
+    .result-item {
+      background: white;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      border-left: 3px solid #10B981;
+      font-size: 13px;
+      color: #374151;
+    }
+
+    /* History Sidebar */
+    .history-card {
+      background: white;
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .history-card h2 {
+      font-size: 16px;
+      font-weight: 600;
+      color: #111827;
+      margin-bottom: 16px;
+    }
+    .history-item {
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+      border: 1px solid #E5E7EB;
+    }
+    .history-item:hover {
+      background: #F9FAFB;
+    }
+    .history-item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+    .history-time {
+      font-size: 12px;
+      font-weight: 600;
+      color: #111827;
+    }
+    .history-status {
+      font-size: 11px;
+      color: #10B981;
+    }
+    .history-summary {
+      font-size: 12px;
+      color: #6B7280;
+    }
+
+    /* Configuration Panel (Collapsible) */
+    .config-panel {
+      background: white;
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .config-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      cursor: pointer;
+    }
+    .config-header h2 {
+      font-size: 16px;
+      font-weight: 600;
+      color: #111827;
+    }
+    .toggle-icon {
+      font-size: 20px;
+      color: #6B7280;
+    }
+    .config-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+    }
+    .config-field {
+      display: flex;
+      flex-direction: column;
+    }
+    .config-field label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #6B7280;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .config-field input, .config-field select {
+      padding: 10px;
+      border: 1px solid #E5E7EB;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header with Quick Action -->
+    <div class="header">
+      <div class="header-left">
+        <h1>Customer Complaint Tracker</h1>
+        <p>Last run: 2 minutes ago • Next scheduled: In 6 hours</p>
+      </div>
+      <button class="quick-run-btn">
+        <span>▶</span> Run Now
+      </button>
+    </div>
+
+    <!-- Main Grid -->
+    <div class="grid">
+      <!-- Latest Result (Primary Focus) -->
+      <div class="result-card">
+        <div class="result-header">
+          <h2>📊 Latest Execution Results</h2>
+          <div class="result-badge">✓ Completed</div>
+        </div>
+
+        <div class="metrics-grid">
+          <div class="metric">
+            <div class="metric-value">8</div>
+            <div class="metric-label">Complaints</div>
+          </div>
+          <div class="metric">
+            <div class="metric-value">7.2s</div>
+            <div class="metric-label">Duration</div>
+          </div>
+          <div class="metric">
+            <div class="metric-value">2.1</div>
+            <div class="metric-label">Credits</div>
+          </div>
+          <div class="metric">
+            <div class="metric-value">100%</div>
+            <div class="metric-label">Success</div>
+          </div>
+        </div>
+
+        <div class="result-preview">
+          <h3>Processed Data</h3>
+          <div class="result-item">
+            <strong>From:</strong> customer@example.com<br>
+            <strong>Subject:</strong> Issue with recent order<br>
+            <strong>Status:</strong> Added to sheet
+          </div>
+          <div class="result-item">
+            <strong>From:</strong> user@domain.com<br>
+            <strong>Subject:</strong> Complaint about service<br>
+            <strong>Status:</strong> Added to sheet
+          </div>
+          <div class="result-item">
+            <strong>From:</strong> contact@business.com<br>
+            <strong>Subject:</strong> Problem with billing<br>
+            <strong>Status:</strong> Added to sheet
+          </div>
+        </div>
+      </div>
+
+      <!-- Execution History Sidebar -->
+      <div class="history-card">
+        <h2>⏱️ Recent Runs</h2>
+        <div class="history-item">
+          <div class="history-item-header">
+            <span class="history-time">2 min ago</span>
+            <span class="history-status">✓ Success</span>
+          </div>
+          <div class="history-summary">Found 8 complaints • 7.2s</div>
+        </div>
+        <div class="history-item">
+          <div class="history-item-header">
+            <span class="history-time">2 hours ago</span>
+            <span class="history-status">✓ Success</span>
+          </div>
+          <div class="history-summary">Found 12 complaints • 8.1s</div>
+        </div>
+        <div class="history-item">
+          <div class="history-item-header">
+            <span class="history-time">8 hours ago</span>
+            <span class="history-status">✓ Success</span>
+          </div>
+          <div class="history-summary">Found 5 complaints • 6.8s</div>
+        </div>
+        <div class="history-item">
+          <div class="history-item-header">
+            <span class="history-time">Yesterday</span>
+            <span class="history-status">✓ Success</span>
+          </div>
+          <div class="history-summary">Found 15 complaints • 9.2s</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Configuration Panel (Secondary, Collapsible) -->
+    <div class="config-panel">
+      <div class="config-header">
+        <h2>⚙️ Configuration (Click to modify)</h2>
+        <span class="toggle-icon">▼</span>
+      </div>
+      <div class="config-grid">
+        <div class="config-field">
+          <label>Email Address</label>
+          <input type="email" value="user@example.com" readonly>
+        </div>
+        <div class="config-field">
+          <label>Date Range</label>
+          <select disabled>
+            <option>Last 7 days</option>
+          </select>
+        </div>
+        <div class="config-field">
+          <label>Google Sheet</label>
+          <input type="text" value="Customer Complaints 2026" readonly>
+        </div>
+        <div class="config-field">
+          <label>Keywords</label>
+          <input type="text" value="complaint, issue, problem" readonly>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

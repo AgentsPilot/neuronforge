@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
@@ -44,7 +44,9 @@ import {
   ToggleLeft,
   List,
   ChevronDown,
-  AlignLeft
+  ChevronUp,
+  AlignLeft,
+  TrendingUp
 } from 'lucide-react'
 
 // Helper function to format complex data for non-technical users
@@ -197,6 +199,7 @@ export default function V2RunAgentPage() {
   const [loading, setLoading] = useState(true)
   const [executing, setExecuting] = useState(false)
   const [schemaMetadata, setSchemaMetadata] = useState<Record<string, any[]> | null>(null)
+  const [inputsExpanded, setInputsExpanded] = useState(false) // Collapsed by default for cleaner UI
 
   // Track if config has been loaded - initialize based on whether we loaded from sessionStorage
   const [configLoaded, setConfigLoaded] = useState(() => {
@@ -396,6 +399,73 @@ export default function V2RunAgentPage() {
   const [failedStepsLive, setFailedStepsLive] = useState<Set<string>>(new Set())
   const [liveStepOutputs, setLiveStepOutputs] = useState<Record<string, any>>({})
 
+  // Ref for auto-scrolling execution visualization
+  const executionVizRef = useRef<HTMLDivElement>(null)
+  const lastExecutingStepRef = useRef<string | null>(null)
+  const lastCompletedCountRef = useRef<number>(0)
+
+  // Auto-scroll to currently executing step - smooth and targeted
+  useEffect(() => {
+    if (!executionVizRef.current || !executing) return
+
+    // Find the currently executing step or the most recently completed step
+    const getTargetStepId = () => {
+      // Priority 1: Currently executing step
+      if (executingSteps.size > 0) {
+        return Array.from(executingSteps)[0]
+      }
+      // Priority 2: Most recently completed step
+      if (completedStepsLive.size > lastCompletedCountRef.current) {
+        // Find the step that was just completed by comparing with all steps
+        const allStepElements = executionVizRef.current.querySelectorAll('[data-step-id]')
+        for (const element of Array.from(allStepElements).reverse()) {
+          const stepId = element.getAttribute('data-step-id')
+          if (stepId && completedStepsLive.has(stepId)) {
+            return stepId
+          }
+        }
+      }
+      return null
+    }
+
+    const targetStepId = getTargetStepId()
+
+    if (targetStepId) {
+      // Update completed count tracker
+      if (completedStepsLive.size > lastCompletedCountRef.current) {
+        console.log('[Auto-scroll] Step completed:', {
+          previous: lastCompletedCountRef.current,
+          current: completedStepsLive.size,
+          diff: completedStepsLive.size - lastCompletedCountRef.current,
+          targetStep: targetStepId
+        })
+        lastCompletedCountRef.current = completedStepsLive.size
+      }
+
+      // Small delay to ensure DOM is updated
+      setTimeout(() => {
+        if (executionVizRef.current) {
+          const container = executionVizRef.current
+          const targetElement = container.querySelector(`[data-step-id="${targetStepId}"]`)
+
+          if (targetElement) {
+            const containerRect = container.getBoundingClientRect()
+            const elementRect = targetElement.getBoundingClientRect()
+            const relativeTop = elementRect.top - containerRect.top + container.scrollTop
+
+            // Scroll to center the step in view
+            const scrollTo = relativeTop - (container.clientHeight / 2) + (elementRect.height / 2)
+
+            container.scrollTo({
+              top: Math.max(0, scrollTo),
+              behavior: 'smooth'
+            })
+          }
+        }
+      }, 150)
+    }
+  }, [executingSteps, completedStepsLive.size, executing])
+
   // Clear stale execution limit errors when user has credits
   useEffect(() => {
     if (!user || !error) return
@@ -460,13 +530,15 @@ export default function V2RunAgentPage() {
 
       // Load configuration if found and not already loaded
       if (configData?.input_values) {
+        console.log('[Run Page] Found configuration data:', configData.input_values)
+
         // Use functional update to get current state
         setFormData(current => {
           const currentKeys = Object.keys(current).length
           if (currentKeys === 0) {
             // Filter out fields that are not in the current agent's input_schema
             // This prevents stale fields from old agent versions
-            const validFieldNames = new Set(agent?.input_schema?.map((f: any) => f.name) || [])
+            const validFieldNames = new Set(agentData.input_schema?.map((f: any) => f.name) || [])
             const filtered: Record<string, any> = {}
             for (const [key, value] of Object.entries(configData.input_values)) {
               if (validFieldNames.has(key)) {
@@ -486,6 +558,9 @@ export default function V2RunAgentPage() {
         })
       } else {
         console.log('[Run Page] No configuration data found in database for this agent')
+        if (configError) {
+          console.error('[Run Page] Configuration fetch error:', configError)
+        }
       }
     } catch (error) {
       console.error('Error fetching agent data:', error)
@@ -671,8 +746,23 @@ export default function V2RunAgentPage() {
       return null
     }
 
-    // Check if this field name matches any parameter with x-dynamic-options
-    const matchingParams = schemaMetadata[fieldName]
+    // First try exact match
+    let matchingParams = schemaMetadata[fieldName]
+
+    // If no exact match, try stripping common prefixes (source_, target_, etc.)
+    if (!matchingParams || matchingParams.length === 0) {
+      const prefixes = ['source_', 'target_', 'input_', 'output_', 'from_', 'to_']
+      for (const prefix of prefixes) {
+        if (fieldName.startsWith(prefix)) {
+          const baseFieldName = fieldName.substring(prefix.length)
+          matchingParams = schemaMetadata[baseFieldName]
+          if (matchingParams && matchingParams.length > 0) {
+            console.log('[getDynamicOptions] Matched prefixed field:', fieldName, '->', baseFieldName)
+            break
+          }
+        }
+      }
+    }
 
     if (matchingParams && matchingParams.length > 0) {
       // Found a match! Use the first one (most plugins will have unique parameter names)
@@ -703,6 +793,7 @@ export default function V2RunAgentPage() {
     setCompletedStepsLive(new Set())
     setFailedStepsLive(new Set())
     setLiveStepOutputs({})
+    lastCompletedCountRef.current = 0 // Reset counter for new execution
 
     try {
       const startTime = Date.now()
@@ -763,6 +854,14 @@ export default function V2RunAgentPage() {
                 if (eventType === 'step_started') {
                   setExecutingSteps(prev => new Set(prev).add(data.stepId))
                 } else if (eventType === 'step_completed') {
+                  console.log('[SSE] step_completed event:', {
+                    stepId: data.stepId,
+                    hasOutput: data.output !== undefined,
+                    outputType: typeof data.output,
+                    outputKeys: data.output && typeof data.output === 'object' ? Object.keys(data.output) : [],
+                    fullData: data
+                  })
+
                   setExecutingSteps(prev => {
                     const updated = new Set(prev)
                     updated.delete(data.stepId)
@@ -771,10 +870,13 @@ export default function V2RunAgentPage() {
                   setCompletedStepsLive(prev => new Set(prev).add(data.stepId))
                   // Store step output if available
                   if (data.output !== undefined) {
+                    console.log('[SSE] Storing output for', data.stepId, ':', data.output)
                     setLiveStepOutputs(prev => ({
                       ...prev,
                       [data.stepId]: data.output
                     }))
+                  } else {
+                    console.warn('[SSE] No output provided for step', data.stepId)
                   }
                 } else if (eventType === 'step_failed') {
                   setExecutingSteps(prev => {
@@ -820,7 +922,7 @@ export default function V2RunAgentPage() {
       const requestBody = {
         agent_id: agent.id,
         input_variables: formData,
-        execution_type: 'test',
+        execution_type: 'run',
         use_queue: false,
         session_id: sessionId, // Pass sessionId for SSE correlation
       }
@@ -937,993 +1039,651 @@ export default function V2RunAgentPage() {
 
 
   return (
-    <div className="space-y-4 sm:space-y-5 lg:space-y-6">
-      {/* Logo - First Line */}
-      <div className="mb-3">
-        <V2Logo />
-      </div>
+    <div className="min-h-screen" style={{ background: 'var(--v2-background)' }}>
+      <div className="max-w-[1400px] mx-auto p-4">
+        {/* Logo */}
+        <div className="mb-3">
+          <V2Logo />
+        </div>
 
-      {/* Back Button + Controls */}
-      <div className="flex items-center justify-between">
-        <button
-          onClick={() => router.push(`/v2/agents/${agentId}`)}
-          className="inline-flex items-center gap-2 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:scale-105 transition-all duration-200 text-sm font-medium shadow-[var(--v2-shadow-card)]"
-          style={{ borderRadius: 'var(--v2-radius-button)' }}
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back to Agent
-        </button>
-        <V2Controls />
-      </div>
+        {/* Back Button + Controls */}
+        <div className="flex items-center justify-between mb-4">
+          <button
+            onClick={() => router.push(`/v2/agents/${agentId}`)}
+            className="inline-flex items-center gap-2 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] transition-all duration-200 text-sm font-medium shadow-[var(--v2-shadow-card)]"
+            style={{ borderRadius: 'var(--v2-radius-button)' }}
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back to Agent
+          </button>
+          <V2Controls />
+        </div>
 
-      {/* Main Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr] gap-4 sm:gap-5 lg:gap-6 items-center">
-        {/* Left Column - Input Form */}
-        <Card className="!p-4 sm:!p-6">
-          <div className="flex items-center gap-2 mb-6">
-            <Play className="w-5 h-5 text-[var(--v2-primary)]" />
-            <div>
-              <h2 className="text-lg font-semibold text-[var(--v2-text-primary)]">
-                Run {agent.agent_name}
-              </h2>
-              <p className="text-xs text-[var(--v2-text-muted)]">
-                Configure inputs and execute agent
+        {/* Agent Info Card */}
+        <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] p-5 mb-4" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+          <div className="flex items-center gap-3">
+            <Bot className="w-8 h-8 text-[var(--v2-primary)] flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <h1 className="text-lg font-semibold text-[var(--v2-text-primary)] mb-0.5">
+                {agent.agent_name}
+              </h1>
+              <p className="text-sm text-[var(--v2-text-secondary)]">
+                {agent.description || 'No description provided'}
               </p>
             </div>
           </div>
+        </div>
 
-          {/* Agent Status Warning */}
-          {agent.status !== 'active' && (
-            <div className="mb-6 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                <p className="text-sm text-amber-700 dark:text-amber-300">
-                  This agent is not active. Activate it from the agent details page.
+        {/* Split-Screen Container */}
+        <div className="grid grid-cols-[400px_1fr] gap-4">
+
+          {/* LEFT PANEL - Input Form with Button Below */}
+          <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] flex flex-col h-[700px]" style={{ borderRadius: 'var(--v2-radius-panel)' }}>
+            {/* Panel Header - Fixed */}
+            <div className="px-6 py-6 border-b border-[var(--v2-border)] flex-shrink-0">
+                <h2 className="text-lg font-semibold text-[var(--v2-text-primary)] mb-1">
+                  Setup Your Workflow
+                </h2>
+                <p className="text-[13px] text-[var(--v2-text-muted)]">
+                  Provide the information needed to run
                 </p>
               </div>
-            </div>
-          )}
 
-          {/* Input Form */}
-          <div className="space-y-4">
-            {safeInputSchema.length === 0 ? (
-              <div className="text-center py-8">
-                <Sparkles className="w-12 h-12 text-[var(--v2-primary)] opacity-20 mx-auto mb-3" />
-                <p className="text-sm text-[var(--v2-text-muted)]">
-                  No inputs required. Just click Run!
-                </p>
-              </div>
-            ) : (
-              safeInputSchema.map((field) => (
-                <div key={field.name}>
-                  <label className="block">
-                    <div className="flex items-center gap-1.5 mb-1.5">
-                      <span className="text-sm font-medium text-[var(--v2-text-primary)]">
-                        {field.label || formatFieldName(field.name)}
-                      </span>
-                      {field.required && (
-                        <span className="text-red-500 dark:text-red-400 text-sm">*</span>
-                      )}
-                    </div>
+              {/* Form Content - Scrollable */}
+              <div className="px-5 py-5 flex-1 overflow-y-auto">
+              {/* Agent Status Warning */}
+              {agent.status !== 'active' && (
+                <div className="mb-5 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                    <p className="text-sm text-amber-700 dark:text-amber-300">
+                      This agent is not active. Activate it from the agent details page.
+                    </p>
+                  </div>
+                </div>
+              )}
 
-                    {/* Description */}
+              {/* Input Form */}
+              {safeInputSchema.length === 0 ? (
+                <div className="text-center py-12">
+                  <Sparkles className="w-12 h-12 text-[var(--v2-primary)] opacity-20 mx-auto mb-3" />
+                  <p className="text-sm text-[var(--v2-text-muted)]">
+                    No inputs required. Just click Run!
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-5">
+                {safeInputSchema.map((field) => (
+                  <div key={field.name} className="mb-5">
+                    <label className="block text-[13px] font-medium text-[var(--v2-text-secondary)] mb-1.5">
+                      {field.label || formatFieldName(field.name)}
+                      {field.required && <span className="text-red-500 ml-1">*</span>}
+                    </label>
                     {field.description && (
                       <p className="text-xs text-[var(--v2-text-muted)] mb-2">
                         {field.description}
                       </p>
                     )}
-
                     {/* Input Field with Help Button */}
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1">
-                        {(() => {
-                          // Check if this field should use dynamic dropdown
-                          const dynamicOptions = getDynamicOptionsForInput(field.name)
-
-                          if (dynamicOptions) {
-                            // Build dependent values object from formData if this field has dependencies
-                            const dependentValues: Record<string, any> = {}
-                            if (dynamicOptions.depends_on && Array.isArray(dynamicOptions.depends_on)) {
-                              dynamicOptions.depends_on.forEach((depField: string) => {
-                                if (formData[depField]) {
-                                  dependentValues[depField] = formData[depField]
-                                }
-                              })
-                            }
-
-                            console.log('[Agent Run Page] Rendering DynamicSelectField:', {
-                              field: field.name,
-                              dynamicOptions,
-                              dependentValues,
-                              formData
-                            })
-
-                            // Use DynamicSelectField for fields with dynamic options
-                            return (
-                              <DynamicSelectField
-                                plugin={dynamicOptions.plugin}
-                                action={dynamicOptions.action}
-                                parameter={dynamicOptions.parameter}
-                                value={formData[field.name] || ''}
-                                onChange={(value) => handleInputChange(field.name, value)}
-                                required={field.required}
-                                placeholder={field.placeholder || `Select ${formatFieldName(field.name).toLowerCase()}...`}
-                                className="w-full px-3 py-2 border text-sm focus:outline-none focus:ring-1"
-                                style={{ borderRadius: 'var(--v2-radius-button)' }}
-                                dependentValues={dependentValues}
-                              />
-                            )
-                          } else if (field.type === 'select' || field.type === 'enum') {
-                            // Use regular select for static options
-                            return (
-                              <select
-                                value={formData[field.name] || ''}
-                                onChange={(e) => handleInputChange(field.name, e.target.value)}
-                                className="w-full px-3 py-2 border text-sm focus:outline-none focus:ring-1 bg-[var(--v2-surface)] border-[var(--v2-border)] focus:ring-[var(--v2-primary)] focus:border-[var(--v2-primary)] text-[var(--v2-text-primary)]"
-                                style={{ borderRadius: 'var(--v2-radius-button)' }}
-                                required={field.required}
-                              >
-                                <option value="">
-                                  {field.placeholder || 'Select an option...'}
-                                </option>
-                                {(field.options || field.enum || []).map((option) => (
-                                  <option key={option} value={option}>
-                                    {option}
-                                  </option>
-                                ))}
-                              </select>
-                            )
-                          } else {
-                            // Use regular input for text/number/date/etc.
-                            return (
-                              <input
-                                type={
-                                  field.type === 'number' ? 'number' :
-                                  field.type === 'date' ? 'date' :
-                                  field.type === 'email' ? 'email' :
-                                  field.type === 'time' ? 'time' :
-                                  'text'
-                                }
-                                value={formData[field.name] || ''}
-                                onChange={(e) => handleInputChange(field.name, e.target.value)}
-                                placeholder={field.placeholder || `Enter ${formatFieldName(field.name).toLowerCase()}...`}
-                                required={field.required}
-                                className="w-full px-3 py-2 border text-sm focus:outline-none focus:ring-1 bg-[var(--v2-surface)] border-[var(--v2-border)] focus:ring-[var(--v2-primary)] focus:border-[var(--v2-primary)] text-[var(--v2-text-primary)] placeholder-[var(--v2-text-muted)]"
-                                style={{ borderRadius: 'var(--v2-radius-button)' }}
-                              />
-                            )
-                          }
-                        })()}
-                      </div>
-
-                      {/* InputHelpButton */}
-                      <div className="flex-shrink-0">
-                        <InputHelpButton
-                          agentId={agent.id}
-                          fieldName={field.name}
-                          plugin={inferPluginFromFieldName(field.name)}
-                          expectedType={field.type}
-                          onClick={() => openChatbot({
-                            mode: 'input_help',
-                            agentId: agent.id,
-                            fieldName: field.name,
-                            fieldLabel: field.label || formatFieldName(field.name),
-                            plugin: inferPluginFromFieldName(field.name),
-                            expectedType: field.type
-                          })}
-                        />
-                      </div>
-                    </div>
-                  </label>
-                </div>
-              ))
-            )}
-
-            {/* Save Message */}
-            {saveMessage && (
-              <div
-                className={`p-3 border ${
-                  saveMessage.type === 'success'
-                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
-                    : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
-                }`}
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              >
-                <div className="flex items-center gap-2">
-                  {saveMessage.type === 'success' ? (
-                    <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-400" />
-                  ) : (
-                    <XCircle className="w-4 h-4 text-red-600 dark:text-red-400" />
-                  )}
-                  <p className={`text-sm ${
-                    saveMessage.type === 'success'
-                      ? 'text-green-700 dark:text-green-300'
-                      : 'text-red-700 dark:text-red-300'
-                  }`}>
-                    {saveMessage.text}
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Save and Run Buttons */}
-            <div className="flex flex-col gap-2">
-              <div className="flex gap-3">
-                {/* Save Inputs Button */}
-                <button
-                  onClick={handleSaveInputs}
-                  disabled={saving || !isFormValid()}
-                  className="flex-1 px-6 py-3 bg-[var(--v2-surface)] border-2 border-[var(--v2-primary)] text-[var(--v2-primary)] font-semibold hover:bg-[var(--v2-primary)] hover:text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  {saving ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      <Settings className="w-5 h-5" />
-                      Save Inputs
-                    </>
-                  )}
-                </button>
-
-                {/* Run Button */}
-                <button
-                  onClick={handleRun}
-                  disabled={executing || agent.status !== 'active' || !isFormValid()}
-                  className="flex-1 px-6 py-3 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white font-semibold hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  {executing ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Running Agent...
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-5 h-5" />
-                      Run Agent
-                    </>
-                  )}
-                </button>
-              </div>
-
-              {/* Reload Configuration Button - for debugging */}
-              <button
-                onClick={async () => {
-                  // Clear sessionStorage and reload from DB
-                  sessionStorage.removeItem(`runPage_formData_${agentId}`)
-                  setConfigLoaded(false) // Reset the flag
-                  setFormData({}) // Clear current form data
-                  await fetchAgentData()
-                }}
-                className="text-xs px-3 py-1.5 text-[var(--v2-text-secondary)] hover:text-[var(--v2-primary)] transition-colors"
-              >
-                Reload saved configuration
-              </button>
-            </div>
-          </div>
-        </Card>
-
-        {/* Arrow between cards - hidden on mobile */}
-        <div className="hidden lg:flex items-center justify-center">
-          <ArrowRight className="w-6 h-6 text-[var(--v2-primary)]" />
-        </div>
-
-        {/* Right Column - Results */}
-        <Card className="!p-4 sm:!p-6">
-          <div className="flex items-center gap-2 mb-6">
-            <Sparkles className="w-5 h-5 text-[var(--v2-primary)]" />
-            <div>
-              <h2 className="text-lg font-semibold text-[var(--v2-text-primary)]">
-                Results
-              </h2>
-              <p className="text-xs text-[var(--v2-text-muted)]">
-                Execution output and status
-              </p>
-            </div>
-          </div>
-
-          {/* Results Section */}
-          {error ? (
-            <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-              <div className="flex items-start gap-3">
-                <XCircle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <h4 className="text-sm font-semibold text-red-900 dark:text-red-100 mb-1">
-                    Execution Failed
-                  </h4>
-                  <p className="text-sm text-red-700 dark:text-red-300 mb-3">
-                    {error}
-                  </p>
-                  {(error.includes('execution limit') || error.includes('Upgrade your plan') || error.includes('insufficient') || error.includes('quota')) && (
-                    <button
-                      onClick={() => router.push('/v2/billing')}
-                      className="px-4 py-2 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white text-sm font-semibold hover:scale-105 transition-all shadow-[var(--v2-shadow-button)] flex items-center gap-2"
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    >
-                      <CreditCard className="w-4 h-4" />
-                      Go to Billing
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          ) : result ? (
-            <div className="space-y-4">
-              {/* Success Banner */}
-              <div
-                className="p-4 border"
-                style={{
-                  borderRadius: 'var(--v2-radius-button)',
-                  backgroundColor: 'var(--v2-status-success-bg)',
-                  borderColor: 'var(--v2-status-success-border)'
-                }}>
-                <div className="flex items-center gap-3">
-                  <CheckCircle className="w-5 h-5 text-green-600 dark:text-green-400" />
-                  <h4 className="text-sm font-semibold" style={{ color: 'var(--v2-status-success-text)' }}>
-                    Execution Completed Successfully
-                  </h4>
-                </div>
-              </div>
-
-              {result.agentkit || result.pilot ? (
-                // AgentKit or Pilot execution - display the message and metrics
-                <>
-                  {/* Step Results - Individual Cards */}
-                  {result.pilot && result.data && agent.pilot_steps && (
-                    <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4 flex flex-col" style={{ borderRadius: 'var(--v2-radius-button)', maxHeight: '600px' }}>
-                      {/* Static Header */}
-                      <div className="text-xs font-semibold text-[var(--v2-text-muted)] mb-4 uppercase tracking-wide flex items-center gap-2 flex-shrink-0">
-                        <Layers className="w-4 h-4" />
-                        Step Results
-                      </div>
-
-                      {/* Static Execution Summary Bar */}
-                      <div className="mb-4 p-3 bg-[var(--v2-bg)] dark:bg-slate-800 border border-[var(--v2-border)] rounded-lg flex-shrink-0">
-                        <div className="grid grid-cols-4 gap-4">
-                          <div>
-                            <div className="text-[10px] text-[var(--v2-text-muted)] uppercase tracking-wide mb-1">Total Time</div>
-                            <div className="text-sm font-semibold text-[var(--v2-text-primary)]">
-                              {((result.data.execution_time_ms || result.execution_duration_ms || 0) / 1000).toFixed(2)}s
-                            </div>
-                          </div>
-                          <div>
-                            <div className="text-[10px] text-[var(--v2-text-muted)] uppercase tracking-wide mb-1">Completed</div>
-                            <div className="text-sm font-semibold text-green-600 dark:text-green-400">
-                              {result.data.stepsCompleted || 0} steps
-                            </div>
-                          </div>
-                          <div>
-                            <div className="text-[10px] text-[var(--v2-text-muted)] uppercase tracking-wide mb-1">Credits Used</div>
-                            <div className="text-sm font-semibold text-[var(--v2-text-primary)]">
-                              {Math.round((result.data.totalTokensUsed || 0) / 10).toLocaleString()}
-                            </div>
-                          </div>
-                          <div>
-                            <div className="text-[10px] text-[var(--v2-text-muted)] uppercase tracking-wide mb-1">Execution ID</div>
-                            <div className="flex items-center gap-1.5">
-                              <div className="text-xs font-mono text-[var(--v2-text-primary)] truncate" title={result.data.executionId}>
-                                {result.data.executionId ? result.data.executionId.substring(0, 12) + '...' : 'N/A'}
-                              </div>
-                              {result.data.executionId && (
-                                <button
-                                  onClick={async () => {
-                                    try {
-                                      await navigator.clipboard.writeText(result.data.executionId)
-                                      setCopiedExecutionId(true)
-                                      setTimeout(() => setCopiedExecutionId(false), 2000)
-                                    } catch (err) {
-                                      console.error('Failed to copy:', err)
-                                    }
-                                  }}
-                                  className="p-1 hover:bg-[var(--v2-bg)] rounded transition-colors"
-                                  title="Copy Execution ID"
-                                >
-                                  {copiedExecutionId ? (
-                                    <Check className="w-3 h-3 text-green-600 dark:text-green-400" />
-                                  ) : (
-                                    <Copy className="w-3 h-3 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]" />
-                                  )}
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Scrollable Step Results Container */}
-                      <div className="space-y-3 overflow-y-auto pr-2" style={{ scrollbarGutter: 'stable' }}>
-                        {(() => {
-                          // Flatten all steps including nested ones (conditionals, loops)
-                          const flattenSteps = (steps: any[]): any[] => {
-                            const flattened: any[] = []
-                            for (const step of steps) {
-                              flattened.push(step)
-                              // Add nested steps from conditionals
-                              if (step.then_steps) {
-                                flattened.push(...flattenSteps(step.then_steps))
-                              }
-                              if (step.else_steps) {
-                                flattened.push(...flattenSteps(step.else_steps))
-                              }
-                              // Add nested steps from loops/scatter-gather
-                              if (step.steps) {
-                                flattened.push(...flattenSteps(step.steps))
-                              }
-                              if (step.scatter?.steps) {
-                                flattened.push(...flattenSteps(step.scatter.steps))
-                              }
-                            }
-                            return flattened
-                          }
-
-                          const steps = flattenSteps(agent.pilot_steps || [])
-                          const completedIds = new Set(result.data.completedStepIds || [])
-                          const failedIds = new Set(result.data.failedStepIds || [])
-                          const output = result.data.output || {}
-                          const totalTime = result.data.execution_time_ms || result.execution_duration_ms || 0
-                          const completedCount = result.data.stepsCompleted || 0
-                          // Estimate time per step (rough approximation)
-                          const avgTimePerStep = completedCount > 0 ? totalTime / completedCount : 0
-
-                          // Debug: log what we have
-                          console.log('[Step Results] All steps:', steps.map(s => ({ id: s.id, name: s.name || s.action, type: s.type })))
-                          console.log('[Step Results] Completed IDs:', Array.from(completedIds))
-                          console.log('[Step Results] Failed IDs:', Array.from(failedIds))
-                          console.log('[Step Results] Output keys:', Object.keys(output))
-                          console.log('[Step Results] Full output object:', JSON.stringify(output, null, 2))
-                          console.log('[Step Results] Agent pilot_steps structure:', JSON.stringify(agent.pilot_steps, null, 2))
-
-                          return steps.map((step: any) => {
-                            // Check if step has output data (means it was executed)
-                            let stepData = output[step.id]
-                            let hasOutput = stepData !== undefined && stepData !== null
-
-                            // For nested steps, check if their data is stored in parent step results
-                            if (!hasOutput) {
-                              // Find parent step (conditional or scatter-gather that contains this step)
-                              const findStepInParent = (parentStep: any): boolean => {
-                                // Check conditional branches (then_steps)
-                                const thenStepIndex = parentStep.then_steps?.findIndex((s: any) => s.id === step.id)
-                                if (thenStepIndex !== undefined && thenStepIndex >= 0) {
-                                  const parentData = output[parentStep.id]
-                                  if (parentData?.branchResults && Array.isArray(parentData.branchResults)) {
-                                    // branchResults is an array where each element corresponds to a step in the branch
-                                    // Get the result at the same index as the step in then_steps
-                                    const branchResult = parentData.branchResults[thenStepIndex]
-                                    if (branchResult !== undefined && branchResult !== null) {
-                                      stepData = branchResult
-                                      return true
-                                    }
-                                  }
-                                }
-
-                                // Check conditional branches (else_steps)
-                                const elseStepIndex = parentStep.else_steps?.findIndex((s: any) => s.id === step.id)
-                                if (elseStepIndex !== undefined && elseStepIndex >= 0) {
-                                  const parentData = output[parentStep.id]
-                                  if (parentData?.branchResults && Array.isArray(parentData.branchResults)) {
-                                    const branchResult = parentData.branchResults[elseStepIndex]
-                                    if (branchResult !== undefined && branchResult !== null) {
-                                      stepData = branchResult
-                                      return true
-                                    }
-                                  }
-                                }
-
-                                // Check scatter-gather
-                                if (parentStep.type === 'scatter_gather') {
-                                  const parentData = output[parentStep.id]
-                                  if (Array.isArray(parentData)) {
-                                    // First, check if step is directly in scatter-gather results
-                                    const stepResults = parentData
-                                      .filter((item: any) => typeof item === 'object' && item !== null && step.id in item)
-                                      .map((item: any) => item[step.id])
-
-                                    if (stepResults.length > 0) {
-                                      // If there are multiple iterations, aggregate the results
-                                      stepData = stepResults.length === 1 ? stepResults[0] : stepResults
-                                      return true
-                                    }
-
-                                    // Also check for nested steps inside conditionals within scatter-gather
-                                    // e.g., scatter → conditional → action steps
-                                    const nestedSteps = parentStep.steps || parentStep.scatter?.steps || []
-                                    console.log(`[DEBUG] Checking nested steps in scatter-gather ${parentStep.id} for step ${step.id}, found ${nestedSteps.length} nested steps`)
-
-                                    for (const nestedStep of nestedSteps) {
-                                      if (nestedStep.type === 'conditional') {
-                                        console.log(`[DEBUG] Found conditional ${nestedStep.id} inside scatter-gather, checking branches for step ${step.id}`)
-
-                                        // Check if our step is in this conditional's branches
-                                        const thenIdx = nestedStep.then_steps?.findIndex((s: any) => s.id === step.id)
-                                        const elseIdx = nestedStep.else_steps?.findIndex((s: any) => s.id === step.id)
-
-                                        console.log(`[DEBUG] Step ${step.id} in then_steps? ${thenIdx >= 0 ? 'YES at index ' + thenIdx : 'NO'}, in else_steps? ${elseIdx >= 0 ? 'YES at index ' + elseIdx : 'NO'}`)
-
-                                        if (thenIdx >= 0 || elseIdx >= 0) {
-                                          // Collect results from all iterations
-                                          const nestedResults = parentData
-                                            .filter((item: any) => typeof item === 'object' && item !== null && nestedStep.id in item)
-                                            .map((item: any) => {
-                                              const conditionalResult = item[nestedStep.id]
-                                              console.log(`[DEBUG] Conditional result for ${nestedStep.id}:`, conditionalResult)
-
-                                              if (conditionalResult?.branchResults && Array.isArray(conditionalResult.branchResults)) {
-                                                console.log(`[DEBUG] branchResults:`, conditionalResult.branchResults)
-                                                // branchResults contains objects with stepId field - find by stepId
-                                                const result = conditionalResult.branchResults.find((r: any) => r?.stepId === step.id)
-                                                console.log(`[DEBUG] Found result for step ${step.id}:`, result)
-                                                return result
-                                              }
-                                              return null
-                                            })
-                                            .filter((r: any) => r !== null && r !== undefined)
-
-                                          console.log(`[DEBUG] nestedResults for step ${step.id}:`, nestedResults)
-
-                                          if (nestedResults.length > 0) {
-                                            stepData = nestedResults.length === 1 ? nestedResults[0] : nestedResults
-                                            console.log(`[DEBUG] SUCCESS! Found stepData for ${step.id}:`, stepData)
-                                            return true
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                                return false
-                              }
-
-                              // Recursively search all steps (including nested ones) for parent
-                              const searchSteps = (stepsToSearch: any[]): boolean => {
-                                for (const topStep of stepsToSearch) {
-                                  if (findStepInParent(topStep)) {
-                                    hasOutput = true
-                                    return true
-                                  }
-                                  // Also search within nested steps
-                                  if (topStep.steps && searchSteps(topStep.steps)) return true
-                                  if (topStep.scatter?.steps && searchSteps(topStep.scatter.steps)) return true
-                                  if (topStep.then_steps && searchSteps(topStep.then_steps)) return true
-                                  if (topStep.else_steps && searchSteps(topStep.else_steps)) return true
-                                }
-                                return false
-                              }
-
-                              searchSteps(agent.pilot_steps || [])
-                            }
-
-                            // A step is completed if it's in completedIds OR has output data (and not failed)
-                            const isFailed = failedIds.has(step.id)
-                            const isCompleted = completedIds.has(step.id) || (hasOutput && !isFailed)
-
-                            console.log(`[Step ${step.id} "${step.name || step.action}"] isCompleted:${isCompleted}, isFailed:${isFailed}, hasOutput:${hasOutput}, stepData:`, stepData)
-
-                            // Don't skip ANY steps - show them all with their actual status
-                            // If not completed and not failed, they'll show as pending which is accurate
-                            // if (!isCompleted && !isFailed) return null
-
-                            // Get step stats
-                            const getStepStats = () => {
-                              if (!stepData) return null
-
-                              // For arrays, show count
-                              if (Array.isArray(stepData)) {
-                                return `${stepData.length} item${stepData.length !== 1 ? 's' : ''}`
-                              }
-
-                              // For objects, check for common fields
-                              if (typeof stepData === 'object') {
-                                // Check if it's a result wrapper
-                                if (stepData.result !== undefined) {
-                                  if (Array.isArray(stepData.result)) {
-                                    return `${stepData.result.length} item${stepData.result.length !== 1 ? 's' : ''}`
-                                  }
-                                  if (typeof stepData.result === 'object' && stepData.result !== null) {
-                                    // Check for common data fields
-                                    const dataKeys = Object.keys(stepData.result)
-                                    for (const key of dataKeys) {
-                                      const value = stepData.result[key]
-                                      if (Array.isArray(value)) {
-                                        return `${value.length} ${key.replace(/_/g, ' ')}`
-                                      }
-                                    }
-                                  }
-                                }
-
-                                // Check top-level fields
-                                const keys = Object.keys(stepData)
-                                for (const key of keys) {
-                                  const value = stepData[key]
-                                  if (Array.isArray(value)) {
-                                    return `${value.length} ${key.replace(/_/g, ' ')}`
-                                  }
-                                }
-
-                                // Check for success/message fields
-                                if (stepData.success === true || stepData.success === 'true') {
-                                  return 'Completed'
-                                }
-                                if (stepData.message) {
-                                  return String(stepData.message).substring(0, 50)
-                                }
-                              }
-
-                              // For strings or other types
-                              if (typeof stepData === 'string') {
-                                return stepData.substring(0, 50)
-                              }
-
-                              return 'Completed'
-                            }
-
-                            const stats = getStepStats()
-
-                            return (
-                              <div
-                                key={step.id}
-                                className={`p-3 border rounded-lg ${
-                                  isFailed
-                                    ? 'bg-[var(--v2-status-error-bg)] border-[var(--v2-status-error-border)]'
-                                    : isCompleted
-                                    ? 'bg-[var(--v2-status-success-bg)] border-[var(--v2-status-success-border)]'
-                                    : 'bg-[var(--v2-bg)] border-[var(--v2-border)]'
-                                }`}
-                              >
-                                {/* Main row with icon, name, and status badge */}
-                                <div className="flex items-start justify-between gap-3 mb-2">
-                                  <div className="flex items-start gap-2 flex-1 min-w-0">
-                                    {isFailed ? (
-                                      <XCircle className="w-5 h-5 text-[var(--v2-status-error-border)] flex-shrink-0 mt-0.5" />
-                                    ) : isCompleted ? (
-                                      <CheckCircle className="w-5 h-5 text-[var(--v2-status-success-border)] flex-shrink-0 mt-0.5" />
-                                    ) : (
-                                      <Clock className="w-5 h-5 text-[var(--v2-text-muted)] flex-shrink-0 mt-0.5" />
-                                    )}
-                                    <div className="flex-1 min-w-0">
-                                      <div
-                                        className={`font-semibold text-sm mb-0.5 ${
-                                          isFailed
-                                            ? 'text-[var(--v2-status-error-text)]'
-                                            : isCompleted
-                                            ? 'text-[var(--v2-status-success-text)]'
-                                            : 'text-[var(--v2-text-muted)]'
-                                        }`}
-                                      >
-                                        {step.name || step.action || `Step ${step.id}`}
-                                      </div>
-                                      {stats && (
-                                        <div className="text-xs text-[var(--v2-text-secondary)] font-medium">
-                                          {stats}
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                  {/* Only show status badge for completed or failed steps */}
-                                  {(isCompleted || isFailed) && (
-                                    <div
-                                      className={`text-xs font-medium px-2 py-1 rounded flex-shrink-0 ${
-                                        isFailed
-                                          ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
-                                          : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
-                                      }`}
-                                    >
-                                      {isFailed ? 'Failed' : 'Success'}
-                                    </div>
-                                  )}
-                                </div>
-
-                                {/* Step metadata row */}
-                                {(isCompleted || isFailed) && (step.plugin || (step.type && step.type !== 'action')) && (
-                                  <div className="flex items-center gap-4 text-[10px] text-[var(--v2-text-muted)] pl-7">
-                                    {step.plugin && (
-                                      <div className="flex items-center gap-1">
-                                        <Zap className="w-3 h-3" />
-                                        <span className="capitalize">{step.plugin.replace(/-/g, ' ')}</span>
-                                      </div>
-                                    )}
-                                    {step.type && step.type !== 'action' && (
-                                      <div className="flex items-center gap-1">
-                                        <span className="capitalize">{step.type.replace(/_/g, ' ')}</span>
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            )
-                          })
-                        })()}
-                      </div>
-                      {/* End Scrollable Step Results Container */}
-
-                      <div className="mt-3 text-xs text-[var(--v2-text-muted)] flex-shrink-0">
-                        View detailed data in Sandbox mode
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Message Display (for non-pilot or AgentKit) */}
-                  {result.message && !result.pilot && (
-                    <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-                      <div className="prose prose-sm max-w-none dark:prose-invert">
-                        <div className="whitespace-pre-wrap text-[var(--v2-text-primary)] text-sm leading-relaxed">
+                    <div className="flex items-start gap-2">
+                        <div className="flex-1">
                           {(() => {
-                            const message = result.message || 'Execution completed successfully';
-                            // Clean up message - remove detailed lists after summary
-                            const summaryMarkers = [
-                              'Here are the main points included in the summary:',
-                              'Here are the key points:',
-                              'Here\'s what was included:',
-                              '\n\n-',
-                              '\n\n*',
-                              '\n\n1.',
-                              '\n\n#'
-                            ];
+                            // Check if this field should use dynamic dropdown
+                            const dynamicOptions = getDynamicOptionsForInput(field.name)
 
-                            let cleanedMessage = message;
-                            for (const marker of summaryMarkers) {
-                              const idx = message.indexOf(marker);
-                              if (idx > 0) {
-                                cleanedMessage = message.substring(0, idx).trim();
-                                break;
+                            if (dynamicOptions) {
+                              // Build dependent values object from formData if this field has dependencies
+                              const dependentValues: Record<string, any> = {}
+                              if (dynamicOptions.depends_on && Array.isArray(dynamicOptions.depends_on)) {
+                                dynamicOptions.depends_on.forEach((depField: string) => {
+                                  // First try exact match
+                                  if (formData[depField]) {
+                                    dependentValues[depField] = formData[depField]
+                                  } else {
+                                    // If no exact match, try finding prefixed versions
+                                    // e.g., if looking for "spreadsheet_id", check "source_spreadsheet_id", "target_spreadsheet_id", etc.
+                                    const prefixes = ['source_', 'target_', 'input_', 'output_', 'from_', 'to_']
+                                    for (const prefix of prefixes) {
+                                      const prefixedFieldName = `${prefix}${depField}`
+                                      if (formData[prefixedFieldName]) {
+                                        dependentValues[depField] = formData[prefixedFieldName]
+                                        console.log('[Agent Run Page] Found prefixed dependency:', prefixedFieldName, '->', depField)
+                                        break
+                                      }
+                                    }
+                                  }
+                                })
                               }
-                            }
 
-                            return cleanedMessage;
+                              console.log('[Agent Run Page] Rendering DynamicSelectField:', {
+                                field: field.name,
+                                dynamicOptions,
+                                dependentValues,
+                                formData
+                              })
+
+                              // Use DynamicSelectField for fields with dynamic options
+                              return (
+                                <DynamicSelectField
+                                  plugin={dynamicOptions.plugin}
+                                  action={dynamicOptions.action}
+                                  parameter={dynamicOptions.parameter}
+                                  value={formData[field.name] || ''}
+                                  onChange={(value) => handleInputChange(field.name, value)}
+                                  required={field.required}
+                                  placeholder={field.placeholder || `Select ${formatFieldName(field.name).toLowerCase()}...`}
+                                  className="w-full px-3 py-2 border text-sm focus:outline-none focus:ring-1"
+                                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                  dependentValues={dependentValues}
+                                />
+                              )
+                            } else if (field.type === 'select' || field.type === 'enum') {
+                              // Use regular select for static options
+                              return (
+                                <select
+                                  value={formData[field.name] || ''}
+                                  onChange={(e) => handleInputChange(field.name, e.target.value)}
+                                  className="w-full px-3 py-2.5 border border-[var(--v2-border)] text-sm focus:outline-none focus:border-[var(--v2-primary)] focus:ring-2 focus:ring-[var(--v2-primary)]/10 bg-[var(--v2-surface)] text-[var(--v2-text-primary)] transition-all"
+                                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                  required={field.required}
+                                >
+                                  <option value="">
+                                    {field.placeholder || 'Select an option...'}
+                                  </option>
+                                  {(field.options || field.enum || []).map((option) => (
+                                    <option key={option} value={option}>
+                                      {option}
+                                    </option>
+                                  ))}
+                                </select>
+                              )
+                            } else {
+                              // Use regular input for text/number/date/etc.
+                              return (
+                                <input
+                                  type={
+                                    field.type === 'number' ? 'number' :
+                                    field.type === 'date' ? 'date' :
+                                    field.type === 'email' ? 'email' :
+                                    field.type === 'time' ? 'time' :
+                                    'text'
+                                  }
+                                  value={formData[field.name] || ''}
+                                  onChange={(e) => handleInputChange(field.name, e.target.value)}
+                                  placeholder={field.placeholder || `Enter ${formatFieldName(field.name).toLowerCase()}...`}
+                                  required={field.required}
+                                  className="w-full px-3 py-2.5 border border-[var(--v2-border)] text-sm focus:outline-none focus:border-[var(--v2-primary)] focus:ring-2 focus:ring-[var(--v2-primary)]/10 bg-[var(--v2-surface)] text-[var(--v2-text-primary)] placeholder-[var(--v2-text-muted)] transition-all"
+                                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                />
+                              )
+                            }
                           })()}
                         </div>
-                      </div>
-                    </div>
-                  )}
-</>
-              ) : (
-                // Legacy execution or other structured results
-                <div className="space-y-3">
-                  {Object.entries(result)
-                    .filter(([key]) => key !== 'send_status' && key !== 'agentkit' && key !== 'pilot' && key !== 'execution_duration_ms')
-                    .map(([key, value]) => (
-                      <div key={key} className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-3" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="font-semibold text-[var(--v2-text-primary)] text-sm capitalize">
-                            {key.replace(/_/g, ' ')}
-                          </span>
+
+                        {/* InputHelpButton */}
+                        <div className="flex-shrink-0">
+                          <InputHelpButton
+                            agentId={agent.id}
+                            fieldName={field.name}
+                            plugin={inferPluginFromFieldName(field.name)}
+                            expectedType={field.type}
+                            onClick={() => openChatbot({
+                              mode: 'input_help',
+                              agentId: agent.id,
+                              fieldName: field.name,
+                              fieldLabel: field.label || formatFieldName(field.name),
+                              plugin: inferPluginFromFieldName(field.name),
+                              expectedType: field.type
+                            })}
+                          />
                         </div>
-                        <div className="text-[var(--v2-text-primary)]">
-                          {formatUserFriendlyValue(value)}
-                        </div>
                       </div>
-                    ))}
+                  </div>
+                ))}
+                </div>
+              )}
+
+              {/* Save Inputs Button */}
+              {safeInputSchema.length > 0 && (
+                <div className="mt-5">
+                  <button
+                    onClick={handleSaveInputs}
+                    disabled={saving || !isFormValid()}
+                    className="w-full px-4 py-2.5 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-primary)] hover:border-[var(--v2-primary)] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm font-semibold"
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    {saving ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        <Settings className="w-4 h-4" />
+                        Save Inputs
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+
+              {/* Save Message */}
+              {saveMessage && (
+                <div className={`mt-5 p-3 border ${
+                  saveMessage.type === 'success'
+                    ? 'bg-[var(--v2-status-success-bg)] border-[var(--v2-status-success-border)]'
+                    : 'bg-[var(--v2-status-error-bg)] border-[var(--v2-status-error-border)]'
+                }`} style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                  <div className="flex items-center gap-2">
+                    {saveMessage.type === 'success' ? (
+                      <CheckCircle className="w-4 h-4 text-[var(--v2-status-success-text)]" />
+                    ) : (
+                      <XCircle className="w-4 h-4 text-[var(--v2-status-error-text)]" />
+                    )}
+                    <p className={`text-sm ${
+                      saveMessage.type === 'success'
+                        ? 'text-[var(--v2-status-success-text)]'
+                        : 'text-[var(--v2-status-error-text)]'
+                    }`}>
+                      {saveMessage.text}
+                    </p>
+                  </div>
                 </div>
               )}
             </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-16 text-center">
-              <Clock className="w-16 h-16 text-[var(--v2-text-muted)] opacity-20 mb-4" />
-              <p className="text-sm text-[var(--v2-text-muted)]">
-                Run the agent to see results here
-              </p>
+
+            {/* Run Button - Static at Bottom (Inside Card) */}
+            <div className="p-5 border-t border-[var(--v2-border)] flex-shrink-0">
+              <button
+                onClick={handleRun}
+                disabled={executing || agent.status !== 'active' || !isFormValid()}
+                className="w-full py-3.5 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white font-semibold hover:opacity-90 hover:shadow-[var(--v2-shadow-button)] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-[15px]"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                {executing ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span>Running...</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-5 h-5" />
+                    <span>Run Workflow</span>
+                  </>
+                )}
+              </button>
             </div>
-          )}
-        </Card>
-      </div>
+          </div>
 
-      {/* Workflow Visualization Card */}
-      {(() => {
-        const rawSteps = agent.pilot_steps || agent.workflow_steps
-        if (!rawSteps || rawSteps.length === 0) {
-          console.warn('[AgentRunPage] No workflow steps found', { pilot_steps: agent.pilot_steps, workflow_steps: agent.workflow_steps })
-          return null
-        }
-
-        console.log('[AgentRunPage] Raw steps:', rawSteps.length, rawSteps)
-
-        // Get step execution status from result if available (final state)
-        const completedSteps = result?.data?.completedStepIds || []
-        const failedSteps = result?.data?.failedStepIds || []
-        const skippedSteps = result?.data?.skippedStepIds || []
-
-        // Helper to get step status (combines live and final states)
-        const getStepStatus = (stepId: string) => {
-          // Live states (during execution)
-          if (executing) {
-            if (executingSteps.has(stepId)) return 'executing'
-            if (completedStepsLive.has(stepId)) return 'completed'
-            if (failedStepsLive.has(stepId)) return 'failed'
-            return 'pending'
-          }
-
-          // Final states (after execution)
-          if (completedSteps.includes(stepId)) return 'completed'
-          if (failedSteps.includes(stepId)) return 'failed'
-          if (skippedSteps.includes(stepId)) return 'skipped'
-          return 'pending'
-        }
-
-        // Count all steps recursively for stats
-        const countAllSteps = (steps: any[]): number => {
-          let count = 0
-          const processStep = (step: any) => {
-            count++
-            if (step.then_steps) step.then_steps.forEach(processStep)
-            if (step.else_steps) step.else_steps.forEach(processStep)
-            if (step.steps) step.steps.forEach(processStep)
-            if (step.scatter?.steps) step.scatter.steps.forEach(processStep)
-            if (step.loopSteps) step.loopSteps.forEach(processStep)
-          }
-          steps.forEach(processStep)
-          return count
-        }
-
-        const totalSteps = countAllSteps(rawSteps)
-
-        return (
-          <Card className="!p-4 sm:!p-6">
-            {/* Header */}
-            <div className="flex items-center gap-2 mb-4">
-              <GitBranch className="w-5 h-5 text-[var(--v2-primary)]" />
-              <div>
-                <h3 className="text-sm font-semibold text-[var(--v2-text-primary)]">Pilot Execution Flow</h3>
-                <p className="text-xs text-[var(--v2-text-muted)]">
-                  {totalSteps} total steps
-                  {(executing || result) && ` • ${executing ? completedStepsLive.size : completedSteps.length} completed, ${executing ? failedStepsLive.size : failedSteps.length} failed, ${skippedSteps.length} skipped`}
-                </p>
+          {/* RIGHT COLUMN - Stacked Execution Progress and Result */}
+          <div className="flex flex-col gap-4 h-[700px]">
+            {/* RIGHT PANEL - Live Execution View */}
+            <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] flex flex-col flex-1 overflow-hidden" style={{ borderRadius: 'var(--v2-radius-panel)' }}>
+            {/* Execution Header - Fixed */}
+            <div className="px-6 py-6 border-b border-[var(--v2-border)] flex-shrink-0">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold text-[var(--v2-text-primary)]">
+                  Live Progress
+                </h2>
+                {executing && (
+                  <div className="px-3 py-1.5 bg-[var(--v2-status-executing-bg)] text-[var(--v2-status-executing-text)] font-semibold text-xs flex items-center gap-1.5 rounded-full animate-pulse">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Executing</span>
+                  </div>
+                )}
+                {result && !executing && (
+                  <div className="px-3 py-1.5 bg-[var(--v2-status-success-bg)] text-[var(--v2-status-success-text)] font-semibold text-xs flex items-center gap-1.5 rounded-full">
+                    <CheckCircle className="w-3.5 h-3.5" />
+                    <span>Completed</span>
+                  </div>
+                )}
               </div>
-            </div>
 
-            {/* Pilot Execution Diagram */}
-            <PilotDiagram
-              steps={rawSteps}
-              getStepStatus={getStepStatus}
-              executing={executing}
-            />
-          </Card>
-        )
-      })()}
-
-      {/* Live Step Results - shown during execution */}
-      {executing && Object.keys(liveStepOutputs).length > 0 && (() => {
-        const flattenSteps = (steps: any[]): any[] => {
-          const flattened: any[] = []
-          for (const step of steps) {
-            flattened.push(step)
-            if (step.then_steps) flattened.push(...flattenSteps(step.then_steps))
-            if (step.else_steps) flattened.push(...flattenSteps(step.else_steps))
-            if (step.steps) flattened.push(...flattenSteps(step.steps))
-            if (step.scatter?.steps) flattened.push(...flattenSteps(step.scatter.steps))
-          }
-          return flattened
-        }
-
-        const allSteps = flattenSteps(agent.pilot_steps || [])
-
-        return (
-          <Card className="!p-4 sm:!p-6">
-            <div className="text-xs font-semibold text-[var(--v2-text-muted)] mb-4 uppercase tracking-wide flex items-center gap-2">
-              <Layers className="w-4 h-4" />
-              Live Results
-            </div>
-
-            <div className="space-y-3">
-              {allSteps.map((step: any) => {
-                const isCompleted = completedStepsLive.has(step.id)
-                const isFailed = failedStepsLive.has(step.id)
-                const stepData = liveStepOutputs[step.id]
-
-                // Only show steps that have completed or failed
-                if (!isCompleted && !isFailed) return null
-
-                // Get step stats
-                const getStepStats = () => {
-                  if (!stepData) return null
-                  if (Array.isArray(stepData)) {
-                    return `${stepData.length} item${stepData.length !== 1 ? 's' : ''}`
+              {/* Progress Bar */}
+              {(executing || result) && (() => {
+                const rawSteps = agent.pilot_steps || agent.workflow_steps || []
+                const countAllSteps = (steps: any[]): number => {
+                  let count = 0
+                  const processStep = (step: any) => {
+                    count++
+                    if (step.then_steps) step.then_steps.forEach(processStep)
+                    if (step.else_steps) step.else_steps.forEach(processStep)
+                    if (step.steps) step.steps.forEach(processStep)
+                    if (step.scatter?.steps) step.scatter.steps.forEach(processStep)
+                    if (step.loopSteps) step.loopSteps.forEach(processStep)
                   }
-                  if (typeof stepData === 'object') {
-                    if (stepData.result !== undefined) {
-                      if (Array.isArray(stepData.result)) {
-                        return `${stepData.result.length} item${stepData.result.length !== 1 ? 's' : ''}`
-                      }
-                    }
-                    const keys = Object.keys(stepData)
-                    for (const key of keys) {
-                      const value = stepData[key]
-                      if (Array.isArray(value)) {
-                        return `${value.length} ${key.replace(/_/g, ' ')}`
-                      }
-                    }
-                    if (stepData.success) return 'Completed'
-                    if (stepData.message) return String(stepData.message).substring(0, 50)
-                  }
-                  return 'Completed'
+                  steps.forEach(processStep)
+                  return count
                 }
-
-                const stats = getStepStats()
+                const totalSteps = countAllSteps(rawSteps)
+                const completedCount = executing ? completedStepsLive.size : (result?.data?.completedStepIds || []).length
+                const progress = totalSteps > 0 ? (completedCount / totalSteps) * 100 : 0
 
                 return (
-                  <div
-                    key={step.id}
-                    className={`p-3 border rounded-lg ${
-                      isFailed
-                        ? 'bg-[var(--v2-status-error-bg)] border-[var(--v2-status-error-border)]'
-                        : 'bg-[var(--v2-status-success-bg)] border-[var(--v2-status-success-border)]'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3 mb-2">
-                      <div className="flex items-start gap-2 flex-1 min-w-0">
-                        {isFailed ? (
-                          <XCircle className="w-5 h-5 text-[var(--v2-status-error-border)] flex-shrink-0 mt-0.5" />
-                        ) : (
-                          <CheckCircle className="w-5 h-5 text-[var(--v2-status-success-border)] flex-shrink-0 mt-0.5" />
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div
-                            className={`font-semibold text-sm mb-0.5 ${
-                              isFailed
-                                ? 'text-[var(--v2-status-error-text)]'
-                                : 'text-[var(--v2-status-success-text)]'
-                            }`}
-                          >
-                            {step.name || step.action || `Step ${step.id}`}
-                          </div>
-                          {stats && (
-                            <div className="text-xs text-[var(--v2-text-secondary)] font-medium">
-                              {stats}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      <div
-                        className={`text-xs font-medium px-2 py-1 rounded flex-shrink-0 ${
-                          isFailed
-                            ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
-                            : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
-                        }`}
-                      >
-                        {isFailed ? 'Failed' : 'Success'}
-                      </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-[var(--v2-text-muted)]">
+                        {completedCount} of {totalSteps} steps completed
+                      </span>
+                      <span className="text-[var(--v2-text-primary)] font-semibold">
+                        {Math.round(progress)}%
+                      </span>
                     </div>
-
-                    {(step.plugin || (step.type && step.type !== 'action')) && (
-                      <div className="flex items-center gap-4 text-[10px] text-[var(--v2-text-muted)] pl-7">
-                        {step.plugin && (
-                          <div className="flex items-center gap-1">
-                            <Zap className="w-3 h-3" />
-                            <span className="capitalize">{step.plugin.replace(/-/g, ' ')}</span>
-                          </div>
-                        )}
-                        {step.type && step.type !== 'action' && (
-                          <div className="flex items-center gap-1">
-                            <span className="capitalize">{step.type.replace(/_/g, ' ')}</span>
-                          </div>
-                        )}
-                      </div>
-                    )}
+                    <div className="w-full h-2 bg-[var(--v2-surface-hover)] rounded-full overflow-hidden">
+                      <div
+                        className={`h-full bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] transition-all duration-300 ease-out ${
+                          executing && progress === 0 ? 'w-8 animate-pulse' : ''
+                        }`}
+                        style={{ width: progress > 0 ? `${progress}%` : undefined }}
+                      />
+                    </div>
                   </div>
                 )
-              })}
+              })()}
             </div>
-          </Card>
-        )
-      })()}
 
-      {/* HelpBot - handles both floating button and window */}
-      <HelpBot
-        isOpen={helpBotOpen}
-        context={helpBotContext}
-        onFill={handleChatbotFill}
-        onOpen={() => {
-          setHelpBotOpen(true)
-          setHelpBotContext(null) // Open in general help mode
-        }}
-        onClose={() => {
-          setHelpBotOpen(false)
-          setHelpBotContext(null)
-        }}
-      />
+            {/* Execution Visualization - Scrollable */}
+            <div ref={executionVizRef} className="flex-1 overflow-y-auto px-6 py-6">
+              {(() => {
+                const rawSteps = agent.pilot_steps || agent.workflow_steps
+                if (!rawSteps || rawSteps.length === 0) {
+                  console.warn('[AgentRunPage] No workflow steps found', { pilot_steps: agent.pilot_steps, workflow_steps: agent.workflow_steps })
+                  return (
+                    <div className="flex flex-col items-center justify-center h-full text-center">
+                      <Clock className="w-16 h-16 text-[var(--v2-text-muted)] opacity-20 mb-4" />
+                      <p className="text-sm text-[var(--v2-text-muted)]">
+                        Run the workflow to see execution progress
+                      </p>
+                    </div>
+                  )
+                }
+
+              console.log('[AgentRunPage] Raw steps:', rawSteps.length, rawSteps)
+
+              // Get step execution status from result if available (final state)
+              const completedSteps = result?.data?.completedStepIds || []
+              const failedSteps = result?.data?.failedStepIds || []
+              const skippedSteps = result?.data?.skippedStepIds || []
+
+              // Helper to get step status (combines live and final states)
+              const getStepStatus = (stepId: string) => {
+                // Live states (during execution)
+                if (executing) {
+                  if (executingSteps.has(stepId)) return 'executing'
+                  if (completedStepsLive.has(stepId)) return 'completed'
+                  if (failedStepsLive.has(stepId)) return 'failed'
+                  return 'pending'
+                }
+
+                // Final states (after execution)
+                if (completedSteps.includes(stepId)) return 'completed'
+                if (failedSteps.includes(stepId)) return 'failed'
+                if (skippedSteps.includes(stepId)) return 'skipped'
+                return 'pending'
+              }
+
+              // Count all steps recursively for stats
+              const countAllSteps = (steps: any[]): number => {
+                let count = 0
+                const processStep = (step: any) => {
+                  count++
+                  if (step.then_steps) step.then_steps.forEach(processStep)
+                  if (step.else_steps) step.else_steps.forEach(processStep)
+                  if (step.steps) step.steps.forEach(processStep)
+                  if (step.scatter?.steps) step.scatter.steps.forEach(processStep)
+                  if (step.loopSteps) step.loopSteps.forEach(processStep)
+                }
+                steps.forEach(processStep)
+                return count
+              }
+
+              const totalSteps = countAllSteps(rawSteps)
+
+              return (
+                <div className="space-y-3">
+                  {/* Pilot Execution Diagram */}
+                  <PilotDiagram
+                    steps={rawSteps}
+                    getStepStatus={getStepStatus}
+                    getStepOutput={(stepId: string) => liveStepOutputs[stepId]}
+                    executing={executing}
+                  />
+                </div>
+              )
+            })()}
+            </div>
+          </div>
+
+          {/* Execution Result Card - Below Execution Progress in Right Column */}
+          <div className="bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] p-4 flex-shrink-0" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+            {error ? (
+                <>
+                  {/* Header */}
+                  <div className="flex items-center gap-2 mb-4">
+                    <XCircle className="w-5 h-5 text-[var(--v2-status-error-text)]" />
+                    <h3 className="text-sm font-semibold text-[var(--v2-text-primary)]">Results</h3>
+                  </div>
+
+                  {/* Error Content */}
+                  <div className="bg-[var(--v2-status-error-bg)] border border-[var(--v2-status-error-border)] p-4 rounded-lg">
+                        <div className="flex items-start gap-3">
+                          <XCircle className="w-5 h-5 text-[var(--v2-status-error-text)] flex-shrink-0 mt-0.5" />
+                          <div className="flex-1">
+                            <h4 className="text-sm font-semibold text-[var(--v2-status-error-text)] mb-1">
+                              Execution Failed
+                            </h4>
+                            <p className="text-sm text-[var(--v2-status-error-text)] mb-3">
+                              {error}
+                            </p>
+                            {(error.includes('execution limit') || error.includes('Upgrade your plan') || error.includes('insufficient') || error.includes('quota')) && (
+                              <button
+                                onClick={() => router.push('/v2/billing')}
+                                className="px-4 py-2 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white text-sm font-semibold hover:opacity-90 hover:shadow-[var(--v2-shadow-button)] transition-all flex items-center gap-2"
+                                style={{ borderRadius: 'var(--v2-radius-button)' }}
+                              >
+                                <CreditCard className="w-4 h-4" />
+                                Go to Billing
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                </>
+              ) : result ? (
+                <>
+                  {/* Header */}
+                  <div className="flex items-center gap-2 mb-4">
+                    <CheckCircle className="w-5 h-5 text-[var(--v2-status-success-text)]" />
+                    <h3 className="text-sm font-semibold text-[var(--v2-text-primary)]">Results</h3>
+                  </div>
+
+                  {/* Success Banner */}
+                  <div className="bg-[var(--v2-status-success-bg)] border border-[var(--v2-status-success-border)] p-3 rounded-lg mb-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <CheckCircle className="w-4 h-4 text-[var(--v2-status-success-text)]" />
+                            <span className="text-sm font-semibold text-[var(--v2-status-success-text)]">
+                              Execution Completed Successfully
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => router.push(`/v2/agents/${agentId}`)}
+                            className="px-3 py-1.5 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white text-xs font-semibold hover:opacity-90 hover:shadow-[var(--v2-shadow-button)] transition-all flex items-center gap-1.5"
+                            style={{ borderRadius: 'var(--v2-radius-button)' }}
+                          >
+                            <TrendingUp className="w-3.5 h-3.5" />
+                            View in Activity
+                          </button>
+                        </div>
+                      </div>
+
+                      {result.agentkit || result.pilot ? (
+                        // AgentKit or Pilot execution - display the message and metrics
+                        <>
+                          {/* Execution Summary Metrics */}
+                          {result.pilot && result.data && (
+                            <div className="p-3 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg">
+                              <div className="grid grid-cols-4 gap-4">
+                                <div>
+                                  <div className="text-[10px] text-[var(--v2-text-muted)] uppercase tracking-wide mb-1">Total Time</div>
+                                  <div className="text-sm font-semibold text-[var(--v2-text-primary)]">
+                                    {((result.data.execution_time_ms || result.execution_duration_ms || 0) / 1000).toFixed(2)}s
+                                  </div>
+                                </div>
+                                <div>
+                                  <div className="text-[10px] text-[var(--v2-text-muted)] uppercase tracking-wide mb-1">Completed</div>
+                                  <div className="text-sm font-semibold text-[var(--v2-status-success-text)]">
+                                    {result.data.stepsCompleted || 0} steps
+                                  </div>
+                                </div>
+                                <div>
+                                  <div className="text-[10px] text-[var(--v2-text-muted)] uppercase tracking-wide mb-1">Credits Used</div>
+                                  <div className="text-sm font-semibold text-[var(--v2-text-primary)]">
+                                    {Math.round((result.data.totalTokensUsed || 0) / 10).toLocaleString()}
+                                  </div>
+                                </div>
+                                <div>
+                                  <div className="text-[10px] text-[var(--v2-text-muted)] uppercase tracking-wide mb-1">Execution ID</div>
+                                  <div className="flex items-center gap-1.5">
+                                    <div className="text-xs font-mono text-[var(--v2-text-primary)] truncate" title={result.data.executionId}>
+                                      {result.data.executionId ? result.data.executionId.substring(0, 12) + '...' : 'N/A'}
+                                    </div>
+                                    {result.data.executionId && (
+                                      <button
+                                        onClick={async () => {
+                                          try {
+                                            await navigator.clipboard.writeText(result.data.executionId)
+                                            setCopiedExecutionId(true)
+                                            setTimeout(() => setCopiedExecutionId(false), 2000)
+                                          } catch (err) {
+                                            console.error('Failed to copy:', err)
+                                          }
+                                        }}
+                                        className="p-1 hover:bg-[var(--v2-bg)] rounded transition-colors"
+                                        title="Copy Execution ID"
+                                      >
+                                        {copiedExecutionId ? (
+                                          <Check className="w-3 h-3 text-[var(--v2-status-success-text)]" />
+                                        ) : (
+                                          <Copy className="w-3 h-3 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]" />
+                                        )}
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                  {/* AgentKit message display */}
+                  {result.agentkit && result.message && (
+                    <div className="bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] p-4" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+                      <div className="prose prose-sm max-w-none dark:prose-invert">
+                        <div className="whitespace-pre-wrap text-[var(--v2-text-primary)] text-sm leading-relaxed">
+                          {result.message}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                          {/* Message Display (for non-pilot AgentKit) */}
+                          {result.message && !result.pilot && result.agentkit && (
+                            <div className="mt-3 p-3 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg">
+                              <div className="prose prose-sm max-w-none dark:prose-invert">
+                                <div className="whitespace-pre-wrap text-[var(--v2-text-primary)] text-sm leading-relaxed">
+                                  {(() => {
+                                    const message = result.message || 'Execution completed successfully';
+                                    // Clean up message - remove detailed lists after summary
+                                    const summaryMarkers = [
+                                      'Here are the main points included in the summary:',
+                                      'Here are the key points:',
+                                      'Here\'s what was included:',
+                                      '\n\n-',
+                                      '\n\n*',
+                                      '\n\n1.',
+                                      '\n\n#'
+                                    ];
+
+                                    let cleanedMessage = message;
+                                    for (const marker of summaryMarkers) {
+                                      const idx = message.indexOf(marker);
+                                      if (idx > 0) {
+                                        cleanedMessage = message.substring(0, idx).trim();
+                                        break;
+                                      }
+                                    }
+
+                                    return cleanedMessage;
+                                  })()}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        // Legacy execution or other structured results
+                        <div className="p-3 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg">
+                          <div className="space-y-3">
+                            {Object.entries(result)
+                              .filter(([key]) => key !== 'send_status' && key !== 'agentkit' && key !== 'pilot' && key !== 'execution_duration_ms')
+                              .map(([key, value]) => (
+                                <div key={key}>
+                                  <div className="flex items-center gap-2 mb-2">
+                                    <span className="font-semibold text-[var(--v2-text-primary)] text-sm capitalize">
+                                      {key.replace(/_/g, ' ')}
+                                    </span>
+                                  </div>
+                                  <div className="text-[var(--v2-text-primary)]">
+                                    {formatUserFriendlyValue(value)}
+                                  </div>
+                                </div>
+                              ))}
+                          </div>
+                        </div>
+                      )}
+                </>
+              ) : (
+                <>
+                  {/* Header */}
+                  <div className="flex items-center gap-2 mb-4">
+                    <Clock className="w-5 h-5 text-[var(--v2-text-muted)]" />
+                    <h3 className="text-sm font-semibold text-[var(--v2-text-primary)]">Results</h3>
+                  </div>
+
+                  {/* Waiting State */}
+                  <div className="flex flex-col items-center justify-center py-8 text-center">
+                    <Clock className="w-12 h-12 text-[var(--v2-text-muted)] opacity-20 mb-3" />
+                    <p className="text-sm text-[var(--v2-text-muted)]">
+                      {executing ? 'Execution in progress...' : 'No execution results yet'}
+                    </p>
+                    {!executing && (
+                      <p className="text-xs text-[var(--v2-text-muted)] mt-1">
+                        Click "Run Workflow" to start
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+        </div>
+
+        {/* HelpBot - handles both floating button and window */}
+        <HelpBot
+          isOpen={helpBotOpen}
+          context={helpBotContext}
+          onFill={handleChatbotFill}
+          onOpen={() => {
+            setHelpBotOpen(true)
+            setHelpBotContext(null) // Open in general help mode
+          }}
+          onClose={() => {
+            setHelpBotOpen(false)
+            setHelpBotContext(null)
+          }}
+        />
+      </div>
     </div>
   )
 }

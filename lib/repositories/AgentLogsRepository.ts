@@ -62,7 +62,7 @@ export class AgentLogsRepository {
           full_output: input.full_output ?? null,
           status: input.status,
           status_message: input.status_message ?? null,
-          execution_type: input.execution_type ?? null,
+          // execution_type: Column doesn't exist in database, skip it
           created_at: input.created_at || new Date().toISOString(),
         })
         .select('id')

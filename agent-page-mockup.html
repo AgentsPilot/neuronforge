@@ -1,0 +1,1547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Invoice Processing Agent - Redesigned UI</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+      background: #f8f9fa;
+      color: #1a1a1a;
+      line-height: 1.6;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    /* Header Section */
+    .header {
+      background: white;
+      border-radius: 12px;
+      padding: 32px;
+      margin-bottom: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .agent-name {
+      font-size: 28px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: #1a1a1a;
+    }
+
+    .agent-purpose {
+      font-size: 16px;
+      color: #6b7280;
+      margin-bottom: 24px;
+      max-width: 800px;
+    }
+
+    .health-bar-container {
+      margin-bottom: 16px;
+    }
+
+    .health-label {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .health-percentage {
+      color: #10b981;
+      font-weight: 600;
+    }
+
+    .health-bar {
+      width: 100%;
+      height: 8px;
+      background: #e5e7eb;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .health-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #10b981 0%, #059669 100%);
+      transition: width 0.3s ease;
+    }
+
+    .health-bar-fill.warning {
+      background: linear-gradient(90deg, #f59e0b 0%, #d97706 100%);
+    }
+
+    .health-bar-fill.critical {
+      background: linear-gradient(90deg, #ef4444 0%, #dc2626 100%);
+    }
+
+    .quick-actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      padding: 10px 20px;
+      border-radius: 8px;
+      border: none;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-primary {
+      background: #2563eb;
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: #1d4ed8;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+    }
+
+    .btn-secondary {
+      background: #f3f4f6;
+      color: #374151;
+    }
+
+    .btn-secondary:hover {
+      background: #e5e7eb;
+    }
+
+    /* Alert Banner */
+    .alert-banner {
+      background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+      border-left: 4px solid #f59e0b;
+      border-radius: 12px;
+      padding: 20px 24px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 8px rgba(245, 158, 11, 0.15);
+    }
+
+    .alert-banner.critical {
+      background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+      border-left-color: #ef4444;
+      box-shadow: 0 2px 8px rgba(239, 68, 68, 0.15);
+    }
+
+    .alert-content {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .alert-icon {
+      font-size: 24px;
+      flex-shrink: 0;
+    }
+
+    .alert-text h3 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      color: #92400e;
+    }
+
+    .alert-banner.critical .alert-text h3 {
+      color: #991b1b;
+    }
+
+    .alert-text p {
+      font-size: 14px;
+      color: #78350f;
+    }
+
+    .alert-banner.critical .alert-text p {
+      color: #7f1d1d;
+    }
+
+    /* Main Layout */
+    .main-layout {
+      display: grid;
+      grid-template-columns: 400px 1fr;
+      gap: 20px;
+    }
+
+    @media (max-width: 1024px) {
+      .main-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Execution Timeline */
+    .timeline-section {
+      background: white;
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .timeline-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    .timeline-header h2 {
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .timeline-filter {
+      font-size: 13px;
+      color: #6b7280;
+      background: #f3f4f6;
+      padding: 4px 12px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+    }
+
+    .timeline-item {
+      padding: 16px;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+      border: 2px solid transparent;
+    }
+
+    .timeline-item:hover {
+      background: #f9fafb;
+      border-color: #e5e7eb;
+    }
+
+    .timeline-item.active {
+      background: #eff6ff;
+      border-color: #2563eb;
+    }
+
+    .timeline-item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .timeline-date {
+      font-size: 13px;
+      color: #6b7280;
+      font-weight: 500;
+    }
+
+    .status-badge {
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .status-success {
+      background: #d1fae5;
+      color: #065f46;
+    }
+
+    .status-failed {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .timeline-description {
+      font-size: 14px;
+      color: #374151;
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+
+    .timeline-stats {
+      display: flex;
+      gap: 16px;
+      font-size: 12px;
+      color: #6b7280;
+    }
+
+    .timeline-stat {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* Execution Details */
+    .details-section {
+      background: white;
+      border-radius: 12px;
+      padding: 32px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .details-header {
+      margin-bottom: 24px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    .details-title {
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .details-subtitle {
+      font-size: 14px;
+      color: #6b7280;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+      margin-bottom: 32px;
+    }
+
+    @media (max-width: 768px) {
+      .metric-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .metric-card {
+      padding: 16px;
+      background: #f9fafb;
+      border-radius: 8px;
+    }
+
+    .metric-label {
+      font-size: 12px;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+
+    .metric-value {
+      font-size: 24px;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    .metric-subtext {
+      font-size: 12px;
+      color: #6b7280;
+      margin-top: 4px;
+    }
+
+    .section-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      color: #1a1a1a;
+    }
+
+    .log-container {
+      background: #1a1a1a;
+      border-radius: 8px;
+      padding: 16px;
+      max-height: 400px;
+      overflow-y: auto;
+      font-family: 'Monaco', 'Courier New', monospace;
+      font-size: 13px;
+      line-height: 1.8;
+    }
+
+    .log-entry {
+      color: #d1d5db;
+      margin-bottom: 4px;
+    }
+
+    .log-timestamp {
+      color: #6b7280;
+    }
+
+    .log-success {
+      color: #10b981;
+    }
+
+    .log-error {
+      color: #ef4444;
+    }
+
+    .log-info {
+      color: #60a5fa;
+    }
+
+    /* Settings Drawer */
+    .settings-drawer {
+      position: fixed;
+      top: 0;
+      right: -500px;
+      width: 500px;
+      height: 100vh;
+      background: white;
+      box-shadow: -4px 0 24px rgba(0,0,0,0.15);
+      transition: right 0.3s ease;
+      z-index: 1000;
+      overflow-y: auto;
+    }
+
+    .settings-drawer.open {
+      right: 0;
+    }
+
+    .drawer-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100vh;
+      background: rgba(0,0,0,0.5);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+      z-index: 999;
+    }
+
+    .drawer-overlay.open {
+      opacity: 1;
+      pointer-events: all;
+    }
+
+    .drawer-header {
+      padding: 24px;
+      border-bottom: 1px solid #e5e7eb;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .drawer-header h2 {
+      font-size: 20px;
+      font-weight: 600;
+    }
+
+    .close-drawer {
+      background: none;
+      border: none;
+      font-size: 24px;
+      cursor: pointer;
+      color: #6b7280;
+      padding: 4px;
+    }
+
+    .drawer-content {
+      padding: 24px;
+    }
+
+    .setting-group {
+      margin-bottom: 32px;
+    }
+
+    .setting-group h3 {
+      font-size: 14px;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: #6b7280;
+      letter-spacing: 0.5px;
+      margin-bottom: 16px;
+    }
+
+    .setting-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px;
+      background: #f9fafb;
+      border-radius: 8px;
+      margin-bottom: 12px;
+    }
+
+    .setting-info h4 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .setting-info p {
+      font-size: 13px;
+      color: #6b7280;
+    }
+
+    .toggle-switch {
+      position: relative;
+      width: 48px;
+      height: 24px;
+      background: #d1d5db;
+      border-radius: 24px;
+      cursor: pointer;
+      transition: background 0.3s;
+    }
+
+    .toggle-switch.on {
+      background: #10b981;
+    }
+
+    .toggle-switch-handle {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 20px;
+      height: 20px;
+      background: white;
+      border-radius: 50%;
+      transition: left 0.3s;
+    }
+
+    .toggle-switch.on .toggle-switch-handle {
+      left: 26px;
+    }
+
+    /* Insights Modal */
+    .insights-modal {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) scale(0.9);
+      width: 90%;
+      max-width: 800px;
+      max-height: 90vh;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.3s ease;
+      z-index: 1001;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .insights-modal.open {
+      opacity: 1;
+      pointer-events: all;
+      transform: translate(-50%, -50%) scale(1);
+    }
+
+    .modal-header {
+      padding: 24px;
+      border-bottom: 1px solid #e5e7eb;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .modal-header h2 {
+      font-size: 20px;
+      font-weight: 600;
+    }
+
+    .modal-content {
+      padding: 24px;
+      overflow-y: auto;
+      flex: 1;
+    }
+
+    .insight-card {
+      background: #f9fafb;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 16px;
+      border-left: 4px solid #6b7280;
+    }
+
+    .insight-card.critical {
+      border-left-color: #ef4444;
+      background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+    }
+
+    .insight-card.warning {
+      border-left-color: #f59e0b;
+      background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+    }
+
+    .insight-card.info {
+      border-left-color: #3b82f6;
+      background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+    }
+
+    .insight-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      margin-bottom: 12px;
+    }
+
+    .insight-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .insight-type {
+      font-size: 12px;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .insight-confidence {
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      background: white;
+      color: #6b7280;
+    }
+
+    .insight-description {
+      font-size: 14px;
+      color: #374151;
+      margin-bottom: 12px;
+      line-height: 1.6;
+    }
+
+    .insight-recommendation {
+      font-size: 14px;
+      color: #1a1a1a;
+      background: white;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 12px;
+    }
+
+    .insight-recommendation strong {
+      color: #2563eb;
+    }
+
+    .insight-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn-small {
+      padding: 6px 14px;
+      font-size: 13px;
+    }
+
+    /* Empty State */
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #6b7280;
+    }
+
+    .empty-state-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+      opacity: 0.5;
+    }
+
+    .empty-state h3 {
+      font-size: 18px;
+      margin-bottom: 8px;
+      color: #374151;
+    }
+
+    .empty-state p {
+      font-size: 14px;
+    }
+
+    /* AIS Complexity Section */
+    .ais-container {
+      background: linear-gradient(135deg, #f0f0ff 0%, #e8e8ff 100%);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 16px;
+      border-left: 4px solid #6366f1;
+    }
+
+    .ais-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .ais-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .ais-title h4 {
+      font-size: 15px;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    .ais-title .brain-icon {
+      color: #6366f1;
+      font-size: 20px;
+    }
+
+    .ais-badge {
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      background: #fef3c7;
+      color: #92400e;
+    }
+
+    .ais-badge.low {
+      background: #d1fae5;
+      color: #065f46;
+    }
+
+    .ais-badge.medium {
+      background: #fef3c7;
+      color: #92400e;
+    }
+
+    .ais-badge.high {
+      background: #fed7aa;
+      color: #9a3412;
+    }
+
+    .ais-badge.critical {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .ais-score-row {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .ais-score-main {
+      font-size: 36px;
+      font-weight: 700;
+      color: #1a1a1a;
+    }
+
+    .ais-score-max {
+      font-size: 16px;
+      color: #6b7280;
+      font-weight: 500;
+    }
+
+    .ais-multiplier {
+      font-size: 13px;
+      color: #6b7280;
+    }
+
+    .ais-multiplier strong {
+      color: #1a1a1a;
+      font-weight: 600;
+    }
+
+    .ais-progress-bar {
+      height: 8px;
+      background: #e5e7eb;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+
+    .ais-progress-fill {
+      height: 100%;
+      transition: width 0.3s ease;
+    }
+
+    .ais-progress-fill.low {
+      background: linear-gradient(90deg, #10b981 0%, #059669 100%);
+    }
+
+    .ais-progress-fill.medium {
+      background: linear-gradient(90deg, #f59e0b 0%, #d97706 100%);
+    }
+
+    .ais-progress-fill.high {
+      background: linear-gradient(90deg, #f97316 0%, #ea580c 100%);
+    }
+
+    .ais-progress-fill.critical {
+      background: linear-gradient(90deg, #ef4444 0%, #dc2626 100%);
+    }
+
+    .ais-detail {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(0,0,0,0.05);
+      font-size: 13px;
+    }
+
+    .ais-detail:last-child {
+      border-bottom: none;
+    }
+
+    .ais-detail-label {
+      color: #6b7280;
+    }
+
+    .ais-detail-value {
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    /* Agent Actions Section */
+    .action-button {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: white;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-size: 14px;
+      font-weight: 500;
+      margin-bottom: 8px;
+    }
+
+    .action-button:hover {
+      background: #f9fafb;
+      border-color: #d1d5db;
+      transform: translateX(2px);
+    }
+
+    .action-button.danger {
+      color: #dc2626;
+      border-color: #fecaca;
+    }
+
+    .action-button.danger:hover {
+      background: #fef2f2;
+      border-color: #fca5a5;
+    }
+
+    .action-icon {
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+
+    .action-text {
+      flex: 1;
+    }
+
+    .action-text h5 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+
+    .action-text p {
+      font-size: 12px;
+      color: #6b7280;
+    }
+
+    .danger-zone {
+      margin-top: 32px;
+      padding-top: 24px;
+      border-top: 2px solid #fee2e2;
+    }
+
+    .danger-zone h3 {
+      color: #dc2626;
+      font-size: 14px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 16px;
+    }
+
+    /* Execution Results */
+    .results-section {
+      margin-top: 24px;
+      padding-top: 24px;
+      border-top: 1px solid #e5e7eb;
+    }
+
+    .result-card {
+      background: #f9fafb;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+
+    .result-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .result-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #374151;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .result-count {
+      font-size: 20px;
+      font-weight: 700;
+      color: #1a1a1a;
+    }
+
+    .result-list {
+      font-size: 13px;
+      color: #6b7280;
+      line-height: 1.8;
+    }
+
+    .result-list li {
+      margin-bottom: 4px;
+    }
+
+    /* Analytics & Results Side by Side */
+    .analytics-results-container {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+
+    @media (max-width: 1200px) {
+      .analytics-results-container {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .analytics-section-card,
+    .results-section-card {
+      background: white;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 20px;
+    }
+
+    .card-header {
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid #e5e7eb;
+    }
+
+    .card-header h3 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #374151;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* Analytics Section */
+    .analytics-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .analytics-card {
+      background: #f9fafb;
+      border-radius: 8px;
+      padding: 12px;
+      text-align: center;
+    }
+
+    .analytics-label {
+      font-size: 11px;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+
+    .analytics-value {
+      font-size: 18px;
+      font-weight: 700;
+      color: #1a1a1a;
+    }
+
+    .analytics-subtext {
+      font-size: 11px;
+      color: #6b7280;
+      margin-top: 4px;
+    }
+
+    .analytics-value.success {
+      color: #10b981;
+    }
+
+    .analytics-value.warning {
+      color: #f59e0b;
+    }
+
+    .analytics-value.error {
+      color: #ef4444;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header Section -->
+    <div class="header">
+      <h1 class="agent-name">Invoice Processing Agent</h1>
+      <p class="agent-purpose">Automatically extracts data from supplier invoices, validates against purchase orders, and updates the accounting system</p>
+
+      <div class="health-bar-container">
+        <div class="health-label">
+          <span>System Health</span>
+          <span class="health-percentage">87% Healthy</span>
+        </div>
+        <div class="health-bar">
+          <div class="health-bar-fill warning" style="width: 87%"></div>
+        </div>
+      </div>
+
+      <div class="quick-actions">
+        <button class="btn btn-primary" onclick="alert('Would navigate to run page')">
+          ▶️ Run Now
+        </button>
+        <button class="btn btn-secondary" onclick="toggleSettings()">
+          ⚙️ Settings
+        </button>
+        <button class="btn btn-secondary" onclick="alert('Would navigate to calibration')">
+          🎯 Calibrate
+        </button>
+      </div>
+    </div>
+
+    <!-- Alert Banner (conditionally shown) -->
+    <div class="alert-banner warning">
+      <div class="alert-content">
+        <span class="alert-icon">⚠️</span>
+        <div class="alert-text">
+          <h3>2 Issues Need Attention</h3>
+          <p>Your agent has reliability problems that may affect invoice processing</p>
+        </div>
+      </div>
+      <button class="btn btn-primary btn-small" onclick="toggleInsights()">
+        View Recommendations
+      </button>
+    </div>
+
+    <!-- Main Layout -->
+    <div class="main-layout">
+      <!-- Execution Timeline -->
+      <div class="timeline-section">
+        <div class="timeline-header">
+          <h2>Recent Activity</h2>
+          <select class="timeline-filter">
+            <option>Last 7 days</option>
+            <option>Last 30 days</option>
+            <option>All time</option>
+          </select>
+        </div>
+
+        <div class="timeline-item active" onclick="selectExecution(1)">
+          <div class="timeline-item-header">
+            <span class="timeline-date">Today at 2:34 PM</span>
+            <span class="status-badge status-success">✓ Success</span>
+          </div>
+          <div class="timeline-description">Processed 15 invoices from supplier emails</div>
+          <div class="timeline-stats">
+            <span class="timeline-stat">⏱ 2m 34s</span>
+            <span class="timeline-stat">💰 $0.12</span>
+          </div>
+        </div>
+
+        <div class="timeline-item" onclick="selectExecution(2)">
+          <div class="timeline-item-header">
+            <span class="timeline-date">Today at 9:15 AM</span>
+            <span class="status-badge status-failed">✗ Failed</span>
+          </div>
+          <div class="timeline-description">Failed: Spreadsheet "Q1_Invoices" not found</div>
+          <div class="timeline-stats">
+            <span class="timeline-stat">⏱ 12s</span>
+            <span class="timeline-stat">💰 $0.02</span>
+          </div>
+        </div>
+
+        <div class="timeline-item" onclick="selectExecution(3)">
+          <div class="timeline-item-header">
+            <span class="timeline-date">Yesterday at 3:22 PM</span>
+            <span class="status-badge status-success">✓ Success</span>
+          </div>
+          <div class="timeline-description">Processed 8 invoices, validated against POs</div>
+          <div class="timeline-stats">
+            <span class="timeline-stat">⏱ 1m 48s</span>
+            <span class="timeline-stat">💰 $0.09</span>
+          </div>
+        </div>
+
+        <div class="timeline-item" onclick="selectExecution(4)">
+          <div class="timeline-item-header">
+            <span class="timeline-date">Yesterday at 10:05 AM</span>
+            <span class="status-badge status-success">✓ Success</span>
+          </div>
+          <div class="timeline-description">Processed 12 invoices from inbox</div>
+          <div class="timeline-stats">
+            <span class="timeline-stat">⏱ 2m 15s</span>
+            <span class="timeline-stat">💰 $0.11</span>
+          </div>
+        </div>
+
+        <div class="timeline-item" onclick="selectExecution(5)">
+          <div class="timeline-item-header">
+            <span class="timeline-date">2 days ago at 4:18 PM</span>
+            <span class="status-badge status-failed">✗ Failed</span>
+          </div>
+          <div class="timeline-description">Failed: API rate limit exceeded</div>
+          <div class="timeline-stats">
+            <span class="timeline-stat">⏱ 8s</span>
+            <span class="timeline-stat">💰 $0.01</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Execution Details -->
+      <div class="details-section">
+        <div class="details-header">
+          <h2 class="details-title">Latest Execution</h2>
+          <p class="details-subtitle">Today at 2:34 PM</p>
+        </div>
+
+        <div class="metric-grid">
+          <div class="metric-card">
+            <div class="metric-label">Duration</div>
+            <div class="metric-value">2m 34s</div>
+            <div class="metric-subtext">Completed successfully</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Items Processed</div>
+            <div class="metric-value">15</div>
+            <div class="metric-subtext">Invoices extracted</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Cost</div>
+            <div class="metric-value">$0.12</div>
+            <div class="metric-subtext">API usage</div>
+          </div>
+        </div>
+
+        <!-- Analytics & Results Side by Side -->
+        <div class="analytics-results-container">
+          <!-- Analytics Section -->
+          <div class="analytics-section-card">
+            <div class="card-header">
+              <h3>📊 Execution Analytics</h3>
+            </div>
+            <div class="analytics-grid">
+              <div class="analytics-card">
+                <div class="analytics-label">Success Rate</div>
+                <div class="analytics-value success">100%</div>
+                <div class="analytics-subtext">15/15 processed</div>
+              </div>
+              <div class="analytics-card">
+                <div class="analytics-label">Avg Processing Time</div>
+                <div class="analytics-value">10.3s</div>
+                <div class="analytics-subtext">per invoice</div>
+              </div>
+              <div class="analytics-card">
+                <div class="analytics-label">API Calls</div>
+                <div class="analytics-value">47</div>
+                <div class="analytics-subtext">Total requests</div>
+              </div>
+              <div class="analytics-card">
+                <div class="analytics-label">Tokens Used</div>
+                <div class="analytics-value">8,234</div>
+                <div class="analytics-subtext">GPT-4 Turbo</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Results Section -->
+          <div class="results-section-card">
+            <div class="card-header">
+              <h3>✅ Execution Results</h3>
+            </div>
+
+            <div class="result-card">
+              <div class="result-header">
+                <span class="result-title">📧 Emails Processed</span>
+                <span class="result-count">15</span>
+              </div>
+              <ul class="result-list">
+                <li>✓ invoice_2026_001.pdf - Acme Corp - $2,450.00</li>
+                <li>✓ invoice_2026_002.pdf - TechSupply Inc - $8,920.50</li>
+                <li>✓ invoice_2026_003.pdf - Office Depot - $1,234.75</li>
+                <li>✓ invoice_2026_004.pdf - Global Services - $5,680.00</li>
+                <li style="color: #6b7280; font-style: italic;">... and 11 more</li>
+              </ul>
+            </div>
+
+            <div class="result-card">
+              <div class="result-header">
+                <span class="result-title">✅ PO Validations</span>
+                <span class="result-count" style="color: #10b981;">15/15</span>
+              </div>
+              <ul class="result-list">
+                <li>✓ All invoices matched to purchase orders</li>
+                <li>✓ Price validation passed for all items</li>
+                <li>✓ No discrepancies detected</li>
+              </ul>
+            </div>
+
+            <div class="result-card">
+              <div class="result-header">
+                <span class="result-title">💾 QuickBooks Entries</span>
+                <span class="result-count">15</span>
+              </div>
+              <ul class="result-list">
+                <li>✓ Created 15 new bill entries</li>
+                <li>✓ Updated vendor accounts</li>
+                <li>✓ Total amount recorded: $42,358.67</li>
+              </ul>
+            </div>
+
+            <div class="result-card">
+              <div class="result-header">
+                <span class="result-title">📊 Spreadsheet Updates</span>
+                <span class="result-count">1</span>
+              </div>
+              <ul class="result-list">
+                <li>✓ Updated "Invoice_Tracker_2026"</li>
+                <li>✓ Added 15 new rows (A42:G56)</li>
+                <li>✓ Updated summary totals</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <h3 class="section-title">What Happened</h3>
+        <div class="log-container">
+          <div class="log-entry"><span class="log-timestamp">[14:34:12]</span> <span class="log-info">Starting invoice processing workflow...</span></div>
+          <div class="log-entry"><span class="log-timestamp">[14:34:15]</span> <span class="log-success">✓ Connected to Gmail API</span></div>
+          <div class="log-entry"><span class="log-timestamp">[14:34:18]</span> <span class="log-info">Found 15 unprocessed emails with invoices</span></div>
+          <div class="log-entry"><span class="log-timestamp">[14:34:22]</span> <span class="log-success">✓ Downloaded invoice attachments (15 PDFs)</span></div>
+          <div class="log-entry"><span class="log-timestamp">[14:34:45]</span> <span class="log-info">Extracting data from invoices using OCR...</span></div>
+          <div class="log-entry"><span class="log-timestamp">[14:35:32]</span> <span class="log-success">✓ Extracted data from 15 invoices</span></div>
+          <div class="log-entry"><span class="log-timestamp">[14:35:35]</span> <span class="log-info">Validating against purchase orders...</span></div>
+          <div class="log-entry"><span class="log-timestamp">[14:35:48]</span> <span class="log-success">✓ All invoices validated (15/15 matched to POs)</span></div>
+          <div class="log-entry"><span class="log-timestamp">[14:36:02]</span> <span class="log-info">Updating accounting system...</span></div>
+          <div class="log-entry"><span class="log-timestamp">[14:36:28]</span> <span class="log-success">✓ Created 15 entries in QuickBooks</span></div>
+          <div class="log-entry"><span class="log-timestamp">[14:36:32]</span> <span class="log-info">Updating invoice tracking spreadsheet...</span></div>
+          <div class="log-entry"><span class="log-timestamp">[14:36:38]</span> <span class="log-success">✓ Updated "Invoice_Tracker_2026" spreadsheet</span></div>
+          <div class="log-entry"><span class="log-timestamp">[14:36:42]</span> <span class="log-success">✓ Workflow completed successfully</span></div>
+          <div class="log-entry"><span class="log-timestamp">[14:36:46]</span> <span class="log-info">Total processed: 15 invoices, Total amount: $42,358.67</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Drawer -->
+  <div class="drawer-overlay" onclick="toggleSettings()"></div>
+  <div class="settings-drawer">
+    <div class="drawer-header">
+      <h2>Agent Settings</h2>
+      <button class="close-drawer" onclick="toggleSettings()">×</button>
+    </div>
+    <div class="drawer-content">
+      <!-- AIS Complexity Score -->
+      <div class="ais-container">
+        <div class="ais-header">
+          <div class="ais-title">
+            <span class="brain-icon">🧠</span>
+            <h4>Agent Complexity (AIS)</h4>
+          </div>
+          <span class="ais-badge medium">Medium</span>
+        </div>
+
+        <div class="ais-score-row">
+          <div class="ais-score-main">6.5</div>
+          <div class="ais-score-max">/10</div>
+        </div>
+
+        <div class="ais-multiplier">
+          Cost Multiplier: <strong>2.1x</strong>
+        </div>
+
+        <div class="ais-progress-bar">
+          <div class="ais-progress-fill medium" style="width: 65%"></div>
+        </div>
+
+        <div class="ais-detail">
+          <span class="ais-detail-label">Step Complexity</span>
+          <span class="ais-detail-value">7.2/10</span>
+        </div>
+        <div class="ais-detail">
+          <span class="ais-detail-label">Data Handling</span>
+          <span class="ais-detail-value">6.8/10</span>
+        </div>
+        <div class="ais-detail">
+          <span class="ais-detail-label">API Interactions</span>
+          <span class="ais-detail-value">5.4/10</span>
+        </div>
+        <div class="ais-detail">
+          <span class="ais-detail-label">Recommended Model</span>
+          <span class="ais-detail-value">GPT-4 Turbo</span>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <h3>Intelligence Features</h3>
+        <div class="setting-item">
+          <div class="setting-info">
+            <h4>Business Insights</h4>
+            <p>AI-powered recommendations to improve reliability and efficiency</p>
+          </div>
+          <div class="toggle-switch on" onclick="toggleSwitch(this)">
+            <div class="toggle-switch-handle"></div>
+          </div>
+        </div>
+        <div class="setting-item">
+          <div class="setting-info">
+            <h4>Auto-Calibration</h4>
+            <p>Automatically adjust to changes in data sources</p>
+          </div>
+          <div class="toggle-switch" onclick="toggleSwitch(this)">
+            <div class="toggle-switch-handle"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <h3>Execution Settings</h3>
+        <div class="setting-item">
+          <div class="setting-info">
+            <h4>Production Ready</h4>
+            <p>Agent has been calibrated and is ready for production use</p>
+          </div>
+          <div class="toggle-switch on" onclick="toggleSwitch(this)">
+            <div class="toggle-switch-handle"></div>
+          </div>
+        </div>
+        <div class="setting-item">
+          <div class="setting-info">
+            <h4>Schedule</h4>
+            <p>Run automatically every 4 hours</p>
+          </div>
+          <button class="btn btn-secondary btn-small">Edit Schedule</button>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <h3>Notifications</h3>
+        <div class="setting-item">
+          <div class="setting-info">
+            <h4>Email Alerts</h4>
+            <p>Notify me when executions fail or insights are detected</p>
+          </div>
+          <div class="toggle-switch on" onclick="toggleSwitch(this)">
+            <div class="toggle-switch-handle"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <h3>Agent Actions</h3>
+
+        <button class="action-button" onclick="alert('Duplicate agent functionality')">
+          <span class="action-icon">📋</span>
+          <div class="action-text">
+            <h5>Duplicate Agent</h5>
+            <p>Create a copy of this agent to modify</p>
+          </div>
+        </button>
+
+        <button class="action-button" onclick="alert('Share agent functionality')">
+          <span class="action-icon">🔗</span>
+          <div class="action-text">
+            <h5>Share to Templates</h5>
+            <p>Share with community and earn credits</p>
+          </div>
+        </button>
+
+        <button class="action-button" onclick="alert('Export configuration')">
+          <span class="action-icon">📥</span>
+          <div class="action-text">
+            <h5>Export Configuration</h5>
+            <p>Download agent setup as JSON</p>
+          </div>
+        </button>
+      </div>
+
+      <div class="danger-zone">
+        <h3>⚠️ Danger Zone</h3>
+        <button class="action-button danger" onclick="alert('Delete agent - requires confirmation')">
+          <span class="action-icon">🗑️</span>
+          <div class="action-text">
+            <h5>Delete Agent</h5>
+            <p>Permanently remove this agent</p>
+          </div>
+        </button>
+      </div>
+
+      <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid #e5e7eb;">
+        <button class="btn btn-primary" style="width: 100%; justify-content: center;">
+          Save Changes
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Insights Modal -->
+  <div class="insights-modal">
+    <div class="modal-header">
+      <h2>Business Insights & Recommendations</h2>
+      <button class="close-drawer" onclick="toggleInsights()">×</button>
+    </div>
+    <div class="modal-content">
+      <!-- Critical Insight -->
+      <div class="insight-card critical">
+        <div class="insight-header-row">
+          <div>
+            <h3 class="insight-title">Spreadsheet Reference Breaking</h3>
+            <p class="insight-type">Reliability Risk</p>
+          </div>
+          <span class="insight-confidence">CONFIRMED</span>
+        </div>
+        <p class="insight-description">
+          Your agent failed 2 times in the last 3 days because it couldn't find the spreadsheet "Q1_Invoices". This happens when the spreadsheet is renamed or moved.
+        </p>
+        <div class="insight-recommendation">
+          <strong>Recommendation:</strong> Use the spreadsheet ID instead of the name, or add error handling to search for renamed files.
+        </div>
+        <div class="insight-actions">
+          <button class="btn btn-primary btn-small" onclick="alert('Would apply fix automatically')">
+            Apply Fix
+          </button>
+          <button class="btn btn-secondary btn-small" onclick="alert('Would dismiss insight')">
+            Dismiss
+          </button>
+        </div>
+      </div>
+
+      <!-- Warning Insight -->
+      <div class="insight-card warning">
+        <div class="insight-header-row">
+          <div>
+            <h3 class="insight-title">API Rate Limits Hit</h3>
+            <p class="insight-type">Cost & Reliability</p>
+          </div>
+          <span class="insight-confidence">EMERGING PATTERN</span>
+        </div>
+        <p class="insight-description">
+          Your agent is hitting QuickBooks API rate limits during peak hours. This causes executions to fail and requires retries, increasing costs.
+        </p>
+        <div class="insight-recommendation">
+          <strong>Recommendation:</strong> Add batching to process invoices in smaller groups, or schedule runs during off-peak hours.
+        </div>
+        <div class="insight-actions">
+          <button class="btn btn-primary btn-small" onclick="alert('Would show batching options')">
+            Configure Batching
+          </button>
+          <button class="btn btn-secondary btn-small" onclick="alert('Would snooze for 7 days')">
+            Snooze
+          </button>
+        </div>
+      </div>
+
+      <!-- Info Insight -->
+      <div class="insight-card info">
+        <div class="insight-header-row">
+          <div>
+            <h3 class="insight-title">Opportunity to Reduce Costs</h3>
+            <p class="insight-type">Cost Optimization</p>
+          </div>
+          <span class="insight-confidence">OBSERVATION</span>
+        </div>
+        <p class="insight-description">
+          You're fetching all 500+ emails from the inbox each time, but only processing the latest 10-20. This increases API costs and execution time.
+        </p>
+        <div class="insight-recommendation">
+          <strong>Recommendation:</strong> Filter emails to only fetch unread messages or messages from the last 7 days.
+        </div>
+        <div class="insight-actions">
+          <button class="btn btn-primary btn-small" onclick="alert('Would update email filter')">
+            Optimize Filter
+          </button>
+          <button class="btn btn-secondary btn-small" onclick="alert('Would dismiss insight')">
+            Dismiss
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function toggleSettings() {
+      const drawer = document.querySelector('.settings-drawer');
+      const overlay = document.querySelector('.drawer-overlay');
+      drawer.classList.toggle('open');
+      overlay.classList.toggle('open');
+    }
+
+    function toggleInsights() {
+      const modal = document.querySelector('.insights-modal');
+      const overlay = document.querySelector('.drawer-overlay');
+      modal.classList.toggle('open');
+      overlay.classList.toggle('open');
+    }
+
+    function toggleSwitch(element) {
+      element.classList.toggle('on');
+    }
+
+    function selectExecution(id) {
+      // Remove active class from all timeline items
+      document.querySelectorAll('.timeline-item').forEach(item => {
+        item.classList.remove('active');
+      });
+
+      // Add active class to clicked item
+      event.currentTarget.classList.add('active');
+
+      // In real implementation, this would update the details section
+      // with the selected execution's data
+    }
+
+    // Close modal/drawer when clicking overlay
+    document.querySelector('.drawer-overlay').addEventListener('click', function(e) {
+      if (e.target === this) {
+        document.querySelector('.settings-drawer').classList.remove('open');
+        document.querySelector('.insights-modal').classList.remove('open');
+        this.classList.remove('open');
+      }
+    });
+
+    // Close with Escape key
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        document.querySelector('.settings-drawer').classList.remove('open');
+        document.querySelector('.insights-modal').classList.remove('open');
+        document.querySelector('.drawer-overlay').classList.remove('open');
+      }
+    });
+  </script>
+</body>
+</html>

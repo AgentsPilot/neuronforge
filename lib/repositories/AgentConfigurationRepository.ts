@@ -135,6 +135,81 @@ export class AgentConfigurationRepository {
       return { data: null, error: error as Error };
     }
   }
+
+  /**
+   * Save or update input values for an agent (used during calibration)
+   * This ensures that input values from calibration runs are persisted
+   * and can be reused in subsequent calibration runs.
+   */
+  async saveInputValues(
+    agentId: string,
+    userId: string,
+    inputValues: Record<string, unknown>,
+    inputSchema?: unknown
+  ): Promise<AgentRepositoryResult<AgentConfiguration>> {
+    const methodLogger = this.logger.child({ method: 'saveInputValues', agentId, userId });
+    const startTime = Date.now();
+
+    try {
+      methodLogger.debug({ inputCount: Object.keys(inputValues).length }, 'Saving input values');
+
+      // Check if configuration already exists
+      const { data: existing } = await this.supabase
+        .from('agent_configurations')
+        .select('id')
+        .eq('agent_id', agentId)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      let result;
+
+      if (existing) {
+        // Update existing configuration
+        result = await this.supabase
+          .from('agent_configurations')
+          .update({
+            input_values: inputValues,
+            input_schema: inputSchema,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', existing.id)
+          .select()
+          .single();
+      } else {
+        // Insert new configuration
+        // Generate a unique ID for the configuration
+        const configId = `config_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+
+        result = await this.supabase
+          .from('agent_configurations')
+          .insert({
+            id: configId,
+            agent_id: agentId,
+            user_id: userId,
+            input_values: inputValues,
+            input_schema: inputSchema,
+            created_at: new Date().toISOString()
+          })
+          .select()
+          .single();
+      }
+
+      if (result.error) throw result.error;
+
+      const duration = Date.now() - startTime;
+      methodLogger.info({
+        configId: result.data.id,
+        inputCount: Object.keys(inputValues).length,
+        duration
+      }, 'Input values saved successfully');
+
+      return { data: result.data, error: null };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      methodLogger.error({ err: error, duration }, 'Failed to save input values');
+      return { data: null as any, error: error as Error };
+    }
+  }
 }
 
 // Export singleton instance for convenience

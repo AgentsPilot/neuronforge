@@ -41,6 +41,11 @@ export interface Agent {
   system_prompt?: string | null;
   enhanced_prompt?: string | null;
   trigger_condintion?: Record<string, unknown> | null;
+  // Intelligence features
+  insights_enabled?: boolean;
+  production_ready?: boolean;
+  // Business intelligence context
+  workflow_purpose?: string | null;
 }
 
 export interface CreateAgentInput {

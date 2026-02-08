@@ -17,6 +17,17 @@ module.exports = {
     'dark:text-blue-400',
     'dark:text-green-400',
     'dark:text-white',
+    // Force generation of dark mode border colors for calibration issue cards
+    'dark:border-l-red-400',
+    'dark:border-l-amber-300',
+    'dark:border-l-blue-300',
+    'dark:border-l-purple-300',
+    'dark:border-l-gray-600',
+    'border-l-red-600',
+    'border-l-amber-500',
+    'border-l-blue-500',
+    'border-l-purple-500',
+    'border-l-gray-300',
   ],
   theme: {
     extend: {
@@ -46,5 +57,20 @@ module.exports = {
   },
   plugins: [
     require('@tailwindcss/typography'),
+    // Add scrollbar-hide utility for silent scrolling
+    function({ addUtilities }) {
+      addUtilities({
+        '.scrollbar-hide': {
+          /* IE and Edge */
+          '-ms-overflow-style': 'none',
+          /* Firefox */
+          'scrollbar-width': 'none',
+          /* Safari and Chrome */
+          '&::-webkit-scrollbar': {
+            display: 'none'
+          }
+        }
+      })
+    }
   ],
 }

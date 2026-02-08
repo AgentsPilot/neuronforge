@@ -51,8 +51,27 @@ export abstract class GoogleBasePluginExecutor extends BasePluginExecutor {
     }
 
     // Check for invalid request errors
+    // IMPORTANT: Preserve the original error message for parameter error detection by Shadow Agent
     if (error.message?.includes('400') || error.message?.includes('invalid')) {
-      return commonErrors.invalid_request || 'Invalid request parameters.';
+      // Extract the actual error message from Google API JSON response if available
+      // Example input: "Sheets API error: 400 - { "error": { "code": 400, "message": "Unable to parse range: UrgentEmails", ... } }"
+      // Example output: "Unable to parse range: UrgentEmails"
+      try {
+        // Try to extract JSON from error message
+        const jsonMatch = error.message.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const errorData = JSON.parse(jsonMatch[0]);
+          // Google API errors are nested in { error: { message: "..." } }
+          const actualMessage = errorData?.error?.message || errorData?.message;
+          if (actualMessage) {
+            return actualMessage;
+          }
+        }
+      } catch (parseError) {
+        // If JSON parsing fails, fall back to original message
+      }
+
+      return error.message || commonErrors.invalid_request || 'Invalid request parameters.';
     }
 
     // Allow subclasses to handle service-specific errors

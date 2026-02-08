@@ -19,6 +19,7 @@ import type {
   VariableReference,
   IOrchestrator,
   IExecutionContext,
+  CollectedIssue,
 } from './types';
 import { VariableResolutionError, getTokenTotal } from './types';
 import { createLogger } from '@/lib/logger';
@@ -65,12 +66,17 @@ export class ExecutionContext implements IExecutionContext {
   public totalTokensUsed: number = 0;
   public totalExecutionTime: number = 0;
 
+  // Batch calibration mode
+  public batchCalibrationMode: boolean = false;
+  public collectedIssues: CollectedIssue[] = [];
+
   constructor(
     executionId: string,
     agent: Agent,
     userId: string,
     sessionId: string,
-    inputValues: Record<string, any> = {}
+    inputValues: Record<string, any> = {},
+    batchCalibrationMode: boolean = false
   ) {
     this.executionId = executionId;
     this.agent = agent;
@@ -82,13 +88,16 @@ export class ExecutionContext implements IExecutionContext {
     this.variables = {};
     this.status = 'running';
     this.startedAt = new Date();
+    this.batchCalibrationMode = batchCalibrationMode;
+    this.collectedIssues = [];
 
     logger.info({
       executionId,
       agentId: agent.id,
       userId,
       sessionId,
-      inputKeys: Object.keys(inputValues)
+      inputKeys: Object.keys(inputValues),
+      batchCalibrationMode
     }, 'ExecutionContext created');
   }
 
@@ -723,7 +732,8 @@ export class ExecutionContext implements IExecutionContext {
       this.agent,
       this.userId,
       this.sessionId,
-      { ...this.inputValues }
+      { ...this.inputValues },
+      this.batchCalibrationMode
     );
 
     cloned.status = this.status;
@@ -736,6 +746,7 @@ export class ExecutionContext implements IExecutionContext {
     cloned.memoryContext = this.memoryContext;
     cloned.orchestrator = this.orchestrator; // Copy orchestrator reference for consistent routing
     cloned.startedAt = this.startedAt;
+    cloned.collectedIssues = [...this.collectedIssues];
 
     // For parallel execution, reset metrics to 0 so only NEW tokens/time are tracked
     // This prevents double-counting when merging back to parent
@@ -766,6 +777,9 @@ export class ExecutionContext implements IExecutionContext {
 
     // Merge variables
     this.variables = { ...this.variables, ...other.variables };
+
+    // Merge collected issues (batch calibration)
+    this.collectedIssues = [...this.collectedIssues, ...other.collectedIssues];
 
     // Sum metrics
     this.totalTokensUsed += other.totalTokensUsed;

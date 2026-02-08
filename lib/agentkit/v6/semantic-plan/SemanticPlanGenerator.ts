@@ -135,6 +135,20 @@ export class SemanticPlanGenerator {
    */
   async generate(enhancedPrompt: EnhancedPrompt): Promise<SemanticPlanGenerationResult> {
     console.log('[SemanticPlanGenerator] Starting semantic plan generation...')
+
+    // Validate enhanced prompt structure
+    if (!enhancedPrompt || !enhancedPrompt.sections) {
+      return {
+        success: false,
+        errors: ['Invalid enhanced prompt: missing sections property'],
+        metadata: {
+          model: this.getModelName(),
+          tokens_used: 0,
+          generation_time_ms: 0
+        }
+      }
+    }
+
     console.log('[SemanticPlanGenerator] Enhanced prompt sections:', Object.keys(enhancedPrompt.sections))
 
     const startTime = Date.now()

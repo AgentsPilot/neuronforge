@@ -136,6 +136,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
   }
 
+  // Debug: Log sample of pilot_steps to verify parameterization
+  if (agent.pilot_steps) {
+    logger.info({
+      pilotStepsSample: JSON.stringify(agent.pilot_steps).substring(0, 500)
+    }, 'Agent fetched - checking pilot_steps')
+  }
+
   // **UNIFIED EXECUTION PATH**
   // Determine which executor to use and execute
   let executionResult: any = null;
@@ -207,6 +214,9 @@ export async function POST(req: Request) {
           status: agent.status,
           created_at: agent.created_at,
           updated_at: agent.updated_at ?? undefined,
+          // Business intelligence fields
+          production_ready: agent.production_ready ?? false,
+          insights_enabled: agent.insights_enabled ?? true, // Default to true
         };
         executionResult = await pilot.execute(
           pilotAgent, // Pass transformed agent object
@@ -216,7 +226,9 @@ export async function POST(req: Request) {
           sessionId,
           undefined, // stepEmitter
           debugMode, // Pass debugMode to enable debugging
-          debugRunId // Pass pre-generated debugRunId from frontend
+          debugRunId, // Pass pre-generated debugRunId from frontend
+          execution_id, // Pass frontend-generated execution ID for calibration polling
+          execution_type === 'test' ? 'calibration' : 'production' // Map test mode to calibration type
         );
 
         executionType = 'pilot';
