@@ -27,8 +27,11 @@ Convert Enhanced Prompts into **Declarative Logical IR** that expresses business
 - `goal` (human-readable workflow intent)
 - `data_sources` (WHERE data comes from)
 - `normalization` (WHAT data quality rules)
-- `filters` (WHAT subset of data)
+- `filters` (WHAT subset of SOURCE data - before AI operations)
 - `ai_operations` (WHAT intelligent processing)
+- `post_ai_filters` (WHAT subset of AI-EXTRACTED data - after AI operations)
+- `file_operations` (WHAT files to generate/upload - Drive, S3, etc.)
+- `conditionals` (WHAT branching logic based on extracted fields)
 - `partitions` (HOW to group/split data)
 - `grouping` (HOW to organize for delivery)
 - `rendering` (HOW to format output)
@@ -139,6 +142,78 @@ Convert Enhanced Prompts into **Declarative Logical IR** that expresses business
       "temperature": 0.3,
       "model_preference": "balanced"
     }
+  }],
+
+  // WHAT subset of AI-EXTRACTED data? (Filters on AI operation output fields)
+  "post_ai_filters": {
+    "combineWith": "AND", // How to combine conditions: "AND" or "OR" (default: "AND")
+    "conditions": [{
+      "field": "amount", // Field from AI operation output_schema
+      "operator": "is_not_null", // Same operators as filters
+      "value": null,
+      "description": "Only items with extracted amount (optional)"
+    }]
+  },
+
+  // WHAT files to generate/upload?
+  "file_operations": [{
+    "type": "upload_file" | "generate_pdf" | "generate_csv" | "generate_excel",
+    "source_data": "{{attachment_content}}", // What content to upload/generate
+    "output_config": {
+      "filename": "{{vendor}}_{{date}}.pdf", // Can use template variables
+      "format": "pdf" | "csv" | "excel",
+      "columns": ["Date", "Vendor", "Amount"], // For CSV/Excel only
+      "template": "..." // For PDF generation with template (optional)
+    },
+    "upload_destination": { // Required if type is upload_file
+      "plugin_key": "google-drive" | "aws-s3" | "dropbox",
+      "operation_type": "upload",
+      "location": "folder_id/{{vendor}}", // Can use template variables for dynamic paths
+      "overwrite": false, // optional
+      "permissions": "..." // optional, platform-specific
+    }
+  }],
+
+  // WHAT branching logic based on extracted fields?
+  "conditionals": [{
+    "condition": {
+      "type": "simple", // simple or complex
+      "field": "classification", // Field from AI output or source data
+      "operator": "equals",
+      "value": "invoice"
+    },
+    "then_actions": [{
+      "type": "send_to_recipient",
+      "params": {
+        "plugin_key": "google-sheets",
+        "operation_type": "append_rows",
+        "config": {"range": "Invoices"}
+      }
+    }],
+    "elif_branches": [{ // optional, for multi-branch conditionals
+      "condition": {
+        "type": "simple",
+        "field": "classification",
+        "operator": "equals",
+        "value": "expense"
+      },
+      "actions": [{
+        "type": "send_to_recipient",
+        "params": {
+          "plugin_key": "google-sheets",
+          "operation_type": "append_rows",
+          "config": {"range": "Expenses"}
+        }
+      }]
+    }],
+    "else_actions": [{ // optional
+      "type": "send_to_recipient",
+      "params": {
+        "plugin_key": "google-sheets",
+        "operation_type": "append_rows",
+        "config": {"range": "Needs Review"}
+      }
+    }]
   }],
 
   // HOW to group data?
@@ -367,6 +442,120 @@ The compiler will:
 - Inject AI operation into loop
 - Generate all IDs and variables
 
+### Example 3: File Upload to Google Drive with Conditional Append
+
+**Enhanced Prompt:**
+```
+Data: Gmail search for invoices with attachments
+AI: Extract date, vendor, amount, classification (invoice vs expense) from each attachment
+File Storage: Upload each attachment to Google Drive in vendor-specific subfolders
+Sheets: Append to "Invoices" tab if classification=invoice AND amount is present; append to "Expenses" tab if classification=expense AND amount is present
+Email: Send summary to manager
+```
+
+**Your Output:**
+```json
+{
+  "ir_version": "3.0",
+  "goal": "Extract invoice/expense data from Gmail attachments, store in Drive, append to appropriate Sheets tab",
+
+  "data_sources": [{
+    "type": "api",
+    "source": "gmail",
+    "location": "Gmail",
+    "role": "Source of invoice/expense emails with attachments",
+    "plugin_key": "google-mail",
+    "operation_type": "search_emails",
+    "config": {
+      "query": "subject:(invoice OR receipt) has:attachment"
+    }
+  }],
+
+  "ai_operations": [{
+    "type": "deterministic_extract",
+    "instruction": "Extract invoice/expense fields from email attachment content",
+    "context": "Email attachment (PDF/image)",
+    "output_schema": {
+      "type": "object",
+      "fields": [
+        {"name": "date", "type": "string", "required": false},
+        {"name": "vendor", "type": "string", "required": false},
+        {"name": "amount", "type": "number", "required": false},
+        {"name": "classification", "type": "string", "required": true, "description": "invoice or expense"}
+      ]
+    }
+  }],
+
+  "file_operations": [{
+    "type": "upload_file",
+    "source_data": "{{attachment_content}}",
+    "output_config": {
+      "filename": "{{vendor}}_{{date}}.pdf",
+      "format": "pdf"
+    },
+    "upload_destination": {
+      "plugin_key": "google-drive",
+      "operation_type": "upload",
+      "location": "1BoYgIIQj5QB6F0mWLzD_0-2pMLoxHVp-/{{vendor}}"
+    }
+  }],
+
+  "post_ai_filters": {
+    "combineWith": "AND",
+    "conditions": [
+      {
+        "field": "amount",
+        "operator": "is_not_null",
+        "description": "Only append to Sheets when amount is extracted"
+      }
+    ]
+  },
+
+  "conditionals": [{
+    "condition": {
+      "type": "simple",
+      "field": "classification",
+      "operator": "equals",
+      "value": "invoice"
+    },
+    "then_actions": [{
+      "type": "send_to_recipient",
+      "params": {
+        "plugin_key": "google-sheets",
+        "operation_type": "append_rows",
+        "config": {
+          "spreadsheet_id": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE",
+          "range": "Invoices"
+        }
+      }
+    }],
+    "else_actions": [{
+      "type": "send_to_recipient",
+      "params": {
+        "plugin_key": "google-sheets",
+        "operation_type": "append_rows",
+        "config": {
+          "spreadsheet_id": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE",
+          "range": "Expenses"
+        }
+      }
+    }]
+  }],
+
+  "delivery_rules": {
+    "summary_delivery": {
+      "recipient": "manager@company.com",
+      "subject": "Invoice/Expense Summary"
+    }
+  }
+}
+```
+
+**CRITICAL:** Notice how the three new fields work together:
+- `file_operations`: Uploads attachments to Drive (compiler will create upload steps)
+- `post_ai_filters`: Filters on AI-extracted fields (`amount` field from ai_operations output)
+- `conditionals`: Routes to different Sheet tabs based on `classification` field
+
 ## Categorization Rules
 
 ### Data Sources
@@ -577,6 +766,234 @@ When user wants multiple items per document, use `type: "array"` with `items.fie
 // ✅ CORRECT - Use array type directly
 "output_schema": { "type": "array", "items": { "fields": [...] } }
 ```
+
+### Post-AI Filters (Filters on Extracted Fields)
+
+**CRITICAL DISTINCTION:**
+- `filters`: Applied to SOURCE data BEFORE AI operations (e.g., filter Gmail by subject)
+- `post_ai_filters`: Applied to AI OUTPUT AFTER extraction (e.g., filter by extracted amount)
+
+**When to use `post_ai_filters`:**
+- "Only append to Sheet if extracted amount > 50"
+- "Only send email if sentiment is negative"
+- "Skip items where vendor name is missing"
+- "Only process if classification confidence > 0.8"
+
+**Input:** "Extract amount from receipts, then append to Sheet ONLY IF amount > 50"
+
+**Output:**
+```json
+{
+  "ai_operations": [{
+    "type": "deterministic_extract",
+    "output_schema": {
+      "type": "object",
+      "fields": [
+        {"name": "amount", "type": "number", "required": false}
+      ]
+    }
+  }],
+  "post_ai_filters": {
+    "combineWith": "AND",
+    "conditions": [{
+      "field": "amount",  // This is AI output, not source field!
+      "operator": "greater_than",
+      "value": 50,
+      "description": "Only high-value receipts"
+    }]
+  }
+}
+```
+
+**Input:** "Classify emails as urgent/normal, only send if urgent AND confidence > 0.7"
+
+**Output:**
+```json
+{
+  "ai_operations": [{
+    "type": "classify",
+    "output_schema": {
+      "type": "object",
+      "fields": [
+        {"name": "urgency", "type": "string", "required": true},
+        {"name": "confidence", "type": "number", "required": true}
+      ]
+    }
+  }],
+  "post_ai_filters": {
+    "combineWith": "AND",
+    "conditions": [
+      {
+        "field": "urgency",
+        "operator": "equals",
+        "value": "urgent"
+      },
+      {
+        "field": "confidence",
+        "operator": "greater_than",
+        "value": 0.7
+      }
+    ]
+  }
+}
+```
+
+### File Operations (File Generation & Upload)
+
+**When to use `file_operations`:**
+- "Store PDF in Google Drive"
+- "Upload attachment to S3"
+- "Generate CSV and save to Drive"
+- "Create Excel report and upload to Dropbox"
+
+**Input:** "Store each email attachment in Google Drive under vendor subfolder"
+
+**Output:**
+```json
+{
+  "file_operations": [{
+    "type": "upload_file",
+    "source_data": "{{attachment_content}}",
+    "output_config": {
+      "filename": "{{vendor}}_{{date}}.pdf",
+      "format": "pdf"
+    },
+    "upload_destination": {
+      "plugin_key": "google-drive",
+      "operation_type": "upload",
+      "location": "1BoYgIIQj5QB6F0mWLzD_0-2pMLoxHVp-/{{vendor}}"
+    }
+  }]
+}
+```
+
+**Input:** "Generate CSV from extracted data and upload to S3 bucket"
+
+**Output:**
+```json
+{
+  "file_operations": [{
+    "type": "generate_csv",
+    "source_data": "{{extracted_data}}",
+    "output_config": {
+      "filename": "invoice_data_{{date}}.csv",
+      "format": "csv",
+      "columns": ["Date", "Vendor", "Amount", "Currency"]
+    },
+    "upload_destination": {
+      "plugin_key": "aws-s3",
+      "operation_type": "upload",
+      "location": "my-bucket/invoices/{{year}}/{{month}}"
+    }
+  }]
+}
+```
+
+**CRITICAL:** File operations capture BOTH generation AND upload in a single operation. The compiler will:
+- Generate the file if needed (CSV, Excel, PDF)
+- Upload to destination (Drive, S3, Dropbox)
+- Capture shareable link/URL for use in delivery
+
+### Conditionals (Branching Logic)
+
+**When to use `conditionals`:**
+- "If invoice, send to Invoices tab; if expense, send to Expenses tab"
+- "Route to different teams based on classification"
+- "Different actions based on extracted priority"
+- "Send to different recipients based on amount range"
+
+**Input:** "Classify as invoice or expense, then send invoices to Invoices tab and expenses to Expenses tab"
+
+**Output:**
+```json
+{
+  "ai_operations": [{
+    "type": "classify",
+    "output_schema": {
+      "type": "object",
+      "fields": [
+        {"name": "classification", "type": "string", "required": true}
+      ]
+    }
+  }],
+  "conditionals": [{
+    "condition": {
+      "type": "simple",
+      "field": "classification",
+      "operator": "equals",
+      "value": "invoice"
+    },
+    "then_actions": [{
+      "type": "send_to_recipient",
+      "params": {
+        "plugin_key": "google-sheets",
+        "operation_type": "append_rows",
+        "config": {"range": "Invoices"}
+      }
+    }],
+    "else_actions": [{
+      "type": "send_to_recipient",
+      "params": {
+        "plugin_key": "google-sheets",
+        "operation_type": "append_rows",
+        "config": {"range": "Expenses"}
+      }
+    }]
+  }]
+}
+```
+
+**Input:** "Route by priority: urgent to manager, high to team lead, normal to analyst"
+
+**Output (multi-branch with elif):**
+```json
+{
+  "conditionals": [{
+    "condition": {
+      "type": "simple",
+      "field": "priority",
+      "operator": "equals",
+      "value": "urgent"
+    },
+    "then_actions": [{
+      "type": "send_to_recipient",
+      "params": {
+        "plugin_key": "google-mail",
+        "operation_type": "send_email",
+        "config": {"recipient": "manager@company.com"}
+      }
+    }],
+    "elif_branches": [{
+      "condition": {
+        "type": "simple",
+        "field": "priority",
+        "operator": "equals",
+        "value": "high"
+      },
+      "actions": [{
+        "type": "send_to_recipient",
+        "params": {
+          "plugin_key": "google-mail",
+          "operation_type": "send_email",
+          "config": {"recipient": "teamlead@company.com"}
+        }
+      }]
+    }],
+    "else_actions": [{
+      "type": "send_to_recipient",
+      "params": {
+        "plugin_key": "google-mail",
+        "operation_type": "send_email",
+        "config": {"recipient": "analyst@company.com"}
+      }
+    }]
+  }]
+}
+```
+
+**CRITICAL:** Conditionals vs. post_ai_filters:
+- Use `post_ai_filters` when you want to EXCLUDE items (filter out)
+- Use `conditionals` when you want to ROUTE items to different destinations based on a field value
 
 ### Delivery Rules (Loop Inference)
 

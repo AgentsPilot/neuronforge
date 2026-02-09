@@ -311,9 +311,10 @@ export interface IRValidationError {
 // ============================================================================
 
 export interface Conditional {
-  id: string // Unique identifier for this conditional
+  id?: string // Unique identifier for this conditional (optional, will be generated if not provided)
   condition: ConditionalExpression
   then_actions: ConditionalAction[]
+  elif_branches?: { condition: ConditionalExpression; actions: ConditionalAction[] }[] // Phase 2 Task 2.8: Multi-branch support
   else_actions?: ConditionalAction[]
   description?: string
 }
@@ -333,6 +334,8 @@ export interface ConditionalExpression {
 
 export interface ConditionalAction {
   type: 'set_field' | 'skip_delivery' | 'use_template' | 'send_to_recipient' | 'abort' | 'continue'
+  field?: string // For set_field action
+  value?: any // For set_field action
   params?: Record<string, any>
   description?: string
 }
