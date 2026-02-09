@@ -344,7 +344,9 @@ export const DECLARATIVE_IR_SCHEMA_STRICT = {
                   'in',
                   'not_in',
                   'is_empty',
-                  'is_not_empty'
+                  'is_not_empty',
+                  'is_null',
+                  'is_not_null'
                 ]
               },
               value: {
@@ -396,7 +398,9 @@ export const DECLARATIVE_IR_SCHEMA_STRICT = {
                         'in',
                         'not_in',
                         'is_empty',
-                        'is_not_empty'
+                        'is_not_empty',
+                        'is_null',
+                        'is_not_null'
                       ]
                     },
                     value: {
@@ -407,6 +411,171 @@ export const DECLARATIVE_IR_SCHEMA_STRICT = {
                     }
                   }
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    // ========================================================================
+    // FILE OPERATIONS (Phase 2 Task 2.1)
+    // ========================================================================
+
+    file_operations: {
+      type: ['array', 'null'],
+      items: {
+        type: 'object',
+        required: ['type', 'output_config'],
+        additionalProperties: false,
+        properties: {
+          type: {
+            type: 'string',
+            enum: ['upload_file', 'generate_pdf', 'generate_csv', 'generate_excel']
+          },
+          source_data: {
+            type: ['string', 'null'],
+            description: 'Source data variable or content'
+          },
+          output_config: {
+            type: 'object',
+            required: ['format'],
+            additionalProperties: false,
+            properties: {
+              filename: { type: ['string', 'null'] },
+              format: {
+                type: 'string',
+                enum: ['pdf', 'csv', 'excel', 'txt', 'json']
+              },
+              columns: {
+                type: ['array', 'null'],
+                items: { type: 'string' }
+              },
+              template: { type: ['string', 'null'] }
+            }
+          },
+          upload_destination: {
+            type: ['object', 'null'],
+            required: ['plugin_key', 'operation_type', 'location'],
+            additionalProperties: false,
+            properties: {
+              plugin_key: {
+                type: 'string',
+                enum: ['google-drive', 'aws-s3', 'dropbox', 'onedrive']
+              },
+              operation_type: {
+                type: 'string',
+                enum: ['upload']
+              },
+              location: { type: 'string' },
+              overwrite: { type: ['boolean', 'null'] },
+              permissions: { type: ['string', 'null'] }
+            }
+          }
+        }
+      }
+    },
+
+    // ========================================================================
+    // CONDITIONALS (Phase 2 Task 2.3)
+    // ========================================================================
+
+    conditionals: {
+      type: ['array', 'null'],
+      items: {
+        type: 'object',
+        required: ['condition', 'then_actions'],
+        additionalProperties: false,
+        properties: {
+          id: { type: ['string', 'null'] },
+          description: { type: ['string', 'null'] },
+          condition: {
+            type: 'object',
+            required: ['type'],
+            additionalProperties: false,
+            properties: {
+              type: {
+                type: 'string',
+                enum: ['simple', 'complex']
+              },
+              field: { type: ['string', 'null'] },
+              operator: {
+                type: ['string', 'null'],
+                enum: ['equals', 'not_equals', 'contains', 'greater_than', 'less_than', 'is_empty', 'is_not_empty', 'in', null]
+              },
+              value: { type: ['string', 'number', 'boolean', 'null'] },
+              combineWith: {
+                type: ['string', 'null'],
+                enum: ['AND', 'OR', null]
+              },
+              conditions: {
+                type: ['array', 'null'],
+                items: { type: 'object' }
+              }
+            }
+          },
+          then_actions: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['type'],
+              additionalProperties: false,
+              properties: {
+                type: {
+                  type: 'string',
+                  enum: ['set_field', 'skip_delivery', 'use_template', 'send_to_recipient', 'abort', 'continue']
+                },
+                field: { type: ['string', 'null'] },
+                value: { type: ['string', 'number', 'boolean', 'null'] },
+                params: { type: ['object', 'null'] },
+                description: { type: ['string', 'null'] }
+              }
+            }
+          },
+          elif_branches: {
+            type: ['array', 'null'],
+            items: {
+              type: 'object',
+              required: ['condition', 'actions'],
+              additionalProperties: false,
+              properties: {
+                condition: { type: 'object' },
+                actions: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    required: ['type'],
+                    additionalProperties: false,
+                    properties: {
+                      type: {
+                        type: 'string',
+                        enum: ['set_field', 'skip_delivery', 'use_template', 'send_to_recipient', 'abort', 'continue']
+                      },
+                      field: { type: ['string', 'null'] },
+                      value: { type: ['string', 'number', 'boolean', 'null'] },
+                      params: { type: ['object', 'null'] },
+                      description: { type: ['string', 'null'] }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          else_actions: {
+            type: ['array', 'null'],
+            items: {
+              type: 'object',
+              required: ['type'],
+              additionalProperties: false,
+              properties: {
+                type: {
+                  type: 'string',
+                  enum: ['set_field', 'skip_delivery', 'use_template', 'send_to_recipient', 'abort', 'continue']
+                },
+                field: { type: ['string', 'null'] },
+                value: { type: ['string', 'number', 'boolean', 'null'] },
+                params: { type: ['object', 'null'] },
+                description: { type: ['string', 'null'] }
               }
             }
           }
