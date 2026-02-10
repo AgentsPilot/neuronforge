@@ -84,6 +84,16 @@ Step types supported:
 
 ---
 
+## Development Standards
+
+The following documents define **mandatory development standards** for this project. All contributors (human and AI) must follow these patterns:
+
+| Standard | Document | Summary |
+|----------|----------|---------|
+| **Repository Pattern** | [REPOSITORY_STRATEGY.md](/docs/REPOSITORY_STRATEGY.md) | All database access MUST go through the repository layer (`lib/repositories/`). No direct Supabase queries in API routes, services, or components. Repositories are server-side only — never import them in `'use client'` components. |
+
+---
+
 ## Code Patterns & Conventions
 
 ### Naming Conventions
